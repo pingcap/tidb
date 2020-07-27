@@ -59,6 +59,8 @@ const (
 	// MaxOldEncodeValueLen is the maximum len of the old encoding of index value.
 	MaxOldEncodeValueLen = 9
 
+	// PartitionIDFlag is the flag used to decode the partition ID in global index value.
+	PartitionIDFlag byte = 126
 	// CommonHandleFlag is the flag used to decode the common handle in an unique index value.
 	CommonHandleFlag byte = 127
 )
@@ -973,7 +975,17 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 // GenIndexValue creates encoded index value and returns the result
 func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, containNonBinaryString bool,
 	distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
-	var idxVal []byte
+	idxVal := make([]byte, 1)
+	newEncode := false
+	tailLen := 0
+	if idxInfo.Global {
+		idxVal = encodePartitionID(idxVal, partitionID)
+		newEncode = true
+	}
+	if !h.IsInt() && distinct {
+		idxVal = encodeCommonHandle(idxVal, h)
+		newEncode = true
+	}
 	if collate.NewCollationEnabled() && containNonBinaryString {
 		colIds := make([]int64, len(idxInfo.Columns))
 		for i, col := range idxInfo.Columns {
@@ -984,14 +996,11 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 		if err != nil {
 			return nil, err
 		}
-		// tailLen(1) + commonHandleFlag(1) + handleLen(2) + handle + restoredValue
-		idxValCap := 1 + 1 + 2 + h.Len() + len(rowRestoredValue)
-		idxVal = make([]byte, 1, idxValCap)
-		if !h.IsInt() && distinct {
-			idxVal = encodeCommonHandle(idxVal, h)
-		}
 		idxVal = append(idxVal, rowRestoredValue...)
-		tailLen := 0
+		newEncode = true
+	}
+
+	if newEncode {
 		if h.IsInt() && distinct {
 			// The len of the idxVal is always >= 10 since len (restoredValue) > 0.
 			tailLen += 8
@@ -1011,9 +1020,10 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 		}
 		idxVal[0] = byte(tailLen)
 	} else {
+		// Old index value encoding.
 		idxVal = make([]byte, 0)
 		if distinct {
-			idxVal = EncodeHandleInUniqueIndexValue(h, untouched)
+			idxVal = h.Encoded()
 		}
 		if untouched {
 			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
@@ -1024,9 +1034,6 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 		if len(idxVal) == 0 {
 			idxVal = []byte{'0'}
 		}
-	}
-	if idxInfo.Global {
-		idxVal = append(idxVal, codec.EncodeInt(nil, partitionID)...)
 	}
 	return idxVal, nil
 }
@@ -1114,4 +1121,11 @@ func DecodeHandleInUniqueIndexValueDeprecated(data []byte) (int64, error) {
 		return int64(binary.BigEndian.Uint64(data)), nil
 	}
 	return int64(binary.BigEndian.Uint64(data[dLen-int(data[0]):])), nil
+}
+
+func encodePartitionID(idxVal []byte, partitionID int64) []byte {
+	var data [8]byte
+	idxVal = append(idxVal, PartitionIDFlag)
+	idxVal = append(idxVal, codec.EncodeInt(data[:], partitionID)...)
+	return idxVal
 }
