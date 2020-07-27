@@ -72,14 +72,16 @@ type indexNestedLoopJoinTables struct {
 
 type tableHintInfo struct {
 	indexNestedLoopJoinTables
-	sortMergeJoinTables []hintTableInfo
-	hashJoinTables      []hintTableInfo
-	indexHintList       []indexHintInfo
-	tiflashTables       []hintTableInfo
-	tikvTables          []hintTableInfo
-	aggHints            aggHintInfo
-	indexMergeHintList  []indexHintInfo
-	timeRangeHint       ast.HintTimeRange
+	sortMergeJoinTables         []hintTableInfo
+	broadcastJoinTables         []hintTableInfo
+	broadcastJoinPreferredLocal []hintTableInfo
+	hashJoinTables              []hintTableInfo
+	indexHintList               []indexHintInfo
+	tiflashTables               []hintTableInfo
+	tikvTables                  []hintTableInfo
+	aggHints                    aggHintInfo
+	indexMergeHintList          []indexHintInfo
+	timeRangeHint               ast.HintTimeRange
 }
 
 type hintTableInfo struct {
@@ -157,8 +159,28 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintTables []ast.HintTable
 	return hintTableInfos
 }
 
+// ifPreferAsLocalInBCJoin checks if there is a data source specified as local read by hint
+func (info *tableHintInfo) ifPreferAsLocalInBCJoin(p LogicalPlan, blockOffset int) bool {
+	alias := extractTableAlias(p, blockOffset)
+	if alias != nil {
+		tableNames := make([]*hintTableInfo, 1)
+		tableNames[0] = alias
+		return info.matchTableName(tableNames, info.broadcastJoinPreferredLocal)
+	}
+	for _, c := range p.Children() {
+		if info.ifPreferAsLocalInBCJoin(c, blockOffset) {
+			return true
+		}
+	}
+	return false
+}
+
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.sortMergeJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferBroadcastJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.broadcastJoinTables)
 }
 
 func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
@@ -713,7 +735,31 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
+<<<<<<< HEAD
 func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
+=======
+func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPath {
+	tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash, IsTiFlashGlobalRead: isGlobalRead}
+	fillContentForTablePath(tiFlashPath, tblInfo)
+	return tiFlashPath
+}
+
+func fillContentForTablePath(tablePath *util.AccessPath, tblInfo *model.TableInfo) {
+	if tblInfo.IsCommonHandle {
+		tablePath.IsCommonHandlePath = true
+		for _, index := range tblInfo.Indices {
+			if index.Primary {
+				tablePath.Index = index
+				break
+			}
+		}
+	} else {
+		tablePath.IsIntHandlePath = true
+	}
+}
+
+func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
+>>>>>>> 29178df... planner, executor: support broadcast join for tiflash engine. (#17232)
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -722,7 +768,12 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	}
 	publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: tp})
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
+<<<<<<< HEAD
 		publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
+=======
+		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
+		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
+>>>>>>> 29178df... planner, executor: support broadcast join for tiflash engine. (#17232)
 	}
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {

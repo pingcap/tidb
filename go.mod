@@ -32,11 +32,19 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200706115936-1e0910aabe6c
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
+<<<<<<< HEAD
 	github.com/pingcap/parser v0.0.0-20200623164729-3a18f1e5dceb
 	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200520083007-2c251bd8f181
 	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
 	github.com/pingcap/tidb-tools v4.0.1-0.20200530144555-cdec43635625+incompatible
 	github.com/pingcap/tipb v0.0.0-20200522051215-f31a15d98fce
+=======
+	github.com/pingcap/parser v0.0.0-20200623082809-b74301ac298b
+	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200714122454-1a64f969cb3c
+	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
+	github.com/pingcap/tidb-tools v4.0.1+incompatible
+	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
+>>>>>>> 29178df... planner, executor: support broadcast join for tiflash engine. (#17232)
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
