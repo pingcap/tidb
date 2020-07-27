@@ -141,7 +141,7 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 			if needWait {
 				// The new added partition hasn't been replicated.
 				// Do nothing to the job this time, wait next worker round.
-				time.Sleep(tiflashCheckTiDBHttpAPIHalfInterval)
+				time.Sleep(tiflashCheckTiDBHTTPAPIHalfInterval)
 				return ver, nil
 			}
 		}
