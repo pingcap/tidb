@@ -315,7 +315,7 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		if filterCond {
 			leftCond = append(leftCond, expr)
-			// Append the AccessCondition to right join condition instead of `rightCond`, to make it able to be
+			// Append the expr to right join condition instead of `rightCond`, to make it able to be
 			// pushed down to children of join.
 			p.RightConditions = append(p.RightConditions, expr)
 		} else {
@@ -417,8 +417,8 @@ func (p *LogicalJoin) ExtractOnCondition(
 		} else if allFromLeft {
 			leftCond = append(leftCond, expr)
 		} else {
-			// Relax AccessCondition to two supersets: leftRelaxedCond and rightRelaxedCond, the expression now is
-			// `AccessCondition AND leftRelaxedCond AND rightRelaxedCond`. Motivation is to push filters down to
+			// Relax expr to two supersets: leftRelaxedCond and rightRelaxedCond, the expression now is
+			// `expr AND leftRelaxedCond AND rightRelaxedCond`. Motivation is to push filters down to
 			// children as much as possible.
 			if deriveLeft {
 				leftRelaxedCond := expression.DeriveRelaxedFiltersFromDNF(expr, leftSchema)
@@ -3939,8 +3939,8 @@ func (b *PlanBuilder) buildByItemsForWindow(
 }
 
 // buildWindowFunctionFrameBound builds the bounds of window function frames.
-// For type `Rows`, the bound AccessCondition must be an unsigned integer.
-// For type `Range`, the bound AccessCondition must be temporal or numeric types.
+// For type `Rows`, the bound expr must be an unsigned integer.
+// For type `Range`, the bound expr must be temporal or numeric types.
 func (b *PlanBuilder) buildWindowFunctionFrameBound(ctx context.Context, spec *ast.WindowSpec, orderByItems []property.Item, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
 	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}

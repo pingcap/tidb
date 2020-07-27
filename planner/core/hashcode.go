@@ -40,7 +40,7 @@ func (p *baseLogicalPlan) HashCode() []byte {
 func (p *LogicalProjection) HashCode() []byte {
 	// PlanType + SelectOffset + ExprNum + [Exprs]
 	// Expressions are commonly `Column`s, whose hashcode has the length 9, so
-	// we pre-alloc 10 bytes for each AccessCondition's hashcode.
+	// we pre-alloc 10 bytes for each expr's hashcode.
 	result := make([]byte, 0, 12+len(p.Exprs)*10)
 	result = encodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = encodeIntAsUint32(result, p.SelectBlockOffset())
@@ -67,7 +67,7 @@ func (p *LogicalTableDual) HashCode() []byte {
 func (p *LogicalSelection) HashCode() []byte {
 	// PlanType + SelectOffset + ConditionNum + [Conditions]
 	// Conditions are commonly `ScalarFunction`s, whose hashcode usually has a
-	// length larger than 20, so we pre-alloc 25 bytes for each AccessCondition's hashcode.
+	// length larger than 20, so we pre-alloc 25 bytes for each expr's hashcode.
 	result := make([]byte, 0, 12+len(p.Conditions)*25)
 	result = encodeIntAsUint32(result, plancodec.TypeStringToPhysicalID(p.tp))
 	result = encodeIntAsUint32(result, p.SelectBlockOffset())

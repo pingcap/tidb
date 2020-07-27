@@ -317,7 +317,7 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 	// then simplify embedding outer join.
 	canBeSimplified := false
 	for _, expr := range predicates {
-		// avoid the case where the AccessCondition only refers to the schema of outerTable
+		// avoid the case where the expr only refers to the schema of outerTable
 		if expression.ExprFromSchema(expr, outerTable.Schema()) {
 			continue
 		}

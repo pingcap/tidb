@@ -79,7 +79,7 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 	return expr, err
 }
 
-// rewrite function rewrites ast AccessCondition to expression.Expression.
+// rewrite function rewrites ast expr to expression.Expression.
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
@@ -90,7 +90,7 @@ func (b *PlanBuilder) rewrite(ctx context.Context, exprNode ast.ExprNode, p Logi
 
 // rewriteWithPreprocess is for handling the situation that we need to adjust the input ast tree
 // before really using its node in `expressionRewriter.Leave`. In that case, we first call
-// er.preprocess(AccessCondition), which returns a new AccessCondition. Then we use the new AccessCondition in `Leave`.
+// er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.
 func (b *PlanBuilder) rewriteWithPreprocess(
 	ctx context.Context,
 	exprNode ast.ExprNode,

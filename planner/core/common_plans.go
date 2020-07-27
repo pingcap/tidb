@@ -715,7 +715,7 @@ type Insert struct {
 
 	IsReplace bool
 
-	// NeedFillDefaultValue is true when AccessCondition in value list reference other column.
+	// NeedFillDefaultValue is true when expr in value list reference other column.
 	NeedFillDefaultValue bool
 
 	AllAssignmentsAreConstant bool
