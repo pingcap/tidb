@@ -20,7 +20,6 @@ type checksum struct {
 	buf         []byte
 	payload     []byte
 	payloadUsed int
-	size        int64
 	readerMu    sync.Mutex
 }
 
@@ -33,10 +32,10 @@ func newChecksum(disk *os.File) *checksum {
 }
 
 // Available returns how many bytes are unused in the buffer.
-func (cks *checksum) Available() int { return len(cks.payload) - cks.payloadUsed }
+func (cks *checksum) Available() int { return checksumPayloadSize - cks.payloadUsed }
 
 func (cks *checksum) Write(p []byte) (nn int, err error) {
-	for len(p) > 0 {
+	for len(p) > cks.Available() {
 		n := copy(cks.payload[cks.payloadUsed:], p)
 		cks.payloadUsed += n
 		err = cks.Flush()
@@ -46,6 +45,9 @@ func (cks *checksum) Write(p []byte) (nn int, err error) {
 		nn += n
 		p = p[n:]
 	}
+	n := copy(cks.payload[cks.payloadUsed:], p)
+	cks.payloadUsed += n
+	nn += n
 	return
 }
 
@@ -56,27 +58,14 @@ func (cks *checksum) Flush() error {
 	}
 	checksum := crc32.Checksum(cks.payload[:cks.payloadUsed], crc32.MakeTable(crc32.IEEE))
 	binary.LittleEndian.PutUint32(cks.buf, checksum)
-	if cks.size%checksumBlockSize > 0 {
-		cursor := cks.size / checksumBlockSize * checksumBlockSize
-		_, err := cks.disk.Seek(cursor, io.SeekStart)
-		if err != nil {
-			return err
-		}
-		cks.size = cursor
-	}
 	n, err := cks.disk.Write(cks.buf[:cks.payloadUsed+checksumSize])
-	cks.size += int64(n)
 	if n < cks.payloadUsed && err == nil {
 		err = io.ErrShortWrite
 	}
 	if err != nil {
-		if n > 0 && n < cks.payloadUsed {
-			copy(cks.payload[:cks.payloadUsed-n], cks.payload[n:cks.payloadUsed])
-		}
-		cks.payloadUsed -= n
 		return err
 	}
-	cks.payloadUsed %= checksumPayloadSize
+	cks.payloadUsed = 0
 	return nil
 }
 
