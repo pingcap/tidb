@@ -72,14 +72,16 @@ type indexNestedLoopJoinTables struct {
 
 type tableHintInfo struct {
 	indexNestedLoopJoinTables
-	sortMergeJoinTables []hintTableInfo
-	hashJoinTables      []hintTableInfo
-	indexHintList       []indexHintInfo
-	tiflashTables       []hintTableInfo
-	tikvTables          []hintTableInfo
-	aggHints            aggHintInfo
-	indexMergeHintList  []indexHintInfo
-	timeRangeHint       ast.HintTimeRange
+	sortMergeJoinTables         []hintTableInfo
+	broadcastJoinTables         []hintTableInfo
+	broadcastJoinPreferredLocal []hintTableInfo
+	hashJoinTables              []hintTableInfo
+	indexHintList               []indexHintInfo
+	tiflashTables               []hintTableInfo
+	tikvTables                  []hintTableInfo
+	aggHints                    aggHintInfo
+	indexMergeHintList          []indexHintInfo
+	timeRangeHint               ast.HintTimeRange
 }
 
 type hintTableInfo struct {
@@ -177,8 +179,28 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 	return hintTableInfos
 }
 
+// ifPreferAsLocalInBCJoin checks if there is a data source specified as local read by hint
+func (info *tableHintInfo) ifPreferAsLocalInBCJoin(p LogicalPlan, blockOffset int) bool {
+	alias := extractTableAlias(p, blockOffset)
+	if alias != nil {
+		tableNames := make([]*hintTableInfo, 1)
+		tableNames[0] = alias
+		return info.matchTableName(tableNames, info.broadcastJoinPreferredLocal)
+	}
+	for _, c := range p.Children() {
+		if info.ifPreferAsLocalInBCJoin(c, blockOffset) {
+			return true
+		}
+	}
+	return false
+}
+
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.sortMergeJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferBroadcastJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.broadcastJoinTables)
 }
 
 func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
@@ -778,6 +800,12 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
+func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPath {
+	tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash, IsTiFlashGlobalRead: isGlobalRead}
+	fillContentForTablePath(tiFlashPath, tblInfo)
+	return tiFlashPath
+}
+
 func fillContentForTablePath(tablePath *util.AccessPath, tblInfo *model.TableInfo) {
 	if tblInfo.IsCommonHandle {
 		tablePath.IsCommonHandlePath = true
@@ -803,9 +831,8 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	fillContentForTablePath(tablePath, tblInfo)
 	publicPaths = append(publicPaths, tablePath)
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
-		tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash}
-		fillContentForTablePath(tiFlashPath, tblInfo)
-		publicPaths = append(publicPaths, tiFlashPath)
+		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
+		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
 	}
 	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 	for _, index := range tblInfo.Indices {
