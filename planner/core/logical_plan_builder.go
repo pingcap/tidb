@@ -271,8 +271,8 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
 			p, err = b.buildSelect(ctx, v)
-		case *ast.UnionStmt:
-			p, err = b.buildUnion(ctx, v)
+		case *ast.SetOprStmt:
+			p, err = b.buildSetOpr(ctx, v)
 		case *ast.TableName:
 			p, err = b.buildDataSource(ctx, v, &x.AsName)
 			isTableName = true
@@ -308,8 +308,8 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		return p, nil
 	case *ast.SelectStmt:
 		return b.buildSelect(ctx, x)
-	case *ast.UnionStmt:
-		return b.buildUnion(ctx, x)
+	case *ast.SetOprStmt:
+		return b.buildSetOpr(ctx, x)
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.ResultSetNode(%T) for buildResultSetNode()", x)
 	}
@@ -1163,8 +1163,156 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 	}
 }
 
-func (b *PlanBuilder) buildUnion(ctx context.Context, union *ast.UnionStmt) (LogicalPlan, error) {
-	distinctSelectPlans, allSelectPlans, err := b.divideUnionSelectPlans(ctx, union.SelectList.Selects)
+func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (LogicalPlan, error) {
+	// Because INTERSECT has higher precedence than UNION and EXCEPT. We build it first.
+	selectPlans := make([]LogicalPlan, 0, len(setOpr.SelectList.Selects))
+	afterSetOprs := make([]*ast.SetOprType, 0, len(setOpr.SelectList.Selects))
+	selects := setOpr.SelectList.Selects
+	for i := 0; i < len(selects); i++ {
+		intersects := []*ast.SelectStmt{selects[i]}
+		for i+1 < len(selects) && *selects[i+1].AfterSetOperator == ast.Intersect {
+			intersects = append(intersects, selects[i+1])
+			i++
+		}
+		selectPlan, afterSetOpr, err := b.buildIntersect(ctx, intersects)
+		if err != nil {
+			return nil, err
+		}
+		selectPlans = append(selectPlans, selectPlan)
+		afterSetOprs = append(afterSetOprs, afterSetOpr)
+	}
+	setOprPlan, err := b.buildExcept(ctx, selectPlans, afterSetOprs)
+	if err != nil {
+		return nil, err
+	}
+
+	oldLen := setOprPlan.Schema().Len()
+
+	for i := 0; i < len(setOpr.SelectList.Selects); i++ {
+		b.handleHelper.popMap()
+	}
+	b.handleHelper.pushMap(nil)
+
+	if setOpr.OrderBy != nil {
+		setOprPlan, err = b.buildSort(ctx, setOprPlan, setOpr.OrderBy.Items, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if setOpr.Limit != nil {
+		setOprPlan, err = b.buildLimit(setOprPlan, setOpr.Limit)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
+	// If there are extra expressions generated from `ORDER BY` clause, generate a `Projection` to remove them.
+	if oldLen != setOprPlan.Schema().Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(setOprPlan.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
+		proj.SetChildren(setOprPlan)
+		schema := expression.NewSchema(setOprPlan.Schema().Clone().Columns[:oldLen]...)
+		for _, col := range schema.Columns {
+			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+		}
+		proj.names = setOprPlan.OutputNames()[:oldLen]
+		proj.SetSchema(schema)
+		return proj, nil
+	}
+	return setOprPlan, nil
+}
+
+func (b *PlanBuilder) buildSemiJoinForSetOperator(
+	leftOriginPlan LogicalPlan,
+	rightPlan LogicalPlan,
+	joinType JoinType) (leftPlan LogicalPlan, err error) {
+	leftPlan, err = b.buildDistinct(leftOriginPlan, leftOriginPlan.Schema().Len())
+	if err != nil {
+		return nil, err
+	}
+	joinPlan := LogicalJoin{JoinType: joinType}.Init(b.ctx, b.getSelectOffset())
+	joinPlan.SetChildren(leftPlan, rightPlan)
+	joinPlan.SetSchema(leftPlan.Schema())
+	joinPlan.names = make([]*types.FieldName, leftPlan.Schema().Len())
+	copy(joinPlan.names, leftPlan.OutputNames())
+	for j := 0; j < len(rightPlan.Schema().Columns); j++ {
+		leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
+		if leftCol.RetType.Tp != rightCol.RetType.Tp {
+			return nil, errors.New("set operator doesn't support different column type")
+		}
+		eqCond, err := expression.NewFunction(b.ctx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
+		if err != nil {
+			return nil, err
+		}
+		joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
+	}
+	return joinPlan, nil
+}
+
+// buildIntersect build the set operator for 'intersect'. It is called before buildExcept and buildUnion because of its
+// higher precedence.
+func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []*ast.SelectStmt) (LogicalPlan, *ast.SetOprType, error) {
+	leftPlan, err := b.buildSelect(ctx, selects[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(selects) == 1 {
+		return leftPlan, selects[0].AfterSetOperator, nil
+	}
+
+	columnNums := leftPlan.Schema().Len()
+	for i := 1; i < len(selects); i++ {
+		rightPlan, err := b.buildSelect(ctx, selects[i])
+		if err != nil {
+			return nil, nil, err
+		}
+		if rightPlan.Schema().Len() != columnNums {
+			return nil, nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
+		}
+		leftPlan, err = b.buildSemiJoinForSetOperator(leftPlan, rightPlan, SemiJoin)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return leftPlan, selects[0].AfterSetOperator, nil
+}
+
+// buildExcept build the set operators for 'except', and in this function, it calls buildUnion at the same time. Because
+// Union and except has the same precedence.
+func (b *PlanBuilder) buildExcept(ctx context.Context, selects []LogicalPlan, afterSetOpts []*ast.SetOprType) (LogicalPlan, error) {
+	unionPlans := []LogicalPlan{selects[0]}
+	tmpAfterSetOpts := []*ast.SetOprType{nil}
+	columnNums := selects[0].Schema().Len()
+	for i := 1; i < len(selects); i++ {
+		rightPlan := selects[i]
+		if rightPlan.Schema().Len() != columnNums {
+			return nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
+		}
+		if *afterSetOpts[i] == ast.Except {
+			leftPlan, err := b.buildUnion(ctx, unionPlans, tmpAfterSetOpts)
+			if err != nil {
+				return nil, err
+			}
+			leftPlan, err = b.buildSemiJoinForSetOperator(leftPlan, rightPlan, AntiSemiJoin)
+			if err != nil {
+				return nil, err
+			}
+			unionPlans = []LogicalPlan{leftPlan}
+			tmpAfterSetOpts = []*ast.SetOprType{nil}
+		} else {
+			unionPlans = append(unionPlans, rightPlan)
+			tmpAfterSetOpts = append(tmpAfterSetOpts, afterSetOpts[i])
+		}
+	}
+	return b.buildUnion(ctx, unionPlans, tmpAfterSetOpts)
+}
+
+func (b *PlanBuilder) buildUnion(ctx context.Context, selects []LogicalPlan, afterSetOpts []*ast.SetOprType) (LogicalPlan, error) {
+	if len(selects) == 1 {
+		return selects[0], nil
+	}
+	distinctSelectPlans, allSelectPlans, err := b.divideUnionSelectPlans(ctx, selects, afterSetOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -1187,72 +1335,26 @@ func (b *PlanBuilder) buildUnion(ctx context.Context, union *ast.UnionStmt) (Log
 		unionPlan = unionAllPlan
 	}
 
-	oldLen := unionPlan.Schema().Len()
-
-	for i := 0; i < len(union.SelectList.Selects); i++ {
-		b.handleHelper.popMap()
-	}
-	b.handleHelper.pushMap(nil)
-
-	if union.OrderBy != nil {
-		unionPlan, err = b.buildSort(ctx, unionPlan, union.OrderBy.Items, nil, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if union.Limit != nil {
-		unionPlan, err = b.buildLimit(unionPlan, union.Limit)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
-	// If there are extra expressions generated from `ORDER BY` clause, generate a `Projection` to remove them.
-	if oldLen != unionPlan.Schema().Len() {
-		proj := LogicalProjection{Exprs: expression.Column2Exprs(unionPlan.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
-		proj.SetChildren(unionPlan)
-		schema := expression.NewSchema(unionPlan.Schema().Clone().Columns[:oldLen]...)
-		for _, col := range schema.Columns {
-			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
-		}
-		proj.names = unionPlan.OutputNames()[:oldLen]
-		proj.SetSchema(schema)
-		return proj, nil
-	}
-
 	return unionPlan, nil
 }
 
 // divideUnionSelectPlans resolves union's select stmts to logical plans.
 // and divide result plans into "union-distinct" and "union-all" parts.
-// divide rule ref: https://dev.mysql.com/doc/refman/5.7/en/union.html
+// divide rule ref:
+//		https://dev.mysql.com/doc/refman/5.7/en/union.html
 // "Mixed UNION types are treated such that a DISTINCT union overrides any ALL union to its left."
-func (b *PlanBuilder) divideUnionSelectPlans(ctx context.Context, selects []*ast.SelectStmt) (distinctSelects []LogicalPlan, allSelects []LogicalPlan, err error) {
-	firstUnionAllIdx, columnNums := 0, -1
-	// The last slot is reserved for appending distinct union outside this function.
-	children := make([]LogicalPlan, len(selects), len(selects)+1)
-	for i := len(selects) - 1; i >= 0; i-- {
-		stmt := selects[i]
-		if firstUnionAllIdx == 0 && stmt.IsAfterUnionDistinct {
+func (b *PlanBuilder) divideUnionSelectPlans(ctx context.Context, selects []LogicalPlan, setOprTypes []*ast.SetOprType) (distinctSelects []LogicalPlan, allSelects []LogicalPlan, err error) {
+	firstUnionAllIdx := 0
+	columnNums := selects[0].Schema().Len()
+	for i := len(selects) - 1; i > 0; i-- {
+		if firstUnionAllIdx == 0 && *setOprTypes[i] != ast.UnionAll {
 			firstUnionAllIdx = i + 1
 		}
-
-		selectPlan, err := b.buildSelect(ctx, stmt)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		if columnNums == -1 {
-			columnNums = selectPlan.Schema().Len()
-		}
-		if selectPlan.Schema().Len() != columnNums {
+		if selects[i].Schema().Len() != columnNums {
 			return nil, nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 		}
-		children[i] = selectPlan
 	}
-	return children[:firstUnionAllIdx], children[firstUnionAllIdx:], nil
+	return selects[:firstUnionAllIdx], selects[firstUnionAllIdx:], nil
 }
 
 func (b *PlanBuilder) buildUnionAll(ctx context.Context, subPlan []LogicalPlan) LogicalPlan {

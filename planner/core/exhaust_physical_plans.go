@@ -146,7 +146,11 @@ func (p *LogicalJoin) checkJoinKeyCollation(leftKeys, rightKeys []*expression.Co
 func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, leftStatsInfo *property.StatsInfo, rightStatsInfo *property.StatsInfo) []PhysicalPlan {
 	joins := make([]PhysicalPlan, 0, len(p.leftProperties)+1)
 	// The leftProperties caches all the possible properties that are provided by its children.
-	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
+	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
+	// TODO: support null equal join keys for merge join
+	if hasNullEQ {
+		return nil
+	}
 	for _, lhsChildProperty := range p.leftProperties {
 		offsets := getMaxSortPrefix(lhsChildProperty, leftJoinKeys)
 		if len(offsets) == 0 {
@@ -155,6 +159,10 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 
 		leftKeys := lhsChildProperty[:len(offsets)]
 		rightKeys := expression.NewSchema(rightJoinKeys...).ColumnsByIndices(offsets)
+		newIsNullEQ := make([]bool, 0, len(offsets))
+		for _, offset := range offsets {
+			newIsNullEQ = append(newIsNullEQ, isNullEQ[offset])
+		}
 
 		prefixLen := findMaxPrefixLen(p.rightProperties, rightKeys)
 		if prefixLen == 0 {
@@ -163,6 +171,7 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 
 		leftKeys = leftKeys[:prefixLen]
 		rightKeys = rightKeys[:prefixLen]
+		newIsNullEQ = newIsNullEQ[:prefixLen]
 		if !p.checkJoinKeyCollation(leftKeys, rightKeys) {
 			continue
 		}
@@ -174,6 +183,7 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 			DefaultValues:   p.DefaultValues,
 			LeftJoinKeys:    leftKeys,
 			RightJoinKeys:   rightKeys,
+			IsNullEQ:        newIsNullEQ,
 		}
 		mergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(p.ctx, statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
 		mergeJoin.SetSchema(schema)
@@ -223,9 +233,33 @@ func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []
 	return newKeys
 }
 
+func getNewNullEQByOffsets(oldNullEQ []bool, offsets []int) []bool {
+	newNullEQ := make([]bool, 0, len(oldNullEQ))
+	for _, offset := range offsets {
+		newNullEQ = append(newNullEQ, oldNullEQ[offset])
+	}
+	for pos, key := range oldNullEQ {
+		isExist := false
+		for _, p := range offsets {
+			if p == pos {
+				isExist = true
+				break
+			}
+		}
+		if !isExist {
+			newNullEQ = append(newNullEQ, key)
+		}
+	}
+	return newNullEQ
+}
+
 func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo) []PhysicalPlan {
 	// Check whether SMJ can satisfy the required property
-	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
+	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
+	// TODO: support null equal join keys for merge join
+	if hasNullEQ {
+		return nil
+	}
 	offsets := make([]int, 0, len(leftJoinKeys))
 	all, desc := prop.AllSameOrder()
 	if !all {
@@ -263,6 +297,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 	// Generate the enforced sort merge join
 	leftKeys := getNewJoinKeysByOffsets(leftJoinKeys, offsets)
 	rightKeys := getNewJoinKeysByOffsets(rightJoinKeys, offsets)
+	newNullEQ := getNewNullEQByOffsets(isNullEQ, offsets)
 	otherConditions := make([]expression.Expression, len(p.OtherConditions), len(p.OtherConditions)+len(p.EqualConditions))
 	copy(otherConditions, p.OtherConditions)
 	if !p.checkJoinKeyCollation(leftKeys, rightKeys) {
@@ -270,6 +305,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 		// and move EqualConditions to OtherConditions.
 		leftKeys = nil
 		rightKeys = nil
+		newNullEQ = nil
 		otherConditions = append(otherConditions, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
 	}
 	lProp := property.NewPhysicalProperty(property.RootTaskType, leftKeys, desc, math.MaxFloat64, true)
@@ -281,6 +317,7 @@ func (p *LogicalJoin) getEnforcedMergeJoin(prop *property.PhysicalProperty, sche
 		DefaultValues:   p.DefaultValues,
 		LeftJoinKeys:    leftKeys,
 		RightJoinKeys:   rightKeys,
+		IsNullEQ:        newNullEQ,
 		OtherConditions: otherConditions,
 	}
 	enforcedPhysicalMergeJoin := PhysicalMergeJoin{basePhysicalJoin: baseJoin, Desc: desc}.Init(p.ctx, statsInfo.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset)
@@ -366,11 +403,17 @@ func (p *LogicalJoin) constructIndexJoin(
 	var (
 		innerJoinKeys []*expression.Column
 		outerJoinKeys []*expression.Column
+		isNullEQ      []bool
+		hasNullEQ     bool
 	)
 	if outerIdx == 0 {
-		outerJoinKeys, innerJoinKeys = p.GetJoinKeys()
+		outerJoinKeys, innerJoinKeys, isNullEQ, hasNullEQ = p.GetJoinKeys()
 	} else {
-		innerJoinKeys, outerJoinKeys = p.GetJoinKeys()
+		innerJoinKeys, outerJoinKeys, isNullEQ, hasNullEQ = p.GetJoinKeys()
+	}
+	// TODO: support null equal join keys for index join
+	if hasNullEQ {
+		return nil
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, Items: prop.Items}
@@ -380,6 +423,7 @@ func (p *LogicalJoin) constructIndexJoin(
 	}
 	newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
 	newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
+	newIsNullEQ := make([]bool, 0, len(isNullEQ))
 	newKeyOff := make([]int, 0, len(keyOff2IdxOff))
 	newOtherConds := make([]expression.Expression, len(p.OtherConditions), len(p.OtherConditions)+len(p.EqualConditions))
 	copy(newOtherConds, p.OtherConditions)
@@ -390,6 +434,7 @@ func (p *LogicalJoin) constructIndexJoin(
 		}
 		newInnerKeys = append(newInnerKeys, innerJoinKeys[keyOff])
 		newOuterKeys = append(newOuterKeys, outerJoinKeys[keyOff])
+		newIsNullEQ = append(newIsNullEQ, isNullEQ[keyOff])
 		newKeyOff = append(newKeyOff, idxOff)
 	}
 	baseJoin := basePhysicalJoin{
@@ -400,6 +445,7 @@ func (p *LogicalJoin) constructIndexJoin(
 		JoinType:        joinType,
 		OuterJoinKeys:   newOuterKeys,
 		InnerJoinKeys:   newInnerKeys,
+		IsNullEQ:        newIsNullEQ,
 		DefaultValues:   p.DefaultValues,
 	}
 	join := PhysicalIndexJoin{
@@ -541,9 +587,9 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 		outerJoinKeys []*expression.Column
 	)
 	if outerIdx == 0 {
-		outerJoinKeys, innerJoinKeys = p.GetJoinKeys()
+		outerJoinKeys, innerJoinKeys, _, _ = p.GetJoinKeys()
 	} else {
-		innerJoinKeys, outerJoinKeys = p.GetJoinKeys()
+		innerJoinKeys, outerJoinKeys, _, _ = p.GetJoinKeys()
 	}
 	ds, isDataSource := innerChild.(*DataSource)
 	us, isUnionScan := innerChild.(*LogicalUnionScan)
@@ -1541,7 +1587,7 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 }
 
 func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.PhysicalProperty, preferredGlobalIndex int) []PhysicalPlan {
-	lkeys, rkeys := p.GetJoinKeys()
+	lkeys, rkeys, _, _ := p.GetJoinKeys()
 	baseJoin := basePhysicalJoin{
 		JoinType:        p.JoinType,
 		LeftConditions:  p.LeftConditions,
