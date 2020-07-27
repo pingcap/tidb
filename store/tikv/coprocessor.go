@@ -76,6 +76,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 		rpcCancel:       NewRPCanceller(),
+		actionOnExceed:  &TaskRateLimitAction{},
 	}
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
@@ -87,6 +88,11 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.concurrency = 1
 	}
 	it.sendRate = newRateLimit(it.concurrency)
+	it.actionOnExceed.sendRate = it.sendRate
+	if it.memTracker != nil {
+		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
+	}
+
 	if !it.req.KeepOrder {
 		it.respChan = make(chan *copResponse, it.concurrency)
 	}
@@ -402,6 +408,8 @@ type copIterator struct {
 	closed uint32
 
 	minCommitTSPushed
+
+	actionOnExceed *TaskRateLimitAction
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -640,7 +648,13 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		if !ok || closed {
 			return nil, nil
 		}
-		it.sendRate.putToken()
+		it.actionOnExceed.mu.Lock()
+		if it.actionOnExceed.mu.exceed {
+			it.actionOnExceed.mu.exceed = false
+		} else {
+			it.sendRate.putToken()
+		}
+		it.actionOnExceed.mu.Unlock()
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
@@ -659,7 +673,13 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
-			it.sendRate.putToken()
+			it.actionOnExceed.mu.Lock()
+			if it.actionOnExceed.mu.exceed {
+				it.actionOnExceed.mu.exceed = false
+			} else {
+				it.sendRate.putToken()
+			}
+			it.actionOnExceed.mu.Unlock()
 		}
 	}
 
@@ -1168,4 +1188,41 @@ func (it copErrorResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 func (it copErrorResponse) Close() error {
 	return nil
+}
+
+type TaskRateLimitAction struct {
+	fallbackAction memory.ActionOnExceed
+	mu             struct {
+		sync.Mutex
+		exceed bool
+	}
+	sendRate *rateLimit
+}
+
+func (e *TaskRateLimitAction) Action(t *memory.Tracker) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	ticketCount := cap(e.sendRate.token) - len(e.sendRate.token)
+	if ticketCount < 2 {
+		if e.fallbackAction != nil {
+			e.fallbackAction.Action(t)
+		} else {
+			// unreachable code
+			panic("TaskRateLimitAction should have fallback action")
+		}
+	}
+	if ticketCount == cap(e.sendRate.token) {
+		return
+	}
+	e.mu.exceed = true
+}
+
+// SetLogHook implements ActionOnExceed.SetLogHook
+func (e *TaskRateLimitAction) SetLogHook(hook func(uint64)) {
+
+}
+
+// SetFallback implements ActionOnExceed.SetFallback
+func (e *TaskRateLimitAction) SetFallback(a memory.ActionOnExceed) {
+	e.fallbackAction = a
 }
