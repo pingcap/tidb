@@ -1102,6 +1102,7 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	}
 	leftIsBuildSide := true
 
+	e.isNullEQ = v.IsNullEQ
 	if v.UseOuterToBuild {
 		// update the buildSideEstCount due to changing the build side
 		if v.InnerChildIdx == 1 {
@@ -1561,7 +1562,7 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 	}
 }
 
-func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopApplyExec {
+func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) Executor {
 	var (
 		innerPlan plannercore.PhysicalPlan
 		outerPlan plannercore.PhysicalPlan
@@ -1595,7 +1596,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 	}
 	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
 		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil)
-	e := &NestedLoopApplyExec{
+	serialExec := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec, innerExec),
 		innerExec:    innerExec,
 		outerExec:    outerExec,
@@ -1608,7 +1609,48 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		canUseCache:  v.CanUseCache,
 	}
 	executorCounterNestedLoopApplyExec.Inc()
-	return e
+
+	// try parallel mode
+	if v.Concurrency > 1 {
+		innerExecs := make([]Executor, 0, v.Concurrency)
+		innerFilters := make([]expression.CNFExprs, 0, v.Concurrency)
+		corCols := make([][]*expression.CorrelatedColumn, 0, v.Concurrency)
+		joiners := make([]joiner, 0, v.Concurrency)
+		for i := 0; i < v.Concurrency; i++ {
+			clonedInnerPlan, err := plannercore.SafeClone(innerPlan)
+			if err != nil {
+				b.err = nil
+				return serialExec
+			}
+			corCol := plannercore.ExtractCorColumnsBySchema4PhysicalPlan(clonedInnerPlan, outerPlan.Schema())
+			clonedInnerExec := b.build(clonedInnerPlan)
+			if b.err != nil {
+				b.err = nil
+				return serialExec
+			}
+			innerExecs = append(innerExecs, clonedInnerExec)
+			corCols = append(corCols, corCol)
+			innerFilters = append(innerFilters, innerFilter.Clone())
+			joiners = append(joiners, newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
+				defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil))
+		}
+
+		allExecs := append([]Executor{outerExec}, innerExecs...)
+
+		return &ParallelNestedLoopApplyExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), allExecs...),
+			innerExecs:   innerExecs,
+			outerExec:    outerExec,
+			outerFilter:  outerFilter,
+			innerFilter:  innerFilters,
+			outer:        v.JoinType != plannercore.InnerJoin,
+			joiners:      joiners,
+			corCols:      corCols,
+			concurrency:  v.Concurrency,
+			useCache:     true,
+		}
+	}
+	return serialExec
 }
 
 func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) Executor {
@@ -2635,8 +2677,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		feedbacks = append(feedbacks, feedback)
 
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			// TODO: handle length for cluster index.
-			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), 0, v.PartialPlans[i])
+			tempReq, tempStreaming, err = buildIndexReq(b, len(is.Index.Columns), ts.HandleCols.NumCols(), v.PartialPlans[i])
 			keepOrders = append(keepOrders, is.KeepOrder)
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
@@ -2655,7 +2696,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		partialReqs = append(partialReqs, tempReq)
 		partialStreamings = append(partialStreamings, tempStreaming)
 	}
-	tableReq, tableStreaming, table, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
+	tableReq, tableStreaming, tblInfo, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
 	if err != nil {
 		return nil, err
 	}
@@ -2667,7 +2708,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		baseExecutor:      newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 		dagPBs:            partialReqs,
 		startTS:           startTS,
-		table:             table,
+		table:             tblInfo,
 		indexes:           indexes,
 		descs:             descs,
 		tableRequest:      tableReq,
@@ -2678,6 +2719,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		tblPlans:          v.TablePlans,
 		dataReaderBuilder: &dataReaderBuilder{executorBuilder: b},
 		feedbacks:         feedbacks,
+		handleCols:        ts.HandleCols,
 	}
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
@@ -2698,6 +2740,10 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 			sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 		} else {
 			ret.ranges = append(ret.ranges, v.PartialPlans[i][0].(*plannercore.PhysicalTableScan).Ranges)
+			if ret.table.Meta().IsCommonHandle {
+				tblInfo := ret.table.Meta()
+				sctx.IndexNames = append(sctx.IndexNames, tblInfo.Name.O+":"+tables.FindPrimaryIndex(tblInfo).Name.O)
+			}
 		}
 	}
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)

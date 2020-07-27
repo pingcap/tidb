@@ -579,8 +579,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 			return b.buildSelectInto(ctx, x)
 		}
 		return b.buildSelect(ctx, x)
-	case *ast.UnionStmt:
-		return b.buildUnion(ctx, x)
+	case *ast.SetOprStmt:
+		return b.buildSetOpr(ctx, x)
 	case *ast.UpdateStmt:
 		return b.buildUpdate(ctx, x)
 	case *ast.ShowStmt:
