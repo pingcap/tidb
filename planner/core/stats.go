@@ -375,6 +375,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			}
 			if ds.tableInfo.IsCommonHandle {
 				path.IsCommonHandlePath = true
+				path.Index = ds.possibleAccessPaths[i].Index
 			} else {
 				path.IsIntHandlePath = true
 			}
