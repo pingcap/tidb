@@ -83,6 +83,7 @@ type Expression interface {
 	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
 	// An expression is constant item if it:
 	// refers no tables.
+	// refers no correlated column.
 	// refers no subqueries that refers any tables.
 	// refers no non-deterministic functions.
 	// refers no statement parameters.

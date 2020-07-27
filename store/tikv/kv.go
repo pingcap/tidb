@@ -84,9 +84,8 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 		KeyPath:  security.ClusterSSLKey,
 	}, pd.WithGRPCDialOptions(
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
-			Timeout:             time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
-			PermitWithoutStream: true,
+			Time:    time.Duration(tikvConfig.GrpcKeepAliveTime) * time.Second,
+			Timeout: time.Duration(tikvConfig.GrpcKeepAliveTimeout) * time.Second,
 		}),
 	))
 

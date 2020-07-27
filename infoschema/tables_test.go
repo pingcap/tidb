@@ -611,3 +611,22 @@ func (s *testTableSuite) TestPartitionsTable(c *C) {
 
 	tk.MustExec("DROP TABLE `test_partitions`;")
 }
+
+func (s *testTableSuite) TestStmtSummarySensitiveQuery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustExec("drop user if exists user_sensitive;")
+	tk.MustExec("create user user_sensitive identified by '123456789';")
+	tk.MustExec("alter user 'user_sensitive'@'%' identified by 'abcdefg';")
+	tk.MustExec("set password for 'user_sensitive'@'%' = 'xyzuvw';")
+	tk.MustQuery("select query_sample_text from `performance_schema`.`events_statements_summary_by_digest` " +
+		"where query_sample_text like '%user_sensitive%' and " +
+		"(query_sample_text like 'set password%' or query_sample_text like 'create user%' or query_sample_text like 'alter user%') " +
+		"order by query_sample_text;").
+		Check(testkit.Rows(
+			"alter user {user_sensitive@% password = ***}",
+			"create user {user_sensitive@% password = ***}",
+			"set password for user user_sensitive@%",
+		))
+}

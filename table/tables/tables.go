@@ -190,6 +190,17 @@ func (t *tableCommon) WritableIndices() []table.Index {
 	return writable
 }
 
+// GetWritableIndexByName gets the index meta from the table by the index name.
+func GetWritableIndexByName(idxName string, t table.Table) table.Index {
+	indices := t.WritableIndices()
+	for _, idx := range indices {
+		if idxName == idx.Meta().Name.L {
+			return idx
+		}
+	}
+	return nil
+}
+
 // DeletableIndices implements table.Table DeletableIndices interface.
 func (t *tableCommon) DeletableIndices() []table.Index {
 	// All indices are deletable because we don't need to check StateNone.

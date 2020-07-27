@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
@@ -53,7 +54,7 @@ var invalidTask = &rootTask{cst: math.MaxFloat64}
 
 // getPropByOrderByItems will check if this sort property can be pushed or not. In order to simplify the problem, we only
 // consider the case that all expression are columns.
-func getPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) {
+func getPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, bool) {
 	propItems := make([]property.Item, 0, len(items))
 	for _, item := range items {
 		col, ok := item.Expr.(*expression.Column)
@@ -66,7 +67,10 @@ func getPropByOrderByItems(items []*ByItems) (*property.PhysicalProperty, bool) 
 }
 
 func (p *LogicalTableDual) findBestTask(prop *property.PhysicalProperty) (task, error) {
-	if !prop.IsEmpty() {
+	// If the required property is not empty and the row count > 1,
+	// we cannot ensure this required property.
+	// But if the row count is 0 or 1, we don't need to care about the property.
+	if !prop.IsEmpty() && p.RowCount > 1 {
 		return invalidTask, nil
 	}
 	dual := PhysicalTableDual{

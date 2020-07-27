@@ -169,9 +169,9 @@ func (cc *clientConn) String() string {
 func (cc *clientConn) handshake(ctx context.Context) error {
 	if err := cc.writeInitialHandshake(); err != nil {
 		if errors.Cause(err) == io.EOF {
-			logutil.Logger(ctx).Info("Could not send handshake due to connection has be closed by client-side")
+			logutil.Logger(ctx).Debug("Could not send handshake due to connection has be closed by client-side")
 		} else {
-			terror.Log(err)
+			logutil.Logger(ctx).Debug("Write init handshake to client fail", zap.Error(errors.SuspendStack(err)))
 		}
 		return err
 	}
@@ -343,7 +343,7 @@ func parseOldHandshakeResponseBody(ctx context.Context, packet *handshakeRespons
 	defer func() {
 		// Check malformat packet cause out of range is disgusting, but don't panic!
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data))
+			logutil.Logger(ctx).Error("handshake panic", zap.ByteString("packetData", data), zap.Stack("stack"))
 			err = mysql.ErrMalformPacket
 		}
 	}()
@@ -486,9 +486,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	if err != nil {
 		err = errors.SuspendStack(err)
 		if errors.Cause(err) == io.EOF {
-			logutil.Logger(ctx).Info("wait handshake response fail due to connection has be closed by client-side")
+			logutil.Logger(ctx).Debug("wait handshake response fail due to connection has be closed by client-side")
 		} else {
-			logutil.Logger(ctx).Error("wait handshake response fail", zap.Error(err))
+			logutil.Logger(ctx).Debug("wait handshake response fail", zap.Error(err))
 		}
 		return err
 	}
@@ -563,7 +563,9 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 	cc.attrs = resp.Attrs
 
 	err = cc.openSessionAndDoAuth(resp.Auth)
-	logutil.Logger(ctx).Warn("open new session failure", zap.Error(err))
+	if err != nil {
+		logutil.Logger(ctx).Warn("open new session failure", zap.Error(err))
+	}
 	return err
 }
 
@@ -650,6 +652,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.Reflect("err", r),
 				zap.String("stack", string(buf)),
 			)
+			err := cc.writeError(errors.New(fmt.Sprintf("%v", r)))
+			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
 		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
@@ -891,6 +895,10 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 // It also gets a token from server which is used to limit the concurrently handling clients.
 // The most frequently used command is ComQuery.
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
+	defer func() {
+		// reset killed for each request
+		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
+	}()
 	span := opentracing.StartSpan("server.dispatch")
 
 	t := time.Now()
@@ -915,6 +923,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	}()
 
 	vars := cc.ctx.GetSessionVars()
+	// reset killed for each request
 	atomic.StoreUint32(&vars.Killed, 0)
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
