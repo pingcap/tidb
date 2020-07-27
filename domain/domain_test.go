@@ -209,6 +209,16 @@ func TestInfo(t *testing.T) {
 	if err != nil || len(infos) != 0 {
 		t.Fatalf("err %v, infos %v", err, infos)
 	}
+
+	// Test for acquireServerID & refreshServerIDTTL
+	err = dom.acquireServerID(goCtx)
+	if err != nil || dom.ServerID() == 0 {
+		t.Fatalf("dom.acquireServerID err %v, serverID %v", err, dom.ServerID())
+	}
+	err = dom.refreshServerIDTTL(goCtx)
+	if err != nil {
+		t.Fatalf("dom.refreshServerIDTTL err %v", err)
+	}
 }
 
 type mockSessionManager struct {
