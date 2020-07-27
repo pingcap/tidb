@@ -485,6 +485,9 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			}
 		}
 	}
+	if p.err = checkUnsupportedTableOptions(stmt.Options); p.err != nil {
+		return
+	}
 	if stmt.Select != nil {
 		// FIXME: a temp error noticing 'not implemented' (issue 4754)
 		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
@@ -673,6 +676,9 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				return
 			}
 		}
+		if p.err = checkUnsupportedTableOptions(spec.Options); p.err != nil {
+			return
+		}
 		switch spec.Tp {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
@@ -715,6 +721,19 @@ func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSp
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
 	}
 	return checkDuplicateColumnName(IndexPartSpecifications)
+}
+
+// checkUnsupportedTableOptions checks if there exists unsupported table options
+func checkUnsupportedTableOptions(options []*ast.TableOption) error {
+	for _, option := range options {
+		switch option.Tp {
+		case ast.TableOptionUnion:
+			return ddl.ErrTableOptionUnionUnsupported
+		case ast.TableOptionInsertMethod:
+			return ddl.ErrTableOptionInsertMethodUnsupported
+		}
+	}
+	return nil
 }
 
 // checkColumn checks if the column definition is valid.
