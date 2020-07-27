@@ -428,6 +428,7 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 
 // DecodeRowToDatum decodes a byte slice into datums.
 // Row layout: colID1, value1, colID2, value2, .....
+// Default value columns, generated columns and handle columns are unprocessed.
 func DecodeRowToDatum(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
 	if !rowcodec.IsNewFormat(b) {
 		return DecodeRowWithMap(b, cols, loc, nil)
