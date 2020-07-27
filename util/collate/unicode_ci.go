@@ -22,8 +22,8 @@ import (
 const terminal uint16 = 0x0000
 
 var (
-	FFFD            = []uint16{0xFFFD}
-	NotInTableSlice = []uint16{0x0000, 0x0000}
+	fffd            = []uint16{0xFFFD}
+	notInTableSlice = []uint16{0x0000, 0x0000}
 )
 
 // unicodeScanner used to scan unicode string
@@ -241,7 +241,7 @@ func runeEqual(a, b rune) bool {
 // convertRuneToWeight convert rune to weight, return nil if rune is ignorable
 func convertRuneToWeight(r rune) []uint16 {
 	if r > 0xFFFF {
-		return FFFD
+		return fffd
 	}
 
 	// a unicode character is not in the table
@@ -255,9 +255,9 @@ func convertRuneToWeight(r rune) []uint16 {
 		} else {
 			base = 0xFBC0
 		}
-		NotInTableSlice[0] = uint16(base + int(r>>15))
-		NotInTableSlice[0] = uint16((r & 0x7FFF) | 0x8000)
-		return NotInTableSlice
+		notInTableSlice[0] = uint16(base + int(r>>15))
+		notInTableSlice[0] = uint16((r & 0x7FFF) | 0x8000)
+		return notInTableSlice
 	}
 
 	plane := r >> 8
