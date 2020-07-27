@@ -3231,7 +3231,7 @@ func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 	if *withTiKV {
 		cfg := config.GetGlobalConfig()
 		cfg.Store = "tikv"
-		cfg.Path = "127.0.0.1:2379"
+		cfg.Path = s.pdAddr
 		config.StoreGlobalConfig(cfg)
 		tk := testkit.NewTestKitWithInit(c, s.store)
 		tk.MustExec("create database if not exists br")
