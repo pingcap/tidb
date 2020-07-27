@@ -84,7 +84,7 @@ type Domain struct {
 	cancel               context.CancelFunc
 
 	serverID             uint64
-	serverIDSession      *concurrency.Session
+	serverIDSession      atomic.Value // with type *concurrency.Session
 	isLostConnectionToPD int32
 }
 
@@ -1245,6 +1245,11 @@ func (do *Domain) ServerID() uint64 {
 	return atomic.LoadUint64(&do.serverID)
 }
 
+func (do *Domain) getServerIDSession() *concurrency.Session {
+	s, _ := do.serverIDSession.Load().(*concurrency.Session)
+	return s
+}
+
 const (
 	serverIDEtcdPath        = "/tidb/server_id"
 	acquireServerIDRetryCnt = 3
@@ -1261,7 +1266,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	do.serverIDSession = session
+	do.serverIDSession.Store(session)
 
 	for i := 0; i < acquireServerIDRetryCnt; i++ {
 		randServerID := rand.Int63n(int64(util.MaxServerID)) + 1 // get a random serverID: [1, MaxServerID]
@@ -1272,7 +1277,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 		childCtx, cancel := context.WithTimeout(ctx, acquireServerIDTimeout)
 		txn := do.etcdClient.Txn(childCtx)
 		t := txn.If(cmp)
-		resp, err := t.Then(clientv3.OpPut(key, value, clientv3.WithLease(do.serverIDSession.Lease()))).Commit()
+		resp, err := t.Then(clientv3.OpPut(key, value, clientv3.WithLease(do.getServerIDSession().Lease()))).Commit()
 		cancel()
 		if err != nil {
 			return err
@@ -1284,7 +1289,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 
 		atomic.StoreUint64(&do.serverID, uint64(randServerID))
 		logutil.BgLogger().Info("acquireServerID", zap.Uint64("serverID", do.ServerID()),
-			zap.String("lease id", strconv.FormatInt(int64(do.serverIDSession.Lease()), 16)))
+			zap.String("lease id", strconv.FormatInt(int64(do.getServerIDSession().Lease()), 16)))
 		return nil
 	}
 	logutil.BgLogger().Warn("no serverID available", zap.Int32("retry count", acquireServerIDRetryCnt))
@@ -1294,7 +1299,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, do.ServerID())
 	value := "0"
-	err := ddlutil.PutKVToEtcd(ctx, do.etcdClient, acquireServerIDRetryCnt, key, value, clientv3.WithLease(do.serverIDSession.Lease()))
+	err := ddlutil.PutKVToEtcd(ctx, do.etcdClient, acquireServerIDRetryCnt, key, value, clientv3.WithLease(do.getServerIDSession().Lease()))
 	logutil.BgLogger().Info("refreshServerIDTTL", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
 	return err
 }
@@ -1328,7 +1333,7 @@ func (do *Domain) serverIDKeeper() {
 					}
 				}
 			}
-		case <-do.serverIDSession.Done():
+		case <-do.getServerIDSession().Done():
 			logutil.BgLogger().Info("serverIDSession need restart")
 			ctx := context.Background()
 			if err := do.acquireServerID(ctx); err == nil {
