@@ -142,44 +142,19 @@ type FieldMapping struct {
 	UserVar *ast.VariableExpr
 }
 
-// initInsertColumns ensures the order of load columns is consistent with the order of input fields.
-func (e *LoadDataInfo) initLoadColumns() error {
+// initLoadColumns sets columns which the input fields loaded to.
+func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 	var cols []*table.Column
 	var missingColName string
 	var err error
-
 	tableCols := e.Table.Cols()
-	if len(e.ColumnsAndUserVars) > 0 {
-		columns := make([]string, 0, len(e.ColumnsAndUserVars)+len(e.ColumnAssignments))
-		for _, v := range e.ColumnsAndUserVars {
-			var column *table.Column
-			if v.ColumnName != nil {
-				column = table.FindCol(tableCols, v.ColumnName.Name.O)
-				columns = append(columns, v.ColumnName.Name.O)
-			}
 
-			fieldMapping := &FieldMapping{
-				Column:  column,
-				UserVar: v.UserVar,
-			}
-			e.FieldMappings = append(e.FieldMappings, fieldMapping)
-		}
-
-		for _, v := range e.ColumnAssignments {
-			columns = append(columns, v.Column.Name.O)
-		}
-
-		cols, missingColName = table.FindCols(tableCols, columns, e.Table.Meta().PKIsHandle)
+	if len(columnNames) != len(tableCols) {
+		cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
 		if missingColName != "" {
 			return errors.Errorf("LOAD DATA INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
 		}
 	} else {
-		for _, v := range tableCols {
-			fieldMapping := &FieldMapping{
-				Column: v,
-			}
-			e.FieldMappings = append(e.FieldMappings, fieldMapping)
-		}
 		cols = tableCols
 	}
 
@@ -203,6 +178,47 @@ func (e *LoadDataInfo) initLoadColumns() error {
 	}
 
 	return nil
+}
+
+// initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable
+// the slice's order is the same as the order of the input fields.
+// Returns a slice of same ordered column names without user defined variable names.
+func (e *LoadDataInfo) initFieldMappings() []string {
+	columns := make([]string, 0, len(e.ColumnsAndUserVars)+len(e.ColumnAssignments))
+	tableCols := e.Table.Cols()
+
+	if len(e.ColumnsAndUserVars) == 0 {
+		for _, v := range tableCols {
+			fieldMapping := &FieldMapping{
+				Column: v,
+			}
+			e.FieldMappings = append(e.FieldMappings, fieldMapping)
+			columns = append(columns, v.Name.O)
+		}
+
+		return columns
+	}
+
+	var column *table.Column
+
+	for _, v := range e.ColumnsAndUserVars {
+		if v.ColumnName != nil {
+			column = table.FindCol(tableCols, v.ColumnName.Name.O)
+			columns = append(columns, v.ColumnName.Name.O)
+		}
+
+		fieldMapping := &FieldMapping{
+			Column:  column,
+			UserVar: v.UserVar,
+		}
+		e.FieldMappings = append(e.FieldMappings, fieldMapping)
+	}
+
+	for _, v := range e.ColumnAssignments {
+		columns = append(columns, v.Column.Name.O)
+	}
+
+	return columns
 }
 
 // GetRows getter for rows

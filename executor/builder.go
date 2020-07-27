@@ -765,7 +765,8 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		ColumnsAndUserVars: v.ColumnsAndUserVars,
 		Ctx:                b.ctx,
 	}
-	err := loadDataInfo.initLoadColumns()
+	columnNames := loadDataInfo.initFieldMappings()
+	err := loadDataInfo.initLoadColumns(columnNames)
 	if err != nil {
 		b.err = err
 		return nil
