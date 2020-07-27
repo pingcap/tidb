@@ -689,7 +689,7 @@ func (h *rpcHandler) handleBatchCopRequest(ctx context.Context, req *coprocessor
 			StartTs: req.StartTs,
 			Ranges:  ri.Ranges,
 		}
-		_, exec, dagReq, err := h.buildDAGExecutor(&cop)
+		_, exec, dagReq, err := h.buildDAGExecutor(&cop, true)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
