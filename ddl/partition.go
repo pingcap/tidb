@@ -129,7 +129,7 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 	case model.StateDeleteOnly:
 		// delete only -> public
 		// Here need do some tiflash replica complement check.
-		// Todo: if a table is with no TiFlashReplica or it is not available, the delete-only state can be eliminated.
+		// TODO: If a table is with no TiFlashReplica or it is not available, the delete-only state can be eliminated.
 		if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
 			// For available state, the new added partition should wait it's replica to
 			// be finished. Otherwise the query to this partition will be blocked.

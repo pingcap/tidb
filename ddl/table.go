@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 )
 
-const tiflashCheckTiDBHttpAPIHalfInterval = 2500 * time.Millisecond
+const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
