@@ -347,7 +347,6 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 }
 
 // DecodeRowWithMapNew decode a row to datum map.
-// If only row value data is needed, pass `nil` to `handle` and `handleColIDs`.
 func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
 	loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if row == nil {
