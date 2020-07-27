@@ -29,6 +29,8 @@ func (s *testChunkSuite) TestChecksumReadAt(c *check.C) {
 	c.Assert(err, check.IsNil)
 	_, err = cs.Write(w.Bytes())
 	c.Assert(err, check.IsNil)
+	err = cs.Flush()
+	c.Assert(err, check.IsNil)
 
 	r := make([]byte, 10)
 	for i := 0; i < 1000; i++ {

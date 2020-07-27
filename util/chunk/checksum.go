@@ -73,9 +73,8 @@ func (cks *checksum) ReadAt(p []byte, off int64) (nn int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	startBlock := off / checksumPayloadSize
 	offsetInPayload := off % checksumPayloadSize
-	base := startBlock * checksumBlockSize
+	base := off / checksumPayloadSize * checksumBlockSize
 
 	cks.readerMu.Lock()
 	defer cks.readerMu.Unlock()
@@ -83,7 +82,6 @@ func (cks *checksum) ReadAt(p []byte, off int64) (nn int, err error) {
 	if err != nil {
 		return
 	}
-
 	var n int
 	for len(p) > 0 {
 		n, err = cks.disk.Read(cks.buf)
