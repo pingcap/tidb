@@ -1013,12 +1013,12 @@ func (cc *clientConn) writeError(e error) error {
 	)
 	originErr := errors.Cause(e)
 	if te, ok = originErr.(*terror.Error); ok {
-		m = te.ToSQLError()
+		m = terror.ToSQLError(te)
 	} else {
 		e := errors.Cause(originErr)
 		switch y := e.(type) {
 		case *terror.Error:
-			m = y.ToSQLError()
+			m = terror.ToSQLError(y)
 		default:
 			m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
 		}
