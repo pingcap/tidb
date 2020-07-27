@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -130,6 +131,14 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 		newCfg.AlterPrimaryKey = orignalAlterPrimaryKey
 		config.StoreGlobalConfig(&newCfg)
 	}()
+
+	_, err = tk.Exec("alter table primary_key_test2 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	// We can't add a primary key when the table's pk_is_handle is true.
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(b)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
 
 	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:206]Unsupported drop primary key when the table's pkIsHandle is true")
@@ -627,6 +636,27 @@ func (s *testSerialSuite) TestRecoverTableByTableName(c *C) {
 	tk.MustExec("insert into t_recover values (10)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
 
+	tk.MustExec("drop database if exists Test2")
+	tk.MustExec("create database Test2")
+	tk.MustExec("use Test2")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1),(2)")
+	tk.MustExec("drop table t")
+	tk.MustExec("recover table t")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database if exists Test3")
+	tk.MustExec("create database Test3")
+	tk.MustExec("use Test3")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database Test3")
+	tk.MustExec("use Test2")
+	tk.MustExec("recover table t")
+	tk.MustExec("insert into t values (3)")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
+
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)
 	c.Assert(gcEnable, Equals, false)
@@ -772,6 +802,25 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 	_, err := tk.Exec("create table t (a int)")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+}
+
+func (s *testSerialSuite) TestTruncateTableUpdateSchemaVersionErr(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError", `return(true)`), IsNil)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
+	err := ddlutil.LoadDDLVars(tk.Se)
+	c.Assert(err, IsNil)
+
+	tk.MustExec("create table t (a int)")
+	_, err = tk.Exec("truncate table t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+	// Disable fail point.
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError"), IsNil)
+	tk.MustExec("truncate table t")
 }
 
 func (s *testSerialSuite) TestCanceledJobTakeTime(c *C) {

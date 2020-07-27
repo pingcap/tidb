@@ -1441,9 +1441,9 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 			}
 			pi := tbInfo.GetPartitionInfo()
 			if pi != nil {
-				preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
+				preSplit = func() { splitPartitionTableRegion(ctx, sp, pi, scatterRegion) }
 			} else {
-				preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
+				preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
 			}
 			if scatterRegion {
 				preSplit()
@@ -1451,7 +1451,6 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 				go preSplit()
 			}
 		}
-
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1493,6 +1492,37 @@ func (d *ddl) RecoverTable(ctx sessionctx.Context, tbInfo *model.TableInfo, sche
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+// preSplitAndScatter performs pre-split and scatter of the table's regions.
+func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) {
+	sp, ok := d.store.(kv.SplitableStore)
+	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
+		return
+	}
+	var (
+		preSplit      func()
+		scatterRegion bool
+	)
+	val, err := variable.GetGlobalSystemVar(ctx.GetSessionVars(), variable.TiDBScatterRegion)
+	if err != nil {
+		logutil.Logger(context.Background()).Warn("[ddl] won't scatter region", zap.Error(err))
+	} else {
+		scatterRegion = variable.TiDBOptOn(val)
+	}
+	if pi == nil {
+		pi = tbInfo.GetPartitionInfo()
+	}
+	if pi != nil {
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, pi, scatterRegion) }
+	} else {
+		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
+	}
+	if scatterRegion {
+		preSplit()
+	} else {
+		go preSplit()
+	}
 }
 
 func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err error) {
@@ -2238,6 +2268,9 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	err = d.doDDLJob(ctx, job)
+	if err == nil {
+		d.preSplitAndScatter(ctx, meta, partInfo)
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -3153,6 +3186,14 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 		}
 		return errors.Trace(err)
 	}
+
+	oldTblInfo := tb.Meta()
+	if oldTblInfo.PreSplitRegions > 0 {
+		if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
+			d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
+		}
+	}
+
 	if !config.TableLockEnabled() {
 		return nil
 	}
@@ -3247,7 +3288,9 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	}
 
 	indexName = model.NewCIStr(mysql.PrimaryKeyName)
-	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
+	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil ||
+		// If the table's PKIsHandle is true, it also means that this table has a primary key.
+		t.Meta().PKIsHandle {
 		return infoschema.ErrMultiplePriKey
 	}
 

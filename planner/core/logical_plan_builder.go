@@ -1225,7 +1225,6 @@ type havingWindowAndOrderbyExprResolver struct {
 	inWindowFunc bool
 	inWindowSpec bool
 	inExpr       bool
-	orderBy      bool
 	err          error
 	p            LogicalPlan
 	selectFields []*ast.SelectField
@@ -1311,10 +1310,10 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		a.inWindowSpec = false
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) || a.curClause == fieldList {
+		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.curClause == orderByClause && a.inExpr) || a.curClause == fieldList {
 			resolveFieldsFirst = false
 		}
-		if !a.inAggFunc && !a.orderBy {
+		if !a.inAggFunc && a.curClause != orderByClause {
 			for _, item := range a.gbyItems {
 				if col, ok := item.Expr.(*ast.ColumnNameExpr); ok &&
 					(colMatch(v.Name, col.Name) || colMatch(col.Name, v.Name)) {
@@ -1334,8 +1333,22 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 				return node, false
 			}
 			if index == -1 {
-				if a.orderBy {
+				if a.curClause == orderByClause {
 					index, a.err = a.resolveFromSchema(v, a.p.Schema())
+				} else if a.curClause == havingClause && v.Name.Table.L != "" {
+					// For SQLs like:
+					//   select a from t b having b.a;
+					index, a.err = a.resolveFromSchema(v, a.p.Schema())
+					if a.err != nil {
+						return node, false
+					}
+					if index != -1 {
+						// For SQLs like:
+						//   select a+1 from t having t.a;
+						newV := v
+						newV.Name = &ast.ColumnName{Name: v.Name.Name}
+						index, a.err = resolveFromSelectFields(newV, a.selectFields, true)
+					}
 				} else {
 					index, a.err = resolveFromSelectFields(v, a.selectFields, true)
 				}
@@ -1406,7 +1419,6 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	}
 	havingAggMapper := extractor.aggMapper
 	extractor.aggMapper = make(map[*ast.AggregateFuncExpr]int)
-	extractor.orderBy = true
 	extractor.inExpr = false
 	// Extract agg funcs from order by clause.
 	if sel.OrderBy != nil {
@@ -1562,6 +1574,10 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		ret := g.fields[pos-1].Expr
 		ret.Accept(extractor)
 		if len(extractor.AggFuncs) != 0 {
+			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
+			return inNode, false
+		}
+		if _, ok := ret.(*ast.WindowFuncExpr); ok {
 			g.err = ErrWrongGroupField.GenWithStackByArgs(g.fields[pos-1].Text())
 			return inNode, false
 		}
@@ -1811,6 +1827,16 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 
 	if sel.OrderBy != nil {
 		for offset, item := range sel.OrderBy.Items {
+			if colName, ok := item.Expr.(*ast.ColumnNameExpr); ok {
+				index, err := resolveFromSelectFields(colName, sel.Fields.Fields, false)
+				if err != nil {
+					return err
+				}
+				// If the ByItem is in fields list, it has been checked already in above.
+				if index >= 0 {
+					continue
+				}
+			}
 			checkExprInGroupBy(p, item.Expr, offset, ErrExprInOrderBy, gbyCols, gbyExprs, notInGbyCols)
 		}
 	}
@@ -2281,7 +2307,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 	tableInfo := tbl.Meta()
 	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname, tableInfo.Name.L)
+		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", b.ctx.GetSessionVars().User.AuthUsername, b.ctx.GetSessionVars().User.AuthHostname, tableInfo.Name.L)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 

@@ -1401,7 +1401,7 @@ func (s *testIntegrationSuite) TestTimeBuiltin(c *C) {
 	result.Check(testkit.Rows("00:00:01"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime, b timestamp, c time)")
-	tk.MustExec(`insert into t values("2017 01-01 12:30:31", "2017 01-01 12:30:31", "01:01:01")`)
+	tk.MustExec(`insert into t values("2017-01-01 12:30:31", "2017-01-01 12:30:31", "01:01:01")`)
 	result = tk.MustQuery("select addtime(a, b), addtime(cast(a as date), b), addtime(b,a), addtime(a,c), addtime(b," +
 		"c), addtime(c,a), addtime(c,b)" +
 		" from t;")
@@ -3894,6 +3894,9 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 		json_length('[1, 2, 3]')
 	`)
 	r.Check(testkit.Rows("1 0 0 1 2 3"))
+
+	// #16267
+	tk.MustQuery(`select json_array(922337203685477580) =  json_array(922337203685477581);`).Check(testkit.Rows("0"))
 }
 
 func (s *testIntegrationSuite) TestColumnInfoModified(c *C) {
@@ -4022,6 +4025,13 @@ func (s *testIntegrationSuite) TestIssues(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert t values (1)")
 	tk.MustQuery("select * from t where cast(a as binary)").Check(testkit.Rows("1"))
+
+	// for issue #16351
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int, b varchar(20))")
+	tk.MustExec(`insert into t2 values(1,"1111"),(2,"2222"),(3,"3333"),(4,"4444"),(5,"5555"),(6,"6666"),(7,"7777"),(8,"8888"),(9,"9999"),(10,"0000")`)
+	tk.MustQuery(`select (@j := case when substr(t2.b,1,3)=@i then 1 else @j+1 end) from t2, (select @j := 0, @i := "0") tt limit 10`).Check(testkit.Rows(
+		"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"))
 }
 
 func (s *testIntegrationSuite) TestInPredicate4UnsignedInt(c *C) {
@@ -4973,6 +4983,7 @@ func (s *testIntegrationSuite) TestIssue15725(c *C) {
 func (s *testIntegrationSuite) TestIssue15790(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0;")
 	tk.MustExec("CREATE TABLE t0(c0 INT);")
 	tk.MustExec("INSERT INTO t0(c0) VALUES (0);")
 	tk.MustQuery("SELECT * FROM t0 WHERE -10000000000000000000 | t0.c0 UNION SELECT * FROM t0;").Check(testkit.Rows("0"))
@@ -5013,6 +5024,18 @@ func (s *testIntegrationSuite) TestCacheRefineArgs(c *C) {
 	tk.MustExec("prepare stmt from 'SELECT col_int < ? FROM t'")
 	tk.MustExec("set @p0='-184467440737095516167.1'")
 	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
+}
+
+func (s *testIntegrationSuite) TestIssue16505(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t(c varchar(100), index idx(c(100)));")
+	tk.MustExec("INSERT INTO t VALUES (NULL),('1'),('0'),(''),('aaabbb'),('0abc'),('123e456'),('0.0001deadsfeww');")
+	tk.MustQuery("select * from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
+	tk.MustQuery("select /*+ USE_INDEX(t, idx) */ * from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
+	tk.MustQuery("select /*+ IGNORE_INDEX(t, idx) */* from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
+	tk.MustExec("drop table t;")
 }
 
 func (s *testIntegrationSuite) TestIssue15986(c *C) {
