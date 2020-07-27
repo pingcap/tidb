@@ -361,9 +361,6 @@ func (e *ParallelNestedLoopApplyExec) fillInnerChunk(ctx context.Context, id int
 		if e.innerIter[id] == nil || e.innerIter[id].Current() == e.innerIter[id].End() {
 			if e.outerRow[id] != nil && !e.hasMatch[id] {
 				e.joiners[id].onMissMatch(e.hasNull[id], *e.outerRow[id], req)
-				if req.IsFull() {
-					return
-				}
 			}
 			var exit bool
 			e.outerRow[id], exit = e.fetchNextOuterRow(id, req)
