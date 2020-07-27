@@ -409,7 +409,7 @@ type copIterator struct {
 
 	minCommitTSPushed
 
-	actionOnExceed *TaskRateLimitAction
+	actionOnExceed *taskRateLimitAction
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -650,6 +650,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		}
 		it.actionOnExceed.mu.Lock()
 		if it.actionOnExceed.mu.exceed {
+			it.actionOnExceed.mu.tearedTicket = it.actionOnExceed.mu.tearedTicket + 1
 			it.actionOnExceed.mu.exceed = false
 		} else {
 			it.sendRate.putToken()
@@ -675,6 +676,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			it.curr++
 			it.actionOnExceed.mu.Lock()
 			if it.actionOnExceed.mu.exceed {
+				it.actionOnExceed.mu.tearedTicket = it.actionOnExceed.mu.tearedTicket + 1
 				it.actionOnExceed.mu.exceed = false
 			} else {
 				it.sendRate.putToken()
@@ -1190,27 +1192,30 @@ func (it copErrorResponse) Close() error {
 	return nil
 }
 
-type TaskRateLimitAction struct {
+type taskRateLimitAction struct {
 	fallbackAction memory.ActionOnExceed
 	mu             struct {
 		sync.Mutex
+		// exceed indicates whether have encountered OOM situation.
 		exceed bool
+		// tearedTicket indicates the count of tickets which have been teared up.
+		tearedTicket uint
 	}
 	sendRate *rateLimit
 }
 
-func (e *TaskRateLimitAction) Action(t *memory.Tracker) {
+func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	ticketCount := cap(e.sendRate.token) - len(e.sendRate.token)
-	if ticketCount < 2 {
+	if e.mu.tearedTicket >= uint(cap(e.sendRate.token)-1) {
 		if e.fallbackAction != nil {
 			e.fallbackAction.Action(t)
 		} else {
 			// unreachable code
-			panic("TaskRateLimitAction should have fallback action")
+			panic("TaskRateLimitAction should set fallback action")
 		}
 	}
+	ticketCount := cap(e.sendRate.token) - len(e.sendRate.token)
 	if ticketCount == cap(e.sendRate.token) {
 		return
 	}
@@ -1218,11 +1223,11 @@ func (e *TaskRateLimitAction) Action(t *memory.Tracker) {
 }
 
 // SetLogHook implements ActionOnExceed.SetLogHook
-func (e *TaskRateLimitAction) SetLogHook(hook func(uint64)) {
+func (e *taskRateLimitAction) SetLogHook(hook func(uint64)) {
 
 }
 
 // SetFallback implements ActionOnExceed.SetFallback
-func (e *TaskRateLimitAction) SetFallback(a memory.ActionOnExceed) {
+func (e *taskRateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
 }

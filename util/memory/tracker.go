@@ -360,3 +360,10 @@ func (t *Tracker) setParent(parent *Tracker) {
 	defer t.parMu.Unlock()
 	t.parMu.parent = parent
 }
+
+// GetActionOnExceed return the actionOnExceed
+func (t *Tracker) GetActionOnExceed() ActionOnExceed {
+	t.actionMu.Lock()
+	defer t.actionMu.Unlock()
+	return t.actionMu.actionOnExceed
+}
