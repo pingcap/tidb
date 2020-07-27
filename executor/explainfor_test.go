@@ -111,8 +111,8 @@ func (s *testSuite) TestExplainDotForExplainPlan(c *C) {
 	c.Assert(len(rows), Equals, 1)
 	connID := rows[0][0].(string)
 	tk.MustQuery("explain select 1").Check(testkit.Rows(
-		"Projection_3 1.00 root  1->Column#1",
-		"└─TableDual_4 1.00 root  rows:1",
+		"Projection_3 1.00 root 1",
+		"└─TableDual_4 1.00 root rows:1",
 	))
 
 	tkProcess := tk.Se.ShowProcess()
