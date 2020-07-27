@@ -2630,7 +2630,8 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set @@tidb_backoff_lock_fast = 1")
 	tk.MustExec("set @@tidb_backoff_weight = 100")
-	tk.MustExec("create table if not exists kvvars (a int)")
+	tk.MustExec("create table if not exists kvvars (a int key)")
+	tk.MustExec("insert into kvvars values (1)")
 	tk.MustExec("begin")
 	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
@@ -2646,6 +2647,13 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Assert(err, IsNil)
 	vars = txn.GetVars()
 	c.Assert(vars.BackOffWeight, Equals, 50)
+
+	tk.MustExec("set @@autocommit = 1")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/probeSetVars", `return(true)`), IsNil)
+	tk.MustExec("select * from kvvars where a = 1")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/probeSetVars"), IsNil)
+	c.Assert(tikv.SetSuccess, IsTrue)
+	tikv.SetSuccess = false
 }
 
 func (s *testSessionSuite2) TestCommitRetryCount(c *C) {
@@ -2844,7 +2852,6 @@ func (s *testSessionSuite2) TestUpdatePrivilege(c *C) {
 	tk.MustExec("create user xxx;")
 	tk.MustExec("grant all on test.t1 to xxx;")
 	tk.MustExec("grant select on test.t2 to xxx;")
-	tk.MustExec("flush privileges;")
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"},
@@ -2899,7 +2906,6 @@ and s.b !='xx';`)
 	tk.MustExec("create database tp")
 	tk.MustExec("grant all privileges on ap.* to xxx")
 	tk.MustExec("grant select on tp.* to xxx")
-	tk.MustExec("flush privileges")
 	tk.MustExec("create table tp.record( id int,name varchar(128),age int)")
 	tk.MustExec("insert into tp.record (id,name,age) values (1,'john',18),(2,'lary',19),(3,'lily',18)")
 	tk.MustExec("create table ap.record( id int,name varchar(128),age int)")

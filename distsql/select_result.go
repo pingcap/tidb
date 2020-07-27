@@ -237,7 +237,7 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 
 func (r *selectResult) updateCopRuntimeStats(detail *execdetails.ExecDetails, respTime time.Duration) {
 	callee := detail.CalleeAddress
-	if r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
+	if r.rootPlanID == nil || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
 	}
 	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
@@ -252,9 +252,14 @@ func (r *selectResult) updateCopRuntimeStats(detail *execdetails.ExecDetails, re
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
-			planID := r.copPlanIDs[i]
+			planID := ""
+			if detail.GetExecutorId() != "" {
+				planID = detail.GetExecutorId()
+			} else {
+				planID = r.copPlanIDs[i].String()
+			}
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID.String(), callee, detail)
+				RecordOneCopTask(planID, callee, detail)
 		}
 	}
 }

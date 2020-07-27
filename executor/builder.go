@@ -41,6 +41,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	plannerutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -335,32 +336,42 @@ func (b *executorBuilder) buildShowSlow(v *plannercore.ShowSlow) Executor {
 }
 
 // buildIndexLookUpChecker builds check information to IndexLookUpReader.
-func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.PhysicalIndexLookUpReader,
-	readerExec *IndexLookUpExecutor) {
-	is := readerPlan.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	readerExec.dagPB.OutputOffsets = make([]uint32, 0, len(is.Index.Columns))
-	for i := 0; i <= len(is.Index.Columns); i++ {
-		readerExec.dagPB.OutputOffsets = append(readerExec.dagPB.OutputOffsets, uint32(i))
+func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLookUpReader,
+	e *IndexLookUpExecutor) {
+	is := p.IndexPlans[0].(*plannercore.PhysicalIndexScan)
+	fullColLen := len(is.Index.Columns) + len(p.CommonHandleCols)
+	if !e.isCommonHandle() {
+		fullColLen += 1
 	}
-	readerExec.ranges = ranger.FullRange()
-	ts := readerPlan.TablePlans[0].(*plannercore.PhysicalTableScan)
-	readerExec.handleIdx = []int{ts.HandleIdx}
+	e.dagPB.OutputOffsets = make([]uint32, fullColLen)
+	for i := 0; i < fullColLen; i++ {
+		e.dagPB.OutputOffsets[i] = uint32(i)
+	}
 
-	tps := make([]*types.FieldType, 0, len(is.Columns)+1)
+	ts := p.TablePlans[0].(*plannercore.PhysicalTableScan)
+	e.handleIdx = ts.HandleIdx
+
+	e.ranges = ranger.FullRange()
+
+	tps := make([]*types.FieldType, 0, fullColLen)
 	for _, col := range is.Columns {
 		tps = append(tps, &col.FieldType)
 	}
-	tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
-	readerExec.checkIndexValue = &checkIndexValue{genExprs: is.GenExprs, idxColTps: tps}
 
-	colNames := make([]string, 0, len(is.Columns))
-	for _, col := range is.Columns {
-		colNames = append(colNames, col.Name.O)
+	if !e.isCommonHandle() {
+		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
-	if cols, missingColName := table.FindCols(readerExec.table.Cols(), colNames, true); missingColName != "" {
+
+	e.checkIndexValue = &checkIndexValue{idxColTps: tps}
+
+	colNames := make([]string, 0, len(is.IdxCols))
+	for i := range is.IdxCols {
+		colNames = append(colNames, is.Columns[i].Name.O)
+	}
+	if cols, missingColName := table.FindCols(e.table.Cols(), colNames, true); missingColName != "" {
 		b.err = plannercore.ErrUnknownColumn.GenWithStack("Unknown column %s", missingColName)
 	} else {
-		readerExec.idxTblCols = cols
+		e.idxTblCols = cols
 	}
 }
 
@@ -1626,6 +1637,27 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 	return e
 }
 
+func buildHandleCols(sc *stmtctx.StatementContext, tbInfo *model.TableInfo) plannercore.HandleCols {
+	if tbInfo.IsCommonHandle {
+		primaryIdx := tables.FindPrimaryIndex(tbInfo)
+		tableCols := make([]*expression.Column, len(tbInfo.Columns))
+		for i, col := range tbInfo.Columns {
+			tableCols[i] = &expression.Column{
+				ID:      col.ID,
+				RetType: &col.FieldType,
+			}
+		}
+		for i, pkCol := range primaryIdx.Columns {
+			tableCols[pkCol.Offset].Index = i
+		}
+		return plannercore.NewCommonHandleCols(sc, tbInfo, primaryIdx, tableCols)
+	}
+	intCol := &expression.Column{
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	return plannercore.NewIntHandleCols(intCol)
+}
+
 func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
 	base.initCap = 1
@@ -1642,11 +1674,13 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 			valueLists:     v.ValueLists,
 		}
 	}
+	handleCols := buildHandleCols(b.ctx.GetSessionVars().StmtCtx, v.TableInfo)
 	if len(v.ValueLists) > 0 {
 		return &SplitTableRegionExec{
 			baseExecutor:   base,
 			tableInfo:      v.TableInfo,
 			partitionNames: v.PartitionNames,
+			handleCols:     handleCols,
 			valueLists:     v.ValueLists,
 		}
 	}
@@ -1654,8 +1688,9 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 		baseExecutor:   base,
 		tableInfo:      v.TableInfo,
 		partitionNames: v.PartitionNames,
-		lower:          v.Lower[0],
-		upper:          v.Upper[0],
+		handleCols:     handleCols,
+		lower:          v.Lower,
+		upper:          v.Upper,
 		num:            v.Num,
 	}
 }
@@ -2020,7 +2055,7 @@ func constructDistExec(sctx sessionctx.Context, plans []plannercore.PhysicalPlan
 	streaming := true
 	executors := make([]*tipb.Executor, 0, len(plans))
 	for _, p := range plans {
-		execPB, err := p.ToPB(sctx)
+		execPB, err := p.ToPB(sctx, kv.TiKV)
 		if err != nil {
 			return nil, false, err
 		}
@@ -2042,7 +2077,13 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 	return
 }
 
-func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+func constructDistExecForTiFlash(sctx sessionctx.Context, p plannercore.PhysicalPlan) ([]*tipb.Executor, bool, error) {
+	execPB, err := p.ToPB(sctx, kv.TiFlash)
+	return []*tipb.Executor{execPB}, false, err
+
+}
+
+func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan, storeType kv.StoreType) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	dagReq = &tipb.DAGRequest{}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
@@ -2051,7 +2092,13 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dag
 		dagReq.CollectExecutionSummaries = &collExec
 	}
 	dagReq.Flags = sc.PushDownFlags()
-	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
+	if storeType == kv.TiFlash {
+		var executors []*tipb.Executor
+		executors, streaming, err = constructDistExecForTiFlash(b.ctx, plans[0])
+		dagReq.RootExecutor = executors[0]
+	} else {
+		dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
+	}
 
 	distsql.SetEncodeType(b.ctx, dagReq)
 	return dagReq, streaming, err
@@ -2281,7 +2328,7 @@ func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
 	case 1:
 		for _, p := range v.TablePlans {
 			switch p.(type) {
-			case *plannercore.PhysicalHashAgg, *plannercore.PhysicalStreamAgg, *plannercore.PhysicalTopN:
+			case *plannercore.PhysicalHashAgg, *plannercore.PhysicalStreamAgg, *plannercore.PhysicalTopN, *plannercore.PhysicalBroadCastJoin:
 				e.batchCop = true
 			}
 		}
@@ -2292,11 +2339,15 @@ func (e *TableReaderExecutor) setBatchCop(v *plannercore.PhysicalTableReader) {
 }
 
 func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableReader) (*TableReaderExecutor, error) {
-	dagReq, streaming, err := b.constructDAGReq(v.TablePlans)
+	tablePlans := v.TablePlans
+	if v.StoreType == kv.TiFlash {
+		tablePlans = []plannercore.PhysicalPlan{v.GetTablePlan()}
+	}
+	dagReq, streaming, err := b.constructDAGReq(tablePlans, v.StoreType)
 	if err != nil {
 		return nil, err
 	}
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	ts := v.GetTableScan()
 	tbl, _ := b.is.TableByID(ts.Table.ID)
 	isPartition, physicalTableID := ts.IsPartition()
 	if isPartition {
@@ -2363,7 +2414,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *
 		return nil
 	}
 
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	ts := v.GetTableScan()
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
@@ -2371,7 +2422,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *
 }
 
 func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexReader) (*IndexReaderExecutor, error) {
-	dagReq, streaming, err := b.constructDAGReq(v.IndexPlans)
+	dagReq, streaming, err := b.constructDAGReq(v.IndexPlans, kv.TiKV)
 	if err != nil {
 		return nil, err
 	}
@@ -2445,7 +2496,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) *
 }
 
 func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, val table.Table, err error) {
-	tableReq, tableStreaming, err := b.constructDAGReq(plans)
+	tableReq, tableStreaming, err := b.constructDAGReq(plans, kv.TiKV)
 	if err != nil {
 		return nil, false, nil, err
 	}
@@ -2463,7 +2514,7 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 }
 
 func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
-	indexReq, indexStreaming, err := b.constructDAGReq(plans)
+	indexReq, indexStreaming, err := b.constructDAGReq(plans, kv.TiKV)
 	if err != nil {
 		return nil, false, err
 	}

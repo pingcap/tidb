@@ -53,6 +53,14 @@ var (
 			Help:      "Number of connections.",
 		})
 
+	DisconnectionCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "disconnection_total",
+			Help:      "Counter of connections disconnected.",
+		}, []string{LblResult})
+
 	PreparedStmtGauge = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "server",

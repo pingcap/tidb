@@ -32,6 +32,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const splitBatchRegionLimit = 16
+
 func equalRegionStartKey(key, regionStartKey []byte) bool {
 	return bytes.Equal(key, regionStartKey)
 }
@@ -46,7 +48,7 @@ func (s *tikvStore) splitBatchRegionsReq(bo *Backoffer, keys [][]byte, scatter b
 
 	var batches []batch
 	for regionID, groupKeys := range groups {
-		batches = appendKeyBatches(batches, regionID, groupKeys, rawBatchPutSize)
+		batches = appendKeyBatches(batches, regionID, groupKeys, splitBatchRegionLimit)
 	}
 
 	if len(batches) == 0 {
@@ -163,9 +165,6 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 		zap.Int("new region count", len(spResp.Regions)))
 
 	if !scatter {
-		if len(spResp.Regions) == 0 {
-			return batchResp
-		}
 		return batchResp
 	}
 
@@ -293,6 +292,14 @@ func (s *tikvStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64
 				logutil.BgLogger().Info("wait scatter region finished",
 					zap.Uint64("regionID", regionID))
 				return nil
+			}
+			if resp.GetHeader().GetError() != nil {
+				err = errors.AddStack(&PDError{
+					Err: resp.Header.Error,
+				})
+				logutil.BgLogger().Warn("wait scatter region error",
+					zap.Uint64("regionID", regionID), zap.Error(err))
+				return err
 			}
 			if logFreq%10 == 0 {
 				logutil.BgLogger().Info("wait scatter region",

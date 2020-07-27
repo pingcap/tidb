@@ -162,10 +162,10 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	err = rowContainer.PutChunk(chk1)
 	c.Assert(err, IsNil)
 	rowContainer.ActionSpill().(*chunk.SpillDiskAction).WaitForTest()
-	c.Assert(rowContainer.alreadySpilledSafe(), Equals, spill)
+	c.Assert(rowContainer.alreadySpilledSafeForTest(), Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() == 0, Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() > 0, Equals, !spill)
-	if rowContainer.alreadySpilledSafe() {
+	if rowContainer.alreadySpilledSafeForTest() {
 		c.Assert(rowContainer.GetDiskTracker(), NotNil)
 		c.Assert(rowContainer.GetDiskTracker().BytesConsumed() > 0, Equals, true)
 	}

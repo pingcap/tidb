@@ -242,6 +242,12 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// Combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
+		if prop.IsFlashOnlyProp() {
+			if _, ok := curTask.(*copTask); !ok {
+				continue
+			}
+		}
+
 		// Enforce curTask property
 		if prop.Enforced {
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
@@ -284,7 +290,7 @@ func (p *baseLogicalPlan) findBestTask(prop *property.PhysicalProperty, planCoun
 		return bestTask, 1, nil
 	}
 
-	if prop.TaskTp != property.RootTaskType {
+	if prop.TaskTp != property.RootTaskType && prop.TaskTp != property.CopTiFlashLocalReadTaskType && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
 		// Currently all plan cannot totally push down.
 		p.storeTask(prop, invalidTask)
 		return invalidTask, 0, nil
@@ -459,11 +465,27 @@ func compareCandidates(lhs, rhs *candidatePath) int {
 
 func (ds *DataSource) getTableCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
-	pkCol := ds.getPKIsHandleCol()
-	if len(prop.Items) == 1 && pkCol != nil {
-		candidate.isMatchProp = prop.Items[0].Col.Equal(nil, pkCol)
-		if path.StoreType == kv.TiFlash {
-			candidate.isMatchProp = candidate.isMatchProp && !prop.Items[0].Desc
+	if path.IsIntHandlePath {
+		pkCol := ds.getPKIsHandleCol()
+		if len(prop.Items) == 1 && pkCol != nil {
+			candidate.isMatchProp = prop.Items[0].Col.Equal(nil, pkCol)
+			if path.StoreType == kv.TiFlash {
+				candidate.isMatchProp = candidate.isMatchProp && !prop.Items[0].Desc
+			}
+		}
+	} else {
+		all, _ := prop.AllSameOrder()
+		// When the prop is empty or `all` is false, `isMatchProp` is better to be `false` because
+		// it needs not to keep order for index scan.
+		if !prop.IsEmpty() && all {
+			for i, col := range path.IdxCols {
+				if col.Equal(nil, prop.Items[0].Col) {
+					candidate.isMatchProp = matchIndicesProp(path.IdxCols[i:], path.IdxColLens[i:], prop.Items)
+					break
+				} else if i >= path.EqCondCount {
+					break
+				}
+			}
 		}
 	}
 	candidate.columnSet = expression.ExtractColumnSet(path.AccessConds)
@@ -509,9 +531,26 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 		if len(path.Ranges) == 0 && !ds.ctx.GetSessionVars().StmtCtx.UseCache {
 			return []*candidatePath{{path: path}}
 		}
+		if path.StoreType != kv.TiFlash && (prop.TaskTp == property.CopTiFlashLocalReadTaskType || prop.TaskTp == property.CopTiFlashGlobalReadTaskType) {
+			continue
+		}
 		var currentCandidate *candidatePath
 		if path.IsTablePath() {
-			currentCandidate = ds.getTableCandidate(path, prop)
+			if path.StoreType == kv.TiFlash {
+				if path.IsTiFlashGlobalRead && prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
+					currentCandidate = ds.getTableCandidate(path, prop)
+				}
+				if !path.IsTiFlashGlobalRead && prop.TaskTp != property.CopTiFlashGlobalReadTaskType {
+					currentCandidate = ds.getTableCandidate(path, prop)
+				}
+			} else {
+				if !path.IsTiFlashGlobalRead && !prop.IsFlashOnlyProp() {
+					currentCandidate = ds.getTableCandidate(path, prop)
+				}
+			}
+			if currentCandidate == nil {
+				continue
+			}
 		} else {
 			coveredByIdx := ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
 			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || coveredByIdx {
@@ -1306,6 +1345,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		copTask.keepOrder = true
 	}
 	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
+	if prop.IsFlashOnlyProp() && len(copTask.rootTaskConds) != 0 {
+		return invalidTask, nil
+	}
 	if prop.TaskTp == property.RootTaskType {
 		task = finishCopTask(ds.ctx, task)
 	} else if _, ok := task.(*rootTask); ok {
@@ -1481,6 +1523,7 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 		AccessCondition: path.AccessConds,
 		filterCondition: path.TableFilters,
 		StoreType:       path.StoreType,
+		IsGlobalRead:    path.IsTiFlashGlobalRead,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if ts.Table.PKIsHandle {
@@ -1524,6 +1567,9 @@ func (ds *DataSource) getOriginalPhysicalTableScan(prop *property.PhysicalProper
 	}
 	sessVars := ds.ctx.GetSessionVars()
 	cost := rowCount * rowSize * sessVars.ScanFactor
+	if ts.IsGlobalRead {
+		cost += rowCount * sessVars.NetworkFactor * rowSize
+	}
 	if isMatchProp {
 		if prop.Items[0].Desc {
 			ts.Desc = true

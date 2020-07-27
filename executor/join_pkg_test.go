@@ -70,7 +70,7 @@ func (s *pkgTestSuite) TestJoinExec(c *C) {
 				}
 				result.Append(chk, 0, chk.NumRows())
 			}
-			c.Assert(exec.rowContainer.alreadySpilledSafe(), Equals, casTest.disk)
+			c.Assert(exec.rowContainer.alreadySpilledSafeForTest(), Equals, casTest.disk)
 			err = exec.Close()
 			c.Assert(err, IsNil)
 		}

@@ -81,6 +81,23 @@ type HistColl struct {
 	Pseudo         bool
 }
 
+// MemoryUsage returns the total memory usage of this Table.
+// it will only calc the size of Columns and Indices stats data of table.
+// We ignore the size of other metadata in Table
+func (t *Table) MemoryUsage() (sum int64) {
+	for _, col := range t.Columns {
+		if col != nil {
+			sum += col.MemoryUsage()
+		}
+	}
+	for _, index := range t.Indices {
+		if index != nil {
+			sum += index.MemoryUsage()
+		}
+	}
+	return
+}
+
 // Copy copies the current table.
 func (t *Table) Copy() *Table {
 	newHistColl := HistColl{

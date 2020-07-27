@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -110,6 +111,18 @@ func (hg *Histogram) GetLower(idx int) *types.Datum {
 func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.Tp)
 	return &d
+}
+
+// MemoryUsage returns the total memory usage of this Histogram.
+// everytime changed the Histogram of the table, it will cost O(n)
+// complexity so calculate the memoryUsage might cost little time.
+// We ignore the size of other metadata in Histogram.
+func (hg *Histogram) MemoryUsage() (sum int64) {
+	if hg == nil {
+		return
+	}
+	sum = hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
+	return
 }
 
 // AvgColSize is the average column size of the histogram. These sizes are derived from function `encode`
@@ -738,6 +751,16 @@ func (c *Column) String() string {
 	return c.Histogram.ToString(0)
 }
 
+// MemoryUsage returns the total memory usage of Histogram and CMSketch in Column.
+// We ignore the size of other metadata in Column
+func (c *Column) MemoryUsage() (sum int64) {
+	sum = c.Histogram.MemoryUsage()
+	if c.CMSketch != nil {
+		sum += c.CMSketch.MemoryUsage()
+	}
+	return
+}
+
 // HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
@@ -879,6 +902,16 @@ func (idx *Index) String() string {
 // IsInvalid checks if this index is invalid.
 func (idx *Index) IsInvalid(collPseudo bool) bool {
 	return (collPseudo && idx.NotAccurate()) || idx.TotalRowCount() == 0
+}
+
+// MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
+// We ignore the size of other metadata in Index.
+func (idx *Index) MemoryUsage() (sum int64) {
+	sum = idx.Histogram.MemoryUsage()
+	if idx.CMSketch != nil {
+		sum += idx.CMSketch.MemoryUsage()
+	}
+	return
 }
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
