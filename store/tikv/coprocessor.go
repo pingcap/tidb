@@ -86,9 +86,8 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
-	if it.req.KeepOrder {
-		it.sendRate = newRateLimit(2 * it.concurrency)
-	} else {
+	it.sendRate = newRateLimit(it.concurrency)
+	if !it.req.KeepOrder {
 		it.respChan = make(chan *copResponse, it.concurrency)
 	}
 	if !it.req.Streaming {
@@ -641,6 +640,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		if !ok || closed {
 			return nil, nil
 		}
+		it.sendRate.putToken()
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
