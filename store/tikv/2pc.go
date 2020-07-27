@@ -99,6 +99,7 @@ type twoPhaseCommitter struct {
 	testingKnobs struct {
 		acAfterCommitPrimary chan struct{}
 		bkAfterCommitPrimary chan struct{}
+		noFallBack           bool
 	}
 
 	useAsyncCommit uint32
