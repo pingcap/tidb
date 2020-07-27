@@ -293,7 +293,7 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 	select {
 	case task = <-e.resultCh:
 	case <-ctx.Done():
-		return nil, nil
+		return nil, ctx.Err()
 	}
 	if task == nil {
 		return nil, nil
@@ -305,7 +305,7 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 			return nil, err
 		}
 	case <-ctx.Done():
-		return nil, nil
+		return nil, ctx.Err()
 	}
 
 	e.task = task
@@ -619,7 +619,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		default:
 		}
 		err := Next(ctx, innerExec, iw.executorChk)

@@ -109,6 +109,7 @@ type lookUpMergeJoinTask struct {
 }
 
 type outerMergeWorker struct {
+	id string
 	outerMergeCtx
 
 	lookup *IndexLookUpMergeJoin
@@ -130,6 +131,7 @@ type outerMergeWorker struct {
 type innerMergeWorker struct {
 	innerMergeCtx
 
+	id                string
 	taskCh            <-chan *lookUpMergeJoinTask
 	joinChkResourceCh chan *chunk.Chunk
 	outerMergeCtx     outerMergeCtx
@@ -209,6 +211,7 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexLookUpMergeJoin) newOuterWorker(resultCh, innerCh chan *lookUpMergeJoinTask) *outerMergeWorker {
 	omw := &outerMergeWorker{
+		id:                    e.id.String(),
 		outerMergeCtx:         e.outerMergeCtx,
 		ctx:                   e.ctx,
 		lookup:                e,
@@ -233,6 +236,7 @@ func (e *IndexLookUpMergeJoin) newInnerMergeWorker(taskCh chan *lookUpMergeJoinT
 		copiedRanges = append(copiedRanges, ran.Clone())
 	}
 	imw := &innerMergeWorker{
+		id:                e.id.String(),
 		innerMergeCtx:     e.innerMergeCtx,
 		outerMergeCtx:     e.outerMergeCtx,
 		taskCh:            taskCh,
@@ -308,6 +312,8 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 			close(task.results)
 			omw.resultCh <- task
 			cancelFunc()
+			ctx = logutil.WithConnID(ctx, uint32(omw.ctx.GetSessionVars().ConnectionID))
+			logutil.Logger(ctx).Error("indexMergeJoin invoke cancelFunc", zap.String("id", omw.id))
 		}
 		close(omw.resultCh)
 		close(omw.innerCh)
@@ -408,6 +414,8 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 			buf = buf[:stackSize]
 			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.String("stack", string(buf)))
 			cancelFunc()
+			ctx = logutil.WithConnID(ctx, uint32(imw.ctx.GetSessionVars().ConnectionID))
+			logutil.Logger(ctx).Error("indexMergeJoin invoke cancelFunc", zap.String("id", imw.id))
 		}
 	}()
 
@@ -713,6 +721,7 @@ func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *loo
 func (e *IndexLookUpMergeJoin) Close() error {
 	if e.cancelFunc != nil {
 		e.cancelFunc()
+		logutil.Logger(context.Background()).Error("indexHashJoin invoke cancelFunc", zap.String("id", e.id.String()), zap.Uint64("conn_id", e.ctx.GetSessionVars().ConnectionID))
 		e.cancelFunc = nil
 	}
 	if e.resultCh != nil {

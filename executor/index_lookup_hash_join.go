@@ -28,8 +28,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/zap"
 )
 
 // numResChkHold indicates the number of resource chunks that an inner worker
@@ -69,6 +71,7 @@ type IndexNestedLoopHashJoin struct {
 
 type indexHashJoinOuterWorker struct {
 	outerWorker
+	id             string
 	innerCh        chan *indexHashJoinTask
 	keepOuterOrder bool
 	// taskCh is only used when the outer order needs to be promised.
@@ -77,6 +80,7 @@ type indexHashJoinOuterWorker struct {
 
 type indexHashJoinInnerWorker struct {
 	innerWorker
+	id                string
 	matchedOuterPtrs  []chunk.RowPtr
 	joiner            joiner
 	joinChkResourceCh chan *chunk.Chunk
@@ -156,7 +160,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 		e.taskCh = make(chan *indexHashJoinTask, concurrency)
 	}
 	e.workerWg.Add(1)
-	ow := e.newOuterWorker(innerCh)
+	ow := e.newOuterWorker(innerCh, e.id.String())
 	go util.WithRecovery(func() { ow.run(workerCtx) }, e.finishJoinWorkers)
 
 	if !e.keepOuterOrder {
@@ -182,7 +186,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	e.workerWg.Add(concurrency)
 	for i := int(0); i < concurrency; i++ {
 		workerID := i
-		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID).run(workerCtx, cancelFunc) }, e.finishJoinWorkers)
+		go util.WithRecovery(func() { e.newInnerWorker(innerCh, workerID, e.id.String()).run(workerCtx, cancelFunc) }, e.finishJoinWorkers)
 	}
 	go e.wait4JoinWorkers()
 }
@@ -194,6 +198,7 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 		}
 		if e.cancelFunc != nil {
 			e.cancelFunc()
+			logutil.Logger(context.Background()).Error("indexHashJoin invoke cancelFunc", zap.String("id", e.id.String()), zap.Uint64("conn_id", e.ctx.GetSessionVars().ConnectionID))
 		}
 	}
 	e.workerWg.Done()
@@ -284,6 +289,7 @@ func (e *IndexNestedLoopHashJoin) isDryUpTasks(ctx context.Context) bool {
 func (e *IndexNestedLoopHashJoin) Close() error {
 	if e.cancelFunc != nil {
 		e.cancelFunc()
+		logutil.Logger(context.Background()).Error("indexHashJoin invoke cancelFunc", zap.String("id", e.id.String()), zap.Uint64("conn_id", e.ctx.GetSessionVars().ConnectionID))
 		e.cancelFunc = nil
 	}
 	if e.resultCh != nil {
@@ -376,7 +382,7 @@ func (ow *indexHashJoinOuterWorker) pushToChan(ctx context.Context, task *indexH
 	return false
 }
 
-func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask) *indexHashJoinOuterWorker {
+func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask, opID string) *indexHashJoinOuterWorker {
 	ow := &indexHashJoinOuterWorker{
 		outerWorker: outerWorker{
 			outerCtx:         e.outerCtx,
@@ -387,6 +393,7 @@ func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask
 			parentMemTracker: e.memTracker,
 			lookup:           &e.IndexLookUpJoin,
 		},
+		id:             opID,
 		innerCh:        innerCh,
 		keepOuterOrder: e.keepOuterOrder,
 		taskCh:         e.taskCh,
@@ -394,7 +401,7 @@ func (e *IndexNestedLoopHashJoin) newOuterWorker(innerCh chan *indexHashJoinTask
 	return ow
 }
 
-func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask, workerID int) *indexHashJoinInnerWorker {
+func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask, workerID int, opID string) *indexHashJoinInnerWorker {
 	// Since multiple inner workers run concurrently, we should copy join's indexRanges for every worker to avoid data race.
 	copiedRanges := make([]*ranger.Range, 0, len(e.indexRanges))
 	for _, ran := range e.indexRanges {
@@ -409,6 +416,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 			indexRanges:   copiedRanges,
 			keyOff2IdxOff: e.keyOff2IdxOff,
 		},
+		id:                opID,
 		taskCh:            taskCh,
 		joiner:            e.joiners[workerID],
 		joinChkResourceCh: e.joinChkResourceCh[workerID],
@@ -436,6 +444,8 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 	joinResult, ok := iw.getNewJoinResult(ctx)
 	if !ok {
 		cancelFunc()
+		ctx = logutil.WithConnID(ctx, uint32(iw.ctx.GetSessionVars().ConnectionID))
+		logutil.Logger(ctx).Error("indexHashJoin invoke cancelFunc", zap.String("id", iw.id))
 		return
 	}
 	h, resultCh := fnv.New64(), iw.resultCh
@@ -468,6 +478,8 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 			joinResult, ok = iw.getNewJoinResult(ctx)
 			if !ok {
 				cancelFunc()
+				ctx = logutil.WithConnID(ctx, uint32(iw.ctx.GetSessionVars().ConnectionID))
+				logutil.Logger(ctx).Error("indexHashJoin invoke cancelFunc", zap.String("id", iw.id))
 				return
 			}
 		}
