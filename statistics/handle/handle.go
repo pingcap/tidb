@@ -305,7 +305,6 @@ func (h *Handle) updateStatsCache(newCache StatsCache) {
 			size := newCache.EraseLast()
 			h.statsCache.memTracker.Consume(size)
 		}
-		logutil.BgLogger().Info("full load InfoSchema success", zap.Int64("h.statsCache.memTracker", h.statsCache.memTracker.BytesConsumed()))
 		h.statsCache.Store(newCache)
 	}
 	h.statsCache.Unlock()
