@@ -370,6 +370,34 @@ func getRange(start, end int64) []*ranger.Range {
 	return []*ranger.Range{ran}
 }
 
+func (s *testStatsSuite) TestOutOfRangeEQEstimation(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int)")
+	for i := 0; i < 1000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/4)) // 0 ~ 249
+	}
+	testKit.MustExec("analyze table t")
+
+	h := s.do.StatsHandle()
+	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl := h.GetTableStats(table.Meta())
+	sc := &stmtctx.StatementContext{}
+	col := statsTbl.Columns[table.Meta().Columns[0].ID]
+	count, err := col.GetColumnRowCount(sc, getRange(250, 250), 0, false)
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, float64(0))
+
+	for i := 0; i < 8; i++ {
+		count, err := col.GetColumnRowCount(sc, getRange(250, 250), int64(i+1), false)
+		c.Assert(err, IsNil)
+		c.Assert(count, Equals, math.Min(float64(i+1), 4)) // estRows must be less than modifyCnt
+	}
+}
+
 func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)

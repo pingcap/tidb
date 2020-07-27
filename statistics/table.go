@@ -392,19 +392,22 @@ func isSingleColIdxNullRange(idx *Index, ran *ranger.Range) bool {
 	return false
 }
 
-func outOfRangeEQSelectivity(ndv, modifyRows int64) float64 {
-	// It must be 0 since the histogram contains the whole data if modifyRows is 0.
+// outOfRangeEQSelectivity estimates selectivities for out-of-range values.
+// It assumes all modifications are insertions and all new-inserted rows are uniformly distributed
+// and has the same distribution with analyzed rows, which means each unique value should have the
+// same number of rows(Tot/NDV) of it.
+func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
 	if modifyRows == 0 {
-		return 0
+		return 0 // it must be 0 since the histogram contains the whole data
 	}
-	// We simply set its selectivity to 1/NDV, and the magic number outOfRangeBetweenRate
-	// is used to avoid wrong selectivity caused by small NDV.
 	if ndv < outOfRangeBetweenRate {
-		ndv = outOfRangeBetweenRate
+		ndv = outOfRangeBetweenRate // avoid inaccurate selectivity caused by small NDV
 	}
-	// TODO: After extracting TopN from histograms, we can minus the TopN fraction here.
-	// Please see https://github.com/pingcap/tidb/issues/18461 for more details.
-	return 1 / float64(ndv)
+	selectivity := 1 / float64(ndv) // TODO: After extracting TopN from histograms, we can minus the TopN fraction here.
+	if selectivity*float64(totalRows) > float64(modifyRows) {
+		selectivity = float64(modifyRows) / float64(totalRows)
+	}
+	return selectivity
 }
 
 // getEqualCondSelectivity gets the selectivity of the equal conditions.
@@ -419,7 +422,7 @@ func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedCols
 		// When the value is out of range, we could not found this value in the CM Sketch,
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {
-			return outOfRangeEQSelectivity(idx.NDV, coll.ModifyCount)
+			return outOfRangeEQSelectivity(idx.NDV, coll.ModifyCount, int64(idx.TotalRowCount()))
 		}
 		// The equal condition only uses prefix columns of the index.
 		colIDs := coll.Idx2ColumnIDs[idx.ID]
@@ -430,7 +433,7 @@ func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedCols
 			}
 			ndv = mathutil.MaxInt64(ndv, coll.Columns[colID].NDV)
 		}
-		return outOfRangeEQSelectivity(ndv, coll.ModifyCount)
+		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount()))
 	}
 	return float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
 }
