@@ -77,13 +77,15 @@ func (m concurrentMap) Upsert(key uint64, value *entry, cb UpsertCb) (res *entry
 }
 
 // Get retrieves an element from map under given key.
+// Note that in hash joins, reading proceeds after all writes, so we ignore RLock() here.
+// Otherwise, we should use RLock() for concurrent reads and writes.
 func (m concurrentMap) Get(key uint64) (*entry, bool) {
 	// Get shard
 	shard := m.GetShard(key)
-	//	shard.RLock()
+	// shard.RLock()
 	// Get item from shard.
 	val, ok := shard.items[key]
-	//	shard.RUnlock()
+	// shard.RUnlock()
 	return val, ok
 }
 
