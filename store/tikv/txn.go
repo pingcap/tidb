@@ -42,6 +42,8 @@ var (
 var (
 	tikvTxnCmdHistogramWithCommit   = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblCommit)
 	tikvTxnCmdHistogramWithRollback = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblRollback)
+	tikvTxnCmdHistogramWithBatchGet = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblBatchGet)
+	tikvTxnCmdHistogramWithGet      = metrics.TiKVTxnCmdHistogram.WithLabelValues(metrics.LblGet)
 )
 
 // tikvTxn implements kv.Transaction.
@@ -107,43 +109,21 @@ func (a assertionPair) String() string {
 	return fmt.Sprintf("key: %s, assertion type: %d", a.key, a.assertion)
 }
 
+// SetSuccess is used to probe if kv variables are set or not. It is ONLY used in test cases.
+var SetSuccess = false
+
 func (txn *tikvTxn) SetVars(vars *kv.Variables) {
 	txn.vars = vars
 	txn.snapshot.vars = vars
+	failpoint.Inject("probeSetVars", func(val failpoint.Value) {
+		if val.(bool) {
+			SetSuccess = true
+		}
+	})
 }
 
 func (txn *tikvTxn) GetVars() *kv.Variables {
 	return txn.vars
-}
-
-// tikvTxnStagingBuffer is the staging buffer returned to tikvTxn user.
-// Because tikvTxn needs to maintain dirty state when Flush staging data into txn.
-type tikvTxnStagingBuffer struct {
-	kv.MemBuffer
-	txn *tikvTxn
-}
-
-func (buf *tikvTxnStagingBuffer) Flush() (int, error) {
-	cnt, err := buf.MemBuffer.Flush()
-	if cnt != 0 {
-		buf.txn.dirty = true
-	}
-	return cnt, err
-}
-
-func (txn *tikvTxn) NewStagingBuffer() kv.MemBuffer {
-	return &tikvTxnStagingBuffer{
-		MemBuffer: txn.us.NewStagingBuffer(),
-		txn:       txn,
-	}
-}
-
-func (txn *tikvTxn) Flush() (int, error) {
-	return txn.us.Flush()
-}
-
-func (txn *tikvTxn) Discard() {
-	txn.us.Discard()
 }
 
 // Get implements transaction interface.
@@ -170,9 +150,7 @@ func (txn *tikvTxn) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]b
 
 func (txn *tikvTxn) Set(k kv.Key, v []byte) error {
 	txn.setCnt++
-
-	txn.dirty = true
-	return txn.us.Set(k, v)
+	return txn.us.GetMemBuffer().Set(k, v)
 }
 
 func (txn *tikvTxn) String() string {
@@ -189,8 +167,7 @@ func (txn *tikvTxn) IterReverse(k kv.Key) (kv.Iterator, error) {
 }
 
 func (txn *tikvTxn) Delete(k kv.Key) error {
-	txn.dirty = true
-	return txn.us.Delete(k)
+	return txn.us.GetMemBuffer().Delete(k)
 }
 
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
@@ -257,7 +234,12 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 	}
-	defer committer.ttlManager.close()
+	defer func() {
+		// For async commit transactions, the ttl manager will be closed in the asynchronous commit goroutine.
+		if !committer.isAsyncCommit() {
+			committer.ttlManager.close()
+		}
+	}()
 	if err := committer.initKeysAndMutations(); err != nil {
 		return errors.Trace(err)
 	}
@@ -403,7 +385,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		}
 		if err != nil {
 			for _, key := range keys {
-				txn.us.DeleteKeyExistErrInfo(key)
+				txn.us.UnmarkPresumeKeyNotExists(key)
 			}
 			keyMayBeLocked := terror.ErrorNotEqual(kv.ErrWriteConflict, err) && terror.ErrorNotEqual(kv.ErrKeyExists, err)
 			// If there is only 1 key and lock fails, no need to do pessimistic rollback.
@@ -488,7 +470,7 @@ func hashInKeys(deadlockKeyHash uint64, keys [][]byte) bool {
 }
 
 func (txn *tikvTxn) IsReadOnly() bool {
-	return !txn.dirty
+	return !txn.dirty && !txn.us.GetMemBuffer().Dirty()
 }
 
 func (txn *tikvTxn) StartTS() uint64 {
@@ -500,11 +482,19 @@ func (txn *tikvTxn) Valid() bool {
 }
 
 func (txn *tikvTxn) Len() int {
-	return txn.us.Len()
+	return txn.us.GetMemBuffer().Len()
 }
 
 func (txn *tikvTxn) Size() int {
-	return txn.us.Size()
+	return txn.us.GetMemBuffer().Size()
+}
+
+func (txn *tikvTxn) Reset() {
+	txn.us.GetMemBuffer().Reset()
+}
+
+func (txn *tikvTxn) GetUnionStore() kv.UnionStore {
+	return txn.us
 }
 
 func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {

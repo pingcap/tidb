@@ -52,6 +52,7 @@ var (
 	_ PhysicalPlan = &PhysicalStreamAgg{}
 	_ PhysicalPlan = &PhysicalApply{}
 	_ PhysicalPlan = &PhysicalIndexJoin{}
+	_ PhysicalPlan = &PhysicalBroadCastJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
@@ -73,6 +74,27 @@ type PhysicalTableReader struct {
 	StoreType kv.StoreType
 
 	IsCommonHandle bool
+}
+
+// GetTablePlan exports the tablePlan.
+func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
+	return p.tablePlan
+}
+
+// GetTableScan exports the tableScan that contained in tablePlan.
+func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
+	curPlan := p.tablePlan
+	for {
+		chCnt := len(curPlan.Children())
+		if chCnt == 0 {
+			return curPlan.(*PhysicalTableScan)
+		} else if chCnt == 1 {
+			curPlan = curPlan.Children()[0]
+		} else {
+			join := curPlan.(*PhysicalBroadCastJoin)
+			curPlan = join.children[1-join.globalChildIndex]
+		}
+	}
 }
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
@@ -351,10 +373,6 @@ func (p *PhysicalIndexScan) Clone() (PhysicalPlan, error) {
 	if p.Hist != nil {
 		cloned.Hist = p.Hist.Copy()
 	}
-	cloned.GenExprs = make(map[model.TableColumnID]expression.Expression)
-	for id, expr := range p.GenExprs {
-		cloned.GenExprs[id] = expr.Clone()
-	}
 	return cloned, nil
 }
 
@@ -390,7 +408,7 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Ranges  []*ranger.Range
-	pkCol   *expression.Column
+	PkCols  []*expression.Column
 
 	TableAsName *model.CIStr
 
@@ -403,9 +421,11 @@ type PhysicalTableScan struct {
 	rangeDecidedBy []*expression.Column
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
-	HandleIdx int
+	HandleIdx []int
 
 	StoreType kv.StoreType
+
+	IsGlobalRead bool
 
 	// The table scan may be a partition, rather than a real table.
 	isPartition bool
@@ -432,9 +452,7 @@ func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
 	}
 	clonedScan.Columns = cloneColInfos(ts.Columns)
 	clonedScan.Ranges = cloneRanges(ts.Ranges)
-	if ts.pkCol != nil {
-		clonedScan.pkCol = ts.pkCol.Clone().(*expression.Column)
-	}
+	clonedScan.PkCols = cloneCols(ts.PkCols)
 	clonedScan.TableAsName = ts.TableAsName
 	if ts.Hist != nil {
 		clonedScan.Hist = ts.Hist.Copy()
@@ -743,6 +761,12 @@ type PhysicalMergeJoin struct {
 	CompareFuncs []expression.CompareFunc
 	// Desc means whether inner child keep desc order.
 	Desc bool
+}
+
+// PhysicalBroadCastJoin only works for TiFlash Engine, which broadcast the small table to every replica of probe side of tables.
+type PhysicalBroadCastJoin struct {
+	basePhysicalJoin
+	globalChildIndex int
 }
 
 // Clone implements PhysicalPlan interface.

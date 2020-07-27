@@ -79,11 +79,13 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 		MinCommitTs:       minCommitTS,
 	}
 
-	if config.GetGlobalConfig().TiKVClient.EnableAsyncCommit {
+	if c.isAsyncCommit() {
 		if batch.isPrimary {
 			req.Secondaries = c.asyncSecondaries()
 		}
 		req.UseAsyncCommit = true
+		// The async commit can not be used for large transactions, and the commit ts can't be pushed.
+		req.MinCommitTs = 0
 	}
 
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
@@ -128,6 +130,25 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 					c.run(c, nil)
 				}
 			}
+			if c.isAsyncCommit() {
+				// 0 if the min_commit_ts is not ready or any other reason that async
+				// commit cannot proceed. The client can then fallback to normal way to
+				// continue committing the transaction if prewrite are all finished.
+				if prewriteResp.MinCommitTs == 0 {
+					if c.testingKnobs.noFallBack {
+						return nil
+					}
+					logutil.Logger(bo.ctx).Warn("async commit cannot proceed since the returned minCommitTS is zero, "+
+						"fallback to normal path", zap.Uint64("startTS", c.startTS))
+					c.setAsyncCommit(false)
+				} else {
+					c.mu.Lock()
+					if prewriteResp.MinCommitTs > c.minCommitTS {
+						c.minCommitTS = prewriteResp.MinCommitTs
+					}
+					c.mu.Unlock()
+				}
+			}
 			return nil
 		}
 		var locks []*Lock
@@ -135,11 +156,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				existErrInfo := c.txn.us.GetKeyExistErrInfo(key)
-				if existErrInfo == nil {
-					return errors.Errorf("conn %d, existErr for key:%s should not be nil", c.connID, key)
-				}
-				return existErrInfo.Err()
+				return c.extractKeyExistsErr(key)
 			}
 
 			// Extract lock from key error
