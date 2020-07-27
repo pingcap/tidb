@@ -984,6 +984,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 		actRows = fmt.Sprint(rootstats.GetActRows())
 	} else {
 		analyzeInfo = "time:0ns, loops:0"
+		actRows = "0"
 	}
 	switch p.(type) {
 	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
