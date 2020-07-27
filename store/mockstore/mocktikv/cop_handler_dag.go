@@ -488,7 +488,7 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
-	// TODO set FlagInUnionStmt,
+	// TODO set FlagInSetOprStmt,
 	return sc
 }
 
