@@ -125,6 +125,51 @@ func randKV(keyLen, valLen int) (string, string) {
 	return string(k), string(v)
 }
 
+func (s *testCommitterSuite) TestDeleteYourWritesTTL(c *C) {
+	conf := *config.GetGlobalConfig()
+	oldConf := conf
+	defer config.StoreGlobalConfig(&oldConf)
+	conf.TiKVClient.TTLRefreshedTxnSize = 0
+	config.StoreGlobalConfig(&conf)
+	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
+
+	{
+		txn := s.begin(c)
+		var flags kv.KeyFlags
+		flags = flags.MarkPresumeKeyNotExists()
+		err := txn.GetMemBuffer().SetWithFlags(kv.Key("bb"), flags, []byte{0})
+		c.Assert(err, IsNil)
+		err = txn.Set(kv.Key("ba"), []byte{1})
+		c.Assert(err, IsNil)
+		err = txn.Delete(kv.Key("bb"))
+		c.Assert(err, IsNil)
+		committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+		c.Assert(err, IsNil)
+		err = committer.prewriteMutations(bo, committer.mutations)
+		c.Assert(err, IsNil)
+		state := atomic.LoadUint32((*uint32)(&committer.ttlManager.state))
+		c.Check(state, Equals, uint32(stateRunning))
+	}
+
+	{
+		txn := s.begin(c)
+		var flags kv.KeyFlags
+		flags = flags.MarkPresumeKeyNotExists()
+		err := txn.GetMemBuffer().SetWithFlags(kv.Key("dd"), flags, []byte{0})
+		c.Assert(err, IsNil)
+		err = txn.Set(kv.Key("de"), []byte{1})
+		c.Assert(err, IsNil)
+		err = txn.Delete(kv.Key("dd"))
+		c.Assert(err, IsNil)
+		committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+		c.Assert(err, IsNil)
+		err = committer.prewriteMutations(bo, committer.mutations)
+		c.Assert(err, IsNil)
+		state := atomic.LoadUint32((*uint32)(&committer.ttlManager.state))
+		c.Check(state, Equals, uint32(stateRunning))
+	}
+}
+
 func (s *testCommitterSuite) TestCommitRollback(c *C) {
 	s.mustCommit(c, map[string]string{
 		"a": "a",
