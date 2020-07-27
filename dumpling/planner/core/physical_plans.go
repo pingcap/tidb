@@ -16,6 +16,7 @@ package core
 import (
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -258,8 +259,12 @@ func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err
 	}
-	cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
-	cloned.PushedLimit = p.PushedLimit.Clone()
+	if p.ExtraHandleCol != nil {
+		cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
+	}
+	if p.PushedLimit != nil {
+		cloned.PushedLimit = p.PushedLimit.Clone()
+	}
 	return cloned, nil
 }
 
@@ -573,7 +578,25 @@ type PhysicalApply struct {
 	PhysicalHashJoin
 
 	CanUseCache bool
+	Concurrency int
 	OuterSchema []*expression.CorrelatedColumn
+}
+
+// Clone implements PhysicalPlan interface.
+func (la *PhysicalApply) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalApply)
+	base, err := la.PhysicalHashJoin.Clone()
+	if err != nil {
+		return nil, err
+	}
+	hj := base.(*PhysicalHashJoin)
+	cloned.PhysicalHashJoin = *hj
+	cloned.CanUseCache = la.CanUseCache
+	cloned.Concurrency = la.Concurrency
+	for _, col := range la.OuterSchema {
+		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
+	}
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -1152,4 +1175,14 @@ func BuildMergeJoinPlan(ctx sessionctx.Context, joinType JoinType, leftKeys, rig
 		RightJoinKeys: rightKeys,
 	}
 	return PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(ctx, nil, 0)
+}
+
+// SafeClone clones this PhysicalPlan and handles its panic.
+func SafeClone(v PhysicalPlan) (_ PhysicalPlan, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Errorf("%v", r)
+		}
+	}()
+	return v.Clone()
 }

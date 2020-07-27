@@ -698,6 +698,9 @@ type SessionVars struct {
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
 
+	// EnableParallelApply indicates that thether to use parallel apply.
+	EnableParallelApply bool
+
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
 }
@@ -792,6 +795,7 @@ func NewSessionVars() *SessionVars {
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
+		EnableParallelApply:         DefTiDBEnableParallelApply,
 		EnableLogDesensitization:    DefTiDBLogDesensitization,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
 	}
@@ -1407,6 +1411,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	case TiDBEnableClusteredIndex:
 		s.EnableClusteredIndex = TiDBOptOn(val)
+	case TiDBEnableParallelApply:
+		s.EnableParallelApply = TiDBOptOn(val)
 	case TiDBSlowLogMasking, TiDBLogDesensitization:
 		s.EnableLogDesensitization = TiDBOptOn(val)
 	case TiDBShardAllocateStep:
