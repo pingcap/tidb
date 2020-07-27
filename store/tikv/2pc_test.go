@@ -47,6 +47,7 @@ var _ = SerialSuites(&testCommitterSuite{})
 func (s *testCommitterSuite) SetUpSuite(c *C) {
 	atomic.StoreUint64(&ManagedLockTTL, 3000) // 3s
 	s.OneByOneSuite.SetUpSuite(c)
+	CommitMaxBackoff = 1000
 }
 
 func (s *testCommitterSuite) SetUpTest(c *C) {
@@ -77,7 +78,6 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	// c.Assert(err, IsNil)
 
 	s.store = store
-	CommitMaxBackoff = 1000
 }
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
@@ -1137,7 +1137,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 
 // TestSecondaryKeys tests that when async commit is enabled, each prewrite message includes an
 // accurate list of secondary keys.
-func (s *testCommitterSuite) TestPrewiteSecondaryKeys(c *C) {
+func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.EnableAsyncCommit = true
@@ -1167,9 +1167,45 @@ func (s *testCommitterSuite) TestPrewiteSecondaryKeys(c *C) {
 	mock := mockClient{inner: s.store.client}
 	s.store.client = &mock
 	ctx := context.Background()
+	// TODO remove this when minCommitTS is returned from mockStore prewrite response.
+	committer.minCommitTS = committer.startTS + 10
+	committer.testingKnobs.noFallBack = true
 	err = committer.execute(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(mock.seenPrimaryReq > 0 && mock.seenSecondaryReq > 0, IsTrue)
+	c.Assert(mock.seenPrimaryReq > 0, IsTrue)
+	c.Assert(mock.seenSecondaryReq > 0, IsTrue)
+}
+
+func (s *testCommitterSuite) TestAsyncCommit(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableAsyncCommit = true
+	})
+
+	ctx := context.Background()
+	pk := kv.Key("tpk")
+	pkVal := []byte("pkVal")
+	k1 := kv.Key("tk1")
+	k1Val := []byte("k1Val")
+	txn1 := s.begin(c)
+	err := txn1.Set(pk, pkVal)
+	c.Assert(err, IsNil)
+	err = txn1.Set(k1, k1Val)
+	c.Assert(err, IsNil)
+
+	committer, err := newTwoPhaseCommitterWithInit(txn1, 0)
+	c.Assert(err, IsNil)
+	committer.connID = 1
+	committer.minCommitTS = txn1.startTS + 10
+	err = committer.execute(ctx)
+	c.Assert(err, IsNil)
+
+	// TODO remove sleep when recovery logic is done
+	time.Sleep(1 * time.Second)
+	s.checkValues(c, map[string]string{
+		string(pk): string(pkVal),
+		string(k1): string(k1Val),
+	})
 }
 
 type mockClient struct {
