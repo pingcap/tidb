@@ -137,7 +137,8 @@ func (e *ParallelNestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk
 		go e.outerWorker(ctx)
 		for i := 0; i < e.concurrency; i++ {
 			e.workerWg.Add(1)
-			go e.innerWorker(ctx, i)
+			workID := i
+			go e.innerWorker(ctx, workID)
 		}
 		e.notifyWg.Add(1)
 		go e.notifyWorker(ctx)
