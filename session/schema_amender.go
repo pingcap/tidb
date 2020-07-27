@@ -287,10 +287,13 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 	key []byte, kvHandle kv.Handle, keyOnly bool) ([]byte, []byte, error) {
 	chk := a.chk
 	chk.Reset()
-	// The Op_Put may not exist in old value kv map.
 	val, ok := kvMap[string(key)]
-	if !ok && keyOnly {
-		return nil, nil, nil
+	if !ok {
+		// The Op_Put may not exist in old value kv map.
+		if keyOnly {
+			return nil, nil, nil
+		}
+		return nil, nil, errors.Errorf("key=%v is not found in new row kv map", kv.Key(key).String())
 	}
 	err := executor.DecodeRowValToChunk(sctx, a.schemaAndDecoder.schema, a.tblInfoAtStart.Meta(), kvHandle, val, chk, a.schemaAndDecoder.decoder)
 	if err != nil {
