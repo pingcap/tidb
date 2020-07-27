@@ -305,6 +305,7 @@ func (h *Handle) updateStatsCache(newCache StatsCache) {
 			size := newCache.EraseLast()
 			h.statsCache.memTracker.Consume(size)
 		}
+		logutil.BgLogger().Info("full load InfoSchema success", zap.Int64("h.statsCache.memTracker", h.statsCache.memTracker.BytesConsumed()))
 		h.statsCache.Store(newCache)
 	}
 	h.statsCache.Unlock()
@@ -341,7 +342,7 @@ func (sc StatsCache) copy() StatsCache {
 
 //initMemoryUsage calc total memory usage of statsCache and set statsCache.memUsage
 //should be called after the tables and their stats are initilazed
-func (sc StatsCache) initMemoryUsage() {
+func (sc *StatsCache) initMemoryUsage() {
 
 	sum := int64(0)
 	for _, tb := range sc.tables {
