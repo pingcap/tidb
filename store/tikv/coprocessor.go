@@ -1204,6 +1204,7 @@ type taskRateLimitAction struct {
 	sendRate *rateLimit
 }
 
+// Action implements ActionOnExceed.Action
 func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
