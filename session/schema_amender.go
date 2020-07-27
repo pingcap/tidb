@@ -78,7 +78,7 @@ type schemaAndDecoder struct {
 	decoder *rowcodec.ChunkDecoder
 }
 
-// amendCollector collects all amend operations, row decoders and memory chunks for each table needs amend.
+// amendCollector collects all amend operations.
 type amendCollector struct {
 	tblAmendOpMap map[int64][]amendOp
 }
