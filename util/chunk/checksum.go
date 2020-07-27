@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"hash/crc32"
 	"io"
 	"os"
@@ -92,26 +91,24 @@ func (cks *checksum) ReadAt(p []byte, off int64) (nn int, err error) {
 	bufReader.Reset(r)
 	defer bufReaderPool.Put(bufReader)
 
+	buf := make([]byte, checksumBlockSize)
 	var n int
 	for len(p) > 0 && cursor < cks.size {
 		if cursor+checksumBlockSize > cks.size {
-			n, err = r.ReadAt(cks.buf[:cks.size-cursor], cursor-base)
+			n, err = r.ReadAt(buf[:cks.size-cursor], cursor-base)
 		} else {
-			n, err = r.ReadAt(cks.buf, cursor-base)
+			n, err = r.ReadAt(buf, cursor-base)
 		}
 		if err != nil {
 			return
 		}
 		cursor += int64(n)
-		originChecksum := binary.LittleEndian.Uint32(cks.buf)
-		checksum := crc32.Checksum(cks.buf[checksumSize:n], crc32.MakeTable(crc32.IEEE))
+		originChecksum := binary.LittleEndian.Uint32(buf)
+		checksum := crc32.Checksum(buf[checksumSize:n], crc32.MakeTable(crc32.IEEE))
 		if originChecksum != checksum {
-			fmt.Println("cursor", cursor)
-			fmt.Println("originChecksum", originChecksum)
-			fmt.Println("checksum", checksum)
 			return nn, errors.New("error checksum")
 		}
-		n1 := copy(p, cks.buf[checksumSize+offsetInPayload:n])
+		n1 := copy(p, buf[checksumSize+offsetInPayload:n])
 		nn += n1
 		p = p[n1:]
 		offsetInPayload = 0
