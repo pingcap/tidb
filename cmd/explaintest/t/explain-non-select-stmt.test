@@ -1,0 +1,8 @@
+use test;
+drop table if exists t;
+create table t(a bigint, b bigint);
+explain insert into t values(1, 1);
+explain insert into t select * from t;
+explain delete from t where a > 100;
+explain update t set b = 100 where a = 200;
+explain replace into t select a, 100 from t;
