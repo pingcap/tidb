@@ -27,7 +27,7 @@ require (
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/pingcap/badger v1.5.1-0.20200604041313-19c397305fcc
-	github.com/pingcap/br v0.0.0-20200723130425-d904ae3349a1
+	github.com/pingcap/br v0.0.0-20200727092753-a475692725db
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
 	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
