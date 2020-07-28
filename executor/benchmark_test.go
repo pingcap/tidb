@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
@@ -835,41 +836,50 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 	opt2.schema = expression.NewSchema(casTest.columns()...)
 	dataSource1 := buildMockDataSource(opt1)
 	dataSource2 := buildMockDataSource(opt2)
-
+	// Test spill result.
+	benchmarkHashJoinExec(b, casTest, dataSource1, dataSource2, true)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		exec := prepare4HashJoin(casTest, dataSource1, dataSource2)
-		tmpCtx := context.Background()
-		chk := newFirstChunk(exec)
-		dataSource1.prepareChunks()
-		dataSource2.prepareChunks()
+		benchmarkHashJoinExec(b, casTest, dataSource1, dataSource2, false)
+	}
+}
 
-		totalRow := 0
-		b.StartTimer()
-		if err := exec.Open(tmpCtx); err != nil {
+func benchmarkHashJoinExec(b *testing.B, casTest *hashJoinTestCase, opt1, opt2 *mockDataSource, testResult bool) {
+	b.StopTimer()
+	exec := prepare4HashJoin(casTest, opt1, opt2)
+	tmpCtx := context.Background()
+	chk := newFirstChunk(exec)
+	opt1.prepareChunks()
+	opt2.prepareChunks()
+
+	totalRow := 0
+	b.StartTimer()
+	if err := exec.Open(tmpCtx); err != nil {
+		b.Fatal(err)
+	}
+	for {
+		if err := exec.Next(tmpCtx, chk); err != nil {
 			b.Fatal(err)
 		}
-		for {
-			if err := exec.Next(tmpCtx, chk); err != nil {
-				b.Fatal(err)
-			}
-			if chk.NumRows() == 0 {
-				break
-			}
-			totalRow += chk.NumRows()
+		if chk.NumRows() == 0 {
+			break
 		}
+		totalRow += chk.NumRows()
+	}
 
-		if spilled := exec.rowContainer.alreadySpilled(); spilled != casTest.disk {
+	if testResult {
+		time.Sleep(200 * time.Millisecond)
+		if spilled := exec.rowContainer.alreadySpilledSafeForTest(); spilled != casTest.disk {
 			b.Fatal("wrong usage with disk:", spilled, casTest.disk)
 		}
-		if err := exec.Close(); err != nil {
-			b.Fatal(err)
-		}
-		b.StopTimer()
-		if totalRow == 0 {
-			b.Fatal("totalRow == 0")
-		}
+	}
+
+	if err := exec.Close(); err != nil {
+		b.Fatal(err)
+	}
+	b.StopTimer()
+	if totalRow == 0 {
+		b.Fatal("totalRow == 0")
 	}
 }
 
@@ -1024,35 +1034,44 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 	dataSource2 := buildMockDataSource(opt)
 
 	dataSource1.prepareChunks()
+	benchmarkBuildHashTable(b, casTest, dataSource1, dataSource2, true)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		exec := prepare4HashJoin(casTest, dataSource1, dataSource2)
-		tmpCtx := context.Background()
-		if err := exec.Open(tmpCtx); err != nil {
-			b.Fatal(err)
-		}
-		exec.prepared = true
+		benchmarkBuildHashTable(b, casTest, dataSource1, dataSource2, false)
+	}
+}
 
-		innerResultCh := make(chan *chunk.Chunk, len(dataSource1.chunks))
-		for _, chk := range dataSource1.chunks {
-			innerResultCh <- chk
-		}
-		close(innerResultCh)
+func benchmarkBuildHashTable(b *testing.B, casTest *hashJoinTestCase, dataSource1, dataSource2 *mockDataSource, testResult bool) {
+	b.StopTimer()
+	exec := prepare4HashJoin(casTest, dataSource1, dataSource2)
+	tmpCtx := context.Background()
+	if err := exec.Open(tmpCtx); err != nil {
+		b.Fatal(err)
+	}
+	exec.prepared = true
 
-		b.StartTimer()
-		if err := exec.buildHashTableForList(innerResultCh); err != nil {
-			b.Fatal(err)
-		}
+	innerResultCh := make(chan *chunk.Chunk, len(dataSource1.chunks))
+	for _, chk := range dataSource1.chunks {
+		innerResultCh <- chk
+	}
+	close(innerResultCh)
 
-		if err := exec.Close(); err != nil {
-			b.Fatal(err)
-		}
-		b.StopTimer()
-		if exec.rowContainer.alreadySpilled() != casTest.disk {
+	b.StartTimer()
+	if err := exec.buildHashTableForList(innerResultCh); err != nil {
+		b.Fatal(err)
+	}
+
+	if testResult {
+		time.Sleep(200 * time.Millisecond)
+		if exec.rowContainer.alreadySpilledSafeForTest() != casTest.disk {
 			b.Fatal("wrong usage with disk")
 		}
 	}
+
+	if err := exec.Close(); err != nil {
+		b.Fatal(err)
+	}
+	b.StopTimer()
 }
 
 func BenchmarkBuildHashTableForList(b *testing.B) {

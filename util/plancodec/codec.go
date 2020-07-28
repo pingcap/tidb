@@ -52,6 +52,7 @@ func DecodePlan(planString string) (string, error) {
 	pd := decoderPool.Get().(*planDecoder)
 	defer decoderPool.Put(pd)
 	pd.buf.Reset()
+	pd.addHeader = true
 	return pd.decode(planString)
 }
 
@@ -63,6 +64,7 @@ func DecodeNormalizedPlan(planString string) (string, error) {
 	pd := decoderPool.Get().(*planDecoder)
 	defer decoderPool.Put(pd)
 	pd.buf.Reset()
+	pd.addHeader = false
 	return pd.buildPlanTree(planString)
 }
 
@@ -71,6 +73,7 @@ type planDecoder struct {
 	depths    []int
 	indents   [][]rune
 	planInfos []*planInfo
+	addHeader bool
 }
 
 type planInfo struct {
@@ -95,7 +98,6 @@ func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
 	}
 	pd.depths = pd.depths[:0]
 	pd.planInfos = pd.planInfos[:0]
-	planInfos := pd.planInfos
 	for _, node := range nodes {
 		p, err := decodePlanInfo(node)
 		if err != nil {
@@ -104,8 +106,12 @@ func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
 		if p == nil {
 			continue
 		}
-		planInfos = append(planInfos, p)
+		pd.planInfos = append(pd.planInfos, p)
 		pd.depths = append(pd.depths, p.depth)
+	}
+
+	if pd.addHeader {
+		pd.addPlanHeader()
 	}
 
 	// Calculated indentation of plans.
@@ -115,9 +121,9 @@ func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
 		pd.fillIndent(parentIndex, i)
 	}
 	// Align the value of plan fields.
-	pd.alignFields(planInfos)
+	pd.alignFields()
 
-	for i, p := range planInfos {
+	for i, p := range pd.planInfos {
 		if i > 0 {
 			pd.buf.WriteByte(lineBreaker)
 		}
@@ -132,6 +138,28 @@ func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
 		}
 	}
 	return pd.buf.String(), nil
+}
+
+func (pd *planDecoder) addPlanHeader() {
+	if len(pd.planInfos) == 0 {
+		return
+	}
+	header := &planInfo{
+		depth:  0,
+		fields: []string{"id", "task", "estRows", "operator info", "actRows", "execution info", "memory", "disk"},
+	}
+	if len(pd.planInfos[0].fields) < len(header.fields) {
+		// plan without runtime information.
+		header.fields = header.fields[:len(pd.planInfos[0].fields)]
+	}
+	planInfos := make([]*planInfo, 0, len(pd.planInfos)+1)
+	depths := make([]int, 0, len(pd.planInfos)+1)
+	planInfos = append(planInfos, header)
+	planInfos = append(planInfos, pd.planInfos...)
+	depths = append(depths, header.depth)
+	depths = append(depths, pd.depths...)
+	pd.planInfos = planInfos
+	pd.depths = depths
 }
 
 func (pd *planDecoder) initPlanTreeIndents() {
@@ -173,29 +201,29 @@ func (pd *planDecoder) fillIndent(parentIndex, childIndex int) {
 	}
 }
 
-func (pd *planDecoder) alignFields(planInfos []*planInfo) {
-	if len(planInfos) == 0 {
+func (pd *planDecoder) alignFields() {
+	if len(pd.planInfos) == 0 {
 		return
 	}
 	// Align fields length. Some plan may doesn't have runtime info, need append `` to align with other plan fields.
 	maxLen := -1
-	for _, p := range planInfos {
+	for _, p := range pd.planInfos {
 		if len(p.fields) > maxLen {
 			maxLen = len(p.fields)
 		}
 	}
-	for _, p := range planInfos {
+	for _, p := range pd.planInfos {
 		for len(p.fields) < maxLen {
 			p.fields = append(p.fields, "")
 		}
 	}
 
-	fieldsLen := len(planInfos[0].fields)
+	fieldsLen := len(pd.planInfos[0].fields)
 	// Last field no need to align.
 	fieldsLen--
 	for colIdx := 0; colIdx < fieldsLen; colIdx++ {
-		maxFieldLen := pd.getMaxFieldLength(colIdx, planInfos)
-		for rowIdx, p := range planInfos {
+		maxFieldLen := pd.getMaxFieldLength(colIdx)
+		for rowIdx, p := range pd.planInfos {
 			fillLen := maxFieldLen - pd.getPlanFieldLen(rowIdx, colIdx, p)
 			for i := 0; i < fillLen; i++ {
 				p.fields[colIdx] += " "
@@ -204,9 +232,9 @@ func (pd *planDecoder) alignFields(planInfos []*planInfo) {
 	}
 }
 
-func (pd *planDecoder) getMaxFieldLength(idx int, planInfos []*planInfo) int {
+func (pd *planDecoder) getMaxFieldLength(idx int) int {
 	maxLength := -1
-	for rowIdx, p := range planInfos {
+	for rowIdx, p := range pd.planInfos {
 		l := pd.getPlanFieldLen(rowIdx, idx, p)
 		if l > maxLength {
 			maxLength = l

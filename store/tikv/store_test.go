@@ -36,7 +36,7 @@ type testStoreSuite struct {
 	testStoreSuiteBase
 }
 
-type testStoreFailedSuite struct {
+type testStoreSerialSuite struct {
 	testStoreSuiteBase
 }
 
@@ -46,7 +46,7 @@ type testStoreSuiteBase struct {
 }
 
 var _ = Suite(&testStoreSuite{})
-var _ = SerialSuites(&testStoreFailedSuite{})
+var _ = SerialSuites(&testStoreSerialSuite{})
 
 func (s *testStoreSuiteBase) SetUpTest(c *C) {
 	s.store = NewTestStore(c).(*tikvStore)
@@ -61,9 +61,9 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	s.store.oracle = o
 
 	ctx := context.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
 	c.Assert(err, IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
 
@@ -89,7 +89,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 	go func() {
 		defer wg.Done()
-		t3, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff))
+		t3, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, nil))
 		c.Assert(err, IsNil)
 		c.Assert(t2, Less, t3)
 		expired := s.store.oracle.IsExpired(t2, 50)
@@ -280,7 +280,7 @@ func (s *testStoreSuite) TestRequestPriority(c *C) {
 	iter.Close()
 }
 
-func (s *testStoreSuite) TestOracleChangeByFailpoint(c *C) {
+func (s *testStoreSerialSuite) TestOracleChangeByFailpoint(c *C) {
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD")
 	}()
@@ -289,10 +289,10 @@ func (s *testStoreSuite) TestOracleChangeByFailpoint(c *C) {
 	o := &mockoracle.MockOracle{}
 	s.store.oracle = o
 	ctx := context.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD"), IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
 	c.Assert(err, IsNil)
 	c.Assert(t1, Greater, t2)
 }
