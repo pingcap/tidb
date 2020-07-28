@@ -116,6 +116,8 @@ func (sc *statsCache) GetVersion() uint64 {
 // initStatsCache should be called after the tables and their stats are initilazed
 // using tables map and version to init statscache
 func (sc *statsCache) initStatsCache(tables map[int64]*statistics.Table, version uint64) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	for _, tbl := range tables {
 		sc.Insert(tbl)
 	}
