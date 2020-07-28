@@ -1543,10 +1543,16 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
 		TaskID:      stmtctx.AllocateTaskID(),
 	}
+<<<<<<< HEAD
 	if config.GetGlobalConfig().OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
+=======
+	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
+	globalConfig := config.GetGlobalConfig()
+	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
+>>>>>>> 8b19d67... executor: add runtime information for point-get executor (#18666)
 		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
 	}
-	switch config.GetGlobalConfig().OOMAction {
+	switch globalConfig.OOMAction {
 	case config.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
 		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
@@ -1670,6 +1676,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
+	if globalConfig.EnableCollectExecutionInfo {
+		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+	}
+
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount

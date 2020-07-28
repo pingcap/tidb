@@ -21,12 +21,18 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv"
+>>>>>>> 8b19d67... executor: add runtime information for point-get executor (#18666)
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -80,6 +86,8 @@ type PointGetExecutor struct {
 
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
+
+	stats *pointGetRuntimeStats
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -146,10 +154,41 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 	}
+	if e.runtimeStats != nil {
+		snapshotStats := &tikv.SnapshotRuntimeStats{}
+		e.stats = &pointGetRuntimeStats{
+			BasicRuntimeStats:    e.runtimeStats,
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
+	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+<<<<<<< HEAD
+=======
+	return nil
+}
+
+// Close implements the Executor interface.
+func (e *PointGetExecutor) Close() error {
+	if e.runtimeStats != nil {
+		e.snapshot.DelOption(kv.CollectRuntimeStats)
+	}
+	return nil
+}
+
+// Next implements the Executor interface.
+func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.done {
+		return nil
+	}
+	e.done = true
+
+>>>>>>> 8b19d67... executor: add runtime information for point-get executor (#18666)
 	var tblID int64
 	if e.partInfo != nil {
 		tblID = e.partInfo.ID
@@ -389,4 +428,26 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 		}
 	}
 	return nil
+}
+
+type pointGetRuntimeStats struct {
+	*execdetails.BasicRuntimeStats
+	*tikv.SnapshotRuntimeStats
+}
+
+func (e *pointGetRuntimeStats) String() string {
+	var basic, rpcStatsStr string
+	if e.BasicRuntimeStats != nil {
+		basic = e.BasicRuntimeStats.String()
+	}
+	if e.SnapshotRuntimeStats != nil {
+		rpcStatsStr = e.SnapshotRuntimeStats.String()
+	}
+	if rpcStatsStr == "" {
+		return basic
+	}
+	if basic == "" {
+		return rpcStatsStr
+	}
+	return basic + ", " + rpcStatsStr
 }
