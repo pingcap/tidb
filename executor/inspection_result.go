@@ -256,7 +256,6 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 
 	generateDetail := func(tp, item string) string {
 		query := fmt.Sprintf("select value, instance from information_schema.cluster_config where type='%s' and `key`='%s';", tp, item)
-		fmt.Println(query)
 		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(query)
 		if err != nil {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
