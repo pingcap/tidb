@@ -253,7 +253,7 @@ type txnStartCtxKeyType struct{}
 // txnStartKey is a key for transaction start_ts info in context.Context.
 var txnStartKey = txnStartCtxKeyType{}
 
-// NewBackoffer creates a Backoffer with maximum sleep time(in ms).
+// NewBackoffer (Deprecated) creates a Backoffer with maximum sleep time(in ms).
 func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
 		ctx:      ctx,
@@ -262,13 +262,18 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	}
 }
 
+// NewBackofferWithVars creates a Backoffer with maximum sleep time(in ms) and kv.Variables.
+func NewBackofferWithVars(ctx context.Context, maxSleep int, vars *kv.Variables) *Backoffer {
+	return NewBackoffer(ctx, maxSleep).withVars(vars)
+}
+
 // NewNoopBackoff create a Backoffer do nothing just return error directly
 func NewNoopBackoff(ctx context.Context) *Backoffer {
 	return &Backoffer{ctx: ctx, noop: true}
 }
 
-// WithVars sets the kv.Variables to the Backoffer and return it.
-func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
+// withVars sets the kv.Variables to the Backoffer and return it.
+func (b *Backoffer) withVars(vars *kv.Variables) *Backoffer {
 	if vars != nil {
 		b.vars = vars
 	}
@@ -336,7 +341,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	b.backoffTimes[typ]++
 
 	if b.vars != nil && b.vars.Killed != nil {
-		if atomic.CompareAndSwapUint32(b.vars.Killed, 1, 0) {
+		if atomic.LoadUint32(b.vars.Killed) == 1 {
 			return ErrQueryInterrupted
 		}
 	}

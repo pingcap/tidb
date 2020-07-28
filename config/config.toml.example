@@ -106,6 +106,11 @@ max-server-connections = 0
 # Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
 new_collations_enabled_on_first_bootstrap = false
 
+# Don't register information of this TiDB to etcd, so this instance of TiDB won't appear in the services like dashboard.
+# This option is useful when you want to embed TiDB into your service(i.e. use TiDB as a library).
+# *If you want to start a TiDB service, NEVER enable this.*
+skip-register-to-dashboard = false
+
 # When enabled, usage data (for example, instance versions) will be reported to PingCAP periodically for user experience analytics.
 # If this config is set to `false` on all TiDB servers, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
 # See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
@@ -224,7 +229,7 @@ run-auto-analyze = true
 feedback-probability = 0.05
 
 # The max number of query feedback that cache in memory.
-query-feedback-limit = 1024
+query-feedback-limit = 512
 
 # Pseudo stats will be used if the ratio between the modify count and
 # row count in statistics of a table is greater than it.
@@ -417,8 +422,6 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
-# enable column attribute `auto_random` to be defined on the primary key column.
-allow-auto-random = false
 # enable creating expression index.
 allow-expression-index = false
 
