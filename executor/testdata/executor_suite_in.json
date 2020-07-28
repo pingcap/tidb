@@ -1,0 +1,16 @@
+[
+  {
+    "name": "TestSetOperation",
+    "cases": [
+      "select * from t3 union select * from t1",
+      "select * from t2 union all select * from t1",
+      "select * from t1 except select * from t3",
+      "select * from t1 intersect select * from t2",
+      "select * from t1 union all select * from t2 union all select * from t3",
+      "select * from t1 union all select * from t2 except select * from t3",
+      "select * from t1 intersect select * from t2 intersect select * from t1",
+      "select * from t1 union all select * from t2 intersect select * from t3",
+      "select * from t1 except select * from t2 intersect select * from t3"
+    ]
+  }
+]
