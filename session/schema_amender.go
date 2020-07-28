@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -156,7 +156,7 @@ func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStar
 				colID := tblAtCommit.Meta().Columns[idxCol.Offset].ID
 				oldColInfo := findColByID(tblAtStart, colID)
 				// TODO: now index column MUST be found in old table columns, generated column is not supported.
-				if oldColInfo == nil || oldColInfo.IsGenerated() {
+				if oldColInfo == nil || oldColInfo.IsGenerated() || oldColInfo.Hidden {
 					return nil, errors.Trace(errors.Errorf("amend index column=%v id=%v is not found or generated in table=%v",
 						idxCol.Name, colID, tblAtCommit.Meta().Name.String()))
 				}
@@ -319,14 +319,7 @@ func (a *amendOperationAddIndexInfo) genIndexKeyValue(ctx context.Context, sctx 
 	}
 
 	// Generate index value buf.
-	var containsNonBinaryString bool
-	for _, idxCol := range a.indexInfoAtCommit.Meta().Columns {
-		col := a.tblInfoAtCommit.Meta().Columns[idxCol.Offset]
-		if col.EvalType() == types.ETString && !mysql.HasBinaryFlag(col.Flag) {
-			containsNonBinaryString = true
-			break
-		}
-	}
+	containsNonBinaryString := tables.ContainsNonBinaryString(a.indexInfoAtCommit.Meta().Columns, a.tblInfoAtCommit.Meta().Columns)
 	newIdxVal, err := tablecodec.GenIndexValue(sctx.GetSessionVars().StmtCtx, a.tblInfoAtCommit.Meta(),
 		a.indexInfoAtCommit.Meta(), containsNonBinaryString, distinct, false, idxVals, kvHandle)
 	if err != nil {
