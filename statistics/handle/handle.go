@@ -140,7 +140,7 @@ func DurationToTS(d time.Duration) uint64 {
 
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema) error {
-	lastVersion := h.statsCache.version
+	lastVersion := h.statsCache.GetVersion()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
@@ -347,7 +347,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 
 // LastUpdateVersion gets the last update version.
 func (h *Handle) LastUpdateVersion() uint64 {
-	return h.statsCache.version
+	return h.statsCache.GetVersion()
 }
 
 // SetLastUpdateVersion sets the last update version.
