@@ -127,3 +127,14 @@ func (s *testBatchPointGetSuite) TestBatchPointGetInTxn(c *C) {
 	tk.MustQuery("select * from s where (a, b) in ((1, 1), (2, 2), (3, 3)) for update").Check(testkit.Rows("1 1 1", "3 3 10"))
 	tk.MustExec("rollback")
 }
+
+func (s *testBatchPointGetSuite) TestBatchPointGetCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table customers (id int primary key, token varchar(255) unique)")
+	tk.MustExec("INSERT INTO test.customers (id, token) VALUES (28, '07j')")
+	tk.MustExec("INSERT INTO test.customers (id, token) VALUES (29, '03j')")
+	tk.MustExec("BEGIN")
+	tk.MustQuery("SELECT id, token FROM test.customers WHERE id IN (28)")
+	tk.MustQuery("SELECT id, token FROM test.customers WHERE id IN (28, 29);").Check(testkit.Rows("28 07j", "29 03j"))
+}
