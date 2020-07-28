@@ -2852,7 +2852,6 @@ func (s *testSessionSuite2) TestUpdatePrivilege(c *C) {
 	tk.MustExec("create user xxx;")
 	tk.MustExec("grant all on test.t1 to xxx;")
 	tk.MustExec("grant select on test.t2 to xxx;")
-	tk.MustExec("flush privileges;")
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"},
@@ -2907,7 +2906,6 @@ and s.b !='xx';`)
 	tk.MustExec("create database tp")
 	tk.MustExec("grant all privileges on ap.* to xxx")
 	tk.MustExec("grant select on tp.* to xxx")
-	tk.MustExec("flush privileges")
 	tk.MustExec("create table tp.record( id int,name varchar(128),age int)")
 	tk.MustExec("insert into tp.record (id,name,age) values (1,'john',18),(2,'lary',19),(3,'lily',18)")
 	tk.MustExec("create table ap.record( id int,name varchar(128),age int)")
