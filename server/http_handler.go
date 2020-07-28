@@ -309,9 +309,13 @@ func (t *tikvHandlerTool) getTable(dbName, tableName string) (table.PhysicalTabl
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	return t.getPartition(tableVal, partitionName)
+}
+
+func (t *tikvHandlerTool) getPartition(tableVal table.Table, partitionName string) (table.PhysicalTable, error) {
 	if pt, ok := tableVal.(table.PartitionedTable); ok {
 		if partitionName == "" {
-			return nil, errors.New("work on partitioned table, please specify the table name like this: table(partition)")
+			return tableVal.(table.PhysicalTable), errors.New("work on partitioned table, please specify the table name like this: table(partition)")
 		}
 		tblInfo := pt.Meta()
 		pid, err := tables.FindPartitionByName(tblInfo, partitionName)
@@ -321,7 +325,7 @@ func (t *tikvHandlerTool) getTable(dbName, tableName string) (table.PhysicalTabl
 		return pt.GetPartition(pid), nil
 	}
 	if partitionName != "" {
-		return nil, fmt.Errorf("%s is not a partitionted table", tableName)
+		return nil, fmt.Errorf("%s is not a partitionted table", tableVal.Meta().Name)
 	}
 	return tableVal.(table.PhysicalTable), nil
 }
@@ -939,22 +943,33 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	// get table's schema.
+
+	tableName, partitionName := extractTableAndPartitionName(tableName)
 	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-
 	switch h.op {
 	case opTableRegions:
 		h.handleRegionRequest(schema, tableVal, w, req)
 	case opTableDiskUsage:
 		h.handleDiskUsageRequest(tableVal, w)
 	case opTableScatter:
-		h.handleScatterTableRequest(schema, tableVal, w, req)
+		// supports partition table, only get one physical table, prevent too many scatter schedulers.
+		ptbl, err := h.getPartition(tableVal, partitionName)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		h.handleScatterTableRequest(schema, ptbl, w, req)
 	case opStopTableScatter:
-		h.handleStopScatterTableRequest(schema, tableVal, w, req)
+		ptbl, err := h.getPartition(tableVal, partitionName)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		h.handleStopScatterTableRequest(schema, ptbl, w, req)
 	default:
 		writeError(w, errors.New("method not found"))
 	}
@@ -1113,13 +1128,13 @@ func (h tableHandler) deleteScatterSchedule(name string) error {
 	return nil
 }
 
-func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tbl table.PhysicalTable, w http.ResponseWriter, req *http.Request) {
 	// for record
-	tableID := tbl.Meta().ID
+	tableID := tbl.GetPhysicalID()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(tableID)
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
-	tableName := tbl.Meta().Name.String()
+	tableName := fmt.Sprintf("%s-%d", tbl.Meta().Name.String(), tableID)
 	err := h.addScatterSchedule(startKey, endKey, tableName)
 	if err != nil {
 		writeError(w, errors.Annotate(err, "scatter record error"))
@@ -1142,9 +1157,9 @@ func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tb
 	writeData(w, "success!")
 }
 
-func (h tableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+func (h tableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchema, tbl table.PhysicalTable, w http.ResponseWriter, req *http.Request) {
 	// for record
-	tableName := tbl.Meta().Name.String()
+	tableName := fmt.Sprintf("%s-%d", tbl.Meta().Name.String(), tbl.GetPhysicalID())
 	err := h.deleteScatterSchedule(tableName)
 	if err != nil {
 		writeError(w, errors.Annotate(err, "stop scatter record error"))

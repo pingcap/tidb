@@ -629,7 +629,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
-// getDefault value will get the default value for column.
+// getDefaultValue will get the default value for column.
 // 1: get the expr restored string for the column which uses sequence next value as default value.
 // 2: get specific default value for the other column.
 func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, bool, error) {
@@ -2748,11 +2748,6 @@ func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 }
 
 func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	// TODO: Support truncate multiple partitions
-	if len(spec.PartitionNames) != 1 {
-		return errRunMultiSchemaChanges
-	}
-
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -2767,12 +2762,14 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	var pid int64
-	pid, err = tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
-	if err != nil {
-		return errors.Trace(err)
+	pids := make([]int64, len(spec.PartitionNames))
+	for i, name := range spec.PartitionNames {
+		pid, err := tables.FindPartitionByName(meta, name.L)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		pids[i] = pid
 	}
-	pids := []int64{pid}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -2792,11 +2789,6 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 }
 
 func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	// TODO: Support drop multiple partitions
-	if len(spec.PartitionNames) != 1 {
-		return errRunMultiSchemaChanges
-	}
-
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -2811,8 +2803,10 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	partName := spec.PartitionNames[0].L
-	partNames := []string{partName}
+	partNames := make([]string, len(spec.PartitionNames))
+	for i, partCIName := range spec.PartitionNames {
+		partNames[i] = partCIName.L
+	}
 	err = checkDropTablePartition(meta, partNames)
 	if err != nil {
 		if ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
@@ -3825,7 +3819,7 @@ func (d *ddl) AlterTableAutoIDCache(ctx sessionctx.Context, ident ast.Ident, new
 	return errors.Trace(err)
 }
 
-// AlterTableCharset changes the table charset and collate.
+// AlterTableCharsetAndCollate changes the table charset and collate.
 func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string, needsOverwriteCols bool) error {
 	// use the last one.
 	if toCharset == "" && toCollate == "" {
