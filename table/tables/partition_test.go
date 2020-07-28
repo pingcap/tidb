@@ -297,7 +297,7 @@ func (ts *testSuite) TestLocateRangeColumnPartitionErr(c *C) {
 func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE t_month_data_monitor (
+	tk.MustExec(`CREATE TABLE t_range_locate (
 		id int(20) NOT NULL AUTO_INCREMENT,
 		data_date date NOT NULL,
 		PRIMARY KEY (id, data_date)
