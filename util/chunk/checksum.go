@@ -19,13 +19,13 @@ var checksumReaderBufPool = sync.Pool{
 }
 
 type checksumWriter struct {
-	w           io.Writer
+	w           io.WriteCloser
 	buf         []byte
 	payload     []byte
 	payloadUsed int
 }
 
-func newChecksumWriter(w io.Writer) *checksumWriter {
+func newChecksumWriter(w io.WriteCloser) *checksumWriter {
 	checksumWriter := &checksumWriter{w: w}
 	checksumWriter.buf = make([]byte, checksumBlockSize)
 	checksumWriter.payload = checksumWriter.buf[checksumSize:]
@@ -74,8 +74,12 @@ func (w *checksumWriter) Flush() error {
 	return nil
 }
 
-func (w *checksumWriter) Close() error {
-	return w.Flush()
+func (w *checksumWriter) Close() (err error) {
+	err = w.Flush()
+	if err != nil {
+		return
+	}
+	return w.w.Close()
 }
 
 type checksumReader struct {

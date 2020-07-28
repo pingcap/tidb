@@ -32,6 +32,8 @@ func (s *testChunkSuite) TestChecksumReadAt(c *check.C) {
 	err = csw.Close()
 	c.Assert(err, check.IsNil)
 
+	f, err = os.Create(path)
+	c.Assert(err, check.IsNil)
 	cs := newChecksumReader(f)
 	r := make([]byte, 10)
 	for i := 0; i < 1000; i++ {
