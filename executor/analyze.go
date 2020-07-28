@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -374,8 +375,12 @@ func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool)
 
 func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) analyzeResult {
 	var ranges []*ranger.Range
-	if colExec.pkInfo != nil {
-		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(colExec.pkInfo.Flag))
+	if hc := colExec.handleCols; hc != nil {
+		if hc.IsInt() {
+			ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(hc.GetCol(0).RetType.Flag))
+		} else {
+			ranges = ranger.FullRange()
+		}
 	} else {
 		ranges = ranger.FullIntRange(false)
 	}
@@ -402,7 +407,7 @@ type AnalyzeColumnsExec struct {
 	ctx             sessionctx.Context
 	physicalTableID int64
 	colsInfo        []*model.ColumnInfo
-	pkInfo          *model.ColumnInfo
+	handleCols      core.HandleCols
 	concurrency     int
 	priority        int
 	analyzePB       *tipb.AnalyzeReq
@@ -490,7 +495,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		}
 		sc := e.ctx.GetSessionVars().StmtCtx
 		rowCount := int64(0)
-		if e.pkInfo != nil {
+		if hasPkHist(e.handleCols) {
 			respHist := statistics.HistogramFromProto(resp.PkHist)
 			rowCount = int64(respHist.TotalRowCount())
 			pkHist, err = statistics.MergeHistograms(sc, pkHist, respHist, int(e.opts[ast.AnalyzeOptNumBuckets]))
@@ -506,9 +511,10 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 		e.job.Update(rowCount)
 	}
 	timeZone := e.ctx.GetSessionVars().Location()
-	if e.pkInfo != nil {
-		pkHist.ID = e.pkInfo.ID
-		err = pkHist.DecodeTo(&e.pkInfo.FieldType, timeZone)
+	if hasPkHist(e.handleCols) {
+		pkInfo := e.handleCols.GetCol(0)
+		pkHist.ID = pkInfo.ID
+		err = pkHist.DecodeTo(pkInfo.RetType, timeZone)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -537,6 +543,17 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range) (hists []*statis
 	return hists, cms, nil
 }
 
+func hasPkHist(handleCols core.HandleCols) bool {
+	return handleCols != nil && handleCols.IsInt()
+}
+
+func pkColsCount(handleCols core.HandleCols) int {
+	if handleCols == nil {
+		return 0
+	}
+	return handleCols.NumCols()
+}
+
 var (
 	fastAnalyzeHistogramSample        = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "sample")
 	fastAnalyzeHistogramAccessRegions = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "access_regions")
@@ -551,12 +568,9 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 		return []analyzeResult{{Err: err, job: exec.job}}
 	}
 	var results []analyzeResult
-	hasPKInfo := 0
-	if exec.pkInfo != nil {
-		hasPKInfo = 1
-	}
+	pkColCount := pkColsCount(exec.handleCols)
 	if len(exec.idxsInfo) > 0 {
-		for i := hasPKInfo + len(exec.colsInfo); i < len(hists); i++ {
+		for i := pkColCount + len(exec.colsInfo); i < len(hists); i++ {
 			idxResult := analyzeResult{
 				PhysicalTableID: exec.physicalTableID,
 				Hist:            []*statistics.Histogram{hists[i]},
@@ -574,8 +588,8 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 	hist := hists[0]
 	colResult := analyzeResult{
 		PhysicalTableID: exec.physicalTableID,
-		Hist:            hists[:hasPKInfo+len(exec.colsInfo)],
-		Cms:             cms[:hasPKInfo+len(exec.colsInfo)],
+		Hist:            hists[:pkColCount+len(exec.colsInfo)],
+		Cms:             cms[:pkColCount+len(exec.colsInfo)],
 		Count:           hist.NullCount,
 		job:             exec.job,
 	}
@@ -598,7 +612,7 @@ type AnalyzeFastTask struct {
 type AnalyzeFastExec struct {
 	ctx             sessionctx.Context
 	physicalTableID int64
-	pkInfo          *model.ColumnInfo
+	handleCols      core.HandleCols
 	colsInfo        []*model.ColumnInfo
 	idxsInfo        []*model.IndexInfo
 	concurrency     int
@@ -793,15 +807,24 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	return false, nil
 }
 
-func (e *AnalyzeFastExec) decodeValues(sValue []byte) (values map[int64]types.Datum, err error) {
+func (e *AnalyzeFastExec) decodeValues(handle kv.Handle, sValue []byte) (values map[int64]types.Datum, err error) {
+	loc := e.ctx.GetSessionVars().Location()
 	colID2FieldTypes := make(map[int64]*types.FieldType, len(e.colsInfo))
-	if e.pkInfo != nil {
-		colID2FieldTypes[e.pkInfo.ID] = &e.pkInfo.FieldType
-	}
 	for _, col := range e.colsInfo {
 		colID2FieldTypes[col.ID] = &col.FieldType
 	}
-	return tablecodec.DecodeRowToDatum(sValue, colID2FieldTypes, e.ctx.GetSessionVars().Location())
+	values, err = tablecodec.DecodeRowToDatum(sValue, colID2FieldTypes, loc)
+	if err != nil || e.handleCols == nil {
+		return values, err
+	}
+	colID2FieldTypes = make(map[int64]*types.FieldType, len(e.colsInfo))
+	handleColIDs := make([]int64, e.handleCols.NumCols())
+	for i := 0; i < e.handleCols.NumCols(); i++ {
+		c := e.handleCols.GetCol(i)
+		handleColIDs[i] = c.ID
+		colID2FieldTypes[c.ID] = c.RetType
+	}
+	return tablecodec.DecodeHandleToDatum(handle, handleColIDs, colID2FieldTypes, loc, values)
 }
 
 func (e *AnalyzeFastExec) getValueByInfo(colInfo *model.ColumnInfo, values map[int64]types.Datum) (types.Datum, error) {
@@ -812,49 +835,44 @@ func (e *AnalyzeFastExec) getValueByInfo(colInfo *model.ColumnInfo, values map[i
 	return val, nil
 }
 
-func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, samplePos int32, hasPKInfo int) (err error) {
-	// Decode the cols value in order.
-	var values map[int64]types.Datum
-	values, err = e.decodeValues(sValue)
+func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, samplePos int32) (err error) {
+	var handle kv.Handle
+	handle, err = tablecodec.DecodeRowKey(sKey)
 	if err != nil {
 		return err
 	}
-	var rowID kv.Handle
-	rowID, err = tablecodec.DecodeRowKey(sKey)
+	// Decode the cols value in order.
+	var values map[int64]types.Datum
+	values, err = e.decodeValues(handle, sValue)
 	if err != nil {
 		return err
 	}
 	// Update the primary key collector.
-	if hasPKInfo > 0 {
-		v, ok := values[e.pkInfo.ID]
+	pkColsCount := pkColsCount(e.handleCols)
+	for i := 0; i < pkColsCount; i++ {
+		col := e.handleCols.GetCol(i)
+		v, ok := values[col.ID]
 		if !ok {
-			var key kv.Handle
-			_, key, err = tablecodec.DecodeRecordKey(sKey)
-			if err != nil {
-				return err
-			}
-			v = types.NewIntDatum(key.IntValue())
+			return errors.Trace(errors.Errorf("Primary key column not found"))
 		}
-		if mysql.HasUnsignedFlag(e.pkInfo.Flag) {
-			v.SetUint64(uint64(v.GetInt64()))
+		if e.collectors[i].Samples[samplePos] == nil {
+			e.collectors[i].Samples[samplePos] = &statistics.SampleItem{}
 		}
-		if e.collectors[0].Samples[samplePos] == nil {
-			e.collectors[0].Samples[samplePos] = &statistics.SampleItem{}
-		}
-		e.collectors[0].Samples[samplePos].RowID = rowID.IntValue()
-		e.collectors[0].Samples[samplePos].Value = v
+		e.collectors[i].Samples[samplePos].Handle = handle
+		e.collectors[i].Samples[samplePos].Value = v
 	}
+
 	// Update the columns' collectors.
 	for j, colInfo := range e.colsInfo {
 		v, err := e.getValueByInfo(colInfo, values)
 		if err != nil {
 			return err
 		}
-		if e.collectors[hasPKInfo+j].Samples[samplePos] == nil {
-			e.collectors[hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
+		if e.collectors[pkColsCount+j].Samples[samplePos] == nil {
+			e.collectors[pkColsCount+j].Samples[samplePos] = &statistics.SampleItem{}
 		}
-		e.collectors[hasPKInfo+j].Samples[samplePos].RowID = rowID.IntValue()
-		e.collectors[hasPKInfo+j].Samples[samplePos].Value = v
+		e.collectors[pkColsCount+j].Samples[samplePos].Handle = handle
+		e.collectors[pkColsCount+j].Samples[samplePos].Value = v
 	}
 	// Update the indexes' collectors.
 	for j, idxInfo := range e.idxsInfo {
@@ -876,11 +894,11 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 		if err != nil {
 			return err
 		}
-		if e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] == nil {
-			e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos] = &statistics.SampleItem{}
+		if e.collectors[len(e.colsInfo)+pkColsCount+j].Samples[samplePos] == nil {
+			e.collectors[len(e.colsInfo)+pkColsCount+j].Samples[samplePos] = &statistics.SampleItem{}
 		}
-		e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].RowID = rowID.IntValue()
-		e.collectors[len(e.colsInfo)+hasPKInfo+j].Samples[samplePos].Value = types.NewBytesDatum(bytes)
+		e.collectors[len(e.colsInfo)+pkColsCount+j].Samples[samplePos].Handle = handle
+		e.collectors[len(e.colsInfo)+pkColsCount+j].Samples[samplePos].Value = types.NewBytesDatum(bytes)
 	}
 	return nil
 }
@@ -888,13 +906,9 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 func (e *AnalyzeFastExec) handleBatchSeekResponse(kvMap map[string][]byte) (err error) {
 	length := int32(len(kvMap))
 	newCursor := atomic.AddInt32(&e.sampCursor, length)
-	hasPKInfo := 0
-	if e.pkInfo != nil {
-		hasPKInfo = 1
-	}
 	samplePos := newCursor - length
 	for sKey, sValue := range kvMap {
-		err = e.updateCollectorSamples(sValue, kv.Key(sKey), samplePos, hasPKInfo)
+		err = e.updateCollectorSamples(sValue, kv.Key(sKey), samplePos)
 		if err != nil {
 			return err
 		}
@@ -904,10 +918,6 @@ func (e *AnalyzeFastExec) handleBatchSeekResponse(kvMap map[string][]byte) (err 
 }
 
 func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, err error) {
-	hasPKInfo := 0
-	if e.pkInfo != nil {
-		hasPKInfo = 1
-	}
 	rander := rand.New(rand.NewSource(e.randSeed + int64(e.rowCount)))
 	sampleSize := int64(e.opts[ast.AnalyzeOptNumSamples])
 	for ; iter.Valid() && err == nil; err = iter.Next() {
@@ -925,7 +935,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, er
 			e.sampCursor++
 		}
 
-		err = e.updateCollectorSamples(iter.Value(), iter.Key(), p, hasPKInfo)
+		err = e.updateCollectorSamples(iter.Value(), iter.Key(), p)
 		if err != nil {
 			return
 		}
@@ -973,22 +983,15 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 			continue
 		}
 
-		var tableID int64
-		var minRowID, maxRowID kv.Handle
 		startKey, endKey := task.Location.StartKey, task.Location.EndKey
-		tableID, minRowID, *err = tablecodec.DecodeRecordKey(startKey)
-		if *err != nil {
-			return
-		}
-		_, maxRowID, *err = tablecodec.DecodeRecordKey(endKey)
-		if *err != nil {
-			return
-		}
-
 		keys := make([]kv.Key, 0, task.SampSize)
 		for i := 0; i < int(task.SampSize); i++ {
-			randKey := rander.Int63n(maxRowID.IntValue()-minRowID.IntValue()) + minRowID.IntValue()
-			keys = append(keys, tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(randKey)))
+			var randKey kv.Key
+			randKey, *err = randomKeyFromHandles(startKey, endKey, rander)
+			if *err != nil {
+				return
+			}
+			keys = append(keys, randKey)
 		}
 
 		kvMap := make(map[string][]byte, len(keys))
@@ -1010,6 +1013,31 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 			return
 		}
 	}
+}
+
+func randomKeyFromHandles(start, end kv.Key, rander *rand.Rand) (kv.Key, error) {
+	result := make(kv.Key, 0, len(start))
+	commonPrefixLen := longestCommonPrefixLen(start, end)
+	start, end = start[commonPrefixLen:], end[commonPrefixLen:]
+	result = append(result, start[:commonPrefixLen]...)
+
+	for len(start) > 0 || len(end) > 0 {
+		startLen, endLen := len(start), len(end)
+		for i := startLen; i < 8; i++ {
+			start = append(start, 0)
+		}
+		for i := endLen; i < 8; i++ {
+			end = append(end, 0)
+		}
+		startRemain, lowerInt, err := codec.DecodeInt(start)
+		if err != nil {
+			return nil, err
+		}
+		endRemain, upperInt, err := codec.DecodeInt(end)
+		result = codec.EncodeInt(result, rander.Int63n(upperInt-lowerInt)+lowerInt)
+		start, end = startRemain, endRemain
+	}
+	return result, nil
 }
 
 func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.SampleCollector, tp *types.FieldType, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, error) {
@@ -1069,12 +1097,9 @@ func (e *AnalyzeFastExec) buildIndexStats(idxInfo *model.IndexInfo, collector *s
 
 func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMSketch, error) {
 	errs := make([]error, e.concurrency)
-	hasPKInfo := 0
-	if e.pkInfo != nil {
-		hasPKInfo = 1
-	}
+	pkColCount := pkColsCount(e.handleCols)
 	// collect column samples and primary key samples and index samples.
-	length := len(e.colsInfo) + hasPKInfo + len(e.idxsInfo)
+	length := len(e.colsInfo) + pkColCount + len(e.idxsInfo)
 	e.collectors = make([]*statistics.SampleCollector, length)
 	for i := range e.collectors {
 		e.collectors[i] = &statistics.SampleCollector{
@@ -1111,7 +1136,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		// Build collector properties.
 		collector := e.collectors[i]
 		collector.Samples = collector.Samples[:e.sampCursor]
-		sort.Slice(collector.Samples, func(i, j int) bool { return collector.Samples[i].RowID < collector.Samples[j].RowID })
+		sort.Slice(collector.Samples, func(i, j int) bool { return collector.Samples[i].Handle.Compare(collector.Samples[j].Handle) < 0 })
 		collector.CalcTotalSize()
 		// Adjust the row count in case the count of `tblStats` is not accurate and too small.
 		rowCount = mathutil.MaxInt64(rowCount, int64(len(collector.Samples)))
@@ -1119,12 +1144,13 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 		if len(collector.Samples) > 0 {
 			collector.TotalSize *= rowCount / int64(len(collector.Samples))
 		}
-		if i < hasPKInfo {
-			hists[i], cms[i], err = e.buildColumnStats(e.pkInfo.ID, e.collectors[i], &e.pkInfo.FieldType, rowCount)
-		} else if i < hasPKInfo+len(e.colsInfo) {
-			hists[i], cms[i], err = e.buildColumnStats(e.colsInfo[i-hasPKInfo].ID, e.collectors[i], &e.colsInfo[i-hasPKInfo].FieldType, rowCount)
+		if i < pkColCount {
+			pkCol := e.handleCols.GetCol(i)
+			hists[i], cms[i], err = e.buildColumnStats(pkCol.ID, e.collectors[i], pkCol.RetType, rowCount)
+		} else if i < pkColCount+len(e.colsInfo) {
+			hists[i], cms[i], err = e.buildColumnStats(e.colsInfo[i-pkColCount].ID, e.collectors[i], &e.colsInfo[i-pkColCount].FieldType, rowCount)
 		} else {
-			hists[i], cms[i], err = e.buildIndexStats(e.idxsInfo[i-hasPKInfo-len(e.colsInfo)], e.collectors[i], rowCount)
+			hists[i], cms[i], err = e.buildIndexStats(e.idxsInfo[i-pkColCount-len(e.colsInfo)], e.collectors[i], rowCount)
 		}
 		if err != nil {
 			return nil, nil, err
@@ -1192,7 +1218,7 @@ type AnalyzeTestFastExec struct {
 	AnalyzeFastExec
 	Ctx             sessionctx.Context
 	PhysicalTableID int64
-	PKInfo          *model.ColumnInfo
+	HandleCols      core.HandleCols
 	ColsInfo        []*model.ColumnInfo
 	IdxsInfo        []*model.IndexInfo
 	Concurrency     int
@@ -1204,7 +1230,7 @@ type AnalyzeTestFastExec struct {
 // TestFastSample only test the fast sample in unit test.
 func (e *AnalyzeTestFastExec) TestFastSample() error {
 	e.ctx = e.Ctx
-	e.pkInfo = e.PKInfo
+	e.handleCols = e.HandleCols
 	e.colsInfo = e.ColsInfo
 	e.idxsInfo = e.IdxsInfo
 	e.concurrency = e.Concurrency
@@ -1266,7 +1292,8 @@ type analyzePKIncrementalExec struct {
 
 func analyzePKIncremental(colExec *analyzePKIncrementalExec) analyzeResult {
 	var maxVal types.Datum
-	if mysql.HasUnsignedFlag(colExec.pkInfo.Flag) {
+	pkInfo := colExec.handleCols.GetCol(0)
+	if mysql.HasUnsignedFlag(pkInfo.RetType.Flag) {
 		maxVal = types.NewUintDatum(math.MaxUint64)
 	} else {
 		maxVal = types.NewIntDatum(math.MaxInt64)

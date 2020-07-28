@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -215,15 +216,14 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
 
-	var pkCol *model.ColumnInfo
+	handleCols := core.BuildHandleColsForAnalyze(tk.Se, tblInfo)
 	var colsInfo []*model.ColumnInfo
 	var indicesInfo []*model.IndexInfo
 	for _, col := range tblInfo.Columns {
-		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			pkCol = col
-		} else {
-			colsInfo = append(colsInfo, col)
+		if mysql.HasPriKeyFlag(col.Flag) {
+			continue
 		}
+		colsInfo = append(colsInfo, col)
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
@@ -234,7 +234,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	opts[ast.AnalyzeOptNumSamples] = 20
 	mockExec := &executor.AnalyzeTestFastExec{
 		Ctx:             tk.Se.(sessionctx.Context),
-		PKInfo:          pkCol,
+		HandleCols:      handleCols,
 		ColsInfo:        colsInfo,
 		IdxsInfo:        indicesInfo,
 		Concurrency:     1,

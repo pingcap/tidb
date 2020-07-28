@@ -217,7 +217,7 @@ func (s *testTableCodecSuite) TestUnflattenDatums(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
 	input := types.MakeDatums(int64(1))
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
-	output, err := rowcodec.UnflattenDatums(input, tps, sc.TimeZone)
+	output, err := UnflattenDatums(input, tps, sc.TimeZone)
 	c.Assert(err, IsNil)
 	cmp, err := input[0].CompareDatum(sc, &output[0])
 	c.Assert(err, IsNil)

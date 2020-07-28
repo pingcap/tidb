@@ -119,11 +119,8 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 		c.Assert(err, IsNil)
 
 		// decode to datum map.
-		handleDecoder := rowcodec.NewDatumMapHandleDecoder(cols, []int64{-1}, sc.TimeZone)
-		dm, err := handleDecoder.DecodeToDatumMap(kv.IntHandle(handleValue), nil)
-		c.Assert(err, IsNil)
-		rDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
-		dm, err = rDecoder.DecodeToDatumMap(newRow, dm)
+		mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
+		dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
 		c.Assert(err, IsNil)
 		for _, t := range testData {
 			d, exists := dm[t.id]

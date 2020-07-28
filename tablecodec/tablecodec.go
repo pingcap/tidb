@@ -339,7 +339,7 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
-	colDatum, err := rowcodec.Unflatten(d, ft, loc)
+	colDatum, err := Unflatten(d, ft, loc)
 	if err != nil {
 		return types.Datum{}, errors.Trace(err)
 	}
@@ -411,7 +411,7 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			v, err = rowcodec.Unflatten(v, ft, loc)
+			v, err = Unflatten(v, ft, loc)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -445,17 +445,39 @@ func DecodeHandleToDatum(handle kv.Handle, handleColIDs []int64,
 	if row == nil {
 		row = make(map[int64]types.Datum, len(cols))
 	}
-	reqCols := make([]rowcodec.ColInfo, len(cols))
-	var idx int
-	for id, tp := range cols {
-		reqCols[idx] = rowcodec.ColInfo{
-			ID: id,
-			Ft: tp,
+	var err error
+	forEachColumnIDMatch(handleColIDs, cols, func(colID int64, ft *types.FieldType, idx int) {
+		if handle.IsInt() {
+			if mysql.HasUnsignedFlag(ft.Flag) {
+				row[colID] = types.NewUintDatum(uint64(handle.IntValue()))
+			} else {
+				row[colID] = types.NewIntDatum(handle.IntValue())
+			}
+			return
 		}
-		idx++
+		// Decode common handle to Datum.
+		var d types.Datum
+		if _, d, err = codec.DecodeOne(handle.EncodedCol(idx)); err != nil {
+			return
+		}
+		if d, err = Unflatten(d, ft, loc); err != nil {
+			return
+		}
+		row[colID] = d
+	})
+	return row, err
+}
+
+func forEachColumnIDMatch(handleColIDs []int64, cols map[int64]*types.FieldType,
+	f func(id int64, fieldTp *types.FieldType, idx int)) {
+	for id, ft := range cols {
+		for idx, hid := range handleColIDs {
+			if id != hid {
+				continue
+			}
+			f(id, ft, idx)
+		}
 	}
-	rd := rowcodec.NewDatumMapHandleDecoder(reqCols, handleColIDs, loc)
-	return rd.DecodeToDatumMap(handle, row)
 }
 
 // CutRowNew cuts encoded row into byte slices and return columns' byte slice.
@@ -495,6 +517,78 @@ func CutRowNew(data []byte, colIDs map[int64]int) ([][]byte, error) {
 		}
 	}
 	return row, nil
+}
+
+// UnflattenDatums converts raw datums to column datums.
+func UnflattenDatums(datums []types.Datum, fts []*types.FieldType, loc *time.Location) ([]types.Datum, error) {
+	for i, datum := range datums {
+		ft := fts[i]
+		uDatum, err := Unflatten(datum, ft, loc)
+		if err != nil {
+			return datums, errors.Trace(err)
+		}
+		datums[i] = uDatum
+	}
+	return datums, nil
+}
+
+// Unflatten converts a raw datum to a column datum.
+func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (types.Datum, error) {
+	if datum.IsNull() {
+		return datum, nil
+	}
+	switch ft.Tp {
+	case mysql.TypeFloat:
+		datum.SetFloat32(float32(datum.GetFloat64()))
+		return datum, nil
+	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
+		datum.SetString(datum.GetString(), ft.Collate)
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeYear, mysql.TypeInt24,
+		mysql.TypeLong, mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeTinyBlob,
+		mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
+		return datum, nil
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		t := types.NewTime(types.ZeroCoreTime, ft.Tp, int8(ft.Decimal))
+		var err error
+		err = t.FromPackedUint(datum.GetUint64())
+		if err != nil {
+			return datum, errors.Trace(err)
+		}
+		if ft.Tp == mysql.TypeTimestamp && !t.IsZero() {
+			err = t.ConvertTimeZone(time.UTC, loc)
+			if err != nil {
+				return datum, errors.Trace(err)
+			}
+		}
+		datum.SetUint64(0)
+		datum.SetMysqlTime(t)
+		return datum, nil
+	case mysql.TypeDuration: // duration should read fsp from column meta data
+		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: int8(ft.Decimal)}
+		datum.SetMysqlDuration(dur)
+		return datum, nil
+	case mysql.TypeEnum:
+		// ignore error deliberately, to read empty enum value.
+		enum, err := types.ParseEnumValue(ft.Elems, datum.GetUint64())
+		if err != nil {
+			enum = types.Enum{}
+		}
+		datum.SetMysqlEnum(enum, ft.Collate)
+		return datum, nil
+	case mysql.TypeSet:
+		set, err := types.ParseSetValue(ft.Elems, datum.GetUint64())
+		if err != nil {
+			return datum, errors.Trace(err)
+		}
+		datum.SetMysqlSet(set, ft.Collate)
+		return datum, nil
+	case mysql.TypeBit:
+		val := datum.GetUint64()
+		byteSize := (ft.Flen + 7) >> 3
+		datum.SetUint64(0)
+		datum.SetMysqlBit(types.NewBinaryLiteralFromUint(val, byteSize))
+	}
+	return datum, nil
 }
 
 // EncodeIndexSeekKey encodes an index value to kv.Key.

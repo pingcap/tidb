@@ -240,8 +240,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 		for _, col := range x.ColTasks {
 			var colNames []string
-			if col.PKInfo != nil {
-				colNames = append(colNames, col.PKInfo.Name.O)
+			if col.HandleCols != nil {
+				colNames = append(colNames, col.HandleCols.String())
 			}
 			for _, c := range col.ColsInfo {
 				colNames = append(colNames, c.Name.O)
