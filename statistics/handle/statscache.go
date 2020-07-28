@@ -39,8 +39,8 @@ func newstatsCache(maxMemoryLimit int64) (*statsCache, error) {
 	return &c, nil
 }
 
-// Lookup get table with id.
-func (sc *statsCache) Lookup(id int64) (*statistics.Table, bool) {
+// LookupUnlock get table with id without Lock.
+func (sc *statsCache) LookupUnlock(id int64) (*statistics.Table, bool) {
 	var key statsCacheKey = statsCacheKey(id)
 	value, hit := sc.cache.Get(key)
 	if !hit {
@@ -48,6 +48,13 @@ func (sc *statsCache) Lookup(id int64) (*statistics.Table, bool) {
 	}
 	table := value.(*statistics.Table)
 	return table, true
+}
+
+// Lookup get table with id.
+func (sc *statsCache) Lookup(id int64) (*statistics.Table, bool) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.LookupUnlock(id)
 }
 
 // Insert insert a new table to tables and update the cache.
@@ -74,7 +81,7 @@ func (sc *statsCache) Insert(table *statistics.Table) (bool, error) {
 
 // Erase Erase a stateCache with physical id
 func (sc *statsCache) Erase(deletedID int64) bool {
-	table, hit := sc.Lookup(deletedID)
+	table, hit := sc.LookupUnlock(deletedID)
 	if !hit {
 		return false
 	}
