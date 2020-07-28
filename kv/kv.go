@@ -50,6 +50,8 @@ const (
 	TaskID
 	// InfoSchema is schema version used by txn startTS.
 	InfoSchema
+	// CollectRuntimeStats is used to enable collect runtime stats.
+	CollectRuntimeStats
 )
 
 // Priority value for transaction priority.
