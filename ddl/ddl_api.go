@@ -3892,6 +3892,15 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		}
 	}
 
+	// Check the tiflash replica count should less than the total tiflash store.
+	tiflashStoreCnt, err := infoschema.GetTiFlashStoreCount(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if replicaInfo.Count > tiflashStoreCnt {
+		return errors.Errorf("the tiflash replica count: %d should less than the total tiflash server count: %d", replicaInfo.Count, tiflashStoreCnt)
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
