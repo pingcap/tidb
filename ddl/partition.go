@@ -83,9 +83,12 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 		return ver, err
 	}
 
-	// addingDefinition's len is 0 meaning the job is in the initial state of add partition.
-	// Here should use partInfo from job directly and do some check action.
-	if len(addingDefinitions) == 0 {
+	// In order to skip maintaining the state check in partitionDefinition, TiDB use addingDefinition instead of state field.
+	// So here using `job.SchemaState` to judge what the stage of this job is.
+	switch job.SchemaState {
+	case model.StateNone:
+		// job.SchemaState == model.StateNone means the job is in the initial state of add partition.
+		// Here should use partInfo from job directly and do some check action.
 		err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions)))
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -103,12 +106,6 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-	}
-
-	// In order to skip maintaining the state check in partitionDefinition, TiDB use addingDefinition instead of state field.
-	// So here using `job.SchemaState` to judge what the stage of this job is.
-	switch job.SchemaState {
-	case model.StateNone:
 		// none -> replica only
 		job.SchemaState = model.StateReplicaOnly
 		// move the adding definition into tableInfo.
@@ -159,7 +156,7 @@ func updatePartitionInfo(tblInfo *model.TableInfo) {
 	parInfo.Definitions = append(parInfo.Definitions, oldDefs...)
 	parInfo.Definitions = append(parInfo.Definitions, newDefs...)
 	tblInfo.Partition.Definitions = parInfo.Definitions
-	tblInfo.Partition.AddingDefinitions = tblInfo.Partition.AddingDefinitions[:0]
+	tblInfo.Partition.AddingDefinitions = nil
 }
 
 // updateAddingPartitionInfo write adding partitions into `addingDefinitions` field in the tableInfo.
@@ -175,7 +172,7 @@ func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) []int64 {
 	for _, one := range tblInfo.Partition.AddingDefinitions {
 		physicalTableIDs = append(physicalTableIDs, one.ID)
 	}
-	tblInfo.Partition.AddingDefinitions = tblInfo.Partition.AddingDefinitions[:0]
+	tblInfo.Partition.AddingDefinitions = nil
 	return physicalTableIDs
 }
 
