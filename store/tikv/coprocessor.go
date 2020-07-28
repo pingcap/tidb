@@ -91,7 +91,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.collector = &copResponseCollector{
 			respChan: make(chan *copResponse, it.concurrency),
 			tasks:    it.tasks,
-			finishCh: it.finishCh,
 			sendRate: it.sendRate,
 		}
 	}
@@ -382,11 +381,11 @@ type copIterator struct {
 	concurrency int
 	finishCh    chan struct{}
 
-	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
+	// results are stored in copTask.respChan. If keepOrder, read them out one by one, otherwise response would be
+	// collected by copResponseCollector
 	tasks []*copTask
 	curr  int
-	// sendRate controls the sending rate of copIteratorTaskSender, if keepOrder,
-	// to prevent all tasks being done (aka. all of the responses are buffered)
+	// sendRate controls the sending rate of copIteratorTaskSender
 	sendRate *rateLimit
 
 	vars *kv.Variables
@@ -405,6 +404,7 @@ type copIterator struct {
 
 	minCommitTSPushed
 
+	// If not keep order, collector will collector the response from task respCh
 	collector *copResponseCollector
 }
 
@@ -547,10 +547,8 @@ func (it *copIterator) open(ctx context.Context) {
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
 	for _, t := range sender.tasks {
-		// If keepOrder, we must control the sending rate to prevent all tasks
-		// being done (aka. all of the responses are buffered) by copIteratorWorker.
-		// We keep the number of inflight tasks within the number of concurrency * 2.
-		// It sends one more task if a task has been finished in copIterator.Next.
+		// We keep the number of inflight tasks within the number of concurrency
+		// It sends one more task if a task has been finished.
 		exit := sender.sendRate.getToken(sender.finishCh)
 		if exit {
 			break
@@ -1170,44 +1168,41 @@ func (it copErrorResponse) Close() error {
 	return nil
 }
 
+// copResponseCollector is used to collect the resp from task respCh into its own resp
 type copResponseCollector struct {
 	respChan chan *copResponse
 	tasks    []*copTask
-	finishCh chan struct{}
 	sendRate *rateLimit
 }
 
 func (c *copResponseCollector) run() {
 	finishedTask := make(map[int]struct{}, len(c.tasks))
 	for {
-		select {
-		case <-c.finishCh:
+		// fetch response from tasks, it the task have finished, we will directly skip this task
+		for id, task := range c.tasks {
+			if _, ok := finishedTask[id]; ok {
+				continue
+			}
+			select {
+			case resp, ok := <-task.respChan:
+				if ok {
+					c.respChan <- resp
+				} else {
+					// if the task have been finished, record the task id.
+					finishedTask[id] = struct{}{}
+					if len(finishedTask) < len(c.tasks) {
+						// putToken when a task finished.
+						c.sendRate.putToken()
+					}
+				}
+				break
+			default:
+				continue
+			}
+		}
+		if len(finishedTask) >= len(c.tasks) {
 			close(c.respChan)
 			return
-		default:
-			for id, task := range c.tasks {
-				if _, ok := finishedTask[id]; ok {
-					continue
-				}
-				select {
-				case resp, ok := <-task.respChan:
-					if ok {
-						c.respChan <- resp
-					} else {
-						finishedTask[id] = struct{}{}
-						if len(finishedTask) < len(c.tasks) {
-							c.sendRate.putToken()
-						}
-					}
-					break
-				default:
-					continue
-				}
-			}
-			if len(finishedTask) >= len(c.tasks) {
-				close(c.respChan)
-				return
-			}
 		}
 	}
 }
