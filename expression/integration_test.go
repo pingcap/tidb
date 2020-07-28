@@ -6481,50 +6481,10 @@ func (s *testIntegrationSuite) TestIssue16697(c *C) {
 	}
 }
 
-func (s *testIntegrationSerialSuite) TestIssue17176(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
+func (s *testIntegrationSuite) TestIssue17115(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8 collate utf8_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
-	tk.MustGetErrMsg("create table t(a enum('a', 'Á')) charset utf8 collate utf8_general_ci;", "[types:1291]Column 'a' has duplicated value 'Á' in ENUM")
-	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8mb4 collate utf8mb4_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
-	tk.MustExec("create table t(a enum('a', 'A')) charset utf8 collate utf8_bin;")
-	tk.MustExec("drop table t;")
-	tk.MustExec("create table t3(a enum('a', 'A')) charset utf8mb4 collate utf8mb4_bin;")
-}
-
-func (s *testIntegrationSuite) TestIndexedVirtualGeneratedColumnTruncate(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(a int, b tinyint as(a+100) unique key)")
-	tk.MustExec("insert ignore into t values(200, default)")
-	tk.MustExec("update t set a=1 where a=200")
-	tk.MustExec("admin check table t")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert ignore into t values(200, default)")
-	tk.MustExec("admin check table t")
-	tk.MustExec("insert ignore into t values(200, default) on duplicate key update a=100")
-	tk.MustExec("admin check table t")
-	tk.MustExec("delete from t")
-	tk.MustExec("admin check table t")
-
-	tk.MustExec("begin")
-	tk.MustExec("insert ignore into t values(200, default)")
-	tk.MustExec("update t set a=1 where a=200")
-	tk.MustExec("admin check table t")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert ignore into t values(200, default)")
-	tk.MustExec("admin check table t")
-	tk.MustExec("insert ignore into t values(200, default) on duplicate key update a=100")
-	tk.MustExec("admin check table t")
-	tk.MustExec("delete from t")
-	tk.MustExec("admin check table t")
-	tk.MustExec("commit")
-	tk.MustExec("admin check table t")
+	tk.MustQuery("select collation(user());").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(compress('abc'));").Check(testkit.Rows("binary"))
 }
 
 func (s *testIntegrationSuite) TestIssue17287(c *C) {
@@ -6550,6 +6510,16 @@ func (s *testIntegrationSuite) TestIssue17287(c *C) {
 	tk.MustExec("set @val2 = 1589873946;")
 	tk.MustQuery("execute stmt7 using @val1;").Check(testkit.Rows("1589873945"))
 	tk.MustQuery("execute stmt7 using @val2;").Check(testkit.Rows("1589873946"))
+}
+
+func (s *testIntegrationSuite) TestIssue17898(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table t0")
+	tk.MustExec("create table t0(a char(10), b int as ((a)));")
+	tk.MustExec("insert into t0(a) values(\"0.5\");")
+	tk.MustQuery("select * from t0;").Check(testkit.Rows("0.5 1"))
 }
 
 func (s *testIntegrationSuite) TestIssue17727(c *C) {
