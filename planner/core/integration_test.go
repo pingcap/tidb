@@ -14,7 +14,9 @@
 package core_test
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -1419,4 +1421,21 @@ func (s *testIntegrationSuite) TestIndexJoinOnClusteredIndex(c *C) {
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
 	}
+}
+
+func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b varchar(20))")
+	tk.MustExec("insert into t values (1,1)")
+
+	res := tk.MustQuery("explain analyze select * from t where a=1;")
+	resBuff := bytes.NewBufferString("")
+	for _, row := range res.Rows() {
+		fmt.Fprintf(resBuff, "%s\n", row)
+	}
+	explain := resBuff.String()
+	c.Assert(strings.Contains(explain, "Get:{num_rpc:"), IsTrue, Commentf("%s", explain))
+	c.Assert(strings.Contains(explain, "total_time:"), IsTrue, Commentf("%s", explain))
 }
