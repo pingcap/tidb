@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -152,7 +153,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		dedup := make(map[hack.MutableString]struct{})
 		keys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
-			physID := getPhysID(e.tblInfo, kv.IntHandle(idxVals[e.partPos].GetInt64()))
+			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
 			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
@@ -227,7 +228,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		if len(e.physIDs) > 0 {
 			tID = e.physIDs[i]
 		} else {
-			tID = getPhysID(e.tblInfo, handle)
+			if handle.IsInt() {
+				tID = getPhysID(e.tblInfo, handle.IntValue())
+			} else {
+				_, d, err1 := codec.DecodeOne(handle.EncodedCol(e.partPos))
+				if err1 != nil {
+					return err1
+				}
+				tID = getPhysID(e.tblInfo, d.GetInt64())
+			}
 		}
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
 		keys[i] = key
@@ -327,11 +336,11 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 	return nil, kv.ErrNotExist
 }
 
-func getPhysID(tblInfo *model.TableInfo, val kv.Handle) int64 {
+func getPhysID(tblInfo *model.TableInfo, intVal int64) int64 {
 	pi := tblInfo.Partition
 	if pi == nil {
 		return tblInfo.ID
 	}
-	partIdx := math.Abs(val.IntValue() % int64(pi.Num)) // TODO: fix me for table, partition on cluster index.
+	partIdx := math.Abs(intVal % int64(pi.Num))
 	return pi.Definitions[partIdx].ID
 }
