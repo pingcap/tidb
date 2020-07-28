@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -682,9 +683,6 @@ func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
-
 	// Basic show create table.
 	tk.MustExec("create table auto_random_tbl1 (a bigint primary key auto_random(3), b varchar(255))")
 	tk.MustQuery("show create table `auto_random_tbl1`").Check(testutil.RowsWithSep("|",
@@ -780,6 +778,40 @@ func (s *testAutoRandomSuite) TestAutoIdCache(c *C) {
 			"  `a` int(11) NOT NULL,\n"+
 			"  PRIMARY KEY (`a`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=5 */",
+	))
+}
+
+func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bigint primary key auto_random(5), b int unique key auto_increment) auto_random_base = 100, auto_increment = 100")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
+			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`a`),\n"+
+			"  UNIQUE KEY `b` (`b`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=100 /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
+	))
+
+	tk.MustExec("insert into t(`a`) values (1000)")
+	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
+		""+
+			"t CREATE TABLE `t` (\n"+
+			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
+			"  `b` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  PRIMARY KEY (`a`),\n"+
+			"  UNIQUE KEY `b` (`b`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=5100 /*T![auto_rand_base] AUTO_RANDOM_BASE=6001 */",
 	))
 }
 
