@@ -167,7 +167,9 @@
       "select /*+ use_index(t1, c) */ * from t1",
       "select * from t1 use index(c) where t1.c in (2.2, 3.3)",
       "select * from t1 where t1.a = 1 order by b",
-      "select * from t1 order by a, b limit 1"
+      "select * from t1 order by a, b limit 1",
+      "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a >= 1 or t1.c = 2.2",
+      "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a = 1 and t1.b = '111' or t1.c = 3.3"
     ]
   },
   {

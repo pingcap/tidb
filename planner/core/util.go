@@ -40,7 +40,7 @@ func (a *AggregateFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
 	case *ast.AggregateFuncExpr:
 		a.inAggregateFuncExpr = true
-	case *ast.SelectStmt, *ast.UnionStmt:
+	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
 	}
 	return n, false
@@ -66,7 +66,7 @@ type WindowFuncExtractor struct {
 // Enter implements Visitor interface.
 func (a *WindowFuncExtractor) Enter(n ast.Node) (ast.Node, bool) {
 	switch n.(type) {
-	case *ast.SelectStmt, *ast.UnionStmt:
+	case *ast.SelectStmt, *ast.SetOprStmt:
 		return n, true
 	}
 	return n, false
