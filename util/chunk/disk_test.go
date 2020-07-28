@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -26,6 +27,7 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -140,10 +142,12 @@ type listInDiskWriteDisk struct {
 
 func newListInDiskWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWriteDisk, error) {
 	l := listInDiskWriteDisk{*NewListInDisk(fieldTypes)}
-	err := l.initDiskFile()
+	disk, err := ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
 	if err != nil {
 		return nil, err
 	}
+	l.disk = disk
+	l.bufWriter = bufWriterPool.Get().(*bufio.Writer)
 	l.bufWriter.Reset(l.disk)
 	return &l, nil
 }

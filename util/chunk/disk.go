@@ -113,11 +113,13 @@ func (l *ListInDisk) flush() (err error) {
 			return
 		}
 	}
-	err = l.checksumWriter.Close()
-	if err != nil {
-		return
+	if l.checksumWriter != nil {
+		err = l.checksumWriter.Close()
+		if err != nil {
+			return
+		}
+		l.checksumWriter = nil
 	}
-	l.checksumWriter = nil
 	return
 }
 
