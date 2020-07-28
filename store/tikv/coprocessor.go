@@ -86,10 +86,14 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
-	if it.req.KeepOrder {
-		it.sendRate = newRateLimit(2 * it.concurrency)
-	} else {
-		it.respChan = make(chan *copResponse, it.concurrency)
+	it.sendRate = newRateLimit(it.concurrency)
+	if !it.req.KeepOrder {
+		it.collector = &copResponseCollector{
+			respChan: make(chan *copResponse, it.concurrency),
+			tasks:    it.tasks,
+			finishCh: it.finishCh,
+			sendRate: it.sendRate,
+		}
 	}
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
@@ -385,9 +389,6 @@ type copIterator struct {
 	// to prevent all tasks being done (aka. all of the responses are buffered)
 	sendRate *rateLimit
 
-	// Otherwise, results are stored in respChan.
-	respChan chan *copResponse
-
 	vars *kv.Variables
 
 	memTracker *memory.Tracker
@@ -403,6 +404,8 @@ type copIterator struct {
 	closed uint32
 
 	minCommitTSPushed
+
+	collector *copResponseCollector
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -411,7 +414,6 @@ type copIteratorWorker struct {
 	wg       *sync.WaitGroup
 	store    *tikvStore
 	req      *kv.Request
-	respChan chan<- *copResponse
 	finishCh <-chan struct{}
 	vars     *kv.Variables
 	clientHelper
@@ -427,7 +429,6 @@ type copIteratorTaskSender struct {
 	wg       *sync.WaitGroup
 	tasks    []*copTask
 	finishCh <-chan struct{}
-	respChan chan<- *copResponse
 	sendRate *rateLimit
 }
 
@@ -491,12 +492,7 @@ const minLogCopTaskTime = 300 * time.Millisecond
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer worker.wg.Done()
 	for task := range worker.taskCh {
-		respCh := worker.respChan
-		if respCh == nil {
-			respCh = task.respChan
-		}
-
-		worker.handleTask(ctx, task, respCh)
+		worker.handleTask(ctx, task, task.respChan)
 		close(task.respChan)
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
@@ -520,7 +516,6 @@ func (it *copIterator) open(ctx context.Context) {
 			wg:       &it.wg,
 			store:    it.store,
 			req:      it.req,
-			respChan: it.respChan,
 			finishCh: it.finishCh,
 			vars:     it.vars,
 			clientHelper: clientHelper{
@@ -543,8 +538,10 @@ func (it *copIterator) open(ctx context.Context) {
 		finishCh: it.finishCh,
 		sendRate: it.sendRate,
 	}
-	taskSender.respChan = it.respChan
 	go taskSender.run()
+	if it.collector != nil {
+		go it.collector.run()
+	}
 }
 
 func (sender *copIteratorTaskSender) run() {
@@ -554,13 +551,11 @@ func (sender *copIteratorTaskSender) run() {
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
 		// We keep the number of inflight tasks within the number of concurrency * 2.
 		// It sends one more task if a task has been finished in copIterator.Next.
-		if sender.sendRate != nil {
-			exit := sender.sendRate.getToken(sender.finishCh)
-			if exit {
-				break
-			}
+		exit := sender.sendRate.getToken(sender.finishCh)
+		if exit {
+			break
 		}
-		exit := sender.sendToTaskCh(t)
+		exit = sender.sendToTaskCh(t)
 		if exit {
 			break
 		}
@@ -569,9 +564,6 @@ func (sender *copIteratorTaskSender) run() {
 
 	// Wait for worker goroutines to exit.
 	sender.wg.Wait()
-	if sender.respChan != nil {
-		close(sender.respChan)
-	}
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
@@ -635,12 +627,13 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	)
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
-	if it.respChan != nil {
+	if it.collector != nil {
 		// Get next fetched resp from chan
-		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
+		resp, ok, closed = it.recvFromRespCh(ctx, it.collector.respChan)
 		if !ok || closed {
 			return nil, nil
 		}
+
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
@@ -1175,4 +1168,46 @@ func (it copErrorResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 func (it copErrorResponse) Close() error {
 	return nil
+}
+
+type copResponseCollector struct {
+	respChan chan *copResponse
+	tasks    []*copTask
+	finishCh chan struct{}
+	sendRate *rateLimit
+}
+
+func (c *copResponseCollector) run() {
+	finishedTask := make(map[int]struct{}, len(c.tasks))
+	for {
+		select {
+		case <-c.finishCh:
+			close(c.respChan)
+			return
+		default:
+			for id, task := range c.tasks {
+				if _, ok := finishedTask[id]; ok {
+					continue
+				}
+				select {
+				case resp, ok := <-task.respChan:
+					if ok {
+						c.respChan <- resp
+					} else {
+						finishedTask[id] = struct{}{}
+						if len(finishedTask) < len(c.tasks) {
+							c.sendRate.putToken()
+						}
+					}
+					break
+				default:
+					continue
+				}
+			}
+			if len(finishedTask) >= len(c.tasks) {
+				close(c.respChan)
+				return
+			}
+		}
+	}
 }
