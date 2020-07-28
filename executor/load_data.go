@@ -205,6 +205,8 @@ func (e *LoadDataInfo) initFieldMappings() []string {
 		if v.ColumnName != nil {
 			column = table.FindCol(tableCols, v.ColumnName.Name.O)
 			columns = append(columns, v.ColumnName.Name.O)
+		} else {
+			column = nil
 		}
 
 		fieldMapping := &FieldMapping{
