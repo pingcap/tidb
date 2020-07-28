@@ -13,7 +13,7 @@ const long = 2 << 20
 
 func generateData(length int) string {
 	rand.Seed(1)
-	r := make([]rune, length, length)
+	r := make([]rune, length)
 	for i := range r {
 		r[i] = rune(rand.Intn(0xFFFF))
 	}

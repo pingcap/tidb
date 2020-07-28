@@ -256,7 +256,7 @@ func convertRuneToWeight(r rune) []uint16 {
 			base = 0xFBC0
 		}
 		notInTableSlice[0] = uint16(base + int(r>>15))
-		notInTableSlice[0] = uint16((r & 0x7FFF) | 0x8000)
+		notInTableSlice[1] = uint16((r & 0x7FFF) | 0x8000)
 		return notInTableSlice
 	}
 
