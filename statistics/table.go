@@ -395,10 +395,10 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			// so we use heuristic methods to estimate the selectivity.
 			if idx.NDV > 0 && len(ran.LowVal) == len(idx.Info.Columns) && rangePosition == len(ran.LowVal) {
 				// for equality queries
-				selectivity = float64(coll.ModifyCount) / float64(idx.NDV) / idx.TotalRowCount()
+				selectivity = outOfRangeEQSelectivity(idx.NDV, coll.ModifyCount, int64(idx.TotalRowCount()))
 			} else {
 				// for range queries
-				selectivity = float64(coll.ModifyCount) / outOfRangeBetweenRate / idx.TotalRowCount()
+				selectivity = outOfRangeEQSelectivity(outOfRangeBetweenRate, coll.ModifyCount, int64(idx.TotalRowCount()))
 			}
 		} else {
 			selectivity = float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
@@ -437,6 +437,24 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 		totalCount = idx.TotalRowCount()
 	}
 	return totalCount, nil
+}
+
+// outOfRangeEQSelectivity estimates selectivities for out-of-range values.
+// It assumes all modifications are insertions and all new-inserted rows are uniformly distributed
+// and has the same distribution with analyzed rows, which means each unique value should have the
+// same number of rows(Tot/NDV) of it.
+func outOfRangeEQSelectivity(ndv, modifyRows, totalRows int64) float64 {
+	if modifyRows == 0 {
+		return 0 // it must be 0 since the histogram contains the whole data
+	}
+	if ndv < outOfRangeBetweenRate {
+		ndv = outOfRangeBetweenRate // avoid inaccurate selectivity caused by small NDV
+	}
+	selectivity := 1 / float64(ndv) // TODO: After extracting TopN from histograms, we can minus the TopN fraction here.
+	if selectivity*float64(totalRows) > float64(modifyRows) {
+		selectivity = float64(modifyRows) / float64(totalRows)
+	}
+	return selectivity
 }
 
 const fakePhysicalID int64 = -1
