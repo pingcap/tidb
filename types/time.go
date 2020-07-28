@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	tidbMath "github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/parser"
-	"github.com/pingcap/tidb/util/timeutil"
 )
 
 // Time format without fractional seconds precision.
@@ -560,22 +559,28 @@ func GetFsp(s string) int8 {
 // IstTimeZone finds if there is a timezone in the string.
 // for example '2020-07-07 17:55:00.163721+08:00'.
 func IstTimeZone(s string) (tz bool) {
-	timezoneRegexp := regexp.MustCompile(`.{11,}([-|+][\d]{2}:[\d]{2})$`)
-	timezoneList := timezoneRegexp.FindStringSubmatch(s)
+	timezoneRegexp := regexp.MustCompile(`[-|+][\d]{2}:[\d]{2}`)
 
-	if len(timezoneList) > 0 {
-		return true
+	idx1 := strings.LastIndex(s, "+")
+	idx2 := strings.LastIndex(s, "-")
+	if idx1 > 10 {
+		timezoneList := timezoneRegexp.FindStringSubmatch(s[idx1:])
+		if len(timezoneList) > 0 {
+			return true
+		}
+	} else if idx2 > 10 {
+		timezoneList := timezoneRegexp.FindStringSubmatch(s[idx2:])
+		if len(timezoneList) > 0 {
+			return true
+		}
 	}
+
 	return false
 }
 
 // handleTimeZone offsets are supported for inserted datetime values.
 // See: https://dev.mysql.com/doc/refman/8.0/en/time-zone-support.html
-func handleTimeZone(timeZone string) (diffMinute gotime.Duration, err error) {
-	systemTZ, err := gotime.LoadLocation(timeutil.InferSystemTZ())
-	if err != nil {
-		return diffMinute, errors.Trace(err)
-	}
+func handleTimeZone(timeZone string, systemTZ *gotime.Location) (diffMinute gotime.Duration, err error) {
 	_, offset := gotime.Now().In(systemTZ).Zone()
 
 	hour, err := strconv.Atoi(timeZone[1:3])
@@ -836,9 +841,8 @@ func isValidSeparator(c byte, prevParts int) bool {
 
 // splitDateTime The only delimiter recognized between a date and time part and a fractional seconds part is the decimal point.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
-func splitDateTime(format string) (seps []string, fracStr string, timeZoneDiff gotime.Duration, err error) {
+func splitDateTime(format string) (seps []string, fracStr string, timeZone string) {
 	isTimezone := IstTimeZone(format)
-	var timeZone string
 	if isTimezone {
 		timeZone = format[len(format)-6:]
 		format = format[:len(format)-6]
@@ -852,9 +856,6 @@ func splitDateTime(format string) (seps []string, fracStr string, timeZoneDiff g
 
 	seps = ParseDateFormat(format)
 
-	if isTimezone {
-		timeZoneDiff, err = handleTimeZone(timeZone)
-	}
 	return
 }
 
@@ -867,10 +868,8 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		err                                    error
 	)
 
-	seps, fracStr, timeZoneDiff, err := splitDateTime(str)
-	if err != nil {
-		return ZeroDatetime, errors.Trace(err)
-	}
+	seps, fracStr, timeZone := splitDateTime(str)
+
 	var truncatedOrIncorrect bool
 	switch len(seps) {
 	case 1:
@@ -1025,12 +1024,19 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 		tmp = FromGoTime(t1.Add(gotime.Second))
 	}
 
-	if timeZoneDiff != 0 {
-		t1, err := tmp.GoTime(sc.TimeZone)
+	if timeZone != "" {
+		timeZoneDiff, err := handleTimeZone(timeZone, sc.TimeZone)
 		if err != nil {
 			return ZeroDatetime, errors.Trace(err)
 		}
-		tmp = FromGoTime(t1.Add(timeZoneDiff))
+
+		if timeZoneDiff != 0 {
+			t1, err := tmp.GoTime(sc.TimeZone)
+			if err != nil {
+				return ZeroDatetime, errors.Trace(err)
+			}
+			tmp = FromGoTime(t1.Add(timeZoneDiff))
+		}
 	}
 
 	nt := NewTime(tmp, mysql.TypeDatetime, fsp)
