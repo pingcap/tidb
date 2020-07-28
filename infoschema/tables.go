@@ -1459,6 +1459,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
+// GetTiFlashStoreCount returns the count of tiflash server.
 func GetTiFlashStoreCount(ctx sessionctx.Context) (uint64, error) {
 	failpoint.Inject("mockTiFlashStoreCount", func(val failpoint.Value) {
 		if val.(bool) {
