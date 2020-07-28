@@ -1449,19 +1449,6 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	return nil
 }
 
-func checkPlacementRules(t *meta.Meta, schemaID, tblID, partitionID int64, rules []*placement.Rule) ([]*placement.Rule, error) {
-	for _, rule := range rules {
-		randID, err := t.GenAutoRandomID(schemaID, tblID, 1)
-		if err != nil {
-			return nil, err
-		}
-
-		rule.ID = fmt.Sprintf("%d_%d_%d_%d", schemaID, tblID, partitionID, randID)
-	}
-
-	return rules, nil
-}
-
 func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	var partitionID int64
 	var rules []*placement.Rule
@@ -1471,33 +1458,33 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 
+	ver, err := t.GetSchemaVersion()
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return 0, err
+		return ver, err
 	}
 
 	ptInfo := tblInfo.GetPartitionInfo()
 	if ptInfo.GetNameByID(partitionID) == "" {
 		job.State = model.JobStateCancelled
-		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
+		return ver, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	rules, err = checkPlacementRules(t, job.SchemaID, tblInfo.ID, partitionID, rules)
-	if err != nil {
-		return 0, errors.Trace(err)
+	for i, rule := range rules {
+		rule.ID = fmt.Sprintf("%d_%d_%d_%d_%d", job.SchemaID, tblInfo.ID, partitionID, job.ID, i)
 	}
 
 	err = infosync.UpdatePlacementRules(nil, rules)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
-	ver, err := updateVersionAndTableInfo(t, job, tblInfo, true)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+	job.State = model.JobStateDone
+	job.SchemaState = model.StateNone
 	return ver, nil
 }
