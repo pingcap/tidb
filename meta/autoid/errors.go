@@ -30,19 +30,19 @@ var (
 
 const (
 	// AutoRandomPKisNotHandleErrMsg indicates the auto_random column attribute is defined on a non-primary key column, or the table's primary key is not a single integer column.
-	AutoRandomPKisNotHandleErrMsg = "column %s is not the single integer primary key, or alter-primary-key is enabled"
-	// AutoRandomExperimentalDisabledErrMsg is reported when the experimental option allow-auto-random is not enabled.
-	AutoRandomExperimentalDisabledErrMsg = "auto_random is an experimental feature, which can only be used when allow-auto-random is enabled. This can be changed in the configuration."
+	AutoRandomPKisNotHandleErrMsg = "column %s is not the integer primary key, or table is created with alter-primary-key enabled"
 	// AutoRandomIncompatibleWithAutoIncErrMsg is reported when auto_random and auto_increment are specified on the same column.
 	AutoRandomIncompatibleWithAutoIncErrMsg = "auto_random is incompatible with auto_increment"
 	// AutoRandomIncompatibleWithDefaultValueErrMsg is reported when auto_random and default are specified on the same column.
 	AutoRandomIncompatibleWithDefaultValueErrMsg = "auto_random is incompatible with default"
 	// AutoRandomOverflowErrMsg is reported when auto_random is greater than max length of a MySQL data type.
-	AutoRandomOverflowErrMsg = "max allowed auto_random bits is %d, but got %d on column `%s`"
+	AutoRandomOverflowErrMsg = "max allowed auto_random shard bits is %d, but got %d on column `%s`"
 	// AutoRandomModifyColTypeErrMsg is reported when a user is trying to modify the type of a column specified with auto_random.
 	AutoRandomModifyColTypeErrMsg = "modifying the auto_random column type is not supported"
 	// AutoRandomAlterErrMsg is reported when a user is trying to add/drop/modify the value of auto_random attribute.
 	AutoRandomAlterErrMsg = "adding/dropping/modifying auto_random is not supported"
+	// AutoRandomDecreaseBitErrMsg is reported when the auto_random shard bits is decreased.
+	AutoRandomDecreaseBitErrMsg = "decreasing auto_random shard bits is not supported"
 	// AutoRandomNonPositive is reported then a user specifies a non-positive value for auto_random.
 	AutoRandomNonPositive = "the value of auto_random should be positive"
 	// AutoRandomAvailableAllocTimesNote is reported when a table containing auto_random is created.
