@@ -212,7 +212,7 @@ func (m *Meta) GetAutoTableID(dbID int64, tableID int64) (int64, error) {
 	return m.txn.HGetInt64(m.dbKey(dbID), m.autoTableIDKey(tableID))
 }
 
-// GetAutoRandomID gets current auto shard id with table id.
+// GetAutoRandomID gets current auto random id with table id.
 func (m *Meta) GetAutoRandomID(dbID int64, tableID int64) (int64, error) {
 	return m.txn.HGetInt64(m.dbKey(dbID), m.autoRandomTableIDKey(tableID))
 }
