@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+// PartitionTableExecutor is a Executor for partitioned table.
+// it works by wrap the underlying TableReader/IndexReader/IndexLookUpReader.
 type PartitionTableExecutor struct {
 	baseExecutor
 
@@ -73,6 +75,7 @@ func nextPartitionWithTrace(ctx context.Context, n nextPartition, tbl table.Phys
 	return n.nextPartition(ctx, tbl)
 }
 
+// Next implements the Executor interface.
 func (e *PartitionTableExecutor) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	var err error
@@ -97,13 +100,17 @@ func (e *PartitionTableExecutor) Next(ctx context.Context, chk *chunk.Chunk) err
 			break
 		}
 
-		e.curr.Close()
+		err = e.curr.Close()
+		if err != nil {
+			return err
+		}
 		e.curr = nil
 		e.cursor++
 	}
 	return nil
 }
 
+// Close implements the Executor interface.
 func (e *PartitionTableExecutor) Close() error {
 	var err error
 	if e.curr != nil {
