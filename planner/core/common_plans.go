@@ -904,6 +904,8 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 			buildSide = plan.InnerChildIdx ^ 1
 		case *PhysicalIndexHashJoin:
 			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalBroadCastJoin:
+			buildSide = plan.InnerChildIdx
 		}
 
 		if buildSide != -1 {
@@ -985,6 +987,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 		actRows = fmt.Sprint(rootstats.GetActRows())
 	} else {
 		analyzeInfo = "time:0ns, loops:0"
+		actRows = "0"
 	}
 	switch p.(type) {
 	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:

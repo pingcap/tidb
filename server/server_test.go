@@ -1090,7 +1090,6 @@ func (cli *testServerClient) runTestAuth(c *C) {
 		dbt.mustExec(`GRANT ALL on test.* to 'authtest'`)
 		dbt.mustExec(`GRANT authtest_r1 to 'authtest'`)
 		dbt.mustExec(`SET DEFAULT ROLE authtest_r1 TO authtest`)
-		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	cli.runTests(c, func(config *mysql.Config) {
 		config.User = "authtest"
@@ -1127,7 +1126,6 @@ func (cli *testServerClient) runTestAuth(c *C) {
 	cli.runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'authtest2'@'localhost' IDENTIFIED BY '123';`)
 		dbt.mustExec(`GRANT ALL on test.* to 'authtest2'@'localhost'`)
-		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	cli.runTests(c, func(config *mysql.Config) {
 		config.User = "authtest2"
@@ -1172,7 +1170,6 @@ func (cli *testServerClient) runTestIssue3682(c *C) {
 		dbt.mustExec(`CREATE USER 'issue3682'@'%' IDENTIFIED BY '123';`)
 		dbt.mustExec(`GRANT ALL on test.* to 'issue3682'`)
 		dbt.mustExec(`GRANT ALL on mysql.* to 'issue3682'`)
-		dbt.mustExec(`FLUSH PRIVILEGES`)
 	})
 	cli.runTests(c, func(config *mysql.Config) {
 		config.User = "issue3682"
