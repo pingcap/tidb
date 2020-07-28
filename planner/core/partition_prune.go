@@ -26,7 +26,10 @@ func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 	s := partitionProcessor{}
 	tblInfo := tbl.Meta()
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Columns)
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Columns, tblInfo)
+	if err != nil {
+		return nil, err
+	}
 	pi := tblInfo.Partition
 	switch pi.Type {
 	case model.PartitionTypeHash:
