@@ -76,7 +76,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 		rpcCancel:       NewRPCanceller(),
-		actionOnExceed:  &TaskRateLimitAction{},
+		actionOnExceed:  &taskRateLimitAction{},
 	}
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
