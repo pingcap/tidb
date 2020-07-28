@@ -5,7 +5,6 @@ import (
 	"errors"
 	"hash/crc32"
 	"io"
-	"os"
 	"sync"
 )
 
@@ -19,61 +18,76 @@ var checksumReaderBufPool = sync.Pool{
 	New: func() interface{} { return make([]byte, checksumBlockSize) },
 }
 
-type checksum struct {
-	disk        *os.File
+type checksumWriter struct {
+	w           io.Writer
 	buf         []byte
 	payload     []byte
 	payloadUsed int
-	readerMu    sync.Mutex
 }
 
-func newChecksum(disk *os.File) *checksum {
-	cks := &checksum{disk: disk}
-	cks.buf = make([]byte, checksumBlockSize)
-	cks.payload = cks.buf[checksumSize:]
-	cks.payloadUsed = 0
-	return cks
+func newChecksumWriter(w io.Writer) *checksumWriter {
+	checksumWriter := &checksumWriter{w: w}
+	checksumWriter.buf = make([]byte, checksumBlockSize)
+	checksumWriter.payload = checksumWriter.buf[checksumSize:]
+	checksumWriter.payloadUsed = 0
+	return checksumWriter
 }
 
 // Available returns how many bytes are unused in the buffer.
-func (cks *checksum) Available() int { return checksumPayloadSize - cks.payloadUsed }
+func (w *checksumWriter) Available() int { return checksumPayloadSize - w.payloadUsed }
 
-func (cks *checksum) Write(p []byte) (nn int, err error) {
-	for len(p) > cks.Available() {
-		n := copy(cks.payload[cks.payloadUsed:], p)
-		cks.payloadUsed += n
-		err = cks.Flush()
+func (w *checksumWriter) Write(p []byte) (nn int, err error) {
+	for len(p) > w.Available() {
+		n := copy(w.payload[w.payloadUsed:], p)
+		w.payloadUsed += n
+		err = w.Flush()
 		if err != nil {
 			return
 		}
 		nn += n
 		p = p[n:]
 	}
-	n := copy(cks.payload[cks.payloadUsed:], p)
-	cks.payloadUsed += n
+	n := copy(w.payload[w.payloadUsed:], p)
+	w.payloadUsed += n
 	nn += n
 	return
 }
 
+// Buffered returns the number of bytes that have been written into the current buffer.
+func (w *checksumWriter) Buffered() int { return w.payloadUsed }
+
 // Flush writes any buffered data to the disk.
-func (cks *checksum) Flush() error {
-	if cks.payloadUsed == 0 {
+func (w *checksumWriter) Flush() error {
+	if w.payloadUsed == 0 {
 		return nil
 	}
-	checksum := crc32.Checksum(cks.payload[:cks.payloadUsed], crc32.MakeTable(crc32.IEEE))
-	binary.LittleEndian.PutUint32(cks.buf, checksum)
-	n, err := cks.disk.Write(cks.buf[:cks.payloadUsed+checksumSize])
-	if n < cks.payloadUsed && err == nil {
+	checksum := crc32.Checksum(w.payload[:w.payloadUsed], crc32.MakeTable(crc32.IEEE))
+	binary.LittleEndian.PutUint32(w.buf, checksum)
+	n, err := w.w.Write(w.buf[:w.payloadUsed+checksumSize])
+	if n < w.payloadUsed && err == nil {
 		err = io.ErrShortWrite
 	}
 	if err != nil {
 		return err
 	}
-	cks.payloadUsed = 0
+	w.payloadUsed = 0
 	return nil
 }
 
-func (cks *checksum) ReadAt(p []byte, off int64) (nn int, err error) {
+func (w *checksumWriter) Close() error {
+	return w.Flush()
+}
+
+type checksumReader struct {
+	r io.ReaderAt
+}
+
+func newChecksumReader(r io.ReaderAt) *checksumReader {
+	checksumReader := &checksumReader{r: r}
+	return checksumReader
+}
+
+func (r *checksumReader) ReadAt(p []byte, off int64) (nn int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -85,7 +99,7 @@ func (cks *checksum) ReadAt(p []byte, off int64) (nn int, err error) {
 
 	var n int
 	for len(p) > 0 {
-		n, err = cks.disk.ReadAt(buf, cursor)
+		n, err = r.r.ReadAt(buf, cursor)
 		if err != nil {
 			if err != io.EOF {
 				return

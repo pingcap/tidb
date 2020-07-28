@@ -52,7 +52,7 @@ type ListInDisk struct {
 	offWrite int64
 
 	disk          *os.File
-	checksum      *checksum
+	checksum      *checksumWriter
 	bufWriter     *bufio.Writer
 	bufFlushMutex sync.RWMutex
 	diskTracker   *disk.Tracker // track disk usage.
@@ -76,7 +76,7 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	l.checksum = newChecksum(l.disk)
+	l.checksum = newChecksumWriter(l.disk)
 	l.bufWriter = bufWriterPool.Get().(*bufio.Writer)
 	l.bufWriter.Reset(l.checksum)
 	l.bufFlushMutex = sync.RWMutex{}
@@ -99,8 +99,9 @@ func (l *ListInDisk) flush() (err error) {
 	// hence we use a RWLock to allow quicker quit.
 	l.bufFlushMutex.RLock()
 	buffered := l.bufWriter.Buffered()
+	checksumBuffered := l.checksum.Buffered()
 	l.bufFlushMutex.RUnlock()
-	if buffered == 0 {
+	if buffered == 0 && checksumBuffered == 0 {
 		return nil
 	}
 	l.bufFlushMutex.Lock()
@@ -111,13 +112,7 @@ func (l *ListInDisk) flush() (err error) {
 			return
 		}
 	}
-	if l.checksum != nil {
-		err = l.checksum.Flush()
-		if err != nil {
-			return
-		}
-	}
-	return err
+	return l.checksum.Close()
 }
 
 // Add adds a chunk to the ListInDisk. Caller must make sure the input chk
@@ -167,7 +162,8 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
 
-	r := io.NewSectionReader(l.checksum, off, l.offWrite-off)
+	checksum := newChecksumReader(l.disk)
+	r := io.NewSectionReader(checksum, off, l.offWrite-off)
 	bufReader := bufReaderPool.Get().(*bufio.Reader)
 	bufReader.Reset(r)
 	defer bufReaderPool.Put(bufReader)
