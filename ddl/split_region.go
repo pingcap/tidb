@@ -16,9 +16,11 @@ package ddl
 import (
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -134,7 +136,10 @@ func waitScatterRegionFinish(ctx context.Context, store kv.SplittableStore, regi
 		err := store.WaitScatterRegionFinish(ctx, regionID, 0)
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
-			return
+			// We don't break for PDError because it may caused by ScatterRegion request failed.
+			if _, ok := errors.Cause(err).(*tikv.PDError); !ok {
+				break
+			}
 		}
 	}
 }

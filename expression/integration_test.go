@@ -6763,6 +6763,18 @@ func (s *testIntegrationSerialSuite) TestIssue17233(c *C) {
 	tk.MustQuery("SELECT view_10.col_1 FROM view_4 JOIN view_10").Check(testkit.Rows("16", "16", "16", "16", "16", "18", "18", "18", "18", "18", "19", "19", "19", "19", "19"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue17989(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b tinyint as(a+1), c int as(b+1));")
+	tk.MustExec("set sql_mode='';")
+	tk.MustExec("insert into t(a) values(2000);")
+	tk.MustExec("create index idx on t(c);")
+	tk.MustQuery("select c from t;").Check(testkit.Rows("128"))
+	tk.MustExec("admin check table t")
+}
+
 func (s *testIntegrationSerialSuite) TestIssue18638(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
