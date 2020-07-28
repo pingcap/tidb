@@ -143,7 +143,8 @@ func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStar
 		if amendOpType != AmendNone {
 			// TODO unique index amend is not supported by now.
 			if idxInfoAtCommit.Meta().Unique {
-				return nil, errors.Trace(table.ErrUnsupportedOp)
+				return nil, errors.Trace(errors.Errorf("amend unique index=%v for table=%v is not supported now",
+					idxInfoAtCommit.Meta().Name, tblAtCommit.Meta().Name))
 			}
 			opInfo := &amendOperationAddIndexInfo{}
 			opInfo.AmendOpType = amendOpType
@@ -156,7 +157,8 @@ func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStar
 				oldColInfo := findColByID(tblAtStart, colID)
 				// TODO: now index column MUST be found in old table columns, generated column is not supported.
 				if oldColInfo == nil || oldColInfo.IsGenerated() {
-					return nil, errors.Trace(table.ErrUnsupportedOp)
+					return nil, errors.Trace(errors.Errorf("amend index column=%v id=%v is not found or generated in table=%v",
+						idxCol.Name, colID, tblAtCommit.Meta().Name.String()))
 				}
 				opInfo.relatedOldIdxCols = append(opInfo.relatedOldIdxCols, oldColInfo)
 			}
@@ -490,7 +492,8 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 			return nil, errors.Trace(errors.Errorf("tableID=%d is not found in infoSchema", tblID))
 		}
 		if tblInfoAtStart.Meta().Partition != nil {
-			logutil.Logger(ctx).Info("Amend for partition table is not supported", zap.Int64("tableID", tblID))
+			logutil.Logger(ctx).Info("Amend for partition table is not supported",
+				zap.String("tableName", tblInfoAtStart.Meta().Name.String()), zap.Int64("tableID", tblID))
 			return nil, errors.Trace(table.ErrUnsupportedOp)
 		}
 		tblInfoAtCommit, ok := infoSchemaAtCheck.TableByID(tblID)
