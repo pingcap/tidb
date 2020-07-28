@@ -2671,7 +2671,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	tableInfo := tbl.Meta()
 	var authErr error
 	if sessionVars.User != nil {
-		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", sessionVars.User.Username, sessionVars.User.Hostname, tableInfo.Name.L)
+		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tableInfo.Name.L)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
@@ -2993,6 +2993,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
 		case infoschema.TableSlowQuery:
 			p.Extractor = &SlowQueryExtractor{}
+		case infoschema.TableTiFlashTables, infoschema.TableTiFlashSegments:
+			p.Extractor = &TiFlashSystemTableExtractor{}
 		}
 	}
 	return p, nil

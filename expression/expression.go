@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -1015,6 +1014,12 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 		mask := storeTypeMask(storeType)
 		return !(value&mask == mask)
 	}
+
+	if storeType != kv.TiFlash && name == ast.AggFuncApproxCountDistinct {
+		// Can not push down approx_count_distinct to other store except tiflash by now.
+		return false
+	}
+
 	return true
 }
 
@@ -1059,7 +1064,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 }
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
-	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || collate.NewCollationEnabled()) {
+	if storeType == kv.TiFlash && expr.GetType().Tp == mysql.TypeDuration {
 		return false
 	}
 	switch x := expr.(type) {

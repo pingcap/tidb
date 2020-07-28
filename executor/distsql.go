@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -941,7 +942,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		sort.Sort(task)
 	}
 
-	if handleCnt != len(task.rows) {
+	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) {
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := make(map[int64]struct{}, len(task.rows))
 			for _, row := range task.rows {
