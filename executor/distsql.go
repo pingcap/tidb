@@ -390,8 +390,6 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
-	fmt.Println("index lookup open == range ===", e.ranges)
-	fmt.Println("index lookup open == kvRange ===", e.kvRanges)
 	err = e.open(ctx)
 	if err != nil {
 		e.feedback.Invalidate()

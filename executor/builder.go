@@ -2512,8 +2512,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	}
 
 	nextPartition := nextPartitionForIndexReader{exec: ret}
-	// TODO: The filter condition?
-	exec, err := buildPartitionTable(b, is.Table, nil, ret, nextPartition)
+	exec, err := buildPartitionTable(b, is.Table, v.PruningConds, ret, nextPartition)
 	if err != nil {
 		b.err = err
 	}
@@ -2641,10 +2640,6 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	if pi := ts.Table.GetPartitionInfo(); pi == nil {
 		return ret
 	}
-
-	fmt.Println("in indexlookup reader FilterCondition ===", ts.FilterCondition)
-	fmt.Println("in indexlookup reader AccessCondition ===", ts.AccessCondition)
-	fmt.Println("in indexlookup reader AccessCondition ===", v.PruningConds)
 
 	nextPartition := nextPartitionForIndexLookUp{exec: ret}
 	exec, err := buildPartitionTable(b, ts.Table, v.PruningConds, ret, nextPartition)
@@ -2935,16 +2930,11 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		return e, err
 	}
 
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 	if err != nil {
 		return nil, err
 	}
 	nextPartition := nextPartitionForIndexLookUp{exec: e}
-
-	fmt.Println("build index lookup ===", plannercore.ToString(ts))
-	fmt.Println("build partition pruning using ===", v.PruningConds)
-
 	ret, err := buildPartitionTable(builder.executorBuilder, tbInfo, v.PruningConds, e, nextPartition)
 	if err != nil {
 		return nil, err
@@ -3015,7 +3005,6 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*indexJoin
 			for _, ran := range ranges {
 				retRanges = append(retRanges, ran.Clone())
 			}
-			fmt.Println("================= append ranges ????", ranges, retRanges)
 			continue
 		}
 		nextColRanges, err := cwc.BuildRangesByRow(ctx, content.row)
