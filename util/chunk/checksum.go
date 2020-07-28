@@ -18,8 +18,8 @@ var checksumReaderBufPool = sync.Pool{
 	New: func() interface{} { return make([]byte, checksumBlockSize) },
 }
 
-// checksumWriter implements an io.WriteCloser, it calculated and store a CRC-32 checksum before writing
-// to underlying object.
+// checksumWriter implements an io.WriteCloser, it calculates and stores a CRC-32 checksum for the payload before
+// writing to the underlying object.
 type checksumWriter struct {
 	w           io.WriteCloser
 	buf         []byte
