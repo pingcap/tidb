@@ -264,10 +264,6 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	var buf bytes.Buffer
 	p := parser.New()
 	schema := expression.NewSchema(columns...)
-	exprs, err := parseSimpleExprWithNames(p, ctx, pi.Expr, schema, names)
-	if err != nil {
-		return nil, err
-	}
 	partStr := rangePartitionString(pi)
 	for i := 0; i < len(pi.Definitions); i++ {
 		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
@@ -287,16 +283,20 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		buf.Reset()
 	}
 	ret := &PartitionExpr{
-		Expr:        exprs,
 		UpperBounds: locateExprs,
 	}
 
 	switch len(pi.Columns) {
 	case 0:
+		exprs, err := parseSimpleExprWithNames(p, ctx, pi.Expr, schema, names)
+		if err != nil {
+			return nil, err
+		}
 		tmp, err := dataForRangePruning(ctx, pi)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		ret.Expr = exprs
 		ret.ForRangePruning = tmp
 	case 1:
 		tmp, err := dataForRangeColumnsPruning(ctx, pi, schema, names, p)
@@ -348,10 +348,10 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 	var idx int
 	switch t.meta.Partition.Type {
 	case model.PartitionTypeRange:
-		if len(t.Columns) == 1 {
-			idx, err = t.locateRangeColumnPartition(ctx, pi, r)
-		} else {
+		if len(pi.Columns) == 0 {
 			idx, err = t.locateRangePartition(ctx, pi, r)
+		} else {
+			idx, err = t.locateRangeColumnPartition(ctx, pi, r)
 		}
 	case model.PartitionTypeHash:
 		idx, err = t.locateHashPartition(ctx, pi, r)
@@ -368,7 +368,8 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 	partitionExprs := t.partitionExpr.UpperBounds
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
 		var ret int64
-		ret, isNull, err = partitionExprs[i].EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+		t.evalBuffer.SetDatums(r...)
+		ret, isNull, err = partitionExprs[i].EvalInt(ctx,t.evalBuffer.ToRow())
 		if err != nil {
 			return true // Break the search.
 		}
@@ -391,8 +392,7 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 		if pi.Expr != "" {
 			e, err := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, t.meta)
 			if err == nil {
-				t.evalBuffer.SetDatums(r...)
-				val, _, err := e.EvalInt(ctx, t.evalBuffer.ToRow())
+				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 				if err == nil {
 					valueMsg = fmt.Sprintf("%d", val)
 				}
@@ -457,7 +457,6 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 	}
 	t.evalBuffer.SetDatums(r...)
 	ret, isNull, err := t.partitionExpr.Expr.EvalInt(ctx, t.evalBuffer.ToRow())
-	//ret, isNull, err := t.partitionExpr.Expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
 	if err != nil {
 		return 0, err
 	}
