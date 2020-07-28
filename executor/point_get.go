@@ -365,7 +365,7 @@ func EncodeUniqueIndexKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxI
 	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
 }
 
-// DecodeRowValToChunk decoes row value into chunk checking row format used.
+// DecodeRowValToChunk decodes row value into chunk checking row format used.
 func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
 	handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
 	if rowcodec.IsNewFormat(rowVal) {
