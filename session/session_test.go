@@ -18,6 +18,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -3243,14 +3244,16 @@ func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 
 		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
 
-		os.RemoveAll("/tmp/bk1")
-		// backup database
-		tk.MustQuery("backup database br to 'local:///tmp/bk1'")
-		// remove database
+		tmpDir := path.Join(os.TempDir(), "bk1")
+		os.RemoveAll(tmpDir)
+		// backup database to tmp dir
+		tk.MustQuery("backup database br to 'local://" + tmpDir + "'")
+
+		// remove database for recovery
 		tk.MustExec("drop database br")
 
 		// restore database with backup data
-		tk.MustQuery("restore database br from 'local:///tmp/bk1'")
+		tk.MustQuery("restore database br from 'local://" + tmpDir + "'")
 		tk.MustExec("use br")
 		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
 		tk.MustExec("drop database br")
