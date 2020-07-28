@@ -36,7 +36,7 @@ import (
 type testBatchCopSuite struct {
 }
 
-var _ = Suite(&testBatchCopSuite{})
+var _ = SerialSuites(&testBatchCopSuite{})
 
 func newStoreWithBootstrap(tiflashNum int) (kv.Storage, *domain.Domain, error) {
 	store, err := mockstore.NewMockStore(
