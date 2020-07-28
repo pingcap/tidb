@@ -876,7 +876,7 @@ func getAutoIDByAllocType(m *meta.Meta, dbID, tableID int64, allocType Allocator
 	case SequenceType:
 		return m.GetSequenceValue(dbID, tableID)
 	default:
-		return 0, errInvalidAllocatorType.GenWithStackByArgs()
+		return 0, ErrInvalidAllocatorType.GenWithStackByArgs()
 	}
 }
 
@@ -889,7 +889,7 @@ func generateAutoIDByAllocType(m *meta.Meta, dbID, tableID, step int64, allocTyp
 	case SequenceType:
 		return m.GenSequenceValue(dbID, tableID, step)
 	default:
-		return 0, errInvalidAllocatorType.GenWithStackByArgs()
+		return 0, ErrInvalidAllocatorType.GenWithStackByArgs()
 	}
 }
 
@@ -951,7 +951,7 @@ func NewAutoRandomIDLayout(fieldType *types.FieldType, shardBits uint64) *AutoRa
 
 // IncrementalBitsCapacity returns the max capacity of incremental section of the current layout.
 func (l *AutoRandomIDLayout) IncrementalBitsCapacity() uint64 {
-	return uint64(math.Pow(2, float64(l.IncrementalBits)) - 1)
+	return uint64(math.Pow(2, float64(l.IncrementalBits))) - 1
 }
 
 // IncrementalMask returns 00..0[11..1], where [xxx] is the incremental section of the current layout.
