@@ -92,6 +92,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 			respChan: make(chan *copResponse, it.concurrency),
 			tasks:    it.tasks,
 			sendRate: it.sendRate,
+			finishCh: it.finishCh,
 		}
 	}
 	if !it.req.Streaming {
@@ -1173,11 +1174,19 @@ type copResponseCollector struct {
 	respChan chan *copResponse
 	tasks    []*copTask
 	sendRate *rateLimit
+	finishCh <-chan struct{}
 }
 
 func (c *copResponseCollector) run() {
 	finishedTask := make(map[int]struct{}, len(c.tasks))
 	for {
+		select {
+		case <-c.finishCh:
+			close(c.respChan)
+			return
+		default:
+		}
+
 		// fetch response from tasks, it the task have finished, we will directly skip this task
 		for id, task := range c.tasks {
 			if _, ok := finishedTask[id]; ok {
