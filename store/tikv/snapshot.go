@@ -106,7 +106,7 @@ func (s *tikvSnapshot) BatchGet(ctx context.Context, keys []kv.Key) (map[string]
 	m := make(map[string][]byte)
 	s.mu.RLock()
 	if s.mu.cached != nil {
-		tmp := keys[:0]
+		tmp := make([]kv.Key, 0, len(keys))
 		for _, key := range keys {
 			if val, ok := s.mu.cached[string(key)]; ok {
 				if len(val) > 0 {
