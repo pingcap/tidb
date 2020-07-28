@@ -80,6 +80,8 @@ type Handle struct {
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
 	h.mu.Lock()
+	//lock statsCache for race test
+	h.statsCache.mu.Lock()
 	h.statsCache = newstatsCache(maxMemoryLimit)
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
@@ -312,8 +314,6 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 
 	for _, pidx := range idxs {
 		tbl, ok := h.statsCache.Lookup(pidx.TableID)
-		fmt.Println("do.StatsHandle().GetMemConsumed()1 ", tbl.PhysicalID)
-
 		if !ok {
 			continue
 		}
