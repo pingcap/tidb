@@ -1,127 +1,115 @@
 package handle
 
 import (
+	"encoding/binary"
+	"sync"
+
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/util/kvcache"
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
-type tableLRUHandle struct {
-	*statistics.Table
-	prev *tableLRUHandle
-	next *tableLRUHandle
+// statsCache caches Regions loaded from PD.
+type statsCache struct {
+	mu          sync.Mutex
+	cache       *kvcache.SimpleLRUCache
+	memCapacity int64
+	version     uint64
+	memTracker  *memory.Tracker // track memory usage.
+}
+type statsCacheKey int64
+
+func (key statsCacheKey) Hash() []byte {
+	var buf = make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(key))
+	return buf
 }
 
-// MemoryUsage of tableLRUHandle returns the Table MemoryUsage
-func (tbr *tableLRUHandle) MemoryUsage() int64 {
-	return tbr.Table.MemoryUsage()
-}
-
-// StatsCache caches Regions loaded from PD.
-type StatsCache struct {
-	tables   map[int64]*tableLRUHandle
-	version  uint64
-	memUsage int64
-	//after insert a table, append it to the end of the list
-	//lruList.next is the next table to remove
-	lruList *tableLRUHandle
-}
-
-// NewStatsCache creates a new StatsCache.
-func NewStatsCache() *StatsCache {
-	sc := &StatsCache{
-		tables:   make(map[int64]*tableLRUHandle),
-		lruList:  &tableLRUHandle{},
-		memUsage: 0,
+// newstatsCache returns a new statsCahce with capacity maxMemoryLimit(initial 1G)
+func newstatsCache(maxMemoryLimit int64) (*statsCache, error) {
+	// since newstatsCache controls the memory usage by itself, set the capacity of
+	// the underlying LRUCache to max to close its memory control
+	cache := kvcache.NewSimpleLRUCache(uint(maxMemoryLimit), 0.1, 0)
+	c := statsCache{
+		cache:       cache,
+		memCapacity: maxMemoryLimit,
+		memTracker:  memory.NewTracker(stringutil.StringerStr("statsCache"), -1),
 	}
-	sc.lruList.next = sc.lruList
-	sc.lruList.prev = sc.lruList
-
-	return sc
+	return &c, nil
 }
 
-// setLRUlist init LRUlist
-func (sc *StatsCache) setLRUlist() {
-	if sc.lruList != nil {
-		return
-	}
-	sc.lruList = &tableLRUHandle{}
-
-	sc.lruList.next = sc.lruList
-	sc.lruList.prev = sc.lruList
-}
-
-// Lookup let table with id tableLRUHandle to head of lruList
-func (sc *StatsCache) Lookup(id int64, isRemove bool) (*statistics.Table, bool) {
-	sc.setLRUlist()
-
-	htbl, ok := sc.tables[id]
-	if !ok {
+// Lookup get table with id.
+func (sc *statsCache) Lookup(id int64) (*statistics.Table, bool) {
+	var key statsCacheKey = statsCacheKey(id)
+	value, hit := sc.cache.Get(key)
+	if !hit {
 		return nil, false
 	}
-	if isRemove {
-		sc.LRURemove(htbl)
-		sc.LRUAppend(htbl)
+	table := value.(*statistics.Table)
+	return table, true
+}
+
+// Insert insert a new table to tables and update the cache.
+// if bytesconsumed is more than capacity, remove oldest cache and add metadata of it
+func (sc *statsCache) Insert(table *statistics.Table) (bool, error) {
+	var key statsCacheKey = statsCacheKey(table.PhysicalID)
+	mem := table.MemoryUsage()
+	if mem > sc.memCapacity { // ignore this kv pair if its size is too large
+		return false, nil
 	}
-	return htbl.Table, true
-}
-
-// Insert insert a new table to tables and append to lrulist.
-func (sc *StatsCache) Insert(table *statistics.Table) (memUsage int64) {
-	sc.setLRUlist()
-
-	tb := &tableLRUHandle{Table: table}
-
-	id := table.PhysicalID
-	if ptbl, ok := sc.tables[id]; ok {
-		sc.LRURemove(ptbl)
-		memUsage -= ptbl.MemoryUsage()
+	for mem+sc.memTracker.BytesConsumed() > sc.memCapacity {
+		evictedKey, evictedValue, evicted := sc.cache.RemoveOldest()
+		if !evicted {
+			return false, nil
+		}
+		sc.memTracker.Consume(-evictedValue.(*statistics.Table).MemoryUsage())
+		sc.cache.Put(evictedKey, evictedValue.(*statistics.Table).CopyMeta())
 	}
-	memUsage += table.MemoryUsage()
-	sc.memUsage += memUsage
-	sc.LRUAppend(tb)
-	sc.tables[id] = tb
-
-	return
-}
-
-// LRUAppend remove a tableLRUHandle from lruList
-func (sc *StatsCache) LRUAppend(e *tableLRUHandle) {
-	e.next = sc.lruList
-	e.prev = sc.lruList.prev
-	e.prev.next = e
-	e.next.prev = e
-}
-
-// LRURemove remove a tableLRUHandle from lruList
-func (sc *StatsCache) LRURemove(e *tableLRUHandle) {
-
-	e.next.prev = e.prev
-	e.prev.next = e.next
+	sc.Erase(table.PhysicalID)
+	sc.memTracker.Consume(mem)
+	sc.cache.Put(key, table)
+	return true, nil
 }
 
 // Erase Erase a stateCache with physical id
-// return erased memUsage
-func (sc *StatsCache) Erase(deletedID int64) (memUsage int64) {
-	sc.setLRUlist()
-	if ptbl, ok := sc.tables[deletedID]; ok {
-		sc.LRURemove(ptbl)
-		memUsage -= ptbl.MemoryUsage()
+func (sc *statsCache) Erase(deletedID int64) bool {
+	table, hit := sc.Lookup(deletedID)
+	if !hit {
+		return false
 	}
-	sc.memUsage += memUsage
+	sc.memTracker.Consume(-table.MemoryUsage())
 
-	delete(sc.tables, deletedID)
+	var key statsCacheKey = statsCacheKey(deletedID)
+	sc.cache.Delete(key)
+	return true
+}
+
+// Update updates the statistics table cache.
+func (sc *statsCache) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) {
+	sc.mu.Lock()
+	if sc.version <= newVersion {
+		sc.version = newVersion
+		for _, tbl := range tables {
+			sc.Insert(tbl)
+		}
+		for _, id := range deletedIDs {
+			sc.Erase(id)
+		}
+	}
+	sc.mu.Unlock()
+}
+
+func (sc *statsCache) GetVersion() uint64 {
+	return sc.version
+}
+
+// initStatsCache should be called after the tables and their stats are initilazed
+// using tables map and version to init statscache
+func (sc *statsCache) initStatsCache(tables map[int64]*statistics.Table, version uint64) {
+	for _, tb := range tables {
+		sc.Insert(tb)
+	}
+	sc.version = version
 	return
-}
-
-// EraseLast erase last table statistic data in cache
-// and table meta data not erased only used in Handle.updateStatsCache
-// returns erased memUsage
-func (sc *StatsCache) EraseLast() int64 {
-	ID := sc.lruList.next.PhysicalID
-
-	return sc.Insert(sc.tables[ID].CopyMeta())
-}
-
-// isEmpty returns if sc is empty
-func (sc StatsCache) isEmpty() bool {
-	return sc.lruList.next == sc.lruList
 }

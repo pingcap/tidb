@@ -32,7 +32,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *StatsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID := row.GetInt64(1)
 		table, ok := h.getTableByPhysicalID(is, physicalID)
@@ -57,39 +57,40 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *StatsCache
 
 		//use Insert to insert to lruList
 		//Ignore the Memusage change, it will be caculate later
-		cache.Insert(tbl)
+		tables[tbl.PhysicalID] = tbl
+
 	}
 }
 
-func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (StatsCache, error) {
+func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (map[int64]*statistics.Table, error) {
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
-		return StatsCache{}, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	tables := *NewStatsCache()
+	tables := make(map[int64]*statistics.Table)
 
 	req := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
-			return StatsCache{}, errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsMeta4Chunk(is, &tables, iter)
+		h.initStatsMeta4Chunk(is, tables, iter)
 	}
 	return tables, nil
 }
 
-func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *StatsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.tables[row.GetInt64(0)]
+		table, ok := tables[row.GetInt64(0)]
 		if !ok {
 			continue
 		}
@@ -150,7 +151,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *Stat
 	}
 }
 
-func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *StatsCache) error {
+func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables map[int64]*statistics.Table) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
@@ -169,14 +170,14 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *StatsCache
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4Chunk(is, cache, iter)
+		h.initStatsHistograms4Chunk(is, tables, iter)
 	}
 	return nil
 }
 
-func (h *Handle) initStatsTopN4Chunk(cache *StatsCache, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsTopN4Chunk(tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.tables[row.GetInt64(0)]
+		table, ok := tables[row.GetInt64(0)]
 		if !ok {
 			continue
 		}
@@ -190,7 +191,7 @@ func (h *Handle) initStatsTopN4Chunk(cache *StatsCache, iter *chunk.Iterator4Chu
 	}
 }
 
-func (h *Handle) initStatsTopN(cache *StatsCache) error {
+func (h *Handle) initStatsTopN(tables map[int64]*statistics.Table) error {
 	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
@@ -209,15 +210,15 @@ func (h *Handle) initStatsTopN(cache *StatsCache) error {
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsTopN4Chunk(cache, iter)
+		h.initStatsTopN4Chunk(tables, iter)
 	}
 	return nil
 }
 
-func initStatsBuckets4Chunk(ctx sessionctx.Context, cache *StatsCache, iter *chunk.Iterator4Chunk) {
+func initStatsBuckets4Chunk(ctx sessionctx.Context, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-		table, ok := cache.tables[tableID]
+		table, ok := tables[tableID]
 		if !ok {
 			continue
 		}
@@ -260,29 +261,29 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, cache *StatsCache, iter *chu
 	}
 }
 
-func (h *Handle) initStatsBuckets(cache *StatsCache) error {
+func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (uint64, error) {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
 	}
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	req := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	for {
 		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		if req.NumRows() == 0 {
 			break
 		}
-		initStatsBuckets4Chunk(h.mu.ctx, cache, iter)
+		initStatsBuckets4Chunk(h.mu.ctx, tables, iter)
 	}
 	lastVersion := uint64(0)
-	for _, table := range cache.tables {
+	for _, table := range tables {
 		lastVersion = mathutil.MaxUint64(lastVersion, table.Version)
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
@@ -297,8 +298,7 @@ func (h *Handle) initStatsBuckets(cache *StatsCache) error {
 			col.PreCalculateScalar()
 		}
 	}
-	cache.version = lastVersion
-	return nil
+	return lastVersion, nil
 }
 
 // InitStats will init the stats cache using full load strategy.
@@ -315,24 +315,23 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
-	cache, err := h.initStatsMeta(is)
+	tables, err := h.initStatsMeta(is)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = h.initStatsHistograms(is, &cache)
+	err = h.initStatsHistograms(is, tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = h.initStatsTopN(&cache)
+	err = h.initStatsTopN(tables)
 	if err != nil {
 		return err
 	}
-	err = h.initStatsBuckets(&cache)
+	version, err := h.initStatsBuckets(tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cache.initMemoryUsage()
-	h.updateStatsCache(cache)
+	h.statsCache.initStatsCache(tables, version)
 	return nil
 }
 

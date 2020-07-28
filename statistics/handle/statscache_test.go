@@ -43,7 +43,8 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 	c.Assert(statsTbl1.Pseudo, IsFalse)
 
 	//set new BytesLimit
-	BytesLimit := int64(9000)
+	BytesLimit := int64(90000)
+
 	do.StatsHandle().SetBytesLimit(BytesLimit)
 	//create t2 and kick t1 of cache
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
