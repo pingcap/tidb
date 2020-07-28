@@ -35,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // CompareUnorderedStringSlice compare two string slices.
@@ -91,6 +93,9 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 		if v := recover(); v != nil {
 			result = false
 			error = fmt.Sprint(v)
+			logutil.BgLogger().Error("panic in datumEqualsChecker.Check",
+				zap.Reflect("r", v),
+				zap.Stack("stack trace"))
 		}
 	}()
 	paramFirst, ok := params[0].(types.Datum)
@@ -319,25 +324,22 @@ type autoRandom struct {
 	originAlterPrimaryKey bool
 }
 
-// SetupAutoRandomTestConfig set alter-primary-key to false, and set allow-auto-random to true and save their origin values.
+// SetupAutoRandomTestConfig set alter-primary-key to false and save its origin values.
 // This method should only be used for the tests in SerialSuite.
 func (a *autoRandom) SetupAutoRandomTestConfig() {
 	globalCfg := config.GetGlobalConfig()
-	a.originAllowAutoRandom = globalCfg.Experimental.AllowAutoRandom
 	a.originAlterPrimaryKey = globalCfg.AlterPrimaryKey
 	globalCfg.AlterPrimaryKey = false
-	globalCfg.Experimental.AllowAutoRandom = true
 }
 
 // RestoreAutoRandomTestConfig restore the values had been saved in SetupTestConfig.
 // This method should only be used for the tests in SerialSuite.
 func (a *autoRandom) RestoreAutoRandomTestConfig() {
 	globalCfg := config.GetGlobalConfig()
-	globalCfg.Experimental.AllowAutoRandom = a.originAllowAutoRandom
 	globalCfg.AlterPrimaryKey = a.originAlterPrimaryKey
 }
 
-// MaskSortHandles masks highest shard_bits numbers of table handles and sort it.
+// MaskSortHandles sorts the handles by lowest (fieldTypeBits - 1 - shardBitsCount) bits.
 func (a *autoRandom) MaskSortHandles(handles []int64, shardBitsCount int, fieldType byte) []int64 {
 	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[fieldType] * 8
 	const signBitCount = 1
