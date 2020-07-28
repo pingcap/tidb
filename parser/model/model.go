@@ -36,6 +36,8 @@ const (
 	// StateWriteOnly means we can use any write operation on this schema element,
 	// but outer can't read the changed data.
 	StateWriteOnly
+	// StateReplica means we're waiting tiflash replica to be finished.
+	StateReplicaOnly
 	// StateWriteReorganization means we are re-organizing whole data after write only state.
 	StateWriteReorganization
 	// StateDeleteReorganization means we are re-organizing whole data after delete only state.
@@ -704,7 +706,9 @@ type PartitionInfo struct {
 	Enable bool `json:"enable"`
 
 	Definitions []PartitionDefinition `json:"definitions"`
-	Num         uint64                `json:"num"`
+	// AddingDefinitions is filled when adding a partition that is in the mid state.
+	AddingDefinitions []PartitionDefinition `json:"adding_definitions"`
+	Num               uint64                `json:"num"`
 }
 
 // GetNameByID gets the partition name by ID.
@@ -719,11 +723,10 @@ func (pi *PartitionInfo) GetNameByID(id int64) string {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID       int64       `json:"id"`
-	Name     CIStr       `json:"name"`
-	LessThan []string    `json:"less_than"`
-	Comment  string      `json:"comment,omitempty"`
-	State    SchemaState `json:"state"`
+	ID       int64    `json:"id"`
+	Name     CIStr    `json:"name"`
+	LessThan []string `json:"less_than"`
+	Comment  string   `json:"comment,omitempty"`
 }
 
 // Clone clones ConstraintInfo.
