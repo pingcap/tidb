@@ -607,8 +607,8 @@ type SessionVars struct {
 	// SelectLimit limits the max counts of select statement's output
 	SelectLimit uint64
 
-	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
-	EnableSlowLogMasking bool
+	// EnableLogDesensitization indicates that whether desensitization when log query.
+	EnableLogDesensitization bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -698,7 +698,7 @@ func NewSessionVars() *SessionVars {
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
-		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
+		EnableLogDesensitization:    DefTiDBLogDesensitization,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1301,8 +1301,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			return errors.Trace(err)
 		}
 		s.SelectLimit = result
-	case TiDBSlowLogMasking:
-		s.EnableSlowLogMasking = TiDBOptOn(val)
+	case TiDBSlowLogMasking, TiDBLogDesensitization:
+		s.EnableLogDesensitization = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	case TiDBAllowAutoRandExplicitInsert:
