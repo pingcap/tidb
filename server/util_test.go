@@ -72,7 +72,7 @@ func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 	t, err = types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.Local}, "1991-05-01 01:01:01.100001")
 	c.Assert(err, IsNil)
 	d = dumpBinaryDateTime(nil, t)
-	// 199 & 7 composed to uint16  1991 (litter-endian)
+	// 199 & 7 composed to uint16 1991 (litter-endian)
 	// 160 & 134 & 1 & 0 composed to uint32 1000001 (litter-endian)
 	c.Assert(d, DeepEquals, []byte{11, 199, 7, 5, 1, 1, 1, 1, 161, 134, 1, 0})
 
