@@ -60,7 +60,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 		resp.RegionError = err
 		return resp
 	}
-	dagCtx, e, dagReq, err := h.buildDAGExecutor(req)
+	dagCtx, e, dagReq, err := h.buildDAGExecutor(req, false)
 	if err != nil {
 		resp.OtherError = err.Error()
 		return resp
@@ -92,7 +92,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	return buildResp(selResp, execDetails, err)
 }
 
-func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
+func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request, batchCop bool) (*dagContext, executor, *tipb.DAGRequest, error) {
 	if len(req.Ranges) == 0 {
 		return nil, nil, nil, errors.New("request range is null")
 	}
@@ -118,7 +118,12 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		startTS:   req.StartTs,
 		evalCtx:   &evalContext{sc: sc},
 	}
-	e, err := h.buildDAG(ctx, dagReq.Executors)
+	var e executor
+	if batchCop {
+		e, err = h.buildDAGForTiFlash(ctx, dagReq.RootExecutor)
+	} else {
+		e, err = h.buildDAG(ctx, dagReq.Executors)
+	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -133,7 +138,7 @@ func constructTimeZone(name string, offset int) (*time.Location, error) {
 }
 
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
-	dagCtx, e, dagReq, err := h.buildDAGExecutor(req)
+	dagCtx, e, dagReq, err := h.buildDAGExecutor(req, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -146,9 +151,10 @@ func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Reque
 	}, nil
 }
 
-func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
+func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, *tipb.Executor, error) {
 	var currExec executor
 	var err error
+	var childExec *tipb.Executor
 	switch curr.GetTp() {
 	case tipb.ExecType_TypeTableScan:
 		currExec, err = h.buildTableScan(ctx, curr)
@@ -156,26 +162,46 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		currExec, err = h.buildIndexScan(ctx, curr)
 	case tipb.ExecType_TypeSelection:
 		currExec, err = h.buildSelection(ctx, curr)
+		childExec = curr.Selection.Child
 	case tipb.ExecType_TypeAggregation:
 		currExec, err = h.buildHashAgg(ctx, curr)
+		childExec = curr.Aggregation.Child
 	case tipb.ExecType_TypeStreamAgg:
 		currExec, err = h.buildStreamAgg(ctx, curr)
+		childExec = curr.Aggregation.Child
 	case tipb.ExecType_TypeTopN:
 		currExec, err = h.buildTopN(ctx, curr)
+		childExec = curr.TopN.Child
 	case tipb.ExecType_TypeLimit:
 		currExec = &limitExec{limit: curr.Limit.GetLimit(), execDetail: new(execDetail)}
+		childExec = curr.Limit.Child
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
 	}
 
-	return currExec, errors.Trace(err)
+	return currExec, childExec, errors.Trace(err)
+}
+
+func (h *rpcHandler) buildDAGForTiFlash(ctx *dagContext, farther *tipb.Executor) (executor, error) {
+	curr, child, err := h.buildExec(ctx, farther)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if child != nil {
+		childExec, err := h.buildDAGForTiFlash(ctx, child)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		curr.SetSrcExec(childExec)
+	}
+	return curr, nil
 }
 
 func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
 	var src executor
 	for i := 0; i < len(executors); i++ {
-		curr, err := h.buildExec(ctx, executors[i])
+		curr, _, err := h.buildExec(ctx, executors[i])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -462,7 +488,7 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
-	// TODO set FlagInUnionStmt,
+	// TODO set FlagInSetOprStmt,
 	return sc
 }
 
