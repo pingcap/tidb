@@ -1297,3 +1297,21 @@ func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
 	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
 		testkit.Rows("3 1"))
 }
+
+func (s *testTableSuite) TestFormatVersion(c *C) {
+	// Test for defaultVersions.
+	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
+	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
+	for i, v := range defaultVersions {
+		version := infoschema.FormatVersion(v, true)
+		c.Assert(version, Equals, defaultRes[i])
+	}
+
+	// Test for versions user set.
+	versions := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
+	res := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
+	for i, v := range versions {
+		version := infoschema.FormatVersion(v, false)
+		c.Assert(version, Equals, res[i])
+	}
+}
