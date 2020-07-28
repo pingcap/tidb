@@ -64,7 +64,7 @@ func (rs *batchCopResponse) GetStartKey() kv.Key {
 // GetExecDetails is unavailable currently, because TiFlash has not collected exec details for batch cop.
 // TODO: Will fix in near future.
 func (rs *batchCopResponse) GetExecDetails() *execdetails.ExecDetails {
-	return &execdetails.ExecDetails{}
+	return rs.detail
 }
 
 // MemSize returns how many bytes of memory this response use
@@ -304,7 +304,7 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 	for idx := 0; idx < len(tasks); idx++ {
 		ret, err := b.handleTaskOnce(ctx, bo, tasks[idx])
 		if err != nil {
-			resp := &batchCopResponse{err: errors.Trace(err)}
+			resp := &batchCopResponse{err: errors.Trace(err), detail: new(execdetails.ExecDetails)}
 			b.sendToRespCh(resp)
 			break
 		}
@@ -413,9 +413,22 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *copro
 		return errors.Trace(err)
 	}
 
-	b.sendToRespCh(&batchCopResponse{
+	resp := batchCopResponse{
 		pbResp: response,
-	})
+		detail: new(execdetails.ExecDetails),
+	}
+
+	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
+	for backoff := range bo.backoffTimes {
+		backoffName := backoff.String()
+		resp.detail.BackoffTimes[backoffName] = bo.backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.backoffSleepMS[backoff]) * time.Millisecond
+	}
+	resp.detail.CalleeAddress = task.storeAddr
+
+	b.sendToRespCh(&resp)
 
 	return
 }
