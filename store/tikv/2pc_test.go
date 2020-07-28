@@ -47,6 +47,7 @@ var _ = SerialSuites(&testCommitterSuite{})
 func (s *testCommitterSuite) SetUpSuite(c *C) {
 	atomic.StoreUint64(&ManagedLockTTL, 3000) // 3s
 	s.OneByOneSuite.SetUpSuite(c)
+	CommitMaxBackoff = 1000
 }
 
 func (s *testCommitterSuite) SetUpTest(c *C) {
@@ -77,7 +78,6 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 	// c.Assert(err, IsNil)
 
 	s.store = store
-	CommitMaxBackoff = 1000
 }
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
@@ -123,6 +123,51 @@ func randKV(keyLen, valLen int) (string, string) {
 		v[i] = letters[rand.Intn(len(letters))]
 	}
 	return string(k), string(v)
+}
+
+func (s *testCommitterSuite) TestDeleteYourWritesTTL(c *C) {
+	conf := *config.GetGlobalConfig()
+	oldConf := conf
+	defer config.StoreGlobalConfig(&oldConf)
+	conf.TiKVClient.TTLRefreshedTxnSize = 0
+	config.StoreGlobalConfig(&conf)
+	bo := NewBackofferWithVars(context.Background(), getMaxBackoff, nil)
+
+	{
+		txn := s.begin(c)
+		var flags kv.KeyFlags
+		flags = flags.MarkPresumeKeyNotExists()
+		err := txn.GetMemBuffer().SetWithFlags(kv.Key("bb"), flags, []byte{0})
+		c.Assert(err, IsNil)
+		err = txn.Set(kv.Key("ba"), []byte{1})
+		c.Assert(err, IsNil)
+		err = txn.Delete(kv.Key("bb"))
+		c.Assert(err, IsNil)
+		committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+		c.Assert(err, IsNil)
+		err = committer.prewriteMutations(bo, committer.mutations)
+		c.Assert(err, IsNil)
+		state := atomic.LoadUint32((*uint32)(&committer.ttlManager.state))
+		c.Check(state, Equals, uint32(stateRunning))
+	}
+
+	{
+		txn := s.begin(c)
+		var flags kv.KeyFlags
+		flags = flags.MarkPresumeKeyNotExists()
+		err := txn.GetMemBuffer().SetWithFlags(kv.Key("dd"), flags, []byte{0})
+		c.Assert(err, IsNil)
+		err = txn.Set(kv.Key("de"), []byte{1})
+		c.Assert(err, IsNil)
+		err = txn.Delete(kv.Key("dd"))
+		c.Assert(err, IsNil)
+		committer, err := newTwoPhaseCommitterWithInit(txn, 0)
+		c.Assert(err, IsNil)
+		err = committer.prewriteMutations(bo, committer.mutations)
+		c.Assert(err, IsNil)
+		state := atomic.LoadUint32((*uint32)(&committer.ttlManager.state))
+		c.Check(state, Equals, uint32(stateRunning))
+	}
 }
 
 func (s *testCommitterSuite) TestCommitRollback(c *C) {
@@ -1137,7 +1182,7 @@ func (s *testCommitterSuite) TestResolveMixed(c *C) {
 
 // TestSecondaryKeys tests that when async commit is enabled, each prewrite message includes an
 // accurate list of secondary keys.
-func (s *testCommitterSuite) TestPrewiteSecondaryKeys(c *C) {
+func (s *testCommitterSuite) TestPrewriteSecondaryKeys(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.EnableAsyncCommit = true
@@ -1169,9 +1214,11 @@ func (s *testCommitterSuite) TestPrewiteSecondaryKeys(c *C) {
 	ctx := context.Background()
 	// TODO remove this when minCommitTS is returned from mockStore prewrite response.
 	committer.minCommitTS = committer.startTS + 10
+	committer.testingKnobs.noFallBack = true
 	err = committer.execute(ctx)
 	c.Assert(err, IsNil)
-	c.Assert(mock.seenPrimaryReq > 0 && mock.seenSecondaryReq > 0, IsTrue)
+	c.Assert(mock.seenPrimaryReq > 0, IsTrue)
+	c.Assert(mock.seenSecondaryReq > 0, IsTrue)
 }
 
 func (s *testCommitterSuite) TestAsyncCommit(c *C) {

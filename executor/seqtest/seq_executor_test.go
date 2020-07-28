@@ -1235,8 +1235,10 @@ func (s *seqTestSuite) TestShowForNewCollations(c *C) {
 		"latin1_bin latin1 47 Yes Yes 1",
 		"utf8_bin utf8 83 Yes Yes 1",
 		"utf8_general_ci utf8 33  Yes 1",
+		"utf8_unicode_ci utf8 192  Yes 1",
 		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
 		"utf8mb4_general_ci utf8mb4 45  Yes 1",
+		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
 	)
 	tk.MustQuery("show collation").Check(expectRows)
 	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
@@ -1251,15 +1253,15 @@ func (s *seqTestSuite) TestForbidUnsupportedCollations(c *C) {
 		tk.MustGetErrMsg(sql, fmt.Sprintf("[ddl:1273]Unsupported collation when new collation is enabled: '%s'", coll))
 	}
 
-	mustGetUnsupportedCollation("select 'a' collate utf8_unicode_ci", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("select cast('a' as char) collate utf8_unicode_ci", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set names utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set session collation_server = 'utf8_unicode_ci'", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set session collation_database = 'utf8_unicode_ci'", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set session collation_connection = 'utf8_unicode_ci'", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set global collation_server = 'utf8_unicode_ci'", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set global collation_database = 'utf8_unicode_ci'", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("set global collation_connection = 'utf8_unicode_ci'", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("select 'a' collate utf8_roman_ci", "utf8_roman_ci")
+	mustGetUnsupportedCollation("select cast('a' as char) collate utf8_roman_ci", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set names utf8 collate utf8_roman_ci", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set session collation_server = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set session collation_database = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set session collation_connection = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set global collation_server = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set global collation_database = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set global collation_connection = 'utf8_roman_ci'", "utf8_roman_ci")
 }
 
 func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {
