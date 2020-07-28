@@ -61,7 +61,7 @@ import (
 
 const expressionIndexPrefix = "_V$"
 
-const placementRuleDefaultID = "inserted_by_ddl"
+const placementRuleDefaultGroupID = "TiDB_DDL"
 
 const (
 	placementRuleIndexDefault int = iota
@@ -5169,7 +5169,7 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 	rules := make([]*placement.Rule, 0, len(specs))
 	for k, spec := range specs {
 		rule := &placement.Rule{
-			ID:       placementRuleDefaultID,
+			GroupID:  placementRuleDefaultGroupID,
 			Count:    int(spec.Replicas),
 			Override: true,
 		}
@@ -5193,45 +5193,43 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 			return rules, errors.Errorf("invalid placement spec[%d], unknown role: %d", k, spec.Role)
 		}
 
-		if len(spec.Constraints) != 0 {
-			for _, label := range strings.Split(spec.Constraints, ",") {
-				label = strings.TrimSpace(label)
+		for _, label := range strings.Split(spec.Constraints, ",") {
+			label = strings.TrimSpace(label)
 
-				if len(label) < 4 {
-					return rules, errors.Errorf("invalid placement spec[%d], constraint too short to be valid: %s", k, label)
-				}
-
-				var op placement.LabelConstraintOp
-				switch label[0] {
-				case '+':
-					op = placement.In
-				case '-':
-					op = placement.NotIn
-				default:
-					return rules, errors.Errorf("invalid placement spec[%d], unknown operation: %c", k, label[0])
-				}
-
-				kv := strings.Split(label[1:], "=")
-				if len(kv) != 2 {
-					return rules, errors.Errorf("invalid placement spec[%d], invalid constraint format: %s", k, label)
-				}
-
-				key := strings.TrimSpace(kv[0])
-				if key == "" {
-					return rules, errors.Errorf("invalid placement spec[%d], empty constraint key: %s", k, label)
-				}
-
-				val := strings.TrimSpace(kv[1])
-				if val == "" {
-					return rules, errors.Errorf("invalid placement spec[%d], empty constraint val: %s", k, label)
-				}
-
-				rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
-					Key:    key,
-					Op:     op,
-					Values: []string{val},
-				})
+			if len(label) < 4 {
+				return rules, errors.Errorf("invalid placement spec[%d], constraint too short to be valid: %s", k, label)
 			}
+
+			var op placement.LabelConstraintOp
+			switch label[0] {
+			case '+':
+				op = placement.In
+			case '-':
+				op = placement.NotIn
+			default:
+				return rules, errors.Errorf("invalid placement spec[%d], unknown operation: %c", k, label[0])
+			}
+
+			kv := strings.Split(label[1:], "=")
+			if len(kv) != 2 {
+				return rules, errors.Errorf("invalid placement spec[%d], invalid constraint format: %s", k, label)
+			}
+
+			key := strings.TrimSpace(kv[0])
+			if key == "" {
+				return rules, errors.Errorf("invalid placement spec[%d], empty constraint key: %s", k, label)
+			}
+
+			val := strings.TrimSpace(kv[1])
+			if val == "" {
+				return rules, errors.Errorf("invalid placement spec[%d], empty constraint val: %s", k, label)
+			}
+
+			rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+				Key:    key,
+				Op:     op,
+				Values: []string{val},
+			})
 		}
 
 		rules = append(rules, rule)
@@ -5260,11 +5258,9 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	groupID := strconv.FormatInt(partitionID, 10)
 	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
 	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
 	for _, rule := range rules {
-		rule.GroupID = groupID
 		rule.Index = placementRuleIndexPartition
 		rule.StartKeyHex = startKey
 		rule.EndKeyHex = endKey
@@ -5276,7 +5272,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAlterTableAlterPartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{rules},
+		Args:       []interface{}{partitionID, rules},
 	}
 
 	err = d.doDDLJob(ctx, job)

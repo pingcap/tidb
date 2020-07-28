@@ -1449,45 +1449,42 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	return nil
 }
 
-func checkPlacementRules(t *meta.Meta, job *model.Job, rules []*placement.Rule) ([]*placement.Rule, error) {
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
-	if err != nil {
-		return nil, err
-	}
-
-	ptInfo := tblInfo.GetPartitionInfo()
-	leftRules := rules[:0]
-
+func checkPlacementRules(t *meta.Meta, schemaID, tblID, partitionID int64, rules []*placement.Rule) ([]*placement.Rule, error) {
 	for _, rule := range rules {
-		pid, err := strconv.ParseInt(rule.GroupID, 10, 64)
+		randID, err := t.GenAutoRandomID(schemaID, tblID, 1)
 		if err != nil {
 			return nil, err
 		}
 
-		if ptInfo.GetNameByID(pid) != "" {
-			leftRules = append(leftRules, rule)
-		}
+		rule.ID = fmt.Sprintf("%d_%d_%d_%d", schemaID, tblID, partitionID, randID)
 	}
 
-	return leftRules, nil
+	return rules, nil
 }
 
 func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
+	var partitionID int64
 	var rules []*placement.Rule
-	err := job.DecodeArgs(&rules)
+	err := job.DecodeArgs(&partitionID, &rules)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
 	}
 
-	ver, err := t.GetSchemaVersion()
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return 0, err
 	}
 
-	rules, err = checkPlacementRules(t, job, rules)
+	ptInfo := tblInfo.GetPartitionInfo()
+	if ptInfo.GetNameByID(partitionID) == "" {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
+	}
+
+	rules, err = checkPlacementRules(t, job.SchemaID, tblInfo.ID, partitionID, rules)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 
 	err = infosync.UpdatePlacementRules(nil, rules)
@@ -1496,7 +1493,11 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
-	job.State = model.JobStateDone
-	job.SchemaState = model.StateNone
+	ver, err := updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 	return ver, nil
 }
