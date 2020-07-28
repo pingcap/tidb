@@ -18,6 +18,8 @@ var checksumReaderBufPool = sync.Pool{
 	New: func() interface{} { return make([]byte, checksumBlockSize) },
 }
 
+// checksumWriter implements an io.WriteCloser, it calculated and store a CRC-32 checksum before writing
+// to underlying object.
 type checksumWriter struct {
 	w           io.WriteCloser
 	buf         []byte
@@ -36,6 +38,7 @@ func newChecksumWriter(w io.WriteCloser) *checksumWriter {
 // Available returns how many bytes are unused in the buffer.
 func (w *checksumWriter) Available() int { return checksumPayloadSize - w.payloadUsed }
 
+// Write implements the io.Writer interface.
 func (w *checksumWriter) Write(p []byte) (nn int, err error) {
 	for len(p) > w.Available() {
 		n := copy(w.payload[w.payloadUsed:], p)
@@ -74,6 +77,7 @@ func (w *checksumWriter) Flush() error {
 	return nil
 }
 
+// Close implements the io.Closer interface.
 func (w *checksumWriter) Close() (err error) {
 	err = w.Flush()
 	if err != nil {
@@ -82,6 +86,7 @@ func (w *checksumWriter) Close() (err error) {
 	return w.w.Close()
 }
 
+// checksumReader implements an io.ReadAt, reading from the input source after verifying the checksum.
 type checksumReader struct {
 	r io.ReaderAt
 }
@@ -91,6 +96,7 @@ func newChecksumReader(r io.ReaderAt) *checksumReader {
 	return checksumReader
 }
 
+// ReadAt implements the io.ReadAt interface.
 func (r *checksumReader) ReadAt(p []byte, off int64) (nn int, err error) {
 	if len(p) == 0 {
 		return 0, nil
