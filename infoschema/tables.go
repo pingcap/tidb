@@ -1460,21 +1460,12 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 }
 
 func GetTiFlashStoreCount(ctx sessionctx.Context) (uint64, error) {
-	fmt.Println("--------------------------0-----\n\n")
-	failpoint.Inject("mockTiflashStoreCount", func(val failpoint.Value) {
-		fmt.Println("--------------------------1-----\n\n")
+	failpoint.Inject("mockTiFlashStoreCount", func(val failpoint.Value) {
 		if val.(bool) {
-			fmt.Println("--------------------------2\n\n")
 			failpoint.Return(uint64(10), nil)
 		}
 	})
 
-	failpoint.Inject("mockStoreTombstonecscs", func(val failpoint.Value) {
-		if val.(bool) {
-			fmt.Println("--------------------------2\n\n")
-			failpoint.Return(uint64(10), nil)
-		}
-	})
 	cnt := uint64(0)
 	stores, err := GetStoreServerInfo(ctx)
 	if err != nil {

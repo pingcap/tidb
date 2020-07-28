@@ -91,6 +91,9 @@ func (s *testBatchCopSuite) TestStoreErr(c *C) {
 		store.Close()
 	}()
 
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null, b int not null)")
@@ -122,6 +125,9 @@ func (s *testBatchCopSuite) TestStoreSwitchPeer(c *C) {
 		dom.Close()
 		store.Close()
 	}()
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")

@@ -2262,6 +2262,9 @@ func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	checkTbl2()
 
 	// Test for table has tiflash  replica.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
@@ -2850,6 +2853,9 @@ func (s *testDBSuite3) TestTruncateTable(c *C) {
 	c.Assert(hasOldTableData, IsFalse)
 
 	// Test for truncate table should clear the tiflash available status.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
@@ -4052,6 +4058,9 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 }
 
 func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	s.mustExec(tk, c, "drop table if exists t_flash;")
@@ -4313,6 +4322,9 @@ func (s *testDBSuite2) TestWriteLocal(c *C) {
 }
 
 func (s *testDBSuite2) TestSkipSchemaChecker(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
