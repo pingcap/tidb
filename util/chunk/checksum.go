@@ -15,6 +15,10 @@ const (
 	checksumPayloadSize = checksumBlockSize - checksumSize
 )
 
+var checksumReaderBufPool = sync.Pool{
+	New: func() interface{} { return make([]byte, checksumBlockSize) },
+}
+
 type checksum struct {
 	disk        *os.File
 	buf         []byte
@@ -74,29 +78,30 @@ func (cks *checksum) ReadAt(p []byte, off int64) (nn int, err error) {
 		return 0, nil
 	}
 	offsetInPayload := off % checksumPayloadSize
-	base := off / checksumPayloadSize * checksumBlockSize
+	cursor := off / checksumPayloadSize * checksumBlockSize
 
-	cks.readerMu.Lock()
-	defer cks.readerMu.Unlock()
-	_, err = cks.disk.Seek(base, io.SeekStart)
-	if err != nil {
-		return
-	}
+	buf := checksumReaderBufPool.Get().([]byte)
+	defer checksumReaderBufPool.Put(buf)
+
 	var n int
 	for len(p) > 0 {
-		n, err = cks.disk.Read(cks.buf)
+		n, err = cks.disk.ReadAt(buf, cursor)
 		if err != nil {
-			if err == io.EOF {
-				err = nil
+			if err != io.EOF {
+				return
 			}
-			return
+			err = nil
+			if n == 0 {
+				return
+			}
 		}
-		originChecksum := binary.LittleEndian.Uint32(cks.buf)
-		checksum := crc32.Checksum(cks.buf[checksumSize:n], crc32.MakeTable(crc32.IEEE))
+		cursor += int64(n)
+		originChecksum := binary.LittleEndian.Uint32(buf)
+		checksum := crc32.Checksum(buf[checksumSize:n], crc32.MakeTable(crc32.IEEE))
 		if originChecksum != checksum {
 			return nn, errors.New("error checksum")
 		}
-		n1 := copy(p, cks.buf[checksumSize+offsetInPayload:n])
+		n1 := copy(p, buf[checksumSize+offsetInPayload:n])
 		nn += n1
 		p = p[n1:]
 		offsetInPayload = 0
