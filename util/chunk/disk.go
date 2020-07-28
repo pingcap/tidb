@@ -162,7 +162,8 @@ func (l *ListInDisk) GetChunk(chkIdx int) (*Chunk, error) {
 	return chk, nil
 }
 
-func (l *ListInDisk) ReopenDiskFile() (err error) {
+// reopenDiskFile reopen the file descriptor of the disk temp file, need be called after flush and before read.
+func (l *ListInDisk) reopenDiskFile() (err error) {
 	l.bufFileMutex.RLock()
 	r := l.checksumReader
 	l.bufFileMutex.RUnlock()
@@ -185,7 +186,7 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	if err != nil {
 		return
 	}
-	err = l.ReopenDiskFile()
+	err = l.reopenDiskFile()
 	if err != nil {
 		return
 	}
