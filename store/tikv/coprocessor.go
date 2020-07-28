@@ -76,6 +76,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 		rpcCancel:       NewRPCanceller(),
+		actionOnExceed:  &taskRateLimitAction{},
 	}
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
@@ -87,12 +88,18 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.concurrency = 1
 	}
 	it.sendRate = newRateLimit(it.concurrency)
+	it.actionOnExceed.sendRate = it.sendRate
+	if it.memTracker != nil {
+		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
+	}
+
 	if !it.req.KeepOrder {
 		it.collector = &copResponseCollector{
-			respChan: make(chan *copResponse, it.concurrency),
-			tasks:    it.tasks,
-			sendRate: it.sendRate,
-			finishCh: it.finishCh,
+			respChan:       make(chan *copResponse, it.concurrency),
+			tasks:          it.tasks,
+			sendRate:       it.sendRate,
+			finishCh:       it.finishCh,
+			actionOnExceed: it.actionOnExceed,
 		}
 	}
 	if !it.req.Streaming {
@@ -407,6 +414,8 @@ type copIterator struct {
 
 	// If not keep order, collector will collector the response from task respCh
 	collector *copResponseCollector
+
+	actionOnExceed *taskRateLimitAction
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -651,7 +660,14 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
-			it.sendRate.putToken()
+			it.actionOnExceed.mu.Lock()
+			if it.actionOnExceed.mu.exceed {
+				it.actionOnExceed.mu.tearedTicket = it.actionOnExceed.mu.tearedTicket + 1
+				it.actionOnExceed.mu.exceed = false
+			} else {
+				it.sendRate.putToken()
+			}
+			it.actionOnExceed.mu.Unlock()
 		}
 	}
 
@@ -1171,10 +1187,11 @@ func (it copErrorResponse) Close() error {
 
 // copResponseCollector is used to collect the resp from task respCh into its own resp
 type copResponseCollector struct {
-	respChan chan *copResponse
-	tasks    []*copTask
-	sendRate *rateLimit
-	finishCh <-chan struct{}
+	respChan       chan *copResponse
+	tasks          []*copTask
+	sendRate       *rateLimit
+	finishCh       <-chan struct{}
+	actionOnExceed *taskRateLimitAction
 }
 
 func (c *copResponseCollector) run() {
@@ -1201,7 +1218,14 @@ func (c *copResponseCollector) run() {
 					finishedTask[id] = struct{}{}
 					if len(finishedTask) < len(c.tasks) {
 						// putToken when a task finished.
-						c.sendRate.putToken()
+						c.actionOnExceed.mu.Lock()
+						if c.actionOnExceed.mu.exceed {
+							c.actionOnExceed.mu.tearedTicket = c.actionOnExceed.mu.tearedTicket + 1
+							c.actionOnExceed.mu.exceed = false
+						} else {
+							c.sendRate.putToken()
+						}
+						c.actionOnExceed.mu.Unlock()
 					}
 				}
 				break
@@ -1214,4 +1238,45 @@ func (c *copResponseCollector) run() {
 			return
 		}
 	}
+}
+
+type taskRateLimitAction struct {
+	fallbackAction memory.ActionOnExceed
+	mu             struct {
+		sync.Mutex
+		// exceed indicates whether have encountered OOM situation.
+		exceed bool
+		// tearedTicket indicates the count of tickets which have been teared up.
+		tearedTicket uint
+	}
+	sendRate *rateLimit
+}
+
+// Action implements ActionOnExceed.Action
+func (e *taskRateLimitAction) Action(t *memory.Tracker) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.mu.tearedTicket >= uint(cap(e.sendRate.token)-1) {
+		if e.fallbackAction != nil {
+			e.fallbackAction.Action(t)
+		} else {
+			// unreachable code
+			panic("TaskRateLimitAction should set fallback action")
+		}
+	}
+	ticketCount := cap(e.sendRate.token) - len(e.sendRate.token)
+	if ticketCount == cap(e.sendRate.token) {
+		return
+	}
+	e.mu.exceed = true
+}
+
+// SetLogHook implements ActionOnExceed.SetLogHook
+func (e *taskRateLimitAction) SetLogHook(hook func(uint64)) {
+
+}
+
+// SetFallback implements ActionOnExceed.SetFallback
+func (e *taskRateLimitAction) SetFallback(a memory.ActionOnExceed) {
+	e.fallbackAction = a
 }
