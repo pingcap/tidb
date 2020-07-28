@@ -93,7 +93,7 @@ func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
 	t, err = types.ParseDate(nil, "1992-06-01")
 	c.Assert(err, IsNil)
 	d = dumpBinaryDateTime(nil, t)
-	// 200 & 7 composed to uint64 1992 (litter-endian)
+	// 200 & 7 composed to uint16 1992 (litter-endian)
 	c.Assert(d, DeepEquals, []byte{4, 200, 7, 6, 1})
 
 	t, err = types.ParseDate(nil, "0000-00-00")
