@@ -369,7 +369,7 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
 		var ret int64
 		t.evalBuffer.SetDatums(r...)
-		ret, isNull, err = partitionExprs[i].EvalInt(ctx,t.evalBuffer.ToRow())
+		ret, isNull, err = partitionExprs[i].EvalInt(ctx, t.evalBuffer.ToRow())
 		if err != nil {
 			return true // Break the search.
 		}
