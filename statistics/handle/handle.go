@@ -80,7 +80,7 @@ type Handle struct {
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
 	h.mu.Lock()
-	h.statsCache, _ = newstatsCache(maxMemoryLimit)
+	h.statsCache = newstatsCache(maxMemoryLimit)
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
