@@ -6719,3 +6719,18 @@ func (s *testIntegrationSerialSuite) TestIssue18702(c *C) {
 	tk.MustExec("ROLLBACK;")
 	tk.MustQuery("SELECT * FROM t FORCE INDEX(idx_bc);").Check(testkit.Rows("1 A 10 1", "2 B 20 1"))
 }
+
+func (s *testIntegrationSerialSuite) TestIssue18662(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t (a, b) values ('a', 'A');")
+	tk.MustQuery("select * from t where field('A', a collate utf8mb4_general_ci, b) > 1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t where field('A', a, b collate utf8mb4_general_ci) > 1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t where field('A' collate utf8mb4_general_ci, a, b) > 1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t where field('A', a, b) > 1;").Check(testkit.Rows("a A"))
+}
