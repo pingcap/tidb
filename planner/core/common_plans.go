@@ -150,6 +150,16 @@ type AdminPlugins struct {
 	Plugins []string
 }
 
+// AdminShowTelemetry displays telemetry status including tracking ID, status and so on.
+type AdminShowTelemetry struct {
+	baseSchemaProducer
+}
+
+// AdminResetTelemetryID regenerates a new telemetry tracking ID.
+type AdminResetTelemetryID struct {
+	baseSchemaProducer
+}
+
 // Change represents a change plan.
 type Change struct {
 	baseSchemaProducer
@@ -986,6 +996,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 		actRows = fmt.Sprint(rootstats.GetActRows())
 	} else {
 		analyzeInfo = "time:0ns, loops:0"
+		actRows = "0"
 	}
 	switch p.(type) {
 	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
