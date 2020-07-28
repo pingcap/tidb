@@ -108,7 +108,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
-	handle.statsCache, _ = newstatsCache(maxMemoryLimit)
+	handle.statsCache = newstatsCache(maxMemoryLimit)
 
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)

@@ -27,7 +27,7 @@ func (key statsCacheKey) Hash() []byte {
 }
 
 // newstatsCache returns a new statsCahce with capacity maxMemoryLimit(initial 1G)
-func newstatsCache(maxMemoryLimit int64) (*statsCache, error) {
+func newstatsCache(maxMemoryLimit int64) *statsCache {
 	// since newstatsCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
 	cache := kvcache.NewSimpleLRUCache(uint(maxMemoryLimit), 0.1, 0)
@@ -36,7 +36,7 @@ func newstatsCache(maxMemoryLimit int64) (*statsCache, error) {
 		memCapacity: maxMemoryLimit,
 		memTracker:  memory.NewTracker(stringutil.StringerStr("statsCache"), -1),
 	}
-	return &c, nil
+	return &c
 }
 
 // LookupUnlock get table with id without Lock.
@@ -59,16 +59,16 @@ func (sc *statsCache) Lookup(id int64) (*statistics.Table, bool) {
 
 // Insert insert a new table to tables and update the cache.
 // if bytesconsumed is more than capacity, remove oldest cache and add metadata of it
-func (sc *statsCache) Insert(table *statistics.Table) (bool, error) {
+func (sc *statsCache) Insert(table *statistics.Table) {
 	var key statsCacheKey = statsCacheKey(table.PhysicalID)
 	mem := table.MemoryUsage()
 	if mem > sc.memCapacity { // ignore this kv pair if its size is too large
-		return false, nil
+		return
 	}
 	for mem+sc.memTracker.BytesConsumed() > sc.memCapacity {
 		evictedKey, evictedValue, evicted := sc.cache.RemoveOldest()
 		if !evicted {
-			return false, nil
+			return
 		}
 		sc.memTracker.Consume(-evictedValue.(*statistics.Table).MemoryUsage())
 		sc.cache.Put(evictedKey, evictedValue.(*statistics.Table).CopyMeta())
@@ -76,7 +76,7 @@ func (sc *statsCache) Insert(table *statistics.Table) (bool, error) {
 	sc.Erase(table.PhysicalID)
 	sc.memTracker.Consume(mem)
 	sc.cache.Put(key, table)
-	return true, nil
+	return
 }
 
 // Erase Erase a stateCache with physical id
@@ -108,14 +108,16 @@ func (sc *statsCache) Update(tables []*statistics.Table, deletedIDs []int64, new
 }
 
 func (sc *statsCache) GetVersion() uint64 {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	return sc.version
 }
 
 // initStatsCache should be called after the tables and their stats are initilazed
 // using tables map and version to init statscache
 func (sc *statsCache) initStatsCache(tables map[int64]*statistics.Table, version uint64) {
-	for _, tb := range tables {
-		sc.Insert(tb)
+	for _, tbl := range tables {
+		sc.Insert(tbl)
 	}
 	sc.version = version
 	return
