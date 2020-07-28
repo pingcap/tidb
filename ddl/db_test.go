@@ -164,6 +164,33 @@ func (s *testDBSuite4) TestAddIndexWithPK(c *C) {
 	s.tk.MustQuery("select * from test_add_index_with_pk2").Check(testkit.Rows("1 1 1 1", "2 2 2 2"))
 }
 
+func (s *testDBSuite5) TestAddIndexWithDupIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+
+	err1 := ddl.ErrDupKeyName.GenWithStack("index already exist %s", "idx")
+	err2 := ddl.ErrDupKeyName.GenWithStack("index already exist %s; "+
+		"a background job is trying to add the same index, "+
+		"please check by `ADMIN SHOW DDL JOBS`", "idx")
+
+	// When there is already an duplicate index, show error message.
+	tk.MustExec("create table test_add_index_with_dup (a int, key idx (a))")
+	_, err := tk.Exec("alter table test_add_index_with_dup add index idx (a)")
+	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
+	c.Assert(errors.Cause(err1).Error() == err.Error(), IsTrue)
+
+	// When there is another session adding duplicate index with state other than
+	// StatePublic, show explicit error message.
+	t := s.testGetTable(c, "test_add_index_with_dup")
+	indexInfo := t.Meta().FindIndexByName("idx")
+	indexInfo.State = model.StateNone
+	_, err = tk.Exec("alter table test_add_index_with_dup add index idx (a)")
+	c.Check(errors.Cause(err2).(*terror.Error).Equal(err), Equals, true)
+	c.Assert(errors.Cause(err2).Error() == err.Error(), IsTrue)
+
+	tk.MustExec("drop table test_add_index_with_dup")
+}
+
 func (s *testDBSuite1) TestRenameIndex(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use " + s.schemaName)
@@ -2428,7 +2455,7 @@ func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
 		"  `b` set('e') DEFAULT ''\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	s.tk.MustExec("drop table t_set")
-	s.tk.MustExec("create table t_set (a set('a', 'b', 'c', 'd') default 'a,C,c');")
+	s.tk.MustExec("create table t_set (a set('a', 'b', 'c', 'd') default 'a,c,c');")
 	s.tk.MustQuery("show create table t_set").Check(testkit.Rows("t_set CREATE TABLE `t_set` (\n" +
 		"  `a` set('a','b','c','d') DEFAULT 'a,c'\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))

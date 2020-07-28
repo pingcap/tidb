@@ -155,6 +155,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return CapturePlanBaseline.GetVal(), true, nil
 	case TiDBFoundInPlanCache:
 		return BoolToIntStr(s.PrevFoundInPlanCache), true, nil
+	case TiDBEnableCollectExecutionInfo:
+		return BoolToIntStr(config.GetGlobalConfig().EnableCollectExecutionInfo), true, nil
 	}
 	sVal, ok := s.GetSystemVar(key)
 	if ok {
@@ -391,6 +393,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		return checkUInt64SystemVar(name, value, 0, 31536000, vars)
 	case MaxPreparedStmtCount:
 		return checkInt64SystemVar(name, value, -1, 1048576, vars)
+	case AutoIncrementIncrement, AutoIncrementOffset:
+		return checkUInt64SystemVar(name, value, 1, math.MaxUint16, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil
@@ -438,7 +442,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
 		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
-		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache:
+		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo,
+		TiDBAllowAutoRandExplicitInsert, TiDBEnableTelemetry:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,

@@ -124,12 +124,17 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 		for _, task := range tasks {
 			rpcCtx, err := cache.GetTiFlashRPCContext(bo, task.region)
 			if err != nil {
-				return nil, err
+				return nil, errors.Trace(err)
 			}
 			// If the region is not found in cache, it must be out
 			// of date and already be cleaned up. We should retry and generate new tasks.
 			if rpcCtx == nil {
 				needRetry = true
+				err = bo.Backoff(BoRegionMiss, errors.New("Cannot find region or TiFlash peer"))
+				logutil.BgLogger().Info("retry for TiFlash peer or region missing", zap.Uint64("region id", task.region.GetID()))
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 				break
 			}
 			if batchCop, ok := storeTaskMap[rpcCtx.Addr]; ok {
@@ -166,7 +171,7 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 		return copErrorResponse{errors.New("batch coprocessor cannot prove keep order or desc property")}
 	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
-	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
+	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	tasks, err := buildBatchCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
 	if err != nil {
 		return copErrorResponse{err}
@@ -219,7 +224,7 @@ func (b *batchCopIterator) run(ctx context.Context) {
 	// We run workers for every batch cop.
 	for _, task := range b.tasks {
 		b.wg.Add(1)
-		bo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(b.vars)
+		bo := NewBackofferWithVars(ctx, copNextMaxBackoff, b.vars)
 		go b.handleTask(ctx, bo, task)
 	}
 	b.wg.Wait()
@@ -280,7 +285,7 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 	logutil.BgLogger().Debug("handle batch task")
 	tasks := []*batchCopTask{task}
 	for idx := 0; idx < len(tasks); idx++ {
-		ret, err := b.handleTaskOnce(ctx, bo, task)
+		ret, err := b.handleTaskOnce(ctx, bo, tasks[idx])
 		if err != nil {
 			resp := &batchCopResponse{err: errors.Trace(err)}
 			b.sendToRespCh(resp)

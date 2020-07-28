@@ -15,9 +15,9 @@ package types
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -46,9 +46,10 @@ func (e Enum) ToNumber() float64 {
 }
 
 // ParseEnumName creates a Enum with item name.
-func ParseEnumName(elems []string, name string) (Enum, error) {
+func ParseEnumName(elems []string, name string, collation string) (Enum, error) {
+	ctor := collate.GetCollator(collation)
 	for i, n := range elems {
-		if strings.EqualFold(n, name) {
+		if ctor.Compare(n, name) == 0 {
 			return Enum{Name: n, Value: uint64(i) + 1}, nil
 		}
 	}
