@@ -270,6 +270,7 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 		}
 		groups := make([]string, 0, len(m))
 		for k, v := range m {
+			sort.Strings(v)
 			groups = append(groups, fmt.Sprintf("%s config value is %s", strings.Join(v, ","), k))
 		}
 		sort.Strings(groups)
