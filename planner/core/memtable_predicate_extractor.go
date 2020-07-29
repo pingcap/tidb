@@ -792,7 +792,31 @@ func (e *MetricSummaryTableExtractor) Extract(
 }
 
 func (e *MetricSummaryTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+
+	r := new(bytes.Buffer)
+	if len(e.MetricsNames) > 0 {
+		r.WriteString(fmt.Sprintf("metric_names:[%s], ", extractStringFromStringSet(e.MetricsNames)))
+	}
+	if len(e.Quantiles) > 0 {
+		r.WriteString("quantiles:[")
+		for i, quantile := range e.Quantiles {
+			if i > 0 {
+				r.WriteByte(',')
+			}
+			r.WriteString(fmt.Sprintf("%f", quantile))
+		}
+		r.WriteString("], ")
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
 }
 
 // InspectionResultTableExtractor is used to extract some predicates of `inspection_result`
