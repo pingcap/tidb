@@ -239,12 +239,23 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 	}
 }
 
-func (c *batchCommandsClient) recv() (*tikvpb.BatchCommandsResponse, error) {
-	failpoint.Inject("gotErrorInRecvLoop", func(_ failpoint.Value) (*tikvpb.BatchCommandsResponse, error) {
-		return nil, errors.New("injected error in batchRecvLoop")
+func (c *batchCommandsClient) recv() (resp *tikvpb.BatchCommandsResponse, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
+			logutil.BgLogger().Error("batchCommandsClient.recv panic",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
+			err = errors.SuspendStack(errors.New("batch conn recv paniced"))
+		}
+	}()
+	failpoint.Inject("gotErrorInRecvLoop", func(_ failpoint.Value) (resp *tikvpb.BatchCommandsResponse, err error) {
+		err = errors.New("injected error in batchRecvLoop")
+		return
 	})
 	// When `conn.Close()` is called, `client.Recv()` will return an error.
-	return c.client.Recv()
+	resp, err = c.client.Recv()
+	return
 }
 
 // `failPendingRequests` must be called in locked contexts in order to avoid double closing channels.

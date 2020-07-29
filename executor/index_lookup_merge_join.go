@@ -281,7 +281,7 @@ func (e *IndexLookUpMergeJoin) Next(ctx context.Context, req *chunk.Chunk) error
 			result.src <- result.chk
 			return nil
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		}
 	}
 
@@ -474,9 +474,10 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 				}
 			}
 			if cmp != 0 || imw.nextColCompareFilters == nil {
-				return cmp < 0
+				return (cmp < 0 && !imw.desc) || (cmp > 0 && imw.desc)
 			}
-			return imw.nextColCompareFilters.CompareRow(rowI, rowJ) < 0
+			cmp = int64(imw.nextColCompareFilters.CompareRow(rowI, rowJ))
+			return (cmp < 0 && !imw.desc) || (cmp > 0 && imw.desc)
 		})
 	}
 	dLookUpKeys, err := imw.constructDatumLookupKeys(task)
@@ -486,7 +487,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	dLookUpKeys = imw.dedupDatumLookUpKeys(dLookUpKeys)
 	// If the order requires descending, the deDupedLookUpContents is keep descending order before.
 	// So at the end, we should generate the ascending deDupedLookUpContents to build the correct range for inner read.
-	if !imw.outerMergeCtx.needOuterSort && imw.desc {
+	if imw.desc {
 		lenKeys := len(dLookUpKeys)
 		for i := 0; i < lenKeys/2; i++ {
 			dLookUpKeys[i], dLookUpKeys[lenKeys-i-1] = dLookUpKeys[lenKeys-i-1], dLookUpKeys[i]
@@ -727,7 +728,9 @@ func (e *IndexLookUpMergeJoin) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)
-		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
 	}
 	return e.baseExecutor.Close()
 }
