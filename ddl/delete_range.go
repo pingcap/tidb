@@ -373,7 +373,7 @@ func doBatchInsertIndices(s sqlexec.SQLExecutor, jobID, tableID int64, idxInfos 
 		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 		startKeyEncoded := hex.EncodeToString(startKey)
 		endKeyEncoded := hex.EncodeToString(endKey)
-		sql += fmt.Sprintf(insertDeleteRangeSQLValue, jobID, tableID, startKeyEncoded, endKeyEncoded, ts)
+		sql += fmt.Sprintf(insertDeleteRangeSQLValue, jobID, indexID, startKeyEncoded, endKeyEncoded, ts)
 		if i != len(idxIDs)-1 {
 			sql += ","
 		}
