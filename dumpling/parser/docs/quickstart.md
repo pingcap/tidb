@@ -17,10 +17,10 @@ go mod init colx && touch main.go
 
 ## Import Dependencies
 
-First of all, you need to use `go get` to fetch the dependencies:
+First of all, you need to use `go get` to fetch the dependencies through git hash. The git hashes are available in [release page](https://github.com/pingcap/parser/releases). Take `v4.0.2` as an example:
 
 ```bash
-go get -v github.com/pingcap/parser@v4.0.0-rc.1
+go get -v github.com/pingcap/parser@3a18f1e
 ```
 
 > **NOTE**
@@ -28,7 +28,7 @@ go get -v github.com/pingcap/parser@v4.0.0-rc.1
 > You may want to use advanced API on expressions (a kind of AST node), such as numbers, string literals, booleans, nulls, etc. It is strongly recommended to use the `types` package in TiDB repo with the following command:
 >
 > ```bash
-> go get -v github.com/pingcap/tidb/types/parser_driver@v4.0.0-rc.1
+> go get -v github.com/pingcap/tidb/types/parser_driver@328b6d0
 > ```
 > and import it in your golang source code:
 > ```go
