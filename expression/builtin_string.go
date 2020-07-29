@@ -2308,8 +2308,29 @@ func (c *charFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
+	// The last argument represents the charset name after "using".
+	if _, ok := args[len(args)-1].(*Constant); !ok {
+		// If we got there, there must be something wrong in other places.
+		logutil.BgLogger().Warn(fmt.Sprintf("The last argument in char function must be constant, but got %T", args[len(args)-1]))
+		return nil, errIncorrectArgs
+	}
+	charsetName, isNull, err := args[len(args)-1].EvalString(ctx, chunk.Row{})
+	if err != nil {
+		return nil, err
+	}
+	if isNull {
+		// Use the default charset binary if it is nil.
+		bf.tp.Charset, bf.tp.Collate = charset.CharsetBin, charset.CollationBin
+		bf.tp.Flag |= mysql.BinaryFlag
+	} else {
+		bf.tp.Charset = charsetName
+		defaultCollate, err := charset.GetDefaultCollation(charsetName)
+		if err != nil {
+			return nil, err
+		}
+		bf.tp.Collate = defaultCollate
+	}
 	bf.tp.Flen = 4 * (len(args) - 1)
-	types.SetBinChsClnFlag(bf.tp)
 
 	sig := &builtinCharSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Char)
@@ -2354,33 +2375,7 @@ func (b *builtinCharSig) evalString(row chunk.Row) (string, bool, error) {
 		}
 		bigints = append(bigints, val)
 	}
-	// The last argument represents the charset name after "using".
-	// Use default charset utf8 if it is nil.
-	argCharset, IsNull, err := b.args[len(b.args)-1].EvalString(b.ctx, row)
-	if err != nil {
-		return "", true, err
-	}
-
 	result := string(b.convertToBytes(bigints))
-	charsetLabel := strings.ToLower(argCharset)
-	if IsNull || charsetLabel == "ascii" || strings.HasPrefix(charsetLabel, "utf8") {
-		return result, false, nil
-	}
-
-	encoding, charsetName := charset.Lookup(charsetLabel)
-	if encoding == nil {
-		return "", true, errors.Errorf("unknown encoding: %s", argCharset)
-	}
-
-	oldStr := result
-	result, _, err = transform.String(encoding.NewDecoder(), result)
-	if err != nil {
-		logutil.BgLogger().Warn("change charset of string",
-			zap.String("string", oldStr),
-			zap.String("charset", charsetName),
-			zap.Error(err))
-		return "", true, err
-	}
 	return result, false, nil
 }
 
