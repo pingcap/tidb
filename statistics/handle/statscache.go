@@ -97,11 +97,11 @@ func (sc *statsCache) Update(tables []*statistics.Table, deletedIDs []int64, new
 	sc.mu.Lock()
 	if sc.version <= newVersion {
 		sc.version = newVersion
-		for _, tbl := range tables {
-			sc.Insert(tbl)
-		}
 		for _, id := range deletedIDs {
 			sc.Erase(id)
+		}
+		for _, tbl := range tables {
+			sc.Insert(tbl)
 		}
 	}
 	sc.mu.Unlock()
