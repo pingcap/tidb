@@ -78,6 +78,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		rpcCancel:       NewRPCanceller(),
 		actionOnExceed:  &taskRateLimitAction{},
 	}
+
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -87,6 +88,11 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
+	logutil.BgLogger().Info("debug", zap.Int("concurrency", it.concurrency))
+	if it.concurrency > 5 {
+		it.concurrency = 5
+	}
+
 	it.sendRate = newRateLimit(it.concurrency)
 	it.actionOnExceed.sendRate = it.sendRate
 	if it.memTracker != nil {
@@ -1268,6 +1274,13 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 	if ticketCount == cap(e.sendRate.token) {
 		return
 	}
+	logutil.BgLogger().Info("memory exceeds quota, mark taskRateLimitAction exceed signal.",
+		zap.Int64("consumed", t.BytesConsumed()),
+		zap.Int64("quota", t.GetBytesLimit()),
+		zap.Int64("maxConsumed", t.MaxConsumed()),
+		zap.Uint("tearedTicket", e.mu.tearedTicket),
+		zap.Int("ticketTotal", cap(e.sendRate.token)))
+
 	e.mu.exceed = true
 }
 

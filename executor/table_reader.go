@@ -140,6 +140,13 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
+	actionExceed := e.memTracker.GetActionOnExceed()
+	if actionExceed != nil {
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
+	} else {
+		return errors.Trace(fmt.Errorf("failed to find actionExceed in TableReaderExecutor Open phase"))
+	}
+
 	if len(secondPartRanges) == 0 {
 		e.resultHandler.open(nil, firstResult)
 		return nil
@@ -149,12 +156,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if err != nil {
 		e.feedback.Invalidate()
 		return err
-	}
-	actionExceed := e.memTracker.GetActionOnExceed()
-	if actionExceed != nil {
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
-	} else {
-		return errors.Trace(fmt.Errorf("failed to find actionExceed in TableReaderExecutor Open phase"))
 	}
 	e.resultHandler.open(firstResult, secondResult)
 	return nil
