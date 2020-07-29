@@ -155,9 +155,9 @@ func initEvalBufferType(t *partitionedTable) {
 	}
 }
 
-func initEvalBuffer(t *partitionedTable) chunk.MutRow {
+func initEvalBuffer(t *partitionedTable) *chunk.MutRow {
 	evalBuffer := chunk.MutRowFromTypes(t.evalBufferTypes)
-	return evalBuffer
+	return &evalBuffer
 }
 
 // ForRangeColumnsPruning is used for range partition pruning.
@@ -378,7 +378,7 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 	partitionExprs := t.partitionExpr.UpperBounds
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
 		var ret int64
-		evalBuffer := t.evalBufferPool.Get().(chunk.MutRow)
+		evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 		defer t.evalBufferPool.Put(evalBuffer)
 		evalBuffer.SetDatums(r...)
 		ret, isNull, err = partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
@@ -423,7 +423,7 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 	if col, ok := t.partitionExpr.Expr.(*expression.Column); ok {
 		ret = r[col.Index].GetInt64()
 	} else {
-		evalBuffer := t.evalBufferPool.Get().(chunk.MutRow)
+		evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 		defer t.evalBufferPool.Put(evalBuffer)
 		evalBuffer.SetDatums(r...)
 		val, isNull, err := t.partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
@@ -469,7 +469,7 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 		}
 		return int(ret), nil
 	}
-	evalBuffer := t.evalBufferPool.Get().(chunk.MutRow)
+	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 	defer t.evalBufferPool.Put(evalBuffer)
 	evalBuffer.SetDatums(r...)
 	ret, isNull, err := t.partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
