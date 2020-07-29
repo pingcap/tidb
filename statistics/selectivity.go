@@ -296,49 +296,50 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			}
 		}
 		for i := range remainedExprs {
-			if mask&(1<<uint64(i)) > 0 {
-				scalarCond, ok := remainedExprs[i].(*expression.ScalarFunction)
-				// Make sure we only handle DNF condition.
-				if !ok || scalarCond.FuncName.L != ast.LogicOr {
-					continue
-				}
-				dnfItems := expression.FlattenDNFConditions(scalarCond)
-				ranges, cols, err := ranger.DetachSimpleDNFCondAndBuildRangeForCols(ctx, dnfItems, colID2SingleColIdxLen)
-				if err != nil {
-					return 0, nil, errors.Trace(err)
-				}
-				selectivity := 0.0
-				for j := range ranges {
-					cnt := 0.0
-					colID := cols[j].UniqueID
-					singleColIdxID, ok := colID2SingleColIdxID[colID]
-					if ok {
-						cnt, err = coll.GetRowCountByIndexRanges(sc, singleColIdxID, ranges[j])
-						if err != nil {
-							return 0, nil, errors.Trace(err)
-						}
-					} else if coll.Columns[colID].IsHandle {
-						cnt, err = coll.GetRowCountByIntColumnRanges(sc, colID, ranges[j])
-						if err != nil {
-							return 0, nil, errors.Trace(err)
-						}
-					} else {
-						cnt, err = coll.GetRowCountByColumnRanges(sc, colID, ranges[j])
-						if err != nil {
-							return 0, nil, errors.Trace(err)
-						}
+			if mask&(1<<uint64(i)) == 0 {
+				continue
+			}
+			scalarCond, ok := remainedExprs[i].(*expression.ScalarFunction)
+			// Make sure we only handle DNF condition.
+			if !ok || scalarCond.FuncName.L != ast.LogicOr {
+				continue
+			}
+			dnfItems := expression.FlattenDNFConditions(scalarCond)
+			ranges, cols, err := ranger.DetachSimpleDNFCondAndBuildRangeForCols(ctx, dnfItems, colID2SingleColIdxLen)
+			if err != nil {
+				return 0, nil, errors.Trace(err)
+			}
+			selectivity := 0.0
+			for j := range ranges {
+				cnt := 0.0
+				colID := cols[j].UniqueID
+				singleColIdxID, ok := colID2SingleColIdxID[colID]
+				if ok {
+					cnt, err = coll.GetRowCountByIndexRanges(sc, singleColIdxID, ranges[j])
+					if err != nil {
+						return 0, nil, errors.Trace(err)
 					}
-
-					curSelectivity := cnt / float64(coll.Count)
-
-					// Assuming col A and col B are independent,
-					// we can calculate the selectivity by sel(condA OR condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
-					selectivity = selectivity + curSelectivity - selectivity*curSelectivity
+				} else if coll.Columns[colID].IsHandle {
+					cnt, err = coll.GetRowCountByIntColumnRanges(sc, colID, ranges[j])
+					if err != nil {
+						return 0, nil, errors.Trace(err)
+					}
+				} else {
+					cnt, err = coll.GetRowCountByColumnRanges(sc, colID, ranges[j])
+					if err != nil {
+						return 0, nil, errors.Trace(err)
+					}
 				}
-				if selectivity != 0 {
-					ret *= selectivity
-					mask &^= 1 << uint64(i)
-				}
+
+				curSelectivity := cnt / float64(coll.Count)
+
+				// Assuming col A and col B are independent,
+				// we can calculate the selectivity by sel(condA OR condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
+				selectivity = selectivity + curSelectivity - selectivity*curSelectivity
+			}
+			if selectivity != 0 {
+				ret *= selectivity
+				mask &^= 1 << uint64(i)
 			}
 		}
 	}
