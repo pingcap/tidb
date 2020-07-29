@@ -21,6 +21,7 @@ var checksumReaderBufPool = sync.Pool{
 // checksumWriter implements an io.WriteCloser, it calculates and stores a CRC-32 checksum for the payload before
 // writing to the underlying object.
 type checksumWriter struct {
+	err         error
 	w           io.WriteCloser
 	buf         []byte
 	payload     []byte
@@ -40,7 +41,7 @@ func (w *checksumWriter) Available() int { return checksumPayloadSize - w.payloa
 
 // Write implements the io.Writer interface.
 func (w *checksumWriter) Write(p []byte) (nn int, err error) {
-	for len(p) > w.Available() {
+	for len(p) > w.Available() && w.err == nil {
 		n := copy(w.payload[w.payloadUsed:], p)
 		w.payloadUsed += n
 		err = w.Flush()
@@ -49,6 +50,9 @@ func (w *checksumWriter) Write(p []byte) (nn int, err error) {
 		}
 		nn += n
 		p = p[n:]
+	}
+	if w.err != nil {
+		return nn, w.err
 	}
 	n := copy(w.payload[w.payloadUsed:], p)
 	w.payloadUsed += n
@@ -61,6 +65,9 @@ func (w *checksumWriter) Buffered() int { return w.payloadUsed }
 
 // Flush writes any buffered data to the disk.
 func (w *checksumWriter) Flush() error {
+	if w.err != nil {
+		return w.err
+	}
 	if w.payloadUsed == 0 {
 		return nil
 	}
@@ -71,6 +78,7 @@ func (w *checksumWriter) Flush() error {
 		err = io.ErrShortWrite
 	}
 	if err != nil {
+		w.err = err
 		return err
 	}
 	w.payloadUsed = 0
@@ -88,10 +96,10 @@ func (w *checksumWriter) Close() (err error) {
 
 // checksumReader implements an io.ReadAt, reading from the input source after verifying the checksum.
 type checksumReader struct {
-	r io.ReaderAt
+	r io.ReadSeeker
 }
 
-func newChecksumReader(r io.ReaderAt) *checksumReader {
+func newChecksumReader(r io.ReadSeeker) *checksumReader {
 	checksumReader := &checksumReader{r: r}
 	return checksumReader
 }
@@ -104,20 +112,18 @@ func (r *checksumReader) ReadAt(p []byte, off int64) (nn int, err error) {
 	offsetInPayload := off % checksumPayloadSize
 	cursor := off / checksumPayloadSize * checksumBlockSize
 
+	_, err = r.r.Seek(cursor, io.SeekStart)
+	if err != nil {
+		return
+	}
+
 	buf := checksumReaderBufPool.Get().([]byte)
 	defer checksumReaderBufPool.Put(buf)
-
 	var n int
 	for len(p) > 0 {
-		n, err = r.r.ReadAt(buf, cursor)
+		n, err = r.r.Read(buf)
 		if err != nil {
-			if err != io.EOF {
-				return
-			}
-			err = nil
-			if n == 0 {
-				return
-			}
+			return nn, err
 		}
 		cursor += int64(n)
 		originChecksum := binary.LittleEndian.Uint32(buf)

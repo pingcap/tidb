@@ -2,6 +2,7 @@ package chunk
 
 import (
 	"bytes"
+	"io"
 	"os"
 
 	"github.com/pingcap/check"
@@ -58,7 +59,9 @@ func (s *testChunkSuite) TestChecksumReadAt(c *check.C) {
 
 	r = make([]byte, 1000)
 	n, err = cs.ReadAt(r, 1020*10-1)
-	c.Assert(err, check.IsNil)
+	c.Assert(err, check.Equals, io.EOF)
+	r = make([]byte, 1)
+	n, err = cs.ReadAt(r, 1020*10-1)
 	c.Assert(n, check.Equals, 1)
-	c.Assert(string(r[:5]), check.Equals, "9\x00\x00\x00\x00")
+	c.Assert(string(r), check.Equals, "9")
 }
