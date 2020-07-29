@@ -5096,10 +5096,308 @@ func (s *testIntegrationSuite) TestIssue19012(c *C) {
 		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "常州市", 1, 9);`)
 		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "镇江市", 1, 9);`)
 	}
+<<<<<<< HEAD
 	tk.Se.GetSessionVars().MaxChunkSize = 1
 	tk.Se.GetSessionVars().InitChunkSize = 1
 	rs := tk.MustQuery(`select a.province, a.city, case when sum(s1should_count) = 0 then 0 else sum(s1complete_count)/sum(s1should_count) end as aa from t a where a.province = "江苏省" group by a.province, a.city
 union all 
 select a.province, a.province city, case when sum(s1should_count) = 0 then 0 else sum(s1complete_count)/sum(s1should_count) end as aa from t a where a.province = "江苏省" group by a.province, a.province;`)
 	rs.Sort().Check(testkit.Rows("江苏省 南京市 9.0000", "江苏省 南通市 9.0000", "江苏省 宿迁市 9.0000", "江苏省 常州市 9.0000", "江苏省 徐州市 -8.0000", "江苏省 扬州市 9.0000", "江苏省 无锡市 6.0000", "江苏省 江苏省 10.0000", "江苏省 泰州市 9.0000", "江苏省 淮安市 9.0000", "江苏省 盐城市 6.0000", "江苏省 苏州市 9.0000", "江苏省 连云港市 9.0000", "江苏省 镇江市 9.0000"))
+=======
+}
+
+func (s *testIntegrationSuite) TestIssue17045(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int,b varchar(20),c datetime,d double,e int,f int as(a+b),key(a),key(b),key(c),key(d),key(e),key(f));")
+	tk.MustExec("insert into t(a,b,e) values(null,\"5\",null);")
+	tk.MustExec("insert into t(a,b,e) values(\"5\",null,null);")
+	tk.MustQuery("select /*+ use_index_merge(t)*/ * from t where t.e=5 or t.a=5;").Check(testkit.Rows("5 <nil> <nil> <nil> <nil> <nil>"))
+}
+
+func (s *testIntegrationSuite) TestIssue17098(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a char) collate utf8mb4_bin;")
+	tk.MustExec("create table t2(a char) collate utf8mb4_bin;;")
+	tk.MustExec("insert into t1 values('a');")
+	tk.MustExec("insert into t2 values('a');")
+	tk.MustQuery("select collation(t1.a) from t1 union select collation(t2.a) from t2;").Check(testkit.Rows("utf8mb4_bin"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue17176(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8 collate utf8_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
+	tk.MustGetErrMsg("create table t(a enum('a', 'Á')) charset utf8 collate utf8_general_ci;", "[types:1291]Column 'a' has duplicated value 'Á' in ENUM")
+	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8mb4 collate utf8mb4_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
+	tk.MustExec("create table t(a enum('a', 'A')) charset utf8 collate utf8_bin;")
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t3(a enum('a', 'A')) charset utf8mb4 collate utf8mb4_bin;")
+}
+
+func (s *testIntegrationSuite) TestIssue17115(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select collation(user());").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(compress('abc'));").Check(testkit.Rows("binary"))
+}
+
+func (s *testIntegrationSuite) TestIndexedVirtualGeneratedColumnTruncate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(a int, b tinyint as(a+100) unique key)")
+	tk.MustExec("insert ignore into t values(200, default)")
+	tk.MustExec("update t set a=1 where a=200")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert ignore into t values(200, default)")
+	tk.MustExec("admin check table t")
+	tk.MustExec("insert ignore into t values(200, default) on duplicate key update a=100")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert ignore into t values(200, default)")
+	tk.MustExec("update t set a=1 where a=200")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t")
+	tk.MustExec("insert ignore into t values(200, default)")
+	tk.MustExec("admin check table t")
+	tk.MustExec("insert ignore into t values(200, default) on duplicate key update a=100")
+	tk.MustExec("admin check table t")
+	tk.MustExec("delete from t")
+	tk.MustExec("admin check table t")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
+}
+
+func (s *testIntegrationSuite) TestIssue17287(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@tidb_enable_vectorized_expression = false;")
+	tk.MustExec("create table t(a datetime);")
+	tk.MustExec("insert into t values(from_unixtime(1589873945)), (from_unixtime(1589873946));")
+	tk.MustExec("prepare stmt7 from 'SELECT unix_timestamp(a) FROM t WHERE a = from_unixtime(?);';")
+	tk.MustExec("set @val1 = 1589873945;")
+	tk.MustExec("set @val2 = 1589873946;")
+	tk.MustQuery("execute stmt7 using @val1;").Check(testkit.Rows("1589873945"))
+	tk.MustQuery("execute stmt7 using @val2;").Check(testkit.Rows("1589873946"))
+}
+
+func (s *testIntegrationSuite) TestIssue17898(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table t0")
+	tk.MustExec("create table t0(a char(10), b int as ((a)));")
+	tk.MustExec("insert into t0(a) values(\"0.5\");")
+	tk.MustQuery("select * from t0;").Check(testkit.Rows("0.5 1"))
+}
+
+func (s *testIntegrationSuite) TestIssue17727(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	var err error
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test;")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY auto_increment, a timestamp NOT NULL);")
+	tk.MustExec("INSERT INTO t1 VALUES (null, '2020-05-30 20:30:00');")
+	tk.MustExec("PREPARE mystmt FROM 'SELECT * FROM t1 WHERE UNIX_TIMESTAMP(a) >= ?';")
+	tk.MustExec("SET @a=1590868800;")
+	tk.MustQuery("EXECUTE mystmt USING @a;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("SET @a=1590868801;")
+	tk.MustQuery("EXECUTE mystmt USING @a;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt from 'select unix_timestamp(?)';")
+	tk.MustExec("set @a = '2020-05-30 20:30:00';")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1590841800"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("set @a = '2020-06-12 13:47:58';")
+	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("1591940878"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue17891(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_bin default 'a,b ');")
+	tk.MustExec("drop table t")
+	tk.MustExec("create table test(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_general_ci default 'a,B ,C');")
+}
+
+func (s *testIntegrationSerialSuite) TestIssue17233(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists table_int")
+	tk.MustExec(`CREATE TABLE table_int (
+	  id_0 int(16) NOT NULL AUTO_INCREMENT,
+	  col_int_0 int(16) DEFAULT NULL,
+	  PRIMARY KEY (id_0),
+	  KEY fvclc (id_0,col_int_0));`)
+	tk.MustExec("INSERT INTO table_int VALUES (1,NULL),(2,NULL),(3,65535),(4,1),(5,0),(6,NULL),(7,-1),(8,65535),(9,NULL),(10,65535),(11,-1),(12,0),(13,-1),(14,1),(15,65535),(16,0),(17,1),(18,0),(19,0)")
+
+	tk.MustExec("drop table if exists table_varchar")
+	tk.MustExec(`CREATE TABLE table_varchar (
+	  id_2 int(16) NOT NULL AUTO_INCREMENT,
+	  col_varchar_2 varchar(511) DEFAULT NULL,
+	  PRIMARY KEY (id_2));`)
+	tk.MustExec(`INSERT INTO table_varchar VALUES (1,''),(2,''),(3,''),(4,''),(5,''),(6,''),(7,''),(8,''),(9,''),(10,''),(11,''),(12,'');`)
+
+	tk.MustExec("drop table if exists table_float_varchar")
+	tk.MustExec(`CREATE TABLE table_int_float_varchar (
+	  id_6 int(16) NOT NULL AUTO_INCREMENT,
+	  col_int_6 int(16) NOT NULL,
+	  col_float_6 float DEFAULT NULL,
+	  col_varchar_6 varchar(511) DEFAULT NULL,
+	  PRIMARY KEY (id_6,col_int_6)
+	)
+	PARTITION BY RANGE ( col_int_6 ) (
+	  PARTITION p0 VALUES LESS THAN (1),
+	  PARTITION p2 VALUES LESS THAN (1000),
+	  PARTITION p3 VALUES LESS THAN (10000),
+	  PARTITION p5 VALUES LESS THAN (1000000),
+	  PARTITION p7 VALUES LESS THAN (100000000),
+	  PARTITION p9 VALUES LESS THAN (10000000000),
+	  PARTITION p10 VALUES LESS THAN (100000000000),
+	  PARTITION pn VALUES LESS THAN (MAXVALUE));`)
+	tk.MustExec(`INSERT INTO table_int_float_varchar VALUES (1,-1,0.1,'0000-00-00 00:00:00'),(2,0,0,NULL),(3,-1,1,NULL),(4,0,NULL,NULL),(7,0,0.5,NULL),(8,0,0,NULL),(10,-1,0,'-1'),(5,1,-0.1,NULL),(6,1,0.1,NULL),(9,65535,0,'1');`)
+
+	tk.MustExec("drop table if exists table_float")
+	tk.MustExec(`CREATE TABLE table_float (
+	  id_1 int(16) NOT NULL AUTO_INCREMENT,
+	  col_float_1 float DEFAULT NULL,
+	  PRIMARY KEY (id_1),
+	  KEY zbjus (id_1,col_float_1));`)
+	tk.MustExec(`INSERT INTO table_float VALUES (1,NULL),(2,-0.1),(3,-1),(4,NULL),(5,-0.1),(6,0),(7,0),(8,-1),(9,NULL),(10,NULL),(11,0.1),(12,-1);`)
+
+	tk.MustExec("drop view if exists view_4")
+	tk.MustExec(`CREATE DEFINER='root'@'127.0.0.1' VIEW view_4 (col_1, col_2, col_3, col_4, col_5, col_6, col_7, col_8, col_9, col_10) AS
+    SELECT /*+ USE_INDEX(table_int fvclc, fvclc)*/
+        tmp1.id_6 AS col_1,
+        tmp1.col_int_6 AS col_2,
+        tmp1.col_float_6 AS col_3,
+        tmp1.col_varchar_6 AS col_4,
+        tmp2.id_2 AS col_5,
+        tmp2.col_varchar_2 AS col_6,
+        tmp3.id_0 AS col_7,
+        tmp3.col_int_0 AS col_8,
+        tmp4.id_1 AS col_9,
+        tmp4.col_float_1 AS col_10
+    FROM ((
+            test.table_int_float_varchar AS tmp1 LEFT JOIN
+            test.table_varchar AS tmp2 ON ((NULL<=tmp2.col_varchar_2)) IS NULL
+        ) JOIN
+        test.table_int AS tmp3 ON (1.117853833115198e-03!=tmp1.col_int_6))
+    JOIN
+        test.table_float AS tmp4 ON !((1900370398268920328=0e+00)) WHERE ((''<='{Gm~PcZNb') OR (tmp2.id_2 OR tmp3.col_int_0)) ORDER BY col_1,col_2,col_3,col_4,col_5,col_6,col_7,col_8,col_9,col_10 LIMIT 20580,5;`)
+
+	tk.MustExec("drop view if exists view_10")
+	tk.MustExec(`CREATE DEFINER='root'@'127.0.0.1' VIEW view_10 (col_1, col_2) AS
+    SELECT  table_int.id_0 AS col_1,
+            table_int.col_int_0 AS col_2
+    FROM test.table_int
+    WHERE
+        ((-1e+00=1) OR (0e+00>=table_int.col_int_0))
+    ORDER BY col_1,col_2
+    LIMIT 5,9;`)
+
+	tk.MustQuery("SELECT col_1 FROM test.view_10").Sort().Check(testkit.Rows("16", "18", "19"))
+	tk.MustQuery("SELECT col_1 FROM test.view_4").Sort().Check(testkit.Rows("8", "8", "8", "8", "8"))
+	tk.MustQuery("SELECT view_10.col_1 FROM view_4 JOIN view_10").Check(testkit.Rows("16", "16", "16", "16", "16", "18", "18", "18", "18", "18", "19", "19", "19", "19", "19"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue17989(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b tinyint as(a+1), c int as(b+1));")
+	tk.MustExec("set sql_mode='';")
+	tk.MustExec("insert into t(a) values(2000);")
+	tk.MustExec("create index idx on t(c);")
+	tk.MustQuery("select c from t;").Check(testkit.Rows("128"))
+	tk.MustExec("admin check table t")
+}
+
+func (s *testIntegrationSerialSuite) TestIssue18638(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t (a, b) values ('a', 'A');")
+	tk.MustQuery("select * from t t1, t t2 where t1.a = t2.b collate utf8mb4_general_ci;").Check(testkit.Rows("a A a A"))
+	tk.MustQuery("select * from t t1 left join t t2 on t1.a = t2.b collate utf8mb4_general_ci;").Check(testkit.Rows("a A a A"))
+}
+
+func (s *testIntegrationSuite) TestIssue18850(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int, b enum('A', 'B'));")
+	tk.MustExec("create table t1(a1 int, b1 enum('B', 'A'));")
+	tk.MustExec("insert into t values (1, 'A');")
+	tk.MustExec("insert into t1 values (1, 'A');")
+	tk.MustQuery("select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
+
+	tk.MustExec("drop table t, t1")
+	tk.MustExec("create table t(a int, b set('A', 'B'));")
+	tk.MustExec("create table t1(a1 int, b1 set('B', 'A'));")
+	tk.MustExec("insert into t values (1, 'A');")
+	tk.MustExec("insert into t1 values (1, 'A');")
+	tk.MustQuery("select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue18662(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);")
+	tk.MustExec("insert into t (a, b) values ('a', 'A');")
+	tk.MustQuery("select * from t where field('A', a collate utf8mb4_general_ci, b) > 1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t where field('A', a, b collate utf8mb4_general_ci) > 1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t where field('A' collate utf8mb4_general_ci, a, b) > 1;").Check(testkit.Rows())
+	tk.MustQuery("select * from t where field('A', a, b) > 1;").Check(testkit.Rows("a A"))
+>>>>>>> c7dcf9c... util: fix a encode bug causes the wrong result of hashJoin with set and enum (#18855)
 }
