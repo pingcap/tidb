@@ -1449,15 +1449,14 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 	err := tk.ExecToErr("commit")
 	c.Assert(err, NotNil)
 
-	// Change auto random bits is not supported.
-	tk2.MustExec("create table ta(a bigint primary key auto_random(3), b varchar(255), unique key uk(b));")
+	// Change default value is rejected.
+	tk2.MustExec("create table ta(a bigint primary key auto_random(3), b varchar(255) default 'old');")
 	tk2.MustExec("insert into ta(b) values('a')")
 	tk.MustExec("begin pessimistic")
-	tk.MustExec("insert into ta(b) values('b')")
-	tk2.MustExec("alter table ta modify column a bigint auto_random(12);")
+	tk.MustExec("insert into ta values()")
+	tk2.MustExec("alter table ta modify column b varchar(300) default 'new';")
 	err = tk.ExecToErr("commit")
 	c.Assert(err, NotNil)
-	tk2.MustExec("admin check table ta")
 	tk2.MustQuery("select b from ta").Check(testkit.Rows("a"))
 
 	tk2.MustExec("drop database if exists test_db")

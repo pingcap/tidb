@@ -17,11 +17,12 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -137,20 +138,55 @@ func needCollectModifyColOps(actionType uint64) bool {
 	return actionType&(1<<model.ActionModifyColumn) != 0
 }
 
+func fieldTypeDeepEquals(ft1 *types.FieldType, ft2 *types.FieldType) bool {
+	if ft1.Tp == ft2.Tp &&
+		ft1.Flag == ft2.Flag &&
+		ft1.Flen == ft2.Flen &&
+		ft1.Decimal == ft2.Decimal &&
+		ft1.Charset == ft2.Charset &&
+		ft1.Collate == ft2.Collate &&
+		len(ft1.Elems) == len(ft2.Elems) {
+		for i, elem := range ft1.Elems {
+			if elem != ft2.Elems[i] {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// colChangeAmendable checks whether the column change is amendable, now only increasing column field
+// length is allowed for committing concurrent pessimistic transactions.
+func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnInfo) error {
+	// Modifying a stored generated column is not allowed by DDL, the generated related fields are not considered.
+	if !fieldTypeDeepEquals(&colAtStart.FieldType, &colAtCommit.FieldType) {
+		if colAtStart.FieldType.Flag != colAtCommit.FieldType.Flag {
+			return errors.Trace(errors.Errorf("flag is not matched for column=%v, from=%v to=%v",
+				colAtCommit.Name.String(), colAtStart.FieldType.Flag, colAtCommit.FieldType.Flag))
+		}
+		err := ddl.CheckModifyTypeCompatible(&colAtStart.FieldType, &colAtCommit.FieldType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	// TODO Default value change is not supported.
+	if !reflect.DeepEqual(colAtStart.DefaultValue, colAtCommit.DefaultValue) {
+		return errors.Trace(errors.Errorf("default value is not matched for column=%v, from=%v to=%v",
+			colAtCommit.Name.String(), colAtStart.DefaultValue, colAtCommit.DefaultValue))
+	}
+	return nil
+}
+
 // collectModifyColAmendOps is used to check if there is column change from nullable to not null by now.
 // TODO allow column change from nullable to not null, and generate keys check operation.
 func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
-	// Report error if auto random bits is changed.
-	if tblAtStart.Meta().AutoRandomBits != tblAtCommit.Meta().AutoRandomBits {
-		return nil, errors.Trace(errors.Errorf("amend is not supported if the auto random bits is changed table=%v",
-			tblAtCommit.Meta().Name.String()))
-	}
 	for _, colAtCommit := range tblAtCommit.Cols() {
 		colAtStart := findColByID(tblAtStart, colAtCommit.ID)
 		if colAtStart != nil {
-			if !mysql.HasNotNullFlag(colAtStart.Flag) && mysql.HasNotNullFlag(colAtCommit.Flag) {
-				return nil, errors.Trace(errors.Errorf("amend column=%v change from nullable to not null is not supported",
-					colAtStart.Name.String()))
+			err := colChangeAmendable(colAtStart.ColumnInfo, colAtCommit.ColumnInfo)
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
