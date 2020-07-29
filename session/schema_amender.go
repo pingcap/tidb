@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -39,7 +40,7 @@ import (
 
 const amendableType = nonMemAmendType | memBufAmendType
 const nonMemAmendType = (1 << model.ActionAddColumn) | (1 << model.ActionDropColumn) | (1 << model.ActionDropIndex)
-const memBufAmendType = uint64(1 << model.ActionAddIndex)
+const memBufAmendType = uint64(1<<model.ActionAddIndex) | (1 << model.ActionModifyColumn)
 
 // Amend operation types.
 const (
@@ -128,6 +129,29 @@ func (a *amendCollector) keyHasAmendOp(key []byte) bool {
 	return len(ops) > 0
 }
 
+func needCollectIndexOps(actionType uint64) bool {
+	return actionType&(1<<model.ActionAddIndex) != 0
+}
+
+func needCollectModifyColOps(actionType uint64) bool {
+	return actionType&(1<<model.ActionModifyColumn) != 0
+}
+
+// collectModifyColAmendOps is used to check if there is column change from nullable to not null by now.
+// TODO allow column change from nullable to not null, and generate keys check operation.
+func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
+	for _, colAtCommit := range tblAtCommit.Cols() {
+		colAtStart := findColByID(tblAtStart, colAtCommit.ID)
+		if colAtStart != nil {
+			if !mysql.HasNotNullFlag(colAtStart.Flag) && mysql.HasNotNullFlag(colAtCommit.Flag) {
+				return nil, errors.Trace(errors.Errorf("amend column=%v change from nullable to not null is not supported",
+					colAtStart.Name.String()))
+			}
+		}
+	}
+	return nil, nil
+}
+
 func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
 	res := make([]amendOp, 0, 4)
 	// Check index having state change, collect index column info.
@@ -187,16 +211,24 @@ func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStar
 
 // collectTblAmendOps collects amend operations for each table using the schema diff between startTS and commitTS.
 func (a *amendCollector) collectTblAmendOps(sctx sessionctx.Context, phyTblID int64,
-	tblInfoAtStart, tblInfoAtCommit table.Table) error {
+	tblInfoAtStart, tblInfoAtCommit table.Table, actionType uint64) error {
 	if _, ok := a.tblAmendOpMap[phyTblID]; !ok {
 		a.tblAmendOpMap[phyTblID] = make([]amendOp, 0, 4)
 	}
-	// TODO: currently only "add index" is considered.
-	ops, err := a.collectIndexAmendOps(sctx, tblInfoAtStart, tblInfoAtCommit)
-	if err != nil {
-		return err
+	if needCollectIndexOps(actionType) {
+		// TODO: currently only "add index" is considered.
+		ops, err := a.collectIndexAmendOps(sctx, tblInfoAtStart, tblInfoAtCommit)
+		if err != nil {
+			return err
+		}
+		a.tblAmendOpMap[phyTblID] = append(a.tblAmendOpMap[phyTblID], ops...)
 	}
-	a.tblAmendOpMap[phyTblID] = append(a.tblAmendOpMap[phyTblID], ops...)
+	if needCollectModifyColOps(actionType) {
+		_, err := a.collectModifyColAmendOps(tblInfoAtStart, tblInfoAtCommit)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -495,7 +527,7 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 		}
 		if actionType&(memBufAmendType) != 0 {
 			needAmendMem = true
-			err := amendCollector.collectTblAmendOps(s.sess, tblID, tblInfoAtStart, tblInfoAtCommit)
+			err := amendCollector.collectTblAmendOps(s.sess, tblID, tblInfoAtStart, tblInfoAtCommit, actionType)
 			if err != nil {
 				return nil, err
 			}

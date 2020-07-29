@@ -1419,3 +1419,29 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLAddDropColumn(c *C) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2", "5"))
 }
+func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 varchar(10))")
+	tk.MustExec("insert t1 values (1, 77, 'a'), (2, 88, 'b')")
+
+	// Extend column field length is acceptable.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t1 set c2 = c1 * 10")
+	tk2.MustExec("alter table t1 modify column c2 bigint")
+	tk.MustExec("commit")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t1 set c3 = 'aba'")
+	tk2.MustExec("alter table t1 modify column c3 varchar(30)")
+	tk.MustExec("commit")
+	tk2.MustExec("admin check table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 10 aba", "2 20 aba"))
+
+	// Change column from nullable to not null is not allowed by now.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1(c1) values(100)")
+	tk2.MustExec("alter table t1 change column c2 cc2 bigint not null")
+	err := tk.ExecToErr("commit")
+	c.Assert(err, NotNil)
+}
