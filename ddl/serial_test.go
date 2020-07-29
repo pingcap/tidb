@@ -1288,7 +1288,6 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t values (1, 2)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
 	// 2. Drop invisible index
-	tk.MustGetErrMsg("alter table t drop column a", "[ddl:8200]can't drop column a with index covered now")
 	tk.MustExec("alter table t drop index a")
 	tk.MustQuery(showIndexes).Check(testkit.Rows())
 	tk.MustExec("insert into t values (3, 4)")

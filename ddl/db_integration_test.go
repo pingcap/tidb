@@ -2328,3 +2328,14 @@ func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 	tk.MustExec("alter table t3 alter index idx invisible")
 	tk.MustQuery(query).Check(testkit.Rows("idx NO"))
 }
+
+/*
+func (s *testIntegrationSuite5) TestDropColumnWithIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")
+	tk.MustExec("create index idx on t_drop_column_with_idx(b, c)")
+	tk.MustGetErrMsg("alter table t_drop_column_with_idx drop column b", "[ddl:8200]can't drop column b with index covered now")
+	tk.MustExec("drop table if exists t_drop_column_with_idx")
+}
+*/

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -52,7 +53,7 @@ var (
 
 type delRangeManager interface {
 	// addDelRangeJob add a DDL job into gc_delete_range table.
-	addDelRangeJob(job *model.Job) error
+	addDelRangeJob(t *meta.Meta, job *model.Job) error
 	// removeFromGCDeleteRange removes the deleting table job from gc_delete_range table by jobID and tableID.
 	// It's use for recover the table that was mistakenly deleted.
 	removeFromGCDeleteRange(jobID int64, tableID []int64) error
@@ -87,14 +88,14 @@ func newDelRangeManager(store kv.Storage, sessPool *sessionPool) delRangeManager
 }
 
 // addDelRangeJob implements delRangeManager interface.
-func (dr *delRange) addDelRangeJob(job *model.Job) error {
+func (dr *delRange) addDelRangeJob(t *meta.Meta, job *model.Job) error {
 	ctx, err := dr.sessPool.get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer dr.sessPool.put(ctx)
 
-	err = insertJobIntoDeleteRangeTable(ctx, job)
+	err = insertJobIntoDeleteRangeTable(ctx, t, job)
 	if err != nil {
 		logutil.BgLogger().Error("[ddl] add job into delete-range table failed", zap.Int64("jobID", job.ID), zap.String("jobType", job.Type.String()), zap.Error(err))
 		return errors.Trace(err)
@@ -245,7 +246,7 @@ func (dr *delRange) doTask(ctx sessionctx.Context, r util.DelRangeTask) error {
 // insertJobIntoDeleteRangeTable parses the job into delete-range arguments,
 // and inserts a new record into gc_delete_range table. The primary key is
 // job ID, so we ignore key conflict error.
-func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error {
+func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, t *meta.Meta, job *model.Job) error {
 	now, err := getNowTSO(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -342,8 +343,43 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 			return doInsert(s, job.ID, indexID, startKey, endKey, now)
 		}
+	case model.ActionDropColumn:
+		schemaID := job.SchemaID
+		tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		var colName model.CIStr
+		if err := job.DecodeArgs(&colName); err != nil {
+			return errors.Trace(err)
+		}
+		idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
+		if len(idxInfos) > 0 {
+			return doBatchInsertIndices(s, job.ID, job.TableID, idxInfos, now)
+		}
 	}
 	return nil
+}
+
+func doBatchInsertIndices(s sqlexec.SQLExecutor, jobID, tableID int64, idxInfos []*model.IndexInfo, ts uint64) error {
+	idxIDs := make([]int64, 0, len(idxInfos))
+	for _, idxInfo := range idxInfos {
+		idxIDs = append(idxIDs, idxInfo.ID)
+	}
+	logutil.BgLogger().Info("[ddl] batch insert into delete-range indices", zap.Int64("jobID", jobID), zap.Int64s("elementIDs", idxIDs))
+	sql := insertDeleteRangeSQLPrefix
+	for i, indexID := range idxIDs {
+		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+		startKeyEncoded := hex.EncodeToString(startKey)
+		endKeyEncoded := hex.EncodeToString(endKey)
+		sql += fmt.Sprintf(insertDeleteRangeSQLValue, jobID, tableID, startKeyEncoded, endKeyEncoded, ts)
+		if i != len(idxIDs)-1 {
+			sql += ","
+		}
+	}
+	_, err := s.Execute(context.Background(), sql)
+	return errors.Trace(err)
 }
 
 func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, endKey kv.Key, ts uint64) error {

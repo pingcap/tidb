@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
 	"go.etcd.io/etcd/clientv3"
 )
@@ -130,7 +131,7 @@ func newMockDelRangeManager() delRangeManager {
 }
 
 // addDelRangeJob implements delRangeManager interface.
-func (dr *mockDelRange) addDelRangeJob(job *model.Job) error {
+func (dr *mockDelRange) addDelRangeJob(t *meta.Meta, job *model.Job) error {
 	return nil
 }
 

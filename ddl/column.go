@@ -498,9 +498,18 @@ func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.Colu
 }
 
 func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, colInfo, err := checkDropColumn(t, job)
+	tblInfo, colInfo, idxInfos, err := checkDropColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+
+	dependentHiddenCols := make([]*model.ColumnInfo, 0)
+	for _, indexInfo := range idxInfos {
+		for _, indexColumn := range indexInfo.Columns {
+			if tblInfo.Columns[indexColumn.Offset].Hidden {
+				dependentHiddenCols = append(dependentHiddenCols, tblInfo.Columns[indexColumn.Offset])
+			}
+		}
 	}
 
 	originalState := colInfo.State
@@ -509,6 +518,19 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
 		colInfo.State = model.StateWriteOnly
+		if len(idxInfos) > 0 {
+			for _, indexInfo := range idxInfos {
+				indexInfo.State = model.StateWriteOnly
+				if len(dependentHiddenCols) > 0 {
+					firstHiddenOffset := dependentHiddenCols[0].Offset
+					for i := 0; i < len(dependentHiddenCols); i++ {
+						tblInfo.Columns[firstHiddenOffset].State = model.StateWriteOnly
+						// Set this column's offset to the last and reset all following columns' offsets.
+						adjustColumnInfoInDropColumn(tblInfo, firstHiddenOffset)
+					}
+				}
+			}
+		}
 		err = checkDropColumnForStatePublic(tblInfo, colInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -518,16 +540,40 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		colInfo.State = model.StateDeleteOnly
+		if len(idxInfos) > 0 {
+			for _, indexInfo := range idxInfos {
+				indexInfo.State = model.StateDeleteOnly
+				updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteOnly)
+			}
+		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
 		colInfo.State = model.StateDeleteReorganization
+		if len(idxInfos) > 0 {
+			for _, indexInfo := range idxInfos {
+				indexInfo.State = model.StateDeleteReorganization
+				updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteReorganization)
+			}
+		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
-		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
+		if len(idxInfos) > 0 {
+			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+			for _, idx := range tblInfo.Indices {
+				if notInIdxInfoList(idx.Name.L, idxInfos) {
+					newIndices = append(newIndices, idx)
+				}
+			}
+			tblInfo.Indices = newIndices
+			for _, indexInfo := range idxInfos {
+				dropIndexColumnFlag(tblInfo, indexInfo)
+			}
+		}
+		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1-len(dependentHiddenCols)]
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
@@ -546,30 +592,40 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, error) {
+func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, []*model.IndexInfo, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	var colName model.CIStr
 	err = job.DecodeArgs(&colName)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil || colInfo.Hidden {
 		job.State = model.JobStateCancelled
-		return nil, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+		return nil, nil, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
-	return tblInfo, colInfo, nil
+	idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
+	if len(idxInfos) > 0 {
+		for _, idxInfo := range idxInfos {
+			err = checkDropIndexOnAutoIncrementColumn(tblInfo, idxInfo)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return nil, nil, nil, autoid.ErrWrongAutoKey
+			}
+		}
+	}
+	return tblInfo, colInfo, idxInfos, nil
 }
 
 func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -829,6 +885,29 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 	return false
 }
 
+func isColumnCanNotDropWithIndex(colName string, indices []*model.IndexInfo) bool {
+	for _, indexInfo := range indices {
+		if indexInfo.Primary || len(indexInfo.Columns) > 1 {
+			for _, col := range indexInfo.Columns {
+				if col.Name.L == colName {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func listIndicesWithColumn(colName string, indices []*model.IndexInfo) []*model.IndexInfo {
+	ret := make([]*model.IndexInfo, 0)
+	for _, indexInfo := range indices {
+		if len(indexInfo.Columns) == 1 && colName == indexInfo.Columns[0].Name.L {
+			ret = append(ret, indexInfo)
+		}
+	}
+	return ret
+}
+
 func getColumnForeignKeyInfo(colName string, fkInfos []*model.FKInfo) *model.FKInfo {
 	for _, fkInfo := range fkInfos {
 		for _, col := range fkInfo.Cols {
@@ -938,4 +1017,13 @@ func isVirtualGeneratedColumn(col *model.ColumnInfo) bool {
 		return true
 	}
 	return false
+}
+
+func notInIdxInfoList(idxName string, idxInfos []*model.IndexInfo) bool {
+	for _, idxInfo := range idxInfos {
+		if idxName == idxInfo.Name.L {
+			return false
+		}
+	}
+	return true
 }
