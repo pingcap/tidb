@@ -6788,6 +6788,24 @@ func (s *testIntegrationSerialSuite) TestIssue18638(c *C) {
 	tk.MustQuery("select * from t t1 left join t t2 on t1.a = t2.b collate utf8mb4_general_ci;").Check(testkit.Rows("a A a A"))
 }
 
+func (s *testIntegrationSuite) TestIssue18850(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int, b enum('A', 'B'));")
+	tk.MustExec("create table t1(a1 int, b1 enum('B', 'A'));")
+	tk.MustExec("insert into t values (1, 'A');")
+	tk.MustExec("insert into t1 values (1, 'A');")
+	tk.MustQuery("select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
+
+	tk.MustExec("drop table t, t1")
+	tk.MustExec("create table t(a int, b set('A', 'B'));")
+	tk.MustExec("create table t1(a1 int, b1 set('B', 'A'));")
+	tk.MustExec("insert into t values (1, 'A');")
+	tk.MustExec("insert into t1 values (1, 'A');")
+	tk.MustQuery("select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue18662(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
