@@ -239,6 +239,8 @@ type BatchPointGetPlan struct {
 	Lock             bool
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo
+
+	Path *util.AccessPath
 }
 
 // attach2Task makes the current physical plan as the father of task's physicalPlan and updates the cost of
