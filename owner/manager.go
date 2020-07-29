@@ -19,6 +19,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -85,6 +86,7 @@ type ownerManager struct {
 	etcdCli   *clientv3.Client
 	cancel    context.CancelFunc
 	elec      unsafe.Pointer
+	wg        sync.WaitGroup
 }
 
 // NewOwnerManager creates a new Manager.
@@ -116,6 +118,7 @@ func (m *ownerManager) IsOwner() bool {
 // Cancel implements Manager.Cancel interface.
 func (m *ownerManager) Cancel() {
 	m.cancel()
+	m.wg.Wait()
 }
 
 // ManagerSessionTTL is the etcd session's TTL in seconds. It's exported for testing.
@@ -187,6 +190,7 @@ func (m *ownerManager) CampaignOwner() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	m.wg.Add(1)
 	go m.campaignLoop(session)
 	return nil
 }
@@ -228,6 +232,7 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 			logutil.BgLogger().Error("recover panic", zap.String("prompt", m.prompt), zap.Any("error", r), zap.String("buffer", string(buf)))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()
 		}
+		m.wg.Done()
 	}()
 
 	logPrefix := m.logPrefix
