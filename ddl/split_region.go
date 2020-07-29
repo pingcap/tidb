@@ -85,18 +85,11 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 	step := int64(1 << (tbInfo.ShardRowIDBits - tbInfo.PreSplitRegions))
 	max := int64(1 << tbInfo.ShardRowIDBits)
 	splitTableKeys := make([][]byte, 0, 1<<(tbInfo.PreSplitRegions))
-<<<<<<< HEAD
+	splitTableKeys = append(splitTableKeys, tablecodec.GenTablePrefix(physicalID))
 	for p := int64(step); p < max; p += step {
 		recordID := p << (64 - tbInfo.ShardRowIDBits - 1)
-		recordPrefix := tablecodec.GenTableRecordPrefix(tbInfo.ID)
-		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
-=======
-	splitTableKeys = append(splitTableKeys, tablecodec.GenTablePrefix(physicalID))
-	for p := step; p < max; p += step {
-		recordID := p << (64 - tbInfo.ShardRowIDBits - 1)
 		recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
-		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
->>>>>>> 33f4b82... ddl: fix issue `pre_split_regions` table option doesn't work in the partition table. #18144
+		key := tablecodec.EncodeRecordKey(recordPrefix, recordID)
 		splitTableKeys = append(splitTableKeys, key)
 	}
 	var err error
