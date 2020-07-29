@@ -445,7 +445,7 @@ const (
 	DefIndexSerialScanConcurrency      = 1
 	DefIndexJoinBatchSize              = 25000
 	DefIndexLookupSize                 = 20000
-	DefDistSQLScanConcurrency          = 6
+	DefDistSQLScanConcurrency          = 15
 	DefBuildStatsConcurrency           = 4
 	DefAutoAnalyzeRatio                = 0.5
 	DefAutoAnalyzeStartTime            = "00:00 +0000"
