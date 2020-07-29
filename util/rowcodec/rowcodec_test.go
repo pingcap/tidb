@@ -97,9 +97,12 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 		dts := make([]types.Datum, 0, len(testData))
 		fts := make([]*types.FieldType, 0, len(testData))
 		cols := make([]rowcodec.ColInfo, 0, len(testData))
+		handleColFtMap := make(map[int64]*types.FieldType)
 		for i := range testData {
 			t := testData[i]
-			if !t.handle {
+			if t.handle {
+				handleColFtMap[handleID] = t.ft
+			} else {
 				colIDs = append(colIDs, t.id)
 				dts = append(dts, t.dt)
 			}
@@ -121,6 +124,9 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 		// decode to datum map.
 		mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
 		dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
+		c.Assert(err, IsNil)
+		dm, err = tablecodec.DecodeHandleToDatum(kv.IntHandle(handleValue),
+			[]int64{handleID}, handleColFtMap, sc.TimeZone, dm)
 		c.Assert(err, IsNil)
 		for _, t := range testData {
 			d, exists := dm[t.id]

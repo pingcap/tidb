@@ -379,7 +379,7 @@ func analyzeColumnsPushdown(colExec *AnalyzeColumnsExec) analyzeResult {
 		if hc.IsInt() {
 			ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(hc.GetCol(0).RetType.Flag))
 		} else {
-			ranges = ranger.FullRange()
+			ranges = ranger.FullNotNullRange()
 		}
 	} else {
 		ranges = ranger.FullIntRange(false)
@@ -439,9 +439,15 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 
 func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
+	var reqBuilder *distsql.RequestBuilder
+	if e.handleCols != nil && !e.handleCols.IsInt() {
+		reqBuilder = builder.SetCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalTableID, ranges)
+	} else {
+		reqBuilder = builder.SetTableRanges(e.physicalTableID, ranges, nil)
+	}
 	// Always set KeepOrder of the request to be true, in order to compute
 	// correct `correlation` of columns.
-	kvReq, err := builder.SetTableRanges(e.physicalTableID, ranges, nil).
+	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB).
 		SetStartTS(math.MaxUint64).
 		SetKeepOrder(true).
@@ -1018,8 +1024,8 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 func randomKeyFromHandles(start, end kv.Key, rander *rand.Rand) (kv.Key, error) {
 	result := make(kv.Key, 0, len(start))
 	commonPrefixLen := longestCommonPrefixLen(start, end)
-	start, end = start[commonPrefixLen:], end[commonPrefixLen:]
 	result = append(result, start[:commonPrefixLen]...)
+	start, end = start[commonPrefixLen:], end[commonPrefixLen:]
 
 	for len(start) > 0 || len(end) > 0 {
 		startLen, endLen := len(start), len(end)

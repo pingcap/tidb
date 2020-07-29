@@ -1400,9 +1400,10 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 		if col.IsGenerated() && !col.GeneratedStored {
 			continue
 		}
-		if !mysql.HasPriKeyFlag(col.Flag) {
-			colsInfo = append(colsInfo, col)
+		if mysql.HasPriKeyFlag(col.Flag) && (tbl.PKIsHandle || tbl.IsCommonHandle) {
+			continue
 		}
+		colsInfo = append(colsInfo, col)
 	}
 	for _, idx := range tn.TableInfo.Indices {
 		if idx.State == model.StatePublic {
