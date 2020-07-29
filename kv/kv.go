@@ -165,6 +165,7 @@ type MemBufferIterator interface {
 	Iterator
 	HasValue() bool
 	Flags() KeyFlags
+	UpdateFlags(...FlagsOp)
 }
 
 // MemBuffer is an in-memory kv collection, can be used to buffer write operations.

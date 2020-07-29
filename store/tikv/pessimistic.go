@@ -55,7 +55,11 @@ func (actionPessimisticRollback) tiKVTxnRegionsNumHistogram() prometheus.Observe
 	return tiKVTxnRegionsNumHistogramPessimisticRollback
 }
 
-func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+func (actionPessimisticLock) collectMutation(acc *CommitterMutations, m *mutation) {
+	acc.keys = append(acc.keys, m.key)
+}
+
+func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch *batchMutations) (bool, error) {
 	m := &batch.mutations
 	mutations := make([]*pb.Mutation, m.len())
 	for i := range m.keys {
@@ -91,28 +95,23 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 				req.PessimisticLock().WaitTimeout = timeLeft
 			}
 		}
-		failpoint.Inject("PessimisticLockErrWriteConflict", func() error {
+		failpoint.Inject("PessimisticLockErrWriteConflict", func() {
 			time.Sleep(300 * time.Millisecond)
-			return kv.ErrWriteConflict
+			failpoint.Return(false, kv.ErrWriteConflict)
 		})
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		regionErr, err := resp.GetRegionError()
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		if regionErr != nil {
-			err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = c.pessimisticLockMutations(bo, action.LockCtx, batch.mutations)
-			return errors.Trace(err)
+			return true, errors.Trace(errors.New(regionErr.String()))
 		}
 		if resp.Resp == nil {
-			return errors.Trace(ErrBodyMissing)
+			return false, errors.Trace(ErrBodyMissing)
 		}
 		lockResp := resp.Resp.(*pb.PessimisticLockResponse)
 		keyErrs := lockResp.GetErrors()
@@ -124,23 +123,23 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 				}
 				action.ValuesLock.Unlock()
 			}
-			return nil
+			return false, nil
 		}
 		var locks []*Lock
 		for _, keyErr := range keyErrs {
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				return c.extractKeyExistsErr(key)
+				return false, c.extractKeyExistsErr(key)
 			}
 			if deadlock := keyErr.Deadlock; deadlock != nil {
-				return &ErrDeadlock{Deadlock: deadlock}
+				return false, &ErrDeadlock{Deadlock: deadlock}
 			}
 
 			// Extract lock from key error
 			lock, err1 := extractLockFromKeyErr(keyErr)
 			if err1 != nil {
-				return errors.Trace(err1)
+				return false, errors.Trace(err1)
 			}
 			locks = append(locks, lock)
 		}
@@ -148,20 +147,20 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 		// tikv default will wait 3s(also the maximum wait value) when lock error occurs
 		msBeforeTxnExpired, _, err := c.store.lockResolver.ResolveLocks(bo, 0, locks)
 		if err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 
 		// If msBeforeTxnExpired is not zero, it means there are still locks blocking us acquiring
 		// the pessimistic lock. We should return acquire fail with nowait set or timeout error if necessary.
 		if msBeforeTxnExpired > 0 {
 			if action.LockWaitTime == kv.LockNoWait {
-				return ErrLockAcquireFailAndNoWaitSet
+				return false, ErrLockAcquireFailAndNoWaitSet
 			} else if action.LockWaitTime == kv.LockAlwaysWait {
 				// do nothing but keep wait
 			} else {
 				// the lockWaitTime is set, we should return wait timeout if we are still blocked by a lock
 				if time.Since(lockWaitStartTime).Milliseconds() >= action.LockWaitTime {
-					return errors.Trace(ErrLockWaitTimeout)
+					return false, errors.Trace(ErrLockWaitTimeout)
 				}
 			}
 			if action.LockCtx.PessimisticLockWaited != nil {
@@ -177,13 +176,17 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			// actionPessimisticLock runs on each region parallelly, we have to consider that
 			// the error may be dropped.
 			if atomic.LoadUint32(action.Killed) == 1 {
-				return errors.Trace(ErrQueryInterrupted)
+				return false, errors.Trace(ErrQueryInterrupted)
 			}
 		}
 	}
 }
 
-func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+func (actionPessimisticRollback) collectMutation(acc *CommitterMutations, m *mutation) {
+	acc.keys = append(acc.keys, m.key)
+}
+
+func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch *batchMutations) (bool, error) {
 	req := tikvrpc.NewRequest(tikvrpc.CmdPessimisticRollback, &pb.PessimisticRollbackRequest{
 		StartVersion: c.startTS,
 		ForUpdateTs:  c.forUpdateTS,
@@ -191,27 +194,57 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 	})
 	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	regionErr, err := resp.GetRegionError()
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+		return true, errors.Trace(errors.New(regionErr.String()))
+	}
+	return false, nil
+}
+
+func (c *twoPhaseCommitter) tryPreSplitLockKeys(bo *Backoffer, keys [][]byte) error {
+	if uint32(len(keys)) < preSplitDetectThreshold {
+		return nil
+	}
+
+	var preSplitCal preSplitCalculator
+	it := c.mapWithRegion(bo, lockKeysMutations{keys}.Iter(nil, nil))
+	for {
+		m, err := it.Next()
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = c.pessimisticRollbackMutations(bo, batch.mutations)
-		return errors.Trace(err)
+		if m.key == nil {
+			break
+		}
+		preSplitCal.Process(m)
 	}
+	splitKeys, splitRegions := preSplitCal.Finish()
+	c.trySplitRegions(splitKeys, splitRegions)
 	return nil
 }
 
-func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations CommitterMutations) error {
-	return c.doActionOnMutations(bo, actionPessimisticLock{lockCtx}, mutations)
+func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations mutations) error {
+	exec := c.newExecController(mutations, actionPessimisticLock{LockCtx: lockCtx})
+	return exec.run(bo)
 }
 
-func (c *twoPhaseCommitter) pessimisticRollbackMutations(bo *Backoffer, mutations CommitterMutations) error {
-	return c.doActionOnMutations(bo, actionPessimisticRollback{}, mutations)
+func (c *twoPhaseCommitter) pessimisticRollbackMutations(bo *Backoffer, mutations mutations) error {
+	exec := c.newExecController(mutations, actionPessimisticRollback{})
+	return exec.run(bo)
+}
+
+func (c *twoPhaseCommitter) pessimisticLockKeys(bo *Backoffer, lockCtx *kv.LockCtx, keys [][]byte) error {
+	if err := c.tryPreSplitLockKeys(bo, keys); err != nil {
+		return err
+	}
+	return c.pessimisticLockMutations(bo, lockCtx, lockKeysMutations{keys})
+}
+
+func (c *twoPhaseCommitter) pessimisticRollbackKeys(bo *Backoffer, keys [][]byte) error {
+	return c.pessimisticRollbackMutations(bo, lockKeysMutations{keys})
 }

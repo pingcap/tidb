@@ -26,7 +26,8 @@ const (
 	flagKeyLocked
 	flagKeyLockedValExist
 	flagNeedCheckExists
-	flagNoNeedCommit
+	flagPrewriteOnly
+	flagIgnoredIn2PC
 
 	persistentFlags = flagKeyLocked | flagKeyLockedValExist
 	// bit 1 => red, bit 0 => black
@@ -57,9 +58,14 @@ func (f KeyFlags) HasNeedCheckExists() bool {
 	return f&flagNeedCheckExists != 0
 }
 
-// HasNoNeedCommit returns whether the key should be used in 2pc commit phase.
-func (f KeyFlags) HasNoNeedCommit() bool {
-	return f&flagNoNeedCommit != 0
+// HasPrewriteOnly returns whether the key should be used in 2pc commit phase.
+func (f KeyFlags) HasPrewriteOnly() bool {
+	return f&flagPrewriteOnly != 0
+}
+
+// HasIgnoredIn2PC returns whether the key will be ignored in 2pc.
+func (f KeyFlags) HasIgnoredIn2PC() bool {
+	return f&flagIgnoredIn2PC != 0
 }
 
 // FlagsOp describes KeyFlags modify operation.
@@ -81,8 +87,10 @@ const (
 	SetKeyLockedValueNotExists
 	// DelNeedCheckExists marks the key no need to be checked in Transaction.LockKeys.
 	DelNeedCheckExists
-	// SetNoNeedCommit marks the key shouldn't be used in 2pc commit phase.
-	SetNoNeedCommit
+	// SetPrewriteOnly marks the key shouldn't be used in 2pc commit phase.
+	SetPrewriteOnly
+	// SetIgnoredIn2PC marks the key will be ignored in 2pc.
+	SetIgnoredIn2PC
 )
 
 func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
@@ -102,8 +110,10 @@ func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 			origin &= ^flagNeedCheckExists
 		case SetKeyLockedValueNotExists:
 			origin &= ^flagKeyLockedValExist
-		case SetNoNeedCommit:
-			origin |= flagNoNeedCommit
+		case SetPrewriteOnly:
+			origin |= flagPrewriteOnly
+		case SetIgnoredIn2PC:
+			origin |= flagIgnoredIn2PC
 		}
 	}
 	return origin
@@ -176,8 +186,11 @@ func (db *memdb) Cleanup(h StagingHandle) {
 
 	cp := &db.stages[int(h)-1]
 	if !db.vlogInvalid {
-		db.vlog.revertToCheckpoint(db, cp)
-		db.vlog.truncate(cp)
+		curr := db.vlog.checkpoint()
+		if !curr.isSamePosition(cp) {
+			db.vlog.revertToCheckpoint(db, cp)
+			db.vlog.truncate(cp)
+		}
 	}
 	db.stages = db.stages[:int(h)-1]
 }

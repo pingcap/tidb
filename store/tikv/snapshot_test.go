@@ -223,7 +223,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	committer.lockTTL = 3000
-	c.Assert(committer.prewriteMutations(bo, committer.mutations), IsNil)
+	c.Assert(committer.prewriteTxnMutations(bo), IsNil)
 
 	txn1 := s.beginTxn(c)
 	// txn1 is not blocked by txn in the large txn protocol.
@@ -236,7 +236,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 
 	// Commit txn, check the final commit ts is pushed.
 	committer.commitTS = txn.StartTS() + 1
-	c.Assert(committer.commitMutations(bo, committer.mutations), IsNil)
+	c.Assert(committer.commitTxnMutations(bo), IsNil)
 	status, err := s.store.lockResolver.GetTxnStatus(txn.StartTS(), 0, x)
 	c.Assert(err, IsNil)
 	c.Assert(status.IsCommitted(), IsTrue)
@@ -254,7 +254,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	committer.lockTTL = 3000
-	c.Assert(committer.prewriteMutations(bo, committer.mutations), IsNil)
+	c.Assert(committer.prewriteTxnMutations(bo), IsNil)
 
 	snapshot := newTiKVSnapshot(s.store, kv.MaxVersion, 0)
 	start := time.Now()
@@ -266,7 +266,8 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 
 	// Commit the primary key
 	committer.commitTS = txn.StartTS() + 1
-	committer.commitMutations(bo, committer.mutationsOfKeys([][]byte{committer.primary()}))
+	err = committer.commitMutations(bo, staticMutations{committer.mutationsOfKeys([][]byte{committer.primary()})})
+	c.Assert(err, IsNil)
 
 	snapshot = newTiKVSnapshot(s.store, kv.MaxVersion, 0)
 	start = time.Now()
