@@ -2990,7 +2990,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	if err != nil {
 		return nil, err
 	}
-	ret.Open(ctx)
+	err = ret.Open(ctx)
 	return ret, err
 }
 
