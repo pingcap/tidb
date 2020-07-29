@@ -26,7 +26,9 @@ import (
 	"go.uber.org/zap"
 )
 
-type actionCommit struct{ retry bool }
+type actionCommit struct {
+	retry bool
+}
 
 var _ twoPhaseCommitAction = actionCommit{}
 
@@ -41,7 +43,11 @@ func (actionCommit) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 	return tiKVTxnRegionsNumHistogramCommit
 }
 
-func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+func (actionCommit) collectMutation(acc *CommitterMutations, m *mutation) {
+	acc.keys = append(acc.keys, m.key)
+}
+
+func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch *batchMutations) (bool, error) {
 	req := tikvrpc.NewRequest(tikvrpc.CmdCommit, &pb.CommitRequest{
 		StartVersion:  c.startTS,
 		Keys:          batch.mutations.keys,
@@ -61,23 +67,17 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 	}
 
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	regionErr, err := resp.GetRegionError()
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// re-split keys and commit again.
-		err = c.doActionOnMutations(bo, actionCommit{retry: true}, batch.mutations)
-		return errors.Trace(err)
+		return true, errors.Trace(errors.New(regionErr.String()))
 	}
 	if resp.Resp == nil {
-		return errors.Trace(ErrBodyMissing)
+		return false, errors.Trace(ErrBodyMissing)
 	}
 	commitResp := resp.Resp.(*pb.CommitResponse)
 	// Here we can make sure tikv has processed the commit primary key request. So
@@ -97,13 +97,13 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 				logutil.Logger(bo.ctx).Warn("2PC get commitTS failed",
 					zap.Error(err),
 					zap.Uint64("txnStartTS", c.startTS))
-				return errors.Trace(err)
+				return false, errors.Trace(err)
 			}
 
 			c.mu.Lock()
 			c.commitTS = commitTS
 			c.mu.Unlock()
-			return c.commitMutations(bo, batch.mutations)
+			return true, nil
 		}
 
 		c.mu.RLock()
@@ -124,13 +124,13 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 				zap.Uint64("txnStartTS", c.startTS),
 				zap.Uint64("commitTS", c.commitTS),
 				zap.Strings("keys", hexBatchKeys(batch.mutations.keys)))
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 		// The transaction maybe rolled back by concurrent transactions.
 		logutil.Logger(bo.ctx).Debug("2PC failed commit primary key",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
-		return err
+		return false, err
 	}
 
 	c.mu.Lock()
@@ -138,15 +138,20 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 	// Group that contains primary key is always the first.
 	// We mark transaction's status committed when we receive the first success response.
 	c.mu.committed = true
-	return nil
+	return false, nil
 }
 
-func (c *twoPhaseCommitter) commitMutations(bo *Backoffer, mutations CommitterMutations) error {
+func (c *twoPhaseCommitter) commitMutations(bo *Backoffer, mutations mutations) error {
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("twoPhaseCommitter.commitMutations", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		bo.ctx = opentracing.ContextWithSpan(bo.ctx, span1)
 	}
 
-	return c.doActionOnMutations(bo, actionCommit{}, mutations)
+	exec := c.newExecController(mutations, actionCommit{})
+	return exec.run(bo)
+}
+
+func (c *twoPhaseCommitter) commitTxnMutations(bo *Backoffer) error {
+	return c.commitMutations(bo, committerTxnMutations{c, false})
 }

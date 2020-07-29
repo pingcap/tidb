@@ -88,13 +88,13 @@ func (s *testAsyncCommitSuite) lockKeys(c *C, keys, values [][]byte, primaryKey,
 	tpc.primaryKey = primaryKey
 
 	ctx := context.Background()
-	err = tpc.prewriteMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil), tpc.mutations)
+	err = tpc.prewriteTxnMutations(NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil))
 	c.Assert(err, IsNil)
 
 	if commitPrimary {
 		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 		c.Assert(err, IsNil)
-		err = tpc.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), tpc.mutationsOfKeys([][]byte{primaryKey}))
+		err = tpc.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), staticMutations{tpc.mutationsOfKeys([][]byte{primaryKey})})
 		c.Assert(err, IsNil)
 	}
 	return txn.startTS, tpc.commitTS

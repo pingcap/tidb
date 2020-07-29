@@ -42,8 +42,9 @@ import (
 )
 
 type twoPhaseCommitAction interface {
-	handleSingleBatch(*twoPhaseCommitter, *Backoffer, batchMutations) error
+	handleSingleBatch(*twoPhaseCommitter, *Backoffer, *batchMutations) (bool, error)
 	tiKVTxnRegionsNumHistogram() prometheus.Observer
+	collectMutation(acc *CommitterMutations, m *mutation)
 	String() string
 }
 
@@ -65,18 +66,18 @@ func metricsTag(action string) string {
 
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
-	store               *tikvStore
-	txn                 *tikvTxn
-	startTS             uint64
-	mutations           CommitterMutations
-	lockTTL             uint64
-	commitTS            uint64
-	priority            pb.CommandPri
-	connID              uint64 // connID is used for log.
-	cleanWg             sync.WaitGroup
-	detail              unsafe.Pointer
-	txnSize             int
-	hasNoNeedCommitKeys bool
+	store            *tikvStore
+	txn              *tikvTxn
+	startTS          uint64
+	lockTTL          uint64
+	commitTS         uint64
+	priority         pb.CommandPri
+	connID           uint64 // connID is used for log.
+	cleanWg          sync.WaitGroup
+	detail           unsafe.Pointer
+	txnSize          int
+	prewriteOnlyKeys int
+	ignoredKeys      int
 
 	primaryKey  []byte
 	forUpdateTS uint64
@@ -178,14 +179,21 @@ func (c *CommitterMutations) MergeMutations(mutations CommitterMutations) {
 	c.isPessimisticLock = append(c.isPessimisticLock, mutations.isPessimisticLock...)
 }
 
+func (c *CommitterMutations) reset() {
+	c.ops = c.ops[:0]
+	c.keys = c.keys[:0]
+	c.values = c.values[:0]
+	c.isPessimisticLock = c.isPessimisticLock[:0]
+}
+
 // newTwoPhaseCommitter creates a twoPhaseCommitter.
 func newTwoPhaseCommitter(txn *tikvTxn, connID uint64) (*twoPhaseCommitter, error) {
 	return &twoPhaseCommitter{
-		store:         txn.store,
-		txn:           txn,
-		startTS:       txn.StartTS(),
-		connID:        connID,
-		regionTxnSize: map[uint64]int{},
+		store:   txn.store,
+		txn:     txn,
+		startTS: txn.StartTS(),
+		connID:  connID,
+		detail:  unsafe.Pointer(new(execdetails.CommitDetails)),
 		ttlManager: ttlManager{
 			ch: make(chan struct{}),
 		},
@@ -221,128 +229,23 @@ func (c *twoPhaseCommitter) extractKeyExistsErr(key kv.Key) error {
 	return kv.ErrKeyExists.FastGenByArgs(key.String(), "UNKNOWN")
 }
 
-func (c *twoPhaseCommitter) initKeysAndMutations() error {
-	var size, putCnt, delCnt, lockCnt, checkCnt int
-
-	txn := c.txn
-	memBuf := txn.GetMemBuffer()
-	sizeHint := txn.us.GetMemBuffer().Len()
-	mutations := NewCommiterMutations(sizeHint)
-	c.isPessimistic = txn.IsPessimistic()
-
-	var err error
-	for it := memBuf.IterWithFlags(nil, nil); it.Valid(); err = it.Next() {
-		_ = err
-		key := it.Key()
-		flags := it.Flags()
-		var value []byte
-		var op pb.Op
-
-		if !it.HasValue() {
-			if !flags.HasLocked() {
-				continue
-			}
-			op = pb.Op_Lock
-			lockCnt++
-		} else {
-			value = it.Value()
-			if len(value) > 0 {
-				if tablecodec.IsUntouchedIndexKValue(key, value) {
-					continue
-				}
-				op = pb.Op_Put
-				if flags.HasPresumeKeyNotExists() {
-					op = pb.Op_Insert
-				}
-				putCnt++
-			} else {
-				if !txn.IsPessimistic() && flags.HasPresumeKeyNotExists() {
-					// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
-					// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
-					op = pb.Op_CheckNotExists
-					checkCnt++
-					memBuf.UpdateFlags(key, kv.SetNoNeedCommit)
-				} else {
-					// normal delete keys in optimistic txn can be delete without not exists checking
-					// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them
-					op = pb.Op_Del
-					delCnt++
-				}
-			}
-		}
-
-		var isPessimistic bool
-		if flags.HasLocked() {
-			isPessimistic = c.isPessimistic
-		}
-		mutations.Push(op, key, value, isPessimistic)
-		size += len(key) + len(value)
-
-		if len(c.primaryKey) == 0 && op != pb.Op_CheckNotExists {
-			c.primaryKey = key
-		}
-	}
-
-	if mutations.len() == 0 {
-		return nil
-	}
-	c.txnSize = size
-
-	if size > int(kv.TxnTotalSizeLimit) {
-		return kv.ErrTxnTooLarge.GenWithStackByArgs(size)
-	}
-	const logEntryCount = 10000
-	const logSize = 4 * 1024 * 1024 // 4MB
-	if mutations.len() > logEntryCount || size > logSize {
-		tableID := tablecodec.DecodeTableID(mutations.keys[0])
-		logutil.BgLogger().Info("[BIG_TXN]",
-			zap.Uint64("con", c.connID),
-			zap.Int64("table ID", tableID),
-			zap.Int("size", size),
-			zap.Int("keys", mutations.len()),
-			zap.Int("puts", putCnt),
-			zap.Int("dels", delCnt),
-			zap.Int("locks", lockCnt),
-			zap.Int("checks", checkCnt),
-			zap.Uint64("txnStartTS", txn.startTS))
-	}
-
-	// Sanity check for startTS.
-	if txn.StartTS() == math.MaxUint64 {
-		err = errors.Errorf("try to commit with invalid txnStartTS: %d", txn.StartTS())
-		logutil.BgLogger().Error("commit failed",
-			zap.Uint64("conn", c.connID),
-			zap.Error(err))
-		return errors.Trace(err)
-	}
-
-	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: mutations.len()}
-	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
-	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
-	c.hasNoNeedCommitKeys = checkCnt > 0
-	c.mutations = mutations
-	c.lockTTL = txnLockTTL(txn.startTime, size)
-	c.priority = getTxnPriority(txn)
-	c.syncLog = getTxnSyncLog(txn)
-	c.setDetail(commitDetail)
-	return nil
-}
-
 func (c *twoPhaseCommitter) primary() []byte {
-	if len(c.primaryKey) == 0 {
-		return c.mutations.keys[0]
-	}
 	return c.primaryKey
 }
 
 // asyncSecondaries returns all keys that must be checked in the recovery phase of an async commit.
 func (c *twoPhaseCommitter) asyncSecondaries() [][]byte {
-	secondaries := make([][]byte, 0, len(c.mutations.keys))
-	for i, k := range c.mutations.keys {
-		if bytes.Equal(k, c.primary()) || c.mutations.ops[i] == pb.Op_CheckNotExists {
+	secondaries := make([][]byte, 0, c.txn.Len())
+	it := committerTxnMutations{c, true}.Iter(nil, nil)
+	for {
+		m := it.Next()
+		if m.key == nil {
+			break
+		}
+		if bytes.Equal(m.key, c.primary()) || m.op == pb.Op_CheckNotExists {
 			continue
 		}
-		secondaries = append(secondaries, k)
+		secondaries = append(secondaries, m.key)
 	}
 	return secondaries
 }
@@ -376,186 +279,11 @@ func txnLockTTL(startTime time.Time, txnSize int) uint64 {
 var preSplitDetectThreshold uint32 = 100000
 var preSplitSizeThreshold uint32 = 32 << 20
 
-// doActionOnMutations groups keys into primary batch and secondary batches, if primary batch exists in the key,
-// it does action on primary batch first, then on secondary batches. If action is commit, secondary batches
-// is done in background goroutine.
-func (c *twoPhaseCommitter) doActionOnMutations(bo *Backoffer, action twoPhaseCommitAction, mutations CommitterMutations) error {
-	if mutations.len() == 0 {
-		return nil
-	}
-	groups, err := c.groupMutations(bo, mutations)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return c.doActionOnGroupMutations(bo, action, groups)
-}
-
-// groupMutations groups mutations by region, then checks for any large groups and in that case pre-splits the region.
-func (c *twoPhaseCommitter) groupMutations(bo *Backoffer, mutations CommitterMutations) ([]groupedMutations, error) {
-	groups, err := c.store.regionCache.GroupSortedMutationsByRegion(bo, mutations)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	// Pre-split regions to avoid too much write workload into a single region.
-	// In the large transaction case, this operation is important to avoid TiKV 'server is busy' error.
-	var didPreSplit bool
-	preSplitDetectThresholdVal := atomic.LoadUint32(&preSplitDetectThreshold)
-	for _, group := range groups {
-		if uint32(group.mutations.len()) >= preSplitDetectThresholdVal {
-			logutil.BgLogger().Info("2PC detect large amount of mutations on a single region",
-				zap.Uint64("region", group.region.GetID()),
-				zap.Int("mutations count", group.mutations.len()))
-			// Use context.Background, this time should not add up to Backoffer.
-			if c.store.preSplitRegion(context.Background(), group) {
-				didPreSplit = true
-			}
-		}
-	}
-	// Reload region cache again.
-	if didPreSplit {
-		groups, err = c.store.regionCache.GroupSortedMutationsByRegion(bo, mutations)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
-	return groups, nil
-}
-
-// doActionOnGroupedMutations splits groups into batches (there is one group per region, and potentially many batches per group, but all mutations
-// in a batch will belong to the same region).
-func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPhaseCommitAction, groups []groupedMutations) error {
-	action.tiKVTxnRegionsNumHistogram().Observe(float64(len(groups)))
-
-	var sizeFunc = c.keySize
-
-	switch act := action.(type) {
-	case actionPrewrite:
-		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
-		if len(bo.errors) == 0 {
-			for _, group := range groups {
-				c.regionTxnSize[group.region.id] = group.mutations.len()
-			}
-		}
-		sizeFunc = c.keyValueSize
-		atomic.AddInt32(&c.getDetail().PrewriteRegionNum, int32(len(groups)))
-	case actionPessimisticLock:
-		if act.LockCtx.Stats != nil {
-			act.LockCtx.Stats.RegionNum = int32(len(groups))
-		}
-	}
-
-	batchBuilder := newBatched(c.primary())
-	for _, group := range groups {
-		batchBuilder.appendBatchMutationsBySize(group.region, group.mutations, sizeFunc, txnCommitBatchSize)
-	}
-	firstIsPrimary := batchBuilder.setPrimary()
-
-	actionCommit, actionIsCommit := action.(actionCommit)
-	_, actionIsCleanup := action.(actionCleanup)
-	_, actionIsPessimiticLock := action.(actionPessimisticLock)
-
-	var err error
-	failpoint.Inject("skipKeyReturnOK", func(val failpoint.Value) {
-		valStr, ok := val.(string)
-		if ok && c.connID > 0 {
-			if firstIsPrimary && actionIsPessimiticLock {
-				logutil.Logger(bo.ctx).Warn("pessimisticLock failpoint", zap.String("valStr", valStr))
-				switch valStr {
-				case "pessimisticLockSkipPrimary":
-					err = c.doActionOnBatches(bo, action, batchBuilder.allBatches())
-					failpoint.Return(err)
-				case "pessimisticLockSkipSecondary":
-					err = c.doActionOnBatches(bo, action, batchBuilder.primaryBatch())
-					failpoint.Return(err)
-				}
-			}
-		}
-	})
-	failpoint.Inject("pessimisticRollbackDoNth", func() {
-		_, actionIsPessimisticRollback := action.(actionPessimisticRollback)
-		if actionIsPessimisticRollback && c.connID > 0 {
-			logutil.Logger(bo.ctx).Warn("pessimisticRollbackDoNth failpoint")
-			failpoint.Return(nil)
-		}
-	})
-
-	if firstIsPrimary && (actionIsCommit || actionIsCleanup || actionIsPessimiticLock) {
-		// primary should be committed/cleanup/pessimistically locked first
-		err = c.doActionOnBatches(bo, action, batchBuilder.primaryBatch())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if actionIsCommit && c.testingKnobs.bkAfterCommitPrimary != nil && c.testingKnobs.acAfterCommitPrimary != nil {
-			c.testingKnobs.acAfterCommitPrimary <- struct{}{}
-			<-c.testingKnobs.bkAfterCommitPrimary
-		}
-		batchBuilder.forgetPrimary()
-	}
-	if actionIsCommit && !actionCommit.retry {
-		secondaryBo := NewBackofferWithVars(context.Background(), int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
-		go func() {
-			e := c.doActionOnBatches(secondaryBo, action, batchBuilder.allBatches())
-			if e != nil {
-				logutil.BgLogger().Debug("2PC async doActionOnBatches",
-					zap.Uint64("conn", c.connID),
-					zap.Stringer("action type", action),
-					zap.Error(e))
-				tikvSecondaryLockCleanupFailureCounterCommit.Inc()
-			}
-		}()
-	} else {
-		err = c.doActionOnBatches(bo, action, batchBuilder.allBatches())
-	}
-	return errors.Trace(err)
-}
-
-// doActionOnBatches does action to batches in parallel.
-func (c *twoPhaseCommitter) doActionOnBatches(bo *Backoffer, action twoPhaseCommitAction, batches []batchMutations) error {
-	if len(batches) == 0 {
-		return nil
-	}
-
-	noNeedFork := len(batches) == 1
-	if !noNeedFork {
-		if ac, ok := action.(actionCommit); ok && ac.retry {
-			noNeedFork = true
-		}
-	}
-	if noNeedFork {
-		for _, b := range batches {
-			e := action.handleSingleBatch(c, bo, b)
-			if e != nil {
-				logutil.BgLogger().Debug("2PC doActionOnBatches failed",
-					zap.Uint64("conn", c.connID),
-					zap.Stringer("action type", action),
-					zap.Error(e),
-					zap.Uint64("txnStartTS", c.startTS))
-				return errors.Trace(e)
-			}
-		}
-		return nil
-	}
-	rateLim := len(batches)
-	// Set rateLim here for the large transaction.
-	// If the rate limit is too high, tikv will report service is busy.
-	// If the rate limit is too low, we can't full utilize the tikv's throughput.
-	// TODO: Find a self-adaptive way to control the rate limit here.
-	if rateLim > config.GetGlobalConfig().Performance.CommitterConcurrency {
-		rateLim = config.GetGlobalConfig().Performance.CommitterConcurrency
-	}
-	batchExecutor := newBatchExecutor(rateLim, c, action, bo)
-	err := batchExecutor.process(batches)
-	return errors.Trace(err)
-}
-
 func (c *twoPhaseCommitter) keyValueSize(key, value []byte) int {
 	return len(key) + len(value)
 }
 
-func (c *twoPhaseCommitter) keySize(key, value []byte) int {
+func (c *twoPhaseCommitter) keySize(key, _ []byte) int {
 	return len(key)
 }
 
@@ -691,7 +419,7 @@ func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 	const asyncCommitKeysLimit = 256
 	// Async commit is not compatible with Binlog because of the non unique timestamp issue.
 	if c.connID > 0 && config.GetGlobalConfig().TiKVClient.EnableAsyncCommit &&
-		len(c.mutations.keys) <= asyncCommitKeysLimit && !c.shouldWriteBinlog() {
+		c.txn.GetMemBuffer().Len() <= asyncCommitKeysLimit && !c.shouldWriteBinlog() {
 		return true
 	}
 	return false
@@ -711,9 +439,10 @@ func (c *twoPhaseCommitter) setAsyncCommit(val bool) {
 
 func (c *twoPhaseCommitter) cleanup(ctx context.Context) {
 	c.cleanWg.Add(1)
+	c.txn.GetMemBuffer().DiscardValues()
 	go func() {
 		cleanupKeysCtx := context.WithValue(context.Background(), txnStartKey, ctx.Value(txnStartKey))
-		err := c.cleanupMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+		err := c.cleanupTxnMutations(NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars))
 		if err != nil {
 			tikvSecondaryLockCleanupFailureCounterRollback.Inc()
 			logutil.Logger(ctx).Info("2PC cleanup failed",
@@ -766,7 +495,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	binlogChan := c.prewriteBinlog(ctx)
 	prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
 	start := time.Now()
-	err = c.prewriteMutations(prewriteBo, c.mutations)
+	err = c.prewriteTxnMutations(prewriteBo)
 	commitDetail := c.getDetail()
 	commitDetail.PrewriteTime = time.Since(start)
 	if prewriteBo.totalSleep > 0 {
@@ -793,9 +522,6 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			zap.Uint64("txnStartTS", c.startTS))
 		return errors.Trace(err)
 	}
-
-	// strip check_not_exists keys that no need to commit.
-	c.stripNoNeedCommitKeys()
 
 	var commitTS uint64
 	if c.isAsyncCommit() {
@@ -856,6 +582,8 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		failpoint.Inject("beforeCommit", func() {})
 	}
 
+	c.txn.GetMemBuffer().DiscardValues()
+
 	if c.isAsyncCommit() {
 		// For async commit protocol, the commit is considered success here.
 		c.txn.commitTS = c.commitTS
@@ -867,7 +595,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			})
 			defer c.ttlManager.close()
 			commitBo := NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
-			err := c.commitMutations(commitBo, c.mutations)
+			err := c.commitTxnMutations(commitBo)
 			if err != nil {
 				logutil.Logger(ctx).Warn("2PC async commit failed", zap.Uint64("connID", c.connID),
 					zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", c.commitTS), zap.Error(err))
@@ -879,12 +607,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 }
 
 func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *execdetails.CommitDetails) error {
-	c.mutations.values = nil
-	c.txn.GetMemBuffer().DiscardValues()
 	start := time.Now()
 
 	commitBo := NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
-	err := c.commitMutations(commitBo, c.mutations)
+	err := c.commitTxnMutations(commitBo)
 	commitDetail.CommitTime = time.Since(start)
 	if commitBo.totalSleep > 0 {
 		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(commitBo.totalSleep)*int64(time.Millisecond))
@@ -913,33 +639,6 @@ func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *execdet
 	return nil
 }
 
-func (c *twoPhaseCommitter) stripNoNeedCommitKeys() {
-	if !c.hasNoNeedCommitKeys {
-		return
-	}
-	m := &c.mutations
-	var newIdx int
-	for oldIdx := range m.keys {
-		key := m.keys[oldIdx]
-		flags, err := c.txn.GetMemBuffer().GetFlags(key)
-		if err == nil && flags.HasNoNeedCommit() {
-			continue
-		}
-		m.keys[newIdx] = key
-		if m.ops != nil {
-			m.ops[newIdx] = m.ops[oldIdx]
-		}
-		if m.values != nil {
-			m.values[newIdx] = m.values[oldIdx]
-		}
-		if m.isPessimisticLock != nil {
-			m.isPessimisticLock[newIdx] = m.isPessimisticLock[oldIdx]
-		}
-		newIdx++
-	}
-	c.mutations = m.subRange(0, newIdx)
-}
-
 // SchemaVer is the infoSchema which will return the schema version.
 type SchemaVer interface {
 	// SchemaMetaVersion returns the meta schema version.
@@ -961,14 +660,23 @@ type RelatedSchemaChange struct {
 }
 
 func (c *twoPhaseCommitter) tryAmendTxn(ctx context.Context, startInfoSchema SchemaVer, change *RelatedSchemaChange) (bool, error) {
-	addMutations, err := c.txn.schemaAmender.AmendTxn(ctx, startInfoSchema, change, c.mutations)
+	mutations := NewCommiterMutations(c.txn.Len())
+	it := committerTxnMutations{c, true}.Iter(nil, nil)
+	for {
+		m := it.Next()
+		if m.key == nil {
+			break
+		}
+		mutations.Push(m.op, m.key, m.value, m.isPessimisticLock)
+	}
+	addMutations, err := c.txn.schemaAmender.AmendTxn(ctx, startInfoSchema, change, mutations)
 	if err != nil {
 		return false, err
 	}
 	// Prewrite new mutations.
 	if addMutations != nil && len(addMutations.keys) > 0 {
 		prewriteBo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
-		err = c.prewriteMutations(prewriteBo, *addMutations)
+		err = c.prewriteMutations(prewriteBo, staticMutations{*addMutations})
 		if err != nil {
 			logutil.Logger(ctx).Warn("amend prewrite has failed", zap.Error(err), zap.Uint64("txnStartTS", c.startTS))
 			return false, err
@@ -1109,188 +817,6 @@ type batchMutations struct {
 	mutations CommitterMutations
 	isPrimary bool
 }
-type batched struct {
-	batches    []batchMutations
-	primaryIdx int
-	primaryKey []byte
-}
-
-func newBatched(primaryKey []byte) *batched {
-	return &batched{
-		primaryIdx: -1,
-		primaryKey: primaryKey,
-	}
-}
-
-// appendBatchMutationsBySize appends mutations to b. It may split the keys to make
-// sure each batch's size does not exceed the limit.
-func (b *batched) appendBatchMutationsBySize(region RegionVerID, mutations CommitterMutations, sizeFn func(k, v []byte) int, limit int) {
-	var start, end int
-	for start = 0; start < mutations.len(); start = end {
-		var size int
-		for end = start; end < mutations.len() && size < limit; end++ {
-			var k, v []byte
-			k = mutations.keys[end]
-			if end < len(mutations.values) {
-				v = mutations.values[end]
-			}
-			size += sizeFn(k, v)
-			if b.primaryIdx < 0 && bytes.Equal(k, b.primaryKey) {
-				b.primaryIdx = len(b.batches)
-			}
-		}
-		b.batches = append(b.batches, batchMutations{
-			region:    region,
-			mutations: mutations.subRange(start, end),
-		})
-	}
-}
-
-func (b *batched) setPrimary() bool {
-	// If the batches include the primary key, put it to the first
-	if b.primaryIdx >= 0 {
-		if len(b.batches) > 0 {
-			b.batches[b.primaryIdx].isPrimary = true
-			b.batches[0], b.batches[b.primaryIdx] = b.batches[b.primaryIdx], b.batches[0]
-			b.primaryIdx = 0
-		}
-		return true
-	}
-
-	return false
-}
-
-func (b *batched) allBatches() []batchMutations {
-	return b.batches
-}
-
-// primaryBatch returns the batch containing the primary key.
-// Precondition: `b.setPrimary() == true`
-func (b *batched) primaryBatch() []batchMutations {
-	return b.batches[:1]
-}
-
-func (b *batched) forgetPrimary() {
-	if len(b.batches) == 0 {
-		return
-	}
-	b.batches = b.batches[1:]
-}
-
-// batchExecutor is txn controller providing rate control like utils
-type batchExecutor struct {
-	rateLim           int                  // concurrent worker numbers
-	rateLimiter       *rateLimit           // rate limiter for concurrency control, maybe more strategies
-	committer         *twoPhaseCommitter   // here maybe more different type committer in the future
-	action            twoPhaseCommitAction // the work action type
-	backoffer         *Backoffer           // Backoffer
-	tokenWaitDuration time.Duration        // get token wait time
-}
-
-// newBatchExecutor create processor to handle concurrent batch works(prewrite/commit etc)
-func newBatchExecutor(rateLimit int, committer *twoPhaseCommitter,
-	action twoPhaseCommitAction, backoffer *Backoffer) *batchExecutor {
-	return &batchExecutor{rateLimit, nil, committer,
-		action, backoffer, 1 * time.Millisecond}
-}
-
-// initUtils do initialize batchExecutor related policies like rateLimit util
-func (batchExe *batchExecutor) initUtils() error {
-	// init rateLimiter by injected rate limit number
-	batchExe.rateLimiter = newRateLimit(batchExe.rateLim)
-	return nil
-}
-
-// startWork concurrently do the work for each batch considering rate limit
-func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, batches []batchMutations) {
-	for idx, batch1 := range batches {
-		waitStart := time.Now()
-		if exit := batchExe.rateLimiter.getToken(exitCh); !exit {
-			batchExe.tokenWaitDuration += time.Since(waitStart)
-			batch := batch1
-			go func() {
-				defer batchExe.rateLimiter.putToken()
-				var singleBatchBackoffer *Backoffer
-				if _, ok := batchExe.action.(actionCommit); ok {
-					// Because the secondary batches of the commit actions are implemented to be
-					// committed asynchronously in background goroutines, we should not
-					// fork a child context and call cancel() while the foreground goroutine exits.
-					// Otherwise the background goroutines will be canceled execeptionally.
-					// Here we makes a new clone of the original backoffer for this goroutine
-					// exclusively to avoid the data race when using the same backoffer
-					// in concurrent goroutines.
-					singleBatchBackoffer = batchExe.backoffer.Clone()
-				} else {
-					var singleBatchCancel context.CancelFunc
-					singleBatchBackoffer, singleBatchCancel = batchExe.backoffer.Fork()
-					defer singleBatchCancel()
-				}
-				beforeSleep := singleBatchBackoffer.totalSleep
-				ch <- batchExe.action.handleSingleBatch(batchExe.committer, singleBatchBackoffer, batch)
-				commitDetail := batchExe.committer.getDetail()
-				if commitDetail != nil { // lock operations of pessimistic-txn will let commitDetail be nil
-					if delta := singleBatchBackoffer.totalSleep - beforeSleep; delta > 0 {
-						atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(singleBatchBackoffer.totalSleep-beforeSleep)*int64(time.Millisecond))
-						commitDetail.Mu.Lock()
-						commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, singleBatchBackoffer.types...)
-						commitDetail.Mu.Unlock()
-					}
-				}
-			}()
-		} else {
-			logutil.Logger(batchExe.backoffer.ctx).Info("break startWorker",
-				zap.Stringer("action", batchExe.action), zap.Int("batch size", len(batches)),
-				zap.Int("index", idx))
-			break
-		}
-	}
-}
-
-// process will start worker routine and collect results
-func (batchExe *batchExecutor) process(batches []batchMutations) error {
-	var err error
-	err = batchExe.initUtils()
-	if err != nil {
-		logutil.Logger(batchExe.backoffer.ctx).Error("batchExecutor initUtils failed", zap.Error(err))
-		return err
-	}
-
-	// For prewrite, stop sending other requests after receiving first error.
-	backoffer := batchExe.backoffer
-	var cancel context.CancelFunc
-	if _, ok := batchExe.action.(actionPrewrite); ok {
-		backoffer, cancel = batchExe.backoffer.Fork()
-		defer cancel()
-	}
-	// concurrently do the work for each batch.
-	ch := make(chan error, len(batches))
-	exitCh := make(chan struct{})
-	go batchExe.startWorker(exitCh, ch, batches)
-	// check results
-	for i := 0; i < len(batches); i++ {
-		if e := <-ch; e != nil {
-			logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatch failed",
-				zap.Uint64("conn", batchExe.committer.connID),
-				zap.Stringer("action type", batchExe.action),
-				zap.Error(e),
-				zap.Uint64("txnStartTS", batchExe.committer.startTS))
-			// Cancel other requests and return the first error.
-			if cancel != nil {
-				logutil.Logger(backoffer.ctx).Debug("2PC doActionOnBatch to cancel other actions",
-					zap.Uint64("conn", batchExe.committer.connID),
-					zap.Stringer("action type", batchExe.action),
-					zap.Uint64("txnStartTS", batchExe.committer.startTS))
-				cancel()
-			}
-			if err == nil {
-				err = e
-			}
-		}
-	}
-	close(exitCh)
-	metrics.TiKVTokenWaitDuration.Observe(batchExe.tokenWaitDuration.Seconds())
-	return err
-}
 
 func getTxnPriority(txn *tikvTxn) pb.CommandPri {
 	if pri := txn.us.GetOption(kv.Priority); pri != nil {
@@ -1335,4 +861,74 @@ func (c *twoPhaseCommitter) getUndeterminedErr() error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.mu.undeterminedErr
+}
+
+func (c *twoPhaseCommitter) prepare(ctx context.Context) error {
+	txn := c.txn
+	c.isPessimistic = txn.IsPessimistic()
+	bo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, c.txn.vars)
+
+	// Sanity check for startTS.
+	if txn.StartTS() == math.MaxUint64 {
+		err := errors.Errorf("try to commit with invalid txnStartTS: %d", txn.StartTS())
+		logutil.BgLogger().Error("commit failed",
+			zap.Uint64("conn", c.connID),
+			zap.Error(err))
+		return errors.Trace(err)
+	}
+
+	var (
+		firstKey      []byte
+		regionSizeCal regionTxnSizeCalculator
+		txnDetailsCal txnDetailsCalculator
+		preSplitCal   preSplitCalculator
+		it            = c.mapWithRegion(bo, committerTxnMutations{c, true}.Iter(nil, nil))
+	)
+	for {
+		m, err := it.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if m.key == nil {
+			break
+		}
+		if firstKey == nil {
+			firstKey = m.key
+		}
+
+		if len(c.primaryKey) == 0 && m.op != pb.Op_CheckNotExists {
+			c.primaryKey = m.key
+		}
+
+		regionSizeCal.Process(m)
+		txnDetailsCal.Process(m)
+		preSplitCal.Process(m)
+	}
+	if len(c.primaryKey) == 0 {
+		c.primaryKey = firstKey
+	}
+
+	if err := txnDetailsCal.Finish(c); err != nil {
+		return errors.Trace(err)
+	}
+	regionSizeCal.Finish(c)
+	splitKeys, splitRegions := preSplitCal.Finish()
+
+	if c.txnSize == 0 {
+		return nil
+	}
+
+	if c.trySplitRegions(splitKeys, splitRegions) {
+		if err := c.reCalRegionTxnSize(bo); err != nil {
+			return err
+		}
+	}
+
+	mutationsIt := it.src.(*txnMutationsIter)
+	c.prewriteOnlyKeys = mutationsIt.prewriteOnlyKeys
+	c.ignoredKeys = mutationsIt.ignoredKeys
+	c.lockTTL = txnLockTTL(txn.startTime, txn.Size())
+	c.priority = getTxnPriority(txn)
+	c.syncLog = getTxnSyncLog(txn)
+	return nil
 }

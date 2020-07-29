@@ -23,7 +23,8 @@ import (
 	"go.uber.org/zap"
 )
 
-type actionCleanup struct{}
+type actionCleanup struct {
+}
 
 var _ twoPhaseCommitAction = actionCleanup{}
 var tiKVTxnRegionsNumHistogramCleanup = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues(metricsTag("cleanup"))
@@ -36,37 +37,41 @@ func (actionCleanup) tiKVTxnRegionsNumHistogram() prometheus.Observer {
 	return tiKVTxnRegionsNumHistogramCleanup
 }
 
-func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch batchMutations) error {
+func (actionCleanup) collectMutation(acc *CommitterMutations, m *mutation) {
+	acc.keys = append(acc.keys, m.key)
+}
+
+func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch *batchMutations) (bool, error) {
 	req := tikvrpc.NewRequest(tikvrpc.CmdBatchRollback, &pb.BatchRollbackRequest{
 		Keys:         batch.mutations.keys,
 		StartVersion: c.startTS,
 	}, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 	resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	regionErr, err := resp.GetRegionError()
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 	if regionErr != nil {
-		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		err = c.cleanupMutations(bo, batch.mutations)
-		return errors.Trace(err)
+		return true, errors.Trace(errors.New(regionErr.String()))
 	}
 	if keyErr := resp.Resp.(*pb.BatchRollbackResponse).GetError(); keyErr != nil {
 		err = errors.Errorf("conn %d 2PC cleanup failed: %s", c.connID, keyErr)
 		logutil.BgLogger().Debug("2PC failed cleanup key",
 			zap.Error(err),
 			zap.Uint64("txnStartTS", c.startTS))
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
-	return nil
+	return false, nil
 }
 
-func (c *twoPhaseCommitter) cleanupMutations(bo *Backoffer, mutations CommitterMutations) error {
-	return c.doActionOnMutations(bo, actionCleanup{}, mutations)
+func (c *twoPhaseCommitter) cleanupMutations(bo *Backoffer, mutations mutations) error {
+	exec := c.newExecController(mutations, actionCleanup{})
+	return exec.run(bo)
+}
+
+func (c *twoPhaseCommitter) cleanupTxnMutations(bo *Backoffer) error {
+	return c.cleanupMutations(bo, committerTxnMutations{c, false})
 }

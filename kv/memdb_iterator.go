@@ -94,6 +94,12 @@ func (i *memdbIterator) Valid() bool {
 	return !i.curr.isNull()
 }
 
+func (i *memdbIterator) UpdateFlags(ops ...FlagsOp) {
+	origin := i.curr.getKeyFlags()
+	new := applyFlagsOps(origin, ops...)
+	i.curr.setKeyFlags(new)
+}
+
 func (i *memdbIterator) Flags() KeyFlags {
 	return i.curr.getKeyFlags()
 }

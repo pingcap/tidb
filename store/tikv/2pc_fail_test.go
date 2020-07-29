@@ -141,6 +141,6 @@ func (s *testCommitterSuite) TestFailPrewriteRegionError(c *C) {
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	err = committer.prewriteMutations(NewBackofferWithVars(ctx, 1000, nil), committer.mutations)
+	err = committer.prewriteTxnMutations(NewBackofferWithVars(ctx, 1000, nil))
 	c.Assert(err, NotNil)
 }
