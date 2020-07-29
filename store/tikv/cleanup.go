@@ -67,6 +67,6 @@ func (actionCleanup) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batc
 	return nil
 }
 
-func (c *twoPhaseCommitter) cleanupMutations(bo *Backoffer, mutations committerMutations) error {
+func (c *twoPhaseCommitter) cleanupMutations(bo *Backoffer, mutations CommitterMutations) error {
 	return c.doActionOnMutations(bo, actionCleanup{}, mutations)
 }
