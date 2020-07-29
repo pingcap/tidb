@@ -238,11 +238,11 @@ func checkPartitionReplica(addingDefinitions []model.PartitionDefinition, d *ddl
 				continue
 			}
 			needWait = true
-			logutil.BgLogger().Info("[ddl] partition replicas check failed in delete-only DDL state", zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Id), zap.Bool("tiflash peer at least one", tiflashPeerAtLeastOne), zap.Time("check time", time.Now()))
+			logutil.BgLogger().Info("[ddl] partition replicas check failed in replica-only DDL state", zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Id), zap.Bool("tiflash peer at least one", tiflashPeerAtLeastOne), zap.Time("check time", time.Now()))
 			return needWait, nil
 		}
 	}
-	logutil.BgLogger().Info("[ddl] partition replicas check ok in delete-only DDL state")
+	logutil.BgLogger().Info("[ddl] partition replicas check ok in replica-only DDL state")
 	return needWait, nil
 }
 
