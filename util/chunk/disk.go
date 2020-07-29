@@ -146,7 +146,7 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 		return
 	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
-	r := io.NewSectionReader(newChecksumReader(l.disk), off, l.offWrite-off)
+	r := newChecksumReader(l.disk, off, l.offWrite-off)
 	format := rowInDisk{numCol: len(l.fieldTypes)}
 	_, err = format.ReadFrom(r)
 	if err != nil {

@@ -94,34 +94,45 @@ func (w *checksumWriter) Close() (err error) {
 	return w.w.Close()
 }
 
-// checksumReader implements an io.ReadAt, reading from the input source after verifying the checksum.
+// checksumReader implements an io.Reader, reading from the input source after verifying the checksum.
 type checksumReader struct {
-	r io.ReadSeeker
+	r     io.ReaderAt
+	base  int64
+	off   int64
+	limit int64
 }
 
-func newChecksumReader(r io.ReadSeeker) *checksumReader {
-	checksumReader := &checksumReader{r: r}
+func newChecksumReader(r io.ReaderAt, off int64, n int64) *checksumReader {
+	checksumReader := &checksumReader{r, off, off, off + n}
 	return checksumReader
 }
 
-// ReadAt implements the io.ReadAt interface.
-func (r *checksumReader) ReadAt(p []byte, off int64) (nn int, err error) {
+// Read implements the io.Reader interface.
+func (r *checksumReader) Read(p []byte) (nn int, err error) {
+	if r.off >= r.limit {
+		return 0, io.EOF
+	}
 	if len(p) == 0 {
 		return 0, nil
 	}
-	offsetInPayload := off % checksumPayloadSize
-	cursor := off / checksumPayloadSize * checksumBlockSize
-
-	_, err = r.r.Seek(cursor, io.SeekStart)
-	if err != nil {
-		return
+	if maxPayload := r.limit - r.off; int64(len(p)) > maxPayload {
+		p = p[0:maxPayload]
 	}
+	offsetInPayload := r.off % checksumPayloadSize
+	cursor := r.off / checksumPayloadSize * checksumBlockSize
+	limitChecksumBlockBase := r.limit / checksumPayloadSize * checksumBlockSize
+	limit := r.limit%checksumPayloadSize + limitChecksumBlockBase + checksumSize
 
 	buf := checksumReaderBufPool.Get().([]byte)
 	defer checksumReaderBufPool.Put(buf)
+
 	var n int
 	for len(p) > 0 {
-		n, err = r.r.Read(buf)
+		max := int64(checksumBlockSize)
+		if max > limit-cursor {
+			max = limit - cursor
+		}
+		n, err = r.r.ReadAt(buf[:max], cursor)
 		if err != nil {
 			return nn, err
 		}
@@ -133,6 +144,7 @@ func (r *checksumReader) ReadAt(p []byte, off int64) (nn int, err error) {
 		}
 		n1 := copy(p, buf[checksumSize+offsetInPayload:n])
 		nn += n1
+		r.off += int64(n1)
 		p = p[n1:]
 		offsetInPayload = 0
 	}
