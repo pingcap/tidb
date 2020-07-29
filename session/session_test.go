@@ -3227,6 +3227,28 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	c.Assert(taskID1 != taskID2, IsTrue)
 }
 
+func (s *testSessionSuite) TestDoDDLJobQuit(c *C) {
+	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use enviroment
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.MockTiKV))
+	c.Assert(err, IsNil)
+	session.SetSchemaLease(10 * time.Millisecond)
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	se, err := session.CreateSession(store)
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/storeCloseInLoop", `return(2)`), IsNil)
+	go func() {
+		time.Sleep(time.Second)
+		se.Close()
+		dom.Close()
+		store.Close()
+	}()
+	// this DDL call will enter deadloop before this fix
+	c.Assert(dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop"), IsNil)
+}
+
 func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 	// only run BR SQL integration test with tikv store.
 	if *withTiKV {

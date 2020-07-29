@@ -488,9 +488,15 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
+		failpoint.Inject("storeCloseInLoop", func(val failpoint.Value) {
+			v := val.(int)
+			time.Sleep(time.Duration(v) * time.Second)
+		})
 		select {
 		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
+		case <-d.ctx.Done():
+			return errors.New("store closed")
 		}
 
 		historyJob, err = d.getHistoryDDLJob(jobID)
