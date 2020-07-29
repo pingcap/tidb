@@ -509,6 +509,12 @@ func (c *CMSketch) Copy() *CMSketch {
 	return &CMSketch{count: c.count, width: c.width, depth: c.depth, table: tbl, defaultValue: c.defaultValue, topN: topN}
 }
 
+// IndexValCntPair stores the (IndexValue, Count) pair.
+type IndexValCntPair struct {
+	Val []byte
+	Cnt int
+}
+
 // TopN gets all the topN meta.
 func (c *CMSketch) TopN() []*TopNMeta {
 	if c == nil {

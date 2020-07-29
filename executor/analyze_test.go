@@ -204,7 +204,7 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
 
-	// Construct TopN, should be (1, 1) -> 2 and (1, 2) -> 2
+	// Construct TopN, should be (1, 1) -> 2 and (1, 2) -> 2, (1) -> 4.
 	cms := statistics.NewCMSketch(5, 10)
 	{
 		key1, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(1))
@@ -215,10 +215,7 @@ func (s *testSuite1) TestAnalyzeIndexExtractTopN(c *C) {
 		cms.AppendTopN(key2, 2)
 		prefixKey, err := codec.EncodeKey(tk.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
 		c.Assert(err, IsNil)
-		cms.InsertBytes(prefixKey)
-		cms.InsertBytes(prefixKey)
-		cms.InsertBytes(prefixKey)
-		cms.InsertBytes(prefixKey)
+		cms.AppendTopN(prefixKey, 4)
 	}
 	for _, idx := range tbl.Indices {
 		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &idx.Histogram)
