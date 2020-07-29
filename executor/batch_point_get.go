@@ -150,8 +150,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		keys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
 			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
-			idxKey, nonExist, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals, physID)
-			if nonExist {
+			idxKey, hasNull, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals, physID)
+			if hasNull {
 				continue
 			}
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
