@@ -15,6 +15,9 @@ package expensivequery
 
 import (
 	"fmt"
+	"github.com/shirou/gopsutil/mem"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -49,6 +52,11 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
+	systemMem, err := mem.VirtualMemory()
+	if err != nil {
+		panic(err)
+	}
+	lastOOMtime := time.Now()
 	// use 100ms as tickInterval temply, may use given interval or use defined variable later
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
@@ -73,10 +81,60 @@ func (eqh *Handle) Run() {
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
+
+			instanceStats := &runtime.MemStats{}
+			runtime.ReadMemStats(instanceStats)
+			systemMem.Total = 0
+			if instanceStats.HeapAlloc > systemMem.Total/10*8 {
+				if time.Since(lastOOMtime) > time.Minute {
+					eqh.logOOMWarning(instanceStats, systemMem)
+				}
+				lastOOMtime = time.Now()
+			}
 		case <-eqh.exitCh:
 			return
 		}
 	}
+}
+
+func (eqh *Handle) logOOMWarning(memUsage *runtime.MemStats, systemMem *mem.VirtualMemoryStat) {
+	logutil.BgLogger().Warn("The TiDB instance now takes a lot of memory, has the risk of OOM",
+		zap.Any("memUsage", memUsage.HeapAlloc),
+		zap.Any("systemMemoryTotal", systemMem.Total),
+	)
+	sm := eqh.sm.Load().(util.SessionManager)
+	processInfo := sm.ShowProcessList()
+	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
+	for _, info := range processInfo {
+		pinfo = append(pinfo, info)
+	}
+	now := time.Now()
+
+	printTop10 := func(f func(i, j int) bool) {
+		sort.Slice(pinfo, f)
+		count := 0
+		for _, info := range processInfo {
+			if len(info.Info) == 0 {
+				continue
+			}
+			count++
+			logutil.BgLogger().Warn(fmt.Sprintf("OOM analyze SQL %v", count),
+				genLogFields(now.Sub(info.Time), info)...)
+			if count == 10 {
+				break
+			}
+		}
+	}
+
+	logutil.BgLogger().Warn("Top 10 memory usage of SQL for OOM analyze")
+	printTop10(func(i, j int) bool {
+		return pinfo[i].MemTracker.MaxConsumed() > pinfo[j].MemTracker.MaxConsumed()
+	})
+
+	logutil.BgLogger().Warn("Top 10 time usage of SQL for OOM analyze")
+	printTop10(func(i, j int) bool {
+		return pinfo[i].Time.Before(pinfo[j].Time)
+	})
 }
 
 // LogOnQueryExceedMemQuota prints a log when memory usage of connID is out of memory quota.
