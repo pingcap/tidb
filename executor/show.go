@@ -884,6 +884,29 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 	}
 
+	// Foreign Keys are supported by data dictionary even though
+	// they are not enforced by DDL. This is still helpful to applications.
+	for _, fk := range tableInfo.ForeignKeys {
+		buf.WriteString(fmt.Sprintf(",\n  CONSTRAINT %s FOREIGN KEY ", stringutil.Escape(fk.Name.O, sqlMode)))
+		colNames := make([]string, 0, len(fk.Cols))
+		for _, col := range fk.Cols {
+			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
+		}
+		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(colNames, ",")))
+		buf.WriteString(fmt.Sprintf(" REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode)))
+		refColNames := make([]string, 0, len(fk.Cols))
+		for _, refCol := range fk.RefCols {
+			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
+		}
+		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(refColNames, ",")))
+		if ast.ReferOptionType(fk.OnDelete) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete).String()))
+		}
+		if ast.ReferOptionType(fk.OnUpdate) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate).String()))
+		}
+	}
+
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
