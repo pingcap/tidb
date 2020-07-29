@@ -2,8 +2,9 @@ package chunk
 
 import (
 	"bytes"
-	"github.com/pingcap/check"
 	"os"
+
+	"github.com/pingcap/check"
 )
 
 func (s *testChunkSuite) TestChecksumReadAt(c *check.C) {
