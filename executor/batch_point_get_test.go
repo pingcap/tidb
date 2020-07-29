@@ -138,3 +138,11 @@ func (s *testBatchPointGetSuite) TestBatchPointGetCache(c *C) {
 	tk.MustQuery("SELECT id, token FROM test.customers WHERE id IN (28)")
 	tk.MustQuery("SELECT id, token FROM test.customers WHERE id IN (28, 29);").Check(testkit.Rows("28 07j", "29 03j"))
 }
+
+func (s *testBatchPointGetSuite) TestIssue18843(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t ( id bigint(10) primary key, f varchar(191) default null, unique key `idx_f` (`f`))")
+	tk.MustExec("insert into t values (1, '')")
+	tk.MustQuery("select * from t where f in (null)").Check(testkit.Rows())
+}
