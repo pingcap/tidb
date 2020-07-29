@@ -1422,6 +1422,10 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLAddDropColumn(c *C) {
 func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk2.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 varchar(10))")
 	tk.MustExec("insert t1 values (1, 77, 'a'), (2, 88, 'b')")
@@ -1444,4 +1448,17 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 	tk2.MustExec("alter table t1 change column c2 cc2 bigint not null")
 	err := tk.ExecToErr("commit")
 	c.Assert(err, NotNil)
+
+	// Change auto random bits is not supported.
+	tk2.MustExec("create table ta(a bigint primary key auto_random(3), b varchar(255), unique key uk(b));")
+	tk2.MustExec("insert into ta(b) values('a')")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into ta(b) values('b')")
+	tk2.MustExec("alter table ta modify column a bigint auto_random(12);")
+	err = tk.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk2.MustExec("admin check table ta")
+	tk2.MustQuery("select b from ta").Check(testkit.Rows("a"))
+
+	tk2.MustExec("drop database if exists test_db")
 }

@@ -140,6 +140,11 @@ func needCollectModifyColOps(actionType uint64) bool {
 // collectModifyColAmendOps is used to check if there is column change from nullable to not null by now.
 // TODO allow column change from nullable to not null, and generate keys check operation.
 func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
+	// Report error if auto random bits is changed.
+	if tblAtStart.Meta().AutoRandomBits != tblAtCommit.Meta().AutoRandomBits {
+		return nil, errors.Trace(errors.Errorf("amend is not supported if the auto random bits is changed table=%v",
+			tblAtCommit.Meta().Name.String()))
+	}
 	for _, colAtCommit := range tblAtCommit.Cols() {
 		colAtStart := findColByID(tblAtStart, colAtCommit.ID)
 		if colAtStart != nil {
