@@ -52,8 +52,8 @@ type ListInDisk struct {
 	offWrite int64
 
 	disk           *os.File
-	checksumWriter *checksumWriter
-	checksumReader *checksumReader
+	checksumWriter io.WriteCloser
+	checksumReader io.ReaderAt
 	bufWriter      *bufio.Writer
 	bufFlushMutex  sync.RWMutex
 	bufFileMutex   sync.RWMutex
