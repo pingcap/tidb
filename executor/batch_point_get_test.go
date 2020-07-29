@@ -142,7 +142,7 @@ func (s *testBatchPointGetSuite) TestBatchPointGetCache(c *C) {
 func (s *testBatchPointGetSuite) TestIssue18843(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t ( id bigint(10) primary key, f varchar(191) default null, unique key `idx_f` (`f`))")
-	tk.MustExec("insert into t values (1, '')")
-	tk.MustQuery("select * from t where f in (null)").Check(testkit.Rows())
+	tk.MustExec("create table t18843 ( id bigint(10) primary key, f varchar(191) default null, unique key `idx_f` (`f`))")
+	tk.MustExec("insert into t18843 values (1, '')")
+	tk.MustQuery("select * from t18843 where f in (null)").Check(testkit.Rows())
 }
