@@ -14,7 +14,6 @@
 package chunk
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -147,8 +146,7 @@ func newListInDiskWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWriteDisk
 		return nil, err
 	}
 	l.disk = disk
-	l.bufWriter = bufWriterPool.Get().(*bufio.Writer)
-	l.bufWriter.Reset(l.disk)
+	l.w = disk
 	return &l, nil
 }
 
@@ -160,12 +158,8 @@ func (l *listInDiskWriteDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
 
 	r := io.NewSectionReader(l.disk, off, l.offWrite-off)
-	bufReader := bufReaderPool.Get().(*bufio.Reader)
-	bufReader.Reset(r)
-	defer bufReaderPool.Put(bufReader)
-
 	format := rowInDisk{numCol: len(l.fieldTypes)}
-	_, err = format.ReadFrom(bufReader)
+	_, err = format.ReadFrom(r)
 	if err != nil {
 		return row, err
 	}

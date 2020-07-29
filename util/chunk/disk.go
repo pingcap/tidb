@@ -14,7 +14,6 @@
 package chunk
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -29,19 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-const (
-	writeBufSize = 128 * 1024
-	readBufSize  = 4 * 1024
-)
-
-var bufWriterPool = sync.Pool{
-	New: func() interface{} { return bufio.NewWriterSize(nil, writeBufSize) },
-}
-
-var bufReaderPool = sync.Pool{
-	New: func() interface{} { return bufio.NewReaderSize(nil, readBufSize) },
-}
-
 // ListInDisk represents a slice of chunks storing in temporary disk.
 type ListInDisk struct {
 	fieldTypes []*types.FieldType
@@ -51,14 +37,11 @@ type ListInDisk struct {
 	// offWrite is the current offset for writing.
 	offWrite int64
 
-	disk           *os.File
-	checksumWriter io.WriteCloser
-	checksumReader io.ReaderAt
-	bufWriter      *bufio.Writer
-	bufFlushMutex  sync.RWMutex
-	bufFileMutex   sync.RWMutex
-	diskTracker    *disk.Tracker // track disk usage.
-	numRowsInDisk  int
+	disk          *os.File
+	w             io.WriteCloser
+	bufFlushMutex sync.RWMutex
+	diskTracker   *disk.Tracker // track disk usage.
+	numRowsInDisk int
 }
 
 var defaultChunkListInDiskLabel fmt.Stringer = stringutil.StringerStr("chunk.ListInDisk")
@@ -78,9 +61,7 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	l.checksumWriter = newChecksumWriter(l.disk)
-	l.bufWriter = bufWriterPool.Get().(*bufio.Writer)
-	l.bufWriter.Reset(l.checksumWriter)
+	l.w = newChecksumWriter(l.disk)
 	l.bufFlushMutex = sync.RWMutex{}
 	return
 }
@@ -100,25 +81,21 @@ func (l *ListInDisk) flush() (err error) {
 	// buffered is not zero only after Add and before GetRow, after the first flush, buffered will always be zero,
 	// hence we use a RWLock to allow quicker quit.
 	l.bufFlushMutex.RLock()
-	buffered := l.bufWriter.Buffered()
+	checksumWriter := l.w
 	l.bufFlushMutex.RUnlock()
-	if buffered == 0 && l.checksumWriter != nil {
+	if checksumWriter == nil {
 		return nil
 	}
 	l.bufFlushMutex.Lock()
 	defer l.bufFlushMutex.Unlock()
-	if l.bufWriter.Buffered() != 0 {
-		err = l.bufWriter.Flush()
-		if err != nil {
-			return
-		}
+	err = l.w.Close()
+	if err != nil {
+		return
 	}
-	if l.checksumWriter != nil {
-		err = l.checksumWriter.Close()
-		if err != nil {
-			return
-		}
-		l.checksumWriter = nil
+	l.w = nil
+	l.disk, err = os.Open(l.disk.Name())
+	if err != nil {
+		return
 	}
 	return
 }
@@ -137,7 +114,7 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 		}
 	}
 	chk2 := chunkInDisk{Chunk: chk, offWrite: l.offWrite}
-	n, err := chk2.WriteTo(l.bufWriter)
+	n, err := chk2.WriteTo(l.w)
 	l.offWrite += n
 	if err != nil {
 		return
@@ -162,43 +139,16 @@ func (l *ListInDisk) GetChunk(chkIdx int) (*Chunk, error) {
 	return chk, nil
 }
 
-// reopenDiskFile reopen the file descriptor of the disk temp file, need be called after flush and before read.
-func (l *ListInDisk) reopenDiskFile() (err error) {
-	l.bufFileMutex.RLock()
-	r := l.checksumReader
-	l.bufFileMutex.RUnlock()
-	if r != nil {
-		return nil
-	}
-	l.bufFileMutex.Lock()
-	defer l.bufFileMutex.Unlock()
-	l.disk, err = os.Open(l.disk.Name())
-	if err != nil {
-		return
-	}
-	l.checksumReader = newChecksumReader(l.disk)
-	return
-}
-
 // GetRow gets a Row from the ListInDisk by RowPtr.
 func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	err = l.flush()
 	if err != nil {
 		return
 	}
-	err = l.reopenDiskFile()
-	if err != nil {
-		return
-	}
-
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
-	r := io.NewSectionReader(l.checksumReader, off, l.offWrite-off)
-	bufReader := bufReaderPool.Get().(*bufio.Reader)
-	bufReader.Reset(r)
-	defer bufReaderPool.Put(bufReader)
-
+	r := io.NewSectionReader(newChecksumReader(l.disk), off, l.offWrite-off)
 	format := rowInDisk{numCol: len(l.fieldTypes)}
-	_, err = format.ReadFrom(bufReader)
+	_, err = format.ReadFrom(r)
 	if err != nil {
 		return row, err
 	}
@@ -221,7 +171,6 @@ func (l *ListInDisk) Close() error {
 	if l.disk != nil {
 		l.diskTracker.Consume(-l.diskTracker.BytesConsumed())
 		terror.Call(l.disk.Close)
-		bufWriterPool.Put(l.bufWriter)
 		return os.Remove(l.disk.Name())
 	}
 	return nil
