@@ -1201,10 +1201,11 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	tk.MustExec("admin flush bindings")
 	tk.MustExec("admin evolve bindings")
 
-	tk.MustQuery(`select exec_count, digest_text
+	// `exec_count` may be bigger than 1 because other cases are also running.
+	tk.MustQuery(`select digest_text
 		from information_schema.statements_summary
 		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows(
-		"1 select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation , source from mysql . bind_info" +
+		"select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation , source from mysql . bind_info" +
 			" where update_time > ? order by update_time"))
 }
 
@@ -1296,4 +1297,22 @@ func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
 	tk.MustExec("execute stmt")
 	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
 		testkit.Rows("3 1"))
+}
+
+func (s *testTableSuite) TestFormatVersion(c *C) {
+	// Test for defaultVersions.
+	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
+	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
+	for i, v := range defaultVersions {
+		version := infoschema.FormatVersion(v, true)
+		c.Assert(version, Equals, defaultRes[i])
+	}
+
+	// Test for versions user set.
+	versions := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
+	res := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
+	for i, v := range versions {
+		version := infoschema.FormatVersion(v, false)
+		c.Assert(version, Equals, res[i])
+	}
 }
