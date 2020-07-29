@@ -153,6 +153,7 @@ func (eqh *Handle) oomRecord(memUsage *runtime.MemStats, systemMem *mem.VirtualM
 	err = p.WriteTo(f, 0)
 	if err != nil {
 		logutil.BgLogger().Warn("Write heap profile file fail.", zap.Error(err))
+		return
 	}
 	logutil.BgLogger().Warn("Get heap profile successfully.", zap.Any("FileName", filename))
 }
