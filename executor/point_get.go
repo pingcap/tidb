@@ -21,11 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/tikv"
->>>>>>> 8b19d67... executor: add runtime information for point-get executor (#18666)
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -125,6 +121,9 @@ func (e *PointGetExecutor) Open(context.Context) error {
 
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
+	if e.runtimeStats != nil {
+		e.snapshot.DelOption(kv.CollectRuntimeStats)
+	}
 	return nil
 }
 
@@ -167,28 +166,6 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
-<<<<<<< HEAD
-=======
-	return nil
-}
-
-// Close implements the Executor interface.
-func (e *PointGetExecutor) Close() error {
-	if e.runtimeStats != nil {
-		e.snapshot.DelOption(kv.CollectRuntimeStats)
-	}
-	return nil
-}
-
-// Next implements the Executor interface.
-func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
-	if e.done {
-		return nil
-	}
-	e.done = true
-
->>>>>>> 8b19d67... executor: add runtime information for point-get executor (#18666)
 	var tblID int64
 	if e.partInfo != nil {
 		tblID = e.partInfo.ID

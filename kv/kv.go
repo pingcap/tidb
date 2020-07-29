@@ -56,13 +56,8 @@ const (
 	ReplicaRead
 	// Set task ID
 	TaskID
-<<<<<<< HEAD
-=======
-	// InfoSchema is schema version used by txn startTS.
-	InfoSchema
 	// CollectRuntimeStats is used to enable collect runtime stats.
 	CollectRuntimeStats
->>>>>>> 8b19d67... executor: add runtime information for point-get executor (#18666)
 )
 
 // Priority value for transaction priority.

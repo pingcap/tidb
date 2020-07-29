@@ -1544,13 +1544,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
 		TaskID:      stmtctx.AllocateTaskID(),
 	}
-<<<<<<< HEAD
-	if config.GetGlobalConfig().OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
-=======
-	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
 	globalConfig := config.GetGlobalConfig()
 	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
->>>>>>> 8b19d67... executor: add runtime information for point-get executor (#18666)
 		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
 	}
 	switch globalConfig.OOMAction {

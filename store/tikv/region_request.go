@@ -86,16 +86,12 @@ func (ss *RegionBatchRequestSender) sendReqToAddr(bo *Backoffer, ctxs []copTaskA
 	if e := tikvrpc.SetContext(req, ctx.Meta, ctx.Peer); e != nil {
 		return nil, false, errors.Trace(e)
 	}
-<<<<<<< HEAD
-	resp, err = ss.client.SendRequest(bo.ctx, ctx.Addr, req, timout)
-=======
 	if ss.stats != nil {
 		defer func(start time.Time) {
 			recordRegionRequestRuntimeStats(ss.stats, req.Type, time.Since(start))
 		}(time.Now())
 	}
-	resp, err = ss.client.SendRequest(ctx, rpcCtx.Addr, req, timout)
->>>>>>> 8b19d67... executor: add runtime information for point-get executor (#18666)
+	resp, err = ss.client.SendRequest(bo.ctx, ctx.Addr, req, timout)
 	if err != nil {
 		ss.rpcError = err
 		for _, failedCtx := range ctxs {
@@ -293,25 +289,13 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, ctx *RPCContext, re
 		}
 		defer s.releaseStoreToken(ctx.Store)
 	}
-<<<<<<< HEAD
-	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
-
-=======
-
 	if s.stats != nil {
 		defer func(start time.Time) {
 			recordRegionRequestRuntimeStats(s.stats, req.Type, time.Since(start))
 		}(time.Now())
 	}
 
-	ctx := bo.ctx
-	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
-		var cancel context.CancelFunc
-		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
-		defer cancel()
-	}
-	resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
->>>>>>> 8b19d67... executor: add runtime information for point-get executor (#18666)
+	resp, err = s.client.SendRequest(bo.ctx, ctx.Addr, req, timeout)
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, ctx, err); e != nil {
