@@ -61,7 +61,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type HTTPHandlerTestSuite struct {
+type basicHTTPHandlerTestSuite struct {
 	*testServerClient
 	server  *Server
 	store   kv.Storage
@@ -69,8 +69,20 @@ type HTTPHandlerTestSuite struct {
 	tidbdrv *TiDBDriver
 }
 
+type HTTPHandlerTestSuite struct {
+	*basicHTTPHandlerTestSuite
+}
+
+type HTTPHandlerTestSerialSuite struct {
+	*basicHTTPHandlerTestSuite
+}
+
 var _ = Suite(&HTTPHandlerTestSuite{
-	testServerClient: newTestServerClient(),
+	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
+})
+
+var _ = SerialSuites(&HTTPHandlerTestSerialSuite{
+	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
 })
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
@@ -339,8 +351,12 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/errGetRegionByIDEmpty"), IsNil)
 }
 
+<<<<<<< HEAD
 func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 	mvccStore := mocktikv.MustNewMVCCStore()
+=======
+func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
+>>>>>>> 4db32ba... server: try to make test TestAllServerInfo stable (#18842)
 	var err error
 	ts.store, err = mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
@@ -361,7 +377,7 @@ func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 	ts.waitUntilServerOnline()
 }
 
-func (ts *HTTPHandlerTestSuite) stopServer(c *C) {
+func (ts *basicHTTPHandlerTestSuite) stopServer(c *C) {
 	if ts.domain != nil {
 		ts.domain.Close()
 	}
@@ -373,7 +389,7 @@ func (ts *HTTPHandlerTestSuite) stopServer(c *C) {
 	}
 }
 
-func (ts *HTTPHandlerTestSuite) prepareData(c *C) {
+func (ts *basicHTTPHandlerTestSuite) prepareData(c *C) {
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
@@ -1046,7 +1062,7 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 	c.Assert(info.ID, Equals, ddl.GetID())
 }
 
-func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
+func (ts *HTTPHandlerTestSerialSuite) TestAllServerInfo(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := ts.fetchStatus("/info/all")
