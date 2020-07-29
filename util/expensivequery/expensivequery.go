@@ -58,7 +58,7 @@ func (eqh *Handle) Run() {
 	if err != nil {
 		logutil.BgLogger().Warn("Get system memory fail.")
 	}
-	lastOOMtime := time.Now()
+	lastOOMtime := time.Time{}
 	// use 100ms as tickInterval temply, may use given interval or use defined variable later
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
@@ -86,9 +86,8 @@ func (eqh *Handle) Run() {
 
 			instanceStats := &runtime.MemStats{}
 			runtime.ReadMemStats(instanceStats)
-			systemMem.Total = 0
 			if instanceStats != nil && instanceStats.HeapAlloc > systemMem.Total/10*8 {
-				if time.Since(lastOOMtime) > time.Minute {
+				if time.Since(lastOOMtime) > 10*time.Second {
 					eqh.logOOMWarning(instanceStats, systemMem)
 				}
 				lastOOMtime = time.Now()
@@ -138,7 +137,7 @@ func (eqh *Handle) logOOMWarning(memUsage *runtime.MemStats, systemMem *mem.Virt
 		return pinfo[i].Time.Before(pinfo[j].Time)
 	})
 
-	filename := "heap.profile" + time.Now().String()
+	filename := "heap.profile" + time.Now().Format(time.RFC3339)
 	f, err := os.Create(filename)
 	if err != nil {
 		logutil.BgLogger().Warn("Create heap profile file fail.", zap.Error(err))
