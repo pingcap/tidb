@@ -2713,6 +2713,10 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		return ret
 	}
 
+	if pi := is.Table.GetPartitionInfo(); pi == nil {
+		return ret
+	}
+
 	nextPartition := nextPartitionForIndexLookUp{exec: ret}
 	exec, err := buildPartitionTable(b, ts.Table, v.PruningConds, ret, nextPartition)
 	if err != nil {

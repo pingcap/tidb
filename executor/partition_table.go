@@ -23,7 +23,7 @@ import (
 )
 
 // PartitionTableExecutor is a Executor for partitioned table.
-// it works by wrap the underlying TableReader/IndexReader/IndexLookUpReader.
+// It works by wrap the underlying TableReader/IndexReader/IndexLookUpReader.
 type PartitionTableExecutor struct {
 	baseExecutor
 
