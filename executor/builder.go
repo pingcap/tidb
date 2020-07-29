@@ -1917,7 +1917,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		colInfo := task.TblInfo.Columns[task.HandleCols.GetCol(0).Index]
 		cols = append([]*model.ColumnInfo{colInfo}, cols...)
 	} else if task.HandleCols != nil && !task.HandleCols.IsInt() {
-		cols = make([]*model.ColumnInfo, 0, len(task.ColsInfo) + task.HandleCols.NumCols())
+		cols = make([]*model.ColumnInfo, 0, len(task.ColsInfo)+task.HandleCols.NumCols())
 		for i := 0; i < task.HandleCols.NumCols(); i++ {
 			cols = append(cols, task.TblInfo.Columns[task.HandleCols.GetCol(i).Index])
 		}
