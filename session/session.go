@@ -1034,7 +1034,6 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		StmtCtx:          s.sessionVars.StmtCtx,
 		StatsInfo:        plannercore.GetStatsInfo,
 		MaxExecutionTime: maxExecutionTime,
-		MemTracker:       s.sessionVars.StmtCtx.MemTracker,
 	}
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username

@@ -16,7 +16,6 @@ package util
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/pingcap/tidb/util/memory"
 	"strings"
 	"time"
 
@@ -45,8 +44,6 @@ type ProcessInfo struct {
 	State                     uint16
 	Command                   byte
 	ExceedExpensiveTimeThresh bool
-
-	MemTracker *memory.Tracker
 }
 
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".

@@ -86,9 +86,11 @@ func (eqh *Handle) Run() {
 
 			instanceStats := &runtime.MemStats{}
 			runtime.ReadMemStats(instanceStats)
-			if instanceStats != nil && instanceStats.HeapAlloc > systemMem.Total/10*8 {
+			if systemMem != nil && instanceStats.HeapAlloc > systemMem.Total/10*8 {
+				// At least ten seconds between two recordings that memory usage is less than threshold (80% system memory).
+				// If the memory is still exceeded, only records once.
 				if time.Since(lastOOMtime) > 10*time.Second {
-					eqh.logOOMWarning(instanceStats, systemMem)
+					eqh.oomRecord(instanceStats, systemMem)
 				}
 				lastOOMtime = time.Now()
 			}
@@ -98,7 +100,7 @@ func (eqh *Handle) Run() {
 	}
 }
 
-func (eqh *Handle) logOOMWarning(memUsage *runtime.MemStats, systemMem *mem.VirtualMemoryStat) {
+func (eqh *Handle) oomRecord(memUsage *runtime.MemStats, systemMem *mem.VirtualMemoryStat) {
 	logutil.BgLogger().Warn("The TiDB instance now takes a lot of memory, has the risk of OOM",
 		zap.Any("memUsage", memUsage.HeapAlloc),
 		zap.Any("systemMemoryTotal", systemMem.Total),
@@ -107,29 +109,27 @@ func (eqh *Handle) logOOMWarning(memUsage *runtime.MemStats, systemMem *mem.Virt
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
-		pinfo = append(pinfo, info)
+		if len(info.Info) != 0 {
+			pinfo = append(pinfo, info)
+		}
 	}
 	now := time.Now()
 
 	printTop10 := func(f func(i, j int) bool) {
 		sort.Slice(pinfo, f)
-		count := 0
-		for _, info := range processInfo {
-			if len(info.Info) == 0 {
-				continue
-			}
-			count++
-			logutil.BgLogger().Warn(fmt.Sprintf("OOM analyze SQL %v", count),
+		list := pinfo
+		if len(list) > 10 {
+			list = list[:10]
+		}
+		for i, info := range list {
+			logutil.BgLogger().Warn(fmt.Sprintf("OOM analyze SQL %v", i),
 				genLogFields(now.Sub(info.Time), info)...)
-			if count == 10 {
-				break
-			}
 		}
 	}
 
 	logutil.BgLogger().Warn("Top 10 memory usage of SQL for OOM analyze")
 	printTop10(func(i, j int) bool {
-		return pinfo[i].MemTracker.MaxConsumed() > pinfo[j].MemTracker.MaxConsumed()
+		return pinfo[i].StmtCtx.MemTracker.MaxConsumed() > pinfo[j].StmtCtx.MemTracker.MaxConsumed()
 	})
 
 	logutil.BgLogger().Warn("Top 10 time usage of SQL for OOM analyze")
