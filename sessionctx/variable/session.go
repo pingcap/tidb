@@ -366,6 +366,9 @@ type SessionVars struct {
 	UsersLock sync.RWMutex
 	// Users are user defined variables.
 	Users map[string]types.Datum
+	// UserVarTypes stores the FieldType for user variables, it cannot be inferred from Users when Users have not been set yet.
+	// It is read/write protected by UsersLock.
+	UserVarTypes map[string]*types.FieldType
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// stmtVars variables are temporarily set by SET_VAR hint
@@ -794,6 +797,7 @@ type ConnectionInfo struct {
 func NewSessionVars() *SessionVars {
 	vars := &SessionVars{
 		Users:                       make(map[string]types.Datum),
+		UserVarTypes:                make(map[string]*types.FieldType),
 		systems:                     make(map[string]string),
 		stmtVars:                    make(map[string]string),
 		PreparedStmts:               make(map[uint32]interface{}),

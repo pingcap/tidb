@@ -1117,17 +1117,27 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	sessionVars := er.b.ctx.GetSessionVars()
 	if !v.IsSystem {
 		if v.Value != nil {
-			er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar,
-				er.ctxStack[stkLen-1].GetType(),
+			tp := er.ctxStack[stkLen-1].GetType()
+			er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
 				expression.DatumToConstant(types.NewDatum(name), mysql.TypeString),
 				er.ctxStack[stkLen-1])
 			er.ctxNameStk[stkLen-1] = types.EmptyName
+			// Store the field type of the variable into SessionVars.UserVarTypes.
+			// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
+			// GetVar has not been executed to fill the SessionVars.Users.
+			sessionVars.UsersLock.Lock()
+			sessionVars.UserVarTypes[name] = tp
+			sessionVars.UsersLock.Unlock()
 			return
 		}
-		f, err := er.newFunction(ast.GetVar,
-			// TODO: Here is wrong, the sessionVars should store a name -> Datum map. Will fix it later.
-			types.NewFieldType(mysql.TypeString),
-			expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
+		sessionVars.UsersLock.RLock()
+		tp, ok := sessionVars.UserVarTypes[name]
+		sessionVars.UsersLock.RUnlock()
+		if !ok {
+			tp = types.NewFieldType(mysql.TypeVarString)
+			tp.Flen = mysql.MaxFieldVarCharLength
+		}
+		f, err := er.newFunction(ast.GetVar, tp, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString))
 		if err != nil {
 			er.err = err
 			return

@@ -181,8 +181,11 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
-	if funcName == ast.Cast {
+	switch funcName {
+	case ast.Cast:
 		return BuildCastFunction(ctx, args[0], retType), nil
+	case ast.GetVar:
+		return BuildGetVarFunction(ctx, args[0], retType)
 	}
 	fc, ok := funcs[funcName]
 	if !ok {

@@ -487,10 +487,10 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_GetParamString:
 		f = &builtinGetParamStringSig{base}
 	case tipb.ScalarFuncSig_GetVar:
-		f = &builtinGetVarSig{base}
+		f = &builtinGetStringVarSig{base}
 	//case tipb.ScalarFuncSig_RowSig:
 	case tipb.ScalarFuncSig_SetVar:
-		f = &builtinSetVarSig{base}
+		f = &builtinSetStringVarSig{base}
 	//case tipb.ScalarFuncSig_ValuesDecimal:
 	//	f = &builtinValuesDecimalSig{base}
 	//case tipb.ScalarFuncSig_ValuesDuration:

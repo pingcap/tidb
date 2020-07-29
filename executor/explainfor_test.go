@@ -426,3 +426,63 @@ func (s *testSuite) TestExplainTiFlashSystemTables(c *C) {
 	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", tiflashInstance, database, table)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
 }
+
+func (s *testPrepareSerialSuite) TestPointGetUserVarPlanCache(c *C) {
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t1 (a BIGINT, b VARCHAR(40), PRIMARY KEY (a, b))")
+	tk.MustExec("INSERT INTO t1 VALUES (1,'3'),(2,'4')")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("CREATE TABLE t2 (a BIGINT, b VARCHAR(40), UNIQUE KEY idx_a (a))")
+	tk.MustExec("INSERT INTO t2 VALUES (1,'1'),(2,'2')")
+	tk.MustExec("prepare stmt from 'select * from t1, t2 where t1.a = t2.a and t2.a = ?'")
+	tk.MustExec("set @a=1")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
+		"1 3 1 1",
+	))
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	// t2 should use PointGet.
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		"Projection_7 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b",
+		"└─IndexMergeJoin_19 1.00 root  inner join, inner:TableReader_14, outer key:test.t2.a, inner key:test.t1.a",
+		"  ├─Selection_41(Build) 0.80 root  not(isnull(test.t2.a))",
+		"  │ └─Point_Get_40 1.00 root table:t2, index:idx_a(a) ",
+		"  └─TableReader_14(Probe) 0.00 root  data:Selection_13",
+		"    └─Selection_13 0.00 cop[tikv]  eq(test.t1.a, 1)",
+		"      └─TableRangeScan_12 1.00 cop[tikv] table:t1 range: decided by [test.t2.a], keep order:true, stats:pseudo",
+	))
+	tk.MustExec("set @a=2")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
+		"2 4 2 2",
+	))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	// t2 should use PointGet, range is changed to [2,2].
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		"Projection_7 1.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b",
+		"└─IndexMergeJoin_19 1.00 root  inner join, inner:TableReader_14, outer key:test.t2.a, inner key:test.t1.a",
+		"  ├─Selection_41(Build) 0.80 root  not(isnull(test.t2.a))",
+		"  │ └─Point_Get_40 1.00 root table:t2, index:idx_a(a) ",
+		"  └─TableReader_14(Probe) 0.00 root  data:Selection_13",
+		"    └─Selection_13 0.00 cop[tikv]  eq(test.t1.a, 2)",
+		"      └─TableRangeScan_12 1.00 cop[tikv] table:t1 range: decided by [test.t2.a], keep order:true, stats:pseudo",
+	))
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
+		"2 4 2 2",
+	))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(
+		"1",
+	))
+}
