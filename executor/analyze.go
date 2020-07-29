@@ -1040,6 +1040,9 @@ func randomKeyFromHandles(start, end kv.Key, rander *rand.Rand) (kv.Key, error) 
 			return nil, err
 		}
 		endRemain, upperInt, err := codec.DecodeInt(end)
+		if err != nil {
+			return nil, err
+		}
 		result = codec.EncodeInt(result, rander.Int63n(upperInt-lowerInt)+lowerInt)
 		start, end = startRemain, endRemain
 	}
