@@ -952,7 +952,7 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 		dbt.mustExec("drop table if exists pn")
 		dbt.mustExec("create table pn (c1 int, c2 int, c3 int)")
 		dbt.mustExec("set @@tidb_dml_batch_size = 1")
-		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, @val1, @val2) SET c2 = CAST(@val1 AS UNSIGNED), c3 = @val2 * 100`)
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, @val1, @val2) SET c3 = @val2 * 100, c2 = CAST(@val1 AS UNSIGNED)`)
 		dbt.Assert(err1, IsNil)
 		var (
 			a int

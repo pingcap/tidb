@@ -150,6 +150,10 @@ func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
 	tableCols := e.Table.Cols()
 
 	if len(columnNames) != len(tableCols) {
+		for _, v := range e.ColumnAssignments {
+			columnNames = append(columnNames, v.Column.Name.O)
+		}
+
 		cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
 		if missingColName != "" {
 			return errors.Errorf("LOAD DATA INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
@@ -214,10 +218,6 @@ func (e *LoadDataInfo) initFieldMappings() []string {
 			UserVar: v.UserVar,
 		}
 		e.FieldMappings = append(e.FieldMappings, fieldMapping)
-	}
-
-	for _, v := range e.ColumnAssignments {
-		columns = append(columns, v.Column.Name.O)
 	}
 
 	return columns
