@@ -61,7 +61,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type HTTPHandlerTestSuite struct {
+type basicHTTPHandlerTestSuite struct {
 	*testServerClient
 	server  *Server
 	store   kv.Storage
@@ -69,16 +69,20 @@ type HTTPHandlerTestSuite struct {
 	tidbdrv *TiDBDriver
 }
 
+type HTTPHandlerTestSuite struct {
+	*basicHTTPHandlerTestSuite
+}
+
 type HTTPHandlerTestSerialSuite struct {
-	*HTTPHandlerTestSuite
+	*basicHTTPHandlerTestSuite
 }
 
 var _ = Suite(&HTTPHandlerTestSuite{
-	testServerClient: newTestServerClient(),
+	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
 })
 
 var _ = SerialSuites(&HTTPHandlerTestSerialSuite{
-	&HTTPHandlerTestSuite{testServerClient: newTestServerClient()},
+	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
 })
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
@@ -347,7 +351,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/errGetRegionByIDEmpty"), IsNil)
 }
 
-func (ts *HTTPHandlerTestSuite) startServer(c *C) {
+func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
 	var err error
 	ts.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
@@ -368,7 +372,7 @@ func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 	ts.waitUntilServerOnline()
 }
 
-func (ts *HTTPHandlerTestSuite) stopServer(c *C) {
+func (ts *basicHTTPHandlerTestSuite) stopServer(c *C) {
 	if ts.domain != nil {
 		ts.domain.Close()
 	}
@@ -380,7 +384,7 @@ func (ts *HTTPHandlerTestSuite) stopServer(c *C) {
 	}
 }
 
-func (ts *HTTPHandlerTestSuite) prepareData(c *C) {
+func (ts *basicHTTPHandlerTestSuite) prepareData(c *C) {
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
