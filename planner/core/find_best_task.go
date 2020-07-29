@@ -160,9 +160,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		// combine best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
 
-<<<<<<< HEAD
-		// enforce curTask property
-=======
 		if prop.IsFlashOnlyProp() {
 			if _, ok := curTask.(*copTask); !ok {
 				continue
@@ -170,7 +167,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 
 		// Enforce curTask property
->>>>>>> 29178df... planner, executor: support broadcast join for tiflash engine. (#17232)
 		if prop.Enforced {
 			curTask = enforceProperty(prop, curTask, p.basePlan.ctx)
 		}
@@ -416,11 +412,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			continue
 		}
 		var currentCandidate *candidatePath
-<<<<<<< HEAD
 		if path.IsTablePath {
-			currentCandidate = ds.getTableCandidate(path, prop)
-=======
-		if path.IsTablePath() {
 			if path.StoreType == kv.TiFlash {
 				if path.IsTiFlashGlobalRead && prop.TaskTp == property.CopTiFlashGlobalReadTaskType {
 					currentCandidate = ds.getTableCandidate(path, prop)
@@ -436,7 +428,6 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			if currentCandidate == nil {
 				continue
 			}
->>>>>>> 29178df... planner, executor: support broadcast join for tiflash engine. (#17232)
 		} else {
 			coveredByIdx := isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo.PKIsHandle)
 			if len(path.AccessConds) > 0 || !prop.IsEmpty() || path.Forced || coveredByIdx {

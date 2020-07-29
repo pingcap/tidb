@@ -663,47 +663,6 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 	return resp
 }
 
-<<<<<<< HEAD
-=======
-func drainRowsFromExecutor(ctx context.Context, e executor, req *tipb.DAGRequest) (tipb.Chunk, error) {
-	var chunk tipb.Chunk
-	for {
-		row, err := e.Next(ctx)
-		if err != nil {
-			return chunk, errors.Trace(err)
-		}
-		if row == nil {
-			return chunk, nil
-		}
-		for _, offset := range req.OutputOffsets {
-			chunk.RowsData = append(chunk.RowsData, row[offset]...)
-		}
-	}
-}
-
-func (h *rpcHandler) handleBatchCopRequest(ctx context.Context, req *coprocessor.BatchRequest) (*mockBatchCopDataClient, error) {
-	client := &mockBatchCopDataClient{}
-	for _, ri := range req.Regions {
-		cop := coprocessor.Request{
-			Tp:      kv.ReqTypeDAG,
-			Data:    req.Data,
-			StartTs: req.StartTs,
-			Ranges:  ri.Ranges,
-		}
-		_, exec, dagReq, err := h.buildDAGExecutor(&cop, true)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		chunk, err := drainRowsFromExecutor(ctx, exec, dagReq)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		client.chunks = append(client.chunks, chunk)
-	}
-	return client, nil
-}
-
->>>>>>> 29178df... planner, executor: support broadcast join for tiflash engine. (#17232)
 // Client is a client that sends RPC.
 // This is same with tikv.Client, define again for avoid circle import.
 type Client interface {

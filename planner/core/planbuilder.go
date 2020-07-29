@@ -735,31 +735,12 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
-<<<<<<< HEAD
-func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
-=======
 func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPath {
-	tiFlashPath := &util.AccessPath{StoreType: kv.TiFlash, IsTiFlashGlobalRead: isGlobalRead}
-	fillContentForTablePath(tiFlashPath, tblInfo)
+	tiFlashPath := &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash, IsTiFlashGlobalRead: isGlobalRead}
 	return tiFlashPath
 }
 
-func fillContentForTablePath(tablePath *util.AccessPath, tblInfo *model.TableInfo) {
-	if tblInfo.IsCommonHandle {
-		tablePath.IsCommonHandlePath = true
-		for _, index := range tblInfo.Indices {
-			if index.Primary {
-				tablePath.Index = index
-				break
-			}
-		}
-	} else {
-		tablePath.IsIntHandlePath = true
-	}
-}
-
-func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
->>>>>>> 29178df... planner, executor: support broadcast join for tiflash engine. (#17232)
+func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -768,12 +749,8 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	}
 	publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: tp})
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
-<<<<<<< HEAD
-		publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
-=======
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
 		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
->>>>>>> 29178df... planner, executor: support broadcast join for tiflash engine. (#17232)
 	}
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
