@@ -69,8 +69,16 @@ type HTTPHandlerTestSuite struct {
 	tidbdrv *TiDBDriver
 }
 
+type HTTPHandlerTestSerialSuite struct {
+	*HTTPHandlerTestSuite
+}
+
 var _ = Suite(&HTTPHandlerTestSuite{
 	testServerClient: newTestServerClient(),
+})
+
+var _ = SerialSuites(&HTTPHandlerTestSerialSuite{
+	&HTTPHandlerTestSuite{testServerClient: newTestServerClient()},
 })
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
@@ -1055,7 +1063,7 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 	c.Assert(info.ID, Equals, ddl.GetID())
 }
 
-func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
+func (ts *HTTPHandlerTestSerialSuite) TestAllServerInfo(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := ts.fetchStatus("/info/all")
