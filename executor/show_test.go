@@ -40,7 +40,6 @@ func (s *testSuite5) TestShowVisibility(c *C) {
 	tk.MustExec("create table t1 (id int)")
 	tk.MustExec("create table t2 (id int)")
 	tk.MustExec(`create user 'show'@'%'`)
-	tk.MustExec(`flush privileges`)
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err := session.CreateSession4Test(s.store)
@@ -53,7 +52,6 @@ func (s *testSuite5) TestShowVisibility(c *C) {
 
 	// After grant, the user can see the database.
 	tk.MustExec(`grant select on showdatabase.t1 to 'show'@'%'`)
-	tk.MustExec(`flush privileges`)
 	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "showdatabase"))
 
 	// The user can see t1 but not t2.
@@ -62,12 +60,10 @@ func (s *testSuite5) TestShowVisibility(c *C) {
 
 	// After revoke, show database result should be just except INFORMATION_SCHEMA.
 	tk.MustExec(`revoke select on showdatabase.t1 from 'show'@'%'`)
-	tk.MustExec(`flush privileges`)
 	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
 
 	// Grant any global privilege would make show databases available.
 	tk.MustExec(`grant CREATE on *.* to 'show'@'%'`)
-	tk.MustExec(`flush privileges`)
 	rows := tk1.MustQuery("show databases").Rows()
 	c.Assert(len(rows), GreaterEqual, 2) // At least INFORMATION_SCHEMA and showdatabase
 
@@ -79,13 +75,11 @@ func (s *testSuite5) TestShowDatabasesInfoSchemaFirst(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA"))
 	tk.MustExec(`create user 'show'@'%'`)
-	tk.MustExec(`flush privileges`)
 
 	tk.MustExec(`create database AAAA`)
 	tk.MustExec(`create database BBBB`)
 	tk.MustExec(`grant select on AAAA.* to 'show'@'%'`)
 	tk.MustExec(`grant select on BBBB.* to 'show'@'%'`)
-	tk.MustExec(`flush privileges`)
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err := session.CreateSession4Test(s.store)
@@ -366,7 +360,6 @@ func (s *testSuite5) TestUnprivilegedShow(c *C) {
 	tk.MustExec("CREATE TABLE t2 (a int)")
 
 	tk.MustExec(`CREATE USER 'lowprivuser'`) // no grants
-	tk.MustExec(`FLUSH PRIVILEGES`)
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 	rs, err := tk.Exec("SHOW TABLE STATUS FROM testshow")
@@ -375,7 +368,6 @@ func (s *testSuite5) TestUnprivilegedShow(c *C) {
 
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "192.168.0.1", AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 	tk.MustExec("GRANT ALL ON testshow.t1 TO 'lowprivuser'")
-	tk.MustExec(`FLUSH PRIVILEGES`)
 	tk.Se.Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
 	ctx := tk.Se.(sessionctx.Context)

@@ -202,7 +202,7 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 			return mysql.DefaultLengthOfMysqlTypes[mysql.TypeFloat], nil
 		}
 		return mysql.DefaultLengthOfMysqlTypes[mysql.TypeDouble], nil
-	case mysql.TypeDecimal, mysql.TypeNewDecimal:
+	case mysql.TypeNewDecimal:
 		return calcBytesLengthForDecimal(length), nil
 	case mysql.TypeYear, mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return mysql.DefaultLengthOfMysqlTypes[col.Tp], nil
@@ -1209,19 +1209,15 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 		indexedCols[i] = cols[v.Offset]
 	}
 
-	var containsVirtualCol bool
-	decodeColMap, err := decoder.BuildFullDecodeColMap(indexedCols, t, func(genCol *table.Column) (expression.Expression, error) {
-		containsVirtualCol = true
-		return expression.ParseSimpleExprCastWithTableInfo(sessCtx, genCol.GeneratedExprString, t.Meta(), &genCol.FieldType)
-	})
+	dbName := model.NewCIStr(sessCtx.GetSessionVars().CurrentDB)
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
 	if err != nil {
 		return nil, err
 	}
+	mockSchema := expression.NewSchema(exprCols...)
 
-	if containsVirtualCol {
-		decoder.SubstituteGenColsInDecodeColMap(decodeColMap)
-		decoder.RemoveUnusedVirtualCols(decodeColMap, indexedCols)
-	}
+	decodeColMap := decoder.BuildFullDecodeColMap(t, mockSchema)
+
 	return decodeColMap, nil
 }
 

@@ -34,7 +34,7 @@ func (r *rowContainerTestSuite) TestNewRowContainer(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, 1024)
 	c.Assert(rc, check.NotNil)
-	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
 }
 
 func (r *rowContainerTestSuite) TestSel(c *check.C) {
@@ -42,7 +42,7 @@ func (r *rowContainerTestSuite) TestSel(c *check.C) {
 	sz := 4
 	rc := NewRowContainer(fields, sz)
 	c.Assert(rc, check.NotNil)
-	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
 	n := 64
 	chk := NewChunkWithCapacity(fields, sz)
 	numRows := 0
@@ -79,7 +79,7 @@ func (r *rowContainerTestSuite) TestSel(c *check.C) {
 	rc.SpillToDisk()
 	err := rc.m.spillError
 	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilledSafe(), check.Equals, true)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, true)
 	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))
 	err = rc.Close()
 	c.Assert(err, check.IsNil)
@@ -101,18 +101,18 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 	tracker = rc.GetMemTracker()
 	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
 	tracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
-	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
 	err = rc.Add(chk)
 	rc.actionSpill.WaitForTest()
 	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
 	c.Assert(rc.GetMemTracker().BytesConsumed(), check.Equals, chk.MemoryUsage())
 	// The following line is erroneous, since chk is already handled by rc, Add it again causes duplicated memory usage account.
 	// It is only for test of spill, do not double-add a chunk elsewhere.
 	err = rc.Add(chk)
 	rc.actionSpill.WaitForTest()
 	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilledSafe(), check.Equals, true)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, true)
 	err = rc.Reset()
 	c.Assert(err, check.IsNil)
 }
@@ -120,7 +120,7 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 func (r *rowContainerTestSerialSuite) TestSpillActionDeadLock(c *check.C) {
 	// Maybe get deadlock if we use two RLock in one goroutine, for oom-action call stack.
 	// Now the implement avoids the situation.
-	// Goroutine 1: rc.Add() (RLock) -> list.Add() -> tracker.Consume() -> SpillDiskAction -> rc.AlreadySpilledSafe() (RLock)
+	// Goroutine 1: rc.Add() (RLock) -> list.Add() -> tracker.Consume() -> SpillDiskAction -> rc.AlreadySpilledSafeForTest() (RLock)
 	// Goroutine 2: ------------------> SpillDiskAction -> new Goroutine to spill -> ------------------
 	// new Goroutine created by 2: ---> rc.SpillToDisk (Lock)
 	// In golang, RLock will be blocked after try to get Lock. So it will cause deadlock.
@@ -142,7 +142,7 @@ func (r *rowContainerTestSerialSuite) TestSpillActionDeadLock(c *check.C) {
 	tracker.SetBytesLimit(1)
 	ac := rc.ActionSpillForTest()
 	tracker.FallbackOldAndSetNewAction(ac)
-	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		ac.Action(tracker)
@@ -150,14 +150,14 @@ func (r *rowContainerTestSerialSuite) TestSpillActionDeadLock(c *check.C) {
 	err = rc.Add(chk)
 	c.Assert(err, check.IsNil)
 	rc.actionSpill.WaitForTest()
-	c.Assert(rc.AlreadySpilledSafe(), check.Equals, true)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, true)
 }
 
 func (r *rowContainerTestSuite) TestNewSortedRowContainer(c *check.C) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewSortedRowContainer(fields, 1024, nil, nil, nil)
 	c.Assert(rc, check.NotNil)
-	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
 }
 
 func (r *rowContainerTestSuite) TestSortedRowContainerSortSpillAction(c *check.C) {
@@ -177,18 +177,18 @@ func (r *rowContainerTestSuite) TestSortedRowContainerSortSpillAction(c *check.C
 	tracker = rc.GetMemTracker()
 	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
 	tracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
-	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
 	err = rc.Add(chk)
 	rc.actionSpill.WaitForTest()
 	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilledSafe(), check.Equals, false)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
 	c.Assert(rc.GetMemTracker().BytesConsumed(), check.Equals, chk.MemoryUsage())
 	// The following line is erroneous, since chk is already handled by rc, Add it again causes duplicated memory usage account.
 	// It is only for test of spill, do not double-add a chunk elsewhere.
 	err = rc.Add(chk)
 	rc.actionSpill.WaitForTest()
 	c.Assert(err, check.IsNil)
-	c.Assert(rc.AlreadySpilledSafe(), check.Equals, true)
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, true)
 	// The result has been sorted.
 	for i := 0; i < sz*2; i++ {
 		row, err := rc.GetSortedRow(i)
@@ -203,4 +203,53 @@ func (r *rowContainerTestSuite) TestSortedRowContainerSortSpillAction(c *check.C
 	c.Assert(errors.Is(err, ErrCannotAddBecauseSorted), check.IsTrue)
 	err = rc.Reset()
 	c.Assert(err, check.IsNil)
+}
+
+func (r *rowContainerTestSerialSuite) TestActionBlocked(c *check.C) {
+	sz := 4
+	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	rc := NewRowContainer(fields, sz)
+
+	chk := NewChunkWithCapacity(fields, sz)
+	for i := 0; i < sz; i++ {
+		chk.AppendInt64(0, int64(i))
+	}
+	var tracker *memory.Tracker
+	var err error
+	// Case 1, test Broadcast in Action.
+	tracker = rc.GetMemTracker()
+	tracker.SetBytesLimit(1450)
+	ac := rc.ActionSpill()
+	tracker.FallbackOldAndSetNewAction(ac)
+	for i := 0; i < 10; i++ {
+		err = rc.Add(chk)
+		c.Assert(err, check.IsNil)
+	}
+
+	ac.cond.L.Lock()
+	for ac.cond.status == notSpilled ||
+		ac.cond.status == spilling {
+		ac.cond.Wait()
+	}
+	ac.cond.L.Unlock()
+	ac.cond.L.Lock()
+	c.Assert(ac.cond.status, check.Equals, spilledYet)
+	ac.cond.L.Unlock()
+	c.Assert(tracker.BytesConsumed(), check.Equals, int64(0))
+	c.Assert(tracker.MaxConsumed(), check.Greater, int64(0))
+	c.Assert(rc.GetDiskTracker().BytesConsumed(), check.Greater, int64(0))
+
+	// Case 2, test Action will block when spilling.
+	rc = NewRowContainer(fields, sz)
+	tracker = rc.GetMemTracker()
+	ac = rc.ActionSpill()
+	starttime := time.Now()
+	ac.setStatus(spilling)
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		ac.setStatus(spilledYet)
+		ac.cond.Broadcast()
+	}()
+	ac.Action(tracker)
+	c.Assert(time.Since(starttime), check.GreaterEqual, 200*time.Millisecond)
 }
