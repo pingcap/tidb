@@ -88,10 +88,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
-	logutil.BgLogger().Info("debug", zap.Int("concurrency", it.concurrency))
-	if it.concurrency > 5 {
-		it.concurrency = 5
-	}
 
 	it.sendRate = newRateLimit(it.concurrency)
 	it.actionOnExceed.sendRate = it.sendRate
@@ -668,6 +664,8 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			it.curr++
 			it.actionOnExceed.mu.Lock()
 			if it.actionOnExceed.mu.exceed {
+				logutil.BgLogger().Info("taskRateLimitAction tear ticket up",
+					zap.Uint("tearedTicket", it.actionOnExceed.mu.tearedTicket))
 				it.actionOnExceed.mu.tearedTicket = it.actionOnExceed.mu.tearedTicket + 1
 				it.actionOnExceed.mu.exceed = false
 			} else {
@@ -1264,6 +1262,12 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 	defer e.mu.Unlock()
 	if e.mu.tearedTicket >= uint(cap(e.sendRate.token)-1) {
 		if e.fallbackAction != nil {
+			logutil.BgLogger().Info("taskRateLimitAction delegate to fallback action",
+				zap.Int64("consumed", t.BytesConsumed()),
+				zap.Int64("quota", t.GetBytesLimit()),
+				zap.Int64("maxConsumed", t.MaxConsumed()),
+				zap.Uint("tearedTicket", e.mu.tearedTicket),
+				zap.Int("ticketTotal", cap(e.sendRate.token)))
 			e.fallbackAction.Action(t)
 		} else {
 			// unreachable code
