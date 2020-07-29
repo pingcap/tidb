@@ -16,7 +16,9 @@ package expensivequery
 import (
 	"fmt"
 	"github.com/shirou/gopsutil/mem"
+	"os"
 	"runtime"
+	rpprof "runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
@@ -54,7 +56,7 @@ func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 	systemMem, err := mem.VirtualMemory()
 	if err != nil {
-		panic(err)
+		logutil.BgLogger().Warn("Get system memory fail.")
 	}
 	lastOOMtime := time.Now()
 	// use 100ms as tickInterval temply, may use given interval or use defined variable later
@@ -85,7 +87,7 @@ func (eqh *Handle) Run() {
 			instanceStats := &runtime.MemStats{}
 			runtime.ReadMemStats(instanceStats)
 			systemMem.Total = 0
-			if instanceStats.HeapAlloc > systemMem.Total/10*8 {
+			if instanceStats != nil && instanceStats.HeapAlloc > systemMem.Total/10*8 {
 				if time.Since(lastOOMtime) > time.Minute {
 					eqh.logOOMWarning(instanceStats, systemMem)
 				}
@@ -135,6 +137,25 @@ func (eqh *Handle) logOOMWarning(memUsage *runtime.MemStats, systemMem *mem.Virt
 	printTop10(func(i, j int) bool {
 		return pinfo[i].Time.Before(pinfo[j].Time)
 	})
+
+	filename := "heap.profile" + time.Now().String()
+	f, err := os.Create(filename)
+	if err != nil {
+		logutil.BgLogger().Warn("Create heap profile file fail.", zap.Error(err))
+		return
+	}
+	defer func() {
+		err := f.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("Close heap profile file fail.", zap.Error(err))
+		}
+	}()
+	p := rpprof.Lookup("heap")
+	err = p.WriteTo(f, 0)
+	if err != nil {
+		logutil.BgLogger().Warn("Write heap profile file fail.", zap.Error(err))
+	}
+	logutil.BgLogger().Warn("Get heap profile successfully.", zap.Any("FileName", filename))
 }
 
 // LogOnQueryExceedMemQuota prints a log when memory usage of connID is out of memory quota.
