@@ -120,7 +120,7 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 			// be finished. Otherwise the query to this partition will be blocked.
 			needWait, err := checkPartitionReplica(addingDefinitions, d)
 			if err != nil {
-				ver, err = convertAddTablePartitionJob2RollbackJob(t, job, err)
+				ver, err = convertAddTablePartitionJob2RollbackJob(t, job, err, tblInfo)
 				return ver, err
 			}
 			if needWait {

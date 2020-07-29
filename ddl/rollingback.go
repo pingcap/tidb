@@ -236,17 +236,9 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 	return
 }
 
-func convertAddTablePartitionJob2RollbackJob(t *meta.Meta, job *model.Job, otherwiseErr error) (ver int64, err error) {
+func convertAddTablePartitionJob2RollbackJob(t *meta.Meta, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
 	job.State = model.JobStateRollingback
-	tblInfo, _, addingDefinitions, err := checkAddPartition(t, job)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	// addingDefinitions' len = 0 means the job hasn't reached the replica-only state.
-	if len(addingDefinitions) == 0 {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(otherwiseErr)
-	}
+	addingDefinitions := tblInfo.Partition.AddingDefinitions
 	partNames := make([]string, 0, len(addingDefinitions))
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
@@ -260,7 +252,17 @@ func convertAddTablePartitionJob2RollbackJob(t *meta.Meta, job *model.Job, other
 }
 
 func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	return convertAddTablePartitionJob2RollbackJob(t, job, errCancelledDDLJob)
+	tblInfo, _, addingDefinitions, err := checkAddPartition(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// addingDefinitions' len = 0 means the job hasn't reached the replica-only state.
+	if len(addingDefinitions) == 0 {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(errCancelledDDLJob)
+	}
+	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
+	return convertAddTablePartitionJob2RollbackJob(t, job, errCancelledDDLJob, tblInfo)
 }
 
 func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
