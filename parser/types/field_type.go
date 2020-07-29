@@ -28,6 +28,14 @@ const (
 	UnspecifiedLength = -1
 )
 
+// TiDBStrictIntegerDisplayWidth represent whether return warnings when integerType with (length) was parsed.
+// The default is `false`, it will be parsed as warning, and the result in show-create-table will ignore the
+// display length when it set to `true`. This is for compatibility with MySQL 8.0 in which integer max display
+// length is deprecated, referring this issue #6688 for more details.
+var (
+	TiDBStrictIntegerDisplayWidth bool
+)
+
 // FieldType records field type information.
 type FieldType struct {
 	Tp      byte
@@ -154,9 +162,14 @@ func (ft *FieldType) CompactStr() string {
 		}
 	case mysql.TypeNewDecimal:
 		suffix = fmt.Sprintf("(%d,%d)", displayFlen, displayDecimal)
-	case mysql.TypeBit, mysql.TypeShort, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
-		// Flen is always shown.
+	case mysql.TypeBit, mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString:
 		suffix = fmt.Sprintf("(%d)", displayFlen)
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		// Referring this issue #6688, the integer max display length is deprecated in MySQL 8.0.
+		// Since the length doesn't take any effect in TiDB storage or showing result, we remove it here.
+		if !TiDBStrictIntegerDisplayWidth {
+			suffix = fmt.Sprintf("(%d)", displayFlen)
+		}
 	case mysql.TypeYear:
 		suffix = fmt.Sprintf("(%d)", ft.Flen)
 	}
