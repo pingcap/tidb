@@ -15,7 +15,6 @@ package expensivequery
 
 import (
 	"fmt"
-	"github.com/shirou/gopsutil/mem"
 	"os"
 	"runtime"
 	rpprof "runtime/pprof"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/shirou/gopsutil/mem"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
