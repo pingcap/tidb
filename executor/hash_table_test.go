@@ -157,15 +157,15 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 		tracker.SetBytesLimit(1)
 		rowContainer.rowContainer.ActionSpillForTest().Action(tracker)
 	}
-	err = rowContainer.PutChunk(chk0)
+	err = rowContainer.PutChunk(chk0, nil)
 	c.Assert(err, IsNil)
-	err = rowContainer.PutChunk(chk1)
+	err = rowContainer.PutChunk(chk1, nil)
 	c.Assert(err, IsNil)
 	rowContainer.ActionSpill().(*chunk.SpillDiskAction).WaitForTest()
-	c.Assert(rowContainer.alreadySpilledSafe(), Equals, spill)
+	c.Assert(rowContainer.alreadySpilledSafeForTest(), Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() == 0, Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() > 0, Equals, !spill)
-	if rowContainer.alreadySpilledSafe() {
+	if rowContainer.alreadySpilledSafeForTest() {
 		c.Assert(rowContainer.GetDiskTracker(), NotNil)
 		c.Assert(rowContainer.GetDiskTracker().BytesConsumed() > 0, Equals, true)
 	}
