@@ -175,7 +175,7 @@ func (s *testEvaluatorSuite) TestVectorizedCastStringAsDecimalWithUnsignedFlagIn
 	}
 
 	for _, input := range inputs {
-		result := chunk.NewColumn(types.NewFieldType(mysql.TypeDecimal), input.NumRows())
+		result := chunk.NewColumn(types.NewFieldType(mysql.TypeNewDecimal), input.NumRows())
 		c.Assert(cast.vecEvalDecimal(input, result), IsNil)
 		for i := 0; i < input.NumRows(); i++ {
 			res, isNull, err := cast.evalDecimal(input.GetRow(i))
