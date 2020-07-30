@@ -63,10 +63,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
-	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
-	if err != nil {
-		return copErrorResponse{err}
-	}
 	it := &copIterator{
 		store:           c.store,
 		req:             req,
@@ -78,9 +74,22 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		rpcCancel:       NewRPCanceller(),
 	}
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
-	it.tasks = tasks
-	if it.concurrency > len(tasks) {
-		it.concurrency = len(tasks)
+	it.syncSend = true
+	if it.syncSend {
+		tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
+		if err != nil {
+			return copErrorResponse{err}
+		}
+		it.tasks = tasks
+		if it.concurrency > len(tasks) {
+			it.concurrency = len(tasks)
+		}
+	} else {
+		// start to asynchronously build tasks
+		it.asyncTasks = make(chan *copTask, 2048)
+		go func() {
+			AsyncBuildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req, it.asyncTasks)
+		}()
 	}
 	if it.concurrency < 1 {
 		// Make sure that there is at least one worker.
@@ -227,6 +236,36 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
+func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request, receiver chan *copTask) {
+	cmdType := tikvrpc.CmdCop
+	if req.Streaming {
+		cmdType = tikvrpc.CmdCopStream
+	}
+	if req.Desc {
+
+	} else {
+		appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
+			// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
+			// to make sure the message can be sent successfully.
+			rLen := ranges.len()
+			for i := 0; i < rLen; {
+				nextI := mathutil.Min(i+rangesPerTask, rLen)
+				receiver <- &copTask{
+					region: regionWithRangeInfo.Region,
+					ranges: ranges.slice(i, nextI),
+					// Channel buffer is 2 for handling region split.
+					// In a common case, two region split tasks will not be blocked.
+					respChan:  make(chan *copResponse, 2),
+					cmdType:   cmdType,
+					storeType: req.StoreType,
+				}
+				i = nextI
+			}
+		}
+		splitRanges(bo, cache, ranges, appendTask)
+	}
+
+}
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*copTask, error) {
 	start := time.Now()
 	cmdType := tikvrpc.CmdCop
@@ -300,6 +339,48 @@ func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error
 	return tasks, nil
 }
 
+func splitRangesDesc(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(regionWithRangeInfo *KeyLocation, ranges *copRanges)) error {
+	for ranges.len() > 0 {
+		i := ranges.len() - 1
+		loc, err := cache.LocateEndKey(bo, ranges.at(i).EndKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for ; i >= 0; i-- {
+			r := ranges.at(i)
+			if loc.Contains(r.StartKey) || bytes.Equal(loc.StartKey, r.StartKey) {
+				continue
+			}
+		}
+		// All rest ranges belong to the same region.
+		if i < 0 {
+			fn(loc, ranges)
+			break
+		}
+		r := ranges.at(i)
+		if loc.Contains(r.EndKey) && !bytes.Equal(loc.StartKey, r.EndKey) {
+			// Part of r is not in the region. We need to split it.
+			taskRanges := ranges.slice(i, ranges.len())
+			taskRanges.first = &kv.KeyRange{
+				StartKey: loc.StartKey,
+				EndKey:   r.EndKey,
+			}
+			fn(loc, taskRanges)
+
+			ranges = ranges.slice(0, i+1)
+			ranges.last = &kv.KeyRange{
+				StartKey: r.StartKey,
+				EndKey:   loc.StartKey,
+			}
+		} else {
+			// rs[i] is not in the region.
+			taskRanges := ranges.slice(i+1, ranges.len())
+			fn(loc, taskRanges)
+			ranges = ranges.slice(0, i+1)
+		}
+	}
+	return nil
+}
 func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(regionWithRangeInfo *KeyLocation, ranges *copRanges)) error {
 	for ranges.len() > 0 {
 		loc, err := cache.LocateKey(bo, ranges.at(0).StartKey)
@@ -402,6 +483,10 @@ type copIterator struct {
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
 	closed uint32
 
+	syncSend bool
+
+	asyncTasks chan *copTask
+
 	minCommitTSPushed
 }
 
@@ -423,12 +508,13 @@ type copIteratorWorker struct {
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	taskCh   chan<- *copTask
-	wg       *sync.WaitGroup
-	tasks    []*copTask
-	finishCh <-chan struct{}
-	respChan chan<- *copResponse
-	sendRate *rateLimit
+	taskCh     chan<- *copTask
+	wg         *sync.WaitGroup
+	tasks      []*copTask
+	finishCh   <-chan struct{}
+	respChan   chan<- *copResponse
+	sendRate   *rateLimit
+	asyncTasks chan *copTask
 }
 
 type copResponse struct {
@@ -537,11 +623,12 @@ func (it *copIterator) open(ctx context.Context) {
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
-		taskCh:   taskCh,
-		wg:       &it.wg,
-		tasks:    it.tasks,
-		finishCh: it.finishCh,
-		sendRate: it.sendRate,
+		taskCh:     taskCh,
+		wg:         &it.wg,
+		tasks:      it.tasks,
+		finishCh:   it.finishCh,
+		sendRate:   it.sendRate,
+		asyncTasks: it.asyncTasks,
 	}
 	taskSender.respChan = it.respChan
 	go taskSender.run()
@@ -549,24 +636,46 @@ func (it *copIterator) open(ctx context.Context) {
 
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
-	for _, t := range sender.tasks {
-		// If keepOrder, we must control the sending rate to prevent all tasks
-		// being done (aka. all of the responses are buffered) by copIteratorWorker.
-		// We keep the number of inflight tasks within the number of concurrency * 2.
-		// It sends one more task if a task has been finished in copIterator.Next.
-		if sender.sendRate != nil {
-			exit := sender.sendRate.getToken(sender.finishCh)
+	if sender.asyncTasks == nil {
+		for _, t := range sender.tasks {
+			// If keepOrder, we must control the sending rate to prevent all tasks
+			// being done (aka. all of the responses are buffered) by copIteratorWorker.
+			// We keep the number of inflight tasks within the number of concurrency * 2.
+			// It sends one more task if a task has been finished in copIterator.Next.
+			if sender.sendRate != nil {
+				exit := sender.sendRate.getToken(sender.finishCh)
+				if exit {
+					break
+				}
+			}
+			exit := sender.sendToTaskCh(t)
 			if exit {
 				break
 			}
 		}
-		exit := sender.sendToTaskCh(t)
-		if exit {
-			break
+	} else {
+		for t := range sender.asyncTasks {
+			select {
+			case <-sender.finishCh:
+				break
+			default:
+			}
+			if sender.sendRate != nil {
+				exit := sender.sendRate.getToken(sender.finishCh)
+				if exit {
+					break
+				}
+			}
+			exit := sender.sendToTaskCh(t)
+			if exit {
+				break
+			}
 		}
 	}
 	close(sender.taskCh)
-
+	if sender.asyncTasks != nil {
+		close(sender.asyncTasks)
+	}
 	// Wait for worker goroutines to exit.
 	sender.wg.Wait()
 	if sender.respChan != nil {
