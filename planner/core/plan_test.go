@@ -296,7 +296,7 @@ func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
 
 	// generate SQL
-	buf := bytes.NewBuffer(nil)
+	buf := bytes.NewBuffer(make([]byte, 0, 1024*1024*4))
 	for i := 0; i < 50000; i++ {
 		if i > 0 {
 			buf.WriteString(" union ")
