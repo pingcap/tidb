@@ -88,14 +88,16 @@ func (l *ListInDisk) flush() (err error) {
 	}
 	l.bufFlushMutex.Lock()
 	defer l.bufFlushMutex.Unlock()
-	err = l.w.Close()
-	if err != nil {
-		return
-	}
-	l.w = nil
-	l.disk, err = os.Open(l.disk.Name())
-	if err != nil {
-		return
+	if l.w != nil {
+		err = l.w.Close()
+		if err != nil {
+			return
+		}
+		l.w = nil
+		l.disk, err = os.Open(l.disk.Name())
+		if err != nil {
+			return
+		}
 	}
 	return
 }
