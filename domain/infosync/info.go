@@ -293,7 +293,9 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 
 		res, err := http.DefaultClient.Do(req)
 		if err == nil {
-			defer res.Body.Close()
+			defer func() {
+				_ = res.Body.Close()
+			}()
 			if res.StatusCode != http.StatusOK {
 				bodyBytes, err := ioutil.ReadAll(res.Body)
 				return errors.Wrapf(err, "%s", bodyBytes)
@@ -320,18 +322,14 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) error {
 		return errors.Errorf("pd unavailable")
 	}
 
-	route := path.Join(pdapi.Config, "rule")
+	b, err := json.Marshal(rules)
+	if err != nil {
+		return err
+	}
 
-	for _, rule := range rules {
-		b, err := json.Marshal(rule)
-		if err != nil {
-			return err
-		}
-
-		err = doRequest(ctx, addrs, route, http.MethodPost, bytes.NewReader(b))
-		if err != nil {
-			return err
-		}
+	err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules"), http.MethodPost, bytes.NewReader(b))
+	if err != nil {
+		return err
 	}
 
 	return nil
