@@ -917,7 +917,7 @@ func (s *seqTestSuite) TestPrepareMaxParamCountCheck(c *C) {
 	bigSQL, bigParams := generateBatchSQL(math.MaxUint16 + 2)
 	_, err = tk.Exec(bigSQL, bigParams...)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[executor:1390]Prepared statement contains too many placeholders")
+	c.Assert(err.Error(), Equals, "[DB:executor:1390] Prepared statement contains too many placeholders")
 }
 
 func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {

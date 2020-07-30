@@ -268,7 +268,7 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustExec("insert into t value(20070219173709.055870), (20070219173709.055), (20070219173709.055870123)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("17:37:09.055870", "17:37:09.055000", "17:37:09.055870"))
 	_, err = tk.Exec("insert into t value(-20070219173709.055870)")
-	c.Assert(err.Error(), Equals, "[table:1366]Incorrect time value: '-20070219173709.055870' for column 'a' at row 1")
+	c.Assert(err.Error(), Equals, "[DB:table:1366] Incorrect time value: '-20070219173709.055870' for column 'a' at row 1")
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@sql_mode=''")
@@ -1360,7 +1360,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("insert into update_test(name) values ('aa')")
 	_, err := tk.Exec("update update_test set id = null where name = 'aa'")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), DeepEquals, "[table:1048]Column 'id' cannot be null")
+	c.Assert(err.Error(), DeepEquals, "[DB:table:1048] Column 'id' cannot be null")
 
 	tk.MustExec("drop table update_test")
 	tk.MustExec("create table update_test(id int)")
@@ -1485,7 +1485,7 @@ func (s *testSuite8) TestUpdate(c *C) {
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (k int, v int)")
 	_, err = tk.Exec("update t, (select * from t) as b set b.k = t.k")
-	c.Assert(err.Error(), Equals, "[planner:1288]The target table b of the UPDATE is not updatable")
+	c.Assert(err.Error(), Equals, "[DB:planner:1288] The target table b of the UPDATE is not updatable")
 	tk.MustExec("update t, (select * from t) as b set t.k = b.k")
 
 	// issue 8045
@@ -1618,7 +1618,7 @@ func (s *testSuite4) TestPartitionedTableUpdate(c *C) {
 
 	_, err := tk.Exec("update t set id = null where name = 'aa'")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), DeepEquals, "[table:1048]Column 'id' cannot be null")
+	c.Assert(err.Error(), DeepEquals, "[DB:table:1048] Column 'id' cannot be null")
 
 	// Test that in a transaction, when a constraint failed in an update statement, the record is not inserted.
 	tk.MustExec("drop table if exists t;")
@@ -2495,11 +2495,11 @@ func (s *testSuite7) TestDataTooLongErrMsg(c *C) {
 	tk.MustExec("create table t(a varchar(2));")
 	_, err := tk.Exec("insert into t values('123');")
 	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
-	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'a' at row 1")
+	c.Assert(err.Error(), Equals, "[DB:types:1406] Data too long for column 'a' at row 1")
 	tk.MustExec("insert into t values('12')")
 	_, err = tk.Exec("update t set a = '123' where a = '12';")
 	c.Assert(types.ErrDataTooLong.Equal(err), IsTrue)
-	c.Assert(err.Error(), Equals, "[types:1406]Data too long for column 'a' at row 1")
+	c.Assert(err.Error(), Equals, "[DB:types:1406] Data too long for column 'a' at row 1")
 }
 
 func (s *testSuite7) TestUpdateSelect(c *C) {
@@ -2633,7 +2633,7 @@ func (s *testSuite7) TestDeferConstraintCheckForDelete(c *C) {
 	tk.MustExec("insert into t1 values(1, 3)")
 	tk.MustExec("delete from t1 where j = 3")
 	_, err := tk.Exec("commit")
-	c.Assert(err.Error(), Equals, "previous statement: delete from t1 where j = 3: [kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "previous statement: delete from t1 where j = 3: [DB:kv:1062] Duplicate entry '1' for key 'PRIMARY'")
 	tk.MustExec("rollback")
 
 	tk.MustExec("create table t2(i int, j int, unique index idx(i))")
@@ -2642,7 +2642,7 @@ func (s *testSuite7) TestDeferConstraintCheckForDelete(c *C) {
 	tk.MustExec("insert into t2 values(1, 3)")
 	tk.MustExec("delete from t2 where j = 3")
 	_, err = tk.Exec("commit")
-	c.Assert(err.Error(), Equals, "previous statement: delete from t2 where j = 3: [kv:1062]Duplicate entry '1' for key 'idx'")
+	c.Assert(err.Error(), Equals, "previous statement: delete from t2 where j = 3: [DB:kv:1062] Duplicate entry '1' for key 'idx'")
 	tk.MustExec("admin check table t2")
 
 	tk.MustExec("create table t3(i int, j int, primary key(i))")

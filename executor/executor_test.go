@@ -1380,7 +1380,7 @@ func (s *testSuiteP2) TestUnion(c *C) {
 	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 	_, err = tk.Exec("(select a,b from t1 limit 2) union all (select a,b from t2 order by a limit 1) order by t1.b")
-	c.Assert(err.Error(), Equals, "[planner:1250]Table 't1' from one of the SELECTs cannot be used in global ORDER clause")
+	c.Assert(err.Error(), Equals, "[DB:planner:1250] Table 't1' from one of the SELECTs cannot be used in global ORDER clause")
 
 	// #issue 9900
 	tk.MustExec("drop table if exists t")
@@ -3517,10 +3517,10 @@ func (s *testSuite) TestIncorrectLimitArg(c *C) {
 
 	var err error
 	_, err = tk.Se.Execute(context.TODO(), `execute stmt1 using @a;`)
-	c.Assert(err.Error(), Equals, `[planner:1210]Incorrect arguments to LIMIT`)
+	c.Assert(err.Error(), Equals, `[DB:planner:1210] Incorrect arguments to LIMIT`)
 
 	_, err = tk.Se.Execute(context.TODO(), `execute stmt2 using @b, @a;`)
-	c.Assert(err.Error(), Equals, `[planner:1210]Incorrect arguments to LIMIT`)
+	c.Assert(err.Error(), Equals, `[DB:planner:1210] Incorrect arguments to LIMIT`)
 }
 
 func (s *testSuite) TestLimit(c *C) {
@@ -3951,9 +3951,9 @@ func (s *testSuiteP1) TestSelectPartition(c *C) {
 
 	// test select unknown partition error
 	err := tk.ExecToErr("select b from th partition (p0,p4)")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p4' in table 'th'")
+	c.Assert(err.Error(), Equals, "[DB:table:1735] Unknown partition 'p4' in table 'th'")
 	err = tk.ExecToErr("select b from tr partition (r1,r4)")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'r4' in table 'tr'")
+	c.Assert(err.Error(), Equals, "[DB:table:1735] Unknown partition 'r4' in table 'tr'")
 
 	// test select partition table in transaction.
 	tk.MustExec("begin")
@@ -3997,9 +3997,9 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(c int,d int)")
 	err := tk.ExecToErr("select * from view1")
-	c.Assert(err.Error(), Equals, "[planner:1356]View 'test.view1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
+	c.Assert(err.Error(), Equals, "[DB:planner:1356] View 'test.view1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
 	err = tk.ExecToErr("select * from view2")
-	c.Assert(err.Error(), Equals, "[planner:1356]View 'test.view2' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
+	c.Assert(err.Error(), Equals, "[DB:planner:1356] View 'test.view2' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
 	err = tk.ExecToErr("select * from view3")
 	c.Assert(err.Error(), Equals, plannercore.ErrViewInvalid.GenWithStackByArgs("test", "view3").Error())
 	tk.MustExec("drop table view_t;")
@@ -4290,7 +4290,7 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	// Test truncate error msg.
 	_, err = tk.Exec(`split table t index idx1 between ("aa") and (1000000000) regions 0`)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column 'b'")
+	c.Assert(err.Error(), Equals, "[DB:types:1265] Incorrect value: 'aa' for column 'b'")
 
 	// Test for split table region.
 	tk.MustExec(`split table t between (0) and (1000000000) regions 10`)
@@ -4322,7 +4322,7 @@ func (s *testSplitTable) TestSplitRegion(c *C) {
 	// Test truncate error msg.
 	_, err = tk.Exec(`split table t between ("aa") and (1000000000) regions 10`)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1265]Incorrect value: 'aa' for column '_tidb_rowid'")
+	c.Assert(err.Error(), Equals, "[DB:types:1265] Incorrect value: 'aa' for column '_tidb_rowid'")
 
 	// Test split table region step is too small.
 	_, err = tk.Exec(`split table t between (0) and (100) regions 10`)
@@ -4366,7 +4366,7 @@ func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 	tk.MustGetErrMsg("split table t between ('aaa', 1.0) and ('aaa', 100.0, 11) regions 10;", upperMsg)
 
 	// Value type not match.
-	errMsg := "[types:1265]Incorrect value: 'aaa' for column 'b'"
+	errMsg := "[DB:types:1265] Incorrect value: 'aaa' for column 'b'"
 	tk.MustGetErrMsg("split table t between ('aaa', 0.0) and (100.0, 'aaa') regions 10;", errMsg)
 
 	// lower bound >= upper bound.
@@ -5860,13 +5860,13 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	tk.MustQuery("select * from t1 partition(p1)").Check(testkit.Rows())
 
 	err := tk.ExecToErr("insert into t1 values(1, 'a')")
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'idx_a'")
+	c.Assert(err.Error(), Equals, "[DB:kv:1062] Duplicate entry '1' for key 'idx_a'")
 
 	err = tk.ExecToErr("insert into t1 partition(p0, p_non_exist) values(1, 'a')")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
+	c.Assert(err.Error(), Equals, "[DB:table:1735] Unknown partition 'p_non_exist' in table 't1'")
 
 	err = tk.ExecToErr("insert into t1 partition(p0, p1) values(40, 'a')")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+	c.Assert(err.Error(), Equals, "[DB:table:1748] Found a row not matching the given partition set")
 
 	// replace into
 	tk.MustExec("replace into t1 partition(p0) values(1, 'replace')")
@@ -5876,10 +5876,10 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	tk.MustQuery("select * from t1 partition (p0) order by a").Check(testkit.Rows("1 a", "2 b", "3 replace", "4 replace"))
 
 	err = tk.ExecToErr("replace into t1 partition(p0, p_non_exist) values(1, 'a')")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
+	c.Assert(err.Error(), Equals, "[DB:table:1735] Unknown partition 'p_non_exist' in table 't1'")
 
 	err = tk.ExecToErr("replace into t1 partition(p0, p1) values(40, 'a')")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+	c.Assert(err.Error(), Equals, "[DB:table:1748] Found a row not matching the given partition set")
 
 	tk.MustExec("truncate table t1")
 
@@ -5889,7 +5889,7 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 
 	// insert into general table
 	err = tk.ExecToErr("insert into t partition(p0, p1) values(1, 'a')")
-	c.Assert(err.Error(), Equals, "[planner:1747]PARTITION () clause on non partitioned table")
+	c.Assert(err.Error(), Equals, "[DB:planner:1747] PARTITION () clause on non partitioned table")
 
 	// insert into from select
 	tk.MustExec("insert into t values(1, 'a'), (2, 'b')")
@@ -5903,13 +5903,13 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	tk.MustQuery("select * from t1 partition(p0) order by a").Check(testkit.Rows("1 a", "2 b", "3 c", "4 d"))
 
 	err = tk.ExecToErr("insert into t1 select 1, 'a'")
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'idx_a'")
+	c.Assert(err.Error(), Equals, "[DB:kv:1062] Duplicate entry '1' for key 'idx_a'")
 
 	err = tk.ExecToErr("insert into t1 partition(p0, p_non_exist) select 1, 'a'")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
+	c.Assert(err.Error(), Equals, "[DB:table:1735] Unknown partition 'p_non_exist' in table 't1'")
 
 	err = tk.ExecToErr("insert into t1 partition(p0, p1) select 40, 'a'")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+	c.Assert(err.Error(), Equals, "[DB:table:1748] Found a row not matching the given partition set")
 
 	// replace into from select
 	tk.MustExec("replace into t1 partition(p0) select 1, 'replace'")
@@ -5921,10 +5921,10 @@ func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
 	tk.MustQuery("select * from t1 partition (p0) order by a").Check(testkit.Rows("1 replace", "2 b", "3 replace", "4 replace"))
 
 	err = tk.ExecToErr("replace into t1 partition(p0, p_non_exist) select 1, 'a'")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
+	c.Assert(err.Error(), Equals, "[DB:table:1735] Unknown partition 'p_non_exist' in table 't1'")
 
 	err = tk.ExecToErr("replace into t1 partition(p0, p1) select 40, 'a'")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+	c.Assert(err.Error(), Equals, "[DB:table:1748] Found a row not matching the given partition set")
 }
 
 func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
@@ -5955,20 +5955,20 @@ func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 	defer tk.MustExec("drop table if exists t1,t2,t3")
 	tk.MustExec("insert into t3 values(1, 'a'), (2, 'b'), (11, 'c'), (21, 'd')")
 	err := tk.ExecToErr("update t3 partition(p0) set a = 40 where a = 2")
-	c.Assert(err.Error(), Equals, "[planner:1747]PARTITION () clause on non partitioned table")
+	c.Assert(err.Error(), Equals, "[DB:planner:1747] PARTITION () clause on non partitioned table")
 
 	// update with primary key change
 	tk.MustExec("insert into t1 values(1, 'a'), (2, 'b'), (11, 'c'), (21, 'd')")
 	err = tk.ExecToErr("update t1 partition(p0, p1) set a = 40")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+	c.Assert(err.Error(), Equals, "[DB:table:1748] Found a row not matching the given partition set")
 	err = tk.ExecToErr("update t1 partition(p0) set a = 40 where a = 2")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+	c.Assert(err.Error(), Equals, "[DB:table:1748] Found a row not matching the given partition set")
 	// test non-exist partition.
 	err = tk.ExecToErr("update t1 partition (p0, p_non_exist) set a = 40")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
+	c.Assert(err.Error(), Equals, "[DB:table:1735] Unknown partition 'p_non_exist' in table 't1'")
 	// test join.
 	err = tk.ExecToErr("update t1 partition (p0), t3 set t1.a = 40 where t3.a = 2")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+	c.Assert(err.Error(), Equals, "[DB:table:1748] Found a row not matching the given partition set")
 
 	tk.MustExec("update t1 partition(p0) set a = 3 where a = 2")
 	tk.MustExec("update t1 partition(p0, p3) set a = 33 where a = 1")
@@ -5976,9 +5976,9 @@ func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
 	// update without partition change
 	tk.MustExec("insert into t2 values(1, 'a'), (2, 'b'), (11, 'c'), (21, 'd')")
 	err = tk.ExecToErr("update t2 partition(p0, p1) set a = 40")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+	c.Assert(err.Error(), Equals, "[DB:table:1748] Found a row not matching the given partition set")
 	err = tk.ExecToErr("update t2 partition(p0) set a = 40 where a = 2")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
+	c.Assert(err.Error(), Equals, "[DB:table:1748] Found a row not matching the given partition set")
 
 	tk.MustExec("update t2 partition(p0) set a = 3 where a = 2")
 	tk.MustExec("update t2 partition(p0, p3) set a = 33 where a = 1")

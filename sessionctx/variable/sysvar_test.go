@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 )
@@ -76,7 +77,7 @@ func (*testSysVarSuite) TestBoolToInt32(c *C) {
 }
 
 func (*testSysVarSuite) TestError(c *C) {
-	kvErrs := []*terror.Error{
+	kvErrs := []*errors.Error{
 		ErrUnsupportedValueForVar,
 		ErrUnknownSystemVar,
 		ErrIncorrectScope,

@@ -302,7 +302,7 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 
 	_, err = tk.Exec("select * from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tikv'.")
+	c.Assert(err.Error(), Equals, "[DB:planner:1815] Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tikv'.")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
 	tk.MustExec("select * from t")
@@ -823,7 +823,7 @@ func (s *testIntegrationSuite) TestInvisibleIndex(c *C) {
 	c.Check(tk.MustUseIndex("select a from t where a > 1", "i_a"), IsFalse)
 
 	// If use invisible indexes in index hint and sql hint, throw an error.
-	errStr := "[planner:1176]Key 'i_a' doesn't exist in table 't'"
+	errStr := "[DB:planner:1176] Key 'i_a' doesn't exist in table 't'"
 	tk.MustGetErrMsg("select * from t use index(i_a)", errStr)
 	tk.MustGetErrMsg("select * from t force index(i_a)", errStr)
 	tk.MustGetErrMsg("select * from t ignore index(i_a)", errStr)
@@ -1248,17 +1248,27 @@ func (s *testIntegrationSerialSuite) TestNotReadOnlySQLOnTiFlash(c *C) {
 	}
 	err := tk.ExecToErr("select * from t for update")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+	c.Assert(err.Error(), Equals, `[DB:planner:1815] Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+
+	err = tk.ExecToErr()
 
 	err = tk.ExecToErr("insert into t select * from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+	c.Assert(err.Error(), Equals, `[DB:planner:1815] Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+
+	tk.MustExec()
 
 	tk.MustExec("prepare stmt_insert from 'insert into t select * from t where t.a = ?'")
 	tk.MustExec("set @a=1")
 	err = tk.ExecToErr("execute stmt_insert using @a")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+	c.Assert(err.Error(), Equals, `[DB:planner:1815] Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+}
+
+func (s *testIntegrationSuite) TestSelectLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec()
 }
 
 func (s *testIntegrationSuite) TestSelectLimit(c *C) {

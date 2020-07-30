@@ -544,7 +544,7 @@ func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
 	tk.MustQuery("select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 1 desc, id SEPARATOR '++') from test;").Check(testkit.Rows("1 2 3 4 5 5003++2003++301++201++202++101"))
 	tk.MustQuery("select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 2 desc, name SEPARATOR '++') from test;").Check(testkit.Rows("1 2 3 4 5 2003++5003++202++101++201++301"))
 	err = tk.ExecToErr("select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 3 desc, name SEPARATOR '++') from test;")
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column '3' in 'order clause'")
+	c.Assert(err.Error(), Equals, "[DB:planner:1054] Unknown column '3' in 'order clause'")
 
 	// test Param Marker
 	tk.MustExec(`prepare s1 from "select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY floor(id/?) desc, name SEPARATOR '++') from test";`)
@@ -556,7 +556,7 @@ func (s *testSuiteAgg) TestGroupConcatAggr(c *C) {
 	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("1 2 3 4 5 2003++5003++202++101++201++301"))
 	tk.MustExec("set @a=3;")
 	err = tk.ExecToErr("execute s1 using @a;")
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column '?' in 'order clause'")
+	c.Assert(err.Error(), Equals, "[DB:planner:1054] Unknown column '?' in 'order clause'")
 	tk.MustExec("set @a=3.0;")
 	tk.MustQuery("execute s1 using @a;").Check(testkit.Rows("1 2 3 4 5 101++202++201++301++2003++5003"))
 
@@ -789,7 +789,7 @@ func (s *testSuiteAgg) TestIssue13652(c *C) {
 	tk.MustQuery("select a from t group by +a")
 	tk.MustQuery("select a from t group by ((+a))")
 	_, err := tk.Exec("select a from t group by (-a)")
-	c.Assert(err.Error(), Equals, "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+	c.Assert(err.Error(), Equals, "[DB:planner:1055] Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
 }
 
 func (s *testSuiteAgg) TestIssue14947(c *C) {

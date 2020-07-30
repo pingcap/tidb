@@ -445,7 +445,7 @@ func (s *testIntegrationSuite2) TestMathBuiltin(c *C) {
 	c.Assert(err, NotNil)
 	terr = errors.Cause(err).(*terror.Error)
 	c.Assert(terr.Code(), Equals, terror.ErrCode(mysql.ErrDataOutOfRange))
-	c.Assert(err.Error(), Equals, "[types:1690]DOUBLE value is out of range in 'exp(test.t.a)'")
+	c.Assert(err.Error(), Equals, "[DB:types:1690] DOUBLE value is out of range in 'exp(test.t.a)'")
 	c.Assert(rs.Close(), IsNil)
 
 	// for conv
@@ -949,12 +949,12 @@ func (s *testIntegrationSuite2) TestStringBuiltin(c *C) {
 	result.Check(testkit.Rows("123 中文 中文 中文 中文"))
 	// Charset 866 does not have a default collation configured currently, so this will return error.
 	err = tk.ExecToErr(`select convert("123" using "866");`)
-	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: '866'")
+	c.Assert(err.Error(), Equals, "[DB:parser:1115] Unknown character set: '866'")
 	// Test case in issue #4436.
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a char(20));")
 	err = tk.ExecToErr("select convert(a using a) from t;")
-	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'a'")
+	c.Assert(err.Error(), Equals, "[DB:parser:1115] Unknown character set: 'a'")
 
 	// for insert
 	result = tk.MustQuery(`select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");`)
@@ -2168,7 +2168,7 @@ func (s *testIntegrationSuite) TestDatetimeOverflow(c *C) {
 
 	for _, sql := range overflowSQLs {
 		_, err := tk.Exec(sql)
-		c.Assert(err.Error(), Equals, "[types:1441]Datetime function: datetime field overflow")
+		c.Assert(err.Error(), Equals, "[DB:types:1441] Datetime function: datetime field overflow")
 	}
 
 	tk.MustExec("set sql_mode=''")
@@ -2455,7 +2455,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 		result = tk.MustQuery("show warnings")
 		result.Check(testkit.Rows(msg))
 		_, err := tk.Exec(fmt.Sprintf("insert into t select cast('%s' as time);", invalidTime))
-		c.Assert(err.Error(), Equals, fmt.Sprintf("[types:1292]Truncated incorrect time value: '%s'", invalidTime))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[DB:types:1292] Truncated incorrect time value: '%s'", invalidTime))
 	}
 
 	// Fix issue #3691, cast compatibility.
@@ -2636,7 +2636,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1427]For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').")
+	c.Assert(err.Error(), Equals, "[DB:types:1427] For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '').")
 	c.Assert(rs.Close(), IsNil)
 
 	// test unhex and hex
@@ -2768,7 +2768,7 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result = tk.MustQuery("select char(97, null, 100, 256, 89 using ascii)")
 	result.Check(testkit.Rows("ad\x01\x00Y"))
 	err = tk.ExecToErr("select char(97, null, 100, 256, 89 using tidb)")
-	c.Assert(err.Error(), Equals, "[parser:1115]Unknown character set: 'tidb'")
+	c.Assert(err.Error(), Equals, "[DB:parser:1115] Unknown character set: 'tidb'")
 
 	// issue 3884
 	tk.MustExec("drop table if exists t")
@@ -3114,7 +3114,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	rows, err := session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a + test.t.b)'")
+	c.Assert(err.Error(), Equals, "[DB:types:1690] BIGINT UNSIGNED value is out of range in '(test.t.a + test.t.b)'")
 	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(-3 as signed) + cast(2 as unsigned);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
@@ -3122,7 +3122,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(-3 + 2)'")
+	c.Assert(err.Error(), Equals, "[DB:types:1690] BIGINT UNSIGNED value is out of range in '(-3 + 2)'")
 	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(2 as unsigned) + cast(-3 as signed);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
@@ -3130,7 +3130,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(2 + -3)'")
+	c.Assert(err.Error(), Equals, "[DB:types:1690] BIGINT UNSIGNED value is out of range in '(2 + -3)'")
 	c.Assert(rs.Close(), IsNil)
 
 	// for minus
@@ -3152,7 +3152,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(test.t.a - test.t.b)'")
+	c.Assert(err.Error(), Equals, "[DB:types:1690] BIGINT UNSIGNED value is out of range in '(test.t.a - test.t.b)'")
 	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(-1 as signed) - cast(-1 as unsigned);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
@@ -3160,7 +3160,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(-1 - 18446744073709551615)'")
+	c.Assert(err.Error(), Equals, "[DB:types:1690] BIGINT UNSIGNED value is out of range in '(-1 - 18446744073709551615)'")
 	c.Assert(rs.Close(), IsNil)
 	rs, err = tk.Exec("select cast(-1 as unsigned) - cast(-1 as signed);")
 	c.Assert(errors.ErrorStack(err), Equals, "")
@@ -3168,7 +3168,7 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	rows, err = session.GetRows4Test(ctx, tk.Se, rs)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1690]BIGINT UNSIGNED value is out of range in '(18446744073709551615 - -1)'")
+	c.Assert(err.Error(), Equals, "[DB:types:1690] BIGINT UNSIGNED value is out of range in '(18446744073709551615 - -1)'")
 	c.Assert(rs.Close(), IsNil)
 	tk.MustQuery(`select cast(-3 as unsigned) - cast(-1 as signed);`).Check(testkit.Rows("18446744073709551614"))
 	tk.MustQuery("select 1.11 - 1.11;").Check(testkit.Rows("0.00"))
@@ -4102,7 +4102,7 @@ func (s *testIntegrationSuite) TestFuncJSON(c *C) {
 	c.Assert(rs, NotNil)
 	_, err = session.GetRows4Test(context.Background(), tk.Se, rs)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[json:3149]In this situation, path expressions may not contain the * and ** tokens.")
+	c.Assert(err.Error(), Equals, "[DB:json:3149] In this situation, path expressions may not contain the * and ** tokens.")
 
 	r = tk.MustQuery(`select
 		json_contains_path(NULL, 'one', "$.c"),
@@ -4202,12 +4202,12 @@ func (s *testIntegrationSuite) TestSetVariables(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999:44:33'")
+	c.Assert(err.Error(), Equals, "[DB:types:1292] Truncated incorrect time value: '999:44:33'")
 	_, err = tk.Exec("set sql_mode=' ,';")
 	c.Assert(err, NotNil)
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[types:1292]Truncated incorrect time value: '999:44:33'")
+	c.Assert(err.Error(), Equals, "[DB:types:1292] Truncated incorrect time value: '999:44:33'")
 
 	// issue #5478
 	_, err = tk.Exec("set session transaction read write;")
@@ -4674,15 +4674,15 @@ func (s *testIntegrationSuite) TestFuncNameConst(c *C) {
 	r = tk.MustQuery("SELECT NAME_CONST('come', -1.0);")
 	r.Check(testkit.Rows("-1.0"))
 	err := tk.ExecToErr(`select name_const(a,b) from t;`)
-	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	c.Assert(err.Error(), Equals, "[DB:planner:1210] Incorrect arguments to NAME_CONST")
 	err = tk.ExecToErr(`select name_const(a,"hello") from t;`)
-	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	c.Assert(err.Error(), Equals, "[DB:planner:1210] Incorrect arguments to NAME_CONST")
 	err = tk.ExecToErr(`select name_const("hello", b) from t;`)
-	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	c.Assert(err.Error(), Equals, "[DB:planner:1210] Incorrect arguments to NAME_CONST")
 	err = tk.ExecToErr(`select name_const("hello", 1+1) from t;`)
-	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	c.Assert(err.Error(), Equals, "[DB:planner:1210] Incorrect arguments to NAME_CONST")
 	err = tk.ExecToErr(`select name_const(concat('a', 'b'), 555) from t;`)
-	c.Assert(err.Error(), Equals, "[planner:1210]Incorrect arguments to NAME_CONST")
+	c.Assert(err.Error(), Equals, "[DB:planner:1210] Incorrect arguments to NAME_CONST")
 	err = tk.ExecToErr(`select name_const(555) from t;`)
 	c.Assert(err.Error(), Equals, "[expression:1582]Incorrect parameter count in the call to native function 'name_const'")
 
@@ -5089,7 +5089,7 @@ func (s *testIntegrationSuite) TestIssue10804(c *C) {
 func (s *testIntegrationSuite) TestInvalidEndingStatement(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	parseErrMsg := "[parser:1064]"
+	parseErrMsg := "[DB:parser:1064]"
 	errMsgLen := len(parseErrMsg)
 
 	assertParseErr := func(sql string) {
@@ -5384,10 +5384,10 @@ func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
 
 	// current db is empty
 	_, err := tk.Exec("SELECT xxx(1)")
-	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
+	c.Assert(err.Error(), Equals, "[DB:planner:1046] No database selected")
 
 	_, err = tk.Exec("SELECT yyy()")
-	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
+	c.Assert(err.Error(), Equals, "[DB:planner:1046] No database selected")
 
 	// current db is not empty
 	tk.MustExec("use test")
@@ -6554,9 +6554,9 @@ func (s *testIntegrationSerialSuite) TestIssue17176(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8 collate utf8_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
-	tk.MustGetErrMsg("create table t(a enum('a', 'Á')) charset utf8 collate utf8_general_ci;", "[types:1291]Column 'a' has duplicated value 'Á' in ENUM")
-	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8mb4 collate utf8mb4_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
+	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8 collate utf8_bin;", "[DB:types:1291] Column 'a' has duplicated value 'a ' in ENUM")
+	tk.MustGetErrMsg("create table t(a enum('a', 'Á')) charset utf8 collate utf8_general_ci;", "[DB:types:1291] Column 'a' has duplicated value 'Á' in ENUM")
+	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8mb4 collate utf8mb4_bin;", "[DB:types:1291] Column 'a' has duplicated value 'a ' in ENUM")
 	tk.MustExec("create table t(a enum('a', 'A')) charset utf8 collate utf8_bin;")
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t3(a enum('a', 'A')) charset utf8mb4 collate utf8mb4_bin;")

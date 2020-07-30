@@ -474,7 +474,7 @@ func (s *testSuite) TestErrorBind(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	s.cleanBindingEnv(tk)
 	tk.MustExec("use test")
-	tk.MustGetErrMsg("create global binding for select * from t using select * from t", "[schema:1146]Table 'test.t' doesn't exist")
+	tk.MustGetErrMsg("create global binding for select * from t using select * from t", "[DB:schema:1146] Table 'test.t' doesn't exist")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(i int, s varchar(20))")
@@ -1144,7 +1144,7 @@ func (s *testSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("create table t(a int, b int, unique idx_a(a), index idx_b(b) invisible)")
 	tk.MustGetErrMsg(
 		"create global binding for select * from t using select * from t use index(idx_b) ",
-		"[planner:1176]Key 'idx_b' doesn't exist in table 't'")
+		"[DB:planner:1176] Key 'idx_b' doesn't exist in table 't'")
 
 	// Create bind using index
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a) ")

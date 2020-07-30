@@ -69,7 +69,7 @@ func (s *testSuite6) TestInTxnExecDDLFail(c *C) {
 	tk.MustExec("begin;")
 	tk.MustExec("insert into t values (1);")
 	_, err := tk.Exec("truncate table t;")
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "[DB:kv:1062] Duplicate entry '1' for key 'PRIMARY'")
 	result := tk.MustQuery("select count(*) from t")
 	result.Check(testkit.Rows("1"))
 }
@@ -191,10 +191,10 @@ func (s *testSuite6) TestCreateView(c *C) {
 	tk.MustExec("CREATE VIEW view_t AS select id , name from source_table")
 	defer tk.MustExec("DROP VIEW IF EXISTS view_t")
 	_, err := tk.Exec("CREATE VIEW view_t AS select id , name from source_table")
-	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.view_t' already exists")
+	c.Assert(err.Error(), Equals, "[DB:schema:1050] Table 'test.view_t' already exists")
 	//create view on nonexistent table
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1")
-	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.t1' doesn't exist")
+	c.Assert(err.Error(), Equals, "[DB:schema:1146] Table 'test.t1' doesn't exist")
 	//simple view
 	tk.MustExec("create table t1 (a int ,b int)")
 	tk.MustExec("insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10)")
@@ -216,7 +216,7 @@ func (s *testSuite6) TestCreateView(c *C) {
 	//view with variable
 	tk.MustExec("create view v1 (c,d) as select a,b+@@global.max_user_connections from t1")
 	_, err = tk.Exec("create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections")
-	c.Assert(err.Error(), Equals, "[schema:1050]Table 'test.v1' already exists")
+	c.Assert(err.Error(), Equals, "[DB:schema:1050] Table 'test.v1' already exists")
 	tk.MustExec("drop view v1")
 	//view with different col counts
 	_, err = tk.Exec("create view v1 (c,d,e) as select a,b from t1 ")
@@ -284,7 +284,7 @@ func (s *testSuite6) TestIssue16250(c *C) {
 	tk.MustExec("create table if not exists t(a int)")
 	tk.MustExec("create view view_issue16250 as select * from t")
 	_, err := tk.Exec("truncate table view_issue16250")
-	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.view_issue16250' doesn't exist")
+	c.Assert(err.Error(), Equals, "[DB:schema:1146] Table 'test.view_issue16250' doesn't exist")
 }
 
 func (s testSuite6) TestTruncateSequence(c *C) {
@@ -292,10 +292,10 @@ func (s testSuite6) TestTruncateSequence(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create sequence if not exists seq")
 	_, err := tk.Exec("truncate table seq")
-	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.seq' doesn't exist")
+	c.Assert(err.Error(), Equals, "[DB:schema:1146] Table 'test.seq' doesn't exist")
 	tk.MustExec("create sequence if not exists seq1 start 10 increment 2 maxvalue 10000 cycle")
 	_, err = tk.Exec("truncate table seq1")
-	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.seq1' doesn't exist")
+	c.Assert(err.Error(), Equals, "[DB:schema:1146] Table 'test.seq1' doesn't exist")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("drop sequence if exists seq1")
 }
@@ -396,7 +396,7 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 	tk.MustExec("create or replace view drop_test as select 1,2")
 
 	_, err := tk.Exec("drop table drop_test")
-	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.drop_test'")
+	c.Assert(err.Error(), Equals, "[DB:schema:1051] Unknown table 'test.drop_test'")
 
 	_, err = tk.Exec("drop view if exists drop_test")
 	c.Assert(err, IsNil)
@@ -405,7 +405,7 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 	c.Assert(err.Error(), Equals, "Drop tidb system table 'mysql.gc_delete_range' is forbidden")
 
 	_, err = tk.Exec("drop view drop_test")
-	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.drop_test'")
+	c.Assert(err.Error(), Equals, "[DB:schema:1051] Unknown table 'test.drop_test'")
 
 	tk.MustExec("create table t_v(a int)")
 	_, err = tk.Exec("drop view t_v")

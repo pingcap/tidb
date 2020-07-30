@@ -24,10 +24,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/testutil"
@@ -117,7 +117,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 		partition p2 values less than (1991),
 		partition p3 values less than (1995)
 	);`
-	tk.MustGetErrCode(sql4, tmysql.ErrPartitionMaxvalue)
+	tk.MustGetErrCode(sql4, tmysaql.ErrPartitionMaxvalue)
 
 	_, err = tk.Exec(`CREATE TABLE rc (
 		a INT NOT NULL,

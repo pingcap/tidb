@@ -212,7 +212,7 @@ func (s *testSuite7) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustExec("begin")
 	_, err := tk.Exec("update t set b=b+1")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'idx'")
+	c.Assert(err.Error(), Equals, "[DB:kv:1062] Duplicate entry '2' for key 'idx'")
 	// update with unchange index column.
 	tk.MustExec("update t set a=a+1")
 	tk.MustQuery("select * from t use index (idx)").Check(testkit.Rows("2 1", "3 2"))
@@ -328,7 +328,7 @@ func (s *testSuite7) TestForUpdateUntouchedIndex(c *C) {
 	tk.MustExec("begin")
 	_, err := tk.Exec("insert into t values (1, 1), (2, 2), (1, 3) on duplicate key update a = a + 1;")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'a'")
+	c.Assert(err.Error(), Equals, "[DB:kv:1062] Duplicate entry '2' for key 'a'")
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 }

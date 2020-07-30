@@ -34,10 +34,10 @@ func (s *testSuite1) TestPreparedNameResolver(c *C) {
 	tk.MustExec("create table t (id int, KEY id (id))")
 	tk.MustExec("prepare stmt from 'select * from t limit ? offset ?'")
 	_, err := tk.Exec("prepare stmt from 'select b from t'")
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'b' in 'field list'")
+	c.Assert(err.Error(), Equals, "[DB:planner:1054] Unknown column 'b' in 'field list'")
 
 	_, err = tk.Exec("prepare stmt from '(select * FROM t) union all (select * FROM t) order by a limit ?'")
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'order clause'")
+	c.Assert(err.Error(), Equals, "[DB:planner:1054] Unknown column 'a' in 'order clause'")
 }
 
 // a 'create table' DDL statement should be accepted if it has no parameters.

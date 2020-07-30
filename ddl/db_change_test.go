@@ -242,14 +242,14 @@ func (s *testStateChangeSuite) TestTwoStates(c *C) {
 	// Fill the SQLs and expected error messages.
 	testInfo.sqlInfos[0].sql = "insert into t (c1, c2, c3, c4) value(2, 'b', 'N', '2017-07-02')"
 	testInfo.sqlInfos[1].sql = "insert into t (c1, c2, c3, d3, c4) value(3, 'b', 'N', 'a', '2017-07-03')"
-	unknownColErr := "[planner:1054]Unknown column 'd3' in 'field list'"
+	unknownColErr := "[DB:planner:1054] Unknown column 'd3' in 'field list'"
 	testInfo.sqlInfos[1].cases[0].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[1].cases[1].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[1].cases[2].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[1].cases[3].expectedCompileErr = unknownColErr
 	testInfo.sqlInfos[2].sql = "update t set c2 = 'c2_update'"
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')"
-	testInfo.sqlInfos[3].cases[4].expectedCompileErr = "[planner:1136]Column count doesn't match value count at row 1"
+	testInfo.sqlInfos[3].cases[4].expectedCompileErr = "[DB:planner:1136] Column count doesn't match value count at row 1"
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
 	s.test(c, "", alterTableSQL, testInfo)
 	// TODO: Add more DDL statements.
@@ -480,13 +480,13 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	c.Assert(err, IsNil)
 
 	_, err = s.se.Execute(context.Background(), "insert into t values('a', 'A', '2018-09-19', 9)")
-	c.Assert(err.Error(), Equals, "[table:1366]Incorrect enum value: 'A' for column 'c2' at row 1")
+	c.Assert(err.Error(), Equals, "[DB:table:1366]Incorrect enum value: 'A' for column 'c2' at row 1")
 	failAlterTableSQL1 := "alter table t change c2 c2 enum('N') DEFAULT 'N'"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL1)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: the number of enum column's elements is less than the original: 2")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported modify column: the number of enum column's elements is less than the original: 2")
 	failAlterTableSQL2 := "alter table t change c2 c2 int default 0"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL2)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: cannot modify enum type column's to type int(11)")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported modify column: cannot modify enum type column's to type int(11)")
 	alterTableSQL := "alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'"
 	_, err = s.se.Execute(context.Background(), alterTableSQL)
 	c.Assert(err, IsNil)
@@ -573,13 +573,13 @@ func (s *testStateChangeSuite) TestDeleteOnly(c *C) {
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
 		errors.Errorf("Can't find column c1")}
 	sqls[1] = sqlWithErr{"update t set c1 = 'c1_insert', c3 = '2018-02-12', c4 = 1",
-		errors.Errorf("[planner:1054]Unknown column 'c1' in 'field list'")}
+		errors.Errorf("[DB:planner:1054] Unknown column 'c1' in 'field list'")}
 	sqls[2] = sqlWithErr{"delete from t where c1='a'",
-		errors.Errorf("[planner:1054]Unknown column 'c1' in 'where clause'")}
+		errors.Errorf("[DB:planner:1054] Unknown column 'c1' in 'where clause'")}
 	sqls[3] = sqlWithErr{"delete t, tt from tt inner join t on t.c4=tt.c4 where tt.c='a' and t.c1='a'",
-		errors.Errorf("[planner:1054]Unknown column 't.c1' in 'where clause'")}
+		errors.Errorf("[DB:planner:1054] Unknown column 't.c1' in 'where clause'")}
 	sqls[4] = sqlWithErr{"delete t, tt from tt inner join t on t.c1=tt.c where tt.c='a'",
-		errors.Errorf("[planner:1054]Unknown column 't.c1' in 'on clause'")}
+		errors.Errorf("[DB:planner:1054] Unknown column 't.c1' in 'on clause'")}
 	query := &expectQuery{sql: "select * from t;", rows: []string{"N 2017-07-01 00:00:00 8"}}
 	dropColumnSQL := "alter table t drop column c1"
 	s.runTestInSchemaState(c, model.StateDeleteOnly, true, dropColumnSQL, sqls, query)
@@ -631,9 +631,9 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumn(c *C) {
 	defer s.se.Execute(context.Background(), "drop table tt")
 
 	sqls := make([]sqlWithErr, 2)
-	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[DB:planner:1054] Unknown column 'c3' in 'field list'")}
 	sqls[1] = sqlWithErr{"update t t1, tt t2 set t1.c1='5', t1.c3='2020-03-01', t2.c1='10' where t1.c4=t2.c4",
-		errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+		errors.New("[DB:planner:1054] Unknown column 'c3' in 'field list'")}
 	// TODO: Fix the case of sqls[2].
 	// sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
 	dropColumnSQL := "alter table t drop column c3"
@@ -651,9 +651,9 @@ func (s *testStateChangeSuite) TestWriteOnlyForDropColumns(c *C) {
 	defer s.se.Execute(context.Background(), "drop table t_drop_columns")
 
 	sqls := make([]sqlWithErr, 2)
-	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+	sqls[0] = sqlWithErr{"update t set c1='5', c3='2020-03-01';", errors.New("[DB:planner:1054] Unknown column 'c3' in 'field list'")}
 	sqls[1] = sqlWithErr{"update t t1, t_drop_columns t2 set t1.c1='5', t1.c3='2020-03-01', t2.c1='10' where t1.c4=t2.c4",
-		errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
+		errors.New("[DB:planner:1054] Unknown column 'c3' in 'field list'")}
 	// TODO: Fix the case of sqls[2].
 	// sqls[2] = sqlWithErr{"update t set c1='5' where c3='2017-07-01';", errors.New("[planner:1054]Unknown column 'c3' in 'field list'")}
 	dropColumnsSQL := "alter table t drop column c3, drop column c1"
@@ -882,7 +882,7 @@ func (s *testStateChangeSuite) TestParallelChangeColumnName(c *C) {
 				oneErr = err2
 			}
 		}
-		c.Assert(oneErr.Error(), Equals, "[schema:1060]Duplicate column name 'aa'")
+		c.Assert(oneErr.Error(), Equals, "[DB:schema:1060] Duplicate column name 'aa'")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -892,7 +892,7 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 	sql2 := "CREATE INDEX index_b ON t (c);"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1061]index already exist index_b")
+		c.Assert(err2.Error(), Equals, "[DB:ddl:1061] index already exist index_b")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -905,7 +905,7 @@ func (s *serialTestStateChangeSuite) TestParallelAlterAddExpressionIndex(c *C) {
 	sql2 := "CREATE INDEX expr_index_b ON t ((c+1));"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1061]index already exist expr_index_b")
+		c.Assert(err2.Error(), Equals, "[DB:ddl:1061] index already exist expr_index_b")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -915,7 +915,7 @@ func (s *testStateChangeSuite) TestParallelAddPrimaryKey(c *C) {
 	sql2 := "ALTER TABLE t add primary key index_b(c);"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[schema:1068]Multiple primary key defined")
+		c.Assert(err2.Error(), Equals, "[DB:schema:1068] Multiple primary key defined")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -929,7 +929,7 @@ func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
    );`
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
+		c.Assert(err2.Error(), Equals, "[Db:ddl:1493] VALUES LESS THAN value must be strictly increasing for each partition")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -938,7 +938,7 @@ func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
 	sql := "ALTER TABLE t drop COLUMN c ;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1091]column c doesn't exist")
+		c.Assert(err2.Error(), Equals, "[DB:ddl:1091] column c doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
@@ -947,7 +947,7 @@ func (s *testStateChangeSuite) TestParallelDropColumns(c *C) {
 	sql := "ALTER TABLE t drop COLUMN b, drop COLUMN c;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1091]column b doesn't exist")
+		c.Assert(err2.Error(), Equals, "[DB:ddl:1091] column b doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql, sql, f)
 }
@@ -966,7 +966,7 @@ func (s *testStateChangeSuite) TestParallelDropIndex(c *C) {
 	sql2 := "alter table t drop index idx2 ;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[autoid:1075]Incorrect table definition; there can be only one auto column and it must be defined as a key")
+		c.Assert(err2.Error(), Equals, "[DB:autoid:1075] Incorrect table definition; there can be only one auto column and it must be defined as a key")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -980,7 +980,7 @@ func (s *testStateChangeSuite) TestParallelDropPrimaryKey(c *C) {
 	sql2 := "alter table t drop primary key;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:1091]index PRIMARY doesn't exist")
+		c.Assert(err2.Error(), Equals, "[DB:ddl:1091] index PRIMARY doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -991,7 +991,7 @@ func (s *testStateChangeSuite) TestParallelCreateAndRename(c *C) {
 	defer s.se.Execute(context.Background(), "drop table t_exists")
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_exists' already exists")
+		c.Assert(err2.Error(), Equals, "[DB:schema:1050] Table 't_exists' already exists")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1004,7 +1004,7 @@ func (s *testStateChangeSuite) TestParallelAlterAndDropSchema(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
-		c.Assert(err2.Error(), Equals, "[schema:1008]Can't drop database ''; database doesn't exist")
+		c.Assert(err2.Error(), Equals, "[DB:schema:1008] Can't drop database ''; database doesn't exist")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1147,7 +1147,7 @@ func (s *serialTestStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
 	}()
 	wg.Wait()
 	c.Assert(err1, IsNil)
-	c.Assert(err2.Error(), Equals, "[ddl:-1]the replica available status of table t1 is already updated")
+	c.Assert(err2.Error(), Equals, "[DB:ddl:-1] the replica available status of table t1 is already updated")
 }
 
 func (s *testStateChangeSuite) testParallelExecSQL(c *C, sql string) {
@@ -1423,7 +1423,7 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
-		c.Assert(err2.Error(), Equals, "[schema:1050]Table 't_flashback' already exists")
+		c.Assert(err2.Error(), Equals, "[DB:schema:1050] Table 't_flashback' already exists")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql1, f)
 

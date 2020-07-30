@@ -287,6 +287,10 @@ github.com/imtbkcat/parser v0.0.0-20200730065927-af9eacc84efb h1:Qm/wPFpsns5PVhq
 github.com/imtbkcat/parser v0.0.0-20200730065927-af9eacc84efb/go.mod h1:pirGFmRNpRzhq39jk9ZJnax63261It+5Xkgj7ctn3HE=
 github.com/imtbkcat/parser v0.0.0-20200730071609-1cfeb7dd9180 h1:sPp7frFlNkAF4JHiGGYXH+1DR7qDmXx+IWGZRrbZHb0=
 github.com/imtbkcat/parser v0.0.0-20200730071609-1cfeb7dd9180/go.mod h1:uSEiyp0BoI8DMHY8gZ1r251FHiXZ8Ly96bvonH5pE9k=
+github.com/imtbkcat/parser v0.0.0-20200730074000-bea2e5171ef3 h1:oVWaID/EQIzV+13WHUoTOfBq5cKpf69sou5w6XxwryA=
+github.com/imtbkcat/parser v0.0.0-20200730074000-bea2e5171ef3/go.mod h1:uSEiyp0BoI8DMHY8gZ1r251FHiXZ8Ly96bvonH5pE9k=
+github.com/imtbkcat/parser v0.0.0-20200730082543-5057fb0d6dd8 h1:yjTTJUHzaIepVKgAP8JJ8A0coTiU4XvNemf6MukoD0A=
+github.com/imtbkcat/parser v0.0.0-20200730082543-5057fb0d6dd8/go.mod h1:uSEiyp0BoI8DMHY8gZ1r251FHiXZ8Ly96bvonH5pE9k=
 github.com/inconshreveable/mousetrap v1.0.0 h1:Z8tu5sraLXCXIcARxBp/8cbvlwVa7Z1NHg9XEKhtSvM=
 github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANytuPF1OarO4DADm73n8=
 github.com/jessevdk/go-flags v1.4.0/go.mod h1:4FA24M0QyGHXBuZZK/XkWh8h0e1EYbRYJSGM75WSRxI=

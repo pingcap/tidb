@@ -15,6 +15,7 @@ package kv
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 )
@@ -24,7 +25,7 @@ type testErrorSuite struct{}
 var _ = Suite(testErrorSuite{})
 
 func (s testErrorSuite) TestError(c *C) {
-	kvErrs := []*terror.Error{
+	kvErrs := []*errors.Error{
 		ErrNotExist,
 		ErrTxnRetryable,
 		ErrCannotSetNilValue,

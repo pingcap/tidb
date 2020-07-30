@@ -23,11 +23,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -896,7 +896,7 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
 
-	errMsg := "[ddl:8200]" // unsupported modify column with references
+	errMsg := "[DB: ddl:8200]" // unsupported modify column with references
 	assertErrCode := func(sql string, errCodeStr string) {
 		_, err := tk.Exec(sql)
 		c.Assert(err, NotNil)
@@ -917,15 +917,15 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 	tk.MustExec("create table t2 (b char, c int)")
 	assertErrCode("alter table t2 modify column c int references t1(a)", errMsg)
 	_, err := tk.Exec("alter table t1 change a a varchar(16)")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type varchar(16) not match origin int(11)")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported modify column: type varchar(16) not match origin int(11)")
 	_, err = tk.Exec("alter table t1 change a a varchar(10)")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type varchar(10) not match origin int(11)")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported modify column: type varchar(10) not match origin int(11)")
 	_, err = tk.Exec("alter table t1 change a a datetime")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type datetime not match origin int(11)")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported modify column: type datetime not match origin int(11)")
 	_, err = tk.Exec("alter table t1 change a a int(11) unsigned")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change unsigned integer to signed or vice versa")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported modify column: can't change unsigned integer to signed or vice versa")
 	_, err = tk.Exec("alter table t2 change b b int(11) unsigned")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin char(1)")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported modify column: type int(11) not match origin char(1)")
 }
 
 func (s *testIntegrationSuite4) TestIndexOnMultipleGeneratedColumn(c *C) {
@@ -1841,11 +1841,11 @@ func (s *testIntegrationSuite5) TestChangingDBCharset(c *C) {
 	}{
 		{
 			"ALTER DATABASE CHARACTER SET = 'utf8'",
-			"[planner:1046]No database selected",
+			"[DB:planner:1046] No database selected",
 		},
 		{
 			"ALTER SCHEMA `` CHARACTER SET = 'utf8'",
-			"[ddl:1102]Incorrect database name ''",
+			"[DB:ddl:1102] Incorrect database name ''",
 		},
 	}
 	for _, fc := range noDBFailedCases {
@@ -1888,35 +1888,35 @@ func (s *testIntegrationSuite5) TestChangingDBCharset(c *C) {
 	}{
 		{
 			"ALTER SCHEMA `` CHARACTER SET = 'utf8'",
-			"[ddl:1102]Incorrect database name ''",
+			"[DB:ddl:1102] Incorrect database name ''",
 		},
 		{
 			"ALTER DATABASE CHARACTER SET = ''",
-			"[parser:1115]Unknown character set: ''",
+			"[DB:parser:1115] Unknown character set: ''",
 		},
 		{
 			"ALTER DATABASE CHARACTER SET = 'INVALID_CHARSET'",
-			"[parser:1115]Unknown character set: 'INVALID_CHARSET'",
+			"[DB:parser:1115] Unknown character set: 'INVALID_CHARSET'",
 		},
 		{
 			"ALTER SCHEMA COLLATE = ''",
-			"[ddl:1273]Unknown collation: ''",
+			"[DB:ddl:1273] Unknown collation: ''",
 		},
 		{
 			"ALTER DATABASE COLLATE = 'INVALID_COLLATION'",
-			"[ddl:1273]Unknown collation: 'INVALID_COLLATION'",
+			"[DB:ddl:1273] Unknown collation: 'INVALID_COLLATION'",
 		},
 		{
 			"ALTER DATABASE CHARACTER SET = 'utf8' DEFAULT CHARSET = 'utf8mb4'",
-			"[ddl:1302]Conflicting declarations: 'CHARACTER SET utf8' and 'CHARACTER SET utf8mb4'",
+			"[DB:ddl:1302] Conflicting declarations: 'CHARACTER SET utf8' and 'CHARACTER SET utf8mb4'",
 		},
 		{
 			"ALTER SCHEMA CHARACTER SET = 'utf8' COLLATE = 'utf8mb4_bin'",
-			"[ddl:1302]Conflicting declarations: 'CHARACTER SET utf8' and 'CHARACTER SET utf8mb4'",
+			"[DB:ddl:1302] Conflicting declarations: 'CHARACTER SET utf8' and 'CHARACTER SET utf8mb4'",
 		},
 		{
 			"ALTER DATABASE COLLATE = 'utf8mb4_bin' COLLATE = 'utf8_bin'",
-			"[ddl:1302]Conflicting declarations: 'CHARACTER SET utf8mb4' and 'CHARACTER SET utf8'",
+			"[DB:ddl:1302] Conflicting declarations: 'CHARACTER SET utf8mb4' and 'CHARACTER SET utf8'",
 		},
 	}
 
@@ -2114,7 +2114,7 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = false
 	})
-	tk.MustGetErrMsg("create index d on t((a+1))", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
+	tk.MustGetErrMsg("create index d on t((a+1))", "[DB:ddl:8200] Unsupported creating expression index without allow-expression-index in config")
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
@@ -2309,15 +2309,15 @@ func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 	tk.MustExec("alter table t alter index b invisible")
 	tk.MustQuery(query).Check(testkit.Rows("a NO", "b NO"))
 
-	tk.MustGetErrMsg("alter table t alter index non_exists_idx visible", "[schema:1176]Key 'non_exists_idx' doesn't exist in table 't'")
+	tk.MustGetErrMsg("alter table t alter index non_exists_idx visible", "[DB:schema:1176] Key 'non_exists_idx' doesn't exist in table 't'")
 
 	// Alter implicit primary key to invisible index should throw error
 	tk.MustExec("create table t1(a int NOT NULL, unique(a))")
-	tk.MustGetErrMsg("alter table t1 alter index a invisible", "[ddl:3522]A primary key index cannot be invisible")
+	tk.MustGetErrMsg("alter table t1 alter index a invisible", "[DB:ddl:3522] A primary key index cannot be invisible")
 
 	// Alter explicit primary key to invisible index should throw error
 	tk.MustExec("create table t2(a int, primary key(a))")
-	tk.MustGetErrMsg("alter table t2 alter index PRIMARY invisible", `[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible" `)
+	tk.MustGetErrMsg("alter table t2 alter index PRIMARY invisible", `[DB:parser:1064] You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible" `)
 
 	// Alter expression index
 	tk.MustExec("create table t3(a int NOT NULL, b int)")

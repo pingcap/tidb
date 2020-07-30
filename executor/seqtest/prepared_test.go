@@ -68,7 +68,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 
 		// incorrect SQLs in prepare. issue #3738, SQL in prepare stmt is parsed in DoPrepare.
 		_, err = tk.Exec(`prepare p from "delete from t where a = 7 or 1=1/*' and b = 'p'";`)
-		c.Assert(err.Error(), Equals, `[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use near '/*' and b = 'p'' at line 1`)
+		c.Assert(err.Error(), Equals, `[DB:parser:1064] You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use near '/*' and b = 'p'' at line 1`)
 
 		// The `stmt_test5` should not be found.
 		_, err = tk.Exec(`set @a = 1; execute stmt_test_5 using @a;`)
@@ -224,7 +224,7 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		tk.MustExec("create table prepare1 (a decimal(1))")
 		tk.MustExec("insert into prepare1 values(1);")
 		_, err = tk.Exec("prepare stmt FROM @sql1")
-		c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 4 near \"NULL\" ")
+		c.Assert(err.Error(), Equals, "[DB:parser:1064] You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 4 near \"NULL\" ")
 		tk.MustExec("SET @sql = 'update prepare1 set a=5 where a=?';")
 		_, err = tk.Exec("prepare stmt FROM @sql")
 		c.Assert(err, IsNil)
@@ -664,7 +664,7 @@ func (s *seqTestSuite) TestPreparedIssue8153(c *C) {
 
 		tk.MustExec(`set @param = 3`)
 		_, err = tk.Exec(`execute stmt using @param;`)
-		c.Assert(err.Error(), Equals, "[planner:1054]Unknown column '?' in 'order clause'")
+		c.Assert(err.Error(), Equals, "[DB:planner:1054] Unknown column '?' in 'order clause'")
 
 		tk.MustExec(`set @param = '##'`)
 		r = tk.MustQuery(`execute stmt using @param;`)
@@ -679,7 +679,7 @@ func (s *seqTestSuite) TestPreparedIssue8153(c *C) {
 
 		tk.MustExec(`set @a=1,@b=2`)
 		_, err = tk.Exec(`execute stmt using @a,@b;`)
-		c.Assert(err.Error(), Equals, "[planner:1056]Can't group on 'sum(a)'")
+		c.Assert(err.Error(), Equals, "[DB:planner:1056] Can't group on 'sum(a)'")
 	}
 }
 

@@ -583,7 +583,7 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	c.Assert(resp, NotNil)
 	body, err := ioutil.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
-	c.Assert(string(body), Equals, "[schema:1146]Table which ID = 84 does not exist.")
+	c.Assert(string(body), Equals, "[DB:schema:1146] Table which ID = 84 does not exist.")
 
 	t, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
 	c.Assert(err, IsNil)
@@ -1190,7 +1190,7 @@ func (ts *HTTPHandlerTestSuite) TestZipInfoForSQL(c *C) {
 	c.Assert(resp.StatusCode, Equals, http.StatusInternalServerError)
 	b, err = ioutil.ReadAll(resp.Body)
 	c.Assert(err, IsNil)
-	c.Assert(string(b), Equals, "use database non_exists_db failed, err: [schema:1049]Unknown database 'non_exists_db'\n")
+	c.Assert(string(b), Equals, "use database non_exists_db failed, err: [DB:schema:1049] Unknown database 'non_exists_db'\n")
 	c.Assert(resp.Body.Close(), IsNil)
 }
 

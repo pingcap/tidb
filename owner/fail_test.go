@@ -16,6 +16,7 @@ package owner
 
 import (
 	"context"
+	"github.com/pingcap/errors"
 	"math"
 	"net"
 	"os"
@@ -92,7 +93,7 @@ func (s *testSuite) TestFailNewSession(c *C) {
 		}()
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/owner/closeClient", `return(true)`), IsNil)
 		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
-		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
+		isContextDone := errors.ErrorEqual(grpc.ErrClientConnClosing, err) || errors.ErrorEqual(context.Canceled, err)
 		c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
 	}()
 
@@ -110,7 +111,7 @@ func (s *testSuite) TestFailNewSession(c *C) {
 		}()
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/owner/closeGrpc", `return(true)`), IsNil)
 		_, err = NewSession(context.Background(), "fail_new_serssion", cli, retryCnt, ManagerSessionTTL)
-		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
+		isContextDone := errors.ErrorEqual(grpc.ErrClientConnClosing, err) || errors.ErrorEqual(context.Canceled, err)
 		c.Assert(isContextDone, IsTrue, Commentf("err %v", err))
 	}()
 

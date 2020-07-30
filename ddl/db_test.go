@@ -285,7 +285,7 @@ func (s *testDBSuite5) TestAddPrimaryKeyRollback1(c *C) {
 	hasNullValsInKey := false
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[kv:1062]Duplicate entry '' for key 'PRIMARY'"
+	errMsg := "[DB:kv:1062] Duplicate entry '' for key 'PRIMARY'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -294,7 +294,7 @@ func (s *testDBSuite1) TestAddPrimaryKeyRollback2(c *C) {
 	hasNullValsInKey := true
 	idxName := "PRIMARY"
 	addIdxSQL := "alter table t1 add primary key c3_index (c3);"
-	errMsg := "[ddl:1138]Invalid use of NULL value"
+	errMsg := "[DB:ddl:1138] Invalid use of NULL value"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -302,7 +302,7 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 	hasNullValsInKey := false
 	idxName := "c3_index"
 	addIdxSQL := "create unique index c3_index on t1 (c3)"
-	errMsg := "[kv:1062]Duplicate entry '' for key 'c3_index'"
+	errMsg := "[DB:kv:1062] Duplicate entry '' for key 'c3_index'"
 	testAddIndexRollback(c, s.store, s.lease, idxName, addIdxSQL, errMsg, hasNullValsInKey)
 }
 
@@ -332,7 +332,7 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	}
 	d.(ddl.DDLForTest).SetHook(hook)
 
-	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
+	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[DB:ddl:8202] Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
 	c.Assert(checkErr, IsNil)
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("20 20 20", "80 80 80", "160 160 160"))
 }
@@ -486,7 +486,7 @@ LOOP:
 		case err := <-done:
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[DB:ddl:8214] Cancelled DDL job")
 			break LOOP
 		case <-ticker.C:
 			if times >= 10 {
@@ -565,7 +565,7 @@ func (s *testDBSuite4) TestCancelAddIndex1(c *C) {
 	}
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8214] Cancelled DDL job")
 
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	t := s.testGetTable(c, "t")
@@ -666,7 +666,7 @@ func testCancelDropIndex(c *C, store kv.Storage, d ddl.DDL, idxName, addIdxSQL, 
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[DB:ddl:8214] Cancelled DDL job")
 			c.Assert(indexInfo, NotNil)
 			c.Assert(indexInfo.State, Equals, model.StatePublic)
 		} else {
@@ -724,7 +724,7 @@ func (s *testDBSuite5) TestCancelTruncateTable(c *C) {
 	_, err := tk.Exec("truncate table t")
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8214] Cancelled DDL job")
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 }
 
@@ -759,7 +759,7 @@ func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
 	wg.Wait()
 	c.Assert(done, IsTrue)
 	c.Assert(checkErr, NotNil)
-	c.Assert(checkErr.Error(), Equals, "[schema:1051]Unknown table 'test_drop_schema_table.t'")
+	c.Assert(checkErr.Error(), Equals, "[DB:schema:1051] Unknown table 'test_drop_schema_table.t'")
 
 	// Below behaviour is use to mock query `curl "http://$IP:10080/tiflash/replica"`
 	fn := func(jobs []*model.Job) (bool, error) {
@@ -824,7 +824,7 @@ func (s *testDBSuite1) TestCancelRenameIndex(c *C) {
 	}
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8214] Cancelled DDL job")
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
@@ -914,7 +914,7 @@ func (s *testDBSuite2) TestCancelDropTableAndSchema(c *C) {
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[DB:ddl:8214] Cancelled DDL job")
 			s.mustExec(tk, c, "insert into t values (?, ?)", i, i)
 		} else {
 			c.Assert(err, IsNil)
@@ -1343,7 +1343,7 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 			if testCase.cancelSucc {
 				c.Assert(checkErr, IsNil)
 				c.Assert(err, NotNil)
-				c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
+				c.Assert(err.Error(), Equals, "[DB:ddl:12] cancelled DDL job")
 				s.mustExec(tk, c, "insert into t_part values (?)", i)
 			} else {
 				c.Assert(err, IsNil)
@@ -1512,7 +1512,7 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 			c.Assert(checkErr, IsNil)
 			c.Assert(col1, NotNil)
 			c.Assert(col1.Name.L, Equals, "c3")
-			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+			c.Assert(err1.Error(), Equals, "[DB:ddl:8214] Cancelled DDL job")
 		} else {
 			c.Assert(col1, IsNil)
 			c.Assert(err1, IsNil)
@@ -1594,7 +1594,7 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 			c.Assert(col4, NotNil)
 			c.Assert(col3.Name.L, Equals, "c3")
 			c.Assert(col4.Name.L, Equals, "c4")
-			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+			c.Assert(err1.Error(), Equals, "[DB:ddl:8214] Cancelled DDL job")
 		} else {
 			c.Assert(col3, IsNil)
 			c.Assert(col4, IsNil)
@@ -1927,11 +1927,11 @@ LOOP:
 	// test add unsupported constraint
 	s.mustExec(tk, c, "create table t_add_unsupported_constraint (a int);")
 	_, err = tk.Exec("ALTER TABLE t_add_unsupported_constraint ADD id int AUTO_INCREMENT;")
-	c.Assert(err.Error(), Equals, "[ddl:8200]unsupported add column 'id' constraint AUTO_INCREMENT when altering 'test_db.t_add_unsupported_constraint'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] unsupported add column 'id' constraint AUTO_INCREMENT when altering 'test_db.t_add_unsupported_constraint'")
 	_, err = tk.Exec("ALTER TABLE t_add_unsupported_constraint ADD id int KEY;")
-	c.Assert(err.Error(), Equals, "[ddl:8200]unsupported add column 'id' constraint PRIMARY KEY when altering 'test_db.t_add_unsupported_constraint'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] unsupported add column 'id' constraint PRIMARY KEY when altering 'test_db.t_add_unsupported_constraint'")
 	_, err = tk.Exec("ALTER TABLE t_add_unsupported_constraint ADD id int UNIQUE;")
-	c.Assert(err.Error(), Equals, "[ddl:8200]unsupported add column 'id' constraint UNIQUE KEY when altering 'test_db.t_add_unsupported_constraint'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] unsupported add column 'id' constraint UNIQUE KEY when altering 'test_db.t_add_unsupported_constraint'")
 }
 
 func (s *testDBSuite) testDropColumn(tk *testkit.TestKit, c *C) {
@@ -2357,7 +2357,7 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	failSQL = "create table t_enum (a set('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	_, err = tk.Exec("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;")
-	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
+	c.Assert(err.Error(), Equals, "[DB:types:1291] Column 'a' has duplicated value 'b' in ENUM")
 
 	// test for table option "union" not supported
 	tk.MustExec("use test")
@@ -2395,55 +2395,55 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	tk.MustExec("CREATE TABLE t (a int primary key, b varchar(10));")
 	_, err := tk.Exec("admin repair table t CREATE TABLE t (a float primary key, b varchar(5));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: TiDB is not in REPAIR MODE")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8215] Failed to repair table: TiDB is not in REPAIR MODE")
 
 	// Test repair table when the repaired list is empty.
 	domainutil.RepairInfo.SetRepairMode(true)
 	_, err = tk.Exec("admin repair table t CREATE TABLE t (a float primary key, b varchar(5));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: repair list is empty")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8215] Failed to repair table: repair list is empty")
 
 	// Test repair table when it's database isn't in repairInfo.
 	domainutil.RepairInfo.SetRepairTableList([]string{"test.other_table"})
 	_, err = tk.Exec("admin repair table t CREATE TABLE t (a float primary key, b varchar(5));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: database test is not in repair")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8215] Failed to repair table: database test is not in repair")
 
 	// Test repair table when the table isn't in repairInfo.
 	tk.MustExec("CREATE TABLE other_table (a int, b varchar(1), key using hash(b));")
 	_, err = tk.Exec("admin repair table t CREATE TABLE t (a float primary key, b varchar(5));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: table t is not in repair")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8215] Failed to repair table: table t is not in repair")
 
 	// Test user can't access to the repaired table.
 	_, err = tk.Exec("select * from other_table")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.other_table' doesn't exist")
+	c.Assert(err.Error(), Equals, "[DB:schema:1146] Table 'test.other_table' doesn't exist")
 
 	// Test create statement use the same name with what is in repaired.
 	_, err = tk.Exec("CREATE TABLE other_table (a int);")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1103]Incorrect table name 'other_table'%!(EXTRA string=this table is in repair)")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1103] Incorrect table name 'other_table'%!(EXTRA string=this table is in repair)")
 
 	// Test column lost in repair table.
 	_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a int, c char(1));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Column c has lost")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8215] Failed to repair table: Column c has lost")
 
 	// Test column type should be the same.
 	_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a bigint, b varchar(1), key using hash(b));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Column a type should be the same")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8215] Failed to repair table: Column a type should be the same")
 
 	// Test index lost in repair table.
 	_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a int unique);")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Index a has lost")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8215] Failed to repair table: Index a has lost")
 
 	// Test index type should be the same.
 	_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a int, b varchar(2) unique)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Index b type should be the same")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8215] Failed to repair table: Index b type should be the same")
 
 	// Test sub create statement in repair statement with the same name.
 	_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a int);")
@@ -2462,7 +2462,7 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	domainutil.RepairInfo.SetRepairMode(true)
 	domainutil.RepairInfo.SetRepairTableList([]string{"test.xxx"})
 	_, err = tk.Exec("admin repair table performance_schema.xxx CREATE TABLE yyy (a int);")
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: memory or system database is not for repair")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8215] Failed to repair table: memory or system database is not for repair")
 
 	// Test the repair detail.
 	turnRepairModeAndInit(true)
@@ -2560,7 +2560,7 @@ func (s *testDBSuite5) TestRepairTableWithPartition(c *C) {
 		"partition p90 values less than (90)," +
 		"partition p100 values less than (100));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Partition p100 has lost")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8215] Failed to repair table: Partition p100 has lost")
 
 	// Test for some partition changed the condition.
 	_, err = tk.Exec("admin repair table origin create table origin (a int not null) partition by RANGE(a) (" +
@@ -2569,7 +2569,7 @@ func (s *testDBSuite5) TestRepairTableWithPartition(c *C) {
 		"partition p50 values less than (50)," +
 		"partition p90 values less than (90));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Partition p20 has lost")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8215] Failed to repair table: Partition p20 has lost")
 
 	// Test for some partition changed the partition name.
 	_, err = tk.Exec("admin repair table origin create table origin (a int not null) partition by RANGE(a) (" +
@@ -2578,7 +2578,7 @@ func (s *testDBSuite5) TestRepairTableWithPartition(c *C) {
 		"partition pNew values less than (50)," +
 		"partition p90 values less than (90));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Partition pnew has lost")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8215] Failed to repair table: Partition pnew has lost")
 
 	originTableInfo, _ := domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
 	tk.MustExec("admin repair table origin create table origin_rename (a int not null) partition by RANGE(a) (" +
@@ -2605,7 +2605,7 @@ func (s *testDBSuite5) TestRepairTableWithPartition(c *C) {
 	// Test partition num in repair should be exactly same with old one, other wise will cause partition semantic problem.
 	_, err = tk.Exec("admin repair table origin create table origin (a varchar(2), b int not null, c int, key idx(c)) partition by hash(b) partitions 20")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Hash partition num should be the same")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8215] Failed to repair table: Hash partition num should be the same")
 
 	originTableInfo, _ = domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
 	tk.MustExec("admin repair table origin create table origin (a varchar(3), b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
@@ -3539,14 +3539,14 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	tk.MustExec("alter table t1 change c2 c2 bigint not null;")
-	c.Assert(checkErr.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
+	c.Assert(checkErr.Error(), Equals, "[DB:table:1048]Column 'c2' cannot be null")
 
 	c2 := getModifyColumn()
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
 	c.Assert(mysql.HasPreventNullInsertFlag(c2.Flag), IsFalse)
 	_, err = tk.Exec("insert into t1 values ();")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[table:1364]Field 'c2' doesn't have a default value")
+	c.Assert(err.Error(), Equals, "[DB:table:1364]Field 'c2' doesn't have a default value")
 }
 
 func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
@@ -4140,7 +4140,7 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	// Test for update table replica with unknown table ID.
 	err = domain.GetDomain(tk.Se).DDL().UpdateTableReplicaInfo(tk.Se, math.MaxInt64, false)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:1146]Table which ID = 9223372036854775807 does not exist.")
+	c.Assert(err.Error(), Equals, "[DB:schema:1146] Table which ID = 9223372036854775807 does not exist.")
 
 	// Test for FindTableByPartitionID.
 	is := domain.GetDomain(tk.Se).InfoSchema()
@@ -4199,7 +4199,7 @@ func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	tk.MustExec(fmt.Sprintf("alter table t1 auto_increment = %d;", 1<<56))
 	_, err = tk.Exec("insert into t1 set a=1;")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[autoid:1467]Failed to read auto-increment value from storage engine")
+	c.Assert(err.Error(), Equals, "[DB:autoid:1467] Failed to read auto-increment value from storage engine")
 }
 
 // port from mysql
@@ -4751,21 +4751,21 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
     	c2 decimal(16,4) GENERATED ALWAYS AS ((case when (c0 = 0) then 0when (c0 > 0) then (c1 / c0) end))
 	);`)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 4 column 88 near \"then (c1 / c0) end))\n\t);\" ")
+	c.Assert(err.Error(), Equals, "[DB:parser:1064] You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 4 column 88 near \"then (c1 / c0) end))\n\t);\" ")
 
 	tk.MustExec("create table t (a bigint, b int, c int generated always as (b+1)) partition by hash(a) partitions 4;")
 	// Test drop partition column.
 	_, err = tk.Exec("alter table t drop column a;")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
+	c.Assert(err.Error(), Equals, "[DB:expression:1054] Unknown column 'a' in 'expression'")
 	// Test modify column with invalid expression.
 	_, err = tk.Exec("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 97 near \"then (b / a) end));\" ")
+	c.Assert(err.Error(), Equals, "[DB:parser:1064] You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 97 near \"then (b / a) end));\" ")
 	// Test add column with invalid expression.
 	_, err = tk.Exec("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
+	c.Assert(err.Error(), Equals, "[DB:parser:1064] You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
 }
 
 func (s *testDBSuite4) TestColumnCheck(c *C) {

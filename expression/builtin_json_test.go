@@ -15,6 +15,7 @@ package expression
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
@@ -707,7 +708,7 @@ func (s *testEvaluatorSuite) TestJSONArrayAppend(c *C) {
 	tbl := []struct {
 		input    []interface{}
 		expected interface{}
-		err      *terror.Error
+		err      *errors.Error
 	}{
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`, `z`}, `{"a": 1, "b": [2, 3], "c": 4}`, nil},
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$`, `w`}, `[{"a": 1, "b": [2, 3], "c": 4}, "w"]`, nil},
@@ -858,7 +859,7 @@ func (s *testEvaluatorSuite) TestJSONArrayInsert(c *C) {
 		input    []interface{}
 		expected interface{}
 		success  bool
-		err      *terror.Error
+		err      *errors.Error
 	}{
 		// Success
 		{[]interface{}{`{"a": 1, "b": [2, 3], "c": 4}`, `$.b[1]`, `z`}, `{"a": 1, "b": [2, "z", 3], "c": 4}`, true, nil},

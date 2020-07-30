@@ -81,7 +81,7 @@ func (s *testUpdateSuite) TestUpdateGenColInTxn(c *C) {
 	tk.MustExec(`begin;`)
 	tk.MustExec(`insert into t(a) values(1);`)
 	err := tk.ExecToErr(`update t set b=6 where b=2;`)
-	c.Assert(err.Error(), Equals, "[planner:3105]The value specified for generated column 'b' in table 't' is not allowed.")
+	c.Assert(err.Error(), Equals, "[DB:planner:3105] The value specified for generated column 'b' in table 't' is not allowed.")
 	tk.MustExec(`commit;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
 		`1 2`))
@@ -219,7 +219,7 @@ func (s *testUpdateSuite) TestUpdateSchemaChange(c *C) {
 	tk.MustExec(`begin;`)
 	tk.MustExec(`insert into t(a) values(1);`)
 	err := tk.ExecToErr(`update t set b=6 where b=2;`)
-	c.Assert(err.Error(), Equals, "[planner:3105]The value specified for generated column 'b' in table 't' is not allowed.")
+	c.Assert(err.Error(), Equals, "[DB:planner:3105] The value specified for generated column 'b' in table 't' is not allowed.")
 	tk.MustExec(`commit;`)
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(
 		`1 2`))

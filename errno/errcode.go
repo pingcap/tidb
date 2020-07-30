@@ -1093,4 +1093,3 @@ const (
 	ErrPrometheusAddrIsNotSet = 9009
 	ErrTiKVStaleCommand       = 9010
 )
-

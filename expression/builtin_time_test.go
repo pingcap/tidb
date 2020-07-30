@@ -983,7 +983,7 @@ func (s *testEvaluatorSuite) TestAddTimeSig(c *C) {
 	tblWarning := []struct {
 		Input         interface{}
 		InputDuration interface{}
-		warning       *terror.Error
+		warning       *errors.Error
 	}{
 		{"0", "-32073", types.ErrTruncatedWrongVal},
 		{"-32073", "0", types.ErrTruncatedWrongVal},
@@ -1075,7 +1075,7 @@ func (s *testEvaluatorSuite) TestSubTimeSig(c *C) {
 	tblWarning := []struct {
 		Input         interface{}
 		InputDuration interface{}
-		warning       *terror.Error
+		warning       *errors.Error
 	}{
 		{"0", "-32073", types.ErrTruncatedWrongVal},
 		{"-32073", "0", types.ErrTruncatedWrongVal},

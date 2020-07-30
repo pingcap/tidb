@@ -132,7 +132,7 @@ func (s *testEvaluatorSuite) TestExp(c *C) {
 		{float64(0), 1, false, false, ""},
 		{"0", 1, false, false, ""},
 		{"tidb", 0, false, true, ""},
-		{float64(100000), 0, false, true, "[types:1690]DOUBLE value is out of range in 'exp(100000)'"},
+		{float64(100000), 0, false, true, "[DB:types:1690] DOUBLE value is out of range in 'exp(100000)'"},
 	}
 
 	if runtime.GOARCH == "ppc64le" {
@@ -412,7 +412,7 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 		_, err = evalBuiltinFunc(f, chunk.Row{})
 		if i == 2 {
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[types:1690]DOUBLE value is out of range in 'pow(10, 700)'")
+			c.Assert(err.Error(), Equals, "[DB:types:1690] DOUBLE value is out of range in 'pow(10, 700)'")
 		} else {
 			c.Assert(err, IsNil)
 		}
@@ -988,7 +988,7 @@ func (s *testEvaluatorSuite) TestCot(c *C) {
 		errMsg string
 	}{
 		{nil, 0, true, false, ""},
-		{float64(0), 0, false, true, "[types:1690]DOUBLE value is out of range in 'cot(0)'"},
+		{float64(0), 0, false, true, "[DB:types:1690] DOUBLE value is out of range in 'cot(0)'"},
 		{float64(-1), -0.6420926159343308, false, false, ""},
 		{float64(1), 0.6420926159343308, false, false, ""},
 		{math.Pi / 4, 1 / math.Tan(math.Pi/4), false, false, ""},

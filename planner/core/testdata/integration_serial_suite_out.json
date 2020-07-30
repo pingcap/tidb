@@ -216,7 +216,7 @@
           "└─TableFullScan_4 10000.00 cop[tikv] table:ttt keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]There are no matching table names for (t) in optimizer hint /*+ READ_FROM_STORAGE(tikv[t, ttt]) */. Maybe you can use the table alias name"
+          "[DB:planner:1815] There are no matching table names for (t) in optimizer hint /*+ READ_FROM_STORAGE(tikv[t, ttt]) */. Maybe you can use the table alias name"
         ]
       },
       {
@@ -226,7 +226,7 @@
           "└─TableFullScan_4 10000.00 cop[tiflash] table:ttt keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]There are no matching table names for (t, tt) in optimizer hint /*+ READ_FROM_STORAGE(tiflash[t, ttt], tikv[tt]) */. Maybe you can use the table alias name"
+          "[DB:planner:1815] There are no matching table names for (t, tt) in optimizer hint /*+ READ_FROM_STORAGE(tiflash[t, ttt], tikv[tt]) */. Maybe you can use the table alias name"
         ]
       }
     ]
@@ -243,7 +243,7 @@
           "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]Storage hints are conflict, you can only specify one storage type of table test.t"
+          "[DB:planner:1815] Storage hints are conflict, you can only specify one storage type of table test.t"
         ]
       },
       {
@@ -265,7 +265,7 @@
           "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{}])"
+          "[DB:planner:1815] No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{}])"
         ]
       }
     ]

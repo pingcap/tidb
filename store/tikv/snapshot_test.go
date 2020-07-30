@@ -183,7 +183,7 @@ func (s *testSnapshotSuite) TestWriteConflictPrettyFormat(c *C) {
 		Primary:          []byte{116, 128, 0, 0, 0, 0, 0, 1, 155, 95, 105, 128, 0, 0, 0, 0, 0, 0, 1, 1, 82, 87, 48, 49, 0, 0, 0, 0, 251, 1, 55, 54, 56, 50, 50, 49, 49, 48, 255, 57, 0, 0, 0, 0, 0, 0, 0, 248, 1, 0, 0, 0, 0, 0, 0, 0, 0, 247},
 	}
 
-	expectedStr := "[kv:9007]Write conflict, " +
+	expectedStr := "[DB:kv:9007] Write conflict, " +
 		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
 		"key={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} " +
 		"primary={tableID=411, indexID=1, indexValues={RW01, 768221109, , }} " +
@@ -197,7 +197,7 @@ func (s *testSnapshotSuite) TestWriteConflictPrettyFormat(c *C) {
 		Key:              []byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe},
 		Primary:          []byte{0x6d, 0x44, 0x42, 0x3a, 0x35, 0x36, 0x0, 0x0, 0x0, 0xfc, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x31, 0x30, 0x38, 0x0, 0xfe},
 	}
-	expectedStr = "[kv:9007]Write conflict, " +
+	expectedStr = "[DB:kv:9007] Write conflict, " +
 		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
 		"key={metaKey=true, key=DB:56, field=TID:108} " +
 		"primary={metaKey=true, key=DB:56, field=TID:108} " +

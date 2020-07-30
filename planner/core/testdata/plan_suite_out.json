@@ -1141,15 +1141,15 @@
     "Cases": [
       {
         "SQL": "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
-        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ MERGE_JOIN(t3, t4) */ or /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
+        "Warning": "[DB:planner:1815] There are no matching table names for (t3, t4) in optimizer hint /*+ MERGE_JOIN(t3, t4) */ or /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
       },
       {
         "SQL": "SELECT /*+ TIDB_HJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
-        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ HASH_JOIN(t3, t4) */ or /*+ TIDB_HJ(t3, t4) */. Maybe you can use the table alias name"
+        "Warning": "[DB:planner:1815] There are no matching table names for (t3, t4) in optimizer hint /*+ HASH_JOIN(t3, t4) */ or /*+ TIDB_HJ(t3, t4) */. Maybe you can use the table alias name"
       },
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
-        "Warning": "[planner:1815]There are no matching table names for (t3, t4) in optimizer hint /*+ INL_JOIN(t3, t4) */ or /*+ TIDB_INLJ(t3, t4) */. Maybe you can use the table alias name"
+        "Warning": "[DB:planner:1815] There are no matching table names for (t3, t4) in optimizer hint /*+ INL_JOIN(t3, t4) */ or /*+ TIDB_INLJ(t3, t4) */. Maybe you can use the table alias name"
       },
       {
         "SQL": "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t t1, t t2 where t1.a = t2.a",
@@ -1157,7 +1157,7 @@
       },
       {
         "SQL": "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2, t t3 where t1.a = t2.a and t2.a = t3.a",
-        "Warning": "[planner:1815]There are no matching table names for (t4) in optimizer hint /*+ MERGE_JOIN(t3, t4) */ or /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
+        "Warning": "[DB:planner:1815] There are no matching table names for (t4) in optimizer hint /*+ MERGE_JOIN(t3, t4) */ or /*+ TIDB_SMJ(t3, t4) */. Maybe you can use the table alias name"
       }
     ]
   },
@@ -1179,13 +1179,13 @@
       {
         "SQL": "select /*+ TIDB_INLJ(t1) */ t1.b, t2.a from t t1, t t2 where t1.b = t2.a;",
         "Best": "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.b,test.t.a)",
-        "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable",
+        "Warning": "[DB:planner:1815] Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable",
         "Hints": "use_index(@`sel_1` `test`.`t1` ), use_index(@`sel_1` `test`.`t2` `f`), hash_join(@`sel_1` `test`.`t1`)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ t1.b, t2.a from t2 t1, t2 t2 where t1.b=t2.b and t2.c=-1;",
         "Best": "IndexJoin{IndexReader(Index(t2.b)[[NULL,+inf]])->TableReader(Table(t2)->Sel([eq(test.t2.c, -1)]))}(test.t2.b,test.t2.b)",
-        "Warning": "[planner:1815]Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable",
+        "Warning": "[DB:planner:1815] Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable",
         "Hints": "use_index(@`sel_1` `test`.`t1` `b`), use_index(@`sel_1` `test`.`t2` ), inl_join(@`sel_1` `test`.`t1`)"
       }
     ]
@@ -1216,7 +1216,7 @@
       {
         "SQL": "select /*+ HASH_AGG() STREAM_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b",
         "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))}(test.t.a,test.t.b)->StreamAgg",
-        "Warning": "[planner:1815]Optimizer aggregation hints are conflicted"
+        "Warning": "[DB:planner:1815] Optimizer aggregation hints are conflicted"
       },
       {
         "SQL": "select /*+ STREAM_AGG() */ distinct a from t",
@@ -1425,22 +1425,22 @@
       {
         "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from ta group by a",
         "Best": "IndexReader(Index(ta.a)[[NULL,+inf]]->HashAgg)->HashAgg",
-        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
+        "Warning": "[DB:planner:1815] use_index(test.t) is inapplicable, check whether the table(test.t) exists"
       },
       {
         "SQL": "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from ta group by b",
         "Best": "TableReader(Table(ta)->HashAgg)->HashAgg",
-        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
+        "Warning": "[DB:planner:1815] use_index(test.t) is inapplicable, check whether the table(test.t) exists"
       },
       {
         "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from ta group by a",
         "Best": "IndexReader(Index(ta.a)[[NULL,+inf]]->HashAgg)->HashAgg",
-        "Warning": "[planner:1815]use_index(test.t) is inapplicable, check whether the table(test.t) exists"
+        "Warning": "[DB:planner:1815] use_index(test.t) is inapplicable, check whether the table(test.t) exists"
       },
       {
         "SQL": "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from ta t1, ta t2 where t1.a = t2.b group by t1.a",
         "Best": "LeftHashJoin{TableReader(Table(ta)->Sel([not(isnull(test.ta.a))]))->TableReader(Table(ta)->Sel([not(isnull(test.ta.b))]))}(test.ta.a,test.ta.b)->Projection->HashAgg",
-        "Warning": "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable"
+        "Warning": "[DB:planner:1815] Optimizer Hint AGG_TO_COP is inapplicable"
       }
     ]
   },

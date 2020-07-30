@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	new_terror "github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
@@ -399,7 +400,7 @@ func (s *testTxStructureSuite) TestHash(c *C) {
 }
 
 func (*testTxStructureSuite) TestError(c *C) {
-	kvErrs := []*terror.Error{
+	kvErrs := []*new_terror.Error{
 		structure.ErrInvalidHashKeyFlag,
 		structure.ErrInvalidListIndex,
 		structure.ErrInvalidListMetaData,

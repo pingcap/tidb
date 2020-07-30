@@ -14,8 +14,8 @@
 package variable
 
 import (
-	terror "github.com/pingcap/tidb/errno"
 	mysql "github.com/pingcap/tidb/errno"
+	terror "github.com/pingcap/tidb/errno"
 )
 
 // Error instances.

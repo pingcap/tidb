@@ -50,7 +50,6 @@ var (
 	ClassUtil       = RegDB.RegisterErrorClass(27, "util")
 )
 
-
 // Log logs the error if it is not nil.
 func Log(err error) {
 	if err != nil {

@@ -14,12 +14,12 @@
 package ddl_test
 
 import (
+	"github.com/pingcap/errors"
 	"strconv"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/session"
@@ -88,7 +88,7 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("create sequence my_seq")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1142]CREATE command denied to user 'myuser'@'localhost' for table 'my_seq'")
+	c.Assert(err.Error(), Equals, "[DB:planner:1142] CREATE command denied to user 'myuser'@'localhost' for table 'my_seq'")
 }
 
 func (s *testSequenceSuite) TestDropSequence(c *C) {
@@ -103,18 +103,18 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	tk.MustExec("create sequence seq")
 	_, err := tk.Exec("drop sequence seq, seq2")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:4139]Unknown SEQUENCE: 'test.seq2'")
+	c.Assert(err.Error(), Equals, "[DB:schema:4139] Unknown SEQUENCE: 'test.seq2'")
 
 	// Test the specified object is not sequence.
 	tk.MustExec("create table seq3 (a int)")
 	_, err = tk.Exec("drop sequence seq3")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongObject), IsTrue)
+	c.Assert(errors.ErrorEqual(err, ddl.ErrWrongObject), IsTrue)
 
 	// Test schema is not exist.
 	_, err = tk.Exec("drop sequence unknown.seq")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:4139]Unknown SEQUENCE: 'unknown.seq'")
+	c.Assert(err.Error(), Equals, "[DB:schema:4139] Unknown SEQUENCE: 'unknown.seq'")
 
 	// Test drop sequence successfully.
 	tk.MustExec("create sequence seq")
@@ -122,18 +122,18 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	c.Assert(err, IsNil)
 	_, err = tk.Exec("drop sequence seq")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:4139]Unknown SEQUENCE: 'test.seq'")
+	c.Assert(err.Error(), Equals, "[DB:schema:4139] Unknown SEQUENCE: 'test.seq'")
 
 	// Test drop table when the object is a sequence.
 	tk.MustExec("create sequence seq")
 	_, err = tk.Exec("drop table seq")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:1051]Unknown table 'test.seq'")
+	c.Assert(err.Error(), Equals, "[DB:schema:1051] Unknown table 'test.seq'")
 
 	// Test drop view when the object is a sequence.
 	_, err = tk.Exec("drop view seq")
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrorEqual(err, ddl.ErrWrongObject), IsTrue)
+	c.Assert(errors.ErrorEqual(err, ddl.ErrWrongObject), IsTrue)
 	tk.MustExec("drop sequence seq")
 
 	// Test drop privilege.
@@ -153,7 +153,7 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("drop sequence my_seq")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1142]DROP command denied to user 'myuser'@'localhost' for table 'my_seq'")
+	c.Assert(err.Error(), Equals, "[DB:planner:1142] DROP command denied to user 'myuser'@'localhost' for table 'my_seq'")
 
 	// Test for `drop sequence if exists`.
 	tk.MustExec("drop sequence if exists seq_if_exists")
@@ -185,7 +185,7 @@ func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
 	tk1.MustExec("show create table t")
 	_, err = tk1.Exec("show create sequence seq")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[planner:1142]SHOW command denied to user 'myuser'@'localhost' for table 'seq'")
+	c.Assert(err.Error(), Equals, "[DB:planner:1142] SHOW command denied to user 'myuser'@'localhost' for table 'seq'")
 
 	// Grant the myuser the access to sequence seq in database test.
 	tk.MustExec("grant select on test.seq to 'myuser'@'localhost'")
@@ -230,7 +230,7 @@ func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
 	tk.MustExec("create table seq (a int)")
 	err = tk.QueryToErr("show create sequence seq")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[executor:1347]'test.seq' is not SEQUENCE")
+	c.Assert(err.Error(), Equals, "[DB:executor:1347] 'test.seq' is not SEQUENCE")
 	tk.MustExec("drop table if exists seq")
 
 	// Test use the show create sequence result to create sequence.
@@ -294,13 +294,13 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk.MustQuery("select next value for test.seq").Check(testkit.Rows("4"))
 
 	// test sequence function error.
-	tk.MustGetErrMsg("select nextval(seq1)", "[schema:1146]Table 'test.seq1' doesn't exist")
+	tk.MustGetErrMsg("select nextval(seq1)", "[DB:schema:1146] Table 'test.seq1' doesn't exist")
 	tk.MustExec("create database test2")
 	tk.MustExec("use test2")
 	tk.MustQuery("select nextval(test.seq)").Check(testkit.Rows("5"))
 	tk.MustQuery("select next value for test.seq").Check(testkit.Rows("6"))
-	tk.MustGetErrMsg("select nextval(seq)", "[schema:1146]Table 'test2.seq' doesn't exist")
-	tk.MustGetErrMsg("select next value for seq", "[schema:1146]Table 'test2.seq' doesn't exist")
+	tk.MustGetErrMsg("select nextval(seq)", "[DB:schema:1146] Table 'test2.seq' doesn't exist")
+	tk.MustGetErrMsg("select next value for seq", "[DB:schema:1146] Table 'test2.seq' doesn't exist")
 	tk.MustExec("use test")
 
 	// test sequence nocache.
@@ -357,7 +357,7 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("8"))
 	err := tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[DB:table:4135]Sequence 'test.seq' has run out")
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq increment = 3 start = 3 maxvalue = 9 nocycle")
@@ -365,7 +365,7 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("6"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("9"))
 	err = tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[DB:table:4135]Sequence 'test.seq' has run out")
 
 	// test negative-growth sequence
 	tk.MustExec("drop sequence if exists seq")
@@ -393,14 +393,14 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-2"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-6"))
 	err = tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[DB:table:4135]Sequence 'test.seq' has run out")
 
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("create sequence seq increment = -3 start = 2 minvalue -2 maxvalue 10")
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("2"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("-1"))
 	err = tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[DB:table:4135]Sequence 'test.seq' has run out")
 
 	// test sequence setval function.
 	tk.MustExec("drop sequence if exists seq")
@@ -426,14 +426,14 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk.MustQuery("select setval(seq, 8)").Check(testkit.Rows("8"))
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("10"))
 	err = tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[DB:table:4135]Sequence 'test.seq' has run out")
 	tk.MustQuery("select setval(seq, 11)").Check(testkit.Rows("11"))
 	err = tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[DB:table:4135]Sequence 'test.seq' has run out")
 	// set value can be bigger than maxvalue.
 	tk.MustQuery("select setval(seq, 100)").Check(testkit.Rows("100"))
 	err = tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[DB:table:4135]Sequence 'test.seq' has run out")
 
 	// test setval in second cache round.
 	tk.MustExec("drop sequence if exists seq")
@@ -630,24 +630,24 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk.MustExec("create table seq(a int)")
 	_, err = tk.Exec("select nextval(seq)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
+	c.Assert(err.Error(), Equals, "[DB:schema:1347] 'test.seq' is not SEQUENCE")
 	_, err = tk.Exec("select lastval(seq)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
+	c.Assert(err.Error(), Equals, "[DB:schema:1347] 'test.seq' is not SEQUENCE")
 	_, err = tk.Exec("select setval(seq, 10)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq' is not SEQUENCE")
+	c.Assert(err.Error(), Equals, "[DB:schema:1347] 'test.seq' is not SEQUENCE")
 
 	tk.MustExec("create view seq1 as select * from seq")
 	_, err = tk.Exec("select nextval(seq1)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
+	c.Assert(err.Error(), Equals, "[DB:schema:1347] 'test.seq1' is not SEQUENCE")
 	_, err = tk.Exec("select lastval(seq1)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
+	c.Assert(err.Error(), Equals, "[DB:schema:1347] 'test.seq1' is not SEQUENCE")
 	_, err = tk.Exec("select setval(seq1, 10)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:1347]'test.seq1' is not SEQUENCE")
+	c.Assert(err.Error(), Equals, "[DB:schema:1347] 'test.seq1' is not SEQUENCE")
 	tk.MustExec("drop sequence if exists seq")
 	tk.MustExec("drop table if exists seq")
 	tk.MustExec("drop view if exists seq")
@@ -697,10 +697,10 @@ func (s *testSequenceSuite) TestSequenceFunction(c *C) {
 	tk.MustQuery("select nextval(seq), t.a from t").Check(testkit.Rows("1 1", "2 2"))
 	_, err = tk.Exec("select nextval(t), t.a from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:1347]'test.t' is not SEQUENCE")
+	c.Assert(err.Error(), Equals, "[DB:schema:1347] 'test.t' is not SEQUENCE")
 	_, err = tk.Exec("select nextval(seq), nextval(t), t.a from t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[schema:1347]'test.t' is not SEQUENCE")
+	c.Assert(err.Error(), Equals, "[DB:schema:1347] 'test.t' is not SEQUENCE")
 	tk.MustQuery("select nextval(seq)").Check(testkit.Rows("3"))
 	tk.MustExec("drop sequence seq")
 	tk.MustExec("drop table t")
@@ -771,7 +771,7 @@ func (s *testSequenceSuite) TestInsertSequence(c *C) {
 	setSQL := "select setval(seq," + strconv.FormatInt(model.DefaultPositiveSequenceMaxValue+1, 10) + ")"
 	tk.MustQuery(setSQL).Check(testkit.Rows("9223372036854775807"))
 	err := tk.QueryToErr("select nextval(seq)")
-	c.Assert(err.Error(), Equals, "[table:4135]Sequence 'test.seq' has run out")
+	c.Assert(err.Error(), Equals, "[DB:table:4135]Sequence 'test.seq' has run out")
 }
 
 func (s *testSequenceSuite) TestUnflodSequence(c *C) {

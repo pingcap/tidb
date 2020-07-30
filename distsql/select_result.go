@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -37,7 +36,7 @@ import (
 )
 
 var (
-	errQueryInterrupted = terror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
+	errQueryInterrupted = errno.ClassExecutor.New(errno.ErrQueryInterrupted, errno.MySQLErrName[errno.ErrQueryInterrupted])
 )
 
 var (
@@ -122,7 +121,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		atomic.StoreInt64(&r.selectRespSize, respSize)
 		r.memConsume(respSize)
 		if err := r.selectResp.Error; err != nil {
-			return terror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
+			return errno.ClassTiKV.Synthesize(errors.ErrCode(err.Code), err.Msg)
 		}
 		sessVars := r.ctx.GetSessionVars()
 		if atomic.LoadUint32(&sessVars.Killed) == 1 {
@@ -130,7 +129,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		}
 		sc := sessVars.StmtCtx
 		for _, warning := range r.selectResp.Warnings {
-			sc.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
+			sc.AppendWarning(errno.ClassTiKV.Synthesize(errors.ErrCode(warning.Code), warning.Msg))
 		}
 		resultDetail := resultSubset.GetExecDetails()
 		r.updateCopRuntimeStats(resultDetail, resultSubset.RespTime())

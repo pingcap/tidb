@@ -79,25 +79,25 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustExec(`create table t1(a bigint primary key, b bigint);`)
 	tk.MustExec(`create table t2(a bigint primary key, b bigint);`)
 	_, err := tk.Exec(`insert into t1 select * from t2 on duplicate key update c = t2.b;`)
-	c.Assert(err.Error(), Equals, `[planner:1054]Unknown column 'c' in 'field list'`)
+	c.Assert(err.Error(), Equals, `[DB:planner:1054] Unknown column 'c' in 'field list'`)
 
 	tk.MustExec(`drop table if exists t1, t2;`)
 	tk.MustExec(`create table t1(a bigint primary key, b bigint);`)
 	tk.MustExec(`create table t2(a bigint primary key, b bigint);`)
 	_, err = tk.Exec(`insert into t1 select * from t2 on duplicate key update a = b;`)
-	c.Assert(err.Error(), Equals, `[planner:1052]Column 'b' in field list is ambiguous`)
+	c.Assert(err.Error(), Equals, `[DB:planner:1052] Column 'b' in field list is ambiguous`)
 
 	tk.MustExec(`drop table if exists t1, t2;`)
 	tk.MustExec(`create table t1(a bigint primary key, b bigint);`)
 	tk.MustExec(`create table t2(a bigint primary key, b bigint);`)
 	_, err = tk.Exec(`insert into t1 select * from t2 on duplicate key update c = b;`)
-	c.Assert(err.Error(), Equals, `[planner:1054]Unknown column 'c' in 'field list'`)
+	c.Assert(err.Error(), Equals, `[DB:planner:1054] Unknown column 'c' in 'field list'`)
 
 	tk.MustExec(`drop table if exists t1, t2;`)
 	tk.MustExec(`create table t1(a1 bigint primary key, b1 bigint);`)
 	tk.MustExec(`create table t2(a2 bigint primary key, b2 bigint);`)
 	_, err = tk.Exec(`insert into t1 select * from t2 on duplicate key update a1 = values(b2);`)
-	c.Assert(err.Error(), Equals, `[planner:1054]Unknown column 'b2' in 'field list'`)
+	c.Assert(err.Error(), Equals, `[DB:planner:1054] Unknown column 'b2' in 'field list'`)
 
 	tk.MustExec(`drop table if exists t1, t2;`)
 	tk.MustExec(`create table t1(a1 bigint primary key, b1 bigint);`)
@@ -273,7 +273,7 @@ func (s *testSuite3) TestUpdateDuplicateKey(c *C) {
 	tk.MustExec(`insert into c values(1,2,3);`)
 	tk.MustExec(`insert into c values(1,2,4);`)
 	_, err := tk.Exec(`update c set i=1,j=2,k=4 where i=1 and j=2 and k=3;`)
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1-2-4' for key 'PRIMARY'")
+	c.Assert(err.Error(), Equals, "[DB:kv:1062] Duplicate entry '1-2-4' for key 'PRIMARY'")
 }
 
 func (s *testSuite3) TestInsertWrongValueForField(c *C) {

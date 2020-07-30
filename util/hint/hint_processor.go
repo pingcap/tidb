@@ -31,7 +31,7 @@ import (
 
 var (
 	supportedHintNameForInsertStmt = map[string]struct{}{}
-	errWarnConflictingHint = errno.ClassUtil.New(errno.ErrWarnConflictingHint, errno.MySQLErrName[errno.ErrWarnConflictingHint])
+	errWarnConflictingHint         = errno.ClassUtil.New(errno.ErrWarnConflictingHint, errno.MySQLErrName[errno.ErrWarnConflictingHint])
 )
 
 func init() {

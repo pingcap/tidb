@@ -1004,7 +1004,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 
 	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
 	tk.MustGetErrMsg("create table t (a bigint auto_random(-1) primary key)",
-		`[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 38 near "-1) primary key)" `)
+		`[DB:parser:1064] You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 38 near "-1) primary key)" `)
 
 	// Basic usage.
 	mustExecAndDrop("create table t (a bigint auto_random(1) primary key)")
