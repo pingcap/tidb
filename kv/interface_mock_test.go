@@ -105,6 +105,10 @@ func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
 
+func (t *mockTxn) GetUnionStore() UnionStore {
+	return nil
+}
+
 func (t *mockTxn) NewStagingBuffer() MemBuffer {
 	return nil
 }
@@ -156,7 +160,7 @@ func (s *mockStorage) BeginWithStartTS(startTS uint64) (Transaction, error) {
 
 func (s *mockStorage) GetSnapshot(ver Version) (Snapshot, error) {
 	return &mockSnapshot{
-		store: NewMemDbBuffer(),
+		store: newMemDB(),
 	}, nil
 }
 

@@ -21,10 +21,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -127,7 +129,7 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.index < len(e.values) {
 		handle, val := e.handles[e.index], e.values[e.index]
-		err := decodeRowValToChunk(e.base(), e.tblInfo, handle, val, req, e.rowDecoder)
+		err := DecodeRowValToChunk(e.base().ctx, e.schema, e.tblInfo, handle, val, req, e.rowDecoder)
 		if err != nil {
 			return err
 		}
@@ -151,8 +153,8 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		dedup := make(map[hack.MutableString]struct{})
 		keys := make([]kv.Key, 0, len(e.idxVals))
 		for _, idxVals := range e.idxVals {
-			physID := getPhysID(e.tblInfo, kv.IntHandle(idxVals[e.partPos].GetInt64()))
-			idxKey, err1 := encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, idxVals, physID)
+			physID := getPhysID(e.tblInfo, idxVals[e.partPos].GetInt64())
+			idxKey, err1 := EncodeUniqueIndexKey(e.ctx, e.tblInfo, e.idxInfo, idxVals, physID)
 			if err1 != nil && !kv.ErrNotExist.Equal(err1) {
 				return err1
 			}
@@ -226,7 +228,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		if len(e.physIDs) > 0 {
 			tID = e.physIDs[i]
 		} else {
-			tID = getPhysID(e.tblInfo, handle)
+			if handle.IsInt() {
+				tID = getPhysID(e.tblInfo, handle.IntValue())
+			} else {
+				_, d, err1 := codec.DecodeOne(handle.EncodedCol(e.partPos))
+				if err1 != nil {
+					return err1
+				}
+				tID = getPhysID(e.tblInfo, d.GetInt64())
+			}
 		}
 		key := tablecodec.EncodeRowKeyWithHandle(tID, handle)
 		keys[i] = key
@@ -244,7 +254,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 				lockKeys = append(lockKeys, idxKey)
 			}
 		}
-		err = e.lockKeys(ctx, lockKeys)
+		err = LockKeys(ctx, e.ctx, e.waitTime, lockKeys...)
 		if err != nil {
 			return err
 		}
@@ -277,7 +287,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	// Lock exists keys only for Read Committed Isolation.
 	if e.lock && rc {
-		err = e.lockKeys(ctx, existKeys)
+		err = LockKeys(ctx, e.ctx, e.waitTime, existKeys...)
 		if err != nil {
 			return err
 		}
@@ -286,14 +296,15 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	return nil
 }
 
-func (e *BatchPointGetExec) lockKeys(ctx context.Context, keys []kv.Key) error {
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	lctx := newLockCtx(e.ctx.GetSessionVars(), e.waitTime)
+// LockKeys locks the keys for pessimistic transaction.
+func LockKeys(ctx context.Context, seCtx sessionctx.Context, lockWaitTime int64, keys ...kv.Key) error {
+	txnCtx := seCtx.GetSessionVars().TxnCtx
+	lctx := newLockCtx(seCtx.GetSessionVars(), lockWaitTime)
 	if txnCtx.IsPessimistic {
 		lctx.ReturnValues = true
 		lctx.Values = make(map[string]kv.ReturnedValue, len(keys))
 	}
-	err := doLockKeys(ctx, e.ctx, lctx, keys...)
+	err := doLockKeys(ctx, seCtx, lctx, keys...)
 	if err != nil {
 		return err
 	}
@@ -325,11 +336,11 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key) ([]
 	return nil, kv.ErrNotExist
 }
 
-func getPhysID(tblInfo *model.TableInfo, val kv.Handle) int64 {
+func getPhysID(tblInfo *model.TableInfo, intVal int64) int64 {
 	pi := tblInfo.Partition
 	if pi == nil {
 		return tblInfo.ID
 	}
-	partIdx := math.Abs(val.IntValue() % int64(pi.Num)) // TODO: fix me for table, partition on cluster index.
+	partIdx := math.Abs(intVal % int64(pi.Num))
 	return pi.Definitions[partIdx].ID
 }

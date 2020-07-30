@@ -69,6 +69,8 @@ type copTask struct {
 	// rootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
 	rootTaskConds []expression.Expression
+	// For table partition.
+	pruningConds []expression.Expression
 }
 
 func (t *copTask) invalid() bool {
@@ -152,6 +154,9 @@ func (t *copTask) getStoreType() kv.StoreType {
 	}
 	tp := t.tablePlan
 	for len(tp.Children()) > 0 {
+		if len(tp.Children()) > 1 {
+			return kv.TiFlash
+		}
 		tp = tp.Children()[0]
 	}
 	if ts, ok := tp.(*PhysicalTableScan); ok {
@@ -520,10 +525,70 @@ func (p *PhysicalHashJoin) attach2Task(tasks ...task) task {
 	lTask := finishCopTask(p.ctx, tasks[0].copy())
 	rTask := finishCopTask(p.ctx, tasks[1].copy())
 	p.SetChildren(lTask.plan(), rTask.plan())
-	return &rootTask{
+	task := &rootTask{
 		p:   p,
 		cst: lTask.cost() + rTask.cost() + p.GetCost(lTask.count(), rTask.count()),
 	}
+	return task
+}
+
+// GetCost computes cost of broadcast join operator itself.
+func (p *PhysicalBroadCastJoin) GetCost(lCnt, rCnt float64) float64 {
+	buildCnt := lCnt
+	if p.InnerChildIdx == 1 {
+		buildCnt = rCnt
+	}
+	sessVars := p.ctx.GetSessionVars()
+	// Cost of building hash table.
+	cpuCost := buildCnt * sessVars.CopCPUFactor
+	memoryCost := buildCnt * sessVars.MemoryFactor
+	// Number of matched row pairs regarding the equal join conditions.
+	helper := &fullJoinRowCountHelper{
+		cartesian:     false,
+		leftProfile:   p.children[0].statsInfo(),
+		rightProfile:  p.children[1].statsInfo(),
+		leftJoinKeys:  p.LeftJoinKeys,
+		rightJoinKeys: p.RightJoinKeys,
+		leftSchema:    p.children[0].Schema(),
+		rightSchema:   p.children[1].Schema(),
+	}
+	numPairs := helper.estimate()
+	probeCost := numPairs * sessVars.CopCPUFactor
+	// should divided by the concurrency in tiflash, which should be the number of core in tiflash nodes.
+	probeCost /= float64(sessVars.CopTiFlashConcurrencyFactor)
+	cpuCost += probeCost
+
+	// todo since TiFlash join is significant faster than TiDB join, maybe
+	//  need to add a variable like 'tiflash_accelerate_factor', and divide
+	//  the final cost by that factor
+	return cpuCost + memoryCost
+}
+
+func (p *PhysicalBroadCastJoin) attach2Task(tasks ...task) task {
+	lTask, lok := tasks[0].(*copTask)
+	rTask, rok := tasks[1].(*copTask)
+	if !lok || !rok || (lTask.getStoreType() != kv.TiFlash && rTask.getStoreType() != kv.TiFlash) {
+		return invalidTask
+	}
+	p.SetChildren(lTask.plan(), rTask.plan())
+	p.schema = BuildPhysicalJoinSchema(p.JoinType, p)
+	if !lTask.indexPlanFinished {
+		lTask.finishIndexPlan()
+	}
+	if !rTask.indexPlanFinished {
+		rTask.finishIndexPlan()
+	}
+
+	lCost := lTask.cost()
+	rCost := rTask.cost()
+
+	task := &copTask{
+		tblColHists:       rTask.tblColHists,
+		indexPlanFinished: true,
+		tablePlan:         p,
+		cst:               lCost + rCost + p.GetCost(lTask.count(), rTask.count()),
+	}
+	return task
 }
 
 // GetCost computes cost of merge join operator itself.
@@ -566,7 +631,7 @@ func (p *PhysicalMergeJoin) GetCost(lCnt, rCnt float64) float64 {
 	}
 	cpuCost += probeCost
 	// For merge join, only one group of rows with same join key(not null) are cached,
-	// we compute averge memory cost using estimated group size.
+	// we compute average memory cost using estimated group size.
 	NDV := getCardinality(innerKeys, innerSchema, innerStats)
 	memoryCost := (innerStats.RowCount / NDV) * sessVars.MemoryFactor
 	return cpuCost + memoryCost
@@ -590,6 +655,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		indexPlan:        t.indexPlan,
 		ExtraHandleCol:   t.extraHandleCol,
 		CommonHandleCols: t.commonHandleCols,
+		PruningConds:     t.pruningConds,
 	}.Init(ctx, t.tablePlan.SelectBlockOffset())
 	setTableScanToTableRowIDScan(p.tablePlan)
 	p.stats = t.tablePlan.statsInfo()
@@ -663,19 +729,25 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	if t.indexPlan != nil && t.tablePlan != nil {
 		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
-		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
+		p := PhysicalIndexReader{indexPlan: t.indexPlan, PruningConds: t.pruningConds}.Init(ctx, t.indexPlan.SelectBlockOffset())
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
 		tp := t.tablePlan
 		for len(tp.Children()) > 0 {
-			tp = tp.Children()[0]
+			if len(tp.Children()) == 1 {
+				tp = tp.Children()[0]
+			} else {
+				join := tp.(*PhysicalBroadCastJoin)
+				tp = join.children[1-join.InnerChildIdx]
+			}
 		}
 		ts := tp.(*PhysicalTableScan)
 		p := PhysicalTableReader{
 			tablePlan:      t.tablePlan,
 			StoreType:      ts.StoreType,
 			IsCommonHandle: ts.Table.IsCommonHandle,
+			PruningConds:   t.pruningConds,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)

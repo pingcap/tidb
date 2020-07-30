@@ -36,7 +36,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/stringutil"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -45,7 +47,8 @@ import (
 type statsCache struct {
 	tables map[int64]*statistics.Table
 	// version is the latest version of cache.
-	version uint64
+	version  uint64
+	memUsage int64
 }
 
 // Handle can update stats info periodically.
@@ -61,11 +64,12 @@ type Handle struct {
 		schemaVersion int64
 	}
 
-	// It can be read by multiply readers at the same time without acquire lock, but it can be
-	// written only after acquire the lock.
+	// It can be read by multiple readers at the same time without acquiring lock, but it can be
+	// written only after acquiring the lock.
 	statsCache struct {
 		sync.Mutex
 		atomic.Value
+		memTracker *memory.Tracker
 	}
 
 	restrictedExec sqlexec.RestrictedSQLExecutor
@@ -78,7 +82,7 @@ type Handle struct {
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap tableDeltaMap
 	// feedback is used to store query feedback info.
-	feedback []*statistics.QueryFeedback
+	feedback *statistics.QueryFeedbackMap
 
 	lease atomic2.Duration
 }
@@ -86,11 +90,16 @@ type Handle struct {
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
 	h.mu.Lock()
+	h.statsCache.Lock()
 	h.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
+	h.statsCache.memTracker = memory.NewTracker(
+		stringutil.MemoizeStr(func() string { return "statsCache" }),
+		-1)
+	h.statsCache.Unlock()
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
-	h.feedback = h.feedback[:0]
+	h.feedback = statistics.NewQueryFeedbackMap()
 	h.mu.ctx.GetSessionVars().InitChunkSize = 1
 	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
 	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
@@ -101,22 +110,22 @@ func (h *Handle) Clear() {
 	h.mu.Unlock()
 }
 
-// MaxQueryFeedbackCount is the max number of feedback that cache in memory.
-var MaxQueryFeedbackCount = atomic2.NewInt64(1 << 10)
-
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	handle := &Handle{
 		ddlEventCh: make(chan *util.Event, 100),
 		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:  make(tableDeltaMap),
-		feedback:   make([]*statistics.QueryFeedback, 0, MaxQueryFeedbackCount.Load()),
+		feedback:   statistics.NewQueryFeedbackMap(),
 	}
 	handle.lease.Store(lease)
 	// It is safe to use it concurrently because the exec won't touch the ctx.
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
+	handle.statsCache.memTracker = memory.NewTracker(
+		stringutil.MemoizeStr(func() string { return "statsCache" }),
+		-1)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
@@ -133,10 +142,10 @@ func (h *Handle) SetLease(lease time.Duration) {
 	h.lease.Store(lease)
 }
 
-// GetQueryFeedback gets the query feedback. It is only use in test.
-func (h *Handle) GetQueryFeedback() []*statistics.QueryFeedback {
+// GetQueryFeedback gets the query feedback. It is only used in test.
+func (h *Handle) GetQueryFeedback() *statistics.QueryFeedbackMap {
 	defer func() {
-		h.feedback = h.feedback[:0]
+		h.feedback = statistics.NewQueryFeedbackMap()
 	}()
 	return h.feedback
 }
@@ -232,6 +241,12 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 	return mapper
 }
 
+// GetMemConsumed returns the mem size of statscache consumed
+func (h *Handle) GetMemConsumed() (size int64) {
+	size = h.statsCache.memTracker.BytesConsumed()
+	return
+}
+
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)
@@ -254,17 +269,31 @@ func (h *Handle) updateStatsCache(newCache statsCache) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(statsCache)
 	if oldCache.version <= newCache.version {
+		h.statsCache.memTracker.Consume(newCache.memUsage - oldCache.memUsage)
 		h.statsCache.Store(newCache)
 	}
 	h.statsCache.Unlock()
 }
 
 func (sc statsCache) copy() statsCache {
-	newCache := statsCache{tables: make(map[int64]*statistics.Table, len(sc.tables)), version: sc.version}
+	newCache := statsCache{tables: make(map[int64]*statistics.Table, len(sc.tables)),
+		version:  sc.version,
+		memUsage: sc.memUsage}
 	for k, v := range sc.tables {
 		newCache.tables[k] = v
 	}
 	return newCache
+}
+
+//initMemoryUsage calc total memory usage of statsCache and set statsCache.memUsage
+//should be called after the tables and their stats are initilazed
+func (sc statsCache) initMemoryUsage() {
+	sum := int64(0)
+	for _, tb := range sc.tables {
+		sum += tb.MemoryUsage()
+	}
+	sc.memUsage = sum
+	return
 }
 
 // update updates the statistics table cache using copy on write.
@@ -273,9 +302,16 @@ func (sc statsCache) update(tables []*statistics.Table, deletedIDs []int64, newV
 	newCache.version = newVersion
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
+		if ptbl, ok := newCache.tables[id]; ok {
+			newCache.memUsage -= ptbl.MemoryUsage()
+		}
 		newCache.tables[id] = tbl
+		newCache.memUsage += tbl.MemoryUsage()
 	}
 	for _, id := range deletedIDs {
+		if ptbl, ok := newCache.tables[id]; ok {
+			newCache.memUsage -= ptbl.MemoryUsage()
+		}
 		delete(newCache.tables, id)
 	}
 	return newCache

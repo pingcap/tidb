@@ -523,6 +523,10 @@ func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
 	// the txn correctness should be ensured
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/ExecStmtGetTsError", "return"), IsNil)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/ExecStmtGetTsError"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep"), IsNil)
+	}()
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("select * from tk where c1 > 0 for update nowait")
 	tk2.MustExec("begin pessimistic")
@@ -549,8 +553,6 @@ func (s *testPessimisticSuite) TestAsyncRollBackNoWait(c *C) {
 	tk3.MustQuery("select * from tk where c1 = 4 for update nowait").Check(testkit.Rows("4 4"))
 	tk3.MustQuery("select * from tk where c1 = 3 for update nowait").Check(testkit.Rows("3 3"))
 	tk3.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/ExecStmtGetTsError"), IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/AsyncRollBackSleep"), IsNil)
 }
 
 func (s *testPessimisticSuite) TestWaitLockKill(c *C) {
@@ -1282,6 +1284,8 @@ func (s *testPessimisticSuite) TestKillWaitLockTxn(c *C) {
 	err := <-errCh
 	c.Assert(err, IsNil)
 	tk.Exec("rollback")
+	// reset kill
+	atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0)
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
@@ -1388,4 +1392,30 @@ func (s *testPessimisticSuite) TestPointGetWithDeleteInMem(c *C) {
 	tk2.MustQuery("select * from uk where c2 = 77").Check(testkit.Rows("10 77"))
 	tk2.MustQuery("select * from uk where c1 = 10").Check(testkit.Rows("10 77"))
 	tk.MustExec("drop table if exists uk")
+}
+
+func (s *testPessimisticSuite) TestPessimisticTxnWithDDLAddDropColumn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int)")
+	tk.MustExec("insert t1 values (1, 77), (2, 88)")
+	tk.MustExec("alter table t1 add index k2(c2)")
+	tk.MustExec("alter table t1 drop index k2")
+
+	// tk2 starts a pessimistic transaction and make some changes on table t1.
+	// tk executes some ddl statements add/drop column on table t1.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t1 set c2 = c1 * 10")
+	tk2.MustExec("alter table t1 add column c3 int after c1")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 <nil> 10", "2 <nil> 20"))
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values(5, 5, 5)")
+	tk2.MustExec("alter table t1 drop column c3")
+	tk2.MustExec("alter table t1 drop column c2")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2", "5"))
 }
