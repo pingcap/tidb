@@ -125,6 +125,8 @@ func (r *checksumReader) readErr() error {
 }
 
 // Read implements the io.ReadAt interface.
+// according to err == io.EOF is not meant at the end of the input source and can not read data anymore,
+// we can still read more data until nn == 0 and err == io.EOF.
 func (r *checksumReader) ReadAt(p []byte, off int64) (nn int, err error) {
 	if len(p) == 0 {
 		return 0, nil
