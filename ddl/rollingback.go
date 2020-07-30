@@ -197,9 +197,31 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 }
 
 func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, colInfos, _, err := checkDropColumns(t, job)
+	tblInfo, colInfos, _, idxInfos, err := checkDropColumns(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+
+	if len(idxInfos) > 0 {
+		for _, indexInfo := range idxInfos {
+			originalState := indexInfo.State
+			switch indexInfo.State {
+			case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
+				// We can not rollback now, so just continue to drop index.
+				// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
+				job.State = model.JobStateRunning
+				return ver, nil
+			case model.StatePublic:
+				indexInfo.State = model.StatePublic
+			default:
+				return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+			}
+			job.SchemaState = indexInfo.State
+			ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
 	}
 
 	// StatePublic means when the job is not running yet.
