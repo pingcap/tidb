@@ -94,6 +94,8 @@ func (l *ListInDisk) flush() (err error) {
 			return
 		}
 		l.w = nil
+		// the l.disk is the underlying object of the l.w, it will be closed
+		// after calling l.w.Close, we need to reopen it before reading rows.
 		l.disk, err = os.Open(l.disk.Name())
 		if err != nil {
 			return
