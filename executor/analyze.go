@@ -614,25 +614,25 @@ type AnalyzeFastTask struct {
 
 // AnalyzeFastExec represents Fast Analyze executor.
 type AnalyzeFastExec struct {
-	ctx              sessionctx.Context
-	physicalTableID  int64
-	handleCols       core.HandleCols
-	colsInfo         []*model.ColumnInfo
-	idxsInfo    []*model.IndexInfo
-	concurrency int
-	opts        map[ast.AnalyzeOptionType]uint64
-	tblInfo     *model.TableInfo
-	cache       *tikv.RegionCache
-	wg          *sync.WaitGroup
-	sampLocs    chan *tikv.KeyLocation
-	rowCount    uint64
-	sampCursor  int32
-	sampTasks   []*AnalyzeFastTask
-	estSampStep uint32 // estimate sample step
-	scanTasks   []*tikv.KeyLocation
-	collectors  []*statistics.SampleCollector
-	randSeed    int64
-	job         *statistics.AnalyzeJob
+	ctx             sessionctx.Context
+	physicalTableID int64
+	handleCols      core.HandleCols
+	colsInfo        []*model.ColumnInfo
+	idxsInfo        []*model.IndexInfo
+	concurrency     int
+	opts            map[ast.AnalyzeOptionType]uint64
+	tblInfo         *model.TableInfo
+	cache           *tikv.RegionCache
+	wg              *sync.WaitGroup
+	sampLocs        chan *tikv.KeyLocation
+	rowCount        uint64
+	sampCursor      int32
+	sampTasks       []*AnalyzeFastTask
+	estSampStep     uint32 // estimate sample step
+	scanTasks       []*tikv.KeyLocation
+	collectors      []*statistics.SampleCollector
+	randSeed        int64
+	job             *statistics.AnalyzeJob
 }
 
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
@@ -909,7 +909,7 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 }
 
 func (e *AnalyzeFastExec) handleBatchSeekResponse(kvMap map[string][]byte) (err error) {
-	redundant := uint64(e.sampCursor + int32(len(kvMap))) - e.opts[ast.AnalyzeOptNumSamples]
+	redundant := uint64(e.sampCursor+int32(len(kvMap))) - e.opts[ast.AnalyzeOptNumSamples]
 	for k := range kvMap {
 		if redundant == 0 {
 			break
