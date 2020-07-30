@@ -2,6 +2,7 @@ package chunk
 
 import (
 	"bytes"
+	"io"
 	"os"
 
 	"github.com/pingcap/check"
@@ -35,16 +36,16 @@ func (s *testChunkSuite) TestChecksumReadAt(c *check.C) {
 	f, err = os.Open(path)
 	c.Assert(err, check.IsNil)
 
-	assertRead := func(off int64, assertN int, assertString string) {
-		cs := newChecksumReader(f, off, int64(n1+n2)-off)
+	assertReadAt := func(off int64, assertErr interface{}, assertN int, assertString string) {
+		cs := newChecksumReader(f)
 		r := make([]byte, 10)
-		n, err := cs.Read(r)
-		c.Assert(err, check.IsNil)
+		n, err := cs.ReadAt(r, off)
+		c.Assert(err, check.Equals, assertErr)
 		c.Assert(n, check.Equals, assertN)
 		c.Assert(string(r), check.Equals, assertString)
 	}
 
-	assertRead(0, 10, "0123456789")
-	assertRead(5, 10, "5678901234")
-	assertRead(int64(n1+n2)-5, 5, "56789\x00\x00\x00\x00\x00")
+	assertReadAt(0, nil, 10, "0123456789")
+	assertReadAt(5, nil, 10, "5678901234")
+	assertReadAt(int64(n1+n2)-5, io.EOF, 5, "56789\x00\x00\x00\x00\x00")
 }

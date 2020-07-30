@@ -94,17 +94,14 @@ func (w *checksumWriter) Close() (err error) {
 	return w.w.Close()
 }
 
-// checksumReader implements an io.Reader, reading from the input source after verifying the checksum.
+// checksumReader implements an io.ReadAt, reading from the input source after verifying the checksum.
 type checksumReader struct {
-	r     io.ReaderAt
-	base  int64
-	off   int64
-	limit int64
-	err   error
+	r   io.ReaderAt
+	err error
 }
 
-func newChecksumReader(r io.ReaderAt, off int64, n int64) *checksumReader {
-	checksumReader := &checksumReader{r: r, base: off, off: off, limit: off + n}
+func newChecksumReader(r io.ReaderAt) *checksumReader {
+	checksumReader := &checksumReader{r: r}
 	return checksumReader
 }
 
@@ -114,19 +111,13 @@ func (r *checksumReader) readErr() error {
 	return err
 }
 
-// Read implements the io.Reader interface.
-func (r *checksumReader) Read(p []byte) (nn int, err error) {
-	if r.off >= r.limit {
-		return 0, io.EOF
-	}
+// Read implements the io.ReadAt interface.
+func (r *checksumReader) ReadAt(p []byte, off int64) (nn int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	if maxPayload := r.limit - r.off; int64(len(p)) > maxPayload {
-		p = p[0:maxPayload]
-	}
-	offsetInPayload := r.off % checksumPayloadSize
-	cursor := r.off / checksumPayloadSize * checksumBlockSize
+	offsetInPayload := off % checksumPayloadSize
+	cursor := off / checksumPayloadSize * checksumBlockSize
 
 	buf := checksumReaderBufPool.Get().([]byte)
 	defer checksumReaderBufPool.Put(buf)
@@ -148,7 +139,6 @@ func (r *checksumReader) Read(p []byte) (nn int, err error) {
 		}
 		n1 := copy(p, buf[checksumSize+offsetInPayload:n])
 		nn += n1
-		r.off += int64(n1)
 		p = p[n1:]
 		offsetInPayload = 0
 	}
