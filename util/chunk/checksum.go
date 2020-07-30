@@ -100,11 +100,18 @@ type checksumReader struct {
 	base  int64
 	off   int64
 	limit int64
+	err   error
 }
 
 func newChecksumReader(r io.ReaderAt, off int64, n int64) *checksumReader {
-	checksumReader := &checksumReader{r, off, off, off + n}
+	checksumReader := &checksumReader{r: r, base: off, off: off, limit: off + n}
 	return checksumReader
+}
+
+func (r *checksumReader) readErr() error {
+	err := r.err
+	r.err = nil
+	return err
 }
 
 // Read implements the io.Reader interface.
@@ -120,21 +127,18 @@ func (r *checksumReader) Read(p []byte) (nn int, err error) {
 	}
 	offsetInPayload := r.off % checksumPayloadSize
 	cursor := r.off / checksumPayloadSize * checksumBlockSize
-	limitChecksumBlockBase := r.limit / checksumPayloadSize * checksumBlockSize
-	limit := r.limit%checksumPayloadSize + limitChecksumBlockBase + checksumSize
 
 	buf := checksumReaderBufPool.Get().([]byte)
 	defer checksumReaderBufPool.Put(buf)
 
 	var n int
-	for len(p) > 0 {
-		max := int64(checksumBlockSize)
-		if max > limit-cursor {
-			max = limit - cursor
-		}
-		n, err = r.r.ReadAt(buf[:max], cursor)
-		if err != nil {
-			return nn, err
+	for len(p) > 0 && r.err == nil {
+		n, r.err = r.r.ReadAt(buf, cursor)
+		if r.err != nil {
+			if n == 0 {
+				return nn, r.readErr()
+			}
+			// continue if n > 0
 		}
 		cursor += int64(n)
 		originChecksum := binary.LittleEndian.Uint32(buf)
@@ -148,5 +152,5 @@ func (r *checksumReader) Read(p []byte) (nn int, err error) {
 		p = p[n1:]
 		offsetInPayload = 0
 	}
-	return
+	return nn, r.readErr()
 }
