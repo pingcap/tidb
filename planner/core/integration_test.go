@@ -695,6 +695,7 @@ func (s *testIntegrationSuite) TestPartitionPruningForInExpr(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(11), b int) partition by range (a) (partition p0 values less than (4), partition p1 values less than(10), partition p2 values less than maxvalue);")
 	tk.MustExec("insert into t values (1, 1),(10, 10),(11, 11)")
+	tk.MustExec("set @try_new_partition_implementation = 1")
 
 	var input []string
 	var output []struct {
@@ -1443,4 +1444,31 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
 	checkExplain("Get")
 	res = tk.MustQuery("explain analyze select * from t where a in (1,2,3);")
 	checkExplain("BatchGet")
+}
+
+func (s *testIntegrationSuite) TestPartitionExplain(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (id int, c int, key i_id(id), key i_c(c)) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10))`)
+
+	tk.MustExec("set @try_new_partition_implementation = 1;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+	}
+
+	tk.MustExec("set @try_new_partition_implementation = null;")
 }
