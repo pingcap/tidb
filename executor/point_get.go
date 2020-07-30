@@ -91,7 +91,7 @@ type PointGetExecutor struct {
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
 func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan, startTs uint64) {
-	decoder := newRowDecoder(e.ctx, p.Schema(), p.TblInfo)
+	decoder := NewRowDecoder(e.ctx, p.Schema(), p.TblInfo)
 	e.tblInfo = p.TblInfo
 	e.handle = p.Handle
 	e.idxInfo = p.IndexInfo
@@ -240,7 +240,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	err = decodeRowValToChunk(e.base(), e.tblInfo, e.handle, val, req, e.rowDecoder)
+	err = DecodeRowValToChunk(e.base().ctx, e.schema, e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {
 		return err
 	}
@@ -365,17 +365,20 @@ func EncodeUniqueIndexKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxI
 	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
 }
 
-func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
+// DecodeRowValToChunk decodes row value into chunk checking row format used.
+func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
+	handle kv.Handle, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
 	if rowcodec.IsNewFormat(rowVal) {
 		return rd.DecodeToChunk(rowVal, handle, chk)
 	}
-	return decodeOldRowValToChunk(e, tblInfo, handle, rowVal, chk)
+	return decodeOldRowValToChunk(sctx, schema, tblInfo, handle, rowVal, chk)
 }
 
-func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv.Handle, rowVal []byte, chk *chunk.Chunk) error {
+func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo, handle kv.Handle,
+	rowVal []byte, chk *chunk.Chunk) error {
 	pkCols := tables.TryGetCommonPkColumnIds(tblInfo)
-	colID2CutPos := make(map[int64]int, e.schema.Len())
-	for _, col := range e.schema.Columns {
+	colID2CutPos := make(map[int64]int, schema.Len())
+	for _, col := range schema.Columns {
 		if _, ok := colID2CutPos[col.ID]; !ok {
 			colID2CutPos[col.ID] = len(colID2CutPos)
 		}
@@ -387,8 +390,8 @@ func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv
 	if cutVals == nil {
 		cutVals = make([][]byte, len(colID2CutPos))
 	}
-	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
-	for i, col := range e.schema.Columns {
+	decoder := codec.NewDecoder(chk, sctx.GetSessionVars().Location())
+	for i, col := range schema.Columns {
 		// fill the virtual column value after row calculation
 		if col.VirtualExpr != nil {
 			chk.AppendNull(i)
@@ -404,7 +407,7 @@ func decodeOldRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle kv
 		cutPos := colID2CutPos[col.ID]
 		if len(cutVals[cutPos]) == 0 {
 			colInfo := getColInfoByID(tblInfo, col.ID)
-			d, err1 := table.GetColOriginDefaultValue(e.ctx, colInfo)
+			d, err1 := table.GetColOriginDefaultValue(sctx, colInfo)
 			if err1 != nil {
 				return err1
 			}
