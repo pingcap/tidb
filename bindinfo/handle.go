@@ -613,7 +613,7 @@ func (h *BindHandle) CaptureBaselines() {
 		oriIsolationRead := h.sctx.GetSessionVars().IsolationReadEngines
 		// TODO: support all engines plan hint in capture baselines.
 		h.sctx.GetSessionVars().IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiKV: {}}
-		hints, err := getHintsForSQL(h.sctx.Context, sqls[i])
+		hints, err := GetHintsForSQL(h.sctx.Context, sqls[i])
 		h.sctx.GetSessionVars().IsolationReadEngines = oriIsolationRead
 		h.sctx.Unlock()
 		if err != nil {
@@ -640,7 +640,7 @@ func (h *BindHandle) CaptureBaselines() {
 	}
 }
 
-func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
+func GetHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	origVals := sctx.GetSessionVars().UsePlanBaselines
 	sctx.GetSessionVars().UsePlanBaselines = false
 	recordSets, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), fmt.Sprintf("explain format='hint' %s", sql))

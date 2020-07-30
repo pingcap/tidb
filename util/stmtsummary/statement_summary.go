@@ -106,6 +106,7 @@ type stmtSummaryByDigestElement struct {
 	sampleSQL   string
 	prevSQL     string
 	samplePlan  string
+	hints       string
 	indexNames  []string
 	execCount   int64
 	sumErrors   int
@@ -186,6 +187,7 @@ type StmtExecInfo struct {
 	PlanGenerator  func() string
 	PlanDigest     string
 	PlanDigestGen  func() string
+	Hints          string
 	User           string
 	TotalLatency   time.Duration
 	ParseLatency   time.Duration
@@ -572,6 +574,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
 		sampleSQL: formatSQL(sei.OriginalSQL),
+		hints:     sei.Hints,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
@@ -842,6 +845,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssElement.planCacheHits,
 		ssElement.sampleSQL,
 		ssElement.prevSQL,
+		ssElement.hints,
 		ssbd.planDigest,
 		plan,
 	)

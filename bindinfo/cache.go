@@ -119,7 +119,7 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 			continue
 		}
 		if sctx != nil {
-			_, err := getHintsForSQL(sctx, bind.BindSQL)
+			_, err := GetHintsForSQL(sctx, bind.BindSQL)
 			if err != nil {
 				return err
 			}
