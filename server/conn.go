@@ -908,6 +908,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return nil
 	case mysql.ComQuit:
 		return io.EOF
+	case mysql.ComInitDB:
+		if err := cc.useDB(ctx, dataStr); err != nil {
+			return err
+		}
+		return cc.writeOK()
 	case mysql.ComQuery: // Most frequently used command.
 		// For issue 1989
 		// Input payload may end with byte '\0', we didn't find related mysql document about it, but mysql
@@ -918,31 +923,38 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			dataStr = string(hack.String(data))
 		}
 		return cc.handleQuery(ctx, dataStr)
-	case mysql.ComPing:
-		return cc.writeOK()
-	case mysql.ComInitDB:
-		if err := cc.useDB(ctx, dataStr); err != nil {
+	case mysql.ComFieldList:
+		return cc.handleFieldList(dataStr)
+	// ComCreateDB, ComDropDB
+	case mysql.ComRefresh:
+		return cc.handleRefresh(ctx, data[0])
+	case mysql.ComShutdown: // redirect to SQL
+		if err := cc.handleQuery(ctx, "SHUTDOWN"); err != nil {
 			return err
 		}
 		return cc.writeOK()
-	case mysql.ComFieldList:
-		return cc.handleFieldList(dataStr)
+	// ComStatistics, ComProcessInfo, ComConnect, ComProcessKill, ComDebug
+	case mysql.ComPing:
+		return cc.writeOK()
+	// ComTime, ComDelayedInsert
+	case mysql.ComChangeUser:
+		return cc.handleChangeUser(ctx, data)
+	// ComBinlogDump, ComTableDump, ComConnectOut, ComRegisterSlave
 	case mysql.ComStmtPrepare:
 		return cc.handleStmtPrepare(dataStr)
 	case mysql.ComStmtExecute:
 		return cc.handleStmtExecute(ctx, data)
-	case mysql.ComStmtFetch:
-		return cc.handleStmtFetch(ctx, data)
-	case mysql.ComStmtClose:
-		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
 		return cc.handleStmtSendLongData(data)
+	case mysql.ComStmtClose:
+		return cc.handleStmtClose(data)
 	case mysql.ComStmtReset:
 		return cc.handleStmtReset(data)
 	case mysql.ComSetOption:
 		return cc.handleSetOption(data)
-	case mysql.ComChangeUser:
-		return cc.handleChangeUser(ctx, data)
+	case mysql.ComStmtFetch:
+		return cc.handleStmtFetch(ctx, data)
+	// ComDaemon, ComBinlogDumpGtid, ComResetConnection, ComEnd
 	default:
 		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", cmd)
 	}
@@ -1782,6 +1794,18 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 		return err
 	}
 
+	return cc.writeOK()
+}
+
+func (cc *clientConn) handleRefresh(ctx context.Context, subCommand byte) error {
+	// Refresh is a deprecated RPC which contains a "sub command" of
+	// FLUSH LOGS, FLUSH STATUS etc. Most of these are safe to noop.
+	// The only subcommand that is unsafe to ignore is 0x01 FLUSH PRIVILEGES
+	if subCommand == 0x01 {
+		if err := cc.handleQuery(ctx, "FLUSH PRIVILEGES"); err != nil {
+			return err
+		}
+	}
 	return cc.writeOK()
 }
 
