@@ -291,7 +291,8 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	}()
 	// latches disabled
 	// pessimistic transaction should also bypass latch.
-	if txn.store.txnLatches == nil || txn.IsPessimistic() {
+	// NOTE: latches is force disabled.
+	if true || txn.store.txnLatches == nil || txn.IsPessimistic() {
 		err = committer.execute(ctx)
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
