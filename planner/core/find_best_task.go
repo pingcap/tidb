@@ -763,8 +763,9 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	cop := &copTask{
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
-		pruningConds:      ds.allConds,
 	}
+	cop.partitionTable.pruningConds = ds.allConds
+	cop.partitionTable.partitionNames = ds.partitionNames
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
 		var partialCost, rowCount float64
@@ -955,11 +956,12 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 	path := candidate.path
 	is, cost, _ := ds.getOriginalPhysicalIndexScan(prop, path, candidate.isMatchProp, candidate.isSingleScan)
 	cop := &copTask{
-		indexPlan:    is,
-		tblColHists:  ds.TblColHists,
-		tblCols:      ds.TblCols,
-		pruningConds: ds.allConds,
+		indexPlan:   is,
+		tblColHists: ds.TblColHists,
+		tblCols:     ds.TblCols,
 	}
+	cop.partitionTable.pruningConds = ds.allConds
+	cop.partitionTable.partitionNames = ds.partitionNames
 	if !candidate.isSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
@@ -1357,8 +1359,9 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 		cst:               cost,
-		pruningConds:      ds.allConds,
 	}
+	copTask.partitionTable.pruningConds = ds.allConds
+	copTask.partitionTable.partitionNames = ds.partitionNames
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
@@ -1385,13 +1388,14 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	}
 
 	pointGetPlan := PointGetPlan{
-		ctx:          ds.ctx,
-		schema:       ds.schema.Clone(),
-		dbName:       ds.DBName.L,
-		TblInfo:      ds.TableInfo(),
-		outputNames:  ds.OutputNames(),
-		LockWaitTime: ds.ctx.GetSessionVars().LockWaitTimeout,
-		Columns:      ds.Columns,
+		ctx:              ds.ctx,
+		AccessConditions: candidate.path.AccessConds,
+		schema:           ds.schema.Clone(),
+		dbName:           ds.DBName.L,
+		TblInfo:          ds.TableInfo(),
+		outputNames:      ds.OutputNames(),
+		LockWaitTime:     ds.ctx.GetSessionVars().LockWaitTimeout,
+		Columns:          ds.Columns,
 	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(1.0), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {
@@ -1426,6 +1430,8 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		}
 	} else {
 		pointGetPlan.IndexInfo = candidate.path.Index
+		pointGetPlan.IdxCols = candidate.path.IdxCols
+		pointGetPlan.IdxColLens = candidate.path.IdxColLens
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		pointGetPlan.PartitionInfo = partitionInfo
 		if candidate.isSingleScan {
@@ -1459,10 +1465,11 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	}
 
 	batchPointGetPlan := BatchPointGetPlan{
-		ctx:       ds.ctx,
-		TblInfo:   ds.TableInfo(),
-		KeepOrder: !prop.IsEmpty(),
-		Columns:   ds.Columns,
+		ctx:              ds.ctx,
+		AccessConditions: candidate.path.AccessConds,
+		TblInfo:          ds.TableInfo(),
+		KeepOrder:        !prop.IsEmpty(),
+		Columns:          ds.Columns,
 	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(float64(len(candidate.path.Ranges))), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.Items[0].Desc
@@ -1486,6 +1493,8 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		}
 	} else {
 		batchPointGetPlan.IndexInfo = candidate.path.Index
+		batchPointGetPlan.IdxCols = candidate.path.IdxCols
+		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}

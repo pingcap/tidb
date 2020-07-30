@@ -62,6 +62,14 @@ type RegionRequestSender struct {
 	storeAddr    string
 	rpcError     error
 	failStoreIDs map[uint64]struct{}
+	stats        map[tikvrpc.CmdType]*RegionRequestRuntimeStats
+}
+
+// RegionRequestRuntimeStats records the runtime stats of send region requests.
+type RegionRequestRuntimeStats struct {
+	count int64
+	// Send region request consume time.
+	consume int64
 }
 
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
@@ -85,6 +93,11 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
 	}
+	if ss.stats != nil {
+		defer func(start time.Time) {
+			recordRegionRequestRuntimeStats(ss.stats, req.Type, time.Since(start))
+		}(time.Now())
+	}
 	resp, err = ss.client.SendRequest(ctx, rpcCtx.Addr, req, timout)
 	if err != nil {
 		cancel()
@@ -99,6 +112,19 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	}
 	// We don't need to process region error or lock error. Because TiFlash will retry by itself.
 	return
+}
+
+func recordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*RegionRequestRuntimeStats, cmd tikvrpc.CmdType, d time.Duration) {
+	stat, ok := stats[cmd]
+	if !ok {
+		stats[cmd] = &RegionRequestRuntimeStats{
+			count:   1,
+			consume: int64(d),
+		}
+		return
+	}
+	stat.count++
+	stat.consume += int64(d)
 }
 
 func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
@@ -328,6 +354,13 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		}
 		defer s.releaseStoreToken(rpcCtx.Store)
 	}
+
+	if s.stats != nil {
+		defer func(start time.Time) {
+			recordRegionRequestRuntimeStats(s.stats, req.Type, time.Since(start))
+		}(time.Now())
+	}
+
 	ctx := bo.ctx
 	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		var cancel context.CancelFunc

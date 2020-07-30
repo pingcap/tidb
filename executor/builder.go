@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
@@ -98,9 +97,6 @@ type MockPhysicalPlan interface {
 }
 
 func (b *executorBuilder) build(p plannercore.Plan) Executor {
-	if config.GetGlobalConfig().EnableCollectExecutionInfo && b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
-		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
-	}
 	switch v := p.(type) {
 	case nil:
 		return nil
@@ -2471,7 +2467,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	}
 
 	nextPartition := nextPartitionForTableReader{ret}
-	exec, err := buildPartitionTable(b, ts.Table, v.PruningConds, ret, nextPartition)
+	exec, err := buildPartitionTable(b, ts.Table, v.PartitionTable.PruningConds, v.PartitionTable.PartitionNames, ret, nextPartition)
 	if err != nil {
 		b.err = err
 		return nil
@@ -2479,10 +2475,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	return exec
 }
 
-func buildPartitionTable(b *executorBuilder, tblInfo *model.TableInfo, filter []expression.Expression, e Executor, n nextPartition) (Executor, error) {
+func buildPartitionTable(b *executorBuilder, tblInfo *model.TableInfo, filter []expression.Expression, names []model.CIStr, e Executor, n nextPartition) (Executor, error) {
 	tmp, _ := b.is.TableByID(tblInfo.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.ctx, tbl, filter, nil)
+	partitions, err := partitionPruning(b.ctx, tbl, filter, names)
 	if err != nil {
 		return nil, err
 	}
@@ -2582,7 +2578,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	}
 
 	nextPartition := nextPartitionForIndexReader{exec: ret}
-	exec, err := buildPartitionTable(b, is.Table, v.PruningConds, ret, nextPartition)
+	exec, err := buildPartitionTable(b, is.Table, v.PartitionTable.PruningConds, v.PartitionTable.PartitionNames, ret, nextPartition)
 	if err != nil {
 		b.err = err
 	}
@@ -2718,7 +2714,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	}
 
 	nextPartition := nextPartitionForIndexLookUp{exec: ret}
-	exec, err := buildPartitionTable(b, ts.Table, v.PruningConds, ret, nextPartition)
+	exec, err := buildPartitionTable(b, ts.Table, v.PartitionTable.PruningConds, v.PartitionTable.PartitionNames, ret, nextPartition)
 	if err != nil {
 		b.err = err
 		return nil
@@ -2986,7 +2982,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	nextPartition := nextPartitionForIndexReader{exec: e}
-	ret, err := buildPartitionTable(builder.executorBuilder, tbInfo, nil, e, nextPartition)
+	ret, err := buildPartitionTable(builder.executorBuilder, tbInfo, v.PartitionTable.PruningConds, v.PartitionTable.PartitionNames, e, nextPartition)
 	if err != nil {
 		return nil, err
 	}
@@ -3016,7 +3012,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		return nil, err
 	}
 	nextPartition := nextPartitionForIndexLookUp{exec: e}
-	ret, err := buildPartitionTable(builder.executorBuilder, tbInfo, v.PruningConds, e, nextPartition)
+	ret, err := buildPartitionTable(builder.executorBuilder, tbInfo, v.PartitionTable.PruningConds, v.PartitionTable.PartitionNames, e, nextPartition)
 	if err != nil {
 		return nil, err
 	}
@@ -3289,7 +3285,8 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) Executor 
 	return e
 }
 
-func newRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
+// NewRowDecoder creates a chunk decoder for new row format row value decode.
+func NewRowDecoder(ctx sessionctx.Context, schema *expression.Schema, tbl *model.TableInfo) *rowcodec.ChunkDecoder {
 	getColInfoByID := func(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 		for _, col := range tbl.Columns {
 			if col.ID == colID {
@@ -3346,7 +3343,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		b.err = err
 		return nil
 	}
-	decoder := newRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
+	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
 		baseExecutor: newBaseExecutor(b.ctx, plan.Schema(), plan.ExplainID()),
 		tblInfo:      plan.TblInfo,
