@@ -37,6 +37,7 @@ import (
 type testBypassSuite struct{}
 
 func (s *testBypassSuite) SetUpSuite(c *C) {
+	c.Skip("local latch is force disabled")
 }
 
 func (s *testSuite4) TestInsert(c *C) {
