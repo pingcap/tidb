@@ -1459,5 +1459,19 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 	c.Assert(err, NotNil)
 	tk2.MustQuery("select b from ta").Check(testkit.Rows("a"))
 
+	// Change default value with add index. There is a new MultipleKeyFlag flag on the index key, and the column is changed,
+	// the flag check will fail.
+	tk2.MustExec("insert into ta values()")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into ta(b) values('inserted_value')")
+	tk.MustExec("insert into ta values()")
+	tk.MustExec("insert into ta values()")
+	tk2.MustExec("alter table ta add index i1(b)")
+	tk2.MustExec("alter table ta change column b b varchar(301) default 'newest'")
+	tk2.MustExec("alter table ta modify column b varchar(301) default 'new'")
+	c.Assert(tk.ExecToErr("commit"), NotNil)
+	tk2.MustExec("admin check table ta")
+	tk2.MustQuery("select count(b) from ta use index(i1) where b = 'new'").Check(testkit.Rows("1"))
+
 	tk2.MustExec("drop database if exists test_db")
 }

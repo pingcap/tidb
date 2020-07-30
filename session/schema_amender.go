@@ -14,6 +14,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -178,6 +179,10 @@ func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnI
 		return errors.Trace(errors.Errorf("default value is not matched for column=%v, from=%v to=%v",
 			colAtCommit.Name.String(), colAtStart.DefaultValue, colAtCommit.DefaultValue))
 	}
+	if !bytes.Equal(colAtStart.DefaultValueBit, colAtCommit.DefaultValueBit) {
+		return errors.Trace(errors.Errorf("default value bits is not matched for column=%v, from=%v to=%v",
+			colAtCommit.Name.String(), colAtStart.DefaultValueBit, colAtCommit.DefaultValueBit))
+	}
 	return nil
 }
 
@@ -259,6 +264,12 @@ func (a *amendCollector) collectTblAmendOps(sctx sessionctx.Context, phyTblID in
 	if _, ok := a.tblAmendOpMap[phyTblID]; !ok {
 		a.tblAmendOpMap[phyTblID] = make([]amendOp, 0, 4)
 	}
+	if needCollectModifyColOps(actionType) {
+		_, err := a.collectModifyColAmendOps(tblInfoAtStart, tblInfoAtCommit)
+		if err != nil {
+			return err
+		}
+	}
 	if needCollectIndexOps(actionType) {
 		// TODO: currently only "add index" is considered.
 		ops, err := a.collectIndexAmendOps(sctx, tblInfoAtStart, tblInfoAtCommit)
@@ -266,12 +277,6 @@ func (a *amendCollector) collectTblAmendOps(sctx sessionctx.Context, phyTblID in
 			return err
 		}
 		a.tblAmendOpMap[phyTblID] = append(a.tblAmendOpMap[phyTblID], ops...)
-	}
-	if needCollectModifyColOps(actionType) {
-		_, err := a.collectModifyColAmendOps(tblInfoAtStart, tblInfoAtCommit)
-		if err != nil {
-			return err
-		}
 	}
 	return nil
 }
