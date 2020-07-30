@@ -87,14 +87,15 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.concurrency = 1
 	}
 	it.sendRate = newRateLimit(it.concurrency)
-	if !it.req.KeepOrder {
-		it.collector = &copResponseCollector{
-			respChan: make(chan *copResponse, it.concurrency),
-			tasks:    it.tasks,
-			sendRate: it.sendRate,
-			finishCh: it.finishCh,
-		}
+	it.collector = &copResponseCollector{
+		respChan:  make(chan *copResponse, it.concurrency),
+		tasks:     it.tasks,
+		sendRate:  it.sendRate,
+		finishCh:  it.finishCh,
+		keepOrder: it.req.KeepOrder,
+		curr:      0,
 	}
+
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	}
@@ -624,35 +625,10 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
-	// If data order matters, response should be returned in the same order as copTask slice.
-	// Otherwise all responses are returned from a single channel.
-	if it.collector != nil {
-		// Get next fetched resp from chan
-		resp, ok, closed = it.recvFromRespCh(ctx, it.collector.respChan)
-		if !ok || closed {
-			return nil, nil
-		}
 
-	} else {
-		for {
-			if it.curr >= len(it.tasks) {
-				// Resp will be nil if iterator is finishCh.
-				return nil, nil
-			}
-			task := it.tasks[it.curr]
-			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
-			if closed {
-				// Close() is already called, so Next() is invalid.
-				return nil, nil
-			}
-			if ok {
-				break
-			}
-			// Switch to next task.
-			it.tasks[it.curr] = nil
-			it.curr++
-			it.sendRate.putToken()
-		}
+	resp, ok, closed = it.recvFromRespCh(ctx, it.collector.respChan)
+	if !ok || closed {
+		return nil, nil
 	}
 
 	if resp.err != nil {
@@ -1175,43 +1151,71 @@ type copResponseCollector struct {
 	tasks    []*copTask
 	sendRate *rateLimit
 	finishCh <-chan struct{}
+
+	keepOrder bool
+	curr      int
 }
 
 func (c *copResponseCollector) run() {
-	finishedTask := make(map[int]struct{}, len(c.tasks))
-	for {
-		select {
-		case <-c.finishCh:
-			close(c.respChan)
-			return
-		default:
-		}
-
-		// fetch response from tasks, it the task have finished, we will directly skip this task
-		for id, task := range c.tasks {
-			if _, ok := finishedTask[id]; ok {
-				continue
+	if !c.keepOrder {
+		finishedTask := make(map[int]struct{}, len(c.tasks))
+		for {
+			select {
+			case <-c.finishCh:
+				close(c.respChan)
+				return
+			default:
 			}
+			if len(finishedTask) >= len(c.tasks) {
+				close(c.respChan)
+				return
+			}
+			// fetch response from tasks, it the task have finished, we will directly skip this task
+			for id, task := range c.tasks {
+				if _, ok := finishedTask[id]; ok {
+					continue
+				}
+				select {
+				case resp, ok := <-task.respChan:
+					if ok {
+						c.respChan <- resp
+					} else {
+						// if the task have been finished, record the task id.
+						finishedTask[id] = struct{}{}
+						c.sendRate.putToken()
+					}
+					break
+				default:
+					continue
+				}
+			}
+		}
+	} else {
+		for {
+			select {
+			case <-c.finishCh:
+				close(c.respChan)
+				return
+			default:
+			}
+			if c.curr >= len(c.tasks) {
+				// Resp will be nil if iterator is finishCh.
+				close(c.respChan)
+				return
+			}
+			task := c.tasks[c.curr]
 			select {
 			case resp, ok := <-task.respChan:
 				if ok {
 					c.respChan <- resp
 				} else {
-					// if the task have been finished, record the task id.
-					finishedTask[id] = struct{}{}
-					if len(finishedTask) < len(c.tasks) {
-						// putToken when a task finished.
-						c.sendRate.putToken()
-					}
+					c.tasks[c.curr] = nil
+					c.curr++
+					c.sendRate.putToken()
 				}
-				break
 			default:
 				continue
 			}
-		}
-		if len(finishedTask) >= len(c.tasks) {
-			close(c.respChan)
-			return
 		}
 	}
 }
