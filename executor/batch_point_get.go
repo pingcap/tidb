@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -62,6 +63,9 @@ type BatchPointGetExec struct {
 
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
+
+	snapshot kv.Snapshot
+	stats    *pointGetRuntimeStats
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -98,6 +102,15 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			return err
 		}
 	}
+	if e.runtimeStats != nil {
+		snapshotStats := &tikv.SnapshotRuntimeStats{}
+		e.stats = &pointGetRuntimeStats{
+			BasicRuntimeStats:    e.runtimeStats,
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
+	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
@@ -106,12 +119,16 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	if txn.Valid() {
 		batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
 	}
+	e.snapshot = snapshot
 	e.batchGetter = batchGetter
 	return nil
 }
 
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
+	if e.runtimeStats != nil && e.snapshot != nil {
+		e.snapshot.DelOption(kv.CollectRuntimeStats)
+	}
 	return nil
 }
 
