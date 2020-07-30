@@ -16,7 +16,6 @@ package core_test
 import (
 	"bytes"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
-	_ "net/http/pprof"
 )
 
 var _ = Suite(&testPlanNormalize{})
@@ -290,9 +288,6 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 }
 
 func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
-	go func() {
-		http.ListenAndServe("localhost:6060", nil)
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -317,12 +312,8 @@ func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
 	c.Assert(ok, IsTrue)
 	start := time.Now()
 	encodedPlanStr := core.EncodePlan(p)
-	fmt.Printf("encode: len: %v, cost: %v --\n", len(encodedPlanStr), time.Since(start))
-	//for i := 0; i < 10000; i++ {
 	start = time.Now()
-	decodePlanStr, err := plancodec.DecodePlan(encodedPlanStr)
+	_, err := plancodec.DecodePlan(encodedPlanStr)
 	c.Assert(err, IsNil)
-	//fmt.Println(decodePlanStr)
-	fmt.Printf("decode: len: %v, cost: %v --\n", len(decodePlanStr), time.Since(start))
 	c.Assert(time.Since(start).Seconds(), Less, 1.0)
 }
