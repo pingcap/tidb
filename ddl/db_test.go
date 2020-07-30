@@ -4159,7 +4159,7 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	tk.MustExec("create table t_flash(a int, b int)")
 	_, err = tk.Exec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should less than the total tiflash server count: 0")
+	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
 }
 
 func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {

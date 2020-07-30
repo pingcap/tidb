@@ -3911,13 +3911,13 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 }
 
 func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
-	// Check the tiflash replica count should be less than that of the total tiflash stores.
+	// Check the tiflash replica count should be less than the total tiflash stores.
 	tiflashStoreCnt, err := infoschema.GetTiFlashStoreCount(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if replicaCount > tiflashStoreCnt {
-		return errors.Errorf("the tiflash replica count: %d should less than the total tiflash server count: %d", replicaCount, tiflashStoreCnt)
+		return errors.Errorf("the tiflash replica count: %d should be less than the total tiflash server count: %d", replicaCount, tiflashStoreCnt)
 	}
 	return nil
 }
