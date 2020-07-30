@@ -48,6 +48,8 @@ func (s *testPlanNormalize) SetUpSuite(c *C) {
 
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_normalized_suite")
 	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
 }
 
 func (s *testPlanNormalize) TearDownSuite(c *C) {
@@ -292,8 +294,7 @@ func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a varchar(10) key,b int);")
-	tk.MustExec("set @@tidb_slow_log_threshold=5000")
-	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+	tk.MustExec("set @@tidb_slow_log_threshold=200000")
 
 	// generate SQL
 	buf := bytes.NewBuffer(make([]byte, 0, 1024*1024*4))
@@ -314,5 +315,5 @@ func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
 	start := time.Now()
 	_, err := plancodec.DecodePlan(encodedPlanStr)
 	c.Assert(err, IsNil)
-	c.Assert(time.Since(start).Seconds(), Less, 1.0)
+	c.Assert(time.Since(start).Seconds(), Less, 3.0)
 }
