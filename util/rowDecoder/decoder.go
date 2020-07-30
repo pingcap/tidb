@@ -87,7 +87,7 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 	if err != nil {
 		return nil, err
 	}
-	row, err = tablecodec.DecodeHandleToDatum(handle, rd.pkCols, rd.colTypes, decodeLoc, row)
+	row, err = tablecodec.DecodeHandleToDatumMap(handle, rd.pkCols, rd.colTypes, decodeLoc, row)
 	if err != nil {
 		return nil, err
 	}

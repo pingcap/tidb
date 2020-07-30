@@ -818,7 +818,7 @@ func (e *AnalyzeFastExec) decodeValues(handle kv.Handle, sValue []byte) (values 
 	for _, col := range e.colsInfo {
 		colID2FieldTypes[col.ID] = &col.FieldType
 	}
-	values, err = tablecodec.DecodeRowToDatum(sValue, colID2FieldTypes, loc)
+	values, err = tablecodec.DecodeRowToDatumMap(sValue, colID2FieldTypes, loc)
 	if err != nil || e.handleCols == nil {
 		return values, err
 	}
@@ -829,7 +829,7 @@ func (e *AnalyzeFastExec) decodeValues(handle kv.Handle, sValue []byte) (values 
 		handleColIDs[i] = c.ID
 		colID2FieldTypes[c.ID] = c.RetType
 	}
-	return tablecodec.DecodeHandleToDatum(handle, handleColIDs, colID2FieldTypes, loc, values)
+	return tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, colID2FieldTypes, loc, values)
 }
 
 func (e *AnalyzeFastExec) getValueByInfo(colInfo *model.ColumnInfo, values map[int64]types.Datum) (types.Datum, error) {
@@ -977,6 +977,9 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 	if *err != nil {
 		return
 	}
+	snapshot.SetOption(kv.NotFillCache, true)
+	snapshot.SetOption(kv.IsolationLevel, kv.RC)
+	snapshot.SetOption(kv.Priority, kv.PriorityLow)
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}

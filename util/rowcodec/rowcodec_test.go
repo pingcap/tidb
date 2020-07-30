@@ -125,7 +125,7 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 		mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
 		dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
 		c.Assert(err, IsNil)
-		dm, err = tablecodec.DecodeHandleToDatum(kv.IntHandle(handleValue),
+		dm, err = tablecodec.DecodeHandleToDatumMap(kv.IntHandle(handleValue),
 			[]int64{handleID}, handleColFtMap, sc.TimeZone, dm)
 		c.Assert(err, IsNil)
 		for _, t := range testData {

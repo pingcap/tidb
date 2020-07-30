@@ -426,18 +426,18 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 	return row, nil
 }
 
-// DecodeRowToDatum decodes a byte slice into datums.
+// DecodeRowToDatumMap decodes a byte slice into datums.
 // Row layout: colID1, value1, colID2, value2, .....
 // Default value columns, generated columns and handle columns are unprocessed.
-func DecodeRowToDatum(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
+func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
 	if !rowcodec.IsNewFormat(b) {
 		return DecodeRowWithMap(b, cols, loc, nil)
 	}
 	return DecodeRowWithMapNew(b, cols, loc, nil)
 }
 
-// DecodeHandleToDatum decodes a handle into datums.
-func DecodeHandleToDatum(handle kv.Handle, handleColIDs []int64,
+// DecodeHandleToDatumMap decodes a handle into datums.
+func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if handle == nil || len(handleColIDs) == 0 {
 		return row, nil

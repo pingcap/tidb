@@ -53,6 +53,7 @@ var (
 type tikvSnapshot struct {
 	store           *tikvStore
 	version         kv.Version
+	isolationLevel  kv.IsoLevel
 	priority        pb.CommandPri
 	notFillCache    bool
 	syncLog         bool
@@ -456,6 +457,8 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 		s.stats = val.(*SnapshotRuntimeStats)
 	case kv.SampleStep:
 		s.sampleStep = val.(uint32)
+	case kv.IsolationLevel:
+		s.isolationLevel = val.(kv.IsoLevel)
 	}
 }
 

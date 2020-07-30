@@ -185,8 +185,10 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				reqStartKey = loc.StartKey
 			}
 		}
-
 		sreq := &pb.ScanRequest{
+			Context: &pb.Context{
+				IsolationLevel: pbIsolationLevel(s.snapshot.isolationLevel),
+			},
 			StartKey:   s.nextStartKey,
 			EndKey:     reqEndKey,
 			Limit:      uint32(s.batchSize),
