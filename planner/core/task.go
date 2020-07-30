@@ -69,6 +69,8 @@ type copTask struct {
 	// rootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
 	rootTaskConds []expression.Expression
+	// For table partition.
+	pruningConds []expression.Expression
 }
 
 func (t *copTask) invalid() bool {
@@ -653,6 +655,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		indexPlan:        t.indexPlan,
 		ExtraHandleCol:   t.extraHandleCol,
 		CommonHandleCols: t.commonHandleCols,
+		PruningConds:     t.pruningConds,
 	}.Init(ctx, t.tablePlan.SelectBlockOffset())
 	setTableScanToTableRowIDScan(p.tablePlan)
 	p.stats = t.tablePlan.statsInfo()
@@ -726,7 +729,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	if t.indexPlan != nil && t.tablePlan != nil {
 		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
-		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
+		p := PhysicalIndexReader{indexPlan: t.indexPlan, PruningConds: t.pruningConds}.Init(ctx, t.indexPlan.SelectBlockOffset())
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
@@ -744,6 +747,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			tablePlan:      t.tablePlan,
 			StoreType:      ts.StoreType,
 			IsCommonHandle: ts.Table.IsCommonHandle,
+			PruningConds:   t.pruningConds,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
