@@ -253,7 +253,7 @@ func (s *testEvaluatorSuite) TestCastXXX(c *C) {
 
 	// cast(bad_string as decimal)
 	for _, s := range []string{"hello", ""} {
-		f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum(s), RetType: types.NewFieldType(mysql.TypeDecimal)}, tp)
+		f = BuildCastFunction(ctx, &Constant{Value: types.NewDatum(s), RetType: types.NewFieldType(mysql.TypeNewDecimal)}, tp)
 		res, err = f.Eval(chunk.Row{})
 		c.Assert(err, IsNil)
 	}
