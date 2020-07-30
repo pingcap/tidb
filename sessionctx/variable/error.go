@@ -14,7 +14,7 @@
 package variable
 
 import (
-	"github.com/pingcap/parser/terror"
+	terror "github.com/pingcap/tidb/errno"
 	mysql "github.com/pingcap/tidb/errno"
 )
 

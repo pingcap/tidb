@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	mockpkg "github.com/pingcap/tidb/util/mock"
+	new_terror "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -574,7 +575,7 @@ func (e *closureExecutor) copyError(err error) error {
 	var ret error
 	x := errors.Cause(err)
 	switch y := x.(type) {
-	case *terror.Error:
+	case *new_terror.Error:
 		ret = terror.ToSQLError(y)
 	default:
 		ret = errors.New(err.Error())

@@ -13,7 +13,11 @@
 
 package errno
 
-import "github.com/pingcap/errors"
+import (
+	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
+)
 
 var (
 	RegDB           = errors.NewRegistry("DB")
@@ -45,3 +49,11 @@ var (
 	ClassPlugin     = RegDB.RegisterErrorClass(26, "plugin")
 	ClassUtil       = RegDB.RegisterErrorClass(27, "util")
 )
+
+
+// Log logs the error if it is not nil.
+func Log(err error) {
+	if err != nil {
+		log.Error("encountered error", zap.Error(errors.WithStack(err)))
+	}
+}

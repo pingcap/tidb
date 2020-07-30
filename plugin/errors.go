@@ -19,11 +19,11 @@ import (
 )
 
 var (
-	errInvalidPluginID         = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginID)
-	errInvalidPluginManifest   = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginManifest)
-	errInvalidPluginName       = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginName)
-	errInvalidPluginVersion    = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginVersion)
-	errDuplicatePlugin         = terror.ClassPlugin.NewStd(errno.ErrDuplicatePlugin)
-	errInvalidPluginSysVarName = terror.ClassPlugin.NewStd(errno.ErrInvalidPluginSysVarName)
-	errRequireVersionCheckFail = terror.ClassPlugin.NewStd(errno.ErrRequireVersionCheckFail)
+	errInvalidPluginID         = terror.ClassPlugin.New(errno.ErrInvalidPluginID, errno.MySQLErrName[errno.ErrInvalidPluginID])
+	errInvalidPluginManifest   = terror.ClassPlugin.New(errno.ErrInvalidPluginManifest, errno.MySQLErrName[errno.ErrInvalidPluginManifest])
+	errInvalidPluginName       = terror.ClassPlugin.New(errno.ErrInvalidPluginName, errno.MySQLErrName[errno.ErrInvalidPluginName])
+	errInvalidPluginVersion    = terror.ClassPlugin.New(errno.ErrInvalidPluginVersion, errno.MySQLErrName[errno.ErrInvalidPluginVersion])
+	errDuplicatePlugin         = terror.ClassPlugin.New(errno.ErrDuplicatePlugin, errno.MySQLErrName[errno.ErrDuplicatePlugin])
+	errInvalidPluginSysVarName = terror.ClassPlugin.New(errno.ErrInvalidPluginSysVarName, errno.MySQLErrName[errno.ErrInvalidPluginSysVarName])
+	errRequireVersionCheckFail = terror.ClassPlugin.New(errno.ErrRequireVersionCheckFail, errno.MySQLErrName[errno.ErrRequireVersionCheckFail])
 )

@@ -17,8 +17,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
+	terror "github.com/pingcap/tidb/errno"
 )
 
 var (
@@ -50,9 +50,9 @@ var (
 
 // Registers error returned from TiKV.
 var (
-	_ = terror.ClassTiKV.NewStd(mysql.ErrDataOutOfRange)
-	_ = terror.ClassTiKV.NewStd(mysql.ErrTruncatedWrongValue)
-	_ = terror.ClassTiKV.NewStd(mysql.ErrDivisionByZero)
+	_ = terror.ClassTiKV.New(mysql.ErrDataOutOfRange, mysql.MySQLErrName[mysql.ErrDataOutOfRange])
+	_ = terror.ClassTiKV.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
+	_ = terror.ClassTiKV.New(mysql.ErrDivisionByZero, mysql.MySQLErrName[mysql.ErrDivisionByZero])
 )
 
 // ErrDeadlock wraps *kvrpcpb.Deadlock to implement the error interface.

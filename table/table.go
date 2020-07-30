@@ -22,8 +22,8 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
+	terror "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
@@ -103,7 +103,7 @@ var (
 	// ErrSequenceHasRunOut returns when sequence has run out.
 	ErrSequenceHasRunOut = terror.ClassTable.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])
 	// ErrRowDoesNotMatchGivenPartitionSet returns when the destination partition conflict with the partition selection.
-	ErrRowDoesNotMatchGivenPartitionSet = terror.ClassTable.NewStd(mysql.ErrRowDoesNotMatchGivenPartitionSet)
+	ErrRowDoesNotMatchGivenPartitionSet = terror.ClassTable.New(mysql.ErrRowDoesNotMatchGivenPartitionSet, mysql.MySQLErrName[mysql.ErrRowDoesNotMatchGivenPartitionSet])
 )
 
 // RecordIterFunc is used for low-level record iteration.

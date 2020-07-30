@@ -23,14 +23,16 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
-var supportedHintNameForInsertStmt = map[string]struct{}{}
+var (
+	supportedHintNameForInsertStmt = map[string]struct{}{}
+	errWarnConflictingHint = errno.ClassUtil.New(errno.ErrWarnConflictingHint, errno.MySQLErrName[errno.ErrWarnConflictingHint])
+)
 
 func init() {
 	supportedHintNameForInsertStmt["memory_quota"] = struct{}{}
@@ -105,7 +107,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 				}
 				if duplicatedHint != nil {
 					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
-					err := terror.ClassUtil.New(errno.ErrWarnConflictingHint, fmt.Sprintf(errno.MySQLErrName[errno.ErrWarnConflictingHint], hint))
+					err := errWarnConflictingHint.FastGen(fmt.Sprintf(errno.MySQLErrName[errno.ErrWarnConflictingHint], hint))
 					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				}
 			}

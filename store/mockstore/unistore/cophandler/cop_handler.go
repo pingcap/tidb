@@ -316,7 +316,7 @@ func toPBError(err error) *tipb.Error {
 	perr := new(tipb.Error)
 	e := errors.Cause(err)
 	switch y := e.(type) {
-	case *terror.Error:
+	case *errors.Error:
 		tmp := terror.ToSQLError(y)
 		perr.Code = int32(tmp.Code)
 		perr.Msg = tmp.Message

@@ -808,14 +808,14 @@ func toPBError(err error) *tipb.Error {
 	}
 	perr := new(tipb.Error)
 	switch x := err.(type) {
-	case *terror.Error:
+	case *errors.Error:
 		sqlErr := terror.ToSQLError(x)
 		perr.Code = int32(sqlErr.Code)
 		perr.Msg = sqlErr.Message
 	default:
 		e := errors.Cause(err)
 		switch y := e.(type) {
-		case *terror.Error:
+		case *errors.Error:
 			tmp := terror.ToSQLError(y)
 			perr.Code = int32(tmp.Code)
 			perr.Msg = tmp.Message

@@ -1008,16 +1008,16 @@ func (cc *clientConn) writeOkWith(msg string, affectedRows, lastInsertID uint64,
 func (cc *clientConn) writeError(e error) error {
 	var (
 		m  *mysql.SQLError
-		te *terror.Error
+		te *errors.Error
 		ok bool
 	)
 	originErr := errors.Cause(e)
-	if te, ok = originErr.(*terror.Error); ok {
+	if te, ok = originErr.(*errors.Error); ok {
 		m = terror.ToSQLError(te)
 	} else {
 		e := errors.Cause(originErr)
 		switch y := e.(type) {
-		case *terror.Error:
+		case *errors.Error:
 			m = terror.ToSQLError(y)
 		default:
 			m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())

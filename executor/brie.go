@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	pd "github.com/pingcap/pd/v4/client"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 
@@ -362,7 +361,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func handleBRIEError(err error, terror *terror.Error) error {
+func handleBRIEError(err error, terror *errors.Error) error {
 	if err == nil {
 		return nil
 	}
