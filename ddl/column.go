@@ -503,15 +503,6 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	dependentHiddenCols := make([]*model.ColumnInfo, 0)
-	for _, indexInfo := range idxInfos {
-		for _, indexColumn := range indexInfo.Columns {
-			if tblInfo.Columns[indexColumn.Offset].Hidden {
-				dependentHiddenCols = append(dependentHiddenCols, tblInfo.Columns[indexColumn.Offset])
-			}
-		}
-	}
-
 	originalState := colInfo.State
 	switch colInfo.State {
 	case model.StatePublic:
@@ -521,14 +512,6 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if len(idxInfos) > 0 {
 			for _, indexInfo := range idxInfos {
 				indexInfo.State = model.StateWriteOnly
-				if len(dependentHiddenCols) > 0 {
-					firstHiddenOffset := dependentHiddenCols[0].Offset
-					for i := 0; i < len(dependentHiddenCols); i++ {
-						tblInfo.Columns[firstHiddenOffset].State = model.StateWriteOnly
-						// Set this column's offset to the last and reset all following columns' offsets.
-						adjustColumnInfoInDropColumn(tblInfo, firstHiddenOffset)
-					}
-				}
 			}
 		}
 		err = checkDropColumnForStatePublic(tblInfo, colInfo)
@@ -561,19 +544,21 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
+		indexIDs := make([]int64, 0, len(idxInfos))
 		if len(idxInfos) > 0 {
 			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 			for _, idx := range tblInfo.Indices {
-				if notInIdxInfoList(idx.Name.L, idxInfos) {
+				if !indexInfoContains(idx.Name.L, idxInfos) {
 					newIndices = append(newIndices, idx)
 				}
 			}
 			tblInfo.Indices = newIndices
 			for _, indexInfo := range idxInfos {
+				indexIDs = append(indexIDs, indexInfo.ID)
 				dropIndexColumnFlag(tblInfo, indexInfo)
 			}
 		}
-		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1-len(dependentHiddenCols)]
+		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 		if err != nil {
@@ -584,7 +569,9 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 		} else {
+			// We should set related index IDs for job
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
 		}
 	default:
 		err = errInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
@@ -621,7 +608,7 @@ func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.Col
 			err = checkDropIndexOnAutoIncrementColumn(tblInfo, idxInfo)
 			if err != nil {
 				job.State = model.JobStateCancelled
-				return nil, nil, nil, autoid.ErrWrongAutoKey
+				return nil, nil, nil, err
 			}
 		}
 	}
@@ -885,17 +872,17 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 	return false
 }
 
-func isColumnCanNotDropWithIndex(colName string, indices []*model.IndexInfo) bool {
+func isColumnCanDropWithIndex(colName string, indices []*model.IndexInfo) bool {
 	for _, indexInfo := range indices {
 		if indexInfo.Primary || len(indexInfo.Columns) > 1 {
 			for _, col := range indexInfo.Columns {
 				if col.Name.L == colName {
-					return true
+					return false
 				}
 			}
 		}
 	}
-	return false
+	return true
 }
 
 func listIndicesWithColumn(colName string, indices []*model.IndexInfo) []*model.IndexInfo {
@@ -1019,11 +1006,11 @@ func isVirtualGeneratedColumn(col *model.ColumnInfo) bool {
 	return false
 }
 
-func notInIdxInfoList(idxName string, idxInfos []*model.IndexInfo) bool {
+func indexInfoContains(idxName string, idxInfos []*model.IndexInfo) bool {
 	for _, idxInfo := range idxInfos {
 		if idxName == idxInfo.Name.L {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }

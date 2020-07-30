@@ -2329,13 +2329,44 @@ func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 	tk.MustQuery(query).Check(testkit.Rows("idx NO"))
 }
 
-/*
-func (s *testIntegrationSuite5) TestDropColumnWithIndex(c *C) {
+func (s *testIntegrationSuite5) TestDropColumnWithCompositeIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
-	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")
-	tk.MustExec("create index idx on t_drop_column_with_idx(b, c)")
-	tk.MustGetErrMsg("alter table t_drop_column_with_idx drop column b", "[ddl:8200]can't drop column b with index covered now")
-	tk.MustExec("drop table if exists t_drop_column_with_idx")
+	tk.MustExec("create table t_drop_column_with_comp_idx(a int, b int, c int)")
+	tk.MustExec("create index idx on t_drop_column_with_comp_idx(b, c)")
+	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
+	tk.MustExec("drop table if exists t_drop_column_with_comp_idx")
 }
-*/
+
+func (s *testIntegrationSuite5) TestDropColumnWithIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	query1 := "select * from mysql.gc_delete_range;"
+	query2 := "select * from mysql.gc_delete_range_done;"
+	beforeDeleteRanges := len(tk.MustQuery(query1).Rows())
+	beforeDeleteRanges += len(tk.MustQuery(query2).Rows())
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")
+	tk.MustExec("create index idx on t_drop_column_with_idx(b)")
+	tk.MustExec("alter table t_drop_column_with_idx drop column b")
+	afterDeleteRanges := len(tk.MustQuery(query1).Rows())
+	afterDeleteRanges += len(tk.MustQuery(query2).Rows())
+	tk.MustExec("drop table if exists t_drop_column_with_idx")
+	c.Assert(afterDeleteRanges-beforeDeleteRanges, Equals, 1)
+}
+
+func (s *testIntegrationSuite5) TestDropColumnWithMultiIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	query1 := "select * from mysql.gc_delete_range;"
+	query2 := "select * from mysql.gc_delete_range_done;"
+	beforeDeleteRanges := len(tk.MustQuery(query1).Rows())
+	beforeDeleteRanges += len(tk.MustQuery(query2).Rows())
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")
+	tk.MustExec("create index idx_1 on t_drop_column_with_idx(b)")
+	tk.MustExec("create index idx_2 on t_drop_column_with_idx(b)")
+	tk.MustExec("alter table t_drop_column_with_idx drop column b")
+	afterDeleteRanges := len(tk.MustQuery(query1).Rows())
+	afterDeleteRanges += len(tk.MustQuery(query2).Rows())
+	tk.MustExec("drop table if exists t_drop_column_with_idx")
+	c.Assert(afterDeleteRanges-beforeDeleteRanges, Equals, 2)
+}

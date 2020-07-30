@@ -4675,8 +4675,8 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 	}
 	// We don't support dropping column with index covered now.
 	// We must drop the index first, then drop the column.
-	if isColumnCanNotDropWithIndex(colName.L, tblInfo.Indices) {
-		return errCantDropColWithIndex.GenWithStack("can't drop column %s with index covered now", colName)
+	if !isColumnCanDropWithIndex(colName.L, tblInfo.Indices) {
+		return errCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
 	}
 	// Check the column with foreign key.
 	if fkInfo := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
