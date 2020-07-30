@@ -87,7 +87,7 @@ func (eqh *Handle) Run() {
 			instanceStats := &runtime.MemStats{}
 			runtime.ReadMemStats(instanceStats)
 			instanceMem := instanceStats.HeapAlloc
-			if err1 != nil && instanceMem > systemMem/10*8 {
+			if err1 == nil && instanceMem > systemMem/10*8 {
 				// At least ten seconds between two recordings that memory usage is less than threshold (80% system memory).
 				// If the memory is still exceeded, only records once.
 				if time.Since(lastOOMtime) > 10*time.Second {
