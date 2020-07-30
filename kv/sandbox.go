@@ -78,7 +78,7 @@ func (sb *sandbox) UpdateFlags(key []byte, flags KeyFlags) {
 
 func (sb *sandbox) PutWithFlags(key []byte, flags KeyFlags, value []byte) {
 	if sb.frozen {
-		panic("cannot write to a sandbox when it has forked a new sanbox")
+		panic("cannot write to a sandbox when it has forked a new sandbox")
 	}
 
 	head := sb.getHead()
@@ -367,7 +367,7 @@ func (sb *sandbox) merge(new *sandbox) int {
 	arena := sb.arena
 
 	if sb.head.nexts[0].isNull() {
-		// current skip-list is empty, overwite head node using the new list's head.
+		// current skip-list is empty, overwrite head node using the new list's head.
 		sb.head = new.head
 		sb.height = new.height
 		sb.length = new.length
