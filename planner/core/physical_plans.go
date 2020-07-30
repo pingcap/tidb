@@ -75,6 +75,8 @@ type PhysicalTableReader struct {
 	StoreType kv.StoreType
 
 	IsCommonHandle bool
+	// Used by partition table.
+	PruningConds []expression.Expression
 }
 
 // GetTablePlan exports the tablePlan.
@@ -159,6 +161,8 @@ type PhysicalIndexReader struct {
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
+	// Used by partition table.
+	PruningConds []expression.Expression
 }
 
 // Clone implements PhysicalPlan interface.
@@ -237,6 +241,8 @@ type PhysicalIndexLookUpReader struct {
 	PushedLimit *PushedDownLimit
 
 	CommonHandleCols []*expression.Column
+	// Used by partition table.
+	PruningConds []expression.Expression
 }
 
 // Clone implements PhysicalPlan interface.
