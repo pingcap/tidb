@@ -557,32 +557,37 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 	row := make([]types.Datum, 0, len(e.insertColumns))
 
 	for i := 0; i < len(e.FieldMappings); i++ {
-		if i >= len(cols) && e.FieldMappings[i].Column != nil {
+		if i >= len(cols) {
+			if e.FieldMappings[i].Column == nil {
+				sessionVars := e.Ctx.GetSessionVars()
+				sessionVars.SetUserVar(e.FieldMappings[i].UserVar.Name, "", mysql.DefaultCollationName)
+				continue
+			}
+
 			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
 			if types.IsTypeTime(e.FieldMappings[i].Column.Tp) && mysql.HasNotNullFlag(e.FieldMappings[i].Column.Flag) {
 				row = append(row, types.NewTimeDatum(types.CurrentTime(e.FieldMappings[i].Column.Tp)))
 				continue
 			}
+
 			row = append(row, types.NewDatum(nil))
 			continue
 		}
 
-		var val types.Datum
+		if e.FieldMappings[i].Column == nil {
+			sessionVars := e.Ctx.GetSessionVars()
+			sessionVars.SetUserVar(e.FieldMappings[i].UserVar.Name, string(cols[i].str), mysql.DefaultCollationName)
+			continue
+		}
+
 		// The field with only "\N" in it is handled as NULL in the csv file.
 		// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
 		if cols[i].maybeNull && string(cols[i].str) == "N" {
-			val = types.NewDatum(nil)
-		} else {
-			val = types.NewDatum(string(cols[i].str))
+			row = append(row, types.NewDatum(nil))
+			continue
 		}
 
-		if e.FieldMappings[i].Column != nil {
-			row = append(row, val)
-		} else {
-			// set input field as user variable
-			sessionVars := e.Ctx.GetSessionVars()
-			sessionVars.SetUserVar(e.ColumnsAndUserVars[i].UserVar.Name, string(cols[i].str), mysql.DefaultCollationName)
-		}
+		row = append(row, types.NewDatum(string(cols[i].str)))
 	}
 	for i := 0; i < len(e.ColumnAssignments); i++ {
 		// eval expression of `SET` clause
