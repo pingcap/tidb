@@ -1073,6 +1073,7 @@ retryScanAndResolve:
 				}
 				continue retryScanAndResolve
 			}
+			break
 		}
 		if len(locks) < gcScanLockLimit {
 			stat.CompletedRegions++
