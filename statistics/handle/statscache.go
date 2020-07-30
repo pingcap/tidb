@@ -1,3 +1,16 @@
+// Copyright 2020 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package handle
 
 import (
@@ -39,9 +52,9 @@ func newstatsCache(maxMemoryLimit int64) *statsCache {
 	return &c
 }
 
-// LookupUnlock get table with id without Lock.
-func (sc *statsCache) LookupUnlock(id int64) (*statistics.Table, bool) {
-	var key statsCacheKey = statsCacheKey(id)
+// lookupUnsafe get table with id without Lock.
+func (sc *statsCache) lookupUnsafe(id int64) (*statistics.Table, bool) {
+	var key = statsCacheKey(id)
 	value, hit := sc.cache.Get(key)
 	if !hit {
 		return nil, false
@@ -54,13 +67,13 @@ func (sc *statsCache) LookupUnlock(id int64) (*statistics.Table, bool) {
 func (sc *statsCache) Lookup(id int64) (*statistics.Table, bool) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	return sc.LookupUnlock(id)
+	return sc.lookupUnsafe(id)
 }
 
 // Insert insert a new table to tables and update the cache.
 // if bytesconsumed is more than capacity, remove oldest cache and add metadata of it
 func (sc *statsCache) Insert(table *statistics.Table) {
-	var key statsCacheKey = statsCacheKey(table.PhysicalID)
+	var key = statsCacheKey(table.PhysicalID)
 	mem := table.MemoryUsage()
 	if mem > sc.memCapacity { // ignore this kv pair if its size is too large
 		return
@@ -81,7 +94,7 @@ func (sc *statsCache) Insert(table *statistics.Table) {
 
 // Erase Erase a stateCache with physical id
 func (sc *statsCache) Erase(deletedID int64) bool {
-	table, hit := sc.LookupUnlock(deletedID)
+	table, hit := sc.lookupUnsafe(deletedID)
 	if !hit {
 		return false
 	}

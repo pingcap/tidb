@@ -261,7 +261,7 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, tables map[int64]*statistics
 	}
 }
 
-func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (uint64, error) {
+func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (lastVersion uint64, err error) {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
@@ -282,7 +282,7 @@ func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (uint64, e
 		}
 		initStatsBuckets4Chunk(h.mu.ctx, tables, iter)
 	}
-	lastVersion := uint64(0)
+	lastVersion = uint64(0)
 	for _, table := range tables {
 		lastVersion = mathutil.MaxUint64(lastVersion, table.Version)
 		for _, idx := range table.Indices {
