@@ -194,6 +194,11 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 			sql2:   "SELECT * from t1 where a!=2 order by c limit 2",
 			isSame: true,
 		},
+		{ // test for union
+			sql1:   "select count(1) as num,a from t1 where a=1 group by a union select count(1) as num,a from t1 where a=3 group by a;",
+			sql2:   "select count(1) as num,a from t1 where a=2 group by a union select count(1) as num,a from t1 where a=4 group by a;",
+			isSame: true,
+		},
 	}
 	for _, testCase := range normalizedDigestCases {
 		testNormalizeDigest(tk, c, testCase.sql1, testCase.sql2, testCase.isSame)
@@ -297,7 +302,7 @@ func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
 
 	// generate SQL
 	buf := bytes.NewBuffer(nil)
-	for i := 0; i < 20000; i++ {
+	for i := 0; i < 50000; i++ {
 		if i > 0 {
 			buf.WriteString(" union ")
 		}
@@ -312,7 +317,12 @@ func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
 	c.Assert(ok, IsTrue)
 	start := time.Now()
 	encodedPlanStr := core.EncodePlan(p)
-	_, err := plancodec.DecodePlan(encodedPlanStr)
+	fmt.Printf("encode: len: %v, cost: %v --\n", len(encodedPlanStr), time.Since(start))
+	//for i := 0; i < 10000; i++ {
+	start = time.Now()
+	decodePlanStr, err := plancodec.DecodePlan(encodedPlanStr)
 	c.Assert(err, IsNil)
+	//fmt.Println(decodePlanStr)
+	fmt.Printf("decode: len: %v, cost: %v --\n", len(decodePlanStr), time.Since(start))
 	c.Assert(time.Since(start).Seconds(), Less, 1.0)
 }
