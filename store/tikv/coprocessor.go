@@ -1295,9 +1295,9 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 	if !e.taskStarted {
 		return
 	}
+	e.workersCond.L.Lock()
+	defer e.workersCond.L.Unlock()
 	e.once.Do(func() {
-		e.workersCond.L.Lock()
-		defer e.workersCond.L.Unlock()
 		if e.tearedTicket >= uint(cap(e.sendRate.token)-1) {
 			if e.fallbackAction != nil {
 				logutil.BgLogger().Info("taskRateLimitAction delegate to fallback action",
