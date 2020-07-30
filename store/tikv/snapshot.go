@@ -75,7 +75,8 @@ type tikvSnapshot struct {
 		hitCnt int64
 		cached map[string][]byte
 	}
-	stats *SnapshotRuntimeStats
+	stats      *SnapshotRuntimeStats
+	sampleStep uint32
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -453,6 +454,8 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 		s.taskID = val.(uint64)
 	case kv.CollectRuntimeStats:
 		s.stats = val.(*SnapshotRuntimeStats)
+	case kv.SampleStep:
+		s.sampleStep = val.(uint32)
 	}
 }
 

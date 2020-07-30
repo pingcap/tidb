@@ -54,6 +54,8 @@ const (
 	CollectRuntimeStats
 	// SchemaAmender is used to amend mutations for pessimistic transactions
 	SchemaAmender
+	// SampleStep skips 'SampleStep - 1' number of keys after each returned key.
+	SampleStep
 )
 
 // Priority value for transaction priority.

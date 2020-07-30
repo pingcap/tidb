@@ -187,11 +187,12 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		}
 
 		sreq := &pb.ScanRequest{
-			StartKey: s.nextStartKey,
-			EndKey:   reqEndKey,
-			Limit:    uint32(s.batchSize),
-			Version:  s.startTS(),
-			KeyOnly:  s.snapshot.keyOnly,
+			StartKey:   s.nextStartKey,
+			EndKey:     reqEndKey,
+			Limit:      uint32(s.batchSize),
+			Version:    s.startTS(),
+			KeyOnly:    s.snapshot.keyOnly,
+			SampleStep: s.snapshot.sampleStep,
 		}
 		if s.reverse {
 			sreq.StartKey = s.nextEndKey

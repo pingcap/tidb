@@ -564,7 +564,6 @@ var (
 	fastAnalyzeHistogramSample        = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "sample")
 	fastAnalyzeHistogramAccessRegions = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "access_regions")
 	fastAnalyzeHistogramRegionError   = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "region_error")
-	fastAnalyzeHistogramSeekKeys      = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "seek_keys")
 	fastAnalyzeHistogramScanKeys      = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "scan_keys")
 )
 
@@ -981,7 +980,6 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	rander := rand.New(rand.NewSource(e.randSeed + int64(workID)))
 
 	for i := workID; i < len(e.sampTasks); i += e.concurrency {
 		task := e.sampTasks[i]
@@ -989,29 +987,21 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 			continue
 		}
 
-		startKey, endKey := task.Location.StartKey, task.Location.EndKey
-		keys := make([]kv.Key, 0, task.SampSize)
-		for i := 0; i < int(task.SampSize); i++ {
-			var randKey kv.Key
-			randKey, *err = randomKeyFromHandles(startKey, endKey, rander)
+		step := uint32((task.EndOffset - task.BeginOffset) / task.SampSize)
+		snapshot.SetOption(kv.SampleStep, step)
+		kvMap := make(map[string][]byte, task.SampSize)
+		var iter kv.Iterator
+		iter, *err = snapshot.Iter(task.Location.StartKey, task.Location.EndKey)
+		if *err != nil {
+			return
+		}
+		for iter.Valid() {
+			kvMap[string(iter.Key())] = iter.Value()
+			*err = iter.Next()
 			if *err != nil {
 				return
 			}
-			keys = append(keys, randKey)
 		}
-
-		kvMap := make(map[string][]byte, len(keys))
-		for _, key := range keys {
-			var iter kv.Iterator
-			iter, *err = snapshot.Iter(key, endKey)
-			if *err != nil {
-				return
-			}
-			if iter.Valid() {
-				kvMap[string(iter.Key())] = iter.Value()
-			}
-		}
-		fastAnalyzeHistogramSeekKeys.Observe(float64(len(keys)))
 		fastAnalyzeHistogramSample.Observe(float64(len(kvMap)))
 
 		*err = e.handleBatchSeekResponse(kvMap)
@@ -1019,34 +1009,6 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 			return
 		}
 	}
-}
-
-func randomKeyFromHandles(start, end kv.Key, rander *rand.Rand) (kv.Key, error) {
-	result := make(kv.Key, 0, len(start))
-	commonPrefixLen := longestCommonPrefixLen(start, end)
-	result = append(result, start[:commonPrefixLen]...)
-	start, end = start[commonPrefixLen:], end[commonPrefixLen:]
-
-	for len(start) > 0 || len(end) > 0 {
-		startLen, endLen := len(start), len(end)
-		for i := startLen; i < 8; i++ {
-			start = append(start, 0)
-		}
-		for i := endLen; i < 8; i++ {
-			end = append(end, 0)
-		}
-		startRemain, lowerInt, err := codec.DecodeInt(start)
-		if err != nil {
-			return nil, err
-		}
-		endRemain, upperInt, err := codec.DecodeInt(end)
-		if err != nil {
-			return nil, err
-		}
-		result = codec.EncodeInt(result, rander.Int63n(upperInt-lowerInt)+lowerInt)
-		start, end = startRemain, endRemain
-	}
-	return result, nil
 }
 
 func (e *AnalyzeFastExec) buildColumnStats(ID int64, collector *statistics.SampleCollector, tp *types.FieldType, rowCount int64) (*statistics.Histogram, *statistics.CMSketch, error) {
