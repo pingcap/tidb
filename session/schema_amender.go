@@ -165,6 +165,9 @@ func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnI
 			return errors.Trace(errors.Errorf("flag is not matched for column=%v, from=%v to=%v",
 				colAtCommit.Name.String(), colAtStart.FieldType.Flag, colAtCommit.FieldType.Flag))
 		}
+		if colAtStart.Charset != colAtCommit.Charset || colAtStart.Collate != colAtCommit.Collate {
+			return errors.Trace(errors.Errorf("charset or collate is not matched for column=%v", colAtCommit.Name.String()))
+		}
 		err := ddl.CheckModifyTypeCompatible(&colAtStart.FieldType, &colAtCommit.FieldType)
 		if err != nil {
 			return errors.Trace(err)
