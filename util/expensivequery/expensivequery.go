@@ -16,6 +16,7 @@ package expensivequery
 import (
 	"fmt"
 	"os"
+	"runtime"
 	rpprof "runtime/pprof"
 	"sort"
 	"strconv"
@@ -83,11 +84,10 @@ func (eqh *Handle) Run() {
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 
-			instanceMem, err2 := memory.MemUsed()
-			if err2 != nil {
-				logutil.BgLogger().Warn("Get instance memory fail.", zap.Error(err2))
-			}
-			if err1 != nil && err2 != nil && instanceMem > systemMem/10*8 {
+			instanceStats := &runtime.MemStats{}
+			runtime.ReadMemStats(instanceStats)
+			instanceMem := instanceStats.HeapAlloc
+			if err1 != nil && instanceMem > systemMem/10*8 {
 				// At least ten seconds between two recordings that memory usage is less than threshold (80% system memory).
 				// If the memory is still exceeded, only records once.
 				if time.Since(lastOOMtime) > 10*time.Second {
