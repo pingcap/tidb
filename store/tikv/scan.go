@@ -187,8 +187,8 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		}
 		sreq := &pb.ScanRequest{
 			Context: &pb.Context{
-				Priority: s.snapshot.priority,
-				NotFillCache: s.snapshot.notFillCache,
+				Priority:       s.snapshot.priority,
+				NotFillCache:   s.snapshot.notFillCache,
 				IsolationLevel: pbIsolationLevel(s.snapshot.isolationLevel),
 			},
 			StartKey:   s.nextStartKey,

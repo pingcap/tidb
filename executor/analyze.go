@@ -608,31 +608,31 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 // AnalyzeFastTask is the task for build stats.
 type AnalyzeFastTask struct {
 	Location    *tikv.KeyLocation
-	SampSize    uint64
 	BeginOffset uint64
 	EndOffset   uint64
 }
 
 // AnalyzeFastExec represents Fast Analyze executor.
 type AnalyzeFastExec struct {
-	ctx             sessionctx.Context
-	physicalTableID int64
-	handleCols      core.HandleCols
-	colsInfo        []*model.ColumnInfo
-	idxsInfo        []*model.IndexInfo
-	concurrency     int
-	opts            map[ast.AnalyzeOptionType]uint64
-	tblInfo         *model.TableInfo
-	cache           *tikv.RegionCache
-	wg              *sync.WaitGroup
-	sampLocs        chan *tikv.KeyLocation
-	rowCount        uint64
-	sampCursor      int32
-	sampTasks       []*AnalyzeFastTask
-	scanTasks       []*tikv.KeyLocation
-	collectors      []*statistics.SampleCollector
-	randSeed        int64
-	job             *statistics.AnalyzeJob
+	ctx              sessionctx.Context
+	physicalTableID  int64
+	handleCols       core.HandleCols
+	colsInfo         []*model.ColumnInfo
+	idxsInfo    []*model.IndexInfo
+	concurrency int
+	opts        map[ast.AnalyzeOptionType]uint64
+	tblInfo     *model.TableInfo
+	cache       *tikv.RegionCache
+	wg          *sync.WaitGroup
+	sampLocs    chan *tikv.KeyLocation
+	rowCount    uint64
+	sampCursor  int32
+	sampTasks   []*AnalyzeFastTask
+	estSampStep uint32 // estimate sample step
+	scanTasks   []*tikv.KeyLocation
+	collectors  []*statistics.SampleCollector
+	randSeed    int64
+	job         *statistics.AnalyzeJob
 }
 
 func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
@@ -909,6 +909,14 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 }
 
 func (e *AnalyzeFastExec) handleBatchSeekResponse(kvMap map[string][]byte) (err error) {
+	redundant := uint64(e.sampCursor + int32(len(kvMap))) - e.opts[ast.AnalyzeOptNumSamples]
+	for k := range kvMap {
+		if redundant == 0 {
+			break
+		}
+		delete(kvMap, k)
+		redundant--
+	}
 	length := int32(len(kvMap))
 	newCursor := atomic.AddInt32(&e.sampCursor, length)
 	samplePos := newCursor - length
@@ -986,13 +994,9 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 
 	for i := workID; i < len(e.sampTasks); i += e.concurrency {
 		task := e.sampTasks[i]
-		if task.SampSize == 0 {
-			continue
-		}
 
-		step := uint32((task.EndOffset - task.BeginOffset) / task.SampSize)
-		snapshot.SetOption(kv.SampleStep, step)
-		kvMap := make(map[string][]byte, task.SampSize)
+		snapshot.SetOption(kv.SampleStep, e.estSampStep)
+		kvMap := make(map[string][]byte)
 		var iter kv.Iterator
 		iter, *err = snapshot.Iter(task.Location.StartKey, task.Location.EndKey)
 		if *err != nil {
@@ -1141,7 +1145,6 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 	} else {
 		e.randSeed = RandSeed
 	}
-	rander := rand.New(rand.NewSource(e.randSeed))
 
 	// Only four rebuilds for sample task are allowed.
 	needRebuild, maxBuildTimes := true, 5
@@ -1160,30 +1163,8 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 	}
 
 	defer e.job.Update(int64(e.rowCount))
-
-	// If total row count of the table is smaller than 2*MaxSampleSize, we
-	// translate all the sample tasks to scan tasks.
-	sampleSize := e.opts[ast.AnalyzeOptNumSamples]
-	if e.rowCount < sampleSize*2 {
-		for _, task := range e.sampTasks {
-			e.scanTasks = append(e.scanTasks, task.Location)
-		}
-		e.sampTasks = e.sampTasks[:0]
-		e.rowCount = 0
-		return e.runTasks()
-	}
-
-	randPos := make([]uint64, 0, sampleSize+1)
-	for i := 0; i < int(sampleSize); i++ {
-		randPos = append(randPos, uint64(rander.Int63n(int64(e.rowCount))))
-	}
-	sort.Slice(randPos, func(i, j int) bool { return randPos[i] < randPos[j] })
-
-	for _, task := range e.sampTasks {
-		begin := sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.BeginOffset })
-		end := sort.Search(len(randPos), func(i int) bool { return randPos[i] >= task.EndOffset })
-		task.SampSize = uint64(end - begin)
-	}
+	totalSampSize := e.opts[ast.AnalyzeOptNumSamples]
+	e.estSampStep = uint32(e.rowCount / totalSampSize)
 	return e.runTasks()
 }
 
