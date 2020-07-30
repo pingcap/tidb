@@ -1431,11 +1431,16 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
 	tk.MustExec("insert into t values (1,1)")
 
 	res := tk.MustQuery("explain analyze select * from t where a=1;")
-	resBuff := bytes.NewBufferString("")
-	for _, row := range res.Rows() {
-		fmt.Fprintf(resBuff, "%s\n", row)
+	checkExplain := func(rpc string) {
+		resBuff := bytes.NewBufferString("")
+		for _, row := range res.Rows() {
+			fmt.Fprintf(resBuff, "%s\n", row)
+		}
+		explain := resBuff.String()
+		c.Assert(strings.Contains(explain, rpc+":{num_rpc:"), IsTrue, Commentf("%s", explain))
+		c.Assert(strings.Contains(explain, "total_time:"), IsTrue, Commentf("%s", explain))
 	}
-	explain := resBuff.String()
-	c.Assert(strings.Contains(explain, "Get:{num_rpc:"), IsTrue, Commentf("%s", explain))
-	c.Assert(strings.Contains(explain, "total_time:"), IsTrue, Commentf("%s", explain))
+	checkExplain("Get")
+	res = tk.MustQuery("explain analyze select * from t where a in (1,2,3);")
+	checkExplain("BatchGet")
 }
