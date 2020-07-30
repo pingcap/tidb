@@ -34,7 +34,7 @@ func (s *testChunkSuite) TestChecksumReadAt(c *check.C) {
 
 	writeString := "0123456789"
 	c.Assert(err, check.IsNil)
-	csw := newChecksumWriter(f)
+	csw := newChecksumWriter(newChecksumWriter(newChecksumWriter(f)))
 	w := bytes.NewBuffer(nil)
 	for i := 0; i < 510; i++ {
 		w.WriteString(writeString)
@@ -50,7 +50,7 @@ func (s *testChunkSuite) TestChecksumReadAt(c *check.C) {
 	c.Assert(err, check.IsNil)
 
 	assertReadAt := func(off int64, assertErr interface{}, assertN int, assertString string) {
-		cs := newChecksumReader(f)
+		cs := newChecksumReader(newChecksumReader(newChecksumReader(f)))
 		r := make([]byte, 10)
 		n, err := cs.ReadAt(r, off)
 		c.Assert(err, check.Equals, assertErr)

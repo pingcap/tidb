@@ -136,7 +136,7 @@ func (r *checksumReader) ReadAt(p []byte, off int64) (nn int, err error) {
 	defer checksumReaderBufPool.Put(buf)
 
 	var n int
-	for len(p) > 0 && r.err == nil {
+	for len(p) > 0 {
 		n, r.err = r.r.ReadAt(buf, cursor)
 		if r.err != nil {
 			if n == 0 {
