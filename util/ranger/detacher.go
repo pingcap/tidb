@@ -355,6 +355,163 @@ type DetachRangeResult struct {
 	IsDNFCond bool
 }
 
+// mergeOffsets will merge offset array src to dest.
+func mergeOffsets(dest []bool, src []bool) {
+	for i, item := range src {
+		if item {
+			dest[i] = true
+		}
+	}
+}
+
+// detachColumnsFromItem checks if the expression is one of GE,GT,LT,LE,EQ and NE function that one side is constant and
+// another is column or an in function which is `column in (constant list)`.
+// If so, it will return the bool array that specifies which columns are related to expr. Otherwise, return nil.
+func detachColumnsFromItem(expr expression.Expression, cols []*expression.Column) []bool {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return nil
+	}
+	offsets := []bool(nil)
+	_, collation := expr.CharsetAndCollation(sf.GetCtx())
+	switch sf.FuncName.L {
+	case ast.LogicAnd:
+		cnfItems := expression.FlattenCNFConditions(sf)
+		for _, item := range cnfItems {
+			currentOffsets := detachColumnsFromItem(item, cols)
+			if currentOffsets == nil {
+				return nil
+			}
+			if offsets == nil {
+				offsets = currentOffsets
+			}
+			mergeOffsets(offsets, currentOffsets)
+		}
+		return offsets
+	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE:
+		if c, ok := sf.GetArgs()[0].(*expression.Column); ok {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+				return nil
+			}
+			if _, ok := sf.GetArgs()[1].(*expression.Constant); ok {
+				for i, col := range cols {
+					if col.Equal(nil, c) {
+						offsets := make([]bool, len(cols))
+						offsets[i] = true
+						return offsets
+					}
+				}
+			}
+		}
+		if c, ok := sf.GetArgs()[1].(*expression.Column); ok {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+				return nil
+			}
+			if _, ok := sf.GetArgs()[0].(*expression.Constant); ok {
+				for i, col := range cols {
+					if col.Equal(nil, c) {
+						offsets := make([]bool, len(cols))
+						offsets[i] = true
+						return offsets
+					}
+				}
+			}
+		}
+	case ast.In:
+		c, ok := sf.GetArgs()[0].(*expression.Column)
+		if !ok {
+			return nil
+		}
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+			return nil
+		}
+		for _, arg := range sf.GetArgs()[1:] {
+			if _, ok := arg.(*expression.Constant); !ok {
+				return nil
+			}
+		}
+		for i, col := range cols {
+			if col.Equal(nil, c) {
+				offsets := make([]bool, len(cols))
+				offsets[i] = true
+				return offsets
+			}
+		}
+	}
+	return nil
+}
+
+// checkOffsets checks the offset array A is the same as B.
+func checkOffsets(offsetA []bool, offsetB []bool) bool {
+	for i, offset := range offsetB {
+		if offsetA[i] != offset {
+			return false
+		}
+	}
+	return true
+}
+
+// checkAndGetDNFItems checks if sf is a logicOr function and all items in sf are related to the same column.
+func checkAndGetDNFItems(sf *expression.ScalarFunction, cols []*expression.Column) []expression.Expression {
+	if sf.FuncName.L != ast.LogicOr {
+		return nil
+	}
+	dnfItems := expression.FlattenDNFConditions(sf)
+	offsets := []bool(nil)
+	for _, item := range dnfItems {
+		currentOffsets := detachColumnsFromItem(item, cols)
+		if currentOffsets == nil {
+			return nil
+		}
+		if offsets == nil {
+			offsets = currentOffsets
+			continue
+		}
+		if checkOffsets(offsets, currentOffsets) {
+			continue
+		}
+		return nil
+	}
+	return dnfItems
+}
+
+// expandDNF will expand one DNF in conditions if this DNF satisfies:
+// 		1. Only contains logicAnd, In, LT, LE, GT, GE, EQ and NE.
+//		2. For In function, it satisfies 'column in (constant list)'.
+// 		3. For LT, LE, GT, GE, EQ and NE functions, they satisfy one side is constant and another is column.
+//		4. All DNF items are related to the same columns.
+// If the expansion is successful, it will return other conditions and all items expanded. Otherwise, return nil, nil.
+//
+// This is to correctly select the composite index in similar example
+//    'select * from t where a = 1 and ((b = 1 and c = 1) or (b = 2 and c = 2))'. (issue/14795)
+func expandDNF(conditions []expression.Expression, cols []*expression.Column) ([]expression.Expression, []expression.Expression) {
+	var resCond []expression.Expression
+	var dnfItems []expression.Expression
+	if conditions == nil {
+		return nil, nil
+	}
+	for _, cond := range conditions {
+		eqOrIn := getEqOrInColOffset(cond, cols)
+		if eqOrIn != -1 {
+			resCond = append(resCond, cond)
+		} else {
+			sf, ok := cond.(*expression.ScalarFunction)
+			if !ok {
+				return nil, nil
+			}
+			if sf.FuncName.L != ast.LogicOr || dnfItems != nil {
+				resCond = append(resCond, cond)
+				continue
+			}
+			dnfItems = checkAndGetDNFItems(sf, cols)
+			if dnfItems == nil {
+				resCond = append(resCond, cond)
+			}
+		}
+	}
+	return resCond, dnfItems
+}
+
 // DetachCondAndBuildRangeForIndex will detach the index filters from table filters.
 // The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
 func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
@@ -363,6 +520,27 @@ func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expre
 	newTpSlice := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
+	}
+	// In order to avoid exponential exploding, only expand once here.
+	if restConditions, dnfItems := expandDNF(conditions, cols); restConditions != nil && dnfItems != nil {
+		var rebuildItems []expression.Expression
+		var newConditions []expression.Expression
+		var rebuildConditions []expression.Expression
+		for _, item := range dnfItems {
+			sf, _ := item.(*expression.ScalarFunction)
+			if sf.FuncName.L == ast.LogicAnd {
+				newConditions = restConditions
+				cnfItems := expression.FlattenCNFConditions(sf)
+				for _, cnfItem := range cnfItems {
+					newConditions = append(newConditions, cnfItem)
+				}
+			} else {
+				newConditions = append(restConditions, item)
+			}
+			rebuildItems = append(rebuildItems, expression.ComposeCNFCondition(sctx, newConditions...))
+		}
+		rebuildConditions = append(rebuildConditions, expression.ComposeDNFCondition(sctx, rebuildItems...))
+		conditions = rebuildConditions
 	}
 	if len(conditions) == 1 {
 		if sf, ok := conditions[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
