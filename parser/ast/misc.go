@@ -1563,6 +1563,109 @@ func (n *DropBindingStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// Extended statistics types.
+const (
+	StatsTypeCardinality uint8 = iota
+	StatsTypeDependency
+	StatsTypeCorrelation
+)
+
+// CreateStatisticsStmt is a statement to create extended statistics.
+// Examples:
+//   CREATE STATISTICS stats1 (cardinality) ON t(a, b, c);
+//   CREATE STATISTICS stats2 (dependency) ON t(a, b);
+//   CREATE STATISTICS stats3 (correlation) ON t(a, b);
+type CreateStatisticsStmt struct {
+	stmtNode
+
+	IfNotExists bool
+	StatsName   string
+	StatsType   uint8
+	Table       *TableName
+	Columns     []*ColumnName
+}
+
+// Restore implements Node interface.
+func (n *CreateStatisticsStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE STATISTICS ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	ctx.WriteName(n.StatsName)
+	switch n.StatsType {
+	case StatsTypeCardinality:
+		ctx.WriteKeyWord(" (cardinality) ")
+	case StatsTypeDependency:
+		ctx.WriteKeyWord(" (dependency) ")
+	case StatsTypeCorrelation:
+		ctx.WriteKeyWord(" (correlation) ")
+	}
+	ctx.WriteKeyWord("ON ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateStatisticsStmt.Table")
+	}
+
+	ctx.WritePlain("(")
+	for i, col := range n.Columns {
+		if i != 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := col.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateStatisticsStmt.Columns: [%v]", i)
+		}
+	}
+	ctx.WritePlain(")")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateStatisticsStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateStatisticsStmt)
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Table = node.(*TableName)
+	for i, col := range n.Columns {
+		node, ok = col.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Columns[i] = node.(*ColumnName)
+	}
+	return v.Leave(n)
+}
+
+// DropStatisticsStmt is a statement to drop extended statistics.
+// Examples:
+//   DROP STATISTICS stats1;
+type DropStatisticsStmt struct {
+	stmtNode
+
+	StatsName string
+}
+
+// Restore implements Node interface.
+func (n *DropStatisticsStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP STATISTICS ")
+	ctx.WriteName(n.StatsName)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DropStatisticsStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropStatisticsStmt)
+	return v.Leave(n)
+}
+
 // DoStmt is the struct for DO statement.
 type DoStmt struct {
 	stmtNode
@@ -1628,6 +1731,7 @@ const (
 	AdminReloadBindings
 	AdminShowTelemetry
 	AdminResetTelemetryID
+	AdminReloadStatistics
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -1840,6 +1944,8 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SHOW TELEMETRY")
 	case AdminResetTelemetryID:
 		ctx.WriteKeyWord("RESET TELEMETRY_ID")
+	case AdminReloadStatistics:
+		ctx.WriteKeyWord("RELOAD STATISTICS")
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
