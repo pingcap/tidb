@@ -67,7 +67,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	if err != nil {
 		return copErrorResponse{err}
 	}
-	workersCond := &sync.Cond{}
+	workersCond := sync.NewCond(&sync.Mutex{})
 	it := &copIterator{
 		store:           c.store,
 		req:             req,
