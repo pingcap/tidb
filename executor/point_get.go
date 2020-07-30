@@ -150,6 +150,28 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+<<<<<<< HEAD
+=======
+	return nil
+}
+
+// Close implements the Executor interface.
+func (e *PointGetExecutor) Close() error {
+	if e.runtimeStats != nil && e.snapshot != nil {
+		e.snapshot.DelOption(kv.CollectRuntimeStats)
+	}
+	return nil
+}
+
+// Next implements the Executor interface.
+func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.done {
+		return nil
+	}
+	e.done = true
+
+>>>>>>> c397584... executor: add runtime information for the batch-point-get executor (#18828)
 	var tblID int64
 	if e.partInfo != nil {
 		tblID = e.partInfo.ID
