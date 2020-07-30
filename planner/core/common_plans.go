@@ -1098,6 +1098,9 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		accessObject = plan.AccessObject()
 		operatorInfo = plan.OperatorInfo(false)
 	} else {
+		if pa, ok := p.(partitionAccesser); ok && e.ctx != nil {
+			accessObject = pa.accessObject(e.ctx)
+		}
 		operatorInfo = p.ExplainInfo()
 	}
 
