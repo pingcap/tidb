@@ -16,7 +16,6 @@ package expensivequery
 import (
 	"fmt"
 	"os"
-	"runtime"
 	rpprof "runtime/pprof"
 	"sort"
 	"strconv"
@@ -28,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/shirou/gopsutil/mem"
+	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -54,9 +53,9 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-	systemMem, err := mem.VirtualMemory()
-	if err != nil {
-		logutil.BgLogger().Warn("Get system memory fail.")
+	systemMem, err1 := memory.MemTotal()
+	if err1 != nil {
+		logutil.BgLogger().Warn("Get system memory fail.", zap.Error(err1))
 	}
 	lastOOMtime := time.Time{}
 	// use 100ms as tickInterval temply, may use given interval or use defined variable later
@@ -84,13 +83,15 @@ func (eqh *Handle) Run() {
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 
-			instanceStats := &runtime.MemStats{}
-			runtime.ReadMemStats(instanceStats)
-			if systemMem != nil && instanceStats.HeapAlloc > systemMem.Total/10*8 {
+			instanceMem, err2 := memory.MemUsed()
+			if err2 != nil {
+				logutil.BgLogger().Warn("Get instance memory fail.", zap.Error(err2))
+			}
+			if err1 != nil && err2 != nil && instanceMem > systemMem/10*8 {
 				// At least ten seconds between two recordings that memory usage is less than threshold (80% system memory).
 				// If the memory is still exceeded, only records once.
 				if time.Since(lastOOMtime) > 10*time.Second {
-					eqh.oomRecord(instanceStats, systemMem)
+					eqh.oomRecord(instanceMem, systemMem)
 				}
 				lastOOMtime = time.Now()
 			}
@@ -100,10 +101,10 @@ func (eqh *Handle) Run() {
 	}
 }
 
-func (eqh *Handle) oomRecord(memUsage *runtime.MemStats, systemMem *mem.VirtualMemoryStat) {
+func (eqh *Handle) oomRecord(memUsage uint64, systemMem uint64) {
 	logutil.BgLogger().Warn("The TiDB instance now takes a lot of memory, has the risk of OOM",
-		zap.Any("memUsage", memUsage.HeapAlloc),
-		zap.Any("systemMemoryTotal", systemMem.Total),
+		zap.Any("memUsage", memUsage),
+		zap.Any("systemMemoryTotal", systemMem),
 	)
 	sm := eqh.sm.Load().(util.SessionManager)
 	processInfo := sm.ShowProcessList()
