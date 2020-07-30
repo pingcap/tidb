@@ -129,6 +129,7 @@ var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = Suite(&testSuiteWithData{baseTestSuite: &baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 var _ = SerialSuites(&testSlowQuery{&baseTestSuite{}})
+var _ = Suite(&partitionTableSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -139,6 +140,7 @@ type testSuiteWithData struct {
 	testData testutil.TestData
 }
 type testSlowQuery struct{ *baseTestSuite }
+type partitionTableSuite struct{ *baseTestSuite }
 
 type baseTestSuite struct {
 	cluster cluster.Cluster

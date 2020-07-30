@@ -141,7 +141,7 @@ func (actionCommit) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch
 	return nil
 }
 
-func (c *twoPhaseCommitter) commitMutations(bo *Backoffer, mutations committerMutations) error {
+func (c *twoPhaseCommitter) commitMutations(bo *Backoffer, mutations CommitterMutations) error {
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("twoPhaseCommitter.commitMutations", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
