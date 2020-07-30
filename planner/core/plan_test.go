@@ -14,7 +14,11 @@
 package core_test
 
 import (
+	"bytes"
+	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -25,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
+	_ "net/http/pprof"
 )
 
 var _ = Suite(&testPlanNormalize{})
@@ -277,4 +282,37 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 		"1 1"))
 	tk.MustQuery("select  /*+ nth_plan(3) */ * from tt where a=1 and b=1;").Check(testkit.Rows(
 		"1 1"))
+}
+
+func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
+	go func() {
+		http.ListenAndServe("localhost:6060", nil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10) key,b int);")
+	tk.MustExec("set @@tidb_slow_log_threshold=5000")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+
+	// generate SQL
+	buf := bytes.NewBuffer(nil)
+	for i := 0; i < 20000; i++ {
+		if i > 0 {
+			buf.WriteString(" union ")
+		}
+		buf.WriteString(fmt.Sprintf("select count(1) as num,a from t where a='%v' group by a", i))
+	}
+	query := buf.String()
+	tk.Se.GetSessionVars().PlanID = 0
+	tk.MustExec(query)
+	info := tk.Se.ShowProcess()
+	c.Assert(info, NotNil)
+	p, ok := info.Plan.(core.PhysicalPlan)
+	c.Assert(ok, IsTrue)
+	start := time.Now()
+	encodedPlanStr := core.EncodePlan(p)
+	_, err := plancodec.DecodePlan(encodedPlanStr)
+	c.Assert(err, IsNil)
+	c.Assert(time.Since(start).Seconds(), Less, 1.0)
 }
