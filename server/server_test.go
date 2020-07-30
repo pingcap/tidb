@@ -354,10 +354,10 @@ func runTestLoadData(c *C, server *Server) {
 	c.Assert(err, IsNil)
 	c.Assert(fp, NotNil)
 	defer func() {
-		err = fp.Close()
-		c.Assert(err, IsNil)
-		err = os.Remove(path)
-		c.Assert(err, IsNil)
+		// err = fp.Close()
+		// c.Assert(err, IsNil)
+		// err = os.Remove(path)
+		// c.Assert(err, IsNil)
 	}()
 	_, err = fp.WriteString("\n" +
 		"xxx row1_col1	- row1_col2	1abc\n" +
@@ -431,7 +431,7 @@ func runTestLoadData(c *C, server *Server) {
 		dbt.Assert(lastID, Equals, int64(6))
 		affectedRows, err = rs.RowsAffected()
 		dbt.Assert(err, IsNil)
-		dbt.Assert(affectedRows, Equals, int64(4))
+		dbt.Assert(affectedRows, Equals, int64(5))
 		rows = dbt.mustQuery("select * from test")
 		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
 		rows.Scan(&a, &b, &cc)

@@ -2825,7 +2825,7 @@ func (s *testSessionSuite) TestPessimisticLockOnPartition(c *C) {
 	tk1.MustExec("use test")
 
 	tk.MustExec("begin pessimistic")
-	tk.MustQuery("select * from forupdate_on_partition where age=25 for update").Check(testkit.Rows("25 cosven 0    "))
+	tk.MustQuery("select * from forupdate_on_partition where age=25 for update").Check(testkit.Rows("25 cosven 0   "))
 	tk1.MustExec("begin pessimistic")
 
 	ch := make(chan int32, 5)

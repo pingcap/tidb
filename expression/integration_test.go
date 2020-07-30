@@ -573,7 +573,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	tk.MustExec("create table t(a char(20))")
 	tk.MustExec(`insert into t values("tidb  "), (concat("a  ", "b  "))`)
 	result = tk.MustQuery("select a, length(a) from t")
-	result.Check(testkit.Rows("tidb 4", "a  b 4"))
+	result.Check(testkit.Rows("tidb 4", "ab 2"))
 
 	// for concat
 	tk.MustExec("drop table if exists t")
@@ -782,11 +782,11 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 
 	// for ltrim and rtrim
 	result = tk.MustQuery(`select ltrim('   bar   '), ltrim('bar'), ltrim(''), ltrim(null)`)
-	result.Check(testutil.RowsWithSep(",", "bar   ,bar,,<nil>"))
+	result.Check(testutil.RowsWithSep(",", "bar,bar,,<nil>"))
 	result = tk.MustQuery(`select rtrim('   bar   '), rtrim('bar'), rtrim(''), rtrim(null)`)
 	result.Check(testutil.RowsWithSep(",", "   bar,bar,,<nil>"))
 	result = tk.MustQuery(`select ltrim("\t   bar   "), ltrim("   \tbar"), ltrim("\n  bar"), ltrim("\r  bar")`)
-	result.Check(testutil.RowsWithSep(",", "\t   bar   ,\tbar,\n  bar,\r  bar"))
+	result.Check(testutil.RowsWithSep(",", "\t   bar,\tbar,\n  bar,\r  bar"))
 	result = tk.MustQuery(`select rtrim("   bar   \t"), rtrim("bar\t   "), rtrim("bar   \n"), rtrim("bar   \r")`)
 	result.Check(testutil.RowsWithSep(",", "   bar   \t,bar\t,bar   \n,bar   \r"))
 
@@ -794,8 +794,8 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	tk.MustExec(`DROP TABLE IF EXISTS t;`)
 	tk.MustExec(`CREATE TABLE t(a BINARY(6));`)
 	tk.MustExec(`INSERT INTO t VALUES("中文");`)
-	result = tk.MustQuery(`SELECT a, REVERSE(a), REVERSE("中文"), REVERSE("123 ") FROM t;`)
-	result.Check(testkit.Rows("中文 \x87\x96歸\xe4 文中  321"))
+	result = tk.MustQuery(`SELECT a, REVERSE(a), REVERSE("中文"), REVERSE("123") FROM t;`)
+	result.Check(testkit.Rows("中文 \x87\x96歸\xe4 文中 321"))
 	result = tk.MustQuery(`SELECT REVERSE(123), REVERSE(12.09) FROM t;`)
 	result.Check(testkit.Rows("321 90.21"))
 
@@ -805,7 +805,7 @@ func (s *testIntegrationSuite) TestStringBuiltin(c *C) {
 	result = tk.MustQuery(`select trim('\t   bar\n   '), trim('   \rbar   \t')`)
 	result.Check(testutil.RowsWithSep(",", "\t   bar\n,\rbar   \t"))
 	result = tk.MustQuery(`select trim(leading from '   bar'), trim('x' from 'xxxbarxxx'), trim('x' from 'bar'), trim('' from '   bar   ')`)
-	result.Check(testutil.RowsWithSep(",", "bar,bar,bar,   bar   "))
+	result.Check(testutil.RowsWithSep(",", "bar,bar,bar,   bar"))
 	result = tk.MustQuery(`select trim(''), trim('x' from '')`)
 	result.Check(testutil.RowsWithSep(",", ","))
 	result = tk.MustQuery(`select trim(null from 'bar'), trim('x' from null), trim(null), trim(leading null from 'bar')`)

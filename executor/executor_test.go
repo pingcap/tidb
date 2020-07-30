@@ -602,19 +602,19 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
-	c.Check(fields[0].Column.Name.O, Equals, "abc   ")
+	c.Check(fields[0].Column.Name.O, Equals, "abc")
 
 	sql = `select '  abc   123   ';`
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
 	fields = rs.Fields()
 	c.Check(len(fields), Equals, 1)
-	c.Check(fields[0].Column.Name.O, Equals, "abc   123   ")
+	c.Check(fields[0].Column.Name.O, Equals, "abc   123")
 
 	// Issue #4239.
-	sql = `select 'a' ' ' 'string';`
+	sql = `select 'a' '' 'string';`
 	r = tk.MustQuery(sql)
-	r.Check(testkit.Rows("a string"))
+	r.Check(testkit.Rows("astring"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
 	fields = rs.Fields()
@@ -623,7 +623,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 
 	sql = `select 'a' " " "string";`
 	r = tk.MustQuery(sql)
-	r.Check(testkit.Rows("a string"))
+	r.Check(testkit.Rows("astring"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
 	fields = rs.Fields()
@@ -659,7 +659,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 
 	sql = `select "ss" "a" ' ' "b";`
 	r = tk.MustQuery(sql)
-	r.Check(testkit.Rows("ssa b"))
+	r.Check(testkit.Rows("ssab"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
 	fields = rs.Fields()
@@ -668,7 +668,7 @@ func (s *testSuite) TestSelectStringLiteral(c *C) {
 
 	sql = `select "ss" "a" ' ' "b" ' ' "d";`
 	r = tk.MustQuery(sql)
-	r.Check(testkit.Rows("ssa b d"))
+	r.Check(testkit.Rows("ssabd"))
 	rs, err = tk.Exec(sql)
 	c.Check(err, IsNil)
 	fields = rs.Fields()

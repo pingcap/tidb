@@ -125,8 +125,8 @@ func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
-	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows(`a b`))
 
 	// Test CHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -136,11 +136,11 @@ func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
-	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows(`a b`))
 	tk.MustPointGet(`select * from t where a = "";`).Check(testkit.Rows(` `))
-	tk.MustPointGet(`select * from t where a = "  ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "  ";`).Check(testkit.Rows(` `))
+	tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows(` `))
 
 }
 
@@ -160,8 +160,8 @@ func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
-	tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustPointGet(`select * from t tmp where a = "a  ";`).Check(testkit.Rows(`a b`))
 
 	// Test CHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -171,11 +171,11 @@ func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
-	tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustPointGet(`select * from t tmp where a = "a  ";`).Check(testkit.Rows(`a b`))
 	tk.MustPointGet(`select * from t tmp where a = "";`).Check(testkit.Rows(` `))
-	tk.MustPointGet(`select * from t tmp where a = "  ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t tmp where a = "   ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t tmp where a = "  ";`).Check(testkit.Rows(` `))
+	tk.MustPointGet(`select * from t tmp where a = "   ";`).Check(testkit.Rows(` `))
 
 	// Test both wildcard and column name exist in select field list
 	tk.MustExec(`set @@sql_mode="";`)
@@ -232,8 +232,8 @@ func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
-	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows(`a b`))
 
 	// Test CHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -243,12 +243,12 @@ func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
-	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows(`a b`))
 	tk.MustIndexLookup(`select * from t where a = "";`).Check(testkit.Rows(` `))
-	tk.MustIndexLookup(`select * from t where a = " ";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "  ";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "   ";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t where a = " ";`).Check(testkit.Rows(` `))
+	tk.MustIndexLookup(`select * from t where a = "  ";`).Check(testkit.Rows(` `))
+	tk.MustIndexLookup(`select * from t where a = "   ";`).Check(testkit.Rows(` `))
 
 }
 
@@ -267,9 +267,9 @@ func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
 	tk.MustExec(`insert into t values("a ", "b ");`)
 
 	tk.MustExec(`set @@sql_mode="";`)
-	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
+	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows(`a b`))
 
 	// // Test VARCHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -278,12 +278,12 @@ func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
 	tk.MustExec(`insert into t values("a ", "b ");`)
 
 	tk.MustExec(`set @@sql_mode="";`)
-	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t where a = " ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t where a = "  ";`).Check(testkit.Rows(`     `))
-	tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows())
+	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
+	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a b`))
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows(`a b`))
+	tk.MustPointGet(`select * from t where a = " ";`).Check(testkit.Rows(` `))
+	tk.MustPointGet(`select * from t where a = "  ";`).Check(testkit.Rows(` `))
+	tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows(` `))
 
 }
 
@@ -300,14 +300,7 @@ func (s *testPointGetSuite) TestPointGetBinaryPK(c *C) {
 	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "a\0";`).Check(testkit.Rows("a\x00 b\x00"))
 
-	tk.MustExec(`insert into t values("a ", "b ");`)
-	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
-
-	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustGetErrCode(`insert into t values("a ", "b ");`, 1062)
 }
 
 func (s *testPointGetSuite) TestPointGetAliasTableBinaryPK(c *C) {
@@ -323,14 +316,7 @@ func (s *testPointGetSuite) TestPointGetAliasTableBinaryPK(c *C) {
 	tk.MustPointGet(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t tmp where a = "a\0";`).Check(testkit.Rows("a\x00 b\x00"))
 
-	tk.MustExec(`insert into t values("a ", "b ");`)
-	tk.MustPointGet(`select * from t tmp where a = "a";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustPointGet(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
-
-	tk.MustPointGet(`select * from t tmp where a = "a";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustPointGet(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+	tk.MustGetErrCode(`insert into t values("a ", "b ");`, 1062)
 }
 
 func (s *testPointGetSuite) TestIndexLookupBinary(c *C) {
@@ -355,11 +341,13 @@ func (s *testPointGetSuite) TestIndexLookupBinary(c *C) {
 
 	tk.MustExec(`insert into t values("a ", "b ");`)
 	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
+	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	tk.MustIndexLookup(`select * from t where a = "a\0";`).Check(testkit.Rows("a\x00 b\x00", "a\x00 b\x00"))
+	tk.MustIndexLookup(`select * from t tmp where a = "a\0";`).Check(testkit.Rows("a\x00 b\x00", "a\x00 b\x00"))
 
 	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
+	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
 
 }
