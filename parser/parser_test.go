@@ -704,6 +704,7 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"admin reload bindings", true, "ADMIN RELOAD BINDINGS"},
 		{"admin show telemetry", true, "ADMIN SHOW TELEMETRY"},
 		{"admin reset telemetry_id", true, "ADMIN RESET TELEMETRY_ID"},
+		{"admin reload statistics", true, "ADMIN RELOAD STATISTICS"},
 
 		// for on duplicate key update
 		{"INSERT INTO t (a,b,c) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE c=VALUES(a)+VALUES(b);", true, "INSERT INTO `t` (`a`,`b`,`c`) VALUES (1,2,3),(4,5,6) ON DUPLICATE KEY UPDATE `c`=VALUES(`a`)+VALUES(`b`)"},
@@ -5300,4 +5301,34 @@ func (s *testParserSuite) TestBRIE(c *C) {
 	}
 
 	s.RunTest(c, table)
+}
+
+func (s *testParserSuite) TestStatisticsOps(c *C) {
+	table := []testCase{
+		{"create statistics stats1 (cardinality) on t(a,b,c)", true, "CREATE STATISTICS `stats1` (CARDINALITY) ON `t`(`a`, `b`, `c`)"},
+		{"create statistics stats2 (dependency) on t(a,b)", true, "CREATE STATISTICS `stats2` (DEPENDENCY) ON `t`(`a`, `b`)"},
+		{"create statistics stats3 (correlation) on t(a,b)", true, "CREATE STATISTICS `stats3` (CORRELATION) ON `t`(`a`, `b`)"},
+		{"create statistics stats3 on t(a,b)", false, ""},
+		{"create statistics if not exists stats1 (cardinality) on t(a,b,c)", true, "CREATE STATISTICS IF NOT EXISTS `stats1` (CARDINALITY) ON `t`(`a`, `b`, `c`)"},
+		{"create statistics if not exists stats2 (dependency) on t(a,b)", true, "CREATE STATISTICS IF NOT EXISTS `stats2` (DEPENDENCY) ON `t`(`a`, `b`)"},
+		{"create statistics if not exists stats3 (correlation) on t(a,b)", true, "CREATE STATISTICS IF NOT EXISTS `stats3` (CORRELATION) ON `t`(`a`, `b`)"},
+		{"create statistics if not exists stats3 on t(a,b)", false, ""},
+		{"create statistics stats1(cardinality) on t(a,b,c)", true, "CREATE STATISTICS `stats1` (CARDINALITY) ON `t`(`a`, `b`, `c`)"},
+		{"drop statistics stats1", true, "DROP STATISTICS `stats1`"},
+	}
+	s.RunTest(c, table)
+
+	p := parser.New()
+	sms, _, err := p.Parse("create statistics if not exists stats1 (cardinality) on t(a,b,c)", "", "")
+	c.Assert(err, IsNil)
+	v, ok := sms[0].(*ast.CreateStatisticsStmt)
+	c.Assert(ok, IsTrue)
+	c.Assert(v.IfNotExists, IsTrue)
+	c.Assert(v.StatsName, Equals, "stats1")
+	c.Assert(v.StatsType, Equals, ast.StatsTypeCardinality)
+	c.Assert(v.Table.Name, Equals, model.CIStr{O: "t", L: "t"})
+	c.Assert(len(v.Columns), Equals, 3)
+	c.Assert(v.Columns[0].Name, Equals, model.CIStr{O: "a", L: "a"})
+	c.Assert(v.Columns[1].Name, Equals, model.CIStr{O: "b", L: "b"})
+	c.Assert(v.Columns[2].Name, Equals, model.CIStr{O: "c", L: "c"})
 }
