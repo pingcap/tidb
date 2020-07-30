@@ -447,18 +447,26 @@ func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 // value of this option. Only ReplicaRead is supported for snapshot
 func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	switch opt {
-	case kv.ReplicaRead:
-		s.replicaRead = val.(kv.ReplicaReadType)
+	case kv.IsolationLevel:
+		s.isolationLevel = val.(kv.IsoLevel)
 	case kv.Priority:
 		s.priority = kvPriorityToCommandPri(val.(int))
+	case kv.NotFillCache:
+		s.notFillCache = val.(bool)
+	case kv.SyncLog:
+		s.syncLog = val.(bool)
+	case kv.KeyOnly:
+		s.keyOnly = val.(bool)
+	case kv.SnapshotTS:
+		s.setSnapshotTS(val.(uint64))
+	case kv.ReplicaRead:
+		s.replicaRead = val.(kv.ReplicaReadType)
 	case kv.TaskID:
 		s.taskID = val.(uint64)
 	case kv.CollectRuntimeStats:
 		s.stats = val.(*SnapshotRuntimeStats)
 	case kv.SampleStep:
 		s.sampleStep = val.(uint32)
-	case kv.IsolationLevel:
-		s.isolationLevel = val.(kv.IsoLevel)
 	}
 }
 
