@@ -632,5 +632,15 @@
     "cases": [
       "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a"
     ]
+  },
+  {
+    "name": "TestNthPlanHintWithExplain",
+    "cases": [
+      "select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1",
+      "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+      "select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;",
+      "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+      "select * from test.tt where a=1 and b=1"
+    ]
   }
 ]

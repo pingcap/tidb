@@ -86,7 +86,7 @@ func (s *Scanner) Value() []byte {
 
 // Next return next element.
 func (s *Scanner) Next() error {
-	bo := NewBackoffer(context.WithValue(context.Background(), txnStartKey, s.snapshot.version.Ver), scannerNextMaxBackoff)
+	bo := NewBackofferWithVars(context.WithValue(context.Background(), txnStartKey, s.snapshot.version.Ver), scannerNextMaxBackoff, s.snapshot.vars)
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}
@@ -198,7 +198,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 			sreq.EndKey = reqStartKey
 			sreq.Reverse = true
 		}
-		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.replicaRead, s.snapshot.replicaReadSeed, pb.Context{
+		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.replicaRead, &s.snapshot.replicaReadSeed, pb.Context{
 			Priority:     s.snapshot.priority,
 			NotFillCache: s.snapshot.notFillCache,
 			TaskId:       s.snapshot.taskID,

@@ -147,7 +147,6 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeEnum, 3))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeGeometry, 4))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeUnspecified, 5))
-	colExprs = append(colExprs, dg.genColumn(mysql.TypeDecimal, 6))
 
 	pushed, remained := PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, 0)
@@ -601,6 +600,41 @@ func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+	dg := new(dataGen4Expr2PbTest)
+	exprs := make([]Expression, 0)
+
+	jsonColumn := dg.genColumn(mysql.TypeJSON, 1)
+	intColumn := dg.genColumn(mysql.TypeLonglong, 2)
+	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.If, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.BitNeg, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Xor, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
+	c.Assert(canPush, Equals, true)
+
+	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiFlash)
+	c.Assert(len(pushed), Equals, len(exprs)-1)
+	c.Assert(len(remained), Equals, 1)
+}
+
 func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -754,6 +788,7 @@ func (s *testEvaluatorSerialSuites) TestNewCollationsEnabled(c *C) {
 	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarString, 3), "utf8mb4_general_ci"))
 	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeString, 4), "utf8mb4_0900_ai_ci"))
 	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarchar, 5), "utf8_bin"))
+	colExprs = append(colExprs, columnCollation(dg.genColumn(mysql.TypeVarchar, 6), "utf8_unicode_ci"))
 	pushed, _ := PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, len(colExprs))
 	pbExprs, err := ExpressionsToPBList(sc, colExprs, client)
@@ -764,6 +799,7 @@ func (s *testEvaluatorSerialSuites) TestNewCollationsEnabled(c *C) {
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAM=\",\"sig\":0,\"field_type\":{\"tp\":253,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-45,\"charset\":\"\"}}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAQ=\",\"sig\":0,\"field_type\":{\"tp\":254,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-255,\"charset\":\"\"}}",
 		"{\"tp\":201,\"val\":\"gAAAAAAAAAU=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-83,\"charset\":\"\"}}",
+		"{\"tp\":201,\"val\":\"gAAAAAAAAAY=\",\"sig\":0,\"field_type\":{\"tp\":15,\"flag\":0,\"flen\":-1,\"decimal\":-1,\"collate\":-192,\"charset\":\"\"}}",
 	}
 	for i, pbExpr := range pbExprs {
 		c.Assert(pbExprs, NotNil)

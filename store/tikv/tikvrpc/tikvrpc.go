@@ -158,9 +158,9 @@ func (t CmdType) String() string {
 // Request wraps all kv/coprocessor requests.
 type Request struct {
 	Type CmdType
-	req  interface{}
+	Req  interface{}
 	kvrpcpb.Context
-	ReplicaReadSeed uint32
+	ReplicaReadSeed *uint32 // pointer to follower read seed in snapshot/coprocessor
 	StoreTp         kv.StoreType
 }
 
@@ -169,18 +169,18 @@ func NewRequest(typ CmdType, pointer interface{}, ctxs ...kvrpcpb.Context) *Requ
 	if len(ctxs) > 0 {
 		return &Request{
 			Type:    typ,
-			req:     pointer,
+			Req:     pointer,
 			Context: ctxs[0],
 		}
 	}
 	return &Request{
 		Type: typ,
-		req:  pointer,
+		Req:  pointer,
 	}
 }
 
 // NewReplicaReadRequest returns new kv rpc request with replica read.
-func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.ReplicaReadType, replicaReadSeed uint32, ctxs ...kvrpcpb.Context) *Request {
+func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.ReplicaReadType, replicaReadSeed *uint32, ctxs ...kvrpcpb.Context) *Request {
 	req := NewRequest(typ, pointer, ctxs...)
 	req.ReplicaRead = replicaReadType.IsFollowerRead()
 	req.ReplicaReadSeed = replicaReadSeed
@@ -189,177 +189,177 @@ func NewReplicaReadRequest(typ CmdType, pointer interface{}, replicaReadType kv.
 
 // Get returns GetRequest in request.
 func (req *Request) Get() *kvrpcpb.GetRequest {
-	return req.req.(*kvrpcpb.GetRequest)
+	return req.Req.(*kvrpcpb.GetRequest)
 }
 
 // Scan returns ScanRequest in request.
 func (req *Request) Scan() *kvrpcpb.ScanRequest {
-	return req.req.(*kvrpcpb.ScanRequest)
+	return req.Req.(*kvrpcpb.ScanRequest)
 }
 
 // Prewrite returns PrewriteRequest in request.
 func (req *Request) Prewrite() *kvrpcpb.PrewriteRequest {
-	return req.req.(*kvrpcpb.PrewriteRequest)
+	return req.Req.(*kvrpcpb.PrewriteRequest)
 }
 
 // Commit returns CommitRequest in request.
 func (req *Request) Commit() *kvrpcpb.CommitRequest {
-	return req.req.(*kvrpcpb.CommitRequest)
+	return req.Req.(*kvrpcpb.CommitRequest)
 }
 
 // Cleanup returns CleanupRequest in request.
 func (req *Request) Cleanup() *kvrpcpb.CleanupRequest {
-	return req.req.(*kvrpcpb.CleanupRequest)
+	return req.Req.(*kvrpcpb.CleanupRequest)
 }
 
 // BatchGet returns BatchGetRequest in request.
 func (req *Request) BatchGet() *kvrpcpb.BatchGetRequest {
-	return req.req.(*kvrpcpb.BatchGetRequest)
+	return req.Req.(*kvrpcpb.BatchGetRequest)
 }
 
 // BatchRollback returns BatchRollbackRequest in request.
 func (req *Request) BatchRollback() *kvrpcpb.BatchRollbackRequest {
-	return req.req.(*kvrpcpb.BatchRollbackRequest)
+	return req.Req.(*kvrpcpb.BatchRollbackRequest)
 }
 
 // ScanLock returns ScanLockRequest in request.
 func (req *Request) ScanLock() *kvrpcpb.ScanLockRequest {
-	return req.req.(*kvrpcpb.ScanLockRequest)
+	return req.Req.(*kvrpcpb.ScanLockRequest)
 }
 
 // ResolveLock returns ResolveLockRequest in request.
 func (req *Request) ResolveLock() *kvrpcpb.ResolveLockRequest {
-	return req.req.(*kvrpcpb.ResolveLockRequest)
+	return req.Req.(*kvrpcpb.ResolveLockRequest)
 }
 
 // GC returns GCRequest in request.
 func (req *Request) GC() *kvrpcpb.GCRequest {
-	return req.req.(*kvrpcpb.GCRequest)
+	return req.Req.(*kvrpcpb.GCRequest)
 }
 
 // DeleteRange returns DeleteRangeRequest in request.
 func (req *Request) DeleteRange() *kvrpcpb.DeleteRangeRequest {
-	return req.req.(*kvrpcpb.DeleteRangeRequest)
+	return req.Req.(*kvrpcpb.DeleteRangeRequest)
 }
 
 // RawGet returns RawGetRequest in request.
 func (req *Request) RawGet() *kvrpcpb.RawGetRequest {
-	return req.req.(*kvrpcpb.RawGetRequest)
+	return req.Req.(*kvrpcpb.RawGetRequest)
 }
 
 // RawBatchGet returns RawBatchGetRequest in request.
 func (req *Request) RawBatchGet() *kvrpcpb.RawBatchGetRequest {
-	return req.req.(*kvrpcpb.RawBatchGetRequest)
+	return req.Req.(*kvrpcpb.RawBatchGetRequest)
 }
 
 // RawPut returns RawPutRequest in request.
 func (req *Request) RawPut() *kvrpcpb.RawPutRequest {
-	return req.req.(*kvrpcpb.RawPutRequest)
+	return req.Req.(*kvrpcpb.RawPutRequest)
 }
 
 // RawBatchPut returns RawBatchPutRequest in request.
 func (req *Request) RawBatchPut() *kvrpcpb.RawBatchPutRequest {
-	return req.req.(*kvrpcpb.RawBatchPutRequest)
+	return req.Req.(*kvrpcpb.RawBatchPutRequest)
 }
 
 // RawDelete returns PrewriteRequest in request.
 func (req *Request) RawDelete() *kvrpcpb.RawDeleteRequest {
-	return req.req.(*kvrpcpb.RawDeleteRequest)
+	return req.Req.(*kvrpcpb.RawDeleteRequest)
 }
 
 // RawBatchDelete returns RawBatchDeleteRequest in request.
 func (req *Request) RawBatchDelete() *kvrpcpb.RawBatchDeleteRequest {
-	return req.req.(*kvrpcpb.RawBatchDeleteRequest)
+	return req.Req.(*kvrpcpb.RawBatchDeleteRequest)
 }
 
 // RawDeleteRange returns RawDeleteRangeRequest in request.
 func (req *Request) RawDeleteRange() *kvrpcpb.RawDeleteRangeRequest {
-	return req.req.(*kvrpcpb.RawDeleteRangeRequest)
+	return req.Req.(*kvrpcpb.RawDeleteRangeRequest)
 }
 
 // RawScan returns RawScanRequest in request.
 func (req *Request) RawScan() *kvrpcpb.RawScanRequest {
-	return req.req.(*kvrpcpb.RawScanRequest)
+	return req.Req.(*kvrpcpb.RawScanRequest)
 }
 
 // UnsafeDestroyRange returns UnsafeDestroyRangeRequest in request.
 func (req *Request) UnsafeDestroyRange() *kvrpcpb.UnsafeDestroyRangeRequest {
-	return req.req.(*kvrpcpb.UnsafeDestroyRangeRequest)
+	return req.Req.(*kvrpcpb.UnsafeDestroyRangeRequest)
 }
 
 // RegisterLockObserver returns RegisterLockObserverRequest in request.
 func (req *Request) RegisterLockObserver() *kvrpcpb.RegisterLockObserverRequest {
-	return req.req.(*kvrpcpb.RegisterLockObserverRequest)
+	return req.Req.(*kvrpcpb.RegisterLockObserverRequest)
 }
 
 // CheckLockObserver returns CheckLockObserverRequest in request.
 func (req *Request) CheckLockObserver() *kvrpcpb.CheckLockObserverRequest {
-	return req.req.(*kvrpcpb.CheckLockObserverRequest)
+	return req.Req.(*kvrpcpb.CheckLockObserverRequest)
 }
 
 // RemoveLockObserver returns RemoveLockObserverRequest in request.
 func (req *Request) RemoveLockObserver() *kvrpcpb.RemoveLockObserverRequest {
-	return req.req.(*kvrpcpb.RemoveLockObserverRequest)
+	return req.Req.(*kvrpcpb.RemoveLockObserverRequest)
 }
 
 // PhysicalScanLock returns PhysicalScanLockRequest in request.
 func (req *Request) PhysicalScanLock() *kvrpcpb.PhysicalScanLockRequest {
-	return req.req.(*kvrpcpb.PhysicalScanLockRequest)
+	return req.Req.(*kvrpcpb.PhysicalScanLockRequest)
 }
 
 // Cop returns coprocessor request in request.
 func (req *Request) Cop() *coprocessor.Request {
-	return req.req.(*coprocessor.Request)
+	return req.Req.(*coprocessor.Request)
 }
 
 // BatchCop returns coprocessor request in request.
 func (req *Request) BatchCop() *coprocessor.BatchRequest {
-	return req.req.(*coprocessor.BatchRequest)
+	return req.Req.(*coprocessor.BatchRequest)
 }
 
 // MvccGetByKey returns MvccGetByKeyRequest in request.
 func (req *Request) MvccGetByKey() *kvrpcpb.MvccGetByKeyRequest {
-	return req.req.(*kvrpcpb.MvccGetByKeyRequest)
+	return req.Req.(*kvrpcpb.MvccGetByKeyRequest)
 }
 
 // MvccGetByStartTs returns MvccGetByStartTsRequest in request.
 func (req *Request) MvccGetByStartTs() *kvrpcpb.MvccGetByStartTsRequest {
-	return req.req.(*kvrpcpb.MvccGetByStartTsRequest)
+	return req.Req.(*kvrpcpb.MvccGetByStartTsRequest)
 }
 
 // SplitRegion returns SplitRegionRequest in request.
 func (req *Request) SplitRegion() *kvrpcpb.SplitRegionRequest {
-	return req.req.(*kvrpcpb.SplitRegionRequest)
+	return req.Req.(*kvrpcpb.SplitRegionRequest)
 }
 
 // PessimisticLock returns PessimisticLockRequest in request.
 func (req *Request) PessimisticLock() *kvrpcpb.PessimisticLockRequest {
-	return req.req.(*kvrpcpb.PessimisticLockRequest)
+	return req.Req.(*kvrpcpb.PessimisticLockRequest)
 }
 
 // PessimisticRollback returns PessimisticRollbackRequest in request.
 func (req *Request) PessimisticRollback() *kvrpcpb.PessimisticRollbackRequest {
-	return req.req.(*kvrpcpb.PessimisticRollbackRequest)
+	return req.Req.(*kvrpcpb.PessimisticRollbackRequest)
 }
 
 // DebugGetRegionProperties returns GetRegionPropertiesRequest in request.
 func (req *Request) DebugGetRegionProperties() *debugpb.GetRegionPropertiesRequest {
-	return req.req.(*debugpb.GetRegionPropertiesRequest)
+	return req.Req.(*debugpb.GetRegionPropertiesRequest)
 }
 
 // Empty returns BatchCommandsEmptyRequest in request.
 func (req *Request) Empty() *tikvpb.BatchCommandsEmptyRequest {
-	return req.req.(*tikvpb.BatchCommandsEmptyRequest)
+	return req.Req.(*tikvpb.BatchCommandsEmptyRequest)
 }
 
 // CheckTxnStatus returns CheckTxnStatusRequest in request.
 func (req *Request) CheckTxnStatus() *kvrpcpb.CheckTxnStatusRequest {
-	return req.req.(*kvrpcpb.CheckTxnStatusRequest)
+	return req.Req.(*kvrpcpb.CheckTxnStatusRequest)
 }
 
 // TxnHeartBeat returns TxnHeartBeatRequest in request.
 func (req *Request) TxnHeartBeat() *kvrpcpb.TxnHeartBeatRequest {
-	return req.req.(*kvrpcpb.TxnHeartBeatRequest)
+	return req.Req.(*kvrpcpb.TxnHeartBeatRequest)
 }
 
 // ToBatchCommandsRequest converts the request to an entry in BatchCommands request.

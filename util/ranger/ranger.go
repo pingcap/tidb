@@ -303,9 +303,6 @@ func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 		newTp = append(newTp, newFieldType(col.RetType))
 	}
 	for i := 0; i < eqAndInCount; i++ {
-		if sf, ok := accessCondition[i].(*expression.ScalarFunction); !ok || (sf.FuncName.L != ast.EQ && sf.FuncName.L != ast.In) {
-			break
-		}
 		// Build ranges for equal or in access conditions.
 		point := rb.build(accessCondition[i])
 		if rb.err != nil {
@@ -528,6 +525,5 @@ func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.E
 	if len(args) > 2 {
 		funcName = ast.In
 	}
-	f := expression.NewFunctionInternal(ctx, funcName, sf.GetType(), args...)
-	return f
+	return expression.NewFunctionInternal(ctx, funcName, sf.GetType(), args...)
 }

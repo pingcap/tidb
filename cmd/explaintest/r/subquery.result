@@ -22,11 +22,11 @@ Projection_11	5.00	root		Column#14
   ├─TableReader_15(Build)	5.00	root		data:TableFullScan_14
   │ └─TableFullScan_14	5.00	cop[tikv]	table:t	keep order:false
   └─StreamAgg_22(Probe)	1.00	root		funcs:count(1)->Column#13
-    └─IndexMergeJoin_29	0.50	root		inner join, inner:TableReader_27, outer key:test.t.a, inner key:test.t.a
+    └─IndexMergeJoin_31	0.50	root		inner join, inner:TableReader_26, outer key:test.t.a, inner key:test.t.a
       ├─IndexReader_35(Build)	1.00	root		index:IndexRangeScan_34
       │ └─IndexRangeScan_34	1.00	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(test.t.b, 1) eq(test.t.c, 1) eq(test.t.d, test.t.a)], keep order:false
-      └─TableReader_27(Probe)	1.00	root		data:TableRangeScan_26
-        └─TableRangeScan_26	1.00	cop[tikv]	table:t1	range: decided by [test.t.a], keep order:true
+      └─TableReader_26(Probe)	1.00	root		data:TableRangeScan_25
+        └─TableRangeScan_25	1.00	cop[tikv]	table:t1	range: decided by [test.t.a], keep order:true
 drop table if exists t;
 create table t(a int, b int, c int);
 explain select a from t t1 where t1.a = (select max(t2.a) from t t2 where t1.b=t2.b and t1.c=t2.b);

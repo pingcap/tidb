@@ -23,7 +23,6 @@ How it Works:
 ### Related changes
 
 - PR to update `pingcap/docs`/`pingcap/docs-cn`:
-- PR to update `pingcap/tidb-ansible`:
 - Need to cherry-pick to the release branch
 
 ### Check List <!--REMOVE the items that are not applicable-->
@@ -43,3 +42,5 @@ Side effects
 - Breaking backward compatibility
 
 ### Release note <!-- bugfixes or new feature need a release note -->
+
+- <!-- Please write a release note here to describe the change you made when it is released to the users of TiDB. If your PR doesn't involve any change to TiDB(like test enhancements, RFC proposals...), you can write `No release note`. -->

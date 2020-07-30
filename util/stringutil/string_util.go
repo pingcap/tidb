@@ -14,7 +14,6 @@
 package stringutil
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -139,7 +138,6 @@ const (
 // CompilePattern handles escapes and wild cards convert pattern characters and
 // pattern types.
 func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
-	var lastAny bool
 	patChars = make([]byte, len(pattern))
 	patTypes = make([]byte, len(pattern))
 	patLen := 0
@@ -148,7 +146,6 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 		var c = pattern[i]
 		switch c {
 		case escape:
-			lastAny = false
 			tp = PatMatch
 			if i < len(pattern)-1 {
 				i++
@@ -167,18 +164,21 @@ func CompilePattern(pattern string, escape byte) (patChars, patTypes []byte) {
 				}
 			}
 		case '_':
-			if lastAny {
-				continue
+			// %_ => _%
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
+				tp = PatAny
+				c = '%'
+				patChars[patLen-1], patTypes[patLen-1] = '_', PatOne
+			} else {
+				tp = PatOne
 			}
-			tp = PatOne
 		case '%':
-			if lastAny {
+			// %% => %
+			if patLen > 0 && patTypes[patLen-1] == PatAny {
 				continue
 			}
-			lastAny = true
 			tp = PatAny
 		default:
-			lastAny = false
 			tp = PatMatch
 		}
 		patChars[patLen] = c
@@ -213,21 +213,9 @@ func CompileLike2Regexp(str string) string {
 		case PatMatch:
 			result = append(result, patChars[i])
 		case PatOne:
-			// .*. == .*
-			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
-				result = append(result, '.')
-			}
+			result = append(result, '.')
 		case PatAny:
-			// ..* == .*
-			if bytes.HasSuffix(result, []byte{'.'}) {
-				result = append(result, '*')
-				continue
-			}
-			// .*.* == .*
-			if !bytes.HasSuffix(result, []byte{'.', '*'}) {
-				result = append(result, '.')
-				result = append(result, '*')
-			}
+			result = append(result, '.', '*')
 		}
 	}
 	return string(result)

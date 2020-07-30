@@ -58,7 +58,7 @@ func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableI
 	}
 
 	if err != nil {
-		return nil, util.SyntaxError(err)
+		return nil, errors.Trace(err)
 	}
 	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
 	return RewriteSimpleExprWithTableInfo(ctx, tableInfo, expr)
@@ -78,7 +78,10 @@ func ParseSimpleExprCastWithTableInfo(ctx sessionctx.Context, exprStr string, ta
 // RewriteSimpleExprWithTableInfo rewrites simple ast.ExprNode to expression.Expression.
 func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo, expr ast.ExprNode) (Expression, error) {
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns, names := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns)
+	columns, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns, tbl)
+	if err != nil {
+		return nil, err
+	}
 	rewriter := &simpleRewriter{ctx: ctx, schema: NewSchema(columns...), names: names}
 	expr.Accept(rewriter)
 	if rewriter.err != nil {

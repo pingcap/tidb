@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
@@ -176,7 +177,7 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 }
 
 func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
-	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
+	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
 	resultCh := make(chan *lookUpJoinTask, concurrency)
 	e.resultCh = resultCh
 	workerCtx, cancelFunc := context.WithCancel(ctx)
@@ -681,7 +682,9 @@ func (e *IndexLookUpJoin) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)
-		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
 	}
 	return e.baseExecutor.Close()
 }

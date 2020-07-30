@@ -61,12 +61,8 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 	bDecoder := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
 		{
 			ID:         largeColID,
-			Tp:         int32(colFt.Tp),
-			Flag:       int32(colFt.Flag),
+			Ft:         colFt,
 			IsPKHandle: false,
-			Flen:       colFt.Flen,
-			Decimal:    colFt.Decimal,
-			Elems:      colFt.Elems,
 		},
 	}, []int64{-1}, nil)
 	m, err := bDecoder.DecodeToDatumMap(b, kv.IntHandle(-1), nil)
@@ -81,12 +77,8 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 	bDecoder = rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
 		{
 			ID:         smallColID,
-			Tp:         int32(colFt.Tp),
-			Flag:       int32(colFt.Flag),
+			Ft:         colFt,
 			IsPKHandle: false,
-			Flen:       colFt.Flen,
-			Decimal:    colFt.Decimal,
-			Elems:      colFt.Elems,
 		},
 	}, []int64{-1}, nil)
 	m, err = bDecoder.DecodeToDatumMap(b, kv.IntHandle(-1), nil)
@@ -114,13 +106,8 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 			fts = append(fts, t.ft)
 			cols = append(cols, rowcodec.ColInfo{
 				ID:         t.id,
-				Tp:         int32(t.ft.Tp),
-				Flag:       int32(t.ft.Flag),
 				IsPKHandle: t.handle,
-				Flen:       t.ft.Flen,
-				Decimal:    t.ft.Decimal,
-				Elems:      t.ft.Elems,
-				Collate:    t.ft.Collate,
+				Ft:         t.ft,
 			})
 		}
 
@@ -237,22 +224,12 @@ func (s *testSuite) TestEncodeKindNullDatum(c *C) {
 	c.Assert(err, IsNil)
 
 	cols := []rowcodec.ColInfo{{
-		ID:      1,
-		Tp:      int32(ft.Tp),
-		Flag:    int32(ft.Flag),
-		Flen:    ft.Flen,
-		Decimal: ft.Decimal,
-		Elems:   ft.Elems,
-		Collate: ft.Collate,
+		ID: 1,
+		Ft: ft,
 	},
 		{
-			ID:      2,
-			Tp:      int32(ft.Tp),
-			Flag:    int32(ft.Flag),
-			Flen:    ft.Flen,
-			Decimal: ft.Decimal,
-			Elems:   ft.Elems,
-			Collate: ft.Collate,
+			ID: 2,
+			Ft: ft,
 		}}
 	cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone)
 	chk := chunk.New(fts, 1, 1)
@@ -284,13 +261,8 @@ func (s *testSuite) TestDecodeDecimalFspNotMatch(c *C) {
 	ft.Decimal = 3
 	cols := make([]rowcodec.ColInfo, 0)
 	cols = append(cols, rowcodec.ColInfo{
-		ID:      1,
-		Tp:      int32(ft.Tp),
-		Flag:    int32(ft.Flag),
-		Flen:    ft.Flen,
-		Decimal: ft.Decimal,
-		Elems:   ft.Elems,
-		Collate: ft.Collate,
+		ID: 1,
+		Ft: ft,
 	})
 	cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone)
 	chk := chunk.New(fts, 1, 1)
@@ -335,13 +307,8 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 			fts = append(fts, t.ft)
 			cols = append(cols, rowcodec.ColInfo{
 				ID:         t.id,
-				Tp:         int32(t.ft.Tp),
-				Flag:       int32(t.ft.Flag),
 				IsPKHandle: t.handle,
-				Flen:       t.ft.Flen,
-				Decimal:    t.ft.Decimal,
-				Elems:      t.ft.Elems,
-				Collate:    t.ft.Collate,
+				Ft:         t.ft,
 			})
 		}
 
@@ -574,13 +541,8 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 			fts = append(fts, t.ft)
 			cols = append(cols, rowcodec.ColInfo{
 				ID:         t.id,
-				Tp:         int32(t.ft.Tp),
-				Flag:       int32(t.ft.Flag),
 				IsPKHandle: t.handle,
-				Flen:       t.ft.Flen,
-				Decimal:    t.ft.Decimal,
-				Elems:      t.ft.Elems,
-				Collate:    t.ft.Collate,
+				Ft:         t.ft,
 			})
 		}
 		ddf := func(i int, chk *chunk.Chunk) error {
@@ -705,13 +667,8 @@ func (s *testSuite) TestVarintCompatibility(c *C) {
 			fts = append(fts, t.ft)
 			cols = append(cols, rowcodec.ColInfo{
 				ID:         t.id,
-				Tp:         int32(t.ft.Tp),
-				Flag:       int32(t.ft.Flag),
 				IsPKHandle: t.handle,
-				Flen:       t.ft.Flen,
-				Decimal:    t.ft.Decimal,
-				Elems:      t.ft.Elems,
-				Collate:    t.ft.Collate,
+				Ft:         t.ft,
 			})
 		}
 
@@ -781,13 +738,8 @@ func (s *testSuite) TestCodecUtil(c *C) {
 	for i, ft := range tps {
 		cols = append(cols, rowcodec.ColInfo{
 			ID:         colIDs[i],
-			Tp:         int32(ft.Tp),
-			Flag:       int32(ft.Flag),
 			IsPKHandle: false,
-			Flen:       ft.Flen,
-			Decimal:    ft.Decimal,
-			Elems:      ft.Elems,
-			Collate:    ft.Collate,
+			Ft:         ft,
 		})
 	}
 	d := rowcodec.NewDecoder(cols, []int64{-1}, nil)
@@ -831,13 +783,8 @@ func (s *testSuite) TestOldRowCodec(c *C) {
 	cols := make([]rowcodec.ColInfo, len(tps))
 	for i, tp := range tps {
 		cols[i] = rowcodec.ColInfo{
-			ID:      colIDs[i],
-			Tp:      int32(tp.Tp),
-			Flag:    int32(tp.Flag),
-			Flen:    tp.Flen,
-			Decimal: tp.Decimal,
-			Elems:   tp.Elems,
-			Collate: tp.Collate,
+			ID: colIDs[i],
+			Ft: tp,
 		}
 	}
 	rd := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.Local)
@@ -862,9 +809,8 @@ func (s *testSuite) Test65535Bug(c *C) {
 
 	cols := make([]rowcodec.ColInfo, 1)
 	cols[0] = rowcodec.ColInfo{
-		ID:   1,
-		Tp:   int32(tps[0].Tp),
-		Flag: int32(tps[0].Flag),
+		ID: 1,
+		Ft: tps[0],
 	}
 	dc := rowcodec.NewDatumMapDecoder(cols, []int64{-1}, nil)
 	result, err := dc.DecodeToDatumMap(bd, kv.IntHandle(-1), nil)

@@ -139,14 +139,14 @@ explain select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.cm as cm,sdk.dic a
 id	estRows	task	access object	operator info
 Projection_10	170.34	root		test.st.id, test.dd.id, test.st.aid, test.st.cm, test.dd.dic, test.dd.ip, test.dd.t, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, test.st.ext
 └─Limit_13	170.34	root		offset:0, count:3000
-  └─IndexMergeJoin_24	170.34	root		inner join, inner:IndexLookUp_22, outer key:test.st.aid, inner key:test.dd.aid, other cond:eq(test.st.dic, test.dd.mac), lt(test.st.t, test.dd.t)
+  └─IndexMergeJoin_26	170.34	root		inner join, inner:IndexLookUp_24, outer key:test.st.aid, inner key:test.dd.aid, other cond:eq(test.st.dic, test.dd.mac), lt(test.st.t, test.dd.t)
     ├─TableReader_31(Build)	170.34	root		data:Selection_30
     │ └─Selection_30	170.34	cop[tikv]		eq(test.st.bm, 0), eq(test.st.dit, "mac"), eq(test.st.pt, "ios"), gt(test.st.t, 1477971479), not(isnull(test.st.dic))
     │   └─TableRangeScan_29	1999.00	cop[tikv]	table:gad	range:[0,+inf], keep order:false
-    └─IndexLookUp_22(Probe)	1.00	root		
-      ├─IndexRangeScan_19(Build)	3.93	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:true
-      └─Selection_21(Probe)	1.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
-        └─TableRowIDScan_20	3.93	cop[tikv]	table:sdk	keep order:false
+    └─IndexLookUp_24(Probe)	1.00	root		
+      ├─IndexRangeScan_21(Build)	3.93	cop[tikv]	table:sdk, index:aid(aid, dic)	range: decided by [eq(test.dd.aid, test.st.aid)], keep order:true
+      └─Selection_23(Probe)	1.00	cop[tikv]		eq(test.dd.bm, 0), eq(test.dd.pt, "ios"), gt(test.dd.t, 1477971479), not(isnull(test.dd.mac)), not(isnull(test.dd.t))
+        └─TableRowIDScan_22	3.93	cop[tikv]	table:sdk	keep order:false
 explain SELECT cm, p1, p2, p3, p4, p5, p6_md5, p7_md5, count(1) as click_pv, count(DISTINCT ip) as click_ip FROM st WHERE (t between 1478188800 and 1478275200) and aid='cn.sbkcq' and pt='android' GROUP BY cm, p1, p2, p3, p4, p5, p6_md5, p7_md5;
 id	estRows	task	access object	operator info
 Projection_5	39.28	root		test.st.cm, test.st.p1, test.st.p2, test.st.p3, test.st.p4, test.st.p5, test.st.p6_md5, test.st.p7_md5, Column#20, Column#21
@@ -159,15 +159,15 @@ explain select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic as dic, dt.cm as 
 id	estRows	task	access object	operator info
 Projection_10	428.32	root		test.dt.id, test.dt.aid, test.dt.pt, test.dt.dic, test.dt.cm, test.rr.gid, test.rr.acd, test.rr.t, test.dt.p1, test.dt.p2, test.dt.p3, test.dt.p4, test.dt.p5, test.dt.p6_md5, test.dt.p7_md5
 └─Limit_13	428.32	root		offset:0, count:2000
-  └─IndexMergeJoin_26	428.32	root		inner join, inner:Projection_24, outer key:test.dt.aid, test.dt.dic, inner key:test.rr.aid, test.rr.dic
+  └─IndexMergeJoin_28	428.32	root		inner join, inner:Projection_26, outer key:test.dt.aid, test.dt.dic, inner key:test.rr.aid, test.rr.dic
     ├─TableReader_58(Build)	428.32	root		data:Selection_57
     │ └─Selection_57	428.32	cop[tikv]		eq(test.dt.bm, 0), eq(test.dt.pt, "ios"), gt(test.dt.t, 1478185592), not(isnull(test.dt.dic))
     │   └─TableRangeScan_56	2000.00	cop[tikv]	table:dt	range:[0,+inf], keep order:false
-    └─Projection_24(Probe)	1.00	root		test.rr.aid, test.rr.pt, test.rr.dic, test.rr.gid, test.rr.acd, test.rr.t
-      └─IndexLookUp_23	1.00	root		
-        ├─IndexRangeScan_20(Build)	1.00	cop[tikv]	table:rr, index:PRIMARY(aid, dic)	range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:true
-        └─Selection_22(Probe)	1.00	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
-          └─TableRowIDScan_21	1.00	cop[tikv]	table:rr	keep order:false
+    └─Projection_26(Probe)	1.00	root		test.rr.aid, test.rr.pt, test.rr.dic, test.rr.gid, test.rr.acd, test.rr.t
+      └─IndexLookUp_25	1.00	root		
+        ├─IndexRangeScan_22(Build)	1.00	cop[tikv]	table:rr, index:PRIMARY(aid, dic)	range: decided by [eq(test.rr.aid, test.dt.aid) eq(test.rr.dic, test.dt.dic)], keep order:true
+        └─Selection_24(Probe)	1.00	cop[tikv]		eq(test.rr.pt, "ios"), gt(test.rr.t, 1478185592)
+          └─TableRowIDScan_23	1.00	cop[tikv]	table:rr	keep order:false
 explain select pc,cr,count(DISTINCT uid) as pay_users,count(oid) as pay_times,sum(am) as am from pp where ps=2  and ppt>=1478188800 and ppt<1478275200  and pi in ('510017','520017') and uid in ('18089709','18090780') group by pc,cr;
 id	estRows	task	access object	operator info
 Projection_5	207.86	root		test.pp.pc, test.pp.cr, Column#22, Column#23, Column#24

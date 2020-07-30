@@ -39,13 +39,13 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"go.uber.org/zap"
 )
 
 var (
 	portGenerator       uint32 = 4001
-	statusPortGenerator uint32 = 10090
+	statusPortGenerator uint32 = 7090
 	regression                 = true
 )
 
@@ -952,7 +952,6 @@ func (cli *testServerClient) runTestAuth(c *C) {
 		dbt.mustExec(`GRANT ALL on test.* to 'authtest'`)
 		dbt.mustExec(`GRANT authtest_r1 to 'authtest'`)
 		dbt.mustExec(`SET DEFAULT ROLE authtest_r1 TO authtest`)
-		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	cli.runTests(c, func(config *mysql.Config) {
 		config.User = "authtest"
@@ -989,7 +988,6 @@ func (cli *testServerClient) runTestAuth(c *C) {
 	cli.runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'authtest2'@'localhost' IDENTIFIED BY '123';`)
 		dbt.mustExec(`GRANT ALL on test.* to 'authtest2'@'localhost'`)
-		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	cli.runTests(c, func(config *mysql.Config) {
 		config.User = "authtest2"
@@ -1034,7 +1032,6 @@ func (cli *testServerClient) runTestIssue3682(c *C) {
 		dbt.mustExec(`CREATE USER 'issue3682'@'%' IDENTIFIED BY '123';`)
 		dbt.mustExec(`GRANT ALL on test.* to 'issue3682'`)
 		dbt.mustExec(`GRANT ALL on mysql.* to 'issue3682'`)
-		dbt.mustExec(`FLUSH PRIVILEGES`)
 	})
 	cli.runTests(c, func(config *mysql.Config) {
 		config.User = "issue3682"
@@ -1085,7 +1082,7 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.Version, Equals, tmysql.ServerVersion)
-	c.Assert(data.GitHash, Equals, printer.TiDBGitHash)
+	c.Assert(data.GitHash, Equals, versioninfo.TiDBGitHash)
 }
 
 func (cli *testServerClient) runTestMultiStatements(c *C) {
@@ -1148,8 +1145,8 @@ func (cli *testServerClient) runTestStmtCount(t *C) {
 		t.Assert(currentStmtCnt["CreateTable"], Equals, originStmtCnt["CreateTable"]+1)
 		t.Assert(currentStmtCnt["Insert"], Equals, originStmtCnt["Insert"]+5)
 		t.Assert(currentStmtCnt["Delete"], Equals, originStmtCnt["Delete"]+1)
-		t.Assert(currentStmtCnt["Update"], Equals, originStmtCnt["Update"]+2)
-		t.Assert(currentStmtCnt["Select"], Equals, originStmtCnt["Select"]+3)
+		t.Assert(currentStmtCnt["Update"], Equals, originStmtCnt["Update"]+1)
+		t.Assert(currentStmtCnt["Select"], Equals, originStmtCnt["Select"]+2)
 		t.Assert(currentStmtCnt["Prepare"], Equals, originStmtCnt["Prepare"]+2)
 		t.Assert(currentStmtCnt["Execute"], Equals, originStmtCnt["Execute"]+2)
 		t.Assert(currentStmtCnt["Replace"], Equals, originStmtCnt["Replace"]+1)

@@ -61,26 +61,29 @@ func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression
 	case *DataSource:
 		// Check whether there is an AccessPath can use index for col.
 		for _, path := range p.possibleAccessPaths {
-			if path.IsTablePath {
+			if path.IsIntHandlePath {
 				// Since table path can contain accessConds of at most one column,
 				// we only need to check if all of the conditions can be pushed down as accessConds
 				// and `col` is the handle column.
-				if p.handleCol != nil && col.Equal(nil, p.handleCol) {
+				if p.handleCols != nil && col.Equal(nil, p.handleCols.GetCol(0)) {
 					if _, filterConds := ranger.DetachCondsForColumn(p.ctx, conditions, col); len(filterConds) != 0 {
 						return false
 					}
 					return true
 				}
 			} else {
-				// For index paths, we have to check:
+				indexCols, indexColLen := path.FullIdxCols, path.FullIdxColLens
+				if path.IsCommonHandlePath {
+					indexCols, indexColLen = p.commonHandleCols, p.commonHandleLens
+				}
 				// 1. whether all of the conditions can be pushed down as accessConds.
 				// 2. whether the AccessPath can satisfy the order property of `col` with these accessConds.
-				result, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conditions, path.FullIdxCols, path.FullIdxColLens)
+				result, err := ranger.DetachCondAndBuildRangeForIndex(p.ctx, conditions, indexCols, indexColLen)
 				if err != nil || len(result.RemainedConds) != 0 {
 					continue
 				}
 				for i := 0; i <= result.EqCondCount; i++ {
-					if i < len(path.FullIdxCols) && col.Equal(nil, path.FullIdxCols[i]) {
+					if i < len(indexCols) && col.Equal(nil, indexCols[i]) {
 						return true
 					}
 				}

@@ -16,7 +16,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"math"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -31,11 +30,13 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
@@ -58,7 +59,21 @@ type reorgCtx struct {
 	// 1: job is canceled.
 	notifyCancelReorgJob int32
 	// doneHandle is used to simulate the handle that has been processed.
-	doneHandle int64
+	doneHandle atomic.Value // nullableHandle
+}
+
+// nullableHandle can store <nil> handle.
+// Storing a nil object to atomic.Value can lead to panic. This is a workaround.
+type nullableHandle struct {
+	handle kv.Handle
+}
+
+// toString is used in log to avoid nil dereference panic.
+func toString(handle kv.Handle) string {
+	if handle == nil {
+		return "<nil>"
+	}
+	return handle.String()
 }
 
 // newContext gets a context. It is only used for adding column in reorganization state.
@@ -91,23 +106,23 @@ func (rc *reorgCtx) setRowCount(count int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
 }
 
-func (rc *reorgCtx) setNextHandle(doneHandle int64) {
-	atomic.StoreInt64(&rc.doneHandle, doneHandle)
+func (rc *reorgCtx) setNextHandle(doneHandle kv.Handle) {
+	rc.doneHandle.Store(nullableHandle{handle: doneHandle})
 }
 
 func (rc *reorgCtx) increaseRowCount(count int64) {
 	atomic.AddInt64(&rc.rowCount, count)
 }
 
-func (rc *reorgCtx) getRowCountAndHandle() (int64, int64) {
+func (rc *reorgCtx) getRowCountAndHandle() (int64, kv.Handle) {
 	row := atomic.LoadInt64(&rc.rowCount)
-	handle := atomic.LoadInt64(&rc.doneHandle)
-	return row, handle
+	h, _ := (rc.doneHandle.Load()).(nullableHandle)
+	return row, h.handle
 }
 
 func (rc *reorgCtx) clean() {
 	rc.setRowCount(0)
-	rc.setNextHandle(0)
+	rc.setNextHandle(nil)
 	rc.doneCh = nil
 }
 
@@ -148,9 +163,9 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		}
 		w.reorgCtx.clean()
 		return errors.Trace(err)
-	case <-w.quitCh:
+	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
-		w.reorgCtx.setNextHandle(0)
+		w.reorgCtx.setNextHandle(nil)
 		w.reorgCtx.setRowCount(0)
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
@@ -162,7 +177,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// Update a reorgInfo's handle.
 		err := t.UpdateDDLReorgStartHandle(job, doneHandle)
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout", zap.Duration("waitTime", waitTimeout),
-			zap.Int64("totalAddedRowCount", rowCount), zap.Int64("doneHandle", doneHandle), zap.Error(err))
+			zap.Int64("totalAddedRowCount", rowCount), zap.String("doneHandle", toString(doneHandle)), zap.Error(err))
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}
@@ -210,7 +225,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 }
 
 func (w *worker) isReorgRunnable(d *ddlCtx) error {
-	if isChanClosed(w.quitCh) {
+	if isChanClosed(w.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganizational job.
 		return errInvalidWorker.GenWithStack("worker is closed")
 	}
@@ -232,9 +247,9 @@ type reorgInfo struct {
 	*model.Job
 
 	// StartHandle is the first handle of the adding indices table.
-	StartHandle int64
+	StartHandle kv.Handle
 	// EndHandle is the last handle of the adding indices table.
-	EndHandle int64
+	EndHandle kv.Handle
 	d         *ddlCtx
 	first     bool
 	// PhysicalTableID is used for partitioned table.
@@ -245,19 +260,16 @@ type reorgInfo struct {
 }
 
 func (r *reorgInfo) String() string {
-	return "StartHandle:" + strconv.FormatInt(r.StartHandle, 10) + "," +
-		"EndHandle:" + strconv.FormatInt(r.EndHandle, 10) + "," +
+	return "StartHandle:" + toString(r.StartHandle) + "," +
+		"EndHandle:" + toString(r.EndHandle) + "," +
 		"first:" + strconv.FormatBool(r.first) + "," +
 		"PhysicalTableID:" + strconv.FormatInt(r.PhysicalTableID, 10)
 }
 
-func constructDescTableScanPB(physicalTableID int64, pbColumnInfos []*tipb.ColumnInfo) *tipb.Executor {
-	tblScan := &tipb.TableScan{
-		TableId: physicalTableID,
-		Columns: pbColumnInfos,
-		Desc:    true,
-	}
-
+func constructDescTableScanPB(physicalTableID int64, tblInfo *model.TableInfo, handleCols []*model.ColumnInfo) *tipb.Executor {
+	tblScan := tables.BuildTableScanFromInfos(tblInfo, handleCols)
+	tblScan.TableId = physicalTableID
+	tblScan.Desc = true
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
 }
 
@@ -268,17 +280,16 @@ func constructLimitPB(count uint64) *tipb.Executor {
 	return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: limitExec}
 }
 
-func buildDescTableScanDAG(ctx sessionctx.Context, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
+func buildDescTableScanDAG(ctx sessionctx.Context, tbl table.PhysicalTable, handleCols []*model.ColumnInfo, limit uint64) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
 	_, timeZoneOffset := time.Now().In(time.UTC).Zone()
 	dagReq.TimeZoneOffset = int64(timeZoneOffset)
-	for i := range columns {
+	for i := range handleCols {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 	dagReq.Flags |= model.FlagInSelectStmt
 
-	pbColumnInfos := util.ColumnsToProto(columns, tbl.Meta().PKIsHandle)
-	tblScanExec := constructDescTableScanPB(tbl.GetPhysicalID(), pbColumnInfos)
+	tblScanExec := constructDescTableScanPB(tbl.GetPhysicalID(), tbl.Meta(), handleCols)
 	dagReq.Executors = append(dagReq.Executors, tblScanExec)
 	dagReq.Executors = append(dagReq.Executors, constructLimitPB(limit))
 	distsql.SetEncodeType(ctx, dagReq)
@@ -294,9 +305,10 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 }
 
 // buildDescTableScan builds a desc table scan upon tblInfo.
-func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable, columns []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
-	sctx := newContext(d.store)
-	dagPB, err := buildDescTableScanDAG(sctx, tbl, columns, limit)
+func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable,
+	handleCols []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
+	sctx := newContext(dc.store)
+	dagPB, err := buildDescTableScanDAG(sctx, tbl, handleCols, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -316,7 +328,7 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 		return nil, errors.Trace(err)
 	}
 
-	result, err := distsql.Select(ctx, sctx, kvReq, getColumnsTypes(columns), statistics.NewQueryFeedback(0, nil, 0, false))
+	result, err := distsql.Select(ctx, sctx, kvReq, getColumnsTypes(handleCols), statistics.NewQueryFeedback(0, nil, 0, false))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -324,66 +336,89 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 	return result, nil
 }
 
-// GetTableMaxRowID gets the last row id of the table partition.
-func (d *ddlCtx) GetTableMaxRowID(startTS uint64, tbl table.PhysicalTable) (maxRowID int64, emptyTable bool, err error) {
-	maxRowID = int64(math.MaxInt64)
-	var columns []*model.ColumnInfo
-	if tbl.Meta().PKIsHandle {
+// GetTableMaxHandle gets the max handle of a PhysicalTable.
+func (dc *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
+	var handleCols []*model.ColumnInfo
+	tblInfo := tbl.Meta()
+	switch {
+	case tblInfo.PKIsHandle:
 		for _, col := range tbl.Meta().Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
-				columns = []*model.ColumnInfo{col}
+				handleCols = []*model.ColumnInfo{col}
 				break
 			}
 		}
-	} else {
-		columns = []*model.ColumnInfo{model.NewExtraHandleColInfo()}
+	case tblInfo.IsCommonHandle:
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		cols := tblInfo.Cols()
+		for _, idxCol := range pkIdx.Columns {
+			handleCols = append(handleCols, cols[idxCol.Offset])
+		}
+	default:
+		handleCols = []*model.ColumnInfo{model.NewExtraHandleColInfo()}
 	}
 
 	ctx := context.Background()
 	// build a desc scan of tblInfo, which limit is 1, we can use it to retrieve the last handle of the table.
-	result, err := d.buildDescTableScan(ctx, startTS, tbl, columns, 1)
+	result, err := dc.buildDescTableScan(ctx, startTS, tbl, handleCols, 1)
 	if err != nil {
-		return maxRowID, false, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 	defer terror.Call(result.Close)
 
-	chk := chunk.New(getColumnsTypes(columns), 1, 1)
+	chk := chunk.New(getColumnsTypes(handleCols), 1, 1)
 	err = result.Next(ctx, chk)
 	if err != nil {
-		return maxRowID, false, errors.Trace(err)
+		return nil, false, errors.Trace(err)
 	}
 
 	if chk.NumRows() == 0 {
 		// empty table
-		return maxRowID, true, nil
+		return nil, true, nil
 	}
+	sessCtx := newContext(dc.store)
 	row := chk.GetRow(0)
-	maxRowID = row.GetInt64(0)
-	return maxRowID, false, nil
+	if tblInfo.IsCommonHandle {
+		maxHandle, err = buildHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, row, handleCols)
+		return maxHandle, false, err
+	}
+	return kv.IntHandle(row.GetInt64(0)), false, nil
+}
+
+func buildHandleFromChunkRow(sctx *stmtctx.StatementContext, row chunk.Row, cols []*model.ColumnInfo) (kv.Handle, error) {
+	fieldTypes := make([]*types.FieldType, 0, len(cols))
+	for _, col := range cols {
+		fieldTypes = append(fieldTypes, &col.FieldType)
+	}
+	datumRow := row.GetDatumRow(fieldTypes)
+
+	var handleBytes []byte
+	handleBytes, err := codec.EncodeKey(sctx, nil, datumRow...)
+	if err != nil {
+		return nil, err
+	}
+	return kv.NewCommonHandle(handleBytes)
 }
 
 // getTableRange gets the start and end handle of a table (or partition).
-func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandle, endHandle int64, err error) {
-	startHandle = math.MinInt64
-	endHandle = math.MaxInt64
+func getTableRange(d *ddlCtx, tbl table.PhysicalTable, snapshotVer uint64, priority int) (startHandle, endHandle kv.Handle, err error) {
 	// Get the start handle of this partition.
-	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, math.MinInt64, math.MaxInt64, true,
-		func(h int64, rowKey kv.Key, rawRecord []byte) (bool, error) {
+	err = iterateSnapshotRows(d.store, priority, tbl, snapshotVer, nil, nil, true,
+		func(h kv.Handle, rowKey kv.Key, rawRecord []byte) (bool, error) {
 			startHandle = h
 			return false, nil
 		})
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return startHandle, endHandle, errors.Trace(err)
 	}
 	var emptyTable bool
-	// Get the end handle of this partition.
-	endHandle, emptyTable, err = d.GetTableMaxRowID(snapshotVer, tbl)
+	endHandle, emptyTable, err = d.GetTableMaxHandle(snapshotVer, tbl)
 	if err != nil {
-		return 0, 0, errors.Trace(err)
+		return startHandle, endHandle, errors.Trace(err)
 	}
-	if endHandle < startHandle || emptyTable {
+	if emptyTable || endHandle.Compare(startHandle) < 0 {
 		logutil.BgLogger().Info("[ddl] get table range, endHandle < startHandle", zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
-			zap.Int64("partitionID", tbl.GetPhysicalID()), zap.Int64("endHandle", endHandle), zap.Int64("startHandle", startHandle))
+			zap.Int64("table/partition ID", tbl.GetPhysicalID()), zap.String("endHandle", toString(endHandle)), zap.String("startHandle", toString(startHandle)))
 		endHandle = startHandle
 	}
 	return
@@ -401,8 +436,8 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 
 func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
 	var (
-		start int64
-		end   int64
+		start kv.Handle
+		end   kv.Handle
 		pid   int64
 		info  reorgInfo
 	)
@@ -427,7 +462,9 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		logutil.BgLogger().Info("[ddl] job get table range", zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid), zap.Int64("startHandle", start), zap.Int64("endHandle", end))
+		logutil.BgLogger().Info("[ddl] job get table range",
+			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
+			zap.String("startHandle", toString(start)), zap.String("endHandle", toString(end)))
 
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
@@ -440,7 +477,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		job.SnapshotVer = ver.Ver
 	} else {
 		var err error
-		start, end, pid, err = t.GetDDLReorgHandle(job)
+		start, end, pid, err = t.GetDDLReorgHandle(job, tbl.Meta().IsCommonHandle)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -454,7 +491,10 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	return &info, nil
 }
 
-func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle, physicalTableID int64) error {
+func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle kv.Handle, physicalTableID int64) error {
+	if startHandle == nil && endHandle == nil {
+		return nil
+	}
 	t := meta.NewMeta(txn)
 	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalTableID))
 }
