@@ -15,6 +15,7 @@ package tables
 
 import (
 	"bytes"
+	"context"
 	stderr "errors"
 	"fmt"
 	"sort"
@@ -96,7 +97,10 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Tabl
 func newPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	ctx := mock.NewContext()
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Columns)
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Columns, tblInfo)
+	if err != nil {
+		return nil, err
+	}
 	pi := tblInfo.GetPartitionInfo()
 	switch pi.Type {
 	case model.PartitionTypeRange:
@@ -302,7 +306,8 @@ func (t *partitionedTable) PartitionExpr() (*PartitionExpr, error) {
 	return t.partitionExpr, nil
 }
 
-func partitionRecordKey(pid int64, handle int64) kv.Key {
+// PartitionRecordKey is exported for test.
+func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
 	return tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(handle))
 }
@@ -462,15 +467,15 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r [
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
-	return partitionedTableUpdateRecord(ctx, t, h, currData, newData, touched, nil)
+func (t *partitionedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
+	return partitionedTableUpdateRecord(ctx, sctx, t, h, currData, newData, touched, nil)
 }
 
-func (t *partitionTableWithGivenSets) UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
-	return partitionedTableUpdateRecord(ctx, t.partitionedTable, h, currData, newData, touched, t.partitions)
+func (t *partitionTableWithGivenSets) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error {
+	return partitionedTableUpdateRecord(ctx, sctx, t.partitionedTable, h, currData, newData, touched, t.partitions)
 }
 
-func partitionedTableUpdateRecord(ctx sessionctx.Context, t *partitionedTable, h kv.Handle, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}) error {
+func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, t *partitionedTable, h kv.Handle, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}) error {
 	partitionInfo := t.meta.GetPartitionInfo()
 	from, err := t.locatePartition(ctx, partitionInfo, currData)
 	if err != nil {
@@ -508,7 +513,7 @@ func partitionedTableUpdateRecord(ctx sessionctx.Context, t *partitionedTable, h
 	}
 
 	tbl := t.GetPartition(to)
-	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
+	return tbl.UpdateRecord(gctx, ctx, h, currData, newData, touched)
 }
 
 // FindPartitionByName finds partition in table meta by name.

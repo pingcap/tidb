@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/v4/client"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
@@ -666,11 +665,11 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte, filter fun
 
 type groupedMutations struct {
 	region    RegionVerID
-	mutations committerMutations
+	mutations CommitterMutations
 }
 
 // GroupSortedMutationsByRegion separates keys into groups by their belonging Regions.
-func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m committerMutations) ([]groupedMutations, error) {
+func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m CommitterMutations) ([]groupedMutations, error) {
 	var (
 		groups  []groupedMutations
 		lastLoc *KeyLocation
@@ -1546,8 +1545,9 @@ retry:
 type livenessState uint32
 
 var (
-	livenessSf           singleflight.Group
-	storeLivenessTimeout time.Duration
+	livenessSf singleflight.Group
+	// StoreLivenessTimeout is the max duration of resolving liveness of a TiKV instance.
+	StoreLivenessTimeout time.Duration
 )
 
 const (
@@ -1557,23 +1557,18 @@ const (
 	offline
 )
 
-func init() {
-	t, err := time.ParseDuration(config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout)
-	if err != nil {
-		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
-			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
-	}
-	storeLivenessTimeout = t
-}
-
 func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
+	if StoreLivenessTimeout == 0 {
+		return unreachable
+	}
+
 	saddr := s.saddr
 	if len(saddr) == 0 {
 		l = unknown
 		return
 	}
 	rsCh := livenessSf.DoChan(saddr, func() (interface{}, error) {
-		return invokeKVStatusAPI(saddr, storeLivenessTimeout), nil
+		return invokeKVStatusAPI(saddr, StoreLivenessTimeout), nil
 	})
 	var ctx context.Context
 	if bo != nil {
