@@ -556,7 +556,7 @@ func (it *copIterator) open(ctx context.Context) {
 		curr:      0,
 	}
 	it.actionOnExceed.collector = it.collector
-	it.wg.Add(1)
+	it.collector.wg.Add(1)
 	go it.collector.run()
 	it.actionOnExceed.taskStarted = true
 }
