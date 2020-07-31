@@ -513,22 +513,28 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer worker.wg.Done()
-	for task := range worker.taskCh {
-		worker.handleTask(ctx, task, task.respChan)
-		close(task.respChan)
-		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
-			return
-		}
+	for {
 		select {
 		case <-worker.finishCh:
 			return
+		case task, ok := <-worker.taskCh:
+			if ok {
+				worker.handleTask(ctx, task, task.respChan)
+				close(task.respChan)
+				if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
+					return
+				}
+				worker.actionOnExceed.workersCond.L.Lock()
+				if worker.actionOnExceed.exceed {
+					worker.actionOnExceed.workersCond.Wait()
+				}
+				worker.actionOnExceed.workersCond.L.Unlock()
+			} else {
+				return
+			}
 		default:
+			continue
 		}
-		worker.actionOnExceed.workersCond.L.Lock()
-		if worker.actionOnExceed.exceed {
-			worker.actionOnExceed.workersCond.Wait()
-		}
-		worker.actionOnExceed.workersCond.L.Unlock()
 	}
 }
 
