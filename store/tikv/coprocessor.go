@@ -517,6 +517,17 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) {
+	it.collector = &copResponseCollector{
+		respChan:  make(chan *copResponse, it.concurrency),
+		tasks:     it.tasks,
+		finishCh:  it.finishCh,
+		keepOrder: it.req.KeepOrder,
+		curr:      0,
+	}
+	it.actionOnExceed.collector = it.collector
+	it.collector.wg.Add(1)
+	go it.collector.run()
+
 	taskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
@@ -541,6 +552,7 @@ func (it *copIterator) open(ctx context.Context) {
 		}
 		go worker.run(ctx)
 	}
+	it.actionOnExceed.taskStarted = true
 	taskSender := &copIteratorTaskSender{
 		taskCh:   taskCh,
 		tasks:    it.tasks,
@@ -548,17 +560,6 @@ func (it *copIterator) open(ctx context.Context) {
 		wg:       &it.wg,
 	}
 	go taskSender.run()
-	it.collector = &copResponseCollector{
-		respChan:  make(chan *copResponse, it.concurrency),
-		tasks:     it.tasks,
-		finishCh:  it.finishCh,
-		keepOrder: it.req.KeepOrder,
-		curr:      0,
-	}
-	it.actionOnExceed.collector = it.collector
-	it.collector.wg.Add(1)
-	go it.collector.run()
-	it.actionOnExceed.taskStarted = true
 }
 
 func (sender *copIteratorTaskSender) run() {
@@ -1197,7 +1198,6 @@ func (c *copResponseCollector) run() {
 	} else {
 		c.collectKeepOrderResponse()
 	}
-	// wait all workers finish job
 	close(c.respChan)
 }
 
@@ -1212,7 +1212,7 @@ func (c *copResponseCollector) collectNonKeepOrderResponse() {
 		if len(finishedTask) >= len(c.tasks) {
 			return
 		}
-		// fetch response from tasks, it the task have finished, we will directly skip this task
+		// fetch response from tasks, if the task have finished, we will directly skip this task
 		for id, task := range c.tasks {
 			if _, ok := finishedTask[id]; ok {
 				continue
@@ -1274,11 +1274,11 @@ type taskRateLimitAction struct {
 
 // Action implements ActionOnExceed.Action
 func (e *taskRateLimitAction) Action(t *memory.Tracker) {
+	e.workersCond.L.Lock()
+	defer e.workersCond.L.Unlock()
 	if !e.taskStarted {
 		return
 	}
-	e.workersCond.L.Lock()
-	defer e.workersCond.L.Unlock()
 	e.once.Do(func() {
 		if cap(e.collector.respChan) < 2 {
 			if e.fallbackAction != nil {
