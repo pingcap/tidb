@@ -102,6 +102,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	copRespCh := &copResponseCh{
 		respCh: make(chan *copResponse, it.concurrency),
 		rw:     sync.RWMutex{},
+		exit:   false,
 	}
 	it.collector = &copResponseCollector{
 		respChan:       copRespCh,
@@ -1178,11 +1179,15 @@ func (it copErrorResponse) Close() error {
 type copResponseCh struct {
 	respCh chan *copResponse
 	rw     sync.RWMutex
+	exit   bool
 }
 
 func (ch *copResponseCh) send(resp *copResponse) {
 	ch.rw.RLock()
 	defer ch.rw.RUnlock()
+	if ch.exit {
+		return
+	}
 	ch.respCh <- resp
 }
 
@@ -1195,7 +1200,11 @@ func (ch *copResponseCh) cap() int {
 func (ch *copResponseCh) close() {
 	ch.rw.RLock()
 	defer ch.rw.RUnlock()
+	if ch.exit {
+		return
+	}
 	close(ch.respCh)
+	ch.exit = true
 }
 
 func (ch *copResponseCh) len() int {
@@ -1207,6 +1216,9 @@ func (ch *copResponseCh) len() int {
 func (ch *copResponseCh) declineChCap() {
 	ch.rw.Lock()
 	defer ch.rw.Unlock()
+	if ch.exit {
+		return
+	}
 	if cap(ch.respCh) < 2 {
 		// unreachable code
 		panic("respCh's cap shouldn't be decline if cap is less than 2")
