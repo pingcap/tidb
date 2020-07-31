@@ -286,23 +286,21 @@ func convertRuneToWeight(r rune) []uint16 {
 
 	// a unicode character is not in the table
 	// see https://dev.mysql.com/doc/refman/8.0/en/charset-unicode-sets.html#charset-unicode-sets-collating-weights
-	if runePlaneTable[r>>8] == nil {
-		base := 0
+	plane := runePlaneTable[r>>8]
+	if plane == nil {
+		base := 0xFBC0
 		if r >= 0x3400 && r <= 0x4DB5 {
 			base = 0xFB80
 		} else if r >= 0x4E00 && r <= 0x9FA5 {
 			base = 0xFB40
-		} else {
-			base = 0xFBC0
 		}
 		notInTableSlice[0] = uint16(base + int(r>>15))
 		notInTableSlice[1] = uint16((r & 0x7FFF) | 0x8000)
 		return notInTableSlice
 	}
 
-	plane := r >> 8
-	offset := uint16(r&0xFF) * uint16(runeWeightLength[plane])
-	return runePlaneTable[plane][offset : offset+uint16(runeWeightLength[plane])]
+	offset := uint16(r&0xFF) * uint16(runeWeightLength[r>>8])
+	return plane[offset : offset+uint16(runeWeightLength[r>>8])]
 }
 
 /* Created from allkeys.txt. Unicode version '4.0.0'. Do not EDIT */
