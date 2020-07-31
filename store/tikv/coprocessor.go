@@ -67,7 +67,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	if err != nil {
 		return copErrorResponse{err}
 	}
-	workersCond := sync.NewCond(&sync.Mutex{})
 	it := &copIterator{
 		store:           c.store,
 		req:             req,
@@ -77,13 +76,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 		rpcCancel:       NewRPCanceller(),
-		actionOnExceed: &taskRateLimitAction{
-			taskStarted: false,
-			workersCond: workersCond,
-			once:        sync.Once{},
-		},
-		workersCond: workersCond,
-		collector:   nil,
+		actionOnExceed:  nil,
+		workersCond:     nil,
+		collector:       nil,
 	}
 
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
@@ -97,12 +92,14 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 
 	it.sendRate = newRateLimit(it.concurrency)
-	it.actionOnExceed.sendRate = it.sendRate
-	if it.memTracker != nil {
-		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
-	}
 
 	if !it.req.KeepOrder {
+		workersCond := sync.NewCond(&sync.Mutex{})
+		it.actionOnExceed = &taskRateLimitAction{
+			taskStarted: false,
+			workersCond: workersCond,
+			once:        sync.Once{},
+		}
 		it.collector = &copResponseCollector{
 			respChan:       make(chan *copResponse, it.concurrency),
 			tasks:          it.tasks,
@@ -111,6 +108,11 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 			actionOnExceed: it.actionOnExceed,
 			keepOrder:      it.req.KeepOrder,
 			curr:           0,
+		}
+		it.workersCond = workersCond
+		it.actionOnExceed.sendRate = it.sendRate
+		if it.memTracker != nil {
+			it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 		}
 	}
 	if !it.req.Streaming {
@@ -526,11 +528,13 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			return
 		default:
 		}
-		worker.actionOnExceed.workersCond.L.Lock()
-		if worker.actionOnExceed.exceed {
-			worker.actionOnExceed.workersCond.Wait()
+		if worker.actionOnExceed != nil {
+			worker.actionOnExceed.workersCond.L.Lock()
+			if worker.actionOnExceed.exceed {
+				worker.actionOnExceed.workersCond.Wait()
+			}
+			worker.actionOnExceed.workersCond.L.Unlock()
 		}
-		worker.actionOnExceed.workersCond.L.Unlock()
 	}
 }
 
@@ -571,10 +575,10 @@ func (it *copIterator) open(ctx context.Context) {
 	go taskSender.run()
 	if it.collector != nil {
 		go it.collector.run()
+		it.actionOnExceed.workersCond.L.Lock()
+		it.actionOnExceed.taskStarted = true
+		it.actionOnExceed.workersCond.L.Unlock()
 	}
-	it.actionOnExceed.workersCond.L.Lock()
-	it.actionOnExceed.taskStarted = true
-	it.actionOnExceed.workersCond.L.Unlock()
 }
 
 func (sender *copIteratorTaskSender) run() {
