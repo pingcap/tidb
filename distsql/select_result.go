@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/store/tikv"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -140,15 +140,14 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 
-		var resultDetail *tikv.CopRuntimeStats
-		hasStats, ok := resultSubset.(HasRuntimeStats)
+		hasStats, ok := resultSubset.(HasCopRuntimeStats)
 		if ok {
-			resultDetail = hasStats.GetExecDetails()
-		}
-		if resultDetail != nil {
-			r.updateCopRuntimeStats(resultDetail, resultSubset.RespTime())
-			resultDetail.CopTime = duration
-			sc.MergeExecDetails(&resultDetail.ExecDetails, nil)
+			copStats := hasStats.GetCopRuntimeStats()
+			if copStats != nil {
+				r.updateCopRuntimeStats(copStats, resultSubset.RespTime())
+				copStats.CopTime = duration
+				sc.MergeExecDetails(&copStats.ExecDetails, nil)
+			}
 		}
 		if len(r.selectResp.Chunks) != 0 {
 			break
@@ -271,7 +270,6 @@ func (r *selectResult) updateCopRuntimeStats(copStats *tikv.CopRuntimeStats, res
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
-	//r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID.String(), respTime, copStats)
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
@@ -321,9 +319,9 @@ func (r *selectResult) Close() error {
 	return r.resp.Close()
 }
 
-type HasRuntimeStats interface {
-	// GetExecDetails gets the detail information.
-	GetExecDetails() *tikv.CopRuntimeStats
+type HasCopRuntimeStats interface {
+	// GetCopRuntimeStats gets the cop runtime stats information.
+	GetCopRuntimeStats() *tikv.CopRuntimeStats
 }
 
 type selectResultRuntimeStats struct {

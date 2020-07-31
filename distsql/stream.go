@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"context"
-	"github.com/pingcap/tidb/store/tikv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -108,14 +107,13 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts)
 	r.partialCount++
 
-	var resultDetail *tikv.CopRuntimeStats
-	hasStats, ok := resultSubset.(HasRuntimeStats)
+	hasStats, ok := resultSubset.(HasCopRuntimeStats)
 	if ok {
-		resultDetail = hasStats.GetExecDetails()
-	}
-	if resultDetail != nil {
-		resultDetail.CopTime = duration
-		r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(&resultDetail.ExecDetails, nil)
+		copStats := hasStats.GetCopRuntimeStats()
+		if copStats != nil {
+			copStats.CopTime = duration
+			r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(&copStats.ExecDetails, nil)
+		}
 	}
 	return false, nil
 }
