@@ -95,8 +95,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.concurrency = 1
 	}
 
-	it.sendRate = newRateLimit(it.concurrency)
-	it.actionOnExceed.sendRate = it.sendRate
 	if it.memTracker != nil {
 		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
@@ -104,12 +102,12 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	it.collector = &copResponseCollector{
 		respChan:       make(chan *copResponse, it.concurrency),
 		tasks:          it.tasks,
-		sendRate:       it.sendRate,
 		finishCh:       it.finishCh,
 		actionOnExceed: it.actionOnExceed,
 		keepOrder:      it.req.KeepOrder,
 		curr:           0,
 	}
+	it.actionOnExceed.respCh = it.collector.respChan
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	}
@@ -400,9 +398,6 @@ type copIterator struct {
 	// results are stored in copTask.respChan. If keepOrder, read them out one by one, otherwise response would be
 	// collected by copResponseCollector
 	tasks []*copTask
-	curr  int
-	// sendRate controls the sending rate of copIteratorTaskSender
-	sendRate *rateLimit
 
 	vars *kv.Variables
 
@@ -447,10 +442,8 @@ type copIteratorWorker struct {
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
 	taskCh   chan<- *copTask
-	wg       *sync.WaitGroup
 	tasks    []*copTask
 	finishCh <-chan struct{}
-	sendRate *rateLimit
 }
 
 type copResponse struct {
@@ -551,8 +544,7 @@ func (it *copIterator) open(ctx context.Context) {
 				Client:            it.store.client,
 			},
 
-			memTracker: it.memTracker,
-
+			memTracker:      it.memTracker,
 			replicaReadSeed: it.replicaReadSeed,
 			actionOnExceed:  it.actionOnExceed,
 		}
@@ -560,10 +552,8 @@ func (it *copIterator) open(ctx context.Context) {
 	}
 	taskSender := &copIteratorTaskSender{
 		taskCh:   taskCh,
-		wg:       &it.wg,
 		tasks:    it.tasks,
 		finishCh: it.finishCh,
-		sendRate: it.sendRate,
 	}
 	go taskSender.run()
 	go it.collector.run()
@@ -575,22 +565,18 @@ func (sender *copIteratorTaskSender) run() {
 	for _, t := range sender.tasks {
 		// We keep the number of inflight tasks within the number of concurrency
 		// It sends one more task if a task has been finished.
-		exit := sender.sendRate.getToken(sender.finishCh)
-		if exit {
-			break
-		}
-		exit = sender.sendToTaskCh(t)
+		exit := sender.sendToTaskCh(t)
 		if exit {
 			break
 		}
 	}
 	close(sender.taskCh)
-
-	// Wait for worker goroutines to exit.
-	sender.wg.Wait()
 }
 
-func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
+func (it *copIterator) recvFromRespCh(ctx context.Context, collector *copResponseCollector) (resp *copResponse, ok bool, exit bool) {
+	collector.rwMu.RLock()
+	defer collector.rwMu.RUnlock()
+	respCh := collector.respChan
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -651,17 +637,23 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	)
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
-	resp, ok, closed = it.recvFromRespCh(ctx, it.collector.respChan)
+	resp, ok, closed = it.recvFromRespCh(ctx, it.collector)
 	if !ok || closed {
 		return nil, nil
 	}
 	it.actionOnExceed.workersCond.L.Lock()
+	if it.actionOnExceed.exceed {
+		if !it.actionOnExceed.resize {
+			it.actionOnExceed.resize = true
+			it.collector.declineChCap()
+		}
 
-	// The respCh have been drained out
-	if it.actionOnExceed.exceed && len(it.collector.respChan) < 1 {
-		it.actionOnExceed.exceed = false
-		it.workersCond.Broadcast()
-		it.actionOnExceed.once = sync.Once{}
+		// The respCh have been drained out
+		if it.collector.isEmpty() {
+			it.actionOnExceed.exceed = false
+			it.workersCond.Broadcast()
+			it.actionOnExceed.once = sync.Once{}
+		}
 	}
 	it.actionOnExceed.workersCond.L.Unlock()
 
@@ -1181,6 +1173,7 @@ func (it copErrorResponse) Close() error {
 
 // copResponseCollector is used to collect the resp from task respCh into its own resp
 type copResponseCollector struct {
+	rwMu           sync.RWMutex
 	respChan       chan *copResponse
 	tasks          []*copTask
 	sendRate       *rateLimit
@@ -1189,6 +1182,30 @@ type copResponseCollector struct {
 
 	keepOrder bool
 	curr      int
+}
+
+func (c *copResponseCollector) isEmpty() bool {
+	return len(c.respChan) < 1
+}
+
+func (c *copResponseCollector) declineChCap() {
+	c.rwMu.Lock()
+	defer c.rwMu.Unlock()
+	if cap(c.respChan) < 2 {
+		// unreachable code
+		panic("respCh's cap shouldn't be decline if cap is less than 2")
+	}
+	newCh := make(chan *copResponse, cap(c.respChan)-1)
+	if len(c.respChan) < cap(c.respChan) {
+		for len(c.respChan) > 0 {
+			newCh <- <-c.respChan
+		}
+		close(c.respChan)
+		c.respChan = newCh
+		return
+	}
+	// unreachable code
+	panic("respCh's size should always be less than respCh's cap before decline channel cap")
 }
 
 func (c *copResponseCollector) run() {
@@ -1220,18 +1237,12 @@ func (c *copResponseCollector) collectNonKeepOrderResponse() {
 			select {
 			case resp, ok := <-task.respChan:
 				if ok {
+					c.rwMu.RLock()
 					c.respChan <- resp
+					c.rwMu.RUnlock()
 				} else {
 					// if the task have been finished, record the task id.
 					finishedTask[id] = struct{}{}
-					c.actionOnExceed.workersCond.L.Lock()
-					if c.actionOnExceed.exceed && !c.actionOnExceed.teared {
-						c.actionOnExceed.tearedTicket = c.actionOnExceed.tearedTicket + 1
-						c.actionOnExceed.teared = true
-					} else {
-						c.sendRate.putToken()
-					}
-					c.actionOnExceed.workersCond.L.Unlock()
 				}
 				break
 			default:
@@ -1258,18 +1269,12 @@ func (c *copResponseCollector) collectKeepOrderResponse() {
 		select {
 		case resp, ok := <-task.respChan:
 			if ok {
+				c.rwMu.RLock()
 				c.respChan <- resp
+				c.rwMu.RUnlock()
 			} else {
 				c.tasks[c.curr] = nil
 				c.curr++
-				c.actionOnExceed.workersCond.L.Lock()
-				if c.actionOnExceed.exceed && !c.actionOnExceed.teared {
-					c.actionOnExceed.tearedTicket = c.actionOnExceed.tearedTicket + 1
-					c.actionOnExceed.teared = true
-				} else {
-					c.sendRate.putToken()
-				}
-				c.actionOnExceed.workersCond.L.Unlock()
 			}
 		default:
 			continue
@@ -1284,10 +1289,8 @@ type taskRateLimitAction struct {
 	workersCond    *sync.Cond
 	// exceed indicates whether have encountered OOM situation.
 	exceed bool
-	// tearedTicket indicates the count of tickets which have been teared up.
-	tearedTicket uint
-	teared       bool
-	sendRate     *rateLimit
+	resize bool
+	respCh chan *copResponse
 }
 
 // Action implements ActionOnExceed.Action
@@ -1298,14 +1301,12 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 	e.workersCond.L.Lock()
 	defer e.workersCond.L.Unlock()
 	e.once.Do(func() {
-		if e.tearedTicket >= uint(cap(e.sendRate.token)-1) {
+		if cap(e.respCh) < 2 {
 			if e.fallbackAction != nil {
 				logutil.BgLogger().Info("taskRateLimitAction delegate to fallback action",
 					zap.Int64("consumed", t.BytesConsumed()),
 					zap.Int64("quota", t.GetBytesLimit()),
-					zap.Int64("maxConsumed", t.MaxConsumed()),
-					zap.Uint("tearedTicket", e.tearedTicket),
-					zap.Int("ticketTotal", cap(e.sendRate.token)))
+					zap.Int64("maxConsumed", t.MaxConsumed()))
 				e.fallbackAction.Action(t)
 			} else {
 				// unreachable code
@@ -1315,10 +1316,8 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 		logutil.BgLogger().Info("memory exceeds quota, mark taskRateLimitAction exceed signal.",
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()),
-			zap.Int64("maxConsumed", t.MaxConsumed()),
-			zap.Uint("tearedTicket", e.tearedTicket),
-			zap.Int("ticketTotal", cap(e.sendRate.token)))
-		e.teared = false
+			zap.Int64("maxConsumed", t.MaxConsumed()))
+		e.resize = false
 		e.exceed = true
 	})
 }
