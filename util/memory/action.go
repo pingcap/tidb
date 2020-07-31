@@ -93,6 +93,8 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 	if a.logHook != nil {
 		a.logHook(a.ConnID)
 	}
+	logutil.BgLogger().Warn("memory exceeds quota",
+		zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.bytesLimit, t.String())))
 	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
 }
 
