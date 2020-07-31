@@ -448,6 +448,8 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
+	// AllowBCJ means allow broadcast join.
+	AllowBCJ bool
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -472,6 +474,8 @@ type SessionVars struct {
 	CPUFactor float64
 	// CopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
 	CopCPUFactor float64
+	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
+	CopTiFlashConcurrencyFactor float64
 	// NetworkFactor is the network cost of transferring 1 byte data.
 	NetworkFactor float64
 	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
@@ -694,6 +698,9 @@ type SessionVars struct {
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
 
+	// EnableParallelApply indicates that thether to use parallel apply.
+	EnableParallelApply bool
+
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
 }
@@ -745,6 +752,7 @@ func NewSessionVars() *SessionVars {
 		Status:                      mysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
+		AllowBCJ:                    false,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
@@ -754,6 +762,7 @@ func NewSessionVars() *SessionVars {
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		CPUFactor:                   DefOptCPUFactor,
 		CopCPUFactor:                DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
 		NetworkFactor:               DefOptNetworkFactor,
 		ScanFactor:                  DefOptScanFactor,
 		DescScanFactor:              DefOptDescScanFactor,
@@ -786,6 +795,7 @@ func NewSessionVars() *SessionVars {
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
+		EnableParallelApply:         DefTiDBEnableParallelApply,
 		EnableLogDesensitization:    DefTiDBLogDesensitization,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
 	}
@@ -1169,6 +1179,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SkipASCIICheck = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
+	case TiDBOptBCJ:
+		s.AllowBCJ = TiDBOptOn(val)
 	case TiDBOptDistinctAggPushDown:
 		s.AllowDistinctAggPushDown = TiDBOptOn(val)
 	case TiDBOptWriteRowID:
@@ -1183,6 +1195,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.CPUFactor = tidbOptFloat64(val, DefOptCPUFactor)
 	case TiDBOptCopCPUFactor:
 		s.CopCPUFactor = tidbOptFloat64(val, DefOptCopCPUFactor)
+	case TiDBOptTiFlashConcurrencyFactor:
+		s.CopTiFlashConcurrencyFactor = tidbOptFloat64(val, DefOptTiFlashConcurrencyFactor)
 	case TiDBOptNetworkFactor:
 		s.NetworkFactor = tidbOptFloat64(val, DefOptNetworkFactor)
 	case TiDBOptScanFactor:
@@ -1397,6 +1411,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	case TiDBEnableClusteredIndex:
 		s.EnableClusteredIndex = TiDBOptOn(val)
+	case TiDBEnableParallelApply:
+		s.EnableParallelApply = TiDBOptOn(val)
 	case TiDBSlowLogMasking, TiDBLogDesensitization:
 		s.EnableLogDesensitization = TiDBOptOn(val)
 	case TiDBShardAllocateStep:
@@ -1439,6 +1455,11 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 	// Because `prevStmt` may be truncated, so it's senseless to normalize it.
 	// Even if `prevStmtDigest` is empty but `prevStmt` is not, just return it anyway.
 	return s.prevStmtDigest
+}
+
+// LazyCheckKeyNotExists returns if we can lazy check key not exists.
+func (s *SessionVars) LazyCheckKeyNotExists() bool {
+	return s.PresumeKeyNotExists || s.TxnCtx.IsPessimistic
 }
 
 // SetLocalSystemVar sets values of the local variables which in "server" scope.
