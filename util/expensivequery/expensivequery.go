@@ -15,7 +15,9 @@ package expensivequery
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"runtime"
 	rpprof "runtime/pprof"
 	"sort"
@@ -101,11 +103,38 @@ func (eqh *Handle) Run() {
 	}
 }
 
+var (
+	tmpDir              string
+	lastLogFileName     string
+	lastProfileFileName string
+)
+
 func (eqh *Handle) oomRecord(memUsage uint64, systemMem uint64) {
+	var err error
+	if tmpDir == "" {
+		tmpDir, err = ioutil.TempDir("", "TiDBOOM")
+		if err != nil {
+			return
+		}
+	}
+	tryRemove := func(filename string) {
+		if filename == "" {
+			return
+		}
+		err = os.Remove(filename)
+	}
+	tryRemove(lastLogFileName)
+	tryRemove(lastProfileFileName)
+
 	logutil.BgLogger().Warn("The TiDB instance now takes a lot of memory, has the risk of OOM",
 		zap.Any("memUsage", memUsage),
 		zap.Any("systemMemoryTotal", systemMem),
 	)
+	eqh.oomRecordSQL()
+	eqh.oomRecordProfile()
+}
+
+func (eqh *Handle) oomRecordSQL() {
 	sm := eqh.sm.Load().(util.SessionManager)
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
@@ -116,30 +145,59 @@ func (eqh *Handle) oomRecord(memUsage uint64, systemMem uint64) {
 	}
 	now := time.Now()
 
-	printTop10 := func(f func(i, j int) bool) {
-		sort.Slice(pinfo, f)
+	lastLogFileName = filepath.Join(tmpDir, "oom_sql"+time.Now().Format(time.RFC3339))
+	f, err := os.Create(lastLogFileName)
+	if err != nil {
+		logutil.BgLogger().Warn("Create oom record file fail.", zap.Error(err))
+		return
+	}
+	defer func() {
+		err := f.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("Close oom record file fail.", zap.Error(err))
+		}
+	}()
+	printTop10 := func(cmp func(i, j int) bool) {
+		sort.Slice(pinfo, cmp)
 		list := pinfo
 		if len(list) > 10 {
 			list = list[:10]
 		}
+		var buf strings.Builder
 		for i, info := range list {
-			logutil.BgLogger().Warn(fmt.Sprintf("OOM analyze SQL %v", i),
-				genLogFields(now.Sub(info.Time), info)...)
+			buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
+			fields := genLogFields(now.Sub(info.Time), info)
+			for _, field := range fields {
+				switch field.Type {
+				case zapcore.StringType:
+					buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.String))
+				case zapcore.Uint8Type, zapcore.Uint16Type, zapcore.Uint32Type, zapcore.Uint64Type:
+					buf.WriteString(fmt.Sprintf("%v: %v", field.Key, uint64(field.Integer)))
+				case zapcore.Int8Type, zapcore.Int16Type, zapcore.Int32Type, zapcore.Int64Type:
+					buf.WriteString(fmt.Sprintf("%v: %v", field.Key, field.Integer))
+				}
+				buf.WriteString("\n")
+			}
 		}
+		_, err = f.WriteString(buf.String())
 	}
 
-	logutil.BgLogger().Warn("Top 10 memory usage of SQL for OOM analyze")
+	_, err = f.WriteString("Top 10 memory usage of SQL for OOM analyze\n")
 	printTop10(func(i, j int) bool {
 		return pinfo[i].StmtCtx.MemTracker.MaxConsumed() > pinfo[j].StmtCtx.MemTracker.MaxConsumed()
 	})
 
-	logutil.BgLogger().Warn("Top 10 time usage of SQL for OOM analyze")
+	_, err = f.WriteString("Top 10 time usage of SQL for OOM analyze\n")
 	printTop10(func(i, j int) bool {
 		return pinfo[i].Time.Before(pinfo[j].Time)
 	})
 
-	filename := "heap.profile" + time.Now().Format(time.RFC3339)
-	f, err := os.Create(filename)
+	logutil.BgLogger().Warn("Get oom sql successfully.", zap.Any("SQLs file path:", lastLogFileName))
+}
+
+func (eqh *Handle) oomRecordProfile() {
+	lastProfileFileName = filepath.Join(tmpDir, "heap.profile"+time.Now().Format(time.RFC3339))
+	f, err := os.Create(lastProfileFileName)
 	if err != nil {
 		logutil.BgLogger().Warn("Create heap profile file fail.", zap.Error(err))
 		return
@@ -156,7 +214,7 @@ func (eqh *Handle) oomRecord(memUsage uint64, systemMem uint64) {
 		logutil.BgLogger().Warn("Write heap profile file fail.", zap.Error(err))
 		return
 	}
-	logutil.BgLogger().Warn("Get heap profile successfully.", zap.Any("FileName", filename))
+	logutil.BgLogger().Warn("Get heap profile successfully.", zap.Any("Profile file path:", lastProfileFileName))
 }
 
 // LogOnQueryExceedMemQuota prints a log when memory usage of connID is out of memory quota.
