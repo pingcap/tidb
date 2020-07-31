@@ -14,7 +14,6 @@
 package collate
 
 import (
-	"bytes"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -165,53 +164,6 @@ func (s *testCollateSuite) TestUnicodeCICollator(c *C) {
 
 	testCompareTable(compareTable, "utf8mb4_unicode_ci", c)
 	testKeyTable(keyTable, "utf8mb4_unicode_ci", c)
-}
-
-func BenchmarkUnicodeCIMatchSpecial(b *testing.B) {
-	SetNewCollationEnabledForTest(true)
-	defer SetNewCollationEnabledForTest(false)
-
-	var (
-		pattern = `㍿%㍿%㍿%㍿%㍿%㍿%㍿%㍿%b`
-		target  = `㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿㍿`
-		escape  = byte('\\')
-	)
-
-	p := GetCollator("utf8mb4_unicode_ci").Pattern()
-	p.Compile(pattern, escape)
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		match := p.DoMatch(target)
-		if match {
-			b.Fatal("Unmatch expected.")
-		}
-	}
-}
-
-func BenchmarkUnicodeCIKeySpecial(b *testing.B) {
-	SetNewCollationEnabledForTest(true)
-	defer SetNewCollationEnabledForTest(false)
-
-	keyTable := []keyTable{
-		{"a", []byte{0x0E, 0x33}},
-		{"A", []byte{0x0E, 0x33}},
-		{"ß", []byte{0x0F, 0xEA, 0x0F, 0xEA}},
-		{"Foo © bar 𝌆 baz ☃ qux", []byte{0x0E, 0xB9, 0x0F, 0x82, 0x0F, 0x82, 0x02, 0x09, 0x02,
-			0xC5, 0x02, 0x09, 0x0E, 0x4A, 0x0E, 0x33, 0x0F, 0xC0, 0x02, 0x09, 0xFF, 0xFD, 0x02,
-			0x09, 0x0E, 0x4A, 0x0E, 0x33, 0x10, 0x6A, 0x02, 0x09, 0x06, 0xFF, 0x02, 0x09, 0x0F,
-			0xB4, 0x10, 0x1F, 0x10, 0x5A}},
-		{"a ", []byte{0x0E, 0x33}},
-	}
-	collator := GetCollator("utf8mb4_unicode_ci")
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		for _, t := range keyTable {
-			if !bytes.Equal(collator.Key(t.Str), t.Expect) {
-				b.Fatal("equal expected.")
-			}
-		}
-	}
 }
 
 func (s *testCollateSuite) TestSetNewCollateEnabled(c *C) {

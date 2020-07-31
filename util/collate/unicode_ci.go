@@ -14,48 +14,88 @@
 package collate
 
 import (
-	"unicode/utf8"
-
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-const terminal uint16 = 0x0000
+const (
+	terminal uint16 = 0x0000
+	// first byte of a 2-byte encoding starts 110 and carries 5 bits of data
+	b2Lead = 0xC0 // 1100 0000
+	b2Mask = 0x1F // 0001 1111
+
+	// first byte of a 3-byte encoding starts 1110 and carries 4 bits of data
+	b3Lead = 0xE0 // 1110 0000
+	b3Mask = 0x0F // 0000 1111
+
+	// first byte of a 4-byte encoding starts 11110 and carries 3 bits of data
+	b4Lead = 0xF0 // 1111 0000
+	b4Mask = 0x07 // 0000 0111
+
+	// non-first bytes start 10 and carry 6 bits of data
+	mbLead = 0x80 // 1000 0000
+	mbMask = 0x3F // 0011 1111
+)
 
 var (
-	fffd            = []uint16{0xFFFD}
-	notInTableSlice = []uint16{0x0000, 0x0000}
+	fffd            = []uint16{0xFFFD, terminal}
+	notInTableSlice = []uint16{0x0000, 0x0000, terminal}
 )
 
 // unicodeScanner used to scan unicode string
 type unicodeScanner struct {
 	s      string
 	expand []uint16
+	ei     int
+	si     int
 }
 
 func newUnicodeScanner(s string) *unicodeScanner {
-	return &unicodeScanner{s: s}
+	return &unicodeScanner{s: s, expand: []uint16{terminal}}
 }
 
 // return next weight of string. return `terminal` when string is done
 // a rune may expand to many weights, it will be returned one by one
 func (us *unicodeScanner) next() uint16 {
-	if len(us.expand) != 0 && us.expand[0] != terminal {
-		r := us.expand[0]
-		us.expand = us.expand[1:]
-		return r
+	if us.expand[us.ei] != terminal {
+		us.ei++
+		return us.expand[us.ei-1]
 	}
-	for len(us.s) > 0 {
-		r, rsize := utf8.DecodeRuneInString(us.s)
-		us.s = us.s[rsize:]
-
-		unicodeWeight := convertRuneToWeight(r)
-		if unicodeWeight != nil {
-			us.expand = unicodeWeight[1:]
-			return unicodeWeight[0]
+	for us.si < len(us.s) {
+		r := us.decodeRune()
+		us.expand = convertRuneToWeight(r)
+		if us.expand[0] != terminal {
+			us.ei = 1
+			return us.expand[0]
 		}
 	}
 
 	return terminal
+}
+
+// decode rune by hand
+func (us *unicodeScanner) decodeRune() rune {
+	var r rune
+	switch b := us.s[us.si]; {
+	case b < 0x80:
+		r = rune(b)
+		us.si++
+	case b < 0xE0:
+		r = rune(b&b2Mask)<<6 |
+			rune(us.s[1+us.si]&mbMask)
+		us.si += 2
+	case b < 0xF0:
+		r = rune(b&b3Mask)<<12 |
+			rune(us.s[us.si+1]&mbMask)<<6 |
+			rune(us.s[us.si+2]&mbMask)
+		us.si += 3
+	default:
+		r = rune(b&b4Mask)<<18 |
+			rune(us.s[us.si+1]&mbMask)<<12 |
+			rune(us.s[us.si+2]&mbMask)<<6 |
+			rune(us.s[us.si+3]&mbMask)
+		us.si += 4
+	}
+	return r
 }
 
 // unicodeCICollator implements UCA. see http://unicode.org/reports/tr10/
@@ -262,11 +302,7 @@ func convertRuneToWeight(r rune) []uint16 {
 
 	plane := r >> 8
 	offset := uint16(r&0xFF) * uint16(runeWeightLength[plane])
-	if runePlaneTable[plane][offset] != terminal {
-		return runePlaneTable[plane][offset : offset+uint16(runeWeightLength[plane])]
-	}
-
-	return nil
+	return runePlaneTable[plane][offset : offset+uint16(runeWeightLength[plane])]
 }
 
 /* Created from allkeys.txt. Unicode version '4.0.0'. Do not EDIT */
