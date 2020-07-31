@@ -455,7 +455,7 @@ func (rs *copResponse) GetStartKey() kv.Key {
 	return rs.startKey
 }
 
-func (rs *copResponse) GetExecDetails() *CopRuntimeStats {
+func (rs *copResponse) GetCopRuntimeStats() *CopRuntimeStats {
 	return rs.detail
 }
 

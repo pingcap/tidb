@@ -62,7 +62,7 @@ func (rs *batchCopResponse) GetStartKey() kv.Key {
 
 // GetExecDetails is unavailable currently, because TiFlash has not collected exec details for batch cop.
 // TODO: Will fix in near future.
-func (rs *batchCopResponse) GetExecDetails() *CopRuntimeStats {
+func (rs *batchCopResponse) GetCopRuntimeStats() *CopRuntimeStats {
 	return rs.detail
 }
 
