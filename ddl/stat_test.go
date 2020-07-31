@@ -87,9 +87,7 @@ LOOP:
 	for {
 		select {
 		case <-ticker.C:
-			d.Stop()
 			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
-			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
 		case err := <-done:
 			c.Assert(err, IsNil)

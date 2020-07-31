@@ -496,7 +496,7 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
 		case <-d.ctx.Done():
-			return errors.New("store closed")
+			return d.ctx.Err()
 		}
 
 		historyJob, err = d.getHistoryDDLJob(jobID)
