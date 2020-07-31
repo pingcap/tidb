@@ -1192,6 +1192,9 @@ type copResponseCh struct {
 func (ch *copResponseCh) send(resp *copResponse) {
 	ch.rw.RLock()
 	defer ch.rw.RUnlock()
+	if ch.exit {
+		return
+	}
 	ch.respCh <- resp
 }
 
