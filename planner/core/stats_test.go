@@ -136,3 +136,36 @@ func (s *testStatsSuite) TestGroupNDVs(c *C) {
 		c.Assert(joinInput, Equals, output[i].JoinInput, comment)
 	}
 }
+
+func (s *testStatsSuite) TestCardinalityGroupCols(c *C) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int not null, b int not null, key(a,b))")
+	tk.MustExec("insert into t1 values(1,1),(1,2),(2,1),(2,2)")
+	tk.MustExec("create table t2(a int not null, b int not null, key(a,b))")
+	tk.MustExec("insert into t2 values(1,1),(1,2),(1,3),(2,1),(2,2),(2,3),(3,1),(3,2),(3,3)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+		})
+		// The test point is the row count estimation for aggregations and joins.
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}

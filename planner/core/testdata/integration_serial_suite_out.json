@@ -29,7 +29,7 @@
           "StreamAgg_32 1.00 root  funcs:count(Column#14)->Column#11",
           "└─TableReader_33 1.00 root  data:StreamAgg_13",
           "  └─StreamAgg_13 1.00 cop[tiflash]  funcs:count(1)->Column#14",
-	  "    └─BroadcastJoin_31 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "    └─BroadcastJoin_31 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
           "      ├─Selection_23(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
           "      │ └─TableFullScan_22 2.00 cop[tiflash] table:d1_t keep order:false, global read",
           "      └─Selection_21(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
