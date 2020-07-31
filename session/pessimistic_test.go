@@ -1473,5 +1473,16 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 	tk2.MustExec("admin check table ta")
 	tk2.MustQuery("select count(b) from ta use index(i1) where b = 'new'").Check(testkit.Rows("1"))
 
+	// Change default value to now().
+	tk2.MustExec("create table tbl_time(c1 int, c_time timestamp)")
+	tk2.MustExec("insert into tbl_time(c1) values(1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into tbl_time(c1) values(2)")
+	tk2.MustExec("alter table tbl_time modify column c_time timestamp default now()")
+	tk2.MustExec("insert into tbl_time(c1) values(3)")
+	tk2.MustExec("insert into tbl_time(c1) values(4)")
+	c.Assert(tk.ExecToErr("commit"), NotNil)
+	tk2.MustQuery("select count(1) from tbl_time where c_time is not null").Check(testkit.Rows("2"))
+
 	tk2.MustExec("drop database if exists test_db")
 }
