@@ -644,9 +644,12 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		it.actionOnExceed.exceed = false
 		// resize
 		if cap(it.collector.respChan) > 1 {
-			newCh := make(chan *copResponse, cap(it.collector.respChan)-1)
+			it.collector.rwMu.Lock()
+			newCap := cap(it.collector.respChan) - 1
 			close(it.collector.respChan)
-			it.collector.respChan = newCh
+			it.collector.respChan = nil
+			it.collector.respChan = make(chan *copResponse, newCap)
+			it.collector.rwMu.Unlock()
 		} else {
 			//unreachable code
 			panic("collector respCh shouldn't only have one cap during oom action")
@@ -1173,6 +1176,7 @@ func (it copErrorResponse) Close() error {
 
 // copResponseCollector is used to collect the resp from task respCh into its own resp
 type copResponseCollector struct {
+	rwMu           sync.RWMutex
 	respChan       chan *copResponse
 	tasks          []*copTask
 	sendRate       *rateLimit
@@ -1212,7 +1216,9 @@ func (c *copResponseCollector) collectNonKeepOrderResponse() {
 			select {
 			case resp, ok := <-task.respChan:
 				if ok {
+					c.rwMu.RLock()
 					c.respChan <- resp
+					c.rwMu.RUnlock()
 				} else {
 					// if the task have been finished, record the task id.
 					finishedTask[id] = struct{}{}
@@ -1242,7 +1248,9 @@ func (c *copResponseCollector) collectKeepOrderResponse() {
 		select {
 		case resp, ok := <-task.respChan:
 			if ok {
+				c.rwMu.RLock()
 				c.respChan <- resp
+				c.rwMu.RUnlock()
 			} else {
 				c.tasks[c.curr] = nil
 				c.curr++
