@@ -1212,7 +1212,7 @@ func (c *copResponseCollector) collectNonKeepOrderResponse() {
 			close(c.respChan)
 			return
 		}
-		// fetch response from tasks, it the task have finished, we will directly skip this task
+		// fetch response from tasks, if the task have finished, we will directly skip this task
 		for id, task := range c.tasks {
 			if _, ok := finishedTask[id]; ok {
 				continue
@@ -1307,10 +1307,10 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 					zap.Uint("tearedTicket", e.tearedTicket),
 					zap.Int("ticketTotal", cap(e.sendRate.token)))
 				e.fallbackAction.Action(t)
-			} else {
-				// unreachable code
-				panic("TaskRateLimitAction should set fallback action")
+				return
 			}
+			// unreachable code
+			panic("TaskRateLimitAction should set fallback action")
 		}
 		logutil.BgLogger().Info("memory exceeds quota, mark taskRateLimitAction exceed signal.",
 			zap.Int64("consumed", t.BytesConsumed()),
