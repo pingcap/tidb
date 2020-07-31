@@ -653,7 +653,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		}
 
 		// The respCh have been drained out
-		if len(it.collector.respChan.respCh) < 1 {
+		if it.collector.respChan.len() < 1 {
 			it.actionOnExceed.exceed = false
 			it.workersCond.Broadcast()
 			it.actionOnExceed.once = sync.Once{}
@@ -1190,6 +1190,12 @@ func (ch *copResponseCh) cap() int {
 	ch.rw.RLock()
 	defer ch.rw.RUnlock()
 	return cap(ch.respCh)
+}
+
+func (ch *copResponseCh) len() int {
+	ch.rw.Lock()
+	defer ch.rw.Unlock()
+	return len(ch.respCh)
 }
 
 func (ch *copResponseCh) declineChCap() {
