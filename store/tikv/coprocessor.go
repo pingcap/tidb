@@ -441,9 +441,11 @@ type copIteratorWorker struct {
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	taskCh   chan<- *copTask
-	tasks    []*copTask
-	finishCh <-chan struct{}
+	taskCh    chan<- *copTask
+	tasks     []*copTask
+	finishCh  <-chan struct{}
+	wg        *sync.WaitGroup
+	collector *copResponseCollector
 }
 
 type copResponse struct {
@@ -551,9 +553,11 @@ func (it *copIterator) open(ctx context.Context) {
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
-		taskCh:   taskCh,
-		tasks:    it.tasks,
-		finishCh: it.finishCh,
+		taskCh:    taskCh,
+		tasks:     it.tasks,
+		finishCh:  it.finishCh,
+		wg:        &it.wg,
+		collector: it.collector,
 	}
 	go taskSender.run()
 	go it.collector.run()
@@ -571,6 +575,8 @@ func (sender *copIteratorTaskSender) run() {
 		}
 	}
 	close(sender.taskCh)
+	sender.wg.Wait()
+	close(sender.collector.respChan)
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh chan *copResponse) (resp *copResponse, ok bool, exit bool) {
