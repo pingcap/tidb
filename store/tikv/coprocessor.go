@@ -554,9 +554,9 @@ func (it *copIterator) open(ctx context.Context) {
 		finishCh:  it.finishCh,
 		keepOrder: it.req.KeepOrder,
 		curr:      0,
-		wg:        &it.wg,
 	}
 	it.actionOnExceed.collector = it.collector
+	it.wg.Add(1)
 	go it.collector.run()
 	it.actionOnExceed.taskStarted = true
 }
@@ -1135,6 +1135,7 @@ func (it *copIterator) Close() error {
 		close(it.finishCh)
 	}
 	it.rpcCancel.CancelAll()
+	it.collector.wg.Wait()
 	it.wg.Wait()
 	return nil
 }
@@ -1186,10 +1187,11 @@ type copResponseCollector struct {
 
 	keepOrder bool
 	curr      int
-	wg        *sync.WaitGroup
+	wg        sync.WaitGroup
 }
 
 func (c *copResponseCollector) run() {
+	defer c.wg.Done()
 	if !c.keepOrder {
 		c.collectNonKeepOrderResponse()
 	} else {
@@ -1197,7 +1199,6 @@ func (c *copResponseCollector) run() {
 	}
 	// wait all workers finish job
 	close(c.respChan)
-	c.wg.Wait()
 }
 
 func (c *copResponseCollector) collectNonKeepOrderResponse() {
