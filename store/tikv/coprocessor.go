@@ -99,9 +99,12 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	if it.memTracker != nil {
 		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
-
+	copRespCh := &copResponseCh{
+		respCh: make(chan *copResponse, it.concurrency),
+		rw:     sync.RWMutex{},
+	}
 	it.collector = &copResponseCollector{
-		respChan:       make(chan *copResponse, it.concurrency),
+		respChan:       copRespCh,
 		tasks:          it.tasks,
 		finishCh:       it.finishCh,
 		actionOnExceed: it.actionOnExceed,
@@ -575,14 +578,14 @@ func (sender *copIteratorTaskSender) run() {
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, collector *copResponseCollector) (resp *copResponse, ok bool, exit bool) {
-	collector.rwMu.RLock()
-	defer collector.rwMu.RUnlock()
+	collector.respChan.rw.RLock()
+	defer collector.respChan.rw.RUnlock()
 	respCh := collector.respChan
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
 		select {
-		case resp, ok = <-respCh:
+		case resp, ok = <-respCh.respCh:
 			if it.memTracker != nil && resp != nil {
 				it.memTracker.Consume(-resp.MemSize())
 			}
@@ -644,13 +647,13 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	}
 	it.actionOnExceed.workersCond.L.Lock()
 	if it.actionOnExceed.exceed {
-		if !it.actionOnExceed.resize && cap(it.collector.respChan) > 1 {
+		if !it.actionOnExceed.resize && it.collector.respChan.cap() > 1 {
 			it.actionOnExceed.resize = true
-			it.collector.declineChCap()
+			it.collector.respChan.declineChCap()
 		}
 
 		// The respCh have been drained out
-		if it.collector.isEmpty() {
+		if len(it.collector.respChan.respCh) < 1 {
 			it.actionOnExceed.exceed = false
 			it.workersCond.Broadcast()
 			it.actionOnExceed.once = sync.Once{}
@@ -1172,10 +1175,52 @@ func (it copErrorResponse) Close() error {
 	return nil
 }
 
+type copResponseCh struct {
+	respCh chan *copResponse
+	rw     sync.RWMutex
+}
+
+func (ch *copResponseCh) send(resp *copResponse) {
+	ch.rw.RLock()
+	defer ch.rw.RUnlock()
+	ch.respCh <- resp
+}
+
+func (ch *copResponseCh) cap() int {
+	ch.rw.RLock()
+	defer ch.rw.RUnlock()
+	return cap(ch.respCh)
+}
+
+func (ch *copResponseCh) declineChCap() {
+	ch.rw.Lock()
+	defer ch.rw.Unlock()
+	if cap(ch.respCh) < 2 {
+		// unreachable code
+		panic("respCh's cap shouldn't be decline if cap is less than 2")
+	}
+	newCh := make(chan *copResponse, cap(ch.respCh)-1)
+	if len(ch.respCh) < cap(ch.respCh) {
+		for len(ch.respCh) > 0 {
+			newCh <- <-ch.respCh
+		}
+		close(ch.respCh)
+		ch.respCh = newCh
+		return
+	}
+	// unreachable code
+	panic("respCh's size should always be less than respCh's cap before decline channel cap")
+}
+
+func (ch *copResponseCh) close() {
+	ch.rw.Lock()
+	defer ch.rw.Unlock()
+	close(ch.respCh)
+}
+
 // copResponseCollector is used to collect the resp from task respCh into its own resp
 type copResponseCollector struct {
-	rwMu           sync.RWMutex
-	respChan       chan *copResponse
+	respChan       *copResponseCh
 	tasks          []*copTask
 	sendRate       *rateLimit
 	finishCh       <-chan struct{}
@@ -1183,30 +1228,6 @@ type copResponseCollector struct {
 
 	keepOrder bool
 	curr      int
-}
-
-func (c *copResponseCollector) isEmpty() bool {
-	return len(c.respChan) < 1
-}
-
-func (c *copResponseCollector) declineChCap() {
-	c.rwMu.Lock()
-	defer c.rwMu.Unlock()
-	if cap(c.respChan) < 2 {
-		// unreachable code
-		panic("respCh's cap shouldn't be decline if cap is less than 2")
-	}
-	newCh := make(chan *copResponse, cap(c.respChan)-1)
-	if len(c.respChan) < cap(c.respChan) {
-		for len(c.respChan) > 0 {
-			newCh <- <-c.respChan
-		}
-		close(c.respChan)
-		c.respChan = newCh
-		return
-	}
-	// unreachable code
-	panic("respCh's size should always be less than respCh's cap before decline channel cap")
 }
 
 func (c *copResponseCollector) run() {
@@ -1222,12 +1243,12 @@ func (c *copResponseCollector) collectNonKeepOrderResponse() {
 	for {
 		select {
 		case <-c.finishCh:
-			close(c.respChan)
+			c.respChan.close()
 			return
 		default:
 		}
 		if len(finishedTask) >= len(c.tasks) {
-			close(c.respChan)
+			c.respChan.close()
 			return
 		}
 		// fetch response from tasks, it the task have finished, we will directly skip this task
@@ -1238,9 +1259,7 @@ func (c *copResponseCollector) collectNonKeepOrderResponse() {
 			select {
 			case resp, ok := <-task.respChan:
 				if ok {
-					c.rwMu.RLock()
-					c.respChan <- resp
-					c.rwMu.RUnlock()
+					c.respChan.send(resp)
 				} else {
 					// if the task have been finished, record the task id.
 					finishedTask[id] = struct{}{}
@@ -1257,22 +1276,20 @@ func (c *copResponseCollector) collectKeepOrderResponse() {
 	for {
 		select {
 		case <-c.finishCh:
-			close(c.respChan)
+			c.respChan.close()
 			return
 		default:
 		}
 		if c.curr >= len(c.tasks) {
 			// Resp will be nil if iterator is finishCh.
-			close(c.respChan)
+			c.respChan.close()
 			return
 		}
 		task := c.tasks[c.curr]
 		select {
 		case resp, ok := <-task.respChan:
 			if ok {
-				c.rwMu.RLock()
-				c.respChan <- resp
-				c.rwMu.RUnlock()
+				c.respChan.send(resp)
 			} else {
 				c.tasks[c.curr] = nil
 				c.curr++
@@ -1291,7 +1308,7 @@ type taskRateLimitAction struct {
 	// exceed indicates whether have encountered OOM situation.
 	exceed bool
 	resize bool
-	respCh chan *copResponse
+	respCh *copResponseCh
 }
 
 // Action implements ActionOnExceed.Action
@@ -1302,7 +1319,7 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 	e.workersCond.L.Lock()
 	defer e.workersCond.L.Unlock()
 	e.once.Do(func() {
-		if cap(e.respCh) < 2 {
+		if e.respCh.cap() < 2 {
 			if e.fallbackAction != nil {
 				logutil.BgLogger().Info("taskRateLimitAction delegate to fallback action",
 					zap.Int64("consumed", t.BytesConsumed()),
