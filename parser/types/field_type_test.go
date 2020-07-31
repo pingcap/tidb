@@ -241,6 +241,38 @@ func (s *testFieldTypeSuite) TestHasCharsetFromStmt(c *C) {
 	}
 }
 
+func (s *testFieldTypeSuite) TestEnumSetFlen(c *C) {
+	p := parser.New()
+	cases := []struct {
+		sql string
+		ex  int
+	}{
+		{"enum('a')", 1},
+		{"enum('a', 'b')", 1},
+		{"enum('a', 'bb')", 2},
+		{"enum('a', 'b', 'c')", 1},
+		{"enum('a', 'bb', 'c')", 2},
+		{"enum('a', 'bb', 'c')", 2},
+		{"enum('')", 0},
+		{"enum('a', '')", 1},
+		{"set('a')", 1},
+		{"set('a', 'b')", 3},
+		{"set('a', 'bb')", 4},
+		{"set('a', 'b', 'c')", 5},
+		{"set('a', 'bb', 'c')", 6},
+		{"set('')", 0},
+		{"set('a', '')", 2},
+	}
+
+	for _, ca := range cases {
+		stmt, err := p.ParseOneStmt(fmt.Sprintf("create table t (e %v)", ca.sql), "", "")
+		c.Assert(err, IsNil)
+		col := stmt.(*ast.CreateTableStmt).Cols[0]
+		c.Assert(col.Tp.Flen, Equals, ca.ex)
+
+	}
+}
+
 func (s *testFieldTypeSuite) TestFieldTypeEqual(c *C) {
 
 	// Tp not equal
