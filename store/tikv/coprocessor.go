@@ -81,6 +81,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 			taskStarted: false,
 			workersCond: workersCond,
 			once:        sync.Once{},
+			resize:      true,
 		},
 		workersCond: workersCond,
 	}
@@ -643,7 +644,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	}
 	it.actionOnExceed.workersCond.L.Lock()
 	if it.actionOnExceed.exceed {
-		if !it.actionOnExceed.resize {
+		if !it.actionOnExceed.resize && cap(it.collector.respChan) > 1 {
 			it.actionOnExceed.resize = true
 			it.collector.declineChCap()
 		}
