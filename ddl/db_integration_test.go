@@ -2340,75 +2340,30 @@ func (s *testIntegrationSuite5) TestDropColumnWithCompositeIndex(c *C) {
 
 func (s *testIntegrationSuite5) TestDropColumnWithIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	query1 := "select * from mysql.gc_delete_range;"
-	query2 := "select * from mysql.gc_delete_range_done;"
-	beforeDeleteRanges := len(tk.MustQuery(query1).Rows())
-	beforeDeleteRanges += len(tk.MustQuery(query2).Rows())
 	tk.MustExec("use test_db")
 	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")
 	tk.MustExec("create index idx on t_drop_column_with_idx(b)")
 	tk.MustExec("alter table t_drop_column_with_idx drop column b")
-	success := false
-	for i := 0; i < 5; i++ {
-		afterDeleteRanges := len(tk.MustQuery(query1).Rows())
-		afterDeleteRanges += len(tk.MustQuery(query2).Rows())
-		if afterDeleteRanges-beforeDeleteRanges == 1 {
-			success = true
-			break
-		}
-		time.Sleep(time.Second)
-	}
 	tk.MustExec("drop table if exists t_drop_column_with_idx")
-	c.Assert(success, IsTrue)
 }
 
 func (s *testIntegrationSuite5) TestDropColumnWithMultiIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	query1 := "select * from mysql.gc_delete_range;"
-	query2 := "select * from mysql.gc_delete_range_done;"
-	beforeDeleteRanges := len(tk.MustQuery(query1).Rows())
-	beforeDeleteRanges += len(tk.MustQuery(query2).Rows())
 	tk.MustExec("use test_db")
 	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")
 	tk.MustExec("create index idx_1 on t_drop_column_with_idx(b)")
 	tk.MustExec("create index idx_2 on t_drop_column_with_idx(b)")
 	tk.MustExec("alter table t_drop_column_with_idx drop column b")
-	success := false
-	for i := 0; i < 5; i++ {
-		afterDeleteRanges := len(tk.MustQuery(query1).Rows())
-		afterDeleteRanges += len(tk.MustQuery(query2).Rows())
-		if afterDeleteRanges-beforeDeleteRanges == 2 {
-			success = true
-			break
-		}
-		time.Sleep(time.Second)
-	}
 	tk.MustExec("drop table if exists t_drop_column_with_idx")
-	c.Assert(success, IsTrue)
 }
 
 func (s *testIntegrationSuite5) TestDropColumnsWithMultiIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	query1 := "select * from mysql.gc_delete_range;"
-	query2 := "select * from mysql.gc_delete_range_done;"
-	beforeDeleteRanges := len(tk.MustQuery(query1).Rows())
-	beforeDeleteRanges += len(tk.MustQuery(query2).Rows())
 	tk.MustExec("use test_db")
 	tk.MustExec("create table t_drop_columns_with_idx(a int, b int, c int)")
 	tk.MustExec("create index idx_1 on t_drop_columns_with_idx(b)")
 	tk.MustExec("create index idx_2 on t_drop_columns_with_idx(b)")
 	tk.MustExec("create index idx_3 on t_drop_columns_with_idx(c)")
 	tk.MustExec("alter table t_drop_columns_with_idx drop column b, drop column c")
-	success := false
-	for i := 0; i < 5; i++ {
-		afterDeleteRanges := len(tk.MustQuery(query1).Rows())
-		afterDeleteRanges += len(tk.MustQuery(query2).Rows())
-		if afterDeleteRanges-beforeDeleteRanges == 3 {
-			success = true
-			break
-		}
-		time.Sleep(time.Second)
-	}
 	tk.MustExec("drop table if exists t_drop_columns_with_idx")
-	c.Assert(success, IsTrue)
 }
