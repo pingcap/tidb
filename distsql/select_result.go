@@ -245,6 +245,87 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
+func (r *selectResult) updateCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
+	callee := copStats.CalleeAddress
+	if r.rootPlanID == nil || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
+		return
+	}
+	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+		logutil.BgLogger().Error("invalid cop task execution summaries length",
+			zap.Int("expected", len(r.copPlanIDs)),
+			zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+
+		return
+	}
+	if r.stats == nil {
+		stmtCtx := r.ctx.GetSessionVars().StmtCtx
+		id := r.rootPlanID.String()
+		originRuntimeStats := stmtCtx.RuntimeStatsColl.GetRootStats(id)
+		r.stats = &selectResultRuntimeStats{
+			RuntimeStats: originRuntimeStats,
+			backoffSleep: make(map[string]time.Duration),
+			backoffTimes: make(map[string]int),
+			rpcStat:      tikv.NewRegionRequestRuntimeStats(),
+		}
+		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, r.stats)
+	}
+	r.stats.mergeCopRuntimeStats(copStats, respTime)
+
+	//r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID.String(), respTime, copStats)
+	for i, detail := range r.selectResp.GetExecutionSummaries() {
+		if detail != nil && detail.TimeProcessedNs != nil &&
+			detail.NumProducedRows != nil && detail.NumIterations != nil {
+			planID := ""
+			if detail.GetExecutorId() != "" {
+				planID = detail.GetExecutorId()
+			} else {
+				planID = r.copPlanIDs[i].String()
+			}
+			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+				RecordOneCopTask(planID, callee, detail)
+		}
+	}
+}
+
+func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
+	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
+	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
+	for !chk.IsFull() && len(rowsData) > 0 {
+		for i := 0; i < r.rowLen; i++ {
+			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
+			if err != nil {
+				return err
+			}
+		}
+	}
+	r.selectResp.Chunks[r.respChkIdx].RowsData = rowsData
+	return nil
+}
+
+func (r *selectResult) memConsume(bytes int64) {
+	if r.memTracker != nil {
+		r.memTracker.Consume(bytes)
+	}
+}
+
+// Close closes selectResult.
+func (r *selectResult) Close() error {
+	if r.feedback.Actual() >= 0 {
+		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
+	}
+	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
+	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
+	if respSize > 0 {
+		r.memConsume(-respSize)
+	}
+	return r.resp.Close()
+}
+
+type HasRuntimeStats interface {
+	// GetExecDetails gets the detail information.
+	GetExecDetails() *tikv.CopRuntimeStats
+}
+
 type selectResultRuntimeStats struct {
 	execdetails.RuntimeStats
 	copRespTime      []time.Duration
@@ -330,85 +411,4 @@ func (s *selectResultRuntimeStats) String() string {
 		}
 	}
 	return buf.String()
-}
-
-type HasRuntimeStats interface {
-	// GetExecDetails gets the detail information.
-	GetExecDetails() *tikv.CopRuntimeStats
-}
-
-func (r *selectResult) updateCopRuntimeStats(detail *tikv.CopRuntimeStats, respTime time.Duration) {
-	callee := detail.CalleeAddress
-	if r.rootPlanID == nil || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
-		return
-	}
-	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-		logutil.BgLogger().Error("invalid cop task execution summaries length",
-			zap.Int("expected", len(r.copPlanIDs)),
-			zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
-
-		return
-	}
-	if r.stats == nil {
-		stmtCtx := r.ctx.GetSessionVars().StmtCtx
-		id := r.rootPlanID.String()
-		originRuntimeStats := stmtCtx.RuntimeStatsColl.GetRootStats(id)
-		r.stats = &selectResultRuntimeStats{
-			RuntimeStats: originRuntimeStats,
-			backoffSleep: make(map[string]time.Duration),
-			backoffTimes: make(map[string]int),
-			rpcStat:      tikv.NewRegionRequestRuntimeStats(),
-		}
-		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, r.stats)
-	}
-	r.stats.mergeCopRuntimeStats(detail, respTime)
-
-	//r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID.String(), respTime, detail)
-	for i, detail := range r.selectResp.GetExecutionSummaries() {
-		if detail != nil && detail.TimeProcessedNs != nil &&
-			detail.NumProducedRows != nil && detail.NumIterations != nil {
-			planID := ""
-			if detail.GetExecutorId() != "" {
-				planID = detail.GetExecutorId()
-			} else {
-				planID = r.copPlanIDs[i].String()
-			}
-			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID, callee, detail)
-		}
-	}
-}
-
-func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
-	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
-	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
-	for !chk.IsFull() && len(rowsData) > 0 {
-		for i := 0; i < r.rowLen; i++ {
-			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
-			if err != nil {
-				return err
-			}
-		}
-	}
-	r.selectResp.Chunks[r.respChkIdx].RowsData = rowsData
-	return nil
-}
-
-func (r *selectResult) memConsume(bytes int64) {
-	if r.memTracker != nil {
-		r.memTracker.Consume(bytes)
-	}
-}
-
-// Close closes selectResult.
-func (r *selectResult) Close() error {
-	if r.feedback.Actual() >= 0 {
-		metrics.DistSQLScanKeysHistogram.Observe(float64(r.feedback.Actual()))
-	}
-	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
-	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
-	if respSize > 0 {
-		r.memConsume(-respSize)
-	}
-	return r.resp.Close()
 }
