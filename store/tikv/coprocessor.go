@@ -397,7 +397,6 @@ type copIterator struct {
 
 	rpcCancel *RPCCanceller
 
-	wg sync.WaitGroup
 	// closed represents when the Close is called.
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
 	// when the Close is called. we use atomic.CompareAndSwap `closed` to to make sure the channel is not closed twice.
@@ -518,24 +517,13 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) {
 	taskCh := make(chan *copTask, 1)
-	it.wg.Add(it.concurrency + 1)
-
-	it.collector = &copResponseCollector{
-		respChan:  make(chan *copResponse, it.concurrency),
-		tasks:     it.tasks,
-		finishCh:  it.finishCh,
-		keepOrder: it.req.KeepOrder,
-		curr:      0,
-		wg:        &it.wg,
-	}
-	it.actionOnExceed.collector = it.collector
-	go it.collector.run()
-
+	workersWG := &sync.WaitGroup{}
+	workersWG.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
 			taskCh:   taskCh,
-			wg:       &it.wg,
+			wg:       workersWG,
 			store:    it.store,
 			req:      it.req,
 			finishCh: it.finishCh,
@@ -553,12 +541,25 @@ func (it *copIterator) open(ctx context.Context) {
 		}
 		go worker.run(ctx)
 	}
+	collectorWG := &sync.WaitGroup{}
+	collectorWG.Add(1)
+	it.collector = &copResponseCollector{
+		respChan:  make(chan *copResponse, it.concurrency),
+		tasks:     it.tasks,
+		finishCh:  it.finishCh,
+		keepOrder: it.req.KeepOrder,
+		curr:      0,
+		wg:        collectorWG,
+	}
+	it.actionOnExceed.collector = it.collector
+	go it.collector.run()
+
 	it.actionOnExceed.taskStarted = true
 	taskSender := &copIteratorTaskSender{
 		taskCh:   taskCh,
 		tasks:    it.tasks,
 		finishCh: it.finishCh,
-		wg:       &it.wg,
+		wg:       workersWG,
 	}
 	go taskSender.run()
 }
@@ -1137,7 +1138,7 @@ func (it *copIterator) Close() error {
 		close(it.finishCh)
 	}
 	it.rpcCancel.CancelAll()
-	it.wg.Wait()
+	it.collector.wg.Wait()
 	return nil
 }
 
@@ -1189,6 +1190,7 @@ type copResponseCollector struct {
 	keepOrder bool
 	curr      int
 	wg        *sync.WaitGroup
+	workersWG *sync.WaitGroup
 }
 
 func (c *copResponseCollector) run() {
@@ -1199,6 +1201,7 @@ func (c *copResponseCollector) run() {
 		c.collectKeepOrderResponse()
 	}
 	close(c.respChan)
+	c.workersWG.Wait()
 }
 
 func (c *copResponseCollector) collectNonKeepOrderResponse() {
@@ -1237,16 +1240,13 @@ func (c *copResponseCollector) collectNonKeepOrderResponse() {
 
 func (c *copResponseCollector) collectKeepOrderResponse() {
 	for {
-		select {
-		case <-c.finishCh:
-			return
-		default:
-		}
 		if c.curr >= len(c.tasks) {
 			return
 		}
 		task := c.tasks[c.curr]
 		select {
+		case <-c.finishCh:
+			return
 		case resp, ok := <-task.respChan:
 			if ok {
 				c.rwMu.RLock()
