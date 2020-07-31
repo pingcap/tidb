@@ -72,10 +72,15 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 		rpcCancel:       NewRPCanceller(),
+		syncSend:        true,
 	}
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
-	it.syncSend = true
+	// judge whether using sync send
+	if req.StoreType != kv.TiDB {
+		it.syncSend = false
+	}
 	if it.syncSend {
+		it.asyncTasksChan = nil
 		tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
 		if err != nil {
 			return copErrorResponse{err}
@@ -86,11 +91,12 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		}
 	} else {
 		// start to asynchronously build tasks
-		it.asyncTasks = make(chan *copTask, 2048)
+		it.asyncTasksChan = make(chan *copTask, 2048)
 		it.wg.Add(1)
 		go func() {
 			defer it.wg.Done()
-			AsyncBuildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req, it.asyncTasks)
+			AsyncBuildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req, it.asyncTasksChan)
+			close(it.asyncTasksChan)
 		}()
 	}
 	if it.concurrency < 1 {
@@ -504,7 +510,7 @@ type copIterator struct {
 
 	syncSend bool
 
-	asyncTasks chan *copTask
+	asyncTasksChan chan *copTask
 
 	minCommitTSPushed
 }
@@ -527,13 +533,13 @@ type copIteratorWorker struct {
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	taskCh     chan<- *copTask
-	wg         *sync.WaitGroup
-	tasks      []*copTask
-	finishCh   <-chan struct{}
-	respChan   chan<- *copResponse
-	sendRate   *rateLimit
-	asyncTasks chan *copTask
+	taskCh         chan<- *copTask
+	wg             *sync.WaitGroup
+	tasks          []*copTask
+	finishCh       <-chan struct{}
+	respChan       chan<- *copResponse
+	sendRate       *rateLimit
+	asyncTasksChan chan *copTask
 }
 
 type copResponse struct {
@@ -642,12 +648,12 @@ func (it *copIterator) open(ctx context.Context) {
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
-		taskCh:     taskCh,
-		wg:         &it.wg,
-		tasks:      it.tasks,
-		finishCh:   it.finishCh,
-		sendRate:   it.sendRate,
-		asyncTasks: it.asyncTasks,
+		taskCh:         taskCh,
+		wg:             &it.wg,
+		tasks:          it.tasks,
+		finishCh:       it.finishCh,
+		sendRate:       it.sendRate,
+		asyncTasksChan: it.asyncTasksChan,
 	}
 	taskSender.respChan = it.respChan
 	go taskSender.run()
@@ -655,7 +661,7 @@ func (it *copIterator) open(ctx context.Context) {
 
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
-	if sender.asyncTasks == nil {
+	if sender.asyncTasksChan == nil {
 		for _, t := range sender.tasks {
 			// If keepOrder, we must control the sending rate to prevent all tasks
 			// being done (aka. all of the responses are buffered) by copIteratorWorker.
@@ -673,7 +679,7 @@ func (sender *copIteratorTaskSender) run() {
 			}
 		}
 	} else {
-		for t := range sender.asyncTasks {
+		for t := range sender.asyncTasksChan {
 			select {
 			case <-sender.finishCh:
 				break
@@ -692,9 +698,6 @@ func (sender *copIteratorTaskSender) run() {
 		}
 	}
 	close(sender.taskCh)
-	if sender.asyncTasks != nil {
-		close(sender.asyncTasks)
-	}
 	// Wait for worker goroutines to exit.
 	sender.wg.Wait()
 	if sender.respChan != nil {
