@@ -1287,10 +1287,9 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 					zap.Int64("maxConsumed", t.MaxConsumed()))
 				e.fallbackAction.Action(t)
 				return
-			} else {
-				// unreachable code
-				panic("TaskRateLimitAction should set fallback action")
 			}
+			// unreachable code
+			panic("TaskRateLimitAction should set fallback action")
 		}
 		logutil.BgLogger().Info("memory exceeds quota, mark taskRateLimitAction exceed signal.",
 			zap.Int64("consumed", t.BytesConsumed()),
