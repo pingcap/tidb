@@ -1192,9 +1192,15 @@ func (ch *copResponseCh) cap() int {
 	return cap(ch.respCh)
 }
 
+func (ch *copResponseCh) close() {
+	ch.rw.RLock()
+	defer ch.rw.RUnlock()
+	close(ch.respCh)
+}
+
 func (ch *copResponseCh) len() int {
-	ch.rw.Lock()
-	defer ch.rw.Unlock()
+	ch.rw.RLock()
+	defer ch.rw.RUnlock()
 	return len(ch.respCh)
 }
 
@@ -1216,12 +1222,6 @@ func (ch *copResponseCh) declineChCap() {
 	}
 	// unreachable code
 	panic("respCh's size should always be less than respCh's cap before decline channel cap")
-}
-
-func (ch *copResponseCh) close() {
-	ch.rw.Lock()
-	defer ch.rw.Unlock()
-	close(ch.respCh)
 }
 
 // copResponseCollector is used to collect the resp from task respCh into its own resp
