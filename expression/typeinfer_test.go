@@ -14,6 +14,7 @@
 package expression_test
 
 import (
+	"fmt"
 	"math"
 
 	. "github.com/pingcap/check"
@@ -149,6 +150,9 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		c.Assert(tp.Tp, Equals, tt.tp, comment)
 		c.Assert(tp.Charset, Equals, tt.chs, comment)
 		c.Assert(tp.Flag, Equals, tt.flag, comment)
+		if tp.Flen != tt.flen {
+			fmt.Println("------------------->>>>>>>>>>>> ", tt.sql)
+		}
 		c.Assert(tp.Flen, Equals, tt.flen, comment)
 		c.Assert(tp.Decimal, Equals, tt.decimal, comment)
 	}
@@ -230,8 +234,8 @@ func (s *testInferTypeSuite) createTestCase4Columns() []typeInferTestCase {
 		{"c_binary     ", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, 0},         // TODO: BinaryFlag
 		{"c_varbinary  ", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 20, 0},        // TODO: BinaryFlag, tp should be TypeVarString
 		{"c_blob_d     ", mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag, 65535, 0},        // TODO: BlobFlag, BinaryFlag
-		{"c_set        ", mysql.TypeSet, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, 0},  // TODO: SetFlag, BinaryFlag, Flen should be 5
-		{"c_enum       ", mysql.TypeEnum, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, 0}, // TODO: EnumFlag, BinaryFlag, Flen should be 1
+		{"c_set        ", mysql.TypeSet, charset.CharsetUTF8MB4, 0, 5, 0},  // TODO: SetFlag, BinaryFlag
+		{"c_enum       ", mysql.TypeEnum, charset.CharsetUTF8MB4, 0, 1, 0}, // TODO: EnumFlag, BinaryFlag
 	}
 }
 
@@ -414,8 +418,8 @@ func (s *testInferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"reverse(c_binary     )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
 		{"reverse(c_varbinary  )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
 		{"reverse(c_blob_d     )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 65535, types.UnspecifiedLength},
-		{"reverse(c_set        )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, types.UnspecifiedLength},
-		{"reverse(c_enum       )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"reverse(c_set        )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 5, types.UnspecifiedLength},
+		{"reverse(c_enum       )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 1, types.UnspecifiedLength},
 
 		{"oct(c_int_d      )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
 		{"oct(c_bigint_d   )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
@@ -776,7 +780,7 @@ func (s *testInferTypeSuite) createTestCase4ArithmeticFuncs() []typeInferTestCas
 		{"c_bigint_d MOD c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 3},
 		{"c_double_d MOD c_decimal", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 		{"c_double_d MOD c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
-		{"c_double_d MOD c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"c_double_d MOD c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 	}
 }
 
@@ -1128,8 +1132,8 @@ func (s *testInferTypeSuite) createTestCase4Miscellaneous() []typeInferTestCase 
 		{"any_value(c_binary)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
 		{"any_value(c_varbinary)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
 		{"any_value(c_blob_d)", mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag, 65535, types.UnspecifiedLength},
-		{"any_value(c_set)", mysql.TypeSet, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, types.UnspecifiedLength},
-		{"any_value(c_enum)", mysql.TypeEnum, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"any_value(c_set)", mysql.TypeSet, charset.CharsetUTF8MB4, 0, 5, types.UnspecifiedLength},
+		{"any_value(c_enum)", mysql.TypeEnum, charset.CharsetUTF8MB4, 0, 1, types.UnspecifiedLength},
 	}
 }
 
