@@ -98,16 +98,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	if it.memTracker != nil {
 		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
-
-	it.collector = &copResponseCollector{
-		respChan:  make(chan *copResponse, it.concurrency),
-		tasks:     it.tasks,
-		finishCh:  it.finishCh,
-		keepOrder: it.req.KeepOrder,
-		curr:      0,
-		wg:        &it.wg,
-	}
-	it.actionOnExceed.collector = it.collector
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	}
@@ -558,6 +548,15 @@ func (it *copIterator) open(ctx context.Context) {
 		wg:       &it.wg,
 	}
 	go taskSender.run()
+	it.collector = &copResponseCollector{
+		respChan:  make(chan *copResponse, it.concurrency),
+		tasks:     it.tasks,
+		finishCh:  it.finishCh,
+		keepOrder: it.req.KeepOrder,
+		curr:      0,
+		wg:        &it.wg,
+	}
+	it.actionOnExceed.collector = it.collector
 	go it.collector.run()
 	it.actionOnExceed.taskStarted = true
 }
@@ -1197,6 +1196,7 @@ func (c *copResponseCollector) run() {
 		c.collectKeepOrderResponse()
 	}
 	// wait all workers finish job
+	close(c.respChan)
 	c.wg.Wait()
 }
 
@@ -1205,12 +1205,10 @@ func (c *copResponseCollector) collectNonKeepOrderResponse() {
 	for {
 		select {
 		case <-c.finishCh:
-			close(c.respChan)
 			return
 		default:
 		}
 		if len(finishedTask) >= len(c.tasks) {
-			close(c.respChan)
 			return
 		}
 		// fetch response from tasks, it the task have finished, we will directly skip this task
@@ -1240,13 +1238,10 @@ func (c *copResponseCollector) collectKeepOrderResponse() {
 	for {
 		select {
 		case <-c.finishCh:
-			close(c.respChan)
 			return
 		default:
 		}
 		if c.curr >= len(c.tasks) {
-			// Resp will be nil if iterator is finishCh.
-			close(c.respChan)
 			return
 		}
 		task := c.tasks[c.curr]
