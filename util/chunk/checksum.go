@@ -22,8 +22,11 @@ import (
 )
 
 const (
-	checksumBlockSize   = 1024
-	checksumSize        = 4
+	// the size of whole checksum block
+	checksumBlockSize = 1024
+	// the size of checksum field, we use CRC-32 algorithm to generate a 4 bytes checksum
+	checksumSize = 4
+	// the size of the payload of a checksum block
 	checksumPayloadSize = checksumBlockSize - checksumSize
 )
 
@@ -33,6 +36,11 @@ var checksumReaderBufPool = sync.Pool{
 
 // checksumWriter implements an io.WriteCloser, it calculates and stores a CRC-32 checksum for the payload before
 // writing to the underlying object.
+//
+// For example, a layout of the checksum block which payload is 2100 bytes is as follow:
+//
+// | --    4B    -- | --  1020B  -- || --    4B    -- | --  1020B  -- || --    4B    -- | --   60B   -- |
+// | -- checksum -- | -- payload -- || -- checksum -- | -- payload -- || -- checksum -- | -- payload -- |
 type checksumWriter struct {
 	err         error
 	w           io.WriteCloser
@@ -49,34 +57,34 @@ func newChecksumWriter(w io.WriteCloser) *checksumWriter {
 	return checksumWriter
 }
 
-// Available returns how many bytes are unused in the buffer.
-func (w *checksumWriter) Available() int { return checksumPayloadSize - w.payloadUsed }
+// AvailableSize returns how many bytes are unused in the buffer.
+func (w *checksumWriter) AvailableSize() int { return checksumPayloadSize - w.payloadUsed }
 
 // Write implements the io.Writer interface.
-func (w *checksumWriter) Write(p []byte) (nn int, err error) {
-	for len(p) > w.Available() && w.err == nil {
-		n := copy(w.payload[w.payloadUsed:], p)
-		w.payloadUsed += n
+func (w *checksumWriter) Write(p []byte) (n int, err error) {
+	for len(p) > w.AvailableSize() && w.err == nil {
+		copiedNum := copy(w.payload[w.payloadUsed:], p)
+		w.payloadUsed += copiedNum
 		err = w.Flush()
 		if err != nil {
 			return
 		}
-		nn += n
-		p = p[n:]
+		n += copiedNum
+		p = p[copiedNum:]
 	}
 	if w.err != nil {
-		return nn, w.err
+		return n, w.err
 	}
-	n := copy(w.payload[w.payloadUsed:], p)
-	w.payloadUsed += n
-	nn += n
+	copiedNum := copy(w.payload[w.payloadUsed:], p)
+	w.payloadUsed += copiedNum
+	n += copiedNum
 	return
 }
 
 // Buffered returns the number of bytes that have been written into the current buffer.
 func (w *checksumWriter) Buffered() int { return w.payloadUsed }
 
-// Flush writes any buffered data to the disk.
+// Flush writes all the buffered data to the underlying object.
 func (w *checksumWriter) Flush() error {
 	if w.err != nil {
 		return w.err
