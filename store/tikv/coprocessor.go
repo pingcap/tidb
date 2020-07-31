@@ -87,7 +87,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	} else {
 		// start to asynchronously build tasks
 		it.asyncTasks = make(chan *copTask, 2048)
+		it.wg.Add(1)
 		go func() {
+			defer it.wg.Done()
 			AsyncBuildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req, it.asyncTasks)
 		}()
 	}
@@ -242,7 +244,25 @@ func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 		cmdType = tikvrpc.CmdCopStream
 	}
 	if req.Desc {
-
+		appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
+			// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
+			// to make sure the message can be sent successfully.
+			rLen := ranges.len()
+			for i := rLen; i > 0; {
+				nextI := mathutil.Max(i-rangesPerTask, 0)
+				receiver <- &copTask{
+					region: regionWithRangeInfo.Region,
+					ranges: ranges.slice(nextI, i),
+					// Channel buffer is 2 for handling region split.
+					// In a common case, two region split tasks will not be blocked.
+					respChan:  make(chan *copResponse, 2),
+					cmdType:   cmdType,
+					storeType: req.StoreType,
+				}
+				i = nextI
+			}
+		}
+		splitRangesDesc(bo, cache, ranges, appendTask)
 	} else {
 		appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
 			// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
