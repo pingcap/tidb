@@ -3246,7 +3246,7 @@ func (s *testSessionSuite) TestDoDDLJobQuit(c *C) {
 	}()
 	// this DDL call will enter deadloop before this fix
 	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil)
-	c.Assert(err, Equals, context.Canceled)
+	c.Assert(err.Error(), Equals, "context canceled")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop"), IsNil)
 }
 
