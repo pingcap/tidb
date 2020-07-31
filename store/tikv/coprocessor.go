@@ -101,7 +101,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 	copRespCh := &copResponseCh{
 		respCh: make(chan *copResponse, it.concurrency),
-		rw:     sync.RWMutex{},
 		exit:   false,
 	}
 	it.collector = &copResponseCollector{
@@ -449,6 +448,8 @@ type copIteratorTaskSender struct {
 	taskCh   chan<- *copTask
 	tasks    []*copTask
 	finishCh <-chan struct{}
+	wg       *sync.WaitGroup
+	respCh   *copResponseCh
 }
 
 type copResponse struct {
@@ -559,6 +560,8 @@ func (it *copIterator) open(ctx context.Context) {
 		taskCh:   taskCh,
 		tasks:    it.tasks,
 		finishCh: it.finishCh,
+		wg:       &it.wg,
+		respCh:   it.collector.respChan,
 	}
 	go taskSender.run()
 	go it.collector.run()
@@ -576,6 +579,10 @@ func (sender *copIteratorTaskSender) run() {
 		}
 	}
 	close(sender.taskCh)
+	sender.wg.Wait()
+	if sender.respCh != nil {
+		sender.respCh.close()
+	}
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, collector *copResponseCollector) (resp *copResponse, ok bool, exit bool) {
