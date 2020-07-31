@@ -1071,11 +1071,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 		if !s.sessionVars.InRestrictedSQL {
 			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
 		}
-		if ctx == context.TODO() {
-			return nil, err
-		} else {
-			return nil, util.SyntaxError(err)
-		}
+		return nil, util.SyntaxError(err)
 	}
 	if len(stmtNodes) != 1 {
 		return nil, errors.New("Execute() API doesn't support multiple statements any more")
