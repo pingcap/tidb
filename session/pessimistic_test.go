@@ -1240,15 +1240,13 @@ func (s *testPessimisticSuite) TestTxnWithExpiredPessimisticLocks(c *C) {
 	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 1)
 	err := tk.ExecToErr("select * from t1 where c1 in(1, 5)")
 	c.Assert(terror.ErrorEqual(err, tikv.ErrLockExpire), IsTrue)
-	tk.MustExec("commit")
+	c.Assert(terror.ErrorEqual(tk.ExecToErr("commit"), tikv.ErrLockExpire), IsTrue)
 
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t1 where c1 in(1, 5) for update").Check(testkit.Rows("1 1 1", "5 5 5"))
 	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 1)
 	err = tk.ExecToErr("update t1 set c2 = c2 + 1")
 	c.Assert(terror.ErrorEqual(err, tikv.ErrLockExpire), IsTrue)
-	atomic.StoreUint32(&tk.Se.GetSessionVars().TxnCtx.LockExpire, 0)
-	tk.MustExec("update t1 set c2 = c2 + 1")
 	tk.MustExec("rollback")
 }
 

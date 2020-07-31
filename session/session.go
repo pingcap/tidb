@@ -600,6 +600,7 @@ func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 		err = errors.New("current transaction is aborted, commands ignored until end of transaction block:" + s.txn.doNotCommit.Error())
 	} else if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
 		err = tikv.ErrLockExpire
+		s.txn.doNotCommit = err
 	} else {
 		return nil
 	}
