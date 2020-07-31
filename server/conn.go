@@ -954,7 +954,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return cc.handleSetOption(data)
 	case mysql.ComStmtFetch:
 		return cc.handleStmtFetch(ctx, data)
-	// ComDaemon, ComBinlogDumpGtid, ComResetConnection, ComEnd
+	// ComDaemon, ComBinlogDumpGtid
+	case mysql.ComResetConnection:
+		return cc.handleResetConnection(ctx)
+	// ComEnd
 	default:
 		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", cmd)
 	}
@@ -1766,6 +1769,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	data = data[passLen:]
 	dbName, _ := parseNullTermString(data)
 	cc.dbname = string(hack.String(dbName))
+
 	err := cc.ctx.Close()
 	if err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
@@ -1774,16 +1778,36 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		return err
 	}
+	return cc.handleCommonConnectionReset()
+}
 
+func (cc *clientConn) handleResetConnection(ctx context.Context) error {
+	err := cc.ctx.Close()
+	if err != nil {
+		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
+	}
+	var tlsStatePtr *tls.ConnectionState
+	if cc.tlsConn != nil {
+		tlsState := cc.tlsConn.ConnectionState()
+		tlsStatePtr = &tlsState
+	}
+	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	if err != nil {
+		return err
+	}
+	return cc.handleCommonConnectionReset()
+}
+
+func (cc *clientConn) handleCommonConnectionReset() error {
 	if plugin.IsEnable(plugin.Audit) {
 		cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
 	}
 
-	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			connInfo := cc.ctx.GetSessionVars().ConnectionInfo
-			err = authPlugin.OnConnectionEvent(context.Background(), plugin.ChangeUser, connInfo)
+			err := authPlugin.OnConnectionEvent(context.Background(), plugin.ChangeUser, connInfo)
 			if err != nil {
 				return err
 			}
@@ -1793,14 +1817,11 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		return err
 	}
-
 	return cc.writeOK()
 }
 
+// safe to noop except 0x01 "FLUSH PRIVILEGES"
 func (cc *clientConn) handleRefresh(ctx context.Context, subCommand byte) error {
-	// Refresh is a deprecated RPC which contains a "sub command" of
-	// FLUSH LOGS, FLUSH STATUS etc. Most of these are safe to noop.
-	// The only subcommand that is unsafe to ignore is 0x01 FLUSH PRIVILEGES
 	if subCommand == 0x01 {
 		if err := cc.handleQuery(ctx, "FLUSH PRIVILEGES"); err != nil {
 			return err
