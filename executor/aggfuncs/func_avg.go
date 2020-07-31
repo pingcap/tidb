@@ -39,7 +39,7 @@ type partialResult4AvgDecimal struct {
 }
 
 func (e *baseAvgDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(&partialResult4AvgDecimal{}), 0
+	return PartialResult(&partialResult4AvgDecimal{}), DefPartialResult4AvgDecimalSize
 }
 
 func (e *baseAvgDecimal) ResetPartialResult(pr PartialResult) {
@@ -201,7 +201,7 @@ func (e *avgOriginal4DistinctDecimal) AllocPartialResult() (pr PartialResult, me
 	p := &partialResult4AvgDistinctDecimal{
 		valSet: set.NewStringSet(),
 	}
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4AvgDistinctDecimalSize
 }
 
 func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
@@ -216,14 +216,14 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if isNull {
 			continue
 		}
 		hash, err := input.ToHashKey()
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		decStr := string(hack.String(hash))
 		if p.valSet.Exist(decStr) {
@@ -233,12 +233,13 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		p.sum = *newSum
 		p.count++
+		memDelta += int64(len(decStr))
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -282,7 +283,7 @@ type partialResult4AvgFloat64 struct {
 }
 
 func (e *baseAvgFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return (PartialResult)(&partialResult4AvgFloat64{}), 0
+	return (PartialResult)(&partialResult4AvgFloat64{}), DefPartialResult4AvgFloat64Size
 }
 
 func (e *baseAvgFloat64) ResetPartialResult(pr PartialResult) {
@@ -401,7 +402,7 @@ func (e *avgOriginal4DistinctFloat64) AllocPartialResult() (pr PartialResult, me
 	p := &partialResult4AvgDistinctFloat64{
 		valSet: set.NewFloat64Set(),
 	}
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4AvgDistinctFloat64Size
 }
 
 func (e *avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
@@ -416,7 +417,7 @@ func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Contex
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if isNull || p.valSet.Exist(input) {
 			continue
@@ -425,8 +426,9 @@ func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Contex
 		p.sum += input
 		p.count++
 		p.valSet.Insert(input)
+		memDelta += DefFloat64
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *avgOriginal4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

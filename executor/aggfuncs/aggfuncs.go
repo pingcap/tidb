@@ -99,6 +99,19 @@ var (
 	_ AggFunc = (*jsonObjectAgg)(nil)
 )
 
+const (
+	// DefFloat64 is the size of float64
+	DefFloat64 = 8
+	// DefPartialResult4AvgDecimalSize is the size of partialResult4AvgDecimal
+	DefPartialResult4AvgDecimalSize = 48
+	// DefPartialResult4AvgDistinctDecimalSize is the size of partialResult4AvgDistinctDecimal
+	DefPartialResult4AvgDistinctDecimalSize = 56
+	// DefPartialResult4AvgFloat64Size is the size of partialResult4AvgFloat64
+	DefPartialResult4AvgFloat64Size = 16
+	// DefPartialResult4AvgDistinctFloat64Size is the size of partialResult4AvgDistinctFloat64
+	DefPartialResult4AvgDistinctFloat64Size = 24
+)
+
 // PartialResult represents data structure to store the partial result for the
 // aggregate functions. Here we use unsafe.Pointer to allow the partial result
 // to be any type.
