@@ -117,7 +117,7 @@ func newChecksumReader(r io.ReaderAt) *checksumReader {
 	return checksumReader
 }
 
-var ErrChecksumFail = errors.New("error checksum")
+var errChecksumFail = errors.New("error checksum")
 
 // Read implements the io.ReadAt interface.
 func (r *checksumReader) ReadAt(p []byte, off int64) (nn int, err error) {
@@ -144,7 +144,7 @@ func (r *checksumReader) ReadAt(p []byte, off int64) (nn int, err error) {
 		originChecksum := binary.LittleEndian.Uint32(buf)
 		checksum := crc32.Checksum(buf[checksumSize:n], crc32.MakeTable(crc32.IEEE))
 		if originChecksum != checksum {
-			return nn, ErrChecksumFail
+			return nn, errChecksumFail
 		}
 		n1 := copy(p, buf[checksumSize+offsetInPayload:n])
 		nn += n1
