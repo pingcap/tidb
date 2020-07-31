@@ -650,17 +650,17 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		// The respCh have been drained out
 		it.actionOnExceed.exceed = false
 		// decline respCh capacity
-		//if cap(it.collector.respChan) > 1 {
-		//	it.collector.mu.Lock()
-		//	newCap := cap(it.collector.respChan) - 1
-		//	close(it.collector.respChan)
-		//	it.collector.respChan = nil
-		//	it.collector.respChan = make(chan *copResponse, newCap)
-		//	it.collector.mu.Unlock()
-		//} else {
-		//	//TODO: there should be unreachable code while TestJoinInDisk meet panic here
-		//	//panic("collector respCh shouldn't only have one cap during oom action")
-		//}
+		if cap(it.collector.respChan) > 1 {
+			it.collector.mu.Lock()
+			newCap := cap(it.collector.respChan) - 1
+			close(it.collector.respChan)
+			it.collector.respChan = nil
+			it.collector.respChan = make(chan *copResponse, newCap)
+			it.collector.mu.Unlock()
+		} else {
+			//TODO: there should be unreachable code while TestJoinInDisk meet panic here
+			//panic("collector respCh shouldn't only have one cap during oom action")
+		}
 
 		it.workersCond.Broadcast()
 		it.actionOnExceed.once = sync.Once{}
@@ -1224,9 +1224,9 @@ func (c *copResponseCollector) collectNonKeepOrderResponse() {
 			select {
 			case resp, ok := <-task.respChan:
 				if ok {
-					//c.mu.Lock()
+					c.mu.Lock()
 					c.respChan <- resp
-					//c.mu.Unlock()
+					c.mu.Unlock()
 				} else {
 					// if the task have been finished, record the task id.
 					finishedTask[id] = struct{}{}
@@ -1256,9 +1256,9 @@ func (c *copResponseCollector) collectKeepOrderResponse() {
 		select {
 		case resp, ok := <-task.respChan:
 			if ok {
-				//c.mu.Lock()
+				c.mu.Lock()
 				c.respChan <- resp
-				//c.mu.Unlock()
+				c.mu.Unlock()
 			} else {
 				c.tasks[c.curr] = nil
 				c.curr++
