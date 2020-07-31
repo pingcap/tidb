@@ -109,6 +109,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		actionOnExceed: it.actionOnExceed,
 		keepOrder:      it.req.KeepOrder,
 		curr:           0,
+		wg:             &it.wg,
 	}
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
@@ -534,7 +535,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) {
 	taskCh := make(chan *copTask, 1)
-	it.wg.Add(it.concurrency)
+	it.wg.Add(it.concurrency + 1)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
@@ -567,10 +568,13 @@ func (it *copIterator) open(ctx context.Context) {
 	}
 	go taskSender.run()
 	go it.collector.run()
+	it.actionOnExceed.workersCond.L.Lock()
 	it.actionOnExceed.taskStarted = true
+	it.actionOnExceed.workersCond.L.Unlock()
 }
 
 func (sender *copIteratorTaskSender) run() {
+	defer sender.wg.Done()
 	// Send tasks to feed the worker goroutines.
 	for _, t := range sender.tasks {
 		// We keep the number of inflight tasks within the number of concurrency
@@ -585,9 +589,6 @@ func (sender *copIteratorTaskSender) run() {
 		}
 	}
 	close(sender.taskCh)
-
-	// Wait for worker goroutines to exit.
-	sender.wg.Wait()
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
@@ -1186,6 +1187,7 @@ type copResponseCollector struct {
 	sendRate       *rateLimit
 	finishCh       <-chan struct{}
 	actionOnExceed *taskRateLimitAction
+	wg             *sync.WaitGroup
 
 	keepOrder bool
 	curr      int
@@ -1197,6 +1199,10 @@ func (c *copResponseCollector) run() {
 	} else {
 		c.collectKeepOrderResponse()
 	}
+	c.wg.Wait()
+	if c.respChan != nil {
+		close(c.respChan)
+	}
 }
 
 func (c *copResponseCollector) collectNonKeepOrderResponse() {
@@ -1204,12 +1210,10 @@ func (c *copResponseCollector) collectNonKeepOrderResponse() {
 	for {
 		select {
 		case <-c.finishCh:
-			close(c.respChan)
 			return
 		default:
 		}
 		if len(finishedTask) >= len(c.tasks) {
-			close(c.respChan)
 			return
 		}
 		// fetch response from tasks, if the task have finished, we will directly skip this task
@@ -1245,13 +1249,11 @@ func (c *copResponseCollector) collectKeepOrderResponse() {
 	for {
 		select {
 		case <-c.finishCh:
-			close(c.respChan)
 			return
 		default:
 		}
 		if c.curr >= len(c.tasks) {
 			// Resp will be nil if iterator is finishCh.
-			close(c.respChan)
 			return
 		}
 		task := c.tasks[c.curr]
