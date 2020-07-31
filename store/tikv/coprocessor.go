@@ -433,7 +433,6 @@ type copIteratorTaskSender struct {
 	taskCh   chan<- *copTask
 	tasks    []*copTask
 	finishCh <-chan struct{}
-	wg       *sync.WaitGroup
 }
 
 type copResponse struct {
@@ -547,18 +546,16 @@ func (it *copIterator) open(ctx context.Context) {
 		}
 		go worker.run(ctx)
 	}
-	collectorWG := &sync.WaitGroup{}
-	collectorWG.Add(1)
 	it.collector = &copResponseCollector{
 		respChan:  make(chan *copResponse, it.concurrency),
 		tasks:     it.tasks,
 		finishCh:  it.finishCh,
 		keepOrder: it.req.KeepOrder,
 		curr:      0,
-		wg:        collectorWG,
 		workersWG: workersWG,
 	}
 	it.actionOnExceed.collector = it.collector
+	it.collector.wg.Add(1)
 	go it.collector.run()
 
 	it.actionOnExceed.taskStarted = true
@@ -566,7 +563,6 @@ func (it *copIterator) open(ctx context.Context) {
 		taskCh:   taskCh,
 		tasks:    it.tasks,
 		finishCh: it.finishCh,
-		wg:       workersWG,
 	}
 	go taskSender.run()
 }
@@ -582,8 +578,6 @@ func (sender *copIteratorTaskSender) run() {
 		}
 	}
 	close(sender.taskCh)
-	// Wait for worker goroutines to exit.
-	sender.wg.Wait()
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh chan *copResponse) (resp *copResponse, ok bool, exit bool) {
@@ -1196,8 +1190,8 @@ type copResponseCollector struct {
 
 	keepOrder bool
 	curr      int
-	wg        *sync.WaitGroup
 	workersWG *sync.WaitGroup
+	wg        sync.WaitGroup
 }
 
 func (c *copResponseCollector) run() {
