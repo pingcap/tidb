@@ -105,7 +105,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		finishCh:  it.finishCh,
 		keepOrder: it.req.KeepOrder,
 		curr:      0,
-		wg:        &it.collectorWg,
+		wg:        &it.wg,
 	}
 	it.actionOnExceed.collector = it.collector
 	if !it.req.Streaming {
@@ -421,8 +421,6 @@ type copIterator struct {
 	actionOnExceed *taskRateLimitAction
 
 	workersCond *sync.Cond
-
-	collectorWg sync.WaitGroup
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -560,7 +558,6 @@ func (it *copIterator) open(ctx context.Context) {
 		wg:       &it.wg,
 	}
 	go taskSender.run()
-	it.collector.wg.Add(1)
 	go it.collector.run()
 	it.actionOnExceed.taskStarted = true
 }
@@ -1140,7 +1137,6 @@ func (it *copIterator) Close() error {
 	}
 	it.rpcCancel.CancelAll()
 	it.wg.Wait()
-	it.collectorWg.Wait()
 	return nil
 }
 
@@ -1195,12 +1191,13 @@ type copResponseCollector struct {
 }
 
 func (c *copResponseCollector) run() {
-	defer c.wg.Done()
 	if !c.keepOrder {
 		c.collectNonKeepOrderResponse()
 	} else {
 		c.collectKeepOrderResponse()
 	}
+	// wait all workers finish job
+	c.wg.Wait()
 }
 
 func (c *copResponseCollector) collectNonKeepOrderResponse() {
