@@ -109,8 +109,7 @@ func (w *checksumWriter) Close() (err error) {
 
 // checksumReader implements an io.ReadAt, reading from the input source after verifying the checksum.
 type checksumReader struct {
-	r   io.ReaderAt
-	err error
+	r io.ReaderAt
 }
 
 func newChecksumReader(r io.ReaderAt) *checksumReader {
@@ -118,11 +117,7 @@ func newChecksumReader(r io.ReaderAt) *checksumReader {
 	return checksumReader
 }
 
-func (r *checksumReader) readErr() error {
-	err := r.err
-	r.err = nil
-	return err
-}
+var ErrChecksumFail = errors.New("error checksum")
 
 // Read implements the io.ReadAt interface.
 func (r *checksumReader) ReadAt(p []byte, off int64) (nn int, err error) {
@@ -136,25 +131,25 @@ func (r *checksumReader) ReadAt(p []byte, off int64) (nn int, err error) {
 	defer checksumReaderBufPool.Put(buf)
 
 	var n int
-	for len(p) > 0 && r.err == nil {
-		n, r.err = r.r.ReadAt(buf, cursor)
-		if r.err != nil {
-			if n == 0 {
-				return nn, r.readErr()
+	for len(p) > 0 && err == nil {
+		n, err = r.r.ReadAt(buf, cursor)
+		if err != nil {
+			if n == 0 || err != io.EOF {
+				return nn, err
 			}
-			r.err = nil
-			// continue if n > 0
+			err = nil
+			// continue if n > 0 or r.err is io.EOF
 		}
 		cursor += int64(n)
 		originChecksum := binary.LittleEndian.Uint32(buf)
 		checksum := crc32.Checksum(buf[checksumSize:n], crc32.MakeTable(crc32.IEEE))
 		if originChecksum != checksum {
-			return nn, errors.New("error checksum")
+			return nn, ErrChecksumFail
 		}
 		n1 := copy(p, buf[checksumSize+offsetInPayload:n])
 		nn += n1
 		p = p[n1:]
 		offsetInPayload = 0
 	}
-	return nn, r.readErr()
+	return nn, err
 }
