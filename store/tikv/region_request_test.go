@@ -16,6 +16,7 @@ package tikv
 import (
 	"context"
 	"fmt"
+	goctx "golang.org/x/net/context"
 	"net"
 	"sync"
 	"time"
@@ -443,6 +444,10 @@ func (s *mockTikvGrpcServer) VerScan(context.Context, *kvrpcpb.VerScanRequest) (
 }
 
 func (s *mockTikvGrpcServer) VerDeleteRange(context.Context, *kvrpcpb.VerDeleteRangeRequest) (*kvrpcpb.VerDeleteRangeResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
+func (s *mockTikvGrpcServer) KvCheckSecondaryLocks(c goctx.Context, request *kvrpcpb.CheckSecondaryLocksRequest) (*kvrpcpb.CheckSecondaryLocksResponse, error) {
 	return nil, errors.New("unreachable")
 }
 
