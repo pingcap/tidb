@@ -649,19 +649,19 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	if it.actionOnExceed.exceed && len(it.collector.respChan) < 1 {
 		// The respCh have been drained out
 		it.actionOnExceed.exceed = false
+
 		// decline respCh capacity
 		if cap(it.collector.respChan) > 1 {
-			it.collector.mu.Lock()
+			it.collector.rwMu.Lock()
 			newCap := cap(it.collector.respChan) - 1
 			close(it.collector.respChan)
 			it.collector.respChan = nil
 			it.collector.respChan = make(chan *copResponse, newCap)
-			it.collector.mu.Unlock()
+			it.collector.rwMu.Unlock()
 		} else {
-			//TODO: there should be unreachable code while TestJoinInDisk meet panic here
-			//panic("collector respCh shouldn't only have one cap during oom action")
+			// unreachable code
+			panic("collector respCh shouldn't only have one cap during oom action")
 		}
-
 		it.workersCond.Broadcast()
 		it.actionOnExceed.once = sync.Once{}
 	}
@@ -1184,7 +1184,7 @@ func (it copErrorResponse) Close() error {
 
 // copResponseCollector is used to collect the resp from task respCh into its own resp
 type copResponseCollector struct {
-	mu       sync.Mutex
+	rwMu     sync.RWMutex
 	respChan chan *copResponse
 	tasks    []*copTask
 	finishCh <-chan struct{}
@@ -1224,9 +1224,9 @@ func (c *copResponseCollector) collectNonKeepOrderResponse() {
 			select {
 			case resp, ok := <-task.respChan:
 				if ok {
-					c.mu.Lock()
+					c.rwMu.RLock()
 					c.respChan <- resp
-					c.mu.Unlock()
+					c.rwMu.RUnlock()
 				} else {
 					// if the task have been finished, record the task id.
 					finishedTask[id] = struct{}{}
@@ -1256,9 +1256,9 @@ func (c *copResponseCollector) collectKeepOrderResponse() {
 		select {
 		case resp, ok := <-task.respChan:
 			if ok {
-				c.mu.Lock()
+				c.rwMu.RLock()
 				c.respChan <- resp
-				c.mu.Unlock()
+				c.rwMu.RUnlock()
 			} else {
 				c.tasks[c.curr] = nil
 				c.curr++
@@ -1294,6 +1294,7 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 					zap.Int64("quota", t.GetBytesLimit()),
 					zap.Int64("maxConsumed", t.MaxConsumed()))
 				e.fallbackAction.Action(t)
+				return
 			} else {
 				// unreachable code
 				panic("TaskRateLimitAction should set fallback action")
