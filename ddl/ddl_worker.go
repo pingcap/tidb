@@ -528,6 +528,7 @@ func skipWriteBinlog(job *model.Job) bool {
 	// ActionUpdateTiFlashReplicaStatus is a TiDB internal DDL,
 	// it's used to update table's TiFlash replica available status.
 	case model.ActionUpdateTiFlashReplicaStatus:
+		return true
 	// It is done without modifying table info, bin log is not needed
 	case model.ActionAlterTableAlterPartition:
 		return true
