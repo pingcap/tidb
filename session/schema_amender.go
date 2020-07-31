@@ -183,6 +183,10 @@ func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnI
 		return errors.Trace(errors.Errorf("default value bits is not matched for column=%v, from=%v to=%v",
 			colAtCommit.Name.String(), colAtStart.DefaultValueBit, colAtCommit.DefaultValueBit))
 	}
+	if colAtStart.Version != colAtCommit.Version {
+		return errors.Trace(errors.Errorf("column version is not matched for column=%v, from=%v to=%v",
+			colAtCommit.Name.String(), colAtStart.Version, colAtCommit.Version))
+	}
 	return nil
 }
 
