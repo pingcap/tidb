@@ -14,7 +14,6 @@
 package expression_test
 
 import (
-	"fmt"
 	"math"
 
 	. "github.com/pingcap/check"
