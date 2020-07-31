@@ -2842,7 +2842,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
-		b.optFlag = b.optFlag | flagPartitionProcessor
+		// Use the new partition implementation, clean up the code here when it's full implemented.
+		if _, ok := b.ctx.GetSessionVars().Users["try_new_partition_implementation"]; !ok {
+			b.optFlag = b.optFlag | flagPartitionProcessor
+		}
+
 		pt := tbl.(table.PartitionedTable)
 		// check partition by name.
 		if len(tn.PartitionNames) > 0 {
