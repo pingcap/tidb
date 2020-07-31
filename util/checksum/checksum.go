@@ -49,6 +49,8 @@ type Writer struct {
 	payloadUsed int
 }
 
+// NewWriter returns a new Writer which calculates and stores a CRC-32 checksum for the payload before
+// writing to the underlying object.
 func NewWriter(w io.WriteCloser) *Writer {
 	checksumWriter := &Writer{w: w}
 	checksumWriter.buf = make([]byte, checksumBlockSize)
@@ -120,6 +122,7 @@ type Reader struct {
 	r io.ReaderAt
 }
 
+// NewReader returns a new Reader which can read from the input source after verifying the checksum.
 func NewReader(r io.ReaderAt) *Reader {
 	checksumReader := &Reader{r: r}
 	return checksumReader
