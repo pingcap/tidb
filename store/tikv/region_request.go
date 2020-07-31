@@ -14,7 +14,9 @@
 package tikv
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -62,14 +64,50 @@ type RegionRequestSender struct {
 	storeAddr    string
 	rpcError     error
 	failStoreIDs map[uint64]struct{}
-	stats        map[tikvrpc.CmdType]*RegionRequestRuntimeStats
+	RegionRequestRuntimeStats
 }
 
 // RegionRequestRuntimeStats records the runtime stats of send region requests.
 type RegionRequestRuntimeStats struct {
+	stats map[tikvrpc.CmdType]*rpcRuntimeStats
+}
+
+func NewRegionRequestRuntimeStats() RegionRequestRuntimeStats {
+	return RegionRequestRuntimeStats{
+		stats: make(map[tikvrpc.CmdType]*rpcRuntimeStats),
+	}
+}
+
+type rpcRuntimeStats struct {
 	count int64
 	// Send region request consume time.
 	consume int64
+}
+
+func (r *RegionRequestRuntimeStats) String() string {
+	var buf bytes.Buffer
+	for k, v := range r.stats {
+		if buf.Len() > 0 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(fmt.Sprintf("%s:{num_rpc:%d, total_time:%s}", k.String(), v.count, time.Duration(v.consume)))
+	}
+	return buf.String()
+}
+
+func (r *RegionRequestRuntimeStats) Merge(rs RegionRequestRuntimeStats) {
+	for cmd, v := range rs.stats {
+		stat, ok := r.stats[cmd]
+		if !ok {
+			r.stats[cmd] = &rpcRuntimeStats{
+				count:   v.count,
+				consume: v.consume,
+			}
+			continue
+		}
+		stat.count += v.count
+		stat.consume += v.consume
+	}
 }
 
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
@@ -114,10 +152,10 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	return
 }
 
-func recordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*RegionRequestRuntimeStats, cmd tikvrpc.CmdType, d time.Duration) {
+func recordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*rpcRuntimeStats, cmd tikvrpc.CmdType, d time.Duration) {
 	stat, ok := stats[cmd]
 	if !ok {
-		stats[cmd] = &RegionRequestRuntimeStats{
+		stats[cmd] = &rpcRuntimeStats{
 			count:   1,
 			consume: int64(d),
 		}
