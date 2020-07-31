@@ -150,9 +150,6 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		c.Assert(tp.Tp, Equals, tt.tp, comment)
 		c.Assert(tp.Charset, Equals, tt.chs, comment)
 		c.Assert(tp.Flag, Equals, tt.flag, comment)
-		if tp.Flen != tt.flen {
-			fmt.Println("------------------->>>>>>>>>>>> ", tt.sql)
-		}
 		c.Assert(tp.Flen, Equals, tt.flen, comment)
 		c.Assert(tp.Decimal, Equals, tt.decimal, comment)
 	}
