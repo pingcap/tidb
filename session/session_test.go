@@ -3228,7 +3228,7 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 }
 
 func (s *testSessionSuite) TestDoDDLJobQuit(c *C) {
-	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use enviroment
+	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use environment
 	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.MockTiKV))
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(10 * time.Millisecond)
