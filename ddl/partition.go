@@ -1484,6 +1484,6 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
-	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }

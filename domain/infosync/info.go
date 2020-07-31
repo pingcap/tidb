@@ -293,12 +293,11 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 
 		res, err := http.DefaultClient.Do(req)
 		if err == nil {
+			defer res.Body.Close()
 			if res.StatusCode != http.StatusOK {
 				bodyBytes, err := ioutil.ReadAll(res.Body)
-				err = res.Body.Close()
 				return errors.Wrapf(err, "%s", bodyBytes)
 			}
-			err = res.Body.Close()
 			return nil
 		}
 	}
