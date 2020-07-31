@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package chunk
+package checksum
 
 import (
 	"encoding/binary"
@@ -34,14 +34,14 @@ var checksumReaderBufPool = sync.Pool{
 	New: func() interface{} { return make([]byte, checksumBlockSize) },
 }
 
-// checksumWriter implements an io.WriteCloser, it calculates and stores a CRC-32 checksum for the payload before
+// Writer implements an io.WriteCloser, it calculates and stores a CRC-32 checksum for the payload before
 // writing to the underlying object.
 //
 // For example, a layout of the checksum block which payload is 2100 bytes is as follow:
 //
 // | --    4B    -- | --  1020B  -- || --    4B    -- | --  1020B  -- || --    4B    -- | --   60B   -- |
 // | -- checksum -- | -- payload -- || -- checksum -- | -- payload -- || -- checksum -- | -- payload -- |
-type checksumWriter struct {
+type Writer struct {
 	err         error
 	w           io.WriteCloser
 	buf         []byte
@@ -49,8 +49,8 @@ type checksumWriter struct {
 	payloadUsed int
 }
 
-func newChecksumWriter(w io.WriteCloser) *checksumWriter {
-	checksumWriter := &checksumWriter{w: w}
+func NewWriter(w io.WriteCloser) *Writer {
+	checksumWriter := &Writer{w: w}
 	checksumWriter.buf = make([]byte, checksumBlockSize)
 	checksumWriter.payload = checksumWriter.buf[checksumSize:]
 	checksumWriter.payloadUsed = 0
@@ -58,10 +58,10 @@ func newChecksumWriter(w io.WriteCloser) *checksumWriter {
 }
 
 // AvailableSize returns how many bytes are unused in the buffer.
-func (w *checksumWriter) AvailableSize() int { return checksumPayloadSize - w.payloadUsed }
+func (w *Writer) AvailableSize() int { return checksumPayloadSize - w.payloadUsed }
 
 // Write implements the io.Writer interface.
-func (w *checksumWriter) Write(p []byte) (n int, err error) {
+func (w *Writer) Write(p []byte) (n int, err error) {
 	for len(p) > w.AvailableSize() && w.err == nil {
 		copiedNum := copy(w.payload[w.payloadUsed:], p)
 		w.payloadUsed += copiedNum
@@ -82,10 +82,10 @@ func (w *checksumWriter) Write(p []byte) (n int, err error) {
 }
 
 // Buffered returns the number of bytes that have been written into the current buffer.
-func (w *checksumWriter) Buffered() int { return w.payloadUsed }
+func (w *Writer) Buffered() int { return w.payloadUsed }
 
 // Flush writes all the buffered data to the underlying object.
-func (w *checksumWriter) Flush() error {
+func (w *Writer) Flush() error {
 	if w.err != nil {
 		return w.err
 	}
@@ -107,7 +107,7 @@ func (w *checksumWriter) Flush() error {
 }
 
 // Close implements the io.Closer interface.
-func (w *checksumWriter) Close() (err error) {
+func (w *Writer) Close() (err error) {
 	err = w.Flush()
 	if err != nil {
 		return
@@ -115,20 +115,20 @@ func (w *checksumWriter) Close() (err error) {
 	return w.w.Close()
 }
 
-// checksumReader implements an io.ReadAt, reading from the input source after verifying the checksum.
-type checksumReader struct {
+// Reader implements an io.ReadAt, reading from the input source after verifying the checksum.
+type Reader struct {
 	r io.ReaderAt
 }
 
-func newChecksumReader(r io.ReaderAt) *checksumReader {
-	checksumReader := &checksumReader{r: r}
+func NewReader(r io.ReaderAt) *Reader {
+	checksumReader := &Reader{r: r}
 	return checksumReader
 }
 
 var errChecksumFail = errors.New("error checksum")
 
-// Read implements the io.ReadAt interface.
-func (r *checksumReader) ReadAt(p []byte, off int64) (nn int, err error) {
+// ReadAt implements the io.ReadAt interface.
+func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}

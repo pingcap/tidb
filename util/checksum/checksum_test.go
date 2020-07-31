@@ -11,17 +11,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package chunk
+package checksum
 
 import (
 	"bytes"
 	"io"
 	"os"
+	"testing"
 
 	"github.com/pingcap/check"
 )
 
-func (s *testChunkSuite) TestChecksumReadAt(c *check.C) {
+func TestT(t *testing.T) {
+	check.TestingT(t)
+}
+
+var _ = check.Suite(&testChecksumSuite{})
+
+type testChecksumSuite struct{}
+
+func (s *testChecksumSuite) TestChecksumReadAt(c *check.C) {
 	path := "checksum"
 	f, err := os.Create(path)
 	c.Assert(err, check.IsNil)
@@ -34,7 +43,7 @@ func (s *testChunkSuite) TestChecksumReadAt(c *check.C) {
 
 	writeString := "0123456789"
 	c.Assert(err, check.IsNil)
-	csw := newChecksumWriter(newChecksumWriter(newChecksumWriter(newChecksumWriter(f))))
+	csw := NewWriter(NewWriter(NewWriter(NewWriter(f))))
 	w := bytes.NewBuffer(nil)
 	for i := 0; i < 510; i++ {
 		w.WriteString(writeString)
@@ -50,7 +59,7 @@ func (s *testChunkSuite) TestChecksumReadAt(c *check.C) {
 	c.Assert(err, check.IsNil)
 
 	assertReadAt := func(off int64, assertErr interface{}, assertN int, assertString string) {
-		cs := newChecksumReader(newChecksumReader(newChecksumReader(newChecksumReader(f))))
+		cs := NewReader(NewReader(NewReader(NewReader(f))))
 		r := make([]byte, 10)
 		n, err := cs.ReadAt(r, off)
 		c.Assert(err, check.Equals, assertErr)
