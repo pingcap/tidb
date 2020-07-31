@@ -1192,9 +1192,6 @@ type copResponseCh struct {
 func (ch *copResponseCh) send(resp *copResponse) {
 	ch.rw.RLock()
 	defer ch.rw.RUnlock()
-	if ch.exit {
-		return
-	}
 	ch.respCh <- resp
 }
 
@@ -1204,20 +1201,20 @@ func (ch *copResponseCh) cap() int {
 	return cap(ch.respCh)
 }
 
-func (ch *copResponseCh) close() {
+func (ch *copResponseCh) len() int {
 	ch.rw.RLock()
 	defer ch.rw.RUnlock()
+	return len(ch.respCh)
+}
+
+func (ch *copResponseCh) close() {
+	ch.rw.Lock()
+	defer ch.rw.Unlock()
 	if ch.exit {
 		return
 	}
 	close(ch.respCh)
 	ch.exit = true
-}
-
-func (ch *copResponseCh) len() int {
-	ch.rw.RLock()
-	defer ch.rw.RUnlock()
-	return len(ch.respCh)
 }
 
 func (ch *copResponseCh) declineChCap() {
