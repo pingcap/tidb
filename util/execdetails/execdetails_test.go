@@ -111,24 +111,3 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatal("table_reader not exists")
 	}
 }
-
-func TestReaderStats(t *testing.T) {
-	r := new(ReaderRuntimeStats)
-	if r.String() != "" {
-		t.Fatal()
-	}
-
-	r.procKeys = append(r.procKeys, 100)
-	r.copRespTime = append(r.copRespTime, time.Millisecond*100)
-	if r.String() != "rpc num: 1, rpc time:100ms, proc keys:100" {
-		t.Fatal()
-	}
-
-	for i := 0; i < 100; i++ {
-		r.procKeys = append(r.procKeys, int64(i))
-		r.copRespTime = append(r.copRespTime, time.Millisecond*time.Duration(i))
-	}
-	if r.String() != "rpc num: 101, rpc max:100ms, min:0s, avg:50ms, p80:80ms, p95:95ms, proc keys max:100, p95:95" {
-		t.Fatal()
-	}
-}
