@@ -512,7 +512,6 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
-	worker.wg.Add(1)
 	defer worker.wg.Done()
 	for {
 		select {
@@ -542,6 +541,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) {
 	taskCh := make(chan *copTask, 1)
+	it.wg.Add(it.concurrency + 1)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
@@ -1202,7 +1202,6 @@ type copResponseCollector struct {
 }
 
 func (c *copResponseCollector) run() {
-	c.wg.Add(1)
 	defer c.wg.Done()
 	if !c.keepOrder {
 		c.collectNonKeepOrderResponse()
