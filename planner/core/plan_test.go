@@ -48,8 +48,6 @@ func (s *testPlanNormalize) SetUpSuite(c *C) {
 
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_normalized_suite")
 	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
 }
 
 func (s *testPlanNormalize) TearDownSuite(c *C) {
@@ -311,6 +309,8 @@ func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
 	c.Assert(info, NotNil)
 	p, ok := info.Plan.(core.PhysicalPlan)
 	c.Assert(ok, IsTrue)
+	// TODO: optimize the encode plan performance when encode plan with runtimeStats
+	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	encodedPlanStr := core.EncodePlan(p)
 	start := time.Now()
 	_, err := plancodec.DecodePlan(encodedPlanStr)
