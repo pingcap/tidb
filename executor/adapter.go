@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/hint"
 	"math"
 	"strconv"
 	"strings"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
@@ -979,7 +979,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	memMax := stmtCtx.MemTracker.MaxConsumed()
 	diskMax := stmtCtx.DiskTracker.MaxConsumed()
 	sql := a.GetTextToLog()
-	hints, _ := bindinfo.GetHintsForSQL(a.Ctx, a.Text)
+	hints := hint.RestoreOptimizerHints(plannercore.GenHintsFromPhysicalPlan(a.Plan))
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:    sql,
