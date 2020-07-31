@@ -654,17 +654,17 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		it.actionOnExceed.exceed = false
 
 		// decline respCh capacity
-		if cap(it.collector.respChan) > 1 {
-			it.collector.rwMu.Lock()
-			newCap := cap(it.collector.respChan) - 1
-			close(it.collector.respChan)
-			it.collector.respChan = nil
-			it.collector.respChan = make(chan *copResponse, newCap)
-			it.collector.rwMu.Unlock()
-		} else {
-			// unreachable code
-			panic("collector respCh shouldn't only have one cap during oom action")
-		}
+		//if cap(it.collector.respChan) > 1 {
+		//	it.collector.rwMu.Lock()
+		//	newCap := cap(it.collector.respChan) - 1
+		//	close(it.collector.respChan)
+		//	it.collector.respChan = nil
+		//	it.collector.respChan = make(chan *copResponse, newCap)
+		//	it.collector.rwMu.Unlock()
+		//} else {
+		//	// unreachable code
+		//	panic("collector respCh shouldn't only have one cap during oom action")
+		//}
 		it.workersCond.Broadcast()
 		it.actionOnExceed.once = sync.Once{}
 	}
@@ -1186,7 +1186,7 @@ func (it copErrorResponse) Close() error {
 
 // copResponseCollector is used to collect the resp from task respCh into its own resp
 type copResponseCollector struct {
-	rwMu     sync.RWMutex
+	//rwMu     sync.RWMutex
 	respChan chan *copResponse
 	tasks    []*copTask
 	finishCh <-chan struct{}
@@ -1225,9 +1225,9 @@ func (c *copResponseCollector) collectNonKeepOrderResponse() {
 			select {
 			case resp, ok := <-task.respChan:
 				if ok {
-					c.rwMu.RLock()
+					//c.rwMu.RLock()
 					c.respChan <- resp
-					c.rwMu.RUnlock()
+					//c.rwMu.RUnlock()
 				} else {
 					// if the task have been finished, record the task id.
 					finishedTask[id] = struct{}{}
@@ -1251,9 +1251,9 @@ func (c *copResponseCollector) collectKeepOrderResponse() {
 			return
 		case resp, ok := <-task.respChan:
 			if ok {
-				c.rwMu.RLock()
+				//c.rwMu.RLock()
 				c.respChan <- resp
-				c.rwMu.RUnlock()
+				//c.rwMu.RUnlock()
 			} else {
 				c.tasks[c.curr] = nil
 				c.curr++
