@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -847,6 +848,9 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 	}
 	// Use the value if it's not null and not 0.
 	if recordID != 0 {
+		if !e.ctx.GetSessionVars().AllowAutoRandExplicitInsert {
+			return types.Datum{}, ddl.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExplicitInsertDisabledErrMsg)
+		}
 		err = e.rebaseAutoRandomID(recordID, &c.FieldType)
 		if err != nil {
 			return types.Datum{}, err
@@ -889,7 +893,9 @@ func (e *InsertValues) adjustAutoRandomDatum(ctx context.Context, d types.Datum,
 func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, error) {
 	alloc := e.Table.Allocators(e.ctx).Get(autoid.AutoRandomType)
 	tableInfo := e.Table.Meta()
-	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, 1, 1)
+	increment := e.ctx.GetSessionVars().AutoIncrementIncrement
+	offset := e.ctx.GetSessionVars().AutoIncrementOffset
+	_, autoRandomID, err := alloc.Alloc(tableInfo.ID, 1, int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
 	}

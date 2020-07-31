@@ -733,6 +733,9 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 			v[i] = ri
 			continue
 		}
+		if col.IsGenerated() && !col.GeneratedStored {
+			continue
+		}
 		v[i], err = GetColDefaultValue(ctx, col, defaultVals)
 		if err != nil {
 			return nil, rowMap, err

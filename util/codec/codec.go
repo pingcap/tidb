@@ -359,13 +359,15 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 			return
 		}
 	case mysql.TypeEnum:
-		flag = uvarintFlag
+		flag = compactBytesFlag
 		v := uint64(row.GetEnum(idx).ToNumber())
-		b = (*[8]byte)(unsafe.Pointer(&v))[:]
+		str := tp.Elems[v-1]
+		b = ConvertByCollation(hack.Slice(str), tp)
 	case mysql.TypeSet:
-		flag = uvarintFlag
+		flag = compactBytesFlag
 		v := uint64(row.GetSet(idx).ToNumber())
-		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
+		str := tp.Elems[v-1]
+		b = ConvertByCollation(hack.Slice(str), tp)
 	case mysql.TypeBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 		flag = uvarintFlag
@@ -567,9 +569,10 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
 			} else {
-				buf[0] = uvarintFlag
+				buf[0] = compactBytesFlag
 				v := uint64(column.GetEnum(i).ToNumber())
-				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+				str := tp.Elems[v-1]
+				b = ConvertByCollation(hack.Slice(str), tp)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -586,9 +589,10 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
 			} else {
-				buf[0] = uvarintFlag
+				buf[0] = compactBytesFlag
 				v := uint64(column.GetSet(i).ToNumber())
-				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+				str := tp.Elems[v-1]
+				b = ConvertByCollation(hack.Slice(str), tp)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.

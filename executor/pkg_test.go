@@ -15,7 +15,7 @@ import (
 )
 
 var _ = Suite(&pkgTestSuite{})
-var _ = SerialSuites(&pkgTestSuite{})
+var _ = SerialSuites(&pkgTestSerialSuite{})
 
 type pkgTestSuite struct {
 }
