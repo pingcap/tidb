@@ -1458,24 +1458,24 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 
-	ver, err := t.GetSchemaVersion()
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
-		return ver, err
+		return 0, err
 	}
 
 	ptInfo := tblInfo.GetPartitionInfo()
 	if ptInfo.GetNameByID(partitionID) == "" {
 		job.State = model.JobStateCancelled
-		return ver, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
+		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
 	for i, rule := range rules {
 		rule.ID = fmt.Sprintf("%d_%d_%d_%d_%d", job.SchemaID, tblInfo.ID, partitionID, job.ID, i)
+	}
+
+	ver, err := t.GetSchemaVersion()
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	err = infosync.UpdatePlacementRules(nil, rules)
