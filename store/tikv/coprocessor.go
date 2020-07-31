@@ -410,6 +410,8 @@ type copIterator struct {
 	actionOnExceed *taskRateLimitAction
 
 	workersCond *sync.Cond
+
+	wg sync.WaitGroup
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -433,6 +435,7 @@ type copIteratorTaskSender struct {
 	taskCh   chan<- *copTask
 	tasks    []*copTask
 	finishCh <-chan struct{}
+	wg       *sync.WaitGroup
 }
 
 type copResponse struct {
@@ -522,13 +525,12 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) {
 	taskCh := make(chan *copTask, 1)
-	workersWG := &sync.WaitGroup{}
-	workersWG.Add(it.concurrency)
+	it.wg.Add(it.concurrency + 2)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
 			taskCh:   taskCh,
-			wg:       workersWG,
+			wg:       &it.wg,
 			store:    it.store,
 			req:      it.req,
 			finishCh: it.finishCh,
@@ -552,10 +554,9 @@ func (it *copIterator) open(ctx context.Context) {
 		finishCh:  it.finishCh,
 		keepOrder: it.req.KeepOrder,
 		curr:      0,
-		workersWG: workersWG,
+		wg:        &it.wg,
 	}
 	it.actionOnExceed.collector = it.collector
-	it.collector.wg.Add(1)
 	go it.collector.run()
 
 	it.actionOnExceed.taskStarted = true
@@ -563,11 +564,13 @@ func (it *copIterator) open(ctx context.Context) {
 		taskCh:   taskCh,
 		tasks:    it.tasks,
 		finishCh: it.finishCh,
+		wg:       &it.wg,
 	}
 	go taskSender.run()
 }
 
 func (sender *copIteratorTaskSender) run() {
+	defer sender.wg.Done()
 	// Send tasks to feed the worker goroutines.
 	for _, t := range sender.tasks {
 		// We keep the number of inflight tasks within the number of concurrency
@@ -1139,7 +1142,7 @@ func (it *copIterator) Close() error {
 		close(it.finishCh)
 	}
 	it.rpcCancel.CancelAll()
-	it.collector.wg.Wait()
+	it.wg.Wait()
 	return nil
 }
 
@@ -1190,8 +1193,7 @@ type copResponseCollector struct {
 
 	keepOrder bool
 	curr      int
-	workersWG *sync.WaitGroup
-	wg        sync.WaitGroup
+	wg        *sync.WaitGroup
 }
 
 func (c *copResponseCollector) run() {
@@ -1202,7 +1204,6 @@ func (c *copResponseCollector) run() {
 		c.collectKeepOrderResponse()
 	}
 	close(c.respChan)
-	c.workersWG.Wait()
 }
 
 func (c *copResponseCollector) collectNonKeepOrderResponse() {
