@@ -145,12 +145,11 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if ok {
 			resultDetail = hasStats.GetExecDetails()
 		}
-		if resultDetail == nil {
-			continue
+		if resultDetail != nil {
+			r.updateCopRuntimeStats(resultDetail, resultSubset.RespTime())
+			resultDetail.CopTime = duration
+			sc.MergeExecDetails(&resultDetail.ExecDetails, nil)
 		}
-		r.updateCopRuntimeStats(resultDetail, resultSubset.RespTime())
-		resultDetail.CopTime = duration
-		sc.MergeExecDetails(&resultDetail.ExecDetails, nil)
 		if len(r.selectResp.Chunks) != 0 {
 			break
 		}
@@ -311,7 +310,7 @@ func (s *selectResultRuntimeStats) String() string {
 
 	if s.totalProcessTime > 0 {
 		buf.WriteString(", ")
-		buf.WriteString(fmt.Sprintf("Cop_rpc: {total_process_time: %s", s.totalProcessTime.String()))
+		buf.WriteString(fmt.Sprintf("Coprocessor: {total_process_time: %s", s.totalProcessTime.String()))
 		if s.totalWaitTime > 0 {
 			buf.WriteString(", ")
 			buf.WriteString("total_wait_time: ")
