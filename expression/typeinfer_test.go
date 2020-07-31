@@ -224,15 +224,15 @@ func (s *testInferTypeSuite) createTestCase4Columns() []typeInferTestCase {
 		{"c_timestamp_d", mysql.TypeTimestamp, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
 		{"c_char       ", mysql.TypeString, charset.CharsetUTF8MB4, 0, 20, 0}, // TODO: flag should be BinaryFlag
 		{"c_bchar      ", mysql.TypeString, charset.CharsetUTF8MB4, mysql.BinaryFlag, 20, 0},
-		{"c_varchar    ", mysql.TypeVarchar, charset.CharsetUTF8MB4, 0, 20, 0},                   // TODO: BinaryFlag, tp should be TypeVarString
-		{"c_bvarchar   ", mysql.TypeVarchar, charset.CharsetUTF8MB4, mysql.BinaryFlag, 20, 0},    // TODO: BinaryFlag, tp should be TypeVarString
-		{"c_text_d     ", mysql.TypeBlob, charset.CharsetUTF8MB4, 0, 65535, 0},                   // TODO: BlobFlag, BinaryFlag
-		{"c_btext_d    ", mysql.TypeBlob, charset.CharsetUTF8MB4, mysql.BinaryFlag, 65535, 0},    // TODO: BlobFlag, BinaryFlag
-		{"c_binary     ", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, 0},         // TODO: BinaryFlag
-		{"c_varbinary  ", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 20, 0},        // TODO: BinaryFlag, tp should be TypeVarString
-		{"c_blob_d     ", mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag, 65535, 0},        // TODO: BlobFlag, BinaryFlag
-		{"c_set        ", mysql.TypeSet, charset.CharsetUTF8MB4, 0, 5, 0},  // TODO: SetFlag, BinaryFlag
-		{"c_enum       ", mysql.TypeEnum, charset.CharsetUTF8MB4, 0, 1, 0}, // TODO: EnumFlag, BinaryFlag
+		{"c_varchar    ", mysql.TypeVarchar, charset.CharsetUTF8MB4, 0, 20, 0},                // TODO: BinaryFlag, tp should be TypeVarString
+		{"c_bvarchar   ", mysql.TypeVarchar, charset.CharsetUTF8MB4, mysql.BinaryFlag, 20, 0}, // TODO: BinaryFlag, tp should be TypeVarString
+		{"c_text_d     ", mysql.TypeBlob, charset.CharsetUTF8MB4, 0, 65535, 0},                // TODO: BlobFlag, BinaryFlag
+		{"c_btext_d    ", mysql.TypeBlob, charset.CharsetUTF8MB4, mysql.BinaryFlag, 65535, 0}, // TODO: BlobFlag, BinaryFlag
+		{"c_binary     ", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, 0},      // TODO: BinaryFlag
+		{"c_varbinary  ", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 20, 0},     // TODO: BinaryFlag, tp should be TypeVarString
+		{"c_blob_d     ", mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag, 65535, 0},     // TODO: BlobFlag, BinaryFlag
+		{"c_set        ", mysql.TypeSet, charset.CharsetUTF8MB4, 0, 5, 0},                     // TODO: SetFlag, BinaryFlag
+		{"c_enum       ", mysql.TypeEnum, charset.CharsetUTF8MB4, 0, 1, 0},                    // TODO: EnumFlag, BinaryFlag
 	}
 }
 
