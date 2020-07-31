@@ -441,11 +441,9 @@ type copIteratorWorker struct {
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
 type copIteratorTaskSender struct {
-	taskCh    chan<- *copTask
-	tasks     []*copTask
-	finishCh  <-chan struct{}
-	wg        *sync.WaitGroup
-	collector *copResponseCollector
+	taskCh   chan<- *copTask
+	tasks    []*copTask
+	finishCh <-chan struct{}
 }
 
 type copResponse struct {
@@ -553,11 +551,9 @@ func (it *copIterator) open(ctx context.Context) {
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
-		taskCh:    taskCh,
-		tasks:     it.tasks,
-		finishCh:  it.finishCh,
-		wg:        &it.wg,
-		collector: it.collector,
+		taskCh:   taskCh,
+		tasks:    it.tasks,
+		finishCh: it.finishCh,
 	}
 	go taskSender.run()
 	go it.collector.run()
@@ -575,8 +571,6 @@ func (sender *copIteratorTaskSender) run() {
 		}
 	}
 	close(sender.taskCh)
-	sender.wg.Wait()
-	close(sender.collector.respChan)
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh chan *copResponse) (resp *copResponse, ok bool, exit bool) {
@@ -650,12 +644,12 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		it.actionOnExceed.exceed = false
 		// resize
 		if cap(it.collector.respChan) > 1 {
-			it.collector.rwMu.Lock()
+			it.collector.mu.Lock()
 			newCap := cap(it.collector.respChan) - 1
 			close(it.collector.respChan)
 			it.collector.respChan = nil
 			it.collector.respChan = make(chan *copResponse, newCap)
-			it.collector.rwMu.Unlock()
+			it.collector.mu.Unlock()
 		} else {
 			//unreachable code
 			panic("collector respCh shouldn't only have one cap during oom action")
@@ -1182,7 +1176,7 @@ func (it copErrorResponse) Close() error {
 
 // copResponseCollector is used to collect the resp from task respCh into its own resp
 type copResponseCollector struct {
-	rwMu           sync.RWMutex
+	mu             sync.Mutex
 	respChan       chan *copResponse
 	tasks          []*copTask
 	sendRate       *rateLimit
@@ -1222,9 +1216,9 @@ func (c *copResponseCollector) collectNonKeepOrderResponse() {
 			select {
 			case resp, ok := <-task.respChan:
 				if ok {
-					c.rwMu.RLock()
+					c.mu.Lock()
 					c.respChan <- resp
-					c.rwMu.RUnlock()
+					c.mu.Unlock()
 				} else {
 					// if the task have been finished, record the task id.
 					finishedTask[id] = struct{}{}
@@ -1254,9 +1248,9 @@ func (c *copResponseCollector) collectKeepOrderResponse() {
 		select {
 		case resp, ok := <-task.respChan:
 			if ok {
-				c.rwMu.RLock()
+				c.mu.Lock()
 				c.respChan <- resp
-				c.rwMu.RUnlock()
+				c.mu.Unlock()
 			} else {
 				c.tasks[c.curr] = nil
 				c.curr++
