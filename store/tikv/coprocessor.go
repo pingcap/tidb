@@ -567,7 +567,9 @@ func (it *copIterator) open(ctx context.Context) {
 	}
 	go taskSender.run()
 	go it.collector.run()
+	it.actionOnExceed.workersCond.L.Lock()
 	it.actionOnExceed.taskStarted = true
+	it.actionOnExceed.workersCond.L.Unlock()
 }
 
 func (sender *copIteratorTaskSender) run() {
@@ -1292,11 +1294,11 @@ type taskRateLimitAction struct {
 
 // Action implements ActionOnExceed.Action
 func (e *taskRateLimitAction) Action(t *memory.Tracker) {
+	e.workersCond.L.Lock()
+	defer e.workersCond.L.Unlock()
 	if !e.taskStarted {
 		return
 	}
-	e.workersCond.L.Lock()
-	defer e.workersCond.L.Unlock()
 	e.once.Do(func() {
 		if e.tearedTicket >= uint(cap(e.sendRate.token)-1) {
 			if e.fallbackAction != nil {
