@@ -100,11 +100,12 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 
 	it.collector = &copResponseCollector{
-		respChan:       make(chan *copResponse, it.concurrency),
-		tasks:          it.tasks,
-		finishCh:       it.finishCh,
-		keepOrder:      it.req.KeepOrder,
-		curr:           0,
+		respChan:  make(chan *copResponse, it.concurrency),
+		tasks:     it.tasks,
+		finishCh:  it.finishCh,
+		keepOrder: it.req.KeepOrder,
+		curr:      0,
+		wg:        &it.collectorWg,
 	}
 	it.actionOnExceed.collector = it.collector
 	if !it.req.Streaming {
@@ -420,6 +421,8 @@ type copIterator struct {
 	actionOnExceed *taskRateLimitAction
 
 	workersCond *sync.Cond
+
+	collectorWg sync.WaitGroup
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -555,6 +558,7 @@ func (it *copIterator) open(ctx context.Context) {
 		finishCh: it.finishCh,
 	}
 	go taskSender.run()
+	it.collector.wg.Add(1)
 	go it.collector.run()
 	it.actionOnExceed.taskStarted = true
 }
@@ -1132,6 +1136,7 @@ func (it *copIterator) Close() error {
 	}
 	it.rpcCancel.CancelAll()
 	it.wg.Wait()
+	it.collectorWg.Wait()
 	return nil
 }
 
@@ -1175,17 +1180,18 @@ func (it copErrorResponse) Close() error {
 
 // copResponseCollector is used to collect the resp from task respCh into its own resp
 type copResponseCollector struct {
-	mu             sync.Mutex
-	respChan       chan *copResponse
-	tasks          []*copTask
-	sendRate       *rateLimit
-	finishCh       <-chan struct{}
+	mu       sync.Mutex
+	respChan chan *copResponse
+	tasks    []*copTask
+	finishCh <-chan struct{}
 
 	keepOrder bool
 	curr      int
+	wg        *sync.WaitGroup
 }
 
 func (c *copResponseCollector) run() {
+	defer c.wg.Done()
 	if !c.keepOrder {
 		c.collectNonKeepOrderResponse()
 	} else {
