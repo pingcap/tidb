@@ -109,6 +109,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		actionOnExceed: it.actionOnExceed,
 		keepOrder:      it.req.KeepOrder,
 		curr:           0,
+		wg:             &it.wg,
 	}
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
@@ -534,7 +535,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) {
 	taskCh := make(chan *copTask, 1)
-	it.wg.Add(it.concurrency)
+	it.wg.Add(it.concurrency + 1)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
@@ -558,6 +559,7 @@ func (it *copIterator) open(ctx context.Context) {
 		}
 		go worker.run(ctx)
 	}
+	go it.collector.run()
 	taskSender := &copIteratorTaskSender{
 		taskCh:   taskCh,
 		wg:       &it.wg,
@@ -566,8 +568,9 @@ func (it *copIterator) open(ctx context.Context) {
 		sendRate: it.sendRate,
 	}
 	go taskSender.run()
-	go it.collector.run()
+	it.actionOnExceed.workersCond.L.Lock()
 	it.actionOnExceed.taskStarted = true
+	it.actionOnExceed.workersCond.L.Unlock()
 }
 
 func (sender *copIteratorTaskSender) run() {
@@ -1189,9 +1192,11 @@ type copResponseCollector struct {
 
 	keepOrder bool
 	curr      int
+	wg        *sync.WaitGroup
 }
 
 func (c *copResponseCollector) run() {
+	defer c.wg.Done()
 	if !c.keepOrder {
 		c.collectNonKeepOrderResponse()
 	} else {
