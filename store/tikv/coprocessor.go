@@ -550,6 +550,7 @@ func (it *copIterator) open(ctx context.Context) {
 		keepOrder: it.req.KeepOrder,
 		curr:      0,
 		wg:        collectorWG,
+		workersWG: workersWG,
 	}
 	it.actionOnExceed.collector = it.collector
 	go it.collector.run()
