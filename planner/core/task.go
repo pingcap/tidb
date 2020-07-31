@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -69,8 +70,12 @@ type copTask struct {
 	// rootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
 	rootTaskConds []expression.Expression
+
 	// For table partition.
-	pruningConds []expression.Expression
+	partitionTable struct {
+		pruningConds   []expression.Expression
+		partitionNames []model.CIStr
+	}
 }
 
 func (t *copTask) invalid() bool {
@@ -655,8 +660,9 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		indexPlan:        t.indexPlan,
 		ExtraHandleCol:   t.extraHandleCol,
 		CommonHandleCols: t.commonHandleCols,
-		PruningConds:     t.pruningConds,
 	}.Init(ctx, t.tablePlan.SelectBlockOffset())
+	p.PartitionTable.PruningConds = t.partitionTable.pruningConds
+	p.PartitionTable.PartitionNames = t.partitionTable.partitionNames
 	setTableScanToTableRowIDScan(p.tablePlan)
 	p.stats = t.tablePlan.statsInfo()
 	// Add cost of building table reader executors. Handles are extracted in batch style,
@@ -729,7 +735,9 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	if t.indexPlan != nil && t.tablePlan != nil {
 		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
-		p := PhysicalIndexReader{indexPlan: t.indexPlan, PruningConds: t.pruningConds}.Init(ctx, t.indexPlan.SelectBlockOffset())
+		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
+		p.PartitionTable.PruningConds = t.partitionTable.pruningConds
+		p.PartitionTable.PartitionNames = t.partitionTable.partitionNames
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
@@ -747,8 +755,9 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			tablePlan:      t.tablePlan,
 			StoreType:      ts.StoreType,
 			IsCommonHandle: ts.Table.IsCommonHandle,
-			PruningConds:   t.pruningConds,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
+		p.PartitionTable.PruningConds = t.partitionTable.pruningConds
+		p.PartitionTable.PartitionNames = t.partitionTable.partitionNames
 		p.stats = t.tablePlan.statsInfo()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		newTask.p = p
