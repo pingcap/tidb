@@ -790,6 +790,31 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 	tk.MustGetErrCode("alter table t1 drop partition p2", tmysql.ErrOnlyOnRangeListPartition)
 }
 
+func (s *testIntegrationSuite5) TestMultiPartitionDropAndTruncate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists employees")
+	tk.MustExec(`create table employees (
+	hired int not null
+	)
+	partition by range( hired ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001),
+		partition p4 values less than (2006),
+		partition p5 values less than (2011)
+	);`)
+	tk.MustExec(`INSERT INTO employees VALUES (1990), (1995), (2000), (2005), (2010)`)
+
+	tk.MustExec("alter table employees drop partition p1, p2;")
+	result := tk.MustQuery("select * from employees;")
+	result.Sort().Check(testkit.Rows(`2000`, `2005`, `2010`))
+
+	tk.MustExec("alter table employees truncate partition p3, p4")
+	result = tk.MustQuery("select * from employees;")
+	result.Check(testkit.Rows(`2010`))
+}
+
 func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2309,12 +2334,7 @@ func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
 		);
 	`)
 
-	_, err := tk.Exec("alter table test_1465 truncate partition p1, p2")
-	c.Assert(err, ErrorMatches, ".*Unsupported multi schema change")
-	_, err = tk.Exec("alter table test_1465 drop partition p1, p2")
-	c.Assert(err, ErrorMatches, ".*Unsupported multi schema change")
-
-	_, err = tk.Exec("alter table test_1465 partition by hash(a)")
+	_, err := tk.Exec("alter table test_1465 partition by hash(a)")
 	c.Assert(err, ErrorMatches, ".*alter table partition is unsupported")
 }
 
