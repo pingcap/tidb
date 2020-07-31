@@ -368,8 +368,8 @@ func splitRangesDesc(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn fu
 		}
 		for ; i >= 0; i-- {
 			r := ranges.at(i)
-			if loc.Contains(r.StartKey) || bytes.Equal(loc.StartKey, r.StartKey) {
-				continue
+			if !loc.Contains(r.StartKey) {
+				break
 			}
 		}
 		// All rest ranges belong to the same region.
@@ -378,16 +378,16 @@ func splitRangesDesc(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn fu
 			break
 		}
 		r := ranges.at(i)
-		if loc.Contains(r.EndKey) && !bytes.Equal(loc.StartKey, r.EndKey) {
+		if (loc.Contains(r.EndKey) && !bytes.Equal(loc.StartKey, r.EndKey)) || (bytes.Equal(r.EndKey, loc.EndKey)) {
 			// Part of r is not in the region. We need to split it.
-			taskRanges := ranges.slice(i, ranges.len())
+			taskRanges := ranges.slice(i+1, ranges.len())
 			taskRanges.first = &kv.KeyRange{
 				StartKey: loc.StartKey,
 				EndKey:   r.EndKey,
 			}
-			fn(loc, taskRanges)
 
-			ranges = ranges.slice(0, i+1)
+			fn(loc, taskRanges)
+			ranges = ranges.slice(0, i)
 			ranges.last = &kv.KeyRange{
 				StartKey: r.StartKey,
 				EndKey:   loc.StartKey,
@@ -407,7 +407,6 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		// Iterate to the first range that is not complete in the region.
 		var i int
 		for ; i < ranges.len(); i++ {

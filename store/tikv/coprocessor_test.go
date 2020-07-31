@@ -15,6 +15,7 @@ package tikv
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -27,6 +28,213 @@ type testCoprocessorSuite struct {
 }
 
 var _ = Suite(&testCoprocessorSuite{})
+
+func (s *testCoprocessorSuite) TestAsyncBuildTasks(c *C) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
+	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
+	cache := NewRegionCache(pdCli)
+	defer cache.Close()
+
+	bo := NewBackofferWithVars(context.Background(), 3000, nil)
+
+	req := &kv.Request{}
+	flashReq := &kv.Request{}
+	flashReq.StoreType = kv.TiFlash
+
+	run := func(ranges *copRanges, req *kv.Request) []*copTask {
+		asyncTasksChan := make(chan *copTask, 8)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			AsyncBuildCopTasks(bo, cache, ranges, req, asyncTasksChan)
+			close(asyncTasksChan)
+		}()
+		wg.Wait()
+		var asyncTasks []*copTask
+		for task := range asyncTasksChan {
+			asyncTasks = append(asyncTasks, task)
+		}
+		return asyncTasks
+	}
+	tasks := run(buildCopRanges("a", "c"), req)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
+
+	tasks = run(buildCopRanges("a", "c"), flashReq)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
+
+	tasks = run(buildCopRanges("g", "n"), req)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
+
+	tasks = run(buildCopRanges("g", "n"), flashReq)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
+
+	tasks = run(buildCopRanges("m", "n"), req)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[1], "m", "n")
+
+	tasks = run(buildCopRanges("m", "n"), flashReq)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[1], "m", "n")
+
+	tasks = run(buildCopRanges("a", "k"), req)
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
+	s.taskEqual(c, tasks[1], regionIDs[1], "g", "k")
+
+	tasks = run(buildCopRanges("a", "k"), flashReq)
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
+	s.taskEqual(c, tasks[1], regionIDs[1], "g", "k")
+
+	tasks = run(buildCopRanges("a", "x"), req)
+	c.Assert(tasks, HasLen, 4)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
+	s.taskEqual(c, tasks[1], regionIDs[1], "g", "n")
+	s.taskEqual(c, tasks[2], regionIDs[2], "n", "t")
+	s.taskEqual(c, tasks[3], regionIDs[3], "t", "x")
+
+	tasks = run(buildCopRanges("a", "x"), flashReq)
+	c.Assert(tasks, HasLen, 4)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "g")
+	s.taskEqual(c, tasks[1], regionIDs[1], "g", "n")
+	s.taskEqual(c, tasks[2], regionIDs[2], "n", "t")
+	s.taskEqual(c, tasks[3], regionIDs[3], "t", "x")
+
+	tasks = run(buildCopRanges("a", "b", "b", "c"), req)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "b", "c")
+
+	tasks = run(buildCopRanges("a", "b", "b", "c"), flashReq)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "b", "c")
+
+	tasks = run(buildCopRanges("a", "b", "e", "f"), req)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "e", "f")
+
+	tasks = run(buildCopRanges("a", "b", "e", "f"), flashReq)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "e", "f")
+
+	tasks = run(buildCopRanges("g", "n", "o", "p"), req)
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
+	s.taskEqual(c, tasks[1], regionIDs[2], "o", "p")
+
+	tasks = run(buildCopRanges("g", "n", "o", "p"), flashReq)
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
+	s.taskEqual(c, tasks[1], regionIDs[2], "o", "p")
+
+	tasks = run(buildCopRanges("h", "k", "m", "p"), req)
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[0], regionIDs[1], "h", "k", "m", "n")
+	s.taskEqual(c, tasks[1], regionIDs[2], "n", "p")
+
+	tasks = run(buildCopRanges("h", "k", "m", "p"), flashReq)
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[0], regionIDs[1], "h", "k", "m", "n")
+	s.taskEqual(c, tasks[1], regionIDs[2], "n", "p")
+
+	req.Desc = true
+	flashReq.Desc = true
+	tasks = run(buildCopRanges("g", "k", "o", "t"), req)
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[1], regionIDs[1], "g", "k")
+	s.taskEqual(c, tasks[0], regionIDs[2], "o", "t")
+
+	tasks = run(buildCopRanges("a", "c"), req)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
+
+	tasks = run(buildCopRanges("a", "c"), flashReq)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "c")
+
+	tasks = run(buildCopRanges("g", "n"), req)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
+
+	tasks = run(buildCopRanges("g", "n"), flashReq)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[1], "g", "n")
+
+	tasks = run(buildCopRanges("m", "n"), req)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[1], "m", "n")
+
+	tasks = run(buildCopRanges("m", "n"), flashReq)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[1], "m", "n")
+
+	tasks = run(buildCopRanges("a", "k"), req)
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[1], regionIDs[0], "a", "g")
+	s.taskEqual(c, tasks[0], regionIDs[1], "g", "k")
+
+	tasks = run(buildCopRanges("a", "k"), flashReq)
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[1], regionIDs[0], "a", "g")
+	s.taskEqual(c, tasks[0], regionIDs[1], "g", "k")
+
+	tasks = run(buildCopRanges("a", "x"), req)
+	c.Assert(tasks, HasLen, 4)
+	s.taskEqual(c, tasks[3], regionIDs[0], "a", "g")
+	s.taskEqual(c, tasks[2], regionIDs[1], "g", "n")
+	s.taskEqual(c, tasks[1], regionIDs[2], "n", "t")
+	s.taskEqual(c, tasks[0], regionIDs[3], "t", "x")
+
+	tasks = run(buildCopRanges("a", "x"), flashReq)
+	c.Assert(tasks, HasLen, 4)
+	s.taskEqual(c, tasks[3], regionIDs[0], "a", "g")
+	s.taskEqual(c, tasks[2], regionIDs[1], "g", "n")
+	s.taskEqual(c, tasks[1], regionIDs[2], "n", "t")
+	s.taskEqual(c, tasks[0], regionIDs[3], "t", "x")
+
+	tasks = run(buildCopRanges("a", "b", "b", "c"), req)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "b", "c")
+
+	tasks = run(buildCopRanges("a", "b", "b", "c"), flashReq)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "b", "c")
+
+	tasks = run(buildCopRanges("a", "b", "e", "f"), req)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "e", "f")
+
+	tasks = run(buildCopRanges("a", "b", "e", "f"), flashReq)
+	c.Assert(tasks, HasLen, 1)
+	s.taskEqual(c, tasks[0], regionIDs[0], "a", "b", "e", "f")
+
+	tasks = run(buildCopRanges("g", "n", "o", "p"), req)
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[1], regionIDs[1], "g", "n")
+	s.taskEqual(c, tasks[0], regionIDs[2], "o", "p")
+
+	tasks = run(buildCopRanges("g", "n", "o", "p"), flashReq)
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[1], regionIDs[1], "g", "n")
+	s.taskEqual(c, tasks[0], regionIDs[2], "o", "p")
+
+	tasks = run(buildCopRanges("h", "k", "m", "p"), req)
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[1], regionIDs[1], "h", "k", "m", "n")
+	s.taskEqual(c, tasks[0], regionIDs[2], "n", "p")
+
+	tasks = run(buildCopRanges("h", "k", "m", "p"), flashReq)
+	c.Assert(tasks, HasLen, 2)
+	s.taskEqual(c, tasks[1], regionIDs[1], "h", "k", "m", "n")
+	s.taskEqual(c, tasks[0], regionIDs[2], "n", "p")
+}
 
 func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
