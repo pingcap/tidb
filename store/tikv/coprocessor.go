@@ -517,19 +517,20 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) {
+	taskCh := make(chan *copTask, 1)
+	it.wg.Add(it.concurrency + 1)
+
 	it.collector = &copResponseCollector{
 		respChan:  make(chan *copResponse, it.concurrency),
 		tasks:     it.tasks,
 		finishCh:  it.finishCh,
 		keepOrder: it.req.KeepOrder,
 		curr:      0,
+		wg:        &it.wg,
 	}
 	it.actionOnExceed.collector = it.collector
-	it.collector.wg.Add(1)
 	go it.collector.run()
 
-	taskCh := make(chan *copTask, 1)
-	it.wg.Add(it.concurrency)
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
@@ -1136,7 +1137,6 @@ func (it *copIterator) Close() error {
 		close(it.finishCh)
 	}
 	it.rpcCancel.CancelAll()
-	it.collector.wg.Wait()
 	it.wg.Wait()
 	return nil
 }
@@ -1188,7 +1188,7 @@ type copResponseCollector struct {
 
 	keepOrder bool
 	curr      int
-	wg        sync.WaitGroup
+	wg        *sync.WaitGroup
 }
 
 func (c *copResponseCollector) run() {
