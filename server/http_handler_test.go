@@ -351,12 +351,8 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/errGetRegionByIDEmpty"), IsNil)
 }
 
-<<<<<<< HEAD
-func (ts *HTTPHandlerTestSuite) startServer(c *C) {
-	mvccStore := mocktikv.MustNewMVCCStore()
-=======
 func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
->>>>>>> 4db32ba... server: try to make test TestAllServerInfo stable (#18842)
+	mvccStore := mocktikv.MustNewMVCCStore()
 	var err error
 	ts.store, err = mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
 	c.Assert(err, IsNil)
