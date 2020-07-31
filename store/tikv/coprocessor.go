@@ -496,7 +496,10 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
-	defer worker.wg.Done()
+	defer func() {
+		logutil.BgLogger().Info("worker Done")
+		worker.wg.Done()
+	}()
 	for {
 		select {
 		case <-worker.finishCh:
@@ -526,6 +529,17 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 func (it *copIterator) open(ctx context.Context) {
 	taskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency + 2)
+	it.collector = &copResponseCollector{
+		respChan:  make(chan *copResponse, it.concurrency),
+		tasks:     it.tasks,
+		finishCh:  it.finishCh,
+		keepOrder: it.req.KeepOrder,
+		curr:      0,
+		wg:        &it.wg,
+	}
+	it.actionOnExceed.collector = it.collector
+	go it.collector.run()
+
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
@@ -548,16 +562,6 @@ func (it *copIterator) open(ctx context.Context) {
 		}
 		go worker.run(ctx)
 	}
-	it.collector = &copResponseCollector{
-		respChan:  make(chan *copResponse, it.concurrency),
-		tasks:     it.tasks,
-		finishCh:  it.finishCh,
-		keepOrder: it.req.KeepOrder,
-		curr:      0,
-		wg:        &it.wg,
-	}
-	it.actionOnExceed.collector = it.collector
-	go it.collector.run()
 
 	it.actionOnExceed.taskStarted = true
 	taskSender := &copIteratorTaskSender{
@@ -581,6 +585,7 @@ func (sender *copIteratorTaskSender) run() {
 		}
 	}
 	close(sender.taskCh)
+	logutil.BgLogger().Info("sender Done")
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh chan *copResponse) (resp *copResponse, ok bool, exit bool) {
@@ -1204,6 +1209,7 @@ func (c *copResponseCollector) run() {
 		c.collectKeepOrderResponse()
 	}
 	close(c.respChan)
+	logutil.BgLogger().Info("collect Done")
 }
 
 func (c *copResponseCollector) collectNonKeepOrderResponse() {
