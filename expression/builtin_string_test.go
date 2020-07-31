@@ -22,10 +22,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -792,8 +792,8 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 		cs  string
 		err string
 	}{
-		{"haha", "wrongcharset", "[expression:1115]Unknown character set: 'wrongcharset'"},
-		{"haha", "cp866", "[expression:1115]Unknown character set: 'cp866'"},
+		{"haha", "wrongcharset", "[DB:expression:1115] Unknown character set: 'wrongcharset'"},
+		{"haha", "cp866", "[DB:expression:1115] Unknown character set: 'cp866'"},
 	}
 	for _, v := range errTbl {
 		fc := funcs[ast.Convert]
@@ -810,7 +810,7 @@ func (s *testEvaluatorSuite) TestConvert(c *C) {
 	wrongFunction := f.(*builtinConvertSig)
 	wrongFunction.tp.Charset = "wrongcharset"
 	_, err = evalBuiltinFunc(wrongFunction, chunk.Row{})
-	c.Assert(err.Error(), Equals, "[expression:1115]Unknown character set: 'wrongcharset'")
+	c.Assert(err.Error(), Equals, "[DB:expression:1115] Unknown character set: 'wrongcharset'")
 }
 
 func (s *testEvaluatorSuite) TestSubstringIndex(c *C) {
@@ -2362,7 +2362,7 @@ func (s *testEvaluatorSuite) TestWeightString(c *C) {
 		}
 		strExpr := fmt.Sprintf("%v", test.expr)
 		if test.padding == "BINARY" && test.length < len(strExpr) {
-			expectWarn := fmt.Sprintf("[expression:1292]Truncated incorrect BINARY(%d) value: '%s'", test.length, strExpr)
+			expectWarn := fmt.Sprintf("[DB:expression:1292] Truncated incorrect BINARY(%d) value: '%s'", test.length, strExpr)
 			obtainedWarns := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 			c.Assert(len(obtainedWarns), Equals, 1)
 			c.Assert(obtainedWarns[0].Level, Equals, "Warning")

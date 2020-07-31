@@ -23,8 +23,8 @@ import (
 	"strconv"
 
 	. "github.com/pingcap/check"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
@@ -147,7 +147,7 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_bin")
 
-	expectErrMsg := "[ddl:1273]Unknown collation: 'non_exist_collation'"
+	expectErrMsg := "[DB:ddl:1273] Unknown collation: 'non_exist_collation'"
 	tk.MustGetErrMsg("set names utf8 collate non_exist_collation", expectErrMsg)
 	tk.MustGetErrMsg("set @@session.collation_server='non_exist_collation'", expectErrMsg)
 	tk.MustGetErrMsg("set @@session.collation_database='non_exist_collation'", expectErrMsg)

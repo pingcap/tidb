@@ -336,8 +336,8 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 
 func noSuchTable(err error) bool {
 	e1 := errors.Cause(err)
-	if e2, ok := e1.(*terror.Error); ok {
-		if e2.Code() == terror.ErrCode(mysql.ErrNoSuchTable) {
+	if e2, ok := e1.(*errors.Error); ok {
+		if e2.Code() == errors.ErrCode(mysql.ErrNoSuchTable) {
 			return true
 		}
 	}

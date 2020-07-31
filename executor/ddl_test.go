@@ -22,10 +22,10 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
@@ -338,7 +338,7 @@ func (s *testSuite6) TestCreateViewWithOverlongColName(c *C) {
 
 	tk.MustExec("drop view v ")
 	err := tk.ExecToErr("create view v(`" + strings.Repeat("b", 65) + "`) as select a from t;")
-	c.Assert(err.Error(), Equals, "[ddl:1059]Identifier name 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' is too long")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1059] Identifier name 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' is too long")
 }
 
 func (s *testSuite6) TestCreateDropDatabase(c *C) {
@@ -375,7 +375,7 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
 	))
-	tk.MustGetErrMsg("create database charset_test charset utf8 collate utf8mb4_unicode_ci;", "[ddl:1253]COLLATION 'utf8mb4_unicode_ci' is not valid for CHARACTER SET 'utf8'")
+	tk.MustGetErrMsg("create database charset_test charset utf8 collate utf8mb4_unicode_ci;", "[DB:ddl:1253] COLLATION 'utf8mb4_unicode_ci' is not valid for CHARACTER SET 'utf8'")
 }
 
 func (s *testSuite6) TestCreateDropTable(c *C) {
@@ -409,7 +409,7 @@ func (s *testSuite6) TestCreateDropView(c *C) {
 
 	tk.MustExec("create table t_v(a int)")
 	_, err = tk.Exec("drop view t_v")
-	c.Assert(err.Error(), Equals, "[ddl:1347]'test.t_v' is not VIEW")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1347] 'test.t_v' is not VIEW")
 
 	tk.MustExec("create table t_v1(a int, b int);")
 	tk.MustExec("create table t_v2(a int, b int);")
@@ -684,7 +684,7 @@ func (s *testSuite6) TestTooLargeIdentifierLength(c *C) {
 	tk.MustExec(fmt.Sprintf("create database %s", dbName1))
 	tk.MustExec(fmt.Sprintf("drop database %s", dbName1))
 	_, err := tk.Exec(fmt.Sprintf("create database %s", dbName2))
-	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", dbName2))
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[DB:ddl:1059] Identifier name '%s' is too long", dbName2))
 
 	// for table.
 	tk.MustExec("use test")
@@ -692,7 +692,7 @@ func (s *testSuite6) TestTooLargeIdentifierLength(c *C) {
 	tk.MustExec(fmt.Sprintf("create table %s(c int)", tableName1))
 	tk.MustExec(fmt.Sprintf("drop table %s", tableName1))
 	_, err = tk.Exec(fmt.Sprintf("create table %s(c int)", tableName2))
-	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", tableName2))
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[DB:ddl:1059] Identifier name '%s' is too long", tableName2))
 
 	// for column.
 	tk.MustExec("drop table if exists t;")
@@ -700,7 +700,7 @@ func (s *testSuite6) TestTooLargeIdentifierLength(c *C) {
 	tk.MustExec(fmt.Sprintf("create table t(%s int)", columnName1))
 	tk.MustExec("drop table t")
 	_, err = tk.Exec(fmt.Sprintf("create table t(%s int)", columnName2))
-	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", columnName2))
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[DB:ddl:1059] Identifier name '%s' is too long", columnName2))
 
 	// for index.
 	tk.MustExec("create table t(c int);")
@@ -708,12 +708,12 @@ func (s *testSuite6) TestTooLargeIdentifierLength(c *C) {
 	tk.MustExec(fmt.Sprintf("create index %s on t(c)", indexName1))
 	tk.MustExec(fmt.Sprintf("drop index %s on t", indexName1))
 	_, err = tk.Exec(fmt.Sprintf("create index %s on t(c)", indexName2))
-	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[DB:ddl:1059] Identifier name '%s' is too long", indexName2))
 
 	// for create table with index.
 	tk.MustExec("drop table t;")
 	_, err = tk.Exec(fmt.Sprintf("create table t(c int, index %s(c));", indexName2))
-	c.Assert(err.Error(), Equals, fmt.Sprintf("[ddl:1059]Identifier name '%s' is too long", indexName2))
+	c.Assert(err.Error(), Equals, fmt.Sprintf("[DB:ddl:1059] Identifier name '%s' is too long", indexName2))
 }
 
 func (s *testSuite8) TestShardRowIDBits(c *C) {
@@ -765,10 +765,10 @@ func (s *testSuite8) TestShardRowIDBits(c *C) {
 
 	// After PR 10759, shard_row_id_bits is not supported with pk_is_handle tables.
 	err = tk.ExecToErr("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 4")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported shard_row_id_bits for table with primary key as row id")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported shard_row_id_bits for table with primary key as row id")
 	tk.MustExec("create table auto (id int not null auto_increment primary key, b int) shard_row_id_bits = 0")
 	err = tk.ExecToErr("alter table auto shard_row_id_bits = 5")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported shard_row_id_bits for table with primary key as row id")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported shard_row_id_bits for table with primary key as row id")
 	tk.MustExec("alter table auto shard_row_id_bits = 0")
 
 	// Hack an existing table with shard_row_id_bits and primary key as handle
@@ -1324,38 +1324,38 @@ func (s *testSuite6) TestCheckDefaultFsp(c *C) {
 	tk.MustExec(`drop table if exists t;`)
 
 	_, err := tk.Exec("create table t (  tt timestamp default now(1));")
-	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1067] Invalid default value for 'tt'")
 
 	_, err = tk.Exec("create table t (  tt timestamp(1) default current_timestamp);")
-	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1067] Invalid default value for 'tt'")
 
 	_, err = tk.Exec("create table t (  tt timestamp(1) default now(2));")
-	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1067] Invalid default value for 'tt'")
 
 	tk.MustExec("create table t (  tt timestamp(1) default now(1));")
 	tk.MustExec("create table t2 (  tt timestamp default current_timestamp());")
 	tk.MustExec("create table t3 (  tt timestamp default current_timestamp(0));")
 
 	_, err = tk.Exec("alter table t add column ttt timestamp default now(2);")
-	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1067] Invalid default value for 'ttt'")
 
 	_, err = tk.Exec("alter table t add column ttt timestamp(5) default current_timestamp;")
-	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1067] Invalid default value for 'ttt'")
 
 	_, err = tk.Exec("alter table t add column ttt timestamp(5) default now(2);")
-	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'ttt'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1067] Invalid default value for 'ttt'")
 
 	_, err = tk.Exec("alter table t modify column tt timestamp(1) default now();")
-	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1067] Invalid default value for 'tt'")
 
 	_, err = tk.Exec("alter table t modify column tt timestamp(4) default now(5);")
-	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tt'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1067] Invalid default value for 'tt'")
 
 	_, err = tk.Exec("alter table t change column tt tttt timestamp(4) default now(5);")
-	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1067] Invalid default value for 'tttt'")
 
 	_, err = tk.Exec("alter table t change column tt tttt timestamp(1) default now();")
-	c.Assert(err.Error(), Equals, "[ddl:1067]Invalid default value for 'tttt'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1067] Invalid default value for 'tttt'")
 }
 
 func (s *testSuite6) TestTimestampMinDefaultValue(c *C) {

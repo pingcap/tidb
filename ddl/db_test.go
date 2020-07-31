@@ -27,10 +27,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
@@ -190,7 +190,7 @@ func (s *testDBSuite5) TestAddIndexWithDupIndex(c *C) {
 	// When there is already an duplicate index, show error message.
 	tk.MustExec("create table test_add_index_with_dup (a int, key idx (a))")
 	_, err := tk.Exec("alter table test_add_index_with_dup add index idx (a)")
-	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
+	c.Check(errors.Cause(err1).(*errors.Error).Equal(err), Equals, true)
 	c.Assert(errors.Cause(err1).Error() == err.Error(), IsTrue)
 
 	// When there is another session adding duplicate index with state other than
@@ -199,7 +199,7 @@ func (s *testDBSuite5) TestAddIndexWithDupIndex(c *C) {
 	indexInfo := t.Meta().FindIndexByName("idx")
 	indexInfo.State = model.StateNone
 	_, err = tk.Exec("alter table test_add_index_with_dup add index idx (a)")
-	c.Check(errors.Cause(err2).(*terror.Error).Equal(err), Equals, true)
+	c.Check(errors.Cause(err2).(*errors.Error).Equal(err), Equals, true)
 	c.Assert(errors.Cause(err2).Error() == err.Error(), IsTrue)
 
 	tk.MustExec("drop table test_add_index_with_dup")
@@ -332,7 +332,7 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	}
 	d.(ddl.DDLForTest).SetHook(hook)
 
-	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[DB:ddl:8202] Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
+	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[DB:ddl:8202] Cannot decode index value, because [DB:types:1690] DOUBLE value is out of range in 'pow(160, 160)'")
 	c.Assert(checkErr, IsNil)
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("20 20 20", "80 80 80", "160 160 160"))
 }
@@ -1749,16 +1749,16 @@ func (s *testDBSuite4) TestAddIndexWithDupCols(c *C) {
 
 	tk.MustExec("create table test_add_index_with_dup (a int, b int)")
 	_, err := tk.Exec("create index c on test_add_index_with_dup(b, a, b)")
-	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
+	c.Check(errors.Cause(err1).(*errors.Error).Equal(err), Equals, true)
 
 	_, err = tk.Exec("create index c on test_add_index_with_dup(b, a, B)")
-	c.Check(errors.Cause(err2).(*terror.Error).Equal(err), Equals, true)
+	c.Check(errors.Cause(err2).(*errors.Error).Equal(err), Equals, true)
 
 	_, err = tk.Exec("alter table test_add_index_with_dup add index c (b, a, b)")
-	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
+	c.Check(errors.Cause(err1).(*errors.Error).Equal(err), Equals, true)
 
 	_, err = tk.Exec("alter table test_add_index_with_dup add index c (b, a, B)")
-	c.Check(errors.Cause(err2).(*terror.Error).Equal(err), Equals, true)
+	c.Check(errors.Cause(err2).(*errors.Error).Equal(err), Equals, true)
 
 	tk.MustExec("drop table test_add_index_with_dup")
 }
@@ -2027,7 +2027,7 @@ func (s *testDBSuite6) TestDropColumn(c *C) {
 	tk.MustExec("create table t1 (a int,b int) partition by hash(a) partitions 4;")
 	_, err := tk.Exec("alter table t1 drop column a")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
+	c.Assert(err.Error(), Equals, "[DB:expression:1054] Unknown column 'a' in 'expression'")
 
 	tk.MustExec("drop database drop_col_db")
 }
@@ -3150,7 +3150,7 @@ func (s *testDBSuite3) TestGeneratedColumnDDL(c *C) {
 	}
 
 	// Check alter table modify/change generated column.
-	modStoredColErrMsg := "[ddl:3106]'modifying a stored column' is not supported for generated columns."
+	modStoredColErrMsg := "[DB:ddl:3106] 'modifying a stored column' is not supported for generated columns."
 	_, err := tk.Exec(`alter table test_gv_ddl modify column c bigint as (b+200) stored`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, modStoredColErrMsg)
@@ -3468,7 +3468,7 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 
 	err := <-done
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8214] Cancelled DDL job")
 	s.mustExec(tk, c, "insert into t1(c2) values (null);")
 
 	t := s.testGetTable(c, "t1")
@@ -3522,7 +3522,7 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	_, err := tk.Exec("alter table t1 change c2 c2 int not null;")
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1138] Invalid use of NULL value")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
 
 	// Check insert error when column has PreventNullInsertFlag.
@@ -3539,14 +3539,14 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	tk.MustExec("alter table t1 change c2 c2 bigint not null;")
-	c.Assert(checkErr.Error(), Equals, "[DB:table:1048]Column 'c2' cannot be null")
+	c.Assert(checkErr.Error(), Equals, "[DB:table:1048] Column 'c2' cannot be null")
 
 	c2 := getModifyColumn()
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
 	c.Assert(mysql.HasPreventNullInsertFlag(c2.Flag), IsFalse)
 	_, err = tk.Exec("insert into t1 values ();")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[DB:table:1364]Field 'c2' doesn't have a default value")
+	c.Assert(err.Error(), Equals, "[DB:table:1364] Field 'c2' doesn't have a default value")
 }
 
 func (s *testDBSuite2) TestTransactionOnAddDropColumn(c *C) {
@@ -3883,8 +3883,8 @@ func (s *testDBSuite5) TestModifyGeneratedColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test;")
 	tk.MustExec("use test")
-	modIdxColErrMsg := "[ddl:3106]'modifying an indexed column' is not supported for generated columns."
-	modStoredColErrMsg := "[ddl:3106]'modifying a stored column' is not supported for generated columns."
+	modIdxColErrMsg := "[DB:ddl:3106] 'modifying an indexed column' is not supported for generated columns."
+	modStoredColErrMsg := "[DB:ddl:3106] 'modifying a stored column' is not supported for generated columns."
 
 	// Modify column with single-col-index.
 	tk.MustExec("drop table if exists t1;")
@@ -4016,9 +4016,9 @@ func (s *testDBSuite4) TestIssue9100(c *C) {
 	tk.MustExec("use test_db")
 	tk.MustExec("create table employ (a int, b int) partition by range (b) (partition p0 values less than (1));")
 	_, err := tk.Exec("alter table employ add unique index p_a (a);")
-	c.Assert(err.Error(), Equals, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1503] A UNIQUE INDEX must include all columns in the table's partitioning function")
 	_, err = tk.Exec("alter table employ add primary key p_a (a);")
-	c.Assert(err.Error(), Equals, "[ddl:1503]A PRIMARY must include all columns in the table's partitioning function")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1503] A PRIMARY must include all columns in the table's partitioning function")
 
 	tk.MustExec("create table issue9100t1 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col2)) partition by range( col1 ) (partition p1 values less than (11))")
 	tk.MustExec("alter table issue9100t1 add unique index p_col1 (col1)")
@@ -4026,9 +4026,9 @@ func (s *testDBSuite4) TestIssue9100(c *C) {
 
 	tk.MustExec("create table issue9100t2 (col1 int not null, col2 date not null, col3 int not null, unique key (col1, col3)) partition by range( col1 + col3 ) (partition p1 values less than (11))")
 	_, err = tk.Exec("alter table issue9100t2 add unique index p_col1 (col1)")
-	c.Assert(err.Error(), Equals, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1503] A UNIQUE INDEX must include all columns in the table's partitioning function")
 	_, err = tk.Exec("alter table issue9100t2 add primary key p_col1 (col1)")
-	c.Assert(err.Error(), Equals, "[ddl:1503]A PRIMARY must include all columns in the table's partitioning function")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1503] A PRIMARY must include all columns in the table's partitioning function")
 }
 
 func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
@@ -4466,7 +4466,7 @@ func (s *testDBSuite2) TestLockTables(c *C) {
 	tk2.MustExec("lock tables t1 write")
 	_, err = tk.Exec("commit")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "previous statement: insert into t1 set a=1: [domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
+	c.Assert(err.Error(), Equals, "previous statement: insert into t1 set a=1: [DB:domain:8028] Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 
 	// Test lock table by other session in transaction and commit with retry.
 	tk.MustExec("unlock tables")

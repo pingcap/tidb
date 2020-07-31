@@ -31,12 +31,13 @@ import (
 	"github.com/golang/protobuf/proto"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	old_terror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -4945,7 +4946,7 @@ func (s *testRecoverTable) TestRecoverTable(c *C) {
 	// if GC enable is not exists in mysql.tidb
 	_, err = tk.Exec("recover table t_recover")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:-1] can not get 'tikv_gc_enable'")
 
 	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
@@ -6085,7 +6086,7 @@ func (s *testSuite) TestKillTableReader(c *C) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		c.Assert(int(terror.ToSQLError(errors.Cause(tk.QueryToErr("select * from t")).(*terror.Error)).Code), Equals, int(executor.ErrQueryInterrupted.Code()))
+		c.Assert(int(old_terror.ToSQLError(errors.Cause(tk.QueryToErr("select * from t")).(*terror.Error)).Code), Equals, int(executor.ErrQueryInterrupted.Code()))
 	}()
 	time.Sleep(1 * time.Second)
 	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 1)

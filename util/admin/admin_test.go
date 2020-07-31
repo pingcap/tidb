@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -376,7 +377,7 @@ func (s *testSuite) TestIsJobRollbackable(c *C) {
 }
 
 func (s *testSuite) TestError(c *C) {
-	kvErrs := []*terror.Error{
+	kvErrs := []*errors.Error{
 		ErrDataInConsistent,
 		ErrDDLJobNotFound,
 		ErrCancelFinishedDDLJob,

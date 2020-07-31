@@ -18,7 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
+	terror "github.com/pingcap/errors"
 )
 
 type testFaultInjectionSuite struct{}

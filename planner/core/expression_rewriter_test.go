@@ -15,7 +15,7 @@ package core_test
 
 import (
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -94,7 +94,7 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 
 	tk.MustQuery("select default(a0) from (select a as a0 from t1) as t0").Check(testkit.Rows("def"))
 	err = tk.ExecToErr("select default(a0) from (select a+1 as a0 from t1) as t0")
-	c.Assert(err.Error(), Equals, "[DB:table:1364]Field 'a0' doesn't have a default value")
+	c.Assert(err.Error(), Equals, "[DB:table:1364] Field 'a0' doesn't have a default value")
 
 	tk.MustExec("create table t2(a varchar(10), b varchar(10))")
 	tk.MustExec("insert into t2 values ('1', '1')")

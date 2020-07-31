@@ -17,14 +17,15 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/errno"
 	"hash"
 	"io"
 	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -120,7 +121,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 			var val uint64
 			val, err = vals[i].GetBinaryLiteral().ToInt(sc)
-			terror.Log(errors.Trace(err))
+			errno.Log(errors.Trace(err))
 			b = encodeUnsignedInt(b, val, comparable)
 		case types.KindMysqlJSON:
 			b = append(b, jsonFlag)
@@ -161,7 +162,7 @@ func EstimateValueSize(sc *stmtctx.StatementContext, val types.Datum) (int, erro
 		l = valueSizeOfUnsignedInt(uint64(val.GetMysqlSet().ToNumber()))
 	case types.KindMysqlBit, types.KindBinaryLiteral:
 		val, err := val.GetBinaryLiteral().ToInt(sc)
-		terror.Log(errors.Trace(err))
+		errno.Log(errors.Trace(err))
 		l = valueSizeOfUnsignedInt(val)
 	case types.KindMysqlJSON:
 		l = 2 + len(val.GetMysqlJSON().Value)
@@ -372,7 +373,7 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 		flag = uvarintFlag
 		v, err1 := types.BinaryLiteral(row.GetBytes(idx)).ToInt(sc)
-		terror.Log(errors.Trace(err1))
+		errno.Log(errors.Trace(err1))
 		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
 	case mysql.TypeJSON:
 		flag = jsonFlag
@@ -612,7 +613,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 				buf[0] = uvarintFlag
 				v, err1 := types.BinaryLiteral(column.GetBytes(i)).ToInt(sc)
-				terror.Log(errors.Trace(err1))
+				errno.Log(errors.Trace(err1))
 				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
 			}
 

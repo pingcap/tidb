@@ -106,7 +106,7 @@ func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
 	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii;")
 	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength))
 	_, err := tk.Exec(fmt.Sprintf("create table t2 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength+1))
-	c.Assert(err.Error(), Equals, "[ddl:1071]Specified key was too long; max key length is 12288 bytes")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1071] Specified key was too long; max key length is 12288 bytes")
 	tk.MustExec("drop table t, t1")
 }
 
@@ -119,12 +119,12 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	_, err := tk.Exec("alter table primary_key_test add primary key(a)")
 	c.Assert(ddl.ErrUnsupportedModifyPrimaryKey.Equal(err), IsTrue)
 	_, err = tk.Exec("alter table primary_key_test drop primary key")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported drop primary key when alter-primary-key is false")
 	// for "drop index `primary` on ..." syntax
 	_, err = tk.Exec("drop index `primary` on primary_key_test")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported drop primary key when alter-primary-key is false")
 	_, err = tk.Exec("drop index `primary` on primary_key_test_1")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported drop primary key when alter-primary-key is false")
 
 	// Change the value of AlterPrimaryKey.
 	tk.MustExec("create table primary_key_test1 (a int, b varchar(10), primary key(a))")
@@ -144,10 +144,10 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
 
 	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's pkIsHandle is true")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported drop primary key when the table's pkIsHandle is true")
 	tk.MustExec("alter table primary_key_test2 drop primary key")
 	_, err = tk.Exec("alter table primary_key_test3 drop primary key")
-	c.Assert(err.Error(), Equals, "[ddl:1091]Can't DROP 'PRIMARY'; check that column/key exists")
+	c.Assert(err.Error(), Equals, "[DB:ddl:1091] Can't DROP 'PRIMARY'; check that column/key exists")
 
 	// for "drop index `primary` on ..." syntax
 	tk.MustExec("create table primary_key_test4 (a int, b varchar(10), primary key(a))")
@@ -155,12 +155,12 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 		conf.AlterPrimaryKey = false
 	})
 	_, err = tk.Exec("drop index `primary` on primary_key_test4")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported drop primary key when alter-primary-key is false")
 	// for the index name is `primary`
 	tk.MustExec("create table tt(`primary` int);")
 	tk.MustExec("alter table tt add index (`primary`);")
 	_, err = tk.Exec("drop index `primary` on tt")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported drop primary key when alter-primary-key is false")
 
 	// The primary key cannot be invisible, for the case pk_is_handle.
 	tk.MustExec("drop table if exists t1, t2;")
@@ -563,7 +563,7 @@ func (s *testSerialSuite) TestCancelAddIndexPanic(c *C) {
 	}
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8214] Cancelled DDL job")
 }
 
 func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
@@ -620,7 +620,7 @@ func (s *testSerialSuite) TestRecoverTableByJobID(c *C) {
 	// if GC enable is not exists in mysql.tidb
 	_, err = tk.Exec(fmt.Sprintf("recover table by job %d", jobID))
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]can not get 'tikv_gc_enable'")
+	c.Assert(err.Error(), Equals, "[DB:ddl:-1] can not get 'tikv_gc_enable'")
 
 	err = gcutil.EnableGC(tk.Se)
 	c.Assert(err, IsNil)
@@ -829,7 +829,7 @@ func (s *testSerialSuite) TestCancelJobByErrorCountLimit(c *C) {
 
 	_, err = tk.Exec("create table t (a int)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock do job error")
+	c.Assert(err.Error(), Equals, "[DB:ddl:-1] DDL job rollback, error msg: mock do job error")
 }
 
 func (s *testSerialSuite) TestTruncateTableUpdateSchemaVersionErr(c *C) {
@@ -847,7 +847,7 @@ func (s *testSerialSuite) TestTruncateTableUpdateSchemaVersionErr(c *C) {
 	tk.MustExec("create table t (a int)")
 	_, err = tk.Exec("truncate table t")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: mock update version error")
+	c.Assert(err.Error(), Equals, "[DB:ddl:-1] DDL job rollback, error msg: mock update version error")
 	// Disable fail point.
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockTruncateTableUpdateVersionError"), IsNil)
 	tk.MustExec("truncate table t")
@@ -1224,10 +1224,10 @@ func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 
 	tk.MustExec("alter table t add index b_idx(b)")
 	tk.MustExec("alter table t add index c_idx(c)")
-	tk.MustGetErrMsg("alter table t modify b varchar(10) collate utf8_general_ci", "[ddl:8200]Unsupported modifying collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
-	tk.MustGetErrMsg("alter table t modify c varchar(10) collate utf8_bin", "[ddl:8200]Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_bin' when index is defined on it.")
-	tk.MustGetErrMsg("alter table t modify c varchar(10) collate utf8_unicode_ci", "[ddl:8200]Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_unicode_ci' when index is defined on it.")
-	tk.MustGetErrMsg("alter table t convert to charset utf8 collate utf8_general_ci", "[ddl:8200]Unsupported converting collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
+	tk.MustGetErrMsg("alter table t modify b varchar(10) collate utf8_general_ci", "[DB:ddl:8200] Unsupported modifying collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
+	tk.MustGetErrMsg("alter table t modify c varchar(10) collate utf8_bin", "[DB:ddl:8200] Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_bin' when index is defined on it.")
+	tk.MustGetErrMsg("alter table t modify c varchar(10) collate utf8_unicode_ci", "[DB:ddl:8200] Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_unicode_ci' when index is defined on it.")
+	tk.MustGetErrMsg("alter table t convert to charset utf8 collate utf8_general_ci", "[DB:ddl:8200] Unsupported converting collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
 	// Change to a compatible collation is allowed.
 	tk.MustExec("alter table t modify c varchar(10) collate utf8mb4_general_ci")
 	// Change the default collation of table is allowed.
@@ -1244,7 +1244,7 @@ func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	mustGetUnsupportedCollation := func(sql string, coll string) {
-		tk.MustGetErrMsg(sql, fmt.Sprintf("[ddl:1273]Unsupported collation when new collation is enabled: '%s'", coll))
+		tk.MustGetErrMsg(sql, fmt.Sprintf("[DB:ddl:1273] Unsupported collation when new collation is enabled: '%s'", coll))
 	}
 	// Test default collation of database.
 	mustGetUnsupportedCollation("create database ucd charset utf8mb4 collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
@@ -1288,7 +1288,7 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t values (1, 2)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
 	// 2. Drop invisible index
-	tk.MustGetErrMsg("alter table t drop column a", "[ddl:8200]can't drop column a with index covered now")
+	tk.MustGetErrMsg("alter table t drop column a", "[DB:ddl:8200] can't drop column a with index covered now")
 	tk.MustExec("alter table t drop index a")
 	tk.MustQuery(showIndexes).Check(testkit.Rows())
 	tk.MustExec("insert into t values (3, 4)")

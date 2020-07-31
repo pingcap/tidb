@@ -52,12 +52,13 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	old_terror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
@@ -729,11 +730,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 				cc.addMetrics(data[0], startTime, nil)
 				disconnectNormal.Inc()
 				return
-			} else if terror.ErrResultUndetermined.Equal(err) {
+			} else if old_terror.ErrResultUndetermined.Equal(err) {
 				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
 				disconnectErrorUndetermined.Inc()
 				return
-			} else if terror.ErrCritical.Equal(err) {
+			} else if old_terror.ErrCritical.Equal(err) {
 				metrics.CriticalErrorCounter.Add(1)
 				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
@@ -1013,12 +1014,12 @@ func (cc *clientConn) writeError(e error) error {
 	)
 	originErr := errors.Cause(e)
 	if te, ok = originErr.(*errors.Error); ok {
-		m = terror.ToSQLError(te)
+		m = old_terror.ToSQLError(te)
 	} else {
 		e := errors.Cause(originErr)
 		switch y := e.(type) {
 		case *errors.Error:
-			m = terror.ToSQLError(y)
+			m = old_terror.ToSQLError(y)
 		default:
 			m = mysql.NewErrf(mysql.ErrUnknown, "%s", e.Error())
 		}

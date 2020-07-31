@@ -561,7 +561,7 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 3 5"))
 
 	// `DROP COLUMN` statement
-	tk.MustGetErrMsg("ALTER TABLE t DROP COLUMN b;", "[ddl:1091]column b doesn't exist")
+	tk.MustGetErrMsg("ALTER TABLE t DROP COLUMN b;", "[DB:ddl:1091] column b doesn't exist")
 	tk.MustQuery("show create table t;").Check(testkit.Rows(
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) NOT NULL,\n" +

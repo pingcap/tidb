@@ -32,12 +32,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
@@ -1250,7 +1250,7 @@ func (s *seqTestSuite) TestForbidUnsupportedCollations(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	mustGetUnsupportedCollation := func(sql string, coll string) {
-		tk.MustGetErrMsg(sql, fmt.Sprintf("[ddl:1273]Unsupported collation when new collation is enabled: '%s'", coll))
+		tk.MustGetErrMsg(sql, fmt.Sprintf("[DB:ddl:1273] Unsupported collation when new collation is enabled: '%s'", coll))
 	}
 
 	mustGetUnsupportedCollation("select 'a' collate utf8_roman_ci", "utf8_roman_ci")

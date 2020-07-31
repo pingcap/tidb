@@ -21,7 +21,7 @@ import (
 	"sync"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/variable"

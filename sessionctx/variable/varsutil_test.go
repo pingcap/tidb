@@ -19,8 +19,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/types"

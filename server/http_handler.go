@@ -30,14 +30,15 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -98,7 +99,7 @@ const (
 func writeError(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusBadRequest)
 	_, err = w.Write([]byte(err.Error()))
-	terror.Log(errors.Trace(err))
+	errno.Log(errors.Trace(err))
 }
 
 func writeData(w http.ResponseWriter, data interface{}) {
@@ -111,7 +112,7 @@ func writeData(w http.ResponseWriter, data interface{}) {
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write(js)
-	terror.Log(errors.Trace(err))
+	errno.Log(errors.Trace(err))
 }
 
 type tikvHandlerTool struct {
@@ -1760,7 +1761,7 @@ func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	_, err = w.Write(pb.Build())
-	terror.Log(errors.Trace(err))
+	errno.Log(errors.Trace(err))
 }
 
 // testHandler is the handler for tests. It's convenient to provide some APIs for integration tests.

@@ -18,7 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/terror"
+	terror "github.com/pingcap/errors"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -414,7 +414,7 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
-	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
+	c.Assert(errors.Cause(err).Error(), Equals, "[DB:expression:1305] FUNCTION test.std_samp does not exist")
 	_, err = tk.Exec("select var_samp(a) from t")
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
 

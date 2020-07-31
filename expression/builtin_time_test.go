@@ -20,10 +20,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -2690,7 +2690,7 @@ func (s *testEvaluatorSuite) TestPeriodDiff(c *C) {
 		c.Assert(f, NotNil)
 		_, err = evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, NotNil)
-		c.Assert(err.Error(), Equals, "[expression:1210]Incorrect arguments to period_diff")
+		c.Assert(err.Error(), Equals, "[DB:expression:1210] Incorrect arguments to period_diff")
 	}
 
 	// nil

@@ -391,7 +391,7 @@ create table log_message_1 (
 
 	type testCase struct {
 		sql string
-		err *terror.Error
+		err *errors.Error
 	}
 
 	cases := []testCase{
@@ -1041,7 +1041,7 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 		ptSQL       string
 		ntSQL       string
 		exchangeSQL string
-		err         *terror.Error
+		err         *errors.Error
 	}
 	cases := []testCase{
 		{
@@ -1883,7 +1883,7 @@ LOOP:
 		case err := <-done:
 			c.Assert(checkErr, IsNil)
 			c.Assert(err, NotNil)
-			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+			c.Assert(err.Error(), Equals, "[DB:ddl:8214] Cancelled DDL job")
 			break LOOP
 		case <-ticker.C:
 			if times >= 10 {

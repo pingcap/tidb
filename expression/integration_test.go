@@ -25,10 +25,10 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -1621,7 +1621,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 		"period_add(0, 20)", "period_add(0, 0)", "period_add(-1, 1)", "period_add(200013, 1)", "period_add(-200012, 1)", "period_add('', '')",
 	} {
 		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
-		c.Assert(err.Error(), Equals, "[expression:1210]Incorrect arguments to period_add")
+		c.Assert(err.Error(), Equals, "[DB:expression:1210] Incorrect arguments to period_add")
 	}
 
 	// for period_diff
@@ -1633,7 +1633,7 @@ func (s *testIntegrationSuite2) TestTimeBuiltin(c *C) {
 		"period_diff(-00013,1)", "period_diff(00013,1)", "period_diff(0, 0)", "period_diff(200013, 1)", "period_diff(5612, 4513)", "period_diff('', '')",
 	} {
 		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
-		c.Assert(err.Error(), Equals, "[expression:1210]Incorrect arguments to period_diff")
+		c.Assert(err.Error(), Equals, "[DB:expression:1210] Incorrect arguments to period_diff")
 	}
 
 	// TODO: fix `CAST(xx as duration)` and release the test below:
@@ -4516,7 +4516,7 @@ func (s *testIntegrationSuite) TestUnknowHintIgnore(c *C) {
 	tk.MustExec("USE test")
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("select /*+ unknown_hint(c1)*/ 1").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8064]Optimizer hint syntax error at line 1 column 23 near \"unknown_hint(c1)*/\" "))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [DB:parser:8064] Optimizer hint syntax error at line 1 column 23 near \"unknown_hint(c1)*/\" "))
 	_, err := tk.Exec("select 1 from /*+ test1() */ t")
 	c.Assert(err, IsNil)
 }
@@ -4627,19 +4627,19 @@ func (s *testIntegrationSuite) TestCastAsTime(c *C) {
 	))
 
 	err := tk.ExecToErr(`select cast(col1 as time(31)) from t where col1 is null;`)
-	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+	c.Assert(err.Error(), Equals, "[DB:expression:1426] Too big precision 31 specified for column 'CAST'. Maximum is 6.")
 
 	err = tk.ExecToErr(`select cast(col2 as time(31)) from t where col1 is null;`)
-	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+	c.Assert(err.Error(), Equals, "[DB:expression:1426] Too big precision 31 specified for column 'CAST'. Maximum is 6.")
 
 	err = tk.ExecToErr(`select cast(col3 as time(31)) from t where col1 is null;`)
-	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+	c.Assert(err.Error(), Equals, "[DB:expression:1426] Too big precision 31 specified for column 'CAST'. Maximum is 6.")
 
 	err = tk.ExecToErr(`select cast(col4 as time(31)) from t where col1 is null;`)
-	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+	c.Assert(err.Error(), Equals, "[DB:expression:1426] Too big precision 31 specified for column 'CAST'. Maximum is 6.")
 
 	err = tk.ExecToErr(`select cast(col5 as time(31)) from t where col1 is null;`)
-	c.Assert(err.Error(), Equals, "[expression:1426]Too big precision 31 specified for column 'CAST'. Maximum is 6.")
+	c.Assert(err.Error(), Equals, "[DB:expression:1426] Too big precision 31 specified for column 'CAST'. Maximum is 6.")
 }
 
 func (s *testIntegrationSuite) TestValuesFloat32(c *C) {
@@ -4684,7 +4684,7 @@ func (s *testIntegrationSuite) TestFuncNameConst(c *C) {
 	err = tk.ExecToErr(`select name_const(concat('a', 'b'), 555) from t;`)
 	c.Assert(err.Error(), Equals, "[DB:planner:1210] Incorrect arguments to NAME_CONST")
 	err = tk.ExecToErr(`select name_const(555) from t;`)
-	c.Assert(err.Error(), Equals, "[expression:1582]Incorrect parameter count in the call to native function 'name_const'")
+	c.Assert(err.Error(), Equals, "[DB:expression:1582] Incorrect parameter count in the call to native function 'name_const'")
 
 	var rs sqlexec.RecordSet
 	rs, err = tk.Exec(`select name_const("hello", 1);`)
@@ -5392,14 +5392,14 @@ func (s *testIntegrationSuite) TestNotExistFunc(c *C) {
 	// current db is not empty
 	tk.MustExec("use test")
 	_, err = tk.Exec("SELECT xxx(1)")
-	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.xxx does not exist")
+	c.Assert(err.Error(), Equals, "[DB:expression:1305] FUNCTION test.xxx does not exist")
 
 	_, err = tk.Exec("SELECT yyy()")
-	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.yyy does not exist")
+	c.Assert(err.Error(), Equals, "[DB:expression:1305] FUNCTION test.yyy does not exist")
 
 	tk.MustExec("use test")
 	_, err = tk.Exec("SELECT timestampliteral(rand())")
-	c.Assert(err.Error(), Equals, "[expression:1305]FUNCTION test.timestampliteral does not exist")
+	c.Assert(err.Error(), Equals, "[DB:expression:1305] FUNCTION test.timestampliteral does not exist")
 
 }
 
@@ -5914,8 +5914,8 @@ func (s *testIntegrationSerialSuite) TestWeightString(c *C) {
 	for i, out := range cases.resultExplicitCollateBin {
 		c.Assert(rows[i][0].(string), Equals, out)
 	}
-	tk.MustGetErrMsg("select weight_string(a collate utf8_general_ci) from t order by id", "[ddl:1253]COLLATION 'utf8_general_ci' is not valid for CHARACTER SET 'utf8mb4'")
-	tk.MustGetErrMsg("select weight_string('中' collate utf8_bin)", "[ddl:1253]COLLATION 'utf8_bin' is not valid for CHARACTER SET 'utf8mb4'")
+	tk.MustGetErrMsg("select weight_string(a collate utf8_general_ci) from t order by id", "[DB:ddl:1253] COLLATION 'utf8_general_ci' is not valid for CHARACTER SET 'utf8mb4'")
+	tk.MustGetErrMsg("select weight_string('中' collate utf8_bin)", "[DB:ddl:1253] COLLATION 'utf8_bin' is not valid for CHARACTER SET 'utf8mb4'")
 }
 
 func (s *testIntegrationSerialSuite) TestCollationCreateIndex(c *C) {
@@ -6217,11 +6217,11 @@ func (s *testIntegrationSerialSuite) TestCollateStringFunction(c *C) {
 	tk.MustQuery("select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_general_ci);").Check(testkit.Rows("2"))
 
 	tk.MustExec("select concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_bin);")
-	tk.MustGetErrMsg("select concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci);", "[expression:1267]Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'concat'")
+	tk.MustGetErrMsg("select concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci);", "[DB:expression:1267] Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'concat'")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a char)")
-	tk.MustGetErrMsg("select * from t t1 join t t2 on t1.a collate utf8mb4_bin = t2.a collate utf8mb4_general_ci;", "[expression:1267]Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'eq'")
+	tk.MustGetErrMsg("select * from t t1 join t t2 on t1.a collate utf8mb4_bin = t2.a collate utf8mb4_general_ci;", "[DB:expression:1267] Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'eq'")
 
 	tk.MustExec("DROP TABLE IF EXISTS t1;")
 	tk.MustExec("CREATE TABLE t1 ( a int, p1 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_bin,p2 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci , p3 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,p4 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci ,n1 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_bin,n2 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci , n3 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,n4 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci );")

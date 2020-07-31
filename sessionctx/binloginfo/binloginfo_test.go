@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	old_terror "github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -279,7 +279,7 @@ func (s *testBinlogSuite) TestMaxRecvSize(c *C) {
 	binlogWR := info.WriteBinlog(1)
 	err := binlogWR.GetError()
 	c.Assert(err, NotNil)
-	c.Assert(terror.ErrCritical.Equal(err), IsFalse, Commentf("%v", err))
+	c.Assert(old_terror.ErrCritical.Equal(err), IsFalse, Commentf("%v", err))
 }
 
 func getLatestBinlogPrewriteValue(c *C, pump *mockBinlogPump) *binlog.PrewriteValue {

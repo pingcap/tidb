@@ -15,8 +15,9 @@ package core
 
 import (
 	. "github.com/pingcap/check"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	old_terror "github.com/pingcap/parser/terror"
 )
 
 type testErrorSuite struct{}
@@ -84,7 +85,7 @@ func (s testErrorSuite) TestError(c *C) {
 		ErrAmbiguous,
 	}
 	for _, err := range kvErrs {
-		code := terror.ToSQLError(err).Code
+		code := old_terror.ToSQLError(err).Code
 		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }

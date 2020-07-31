@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -550,7 +551,7 @@ func BenchmarkEncodeValue(b *testing.B) {
 }
 
 func (s *testTableCodecSuite) TestError(c *C) {
-	kvErrs := []*terror.Error{
+	kvErrs := []*errors.Error{
 		errInvalidKey,
 		errInvalidRecordKey,
 		errInvalidIndexKey,

@@ -610,7 +610,7 @@ func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 		err = txn.Commit(context.Background())
 		c.Assert(err, IsNil)
 		err = tk.ExecToErr("admin check table admin_test_p")
-		c.Assert(err.Error(), Equals, fmt.Sprintf("[executor:8003]admin_test_p err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:%d, Values:[]types.Datum{types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}}}", i, i))
+		c.Assert(err.Error(), Equals, fmt.Sprintf("[DB:executor:8003] admin_test_p err:[DB:admin:8223] index:<nil> != record:&admin.RecordData{Handle:%d, Values:[]types.Datum{types.Datum{k:0x1, decimal:0x0, length:0x0, i:%d, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}}}", i, i))
 		c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 		// TODO: fix admin recover for partition table.
 		//r := tk.MustQuery("admin recover index admin_test_p idx")
@@ -708,7 +708,7 @@ func (s *testSuite5) TestAdminCheckTableFailed(c *C) {
 	err = tk.ExecToErr("admin check table admin_test")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals,
-		"[executor:8003]admin_test err:[admin:8223]index:<nil> != record:&admin.RecordData{Handle:-1, Values:[]types.Datum{types.Datum{k:0x1, decimal:0x0, length:0x0, i:-10, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}}}")
+		"[DB:executor:8003] admin_test err:[DB:admin:8223] index:<nil> != record:&admin.RecordData{Handle:-1, Values:[]types.Datum{types.Datum{k:0x1, decimal:0x0, length:0x0, i:-10, collation:\"\", b:[]uint8(nil), x:interface {}(nil)}}}")
 	c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
 	r := tk.MustQuery("admin recover index admin_test c2")
 	r.Check(testkit.Rows("1 7"))
@@ -898,7 +898,7 @@ func (s *testSuite8) TestAdminCheckTable(c *C) {
 	tk.MustExec(`insert into t1 set a='1.9'`)
 	err = tk.ExecToErr(`alter table t1 modify column a decimal(3,2);`)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change decimal column precision")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported modify column: can't change decimal column precision")
 	tk.MustExec(`delete from t1;`)
 	tk.MustExec(`admin check table t1;`)
 }

@@ -24,10 +24,11 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/parser/types"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
@@ -1979,7 +1980,7 @@ func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 // If an error occurs, it will print a log instead of returning an error.
 func DatumsToStrNoErr(datums []Datum) string {
 	str, err := DatumsToString(datums, true)
-	terror.Log(errors.Trace(err))
+	errno.Log(errors.Trace(err))
 	return str
 }
 

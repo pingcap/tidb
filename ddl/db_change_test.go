@@ -23,12 +23,13 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
+	old_terror "github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -155,7 +156,7 @@ func (s *serialTestStateChangeSuite) TestShowCreateTable(c *C) {
 			if got != expected {
 				checkErr = errors.Errorf("got %s, expected %s", got, expected)
 			}
-			terror.Log(result.Close())
+			old_terror.Log(result.Close())
 		}
 	}
 	d := s.dom.DDL()
@@ -480,7 +481,7 @@ func (s *testStateChangeSuite) TestAppendEnum(c *C) {
 	c.Assert(err, IsNil)
 
 	_, err = s.se.Execute(context.Background(), "insert into t values('a', 'A', '2018-09-19', 9)")
-	c.Assert(err.Error(), Equals, "[DB:table:1366]Incorrect enum value: 'A' for column 'c2' at row 1")
+	c.Assert(err.Error(), Equals, "[DB:table:1366] Incorrect enum value: 'A' for column 'c2' at row 1")
 	failAlterTableSQL1 := "alter table t change c2 c2 enum('N') DEFAULT 'N'"
 	_, err = s.se.Execute(context.Background(), failAlterTableSQL1)
 	c.Assert(err.Error(), Equals, "[DB:ddl:8200] Unsupported modify column: the number of enum column's elements is less than the original: 2")
@@ -929,7 +930,7 @@ func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
    );`
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[Db:ddl:1493] VALUES LESS THAN value must be strictly increasing for each partition")
+		c.Assert(err2.Error(), Equals, "[DB:ddl:1493] VALUES LESS THAN value must be strictly increasing for each partition")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1367,7 +1368,7 @@ func (s *testStateChangeSuite) TestParallelTruncateTableAndAddColumn(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
-		c.Assert(err2.Error(), Equals, "[domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
+		c.Assert(err2.Error(), Equals, "[DB:domain:8028] Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
@@ -1379,7 +1380,7 @@ func (s *testStateChangeSuite) TestParallelTruncateTableAndAddColumns(c *C) {
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2, NotNil)
-		c.Assert(err2.Error(), Equals, "[domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
+		c.Assert(err2.Error(), Equals, "[DB:domain:8028] Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 	}
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }

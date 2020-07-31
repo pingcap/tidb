@@ -409,7 +409,7 @@ func (s *testFailDBSuite) TestRunDDLJobPanic(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockPanicInRunDDLJob", `1*panic("panic test")`), IsNil)
 	_, err := tk.Exec("create table t(c1 int, c2 int)")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	c.Assert(err.Error(), Equals, "[DB:ddl:8214] Cancelled DDL job")
 }
 
 func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {

@@ -47,7 +47,7 @@ package expression
 
 import (
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -182,7 +182,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(input *chunk.Chunk, result 
 		if err != nil {
 			return err
 		}
-		
+
 	{{ else if or (eq .SigName "builtinAddDatetimeAndStringSig") (eq .SigName "builtinSubDatetimeAndStringSig") }}
 		{{ if eq $.FuncName "AddTime" }}
 		{{ template "ConvertStringToDuration" . }}

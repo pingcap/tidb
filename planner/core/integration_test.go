@@ -20,9 +20,9 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -1250,25 +1250,15 @@ func (s *testIntegrationSerialSuite) TestNotReadOnlySQLOnTiFlash(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, `[DB:planner:1815] Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
 
-	err = tk.ExecToErr()
-
 	err = tk.ExecToErr("insert into t select * from t")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, `[DB:planner:1815] Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
-
-	tk.MustExec()
 
 	tk.MustExec("prepare stmt_insert from 'insert into t select * from t where t.a = ?'")
 	tk.MustExec("set @a=1")
 	err = tk.ExecToErr("execute stmt_insert using @a")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, `[DB:planner:1815] Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
-}
-
-func (s *testIntegrationSuite) TestSelectLimit(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec()
 }
 
 func (s *testIntegrationSuite) TestSelectLimit(c *C) {

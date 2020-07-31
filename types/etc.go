@@ -21,10 +21,10 @@ import (
 	"io"
 
 	"github.com/pingcap/errors"
+	terror "github.com/pingcap/errors"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
-	"github.com/pingcap/parser/terror"
 	ast "github.com/pingcap/parser/types"
 )
 

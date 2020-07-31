@@ -17,7 +17,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -425,7 +424,7 @@ func (s *testEvaluatorSuite) TestJSONContains(c *C) {
 				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
 			}
 		} else {
-			c.Assert(t.err.(*terror.Error).Equal(err), IsTrue)
+			c.Assert(t.err.(*errors.Error).Equal(err), IsTrue)
 		}
 	}
 	// For issue 9957: test 'argument 1 and 2 as valid json object'
