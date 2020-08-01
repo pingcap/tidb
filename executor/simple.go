@@ -61,8 +61,12 @@ type SimpleExec struct {
 	baseExecutor
 
 	Statement ast.StmtNode
-	done      bool
-	is        infoschema.InfoSchema
+	// InCoprocessor indicates whether the statement is sent from another TiDB instance in cluster,
+	//   and executing in coprocessor.
+	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
+	InCoprocessor bool
+	done          bool
+	is            infoschema.InfoSchema
 }
 
 func (e *baseExecutor) getSysSession() (sessionctx.Context, error) {
@@ -1068,6 +1072,12 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		return nil
 	}
 
+	if e.InCoprocessor {
+		logutil.BgLogger().Info("Kill in coprocessor", zap.Uint64("connID", s.ConnectionID), zap.Bool("query", s.Query))
+		sm.Kill(s.ConnectionID, s.Query)
+		return nil
+	}
+
 	if sm.ServerID() == 0 {
 		// `sm.ServerID() == 0` indicates serverID allocation by PD would be not working.
 		// Degrade to behavior as early versions.
@@ -1083,7 +1093,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 
 	connID, isTruncated := util.ParseGlobalConnID(s.ConnectionID)
 	if isTruncated {
-		err := errors.New("Invalid operation. ConnectionID is truncated to 32 bits")
+		err := errors.New("Invalid operation. ConnectionID is truncated to 32 bits. Please use 'KILL [CONNECTION | QUERY] connectionID' instead")
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
 	}
@@ -1125,7 +1135,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		SetDAGRequest(dagReq).
 		SetFromSessionVars(sctx.GetSessionVars()).
 		SetStoreType(kv.TiDB).
-		SetTiDBServerIDs(connID.ServerID).
+		SetTiDBServerID(connID.ServerID).
 		Build()
 	if err != nil {
 		return err

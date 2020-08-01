@@ -29,10 +29,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // CoprocessorDAGHandler uses to handle cop dag request.
@@ -50,20 +48,7 @@ func NewCoprocessorDAGHandler(sctx sessionctx.Context) *CoprocessorDAGHandler {
 
 // HandleRequest handles the coprocessor request.
 func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
-	dagReq, err := h.extractDAGRequest(req)
-	if err != nil {
-		return h.buildErrorResponse(err)
-	}
-
-	if h.isSimpleRequest(dagReq) {
-		if err = h.handleSimpleRequest(dagReq); err != nil {
-			return h.buildErrorResponse(err)
-		}
-		var chunks []tipb.Chunk
-		return h.buildUnaryResponse(chunks)
-	}
-
-	e, err := h.buildDAGExecutor(dagReq)
+	e, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return h.buildErrorResponse(err)
 	}
@@ -96,11 +81,7 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 
 // HandleStreamRequest handles the coprocessor stream request.
 func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *coprocessor.Request, stream tikvpb.Tikv_CoprocessorStreamServer) error {
-	dagReq, err := h.extractDAGRequest(req)
-	if err != nil {
-		return stream.Send(h.buildErrorResponse(err))
-	}
-	e, err := h.buildDAGExecutor(dagReq)
+	e, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return stream.Send(h.buildErrorResponse(err))
 	}
@@ -141,7 +122,7 @@ func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, t
 	return nil
 }
 
-func (h *CoprocessorDAGHandler) extractDAGRequest(req *coprocessor.Request) (*tipb.DAGRequest, error) {
+func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (Executor, error) {
 	if req.GetTp() != kv.ReqTypeDAG {
 		return nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}
@@ -175,10 +156,6 @@ func (h *CoprocessorDAGHandler) extractDAGRequest(req *coprocessor.Request) (*ti
 		return nil, errors.Trace(err)
 	}
 	h.dagReq = dagReq
-	return h.dagReq, nil
-}
-
-func (h *CoprocessorDAGHandler) buildDAGExecutor(dagReq *tipb.DAGRequest) (Executor, error) {
 	is := h.sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	// Build physical plan.
 	bp := core.NewPBPlanBuilder(h.sctx, is)
@@ -280,33 +257,4 @@ func (h *CoprocessorDAGHandler) appendRow(chunks []tipb.Chunk, data []byte, rowC
 	cur := &chunks[len(chunks)-1]
 	cur.RowsData = append(cur.RowsData, data...)
 	return chunks
-}
-
-func (h *CoprocessorDAGHandler) isSimpleRequest(dagReq *tipb.DAGRequest) bool {
-	if len(dagReq.Executors) > 0 {
-		switch dagReq.Executors[0].Tp {
-		case tipb.ExecType_TypeKill:
-			return true
-		}
-	}
-	return false
-}
-
-func (h *CoprocessorDAGHandler) handleSimpleRequest(dagReq *tipb.DAGRequest) error {
-	switch dagReq.Executors[0].Tp {
-	case tipb.ExecType_TypeKill:
-		return h.execKillStmt(dagReq.Executors[0].Kill)
-	}
-	return nil
-}
-
-func (h *CoprocessorDAGHandler) execKillStmt(kill *tipb.Kill) error {
-	sm := h.sctx.GetSessionManager()
-	if sm == nil {
-		return nil
-	}
-
-	sm.Kill(kill.ConnID, kill.Query)
-	logutil.BgLogger().Info("Kill from remote", zap.Uint64("connID", kill.ConnID), zap.Bool("query", kill.Query))
-	return nil
 }

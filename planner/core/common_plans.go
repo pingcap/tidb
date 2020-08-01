@@ -612,6 +612,18 @@ type Simple struct {
 	baseSchemaProducer
 
 	Statement ast.StmtNode
+
+	// InCoprocessor indicates whether the statement is sent from another TiDB instance in cluster,
+	//   and executing in co-processor.
+	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
+	InCoprocessor bool
+}
+
+// PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
+//   Used for simple statements executing in coprocessor.
+type PhysicalSimpleWrapper struct {
+	basePhysicalPlan
+	Inner Simple
 }
 
 // InsertGeneratedColumns is for completing generated columns in Insert.

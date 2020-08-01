@@ -1,7 +1,7 @@
 # Global Kill
 
 - Author(s):     [pingyu](https://github.com/pingyu) (Ping Yu)
-- Last updated:  2020-07-25
+- Last updated:  2020-07-31
 - Discussion at: https://github.com/pingcap/tidb/issues/8854
 
 ## Abstract
@@ -56,7 +56,7 @@ When `serverId == 0`, we deal with `KILL x` as in [early versions](https://pingc
 `serverId` is kept by PD with a lease default to 1 hour. If TiDB is disconnected to PD longer to half of the lease, all connections are killed. On connection to PD restored, a new `serverId` is acquired.
 
 #### 4. local connId
-`local connId` is allocated by each TiDB instance on establishing connections.
+`local connId` is allocated by each TiDB instance on establishing connections incrementally.
 
 Integer overflow is ignored at this stage, as `local connId` should be long enouth.
 

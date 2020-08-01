@@ -168,6 +168,8 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildShow(v)
 	case *plannercore.Simple:
 		return b.buildSimple(v)
+	case *plannercore.PhysicalSimpleWrapper:
+		return b.buildSimple(&v.Inner)
 	case *plannercore.Set:
 		return b.buildSet(v)
 	case *plannercore.SetConfig:
@@ -670,9 +672,10 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) Executor {
 	base := newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())
 	base.initCap = chunk.ZeroCapacity
 	e := &SimpleExec{
-		baseExecutor: base,
-		Statement:    v.Statement,
-		is:           b.is,
+		baseExecutor:  base,
+		Statement:     v.Statement,
+		InCoprocessor: v.InCoprocessor,
+		is:            b.is,
 	}
 	return e
 }

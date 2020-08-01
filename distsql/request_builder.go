@@ -202,12 +202,11 @@ func (builder *RequestBuilder) SetConcurrency(concurrency int) *RequestBuilder {
 	return builder
 }
 
-// SetTiDBServerIDs sets "TiDBServerIDs" for "kv.Request"
-func (builder *RequestBuilder) SetTiDBServerIDs(serverIDs ...uint64) *RequestBuilder {
-	builder.Request.TiDBServerIDs = make(map[uint64]interface{})
-	for _, id := range serverIDs {
-		builder.Request.TiDBServerIDs[id] = nil
-	}
+// SetTiDBServerID sets "TiDBServerID" for "kv.Request"
+//   ServerID is a unique id of TiDB instance among the cluster.
+//   See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
+func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder {
+	builder.Request.TiDBServerID = serverID
 	return builder
 }
 

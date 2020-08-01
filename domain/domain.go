@@ -1251,9 +1251,10 @@ func (do *Domain) getServerIDSession() *concurrency.Session {
 }
 
 const (
-	serverIDEtcdPath        = "/tidb/server_id"
-	acquireServerIDRetryCnt = 3
-	acquireServerIDTimeout  = 3 * time.Second
+	serverIDEtcdPath             = "/tidb/server_id"
+	acquireServerIDRetryCnt      = 100
+	acquireServerIDRetryInterval = 300 * time.Millisecond
+	acquireServerIDTimeout       = 3 * time.Second
 )
 
 func (do *Domain) acquireServerID(ctx context.Context) error {
@@ -1284,6 +1285,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 		}
 		if !resp.Succeeded {
 			logutil.BgLogger().Info("random serverID exists, try again", zap.Int64("randServerID", randServerID))
+			time.Sleep(acquireServerIDRetryCnt)
 			continue
 		}
 
