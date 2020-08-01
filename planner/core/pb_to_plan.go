@@ -240,7 +240,6 @@ func (b *PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
 	}
 	simple := Simple{Statement: node, InCoprocessor: true}
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
-	// return nil, nil
 }
 
 func (b *PBPlanBuilder) predicatePushDown(p PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, PhysicalPlan) {

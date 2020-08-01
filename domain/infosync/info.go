@@ -95,14 +95,16 @@ type InfoSyncer struct {
 // It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
 type ServerInfo struct {
 	ServerVersionInfo
-	ID             string        `json:"ddl_id"`
-	IP             string        `json:"ip"`
-	Port           uint          `json:"listening_port"`
-	StatusPort     uint          `json:"status_port"`
-	Lease          string        `json:"lease"`
-	BinlogStatus   string        `json:"binlog_status"`
-	StartTimestamp int64         `json:"start_timestamp"`
-	ServerID       func() uint64 `json:"-"`
+	ID             string `json:"ddl_id"`
+	IP             string `json:"ip"`
+	Port           uint   `json:"listening_port"`
+	StatusPort     uint   `json:"status_port"`
+	Lease          string `json:"lease"`
+	BinlogStatus   string `json:"binlog_status"`
+	StartTimestamp int64  `json:"start_timestamp"`
+	// ServerID is a function, to always retrieve latest serverID from `Domain`,
+	//   which will be changed on occasions such as connection to PD is restored after broken.
+	ServerID func() uint64 `json:"-"`
 
 	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
 	JSONServerID uint64 `json:"server_id"`
