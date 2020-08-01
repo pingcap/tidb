@@ -24,7 +24,7 @@ func MemTotal() (uint64, error) {
 		return 0, err
 	}
 
-	return v.Total, err
+	return v.Total, nil
 }
 
 // MemUsed returns the total used amount of RAM on this system
@@ -34,5 +34,5 @@ func MemUsed() (uint64, error) {
 		return 0, err
 	}
 
-	return v.Total - (v.Free + v.Buffers + v.Cached), err
+	return v.Total - (v.Free + v.Buffers + v.Cached), nil
 }
