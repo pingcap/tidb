@@ -1301,7 +1301,8 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 				logutil.BgLogger().Info("taskRateLimitAction delegate to fallback action",
 					zap.Int64("consumed", t.BytesConsumed()),
 					zap.Int64("quota", t.GetBytesLimit()),
-					zap.Int64("maxConsumed", t.MaxConsumed()))
+					zap.Int64("maxConsumed", t.MaxConsumed()),
+					zap.String("memoryStatus", t.String()))
 				e.fallbackAction.Action(t)
 				return
 			}
