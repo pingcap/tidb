@@ -105,6 +105,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 			actionOnExceed: it.actionOnExceed,
 			keepOrder:      it.req.KeepOrder,
 		}
+		it.actionOnExceed.collect = it.collector
 		it.workersCond = workersCond
 		if it.memTracker != nil {
 			it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
