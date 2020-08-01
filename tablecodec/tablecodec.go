@@ -59,10 +59,13 @@ const (
 	// MaxOldEncodeValueLen is the maximum len of the old encoding of index value.
 	MaxOldEncodeValueLen = 9
 
-	// PartitionIDFlag is the flag used to decode the partition ID in global index value.
-	PartitionIDFlag byte = 126
 	// CommonHandleFlag is the flag used to decode the common handle in an unique index value.
 	CommonHandleFlag byte = 127
+	// PartitionIDFlag is the flag used to decode the partition ID in global index value.
+	PartitionIDFlag byte = 126
+	// RestoreDataFlag is the flag that RestoreData begin with.
+	// See rowcodec.Encoder.Encode and rowcodec.row.toBytes
+	RestoreDataFlag byte = rowcodec.CodecVer
 )
 
 // TableSplitKeyLen is the length of key 't{table_id}' which is used for table split.
@@ -978,12 +981,12 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 	idxVal := make([]byte, 1)
 	newEncode := false
 	tailLen := 0
-	if idxInfo.Global {
-		idxVal = encodePartitionID(idxVal, partitionID)
-		newEncode = true
-	}
 	if !h.IsInt() && distinct {
 		idxVal = encodeCommonHandle(idxVal, h)
+		newEncode = true
+	}
+	if idxInfo.Global {
+		idxVal = encodePartitionID(idxVal, partitionID)
 		newEncode = true
 	}
 	if collate.NewCollationEnabled() && containNonBinaryString {
@@ -1023,7 +1026,7 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 		// Old index value encoding.
 		idxVal = make([]byte, 0)
 		if distinct {
-			idxVal = h.Encoded()
+			idxVal = EncodeHandleInUniqueIndexValue(h, untouched)
 		}
 		if untouched {
 			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
@@ -1124,8 +1127,96 @@ func DecodeHandleInUniqueIndexValueDeprecated(data []byte) (int64, error) {
 }
 
 func encodePartitionID(idxVal []byte, partitionID int64) []byte {
-	var data [8]byte
 	idxVal = append(idxVal, PartitionIDFlag)
-	idxVal = append(idxVal, codec.EncodeInt(data[:], partitionID)...)
+	idxVal = codec.EncodeInt(idxVal, partitionID)
 	return idxVal
+}
+
+type indexValueSegments struct {
+	commonHandle   []byte
+	partitionID    []byte
+	restoredValues []byte
+	intHandle      []byte
+}
+
+// splitIndexValue splits index value into segments.
+func splitIndexValue(value []byte) (segs indexValueSegments) {
+	tailLen := int(value[0])
+	tail := value[len(value)-tailLen:]
+	value = value[1 : len(value)-tailLen]
+	if len(tail) >= 8 {
+		segs.intHandle = tail[:8]
+	}
+	if len(value) > 0 && value[0] == CommonHandleFlag {
+		handleLen := uint16(value[1])<<8 + uint16(value[2])
+		handleEndOff := 3 + handleLen
+		segs.commonHandle = value[3:handleEndOff]
+		value = value[handleEndOff:]
+	}
+	if len(value) > 0 && value[0] == PartitionIDFlag {
+		segs.partitionID = value[1:9]
+		value = value[9:]
+	}
+	if len(value) > 0 && value[0] == RestoreDataFlag {
+		segs.restoredValues = value
+	}
+	return
+}
+
+// DecodeIndexKvGeneral uses to decode index key values for all formats in an extensible way.
+func DecodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
+	if len(value) <= MaxOldEncodeValueLen {
+		return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
+	}
+
+	var resultValues [][]byte
+	var keySuffix []byte
+	var handle kv.Handle
+	var err error
+	segs := splitIndexValue(value)
+	resultValues, keySuffix, err = CutIndexKeyNew(key, colsLen)
+	if err != nil {
+		return nil, err
+	}
+	if segs.restoredValues != nil { // new collation
+		resultValues, err = decodeRestoredValues(columns, segs.restoredValues)
+	}
+	if hdStatus == HandleNotNeeded {
+		return resultValues, nil
+	}
+
+	if segs.intHandle != nil {
+		// In unique int handle index.
+		handle = decodeIntHandleInIndexValue(segs.intHandle)
+	} else if segs.commonHandle != nil {
+		// In unique common handle index.
+		handle, err = decodeHandleInIndexKey(segs.commonHandle)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// In non-unique index, decode handle in keySuffix
+		handle, err = decodeHandleInIndexKey(keySuffix)
+		if err != nil {
+			return nil, err
+		}
+	}
+	handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
+	if err != nil {
+		return nil, err
+	}
+	resultValues = append(resultValues, handleBytes...)
+	if segs.partitionID != nil {
+		_, pid, err := codec.DecodeInt(segs.partitionID)
+		if err != nil {
+			return nil, err
+		}
+		datum := types.NewIntDatum(pid)
+		pidBytes, err := codec.EncodeValue(nil, nil, datum)
+		if err != nil {
+			return nil, err
+		}
+		resultValues = append(resultValues, pidBytes)
+	}
+	return resultValues, nil
 }

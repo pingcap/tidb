@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -1761,6 +1762,70 @@ func (s *testDBSuite4) TestAddIndexWithDupCols(c *C) {
 	tk.MustExec("drop table test_add_index_with_dup")
 }
 
+// checkGlobalIndexRow reads one record from global index and check. Only support int handle.
+func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo,
+	pid int64, idxVals []types.Datum, rowVals []types.Datum) {
+	ctx.NewTxn(context.Background())
+	txn, err := ctx.Txn(true)
+	sc := ctx.GetSessionVars().StmtCtx
+	c.Assert(err, IsNil)
+
+	tblColMap := make(map[int64]*types.FieldType, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		tblColMap[col.ID] = &col.FieldType
+	}
+	idxColInfos := make([]rowcodec.ColInfo, 0, len(indexInfo.Columns))
+	for _, idxCol := range indexInfo.Columns {
+		col := tblInfo.Columns[idxCol.Offset]
+		idxColInfos = append(idxColInfos, rowcodec.ColInfo{
+			ID:         col.ID,
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
+		})
+	}
+
+	// Check local index entry does not exist.
+	localPrefix := tablecodec.EncodeTableIndexPrefix(pid, indexInfo.ID)
+	it, err := txn.Iter(localPrefix, nil)
+	c.Assert(err, IsNil)
+	// no local index entry.
+	c.Assert(it.Valid() && it.Key().HasPrefix(localPrefix), IsFalse)
+	it.Close()
+
+	// Check global index entry.
+	encodedValue, err := codec.EncodeKey(sc, nil, idxVals...)
+	c.Assert(err, IsNil)
+	key := tablecodec.EncodeIndexSeekKey(tblInfo.ID, indexInfo.ID, encodedValue)
+	c.Assert(err, IsNil)
+	value, err := txn.Get(context.Background(), key)
+	c.Assert(err, IsNil)
+	colVals, err := tablecodec.DecodeIndexKvGeneral(key, value, len(indexInfo.Columns),
+		tablecodec.HandleDefault, idxColInfos)
+	c.Assert(err, IsNil)
+	c.Assert(colVals, HasLen, len(idxVals)+2)
+	for i, val := range idxVals {
+		_, d, err := codec.DecodeOne(colVals[i])
+		c.Assert(err, IsNil)
+		c.Assert(d, DeepEquals, val)
+	}
+	_, d, err := codec.DecodeOne(colVals[len(idxVals)+1]) //pid
+	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64(), Equals, pid)
+
+	_, d, err = codec.DecodeOne(colVals[len(idxVals)]) //handle
+	c.Assert(err, IsNil)
+	h := kv.IntHandle(d.GetInt64())
+	rowKey := tablecodec.EncodeRowKey(pid, h.Encoded())
+	rowValue, err := txn.Get(context.Background(), rowKey)
+	c.Assert(err, IsNil)
+	rowValueDatums, err := tablecodec.DecodeRow(rowValue, tblColMap, time.UTC)
+	c.Assert(err, IsNil)
+	c.Assert(rowValueDatums, NotNil)
+	for i, val := range rowVals {
+		c.Assert(rowValueDatums[tblInfo.Columns[i].ID], DeepEquals, val)
+	}
+}
+
 func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
@@ -1775,67 +1840,26 @@ func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
 	tk.MustExec("insert test_t1 values (2, 11)")
 	t := s.testGetTable(c, "test_t1")
 	tblInfo := t.Meta()
-	pid := tblInfo.Partition.Definitions[0].ID
 	indexInfo := tblInfo.FindIndexByName("p_a")
 	c.Assert(indexInfo, NotNil)
 	c.Assert(indexInfo.Global, IsTrue)
-	cols := t.Cols()
-	colMap := make(map[int64]*types.FieldType, len(cols))
-	for _, col := range cols {
-		colMap[col.ID] = &col.FieldType
-	}
 
 	ctx := s.s.(sessionctx.Context)
 	ctx.NewTxn(context.Background())
 	txn, err := ctx.Txn(true)
-	sc := ctx.GetSessionVars().StmtCtx
 	c.Assert(err, IsNil)
 
-	// Local index prefix: pid_idx
-	localPrefix := tablecodec.EncodeTableIndexPrefix(pid, indexInfo.ID)
-	it, err := txn.Iter(localPrefix, nil)
-	c.Assert(err, IsNil)
-	// no local index entry.
-	c.Assert(it.Valid() && it.Key().HasPrefix(localPrefix), IsFalse)
-	it.Close()
-
-	// Global index prefix: tid_idx
 	// check row 1
-	key, _, err := tablecodec.GenIndexKey(sc, tblInfo, indexInfo, tblInfo.ID, []types.Datum{types.NewDatum(1)}, kv.IntHandle(1), nil)
-	c.Assert(err, IsNil)
-	value, err := txn.Get(context.Background(), key)
-	c.Assert(err, IsNil)
-	_, decodedPID, err := codec.DecodeInt(value[len(value)-8:])
-	c.Assert(err, IsNil)
-	c.Assert(decodedPID, Equals, pid)
-	h, err := tablecodec.DecodeHandleInUniqueIndexValue(value[:len(value)-8], false)
-	c.Assert(err, IsNil)
-	rowKey := tablecodec.EncodeRowKey(pid, h.Encoded())
-	rowValue, err := txn.Get(context.Background(), rowKey)
-	c.Assert(err, IsNil)
-	rowValueDatums, err := tablecodec.DecodeRow(rowValue, colMap, time.UTC)
-	c.Assert(err, IsNil)
-	c.Assert(rowValueDatums, NotNil)
-	c.Assert(rowValueDatums[cols[1].ID], DeepEquals, types.NewDatum(1))
+	pid := tblInfo.Partition.Definitions[0].ID
+	idxVals := []types.Datum{types.NewDatum(1)}
+	rowVals := []types.Datum{types.NewDatum(1), types.NewDatum(1)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
 
 	// check row 2
-	key, _, err = tablecodec.GenIndexKey(sc, tblInfo, indexInfo, tblInfo.ID, []types.Datum{types.NewDatum(2)}, kv.IntHandle(1), nil)
-	c.Assert(err, IsNil)
-	value, err = txn.Get(context.Background(), key)
-	c.Assert(err, IsNil)
 	pid = tblInfo.Partition.Definitions[1].ID
-	_, decodedPID, err = codec.DecodeInt(value[len(value)-8:])
-	c.Assert(err, IsNil)
-	c.Assert(decodedPID, Equals, pid)
-	h, err = tablecodec.DecodeHandleInUniqueIndexValue(value[:len(value)-8], false)
-	c.Assert(err, IsNil)
-	rowKey = tablecodec.EncodeRowKey(pid, h.Encoded())
-	rowValue, err = txn.Get(context.Background(), rowKey)
-	c.Assert(err, IsNil)
-	rowValueDatums, err = tablecodec.DecodeRow(rowValue, colMap, time.UTC)
-	c.Assert(err, IsNil)
-	c.Assert(rowValueDatums, NotNil)
-	c.Assert(rowValueDatums[cols[1].ID], DeepEquals, types.NewDatum(11))
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
 	txn.Commit(context.Background())
 
 	// Test add global Primary Key index
@@ -1848,67 +1872,25 @@ func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
 	t = s.testGetTable(c, "test_t2")
 	tblInfo = t.Meta()
 	indexInfo = t.Meta().FindIndexByName("primary")
-	pid = tblInfo.Partition.Definitions[0].ID
 	c.Assert(indexInfo, NotNil)
 	c.Assert(indexInfo.Global, IsTrue)
 
-	cols = t.Cols()
-	colMap = make(map[int64]*types.FieldType, len(cols))
-	for _, col := range cols {
-		colMap[col.ID] = &col.FieldType
-	}
-
-	ctx = s.s.(sessionctx.Context)
 	ctx.NewTxn(context.Background())
 	txn, err = ctx.Txn(true)
-	sc = ctx.GetSessionVars().StmtCtx
 	c.Assert(err, IsNil)
 
-	// Local index prefix: pid_idx
-	localPrefix = tablecodec.EncodeTableIndexPrefix(pid, indexInfo.ID)
-	it, err = txn.Iter(localPrefix, nil)
-	c.Assert(err, IsNil)
-	// no local index entry.
-	c.Assert(it.Valid() && it.Key().HasPrefix(localPrefix), IsFalse)
-	it.Close()
-
-	// Global index prefix: tid_idx
 	// check row 1
-	key, _, err = tablecodec.GenIndexKey(sc, tblInfo, indexInfo, tblInfo.ID, []types.Datum{types.NewDatum(1)}, kv.IntHandle(1), nil)
-	c.Assert(err, IsNil)
-	value, err = txn.Get(context.Background(), key)
-	c.Assert(err, IsNil)
-	_, decodedPID, err = codec.DecodeInt(value[len(value)-8:])
-	c.Assert(err, IsNil)
-	c.Assert(decodedPID, Equals, pid)
-	h, err = tablecodec.DecodeHandleInUniqueIndexValue(value[:len(value)-8], false)
-	c.Assert(err, IsNil)
-	rowKey = tablecodec.EncodeRowKey(pid, h.Encoded())
-	rowValue, err = txn.Get(context.Background(), rowKey)
-	c.Assert(err, IsNil)
-	rowValueDatums, err = tablecodec.DecodeRow(rowValue, colMap, time.UTC)
-	c.Assert(err, IsNil)
-	c.Assert(rowValueDatums, NotNil)
-	c.Assert(rowValueDatums[cols[1].ID], DeepEquals, types.NewDatum(1))
+	pid = tblInfo.Partition.Definitions[0].ID
+	idxVals = []types.Datum{types.NewDatum(1)}
+	rowVals = []types.Datum{types.NewDatum(1), types.NewDatum(1)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
 
 	// check row 2
-	key, _, err = tablecodec.GenIndexKey(sc, tblInfo, indexInfo, tblInfo.ID, []types.Datum{types.NewDatum(2)}, kv.IntHandle(1), nil)
-	c.Assert(err, IsNil)
-	value, err = txn.Get(context.Background(), key)
-	c.Assert(err, IsNil)
 	pid = tblInfo.Partition.Definitions[1].ID
-	_, decodedPID, err = codec.DecodeInt(value[len(value)-8:])
-	c.Assert(err, IsNil)
-	c.Assert(decodedPID, Equals, pid)
-	h, err = tablecodec.DecodeHandleInUniqueIndexValue(value[:len(value)-8], false)
-	c.Assert(err, IsNil)
-	rowKey = tablecodec.EncodeRowKey(pid, h.Encoded())
-	rowValue, err = txn.Get(context.Background(), rowKey)
-	c.Assert(err, IsNil)
-	rowValueDatums, err = tablecodec.DecodeRow(rowValue, colMap, time.UTC)
-	c.Assert(err, IsNil)
-	c.Assert(rowValueDatums, NotNil)
-	c.Assert(rowValueDatums[cols[1].ID], DeepEquals, types.NewDatum(11))
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
+
 	txn.Commit(context.Background())
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = false
