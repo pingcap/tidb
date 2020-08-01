@@ -1,0 +1,46 @@
+[
+  {
+    "Name": "TestFormalizeConditions",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where a = 1 and b = 2 and c = 3 and d = 4",
+        "Result": [
+          "Selection_6 0.00 root  eq(test.t.d, 4)",
+          "└─Point_Get_5 1.00 root table:t, index:PRIMARY(a, b, c) "
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a = 1 and b = 2 and (c = 3 or d = 4)",
+        "Result": [
+          "IndexLookUp_11 0.08 root  ",
+          "├─IndexRangeScan_8(Build) 0.10 cop[tikv] table:t, index:PRIMARY(a, b, c) range:[1 2,1 2], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.08 cop[tikv]  or(and(and(eq(test.t.a, 1), eq(test.t.b, 2)), eq(test.t.c, 3)), and(and(eq(test.t.a, 1), eq(test.t.b, 2)), eq(test.t.d, 4)))",
+          "  └─TableRowIDScan_9 0.10 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from (select * from t where (d = 2 and b = 2) or b = 3) t where (c = 2 or c = 1) and a = 1",
+        "Result": [
+          "IndexLookUp_13 0.04 root  ",
+          "├─IndexRangeScan_10(Build) 0.05 cop[tikv] table:t, index:PRIMARY(a, b, c) range:[1 2 1,1 2 2], [1 3 1,1 3 2], keep order:false, stats:pseudo",
+          "└─Selection_12(Probe) 0.04 cop[tikv]  or(or(or(and(and(and(eq(test.t.d, 2), eq(test.t.b, 2)), eq(test.t.c, 2)), eq(test.t.a, 1)), and(and(and(eq(test.t.d, 2), eq(test.t.b, 2)), eq(test.t.c, 1)), eq(test.t.a, 1))), and(and(eq(test.t.b, 3), eq(test.t.c, 2)), eq(test.t.a, 1))), and(and(eq(test.t.b, 3), eq(test.t.c, 1)), eq(test.t.a, 1)))",
+          "  └─TableRowIDScan_11 0.05 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where (a = 1 or a = 2) and (b = 1 or b = 2) and (c = 1 or c = 2)",
+        "Result": [
+          "IndexLookUp_10 0.10 root  ",
+          "├─IndexRangeScan_8(Build) 0.10 cop[tikv] table:t, index:PRIMARY(a, b, c) range:[1 1 1,1 1 2], [1 2 1,1 2 2], [2 1 1,2 1 2], [2 2 1,2 2 2], keep order:false, stats:pseudo",
+          "└─TableRowIDScan_9(Probe) 0.10 cop[tikv] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a = 1 and (b, c) in ((1, 1), (2, 2))",
+        "Result": [
+          "Batch_Point_Get_5 2.00 root table:t, index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ]
+      }
+    ]
+  }
+]
