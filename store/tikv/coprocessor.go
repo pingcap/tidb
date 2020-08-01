@@ -684,6 +684,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				it.actionOnExceed.exceed = false
 				it.workersCond.Broadcast()
 				it.actionOnExceed.once = sync.Once{}
+				logutil.BgLogger().Info("taskRateLimitAction Broadcast")
 			}
 			it.collector.rw.Unlock()
 		}
@@ -1311,7 +1312,7 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()),
 			zap.Int64("maxConsumed", t.MaxConsumed()),
-			zap.Int("suspendWorker", e.suspendWorker))
+			zap.Int("respChCap", cap(e.collect.respChan)))
 		e.exceed = true
 	})
 }
