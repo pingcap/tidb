@@ -143,117 +143,37 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
 // Value layout:
-//		+--Local Index
-//		|  |
-//		|  +--With Restore Data(for indices on string columns)
-//		|  |  |
-//		|  |  +--Non Unique (TailLen = len(PaddingData) + len(Flag), TailLen < 8 always)
-//		|  |  |  |
-//		|  |  |  +--Without Untouched Flag:
-//		|  |  |  |
-//		|  |  |  |  Layout: TailLen |      RestoreData  |      PaddingData
-//		|  |  |  |  Length: 1       | size(RestoreData) | size(paddingData)
-//		|  |  |  |
-//		|  |  |  |  The length >= 10 always because of padding.
-//		|  |  |  |
-//		|  |  |  +--With Untouched Flag:
-//		|  |  |
-//		|  |  |     Layout: TailLen |    RestoreData    |      PaddingData  | Flag
-//		|  |  |     Length: 1       | size(RestoreData) | size(paddingData) |  1
-//		|  |  |
-//		|  |  |     The length >= 11 always because of padding.
-//		|  |  |
-//		|  |  +--Unique Common Handle
-//		|  |  |  |
-//		|  |  |  +--Without Untouched Flag:
-//		|  |  |  |
-//		|  |  |  |  Layout: 0x00 | CHandle Flag | CHandle Len | CHandle       | RestoreData
-//		|  |  |  |  Length: 1    | 1            | 2           | size(CHandle) | size(RestoreData)
-//		|  |  |  |
-//		|  |  |  |  The length > 10 always because of CHandle size.
-//		|  |  |  |
-//		|  |  |  +--With Untouched Flag:
-//		|  |  |
-//		|  |  |     Layout: 0x01 | CHandle Flag | CHandle Len | CHandle       | RestoreData       | Flag
-//		|  |  |     Length: 1    | 1            | 2           | size(CHandle) | size(RestoreData) | 1
-//		|  |  |
-//		|  |  |     The length > 10 always because of CHandle size.
-//		|  |  |
-//		|  |  +--Unique Integer Handle (TailLen = len(Handle) + len(Flag), TailLen == 8 || TailLen == 9)
-//		|  |     |
-//		|  |     +--Without Untouched Flag:
-//		|  |     |
-//		|  |     |  Layout: 0x08 |    RestoreData    |  Handle
-//		|  |     |  Length: 1    | size(RestoreData) |   8
-//		|  |     |
-//		|  |     |  The length >= 10 always since size(RestoreData) > 0.
-//		|  |     |
-//		|  |     +--With Untouched Flag:
-//		|  |
-//		|  |        Layout: 0x09 |      RestoreData  |  Handle  | Flag
-//		|  |        Length: 1    | size(RestoreData) |   8      | 1
-//		|  |
-//		|  |   	 The length >= 11 always since size(RestoreData) > 0.
-//		|  |
-//		|  +--Without Restore Data
-//		|     |
-//		|     +--Non Unique
-//		|     |  |
-//		|     |  +--Without Untouched Flag:
-//		|     |  |
-//		|     |  |  Layout: '0'
-//		|     |  |  Length:  1
-//		|     |  |
-//		|     |  +--With Untouched Flag:
-//		|     |
-//		|     |     Layout: Flag
-//		|     |     Length:  1
-//		|     |
-//		|     +--Unique Common Handle
-//		|     |  |
-//		|     |  +--Without Untouched Flag:
-//		|     |  |
-//		|     |  |  Layout: 0x00 | CHandle Flag | CHandle Len | CHandle
-//      |     |  |  Length: 1    | 1            | 2           | size(CHandle)
-//		|     |  |
-//		|     |  +--With Untouched Flag:
-//		|     |
-//		|     |     Layout: 0x01 | CHandle Flag | CHandle Len | CHandle       | Flag
-//		|     |     Length: 1    | 1            | 2           | size(CHandle) | 1
-//		|     |
-//		|     +--Unique Integer Handle
-//		|        |
-//		|        +--Without Untouched Flag:
-//		|        |
-//		|        |  Layout: Handle
-//		|        |  Length:   8
-//		|        |
-//		|        +--With Untouched Flag:
+//		+--New Encoding (with restore data, or common handle, or index is global)
 //		|
-//		|           Layout: Handle | Flag
-//		|           Length:   8    |  1
+//		|  Layout: TailLen | Options      | Padding      | [IntHandle] | [UntouchedFlag]
+//		|  Length:   1     | len(options) | len(padding) |    8        |     1
 //		|
-//		+--Global Index (Similar to Local Index, except partitionID is append to the end.)
-//		|  |
-//		|  +--With Restore Data(for indices on string columns)
-//		|  |  |
-//		|  |  +--Non Unique (TailLen = len(PaddingData) + len(Flag), TailLen < 8 always)
-//		|  |  |  |
-//		|  |  |  +--Without Untouched Flag:
-//		|  |  |  |
-//		|  |  |  |  Layout: TailLen |      RestoreData  |      PaddingData  | PartitionID |
-//		|  |  |  |  Length: 1       | size(RestoreData) | size(paddingData) |     8       |
-//		|  |  |  |
-//		|  |  |  |  The length >= 18 always because of padding.
-//		|  |  |  |
-//		|  |  |  +--With Untouched Flag:
-//		|  |  |
-//		|  |  |     Layout: TailLen |    RestoreData    |      PaddingData  | Flag | PartitionID |
-//		|  |  |     Length: 1       | size(RestoreData) | size(paddingData) |  1   |     8       |
-//		|  |  |
-//		|  |  |     The length >= 19 always because of padding.
-//		|  |  |
-//		... (Truncated because of length.)
+//		|  TailLen:       len(padding) + len(IntHandle) + len(UntouchedFlag)
+//		|  Options:       Encode some value for new features, such as common handle, new collations or global index.
+//		|                 See below for more information.
+//		|  Padding:       Ensure length of value always >= 10. (or >= 11 if UntouchedFlag exists.)
+//		|  IntHandle:     Only exists when table use int handles and index is unique.
+//		|  UntouchedFlag: Only exists when index is untouched.
+//      |
+//		|  Layout of Options:
+//      |
+//      |     Segment:             Common Handle                 |     Global Index      | New Collation
+//      |     Layout:  CHandle Flag | CHandle Len | CHandle      | PidFlag | PartitionID | restoreData
+//      |     Length:     1         | 2           | len(CHandle) |    1    |    8        | len(restoreData)
+//		|
+//		|     Common Handle Segment: Exists when unique index used common handles.
+//		|     Global Index Segment:  Exists when index is global.
+//		|     New Collation Segment: Exists when new collation is used and index contains non-binary string.
+//		|
+//		+--Old Encoding (without restore data, integer handle, local)
+//
+//		   Layout: [Handle] | [UntouchedFlag]
+//		   Length:   8      |     1
+//
+//         Explain:
+//		       Handle only exists in unique index, UntouchedFlag only exists when index is untouched.
+//		       If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
+//		       Length of value <= 9, use to distinguish from the new encoding.
 //
 func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
 	var opt table.CreateIdxOpt
