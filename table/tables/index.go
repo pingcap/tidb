@@ -170,10 +170,11 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 //		   Layout: [Handle] | [UntouchedFlag]
 //		   Length:   8      |     1
 //
-//         Explain:
-//		       Handle only exists in unique index, UntouchedFlag only exists when index is untouched.
-//		       If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
-//		       Length of value <= 9, use to distinguish from the new encoding.
+//		   Handle:        Only exists in unique index.
+//		   UntouchedFlag: Only exists when index is untouched.
+//
+//		   If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
+//		   Length of value <= 9, use to distinguish from the new encoding.
 //
 func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
 	var opt table.CreateIdxOpt
