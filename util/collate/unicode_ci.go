@@ -92,6 +92,8 @@ type unicodeCICollator struct {
 
 // Compare implements Collator interface.
 func (uc *unicodeCICollator) Compare(a, b string) int {
+	a = truncateTailingSpace(a)
+	b = truncateTailingSpace(b)
 	an, bn := uint64(0), uint64(0)
 	as, bs := uint64(0), uint64(0)
 	ai, bi := 0, 0
@@ -134,6 +136,7 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 
 // Key implements Collator interface.
 func (uc *unicodeCICollator) Key(str string) []byte {
+	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str)*2)
 	sn, ss := uint64(0), uint64(0)
 	si := 0
