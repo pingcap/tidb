@@ -100,9 +100,9 @@ var (
 )
 
 const (
-	// DefInt64 is the size of int64
+	// DefInt64Size is the size of int64
 	DefInt64Size = 8
-	// DefFloat64 is the size of float64
+	// DefFloat64Size is the size of float64
 	DefFloat64Size = 8
 
 	// DefPartialResult4AvgDecimalSize is the size of partialResult4AvgDecimal
