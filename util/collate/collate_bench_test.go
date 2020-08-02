@@ -12,22 +12,22 @@ const middle = 2 << 10
 const long = 2 << 20
 
 func generateData(length int) string {
-	rand.Seed(1)
+	rs := []rune("ßss")
 	r := make([]rune, length)
 	for i := range r {
-		r[i] = rune(rand.Intn(0xFFFF))
+		r[i] = rs[rand.Intn(len(rs))]
 	}
 
 	return string(r)
 }
 
 func compare(b *testing.B, collator Collator, length int) {
-	s := generateData(length)
+	s1 := generateData(length)
+	s2 := generateData(length)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if collator.Compare(s, s) != 0 {
-			b.Fatalf("equal expected")
+		if collator.Compare(s1, s2) != 0 {
 		}
 	}
 }

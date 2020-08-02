@@ -125,11 +125,13 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 			continue
 		}
 
-		if (an^bn)&0xFFFF == 0 {
-			an >>= 16
-			bn >>= 16
-		} else {
-			return sign(int(an&0xFFFF) - int(bn&0xFFFF))
+		for an != 0 && bn != 0 {
+			if (an^bn)&0xFFFF == 0 {
+				an >>= 16
+				bn >>= 16
+			} else {
+				return sign(int(an&0xFFFF) - int(bn&0xFFFF))
+			}
 		}
 	}
 }
