@@ -230,6 +230,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 			continue
 		}
 		p.valSet.Insert(decStr)
+		memDelta += int64(len(decStr))
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
@@ -237,7 +238,6 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		}
 		p.sum = *newSum
 		p.count++
-		memDelta += int64(len(decStr))
 	}
 	return memDelta, nil
 }
@@ -426,7 +426,7 @@ func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Contex
 		p.sum += input
 		p.count++
 		p.valSet.Insert(input)
-		memDelta += DefFloat64
+		memDelta += DefFloat64Size
 	}
 	return memDelta, nil
 }

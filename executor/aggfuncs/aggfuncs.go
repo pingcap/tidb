@@ -100,8 +100,11 @@ var (
 )
 
 const (
+	// DefInt64 is the size of int64
+	DefInt64Size = 8
 	// DefFloat64 is the size of float64
-	DefFloat64 = 8
+	DefFloat64Size = 8
+
 	// DefPartialResult4AvgDecimalSize is the size of partialResult4AvgDecimal
 	DefPartialResult4AvgDecimalSize = 48
 	// DefPartialResult4AvgDistinctDecimalSize is the size of partialResult4AvgDistinctDecimal
@@ -110,6 +113,21 @@ const (
 	DefPartialResult4AvgFloat64Size = 16
 	// DefPartialResult4AvgDistinctFloat64Size is the size of partialResult4AvgDistinctFloat64
 	DefPartialResult4AvgDistinctFloat64Size = 24
+
+	// DefPartialResult4CountDistinctIntSize is the size of partialResult4CountDistinctInt
+	DefPartialResult4CountDistinctIntSize = 8
+	// DefPartialResult4CountDistinctRealSize is the size of partialResult4CountDistinctReal
+	DefPartialResult4CountDistinctRealSize = 8
+	// DefPartialResult4CountDistinctDecimalSize is the size of partialResult4CountDistinctDecimal
+	DefPartialResult4CountDistinctDecimalSize = 8
+	// DefPartialResult4CountDistinctDurationSize is the size of partialResult4CountDistinctDuration
+	DefPartialResult4CountDistinctDurationSize = 8
+	// DefPartialResult4CountDistinctStringSize is the size of partialResult4CountDistinctString
+	DefPartialResult4CountDistinctStringSize = 8
+	// DefPartialResult4CountWithDistinctSize is the size of partialResult4CountWithDistinct
+	DefPartialResult4CountWithDistinctSize = 8
+	// DefPartialResult4ApproxCountDistinctSize is the size of partialResult4ApproxCountDistinct
+	DefPartialResult4ApproxCountDistinctSize = 72
 )
 
 // PartialResult represents data structure to store the partial result for the
