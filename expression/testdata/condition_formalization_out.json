@@ -19,6 +19,12 @@
         ]
       },
       {
+        "SQL": "explain select * from t where a = 1 and b = 2 and (c in (1, 3) or c = 5)",
+        "Result": [
+          "Batch_Point_Get_5 3.00 root table:t, index:PRIMARY(a, b, c) keep order:false, desc:false"
+        ]
+      },
+      {
         "SQL": "explain select * from (select * from t where (d = 2 and b = 2) or b = 3) t where (c = 2 or c = 1) and a = 1",
         "Result": [
           "IndexLookUp_13 0.04 root  ",
