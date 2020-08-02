@@ -658,45 +658,6 @@ func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
 	return [][]byte{intHandleBytes}, err
 }
 
-func decodeIndexKvNewCollation(key, value []byte, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
-	vLen := len(value)
-	tailLen := int(value[0])
-	restoredVal := value[1 : vLen-tailLen]
-	resultValues, err := decodeRestoredValues(columns, restoredVal)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if hdStatus == HandleNotNeeded {
-		return resultValues, nil
-	}
-
-	if tailLen < 8 {
-		// In non-unique index.
-		_, keySuffix, err := CutIndexKeyNew(key, len(columns))
-		if err != nil {
-			return nil, err
-		}
-		handle, err := decodeHandleInIndexKey(keySuffix)
-		if err != nil {
-			return nil, err
-		}
-		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
-		if err != nil {
-			return nil, err
-		}
-		resultValues = append(resultValues, handleBytes...)
-	} else {
-		// In unique int handle index.
-		handle := decodeIntHandleInIndexValue(value[vLen-tailLen:])
-		handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		resultValues = append(resultValues, handleBytes...)
-	}
-	return resultValues, nil
-}
-
 func decodeRestoredValues(columns []rowcodec.ColInfo, restoredVal []byte) ([][]byte, error) {
 	colIDs := make(map[int64]int, len(columns))
 	for i, col := range columns {
@@ -745,48 +706,10 @@ func decodeIndexKvOldCollation(key, value []byte, colsLen int, hdStatus HandleSt
 
 // DecodeIndexKV uses to decode index key values.
 func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
-	if len(value) > MaxOldEncodeValueLen {
-		if value[0] <= 1 && value[1] == CommonHandleFlag {
-			return decodeIndexKVUniqueCommonHandle(key, value, colsLen, hdStatus, columns)
-		}
-		return decodeIndexKvNewCollation(key, value, hdStatus, columns)
+	if len(value) <= MaxOldEncodeValueLen {
+		return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
 	}
-	return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
-}
-
-func decodeIndexKVUniqueCommonHandle(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
-	tailLen := int(value[0])
-	value = value[:len(value)-tailLen]
-	handleLen := uint16(value[2])<<8 + uint16(value[3])
-	handleEndOff := 4 + handleLen
-	var resultValues [][]byte
-	var err error
-	if int(handleEndOff) < len(value) {
-		// new collation values.
-		restoredValue := value[handleEndOff:]
-		resultValues, err = decodeRestoredValues(columns, restoredValue)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		resultValues, _, err = CutIndexKeyNew(key, colsLen)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	if hdStatus == HandleNotNeeded {
-		return resultValues, nil
-	}
-	cHandle, err := decodeHandleInIndexKey(value[4:handleEndOff])
-	if err != nil {
-		return nil, err
-	}
-	cHandleBytes, err := reEncodeHandle(cHandle, false /* doesn't matter */)
-	if err != nil {
-		return nil, err
-	}
-	resultValues = append(resultValues, cHandleBytes...)
-	return resultValues, nil
+	return decodeIndexKvGeneral(key, value, colsLen, hdStatus, columns)
 }
 
 // DecodeIndexHandle uses to decode the handle from index key/value.
@@ -1163,12 +1086,8 @@ func splitIndexValue(value []byte) (segs indexValueSegments) {
 	return
 }
 
-// DecodeIndexKvGeneral uses to decode index key values for all formats in an extensible way.
-func DecodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
-	if len(value) <= MaxOldEncodeValueLen {
-		return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
-	}
-
+// decodeIndexKvGeneral decodes index key value pair of new layout in an extensible way.
+func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
 	var resultValues [][]byte
 	var keySuffix []byte
 	var handle kv.Handle
