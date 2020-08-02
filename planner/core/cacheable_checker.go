@@ -30,8 +30,8 @@ func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
 	_, isUpdate := node.(*ast.UpdateStmt)
 	_, isInsert := node.(*ast.InsertStmt)
 	_, isDelete := node.(*ast.DeleteStmt)
-	_, isUnion := node.(*ast.UnionStmt)
-	if !(isSelect || isUpdate || isInsert || isDelete || isUnion) {
+	_, isSetOpr := node.(*ast.SetOprStmt)
+	if !(isSelect || isUpdate || isInsert || isDelete || isSetOpr) {
 		return false
 	}
 	checker := cacheableChecker{

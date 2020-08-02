@@ -764,6 +764,8 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 	}
+	cop.partitionTable.pruningConds = ds.allConds
+	cop.partitionTable.partitionNames = ds.partitionNames
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
 		var partialCost, rowCount float64
@@ -777,7 +779,10 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		totalRowCount += rowCount
 	}
 
-	ts, partialCost := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
+	ts, partialCost, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
+	if err != nil {
+		return nil, err
+	}
 	totalCost += partialCost
 	cop.tablePlan = ts
 	cop.idxMergePartPlans = scans
@@ -842,7 +847,7 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 	return tablePlan, partialCost, rowCount
 }
 
-func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression, totalRowCount float64) (PhysicalPlan, float64) {
+func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, tableFilters []expression.Expression, totalRowCount float64) (PhysicalPlan, float64, error) {
 	var partialCost float64
 	sessVars := ds.ctx.GetSessionVars()
 	ts := PhysicalTableScan{
@@ -852,8 +857,21 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		DBName:          ds.DBName,
 		isPartition:     ds.isPartition,
 		physicalTableID: ds.physicalTableID,
+		HandleCols:      ds.handleCols,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
+	if ts.HandleCols == nil {
+		handleCol := ds.getPKIsHandleCol()
+		if handleCol == nil {
+			handleCol, _ = ts.appendExtraHandleCol(ds)
+		}
+		ts.HandleCols = NewIntHandleCols(handleCol)
+	}
+	var err error
+	ts.HandleCols, err = ts.HandleCols.ResolveIndices(ts.schema)
+	if err != nil {
+		return nil, 0, err
+	}
 	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
@@ -877,9 +895,9 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		}
 		sel := PhysicalSelection{Conditions: tableFilters}.Init(ts.ctx, ts.stats.ScaleByExpectCnt(selectivity*totalRowCount), ts.blockOffset)
 		sel.SetChildren(ts)
-		return sel, partialCost
+		return sel, partialCost, nil
 	}
-	return ts, partialCost
+	return ts, partialCost, nil
 }
 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
@@ -942,6 +960,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
 	}
+	cop.partitionTable.pruningConds = ds.allConds
+	cop.partitionTable.partitionNames = ds.partitionNames
 	if !candidate.isSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
@@ -1340,6 +1360,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		tblColHists:       ds.TblColHists,
 		cst:               cost,
 	}
+	copTask.partitionTable.pruningConds = ds.allConds
+	copTask.partitionTable.partitionNames = ds.partitionNames
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
@@ -1366,13 +1388,14 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	}
 
 	pointGetPlan := PointGetPlan{
-		ctx:          ds.ctx,
-		schema:       ds.schema.Clone(),
-		dbName:       ds.DBName.L,
-		TblInfo:      ds.TableInfo(),
-		outputNames:  ds.OutputNames(),
-		LockWaitTime: ds.ctx.GetSessionVars().LockWaitTimeout,
-		Columns:      ds.Columns,
+		ctx:              ds.ctx,
+		AccessConditions: candidate.path.AccessConds,
+		schema:           ds.schema.Clone(),
+		dbName:           ds.DBName.L,
+		TblInfo:          ds.TableInfo(),
+		outputNames:      ds.OutputNames(),
+		LockWaitTime:     ds.ctx.GetSessionVars().LockWaitTimeout,
+		Columns:          ds.Columns,
 	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(1.0), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {
@@ -1407,6 +1430,8 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		}
 	} else {
 		pointGetPlan.IndexInfo = candidate.path.Index
+		pointGetPlan.IdxCols = candidate.path.IdxCols
+		pointGetPlan.IdxColLens = candidate.path.IdxColLens
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
 		pointGetPlan.PartitionInfo = partitionInfo
 		if candidate.isSingleScan {
@@ -1440,10 +1465,11 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	}
 
 	batchPointGetPlan := BatchPointGetPlan{
-		ctx:       ds.ctx,
-		TblInfo:   ds.TableInfo(),
-		KeepOrder: !prop.IsEmpty(),
-		Columns:   ds.Columns,
+		ctx:              ds.ctx,
+		AccessConditions: candidate.path.AccessConds,
+		TblInfo:          ds.TableInfo(),
+		KeepOrder:        !prop.IsEmpty(),
+		Columns:          ds.Columns,
 	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(float64(len(candidate.path.Ranges))), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.Items[0].Desc
@@ -1467,6 +1493,8 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		}
 	} else {
 		batchPointGetPlan.IndexInfo = candidate.path.Index
+		batchPointGetPlan.IdxCols = candidate.path.IdxCols
+		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.IndexValues = append(batchPointGetPlan.IndexValues, ran.LowVal)
 		}
