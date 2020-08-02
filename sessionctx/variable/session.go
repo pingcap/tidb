@@ -1457,6 +1457,11 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 	return s.prevStmtDigest
 }
 
+// LazyCheckKeyNotExists returns if we can lazy check key not exists.
+func (s *SessionVars) LazyCheckKeyNotExists() bool {
+	return s.PresumeKeyNotExists || s.TxnCtx.IsPessimistic
+}
+
 // SetLocalSystemVar sets values of the local variables which in "server" scope.
 func SetLocalSystemVar(name string, val string) {
 	switch name {
