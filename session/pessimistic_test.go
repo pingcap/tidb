@@ -1419,3 +1419,70 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLAddDropColumn(c *C) {
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2", "5"))
 }
+func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk2.MustExec("use test_db")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 varchar(10))")
+	tk.MustExec("insert t1 values (1, 77, 'a'), (2, 88, 'b')")
+
+	// Extend column field length is acceptable.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t1 set c2 = c1 * 10")
+	tk2.MustExec("alter table t1 modify column c2 bigint")
+	tk.MustExec("commit")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t1 set c3 = 'aba'")
+	tk2.MustExec("alter table t1 modify column c3 varchar(30)")
+	tk.MustExec("commit")
+	tk2.MustExec("admin check table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 10 aba", "2 20 aba"))
+
+	// Change column from nullable to not null is not allowed by now.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1(c1) values(100)")
+	tk2.MustExec("alter table t1 change column c2 cc2 bigint not null")
+	err := tk.ExecToErr("commit")
+	c.Assert(err, NotNil)
+
+	// Change default value is rejected.
+	tk2.MustExec("create table ta(a bigint primary key auto_random(3), b varchar(255) default 'old');")
+	tk2.MustExec("insert into ta(b) values('a')")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into ta values()")
+	tk2.MustExec("alter table ta modify column b varchar(300) default 'new';")
+	err = tk.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk2.MustQuery("select b from ta").Check(testkit.Rows("a"))
+
+	// Change default value with add index. There is a new MultipleKeyFlag flag on the index key, and the column is changed,
+	// the flag check will fail.
+	tk2.MustExec("insert into ta values()")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into ta(b) values('inserted_value')")
+	tk.MustExec("insert into ta values()")
+	tk.MustExec("insert into ta values()")
+	tk2.MustExec("alter table ta add index i1(b)")
+	tk2.MustExec("alter table ta change column b b varchar(301) default 'newest'")
+	tk2.MustExec("alter table ta modify column b varchar(301) default 'new'")
+	c.Assert(tk.ExecToErr("commit"), NotNil)
+	tk2.MustExec("admin check table ta")
+	tk2.MustQuery("select count(b) from ta use index(i1) where b = 'new'").Check(testkit.Rows("1"))
+
+	// Change default value to now().
+	tk2.MustExec("create table tbl_time(c1 int, c_time timestamp)")
+	tk2.MustExec("insert into tbl_time(c1) values(1)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into tbl_time(c1) values(2)")
+	tk2.MustExec("alter table tbl_time modify column c_time timestamp default now()")
+	tk2.MustExec("insert into tbl_time(c1) values(3)")
+	tk2.MustExec("insert into tbl_time(c1) values(4)")
+	c.Assert(tk.ExecToErr("commit"), NotNil)
+	tk2.MustQuery("select count(1) from tbl_time where c_time is not null").Check(testkit.Rows("2"))
+
+	tk2.MustExec("drop database if exists test_db")
+}
