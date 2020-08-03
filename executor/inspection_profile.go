@@ -30,6 +30,13 @@ const (
 	dateTimeFormat = "2006-01-02 15:04:05"
 )
 
+type metricValueType int
+
+const (
+	metricValueSum metricValueType = 1
+	metricValueAvg metricValueType = 2
+)
+
 type profileBuilder struct {
 	sctx        sessionctx.Context
 	idMap       map[string]uint64
@@ -39,31 +46,32 @@ type profileBuilder struct {
 	buf         *bytes.Buffer
 	start       time.Time
 	end         time.Time
+	valueTP     metricValueType
 }
 
 type metricNode struct {
-	table      string
-	name       string
-	label      []string
-	condition  string
-	labelValue map[string]float64
-	value      float64
-	unit       int64
-	children   []*metricNode
+	table          string
+	name           string
+	label          []string
+	condition      string
+	labelInfoValue map[string]*metricNodeValue
+	value          *metricNodeValue
+	unit           int64
+	children       []*metricNode
 	// isPartOfParent indicates the parent of this node not fully contain this node.
 	isPartOfParent bool
 	initialized    bool
-	labelComment   map[string]*metricNodeComment
 }
 
-type metricNodeComment struct {
-	totalCount int
-	avgP99     float64
-	avgP90     float64
-	avgP80     float64
+type metricNodeValue struct {
+	sum    float64
+	count  int
+	avgP99 float64
+	avgP90 float64
+	avgP80 float64
 }
 
-func (n *metricNodeComment) setQuantileValue(quantile, value float64) {
+func (n *metricNodeValue) setQuantileValue(quantile, value float64) {
 	switch quantile {
 	case 0.99:
 		n.avgP99 = value
@@ -76,13 +84,39 @@ func (n *metricNodeComment) setQuantileValue(quantile, value float64) {
 	}
 }
 
-func (n *metricNodeComment) String() string {
-	if n.totalCount == 0 {
+func (n *metricNodeValue) getValue(tp metricValueType) float64 {
+	value := 0.0
+	switch tp {
+	case metricValueAvg:
+		if n.count == 0 {
+			return 0.0
+		}
+		value = n.sum / float64(n.count)
+	default:
+		value = n.sum
+	}
+	if math.IsNaN(value) {
+		return 0
+	}
+	return value
+}
+
+func (n *metricNodeValue) getComment(tp metricValueType) string {
+	if n.count == 0 {
 		return ""
 	}
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
 	buf.WriteString("total_count: ")
-	buf.WriteString(strconv.Itoa(n.totalCount))
+	buf.WriteString(strconv.Itoa(n.count))
+	buf.WriteByte('\n')
+	switch tp {
+	case metricValueAvg:
+		buf.WriteString("total_time: ")
+		buf.WriteString(time.Duration(int64(n.sum * float64(time.Second))).String())
+	default:
+		buf.WriteString("avg_time: ")
+		buf.WriteString(time.Duration(int64(n.sum / float64(n.count) * float64(time.Second))).String())
+	}
 	buf.WriteByte('\n')
 	buf.WriteString("avgP99: ")
 	buf.WriteString(time.Duration(int64(n.avgP99 * float64(time.Second))).String())
@@ -95,11 +129,11 @@ func (n *metricNodeComment) String() string {
 	return buf.String()
 }
 
-func (n *metricNode) getLabelComment(label string) *metricNodeComment {
-	comment, ok := n.labelComment[label]
+func (n *metricNode) getLabeInfoValue(label string) *metricNodeValue {
+	comment, ok := n.labelInfoValue[label]
 	if !ok {
-		comment = &metricNodeComment{}
-		n.labelComment[label] = comment
+		comment = &metricNodeValue{}
+		n.labelInfoValue[label] = comment
 	}
 	return comment
 }
@@ -116,92 +150,38 @@ func (n *metricNode) getName(label string) string {
 }
 
 func (n *metricNode) getValue(pb *profileBuilder) (float64, error) {
-	if n.initialized {
-		return n.value, nil
+	if !n.initialized {
+		n.initialized = true
+		err := n.initializeMetricValue(pb)
+		if err != nil {
+			return 0, err
+		}
 	}
-	n.initialized = true
-	v, err := pb.getMetricValue(n)
-	if err != nil {
-		return 0, err
-	}
-	if math.IsNaN(v) {
-		n.value = 0
-	} else {
-		n.value = v
-	}
-	return n.value, nil
+	return n.value.getValue(pb.valueTP), nil
 }
 
-func (n *metricNode) getComment(pb *profileBuilder, label string) (string, error) {
-	if n.labelComment != nil {
-		return n.getLabelComment(label).String(), nil
-	}
-	n.labelComment = make(map[string]*metricNodeComment)
+func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
+	n.labelInfoValue = make(map[string]*metricNodeValue)
+	n.value = &metricNodeValue{}
 	queryCondition := fmt.Sprintf("where time >= '%v' and time <= '%v'", pb.start.Format(dateTimeFormat), pb.end.Format(dateTimeFormat))
 	if n.condition != "" {
 		queryCondition += (" and " + n.condition)
 	}
 
-	// 1. Get total count value.
-	var query string
-	if len(n.label) == 0 {
-		query = fmt.Sprintf("select sum(value), '' from `metrics_schema`.`%v_total_count` %v", n.table, queryCondition)
-	} else {
-		query = fmt.Sprintf("select sum(value), `%[3]s` from `metrics_schema`.`%[1]s_total_count` %[2]s group by `%[3]s` having sum(value) > 0",
-			n.table, queryCondition, strings.Join(n.label, "`,`"))
-	}
-	rows, _, err := pb.sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(context.Background(), query)
-	if err != nil {
-		return "", err
-	}
-	if len(rows) == 0 || rows[0].Len() == 0 {
-		return "", nil
-	}
-
-	totalCount := 0.0
-	for _, row := range rows {
-		v := row.GetFloat64(0)
-		label := ""
-		for i := 1; i < row.Len(); i++ {
-			if i > 1 {
-				label += ","
-			}
-			label += row.GetString(i)
-		}
-		if label == "" && len(n.label) > 0 {
-			continue
-		}
-		totalCount += v
-		n.getLabelComment(label).totalCount = int(v)
-	}
-	if int(totalCount) == 0 {
-		return "", nil
-	}
-	n.getLabelComment("").totalCount = int(totalCount)
-
-	// 2. Get quantile value.
-	quantiles := []float64{0.99, 0.90, 0.80}
-	for _, quantile := range quantiles {
-		condition := queryCondition + " and " + "quantile=" + strconv.FormatFloat(quantile, 'f', -1, 64)
-		condition += "and value is not null and value>0"
-		if len(n.label) == 0 {
-			query = fmt.Sprintf("select avg(value), '' from `metrics_schema`.`%v_duration` %v", n.table, condition)
-		} else {
-			query = fmt.Sprintf("select avg(value), `%[3]s` from `metrics_schema`.`%[1]s_duration` %[2]s group by `%[3]s` having sum(value) > 0",
-				n.table, condition, strings.Join(n.label, "`,`"))
-		}
+	queryRows := func(query string, fn func(label string, v float64)) error {
 		rows, _, err := pb.sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(context.Background(), query)
 		if err != nil {
-			return "", err
+			return err
 		}
 		if len(rows) == 0 || rows[0].Len() == 0 {
-			continue
+			return nil
 		}
 
-		totalValue := 0.0
-		cnt := 0
 		for _, row := range rows {
 			v := row.GetFloat64(0)
+			if n.unit != 0 {
+				v = v / float64(n.unit)
+			}
 			label := ""
 			for i := 1; i < row.Len(); i++ {
 				if i > 1 {
@@ -212,63 +192,92 @@ func (n *metricNode) getComment(pb *profileBuilder, label string) (string, error
 			if label == "" && len(n.label) > 0 {
 				continue
 			}
-			totalValue += v
-			cnt++
-			n.getLabelComment(label).setQuantileValue(quantile, v)
+			fn(label, v)
 		}
-		n.getLabelComment("").setQuantileValue(quantile, totalValue/float64(cnt))
+		return nil
 	}
-	return n.getLabelComment(label).String(), nil
-}
 
-func (pb *profileBuilder) getMetricValue(n *metricNode) (float64, error) {
-	if n.labelValue != nil {
-		return n.value, nil
-	}
-	n.labelValue = make(map[string]float64)
 	var query string
-	format := "2006-01-02 15:04:05"
-	queryCondition := fmt.Sprintf("where time >= '%v' and time <= '%v'", pb.start.Format(format), pb.end.Format(format))
-	if n.condition != "" {
-		queryCondition += (" and " + n.condition)
+	// 1. Get total count value.
+	if len(n.label) == 0 {
+		query = fmt.Sprintf("select sum(value), '' from `metrics_schema`.`%v_total_count` %v", n.table, queryCondition)
+	} else {
+		query = fmt.Sprintf("select sum(value), `%[3]s` from `metrics_schema`.`%[1]s_total_count` %[2]s group by `%[3]s` having sum(value) > 0",
+			n.table, queryCondition, strings.Join(n.label, "`,`"))
 	}
+
+	totalCount := 0.0
+	err := queryRows(query, func(label string, v float64) {
+		totalCount += v
+		n.getLabeInfoValue(label).count = int(v)
+	})
+	if err != nil {
+		return err
+	}
+	// Return early if the metric doesn't has value
+	if int(totalCount) == 0 {
+		return nil
+	}
+	n.value.count = int(totalCount)
+
+	// 2. Get total sum time.
 	if len(n.label) == 0 {
 		query = fmt.Sprintf("select sum(value), '' from `metrics_schema`.`%v_total_time` %v", n.table, queryCondition)
 	} else {
 		query = fmt.Sprintf("select sum(value), `%[3]s` from `metrics_schema`.`%[1]s_total_time` %[2]s group by `%[3]s` having sum(value) > 0",
 			n.table, queryCondition, strings.Join(n.label, "`,`"))
 	}
-	rows, _, err := pb.sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(context.Background(), query)
-	if err != nil {
-		return 0, err
-	}
-	if len(rows) == 0 || rows[0].Len() == 0 {
-		return 0, nil
-	}
-
-	for _, row := range rows {
-		v := row.GetFloat64(0)
+	totalSum := 0.0
+	err = queryRows(query, func(label string, v float64) {
 		if n.unit != 0 {
 			v = v / float64(n.unit)
 		}
-		label := ""
-		for i := 1; i < row.Len(); i++ {
-			if i > 1 {
-				label += ","
-			}
-			label += row.GetString(i)
-		}
-		if label == "" && len(n.label) > 0 {
-			continue
-		}
-		n.labelValue[label] = v
-		n.value += v
+		totalSum += v
+		n.getLabeInfoValue(label).sum = v
+	})
+	if err != nil {
+		return err
 	}
-	return n.value, nil
+	n.value.sum = totalSum
+
+	// 3. Get quantile value.
+	quantiles := []float64{0.99, 0.90, 0.80}
+	for _, quantile := range quantiles {
+		condition := queryCondition + " and " + "quantile=" + strconv.FormatFloat(quantile, 'f', -1, 64)
+		condition += "and value is not null and value>0"
+		if len(n.label) == 0 {
+			query = fmt.Sprintf("select avg(value), '' from `metrics_schema`.`%v_duration` %v", n.table, condition)
+		} else {
+			query = fmt.Sprintf("select avg(value), `%[3]s` from `metrics_schema`.`%[1]s_duration` %[2]s group by `%[3]s` having sum(value) > 0",
+				n.table, condition, strings.Join(n.label, "`,`"))
+		}
+
+		totalValue := 0.0
+		cnt := 0
+		err = queryRows(query, func(label string, v float64) {
+			if n.unit != 0 {
+				v = v / float64(n.unit)
+			}
+
+			totalValue += v
+			cnt++
+			n.getLabeInfoValue(label).setQuantileValue(quantile, v)
+		})
+		if err != nil {
+			return err
+		}
+		n.value.setQuantileValue(quantile, totalValue/float64(cnt))
+	}
+
+	return nil
 }
 
 // NewProfileBuilder returns a new profileBuilder.
-func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time) *profileBuilder {
+func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time, tp string) *profileBuilder {
+	valueTp := metricValueSum
+	if strings.ToLower(tp) == "avg" {
+		valueTp = metricValueAvg
+	}
 	return &profileBuilder{
 		sctx:        sctx,
 		idMap:       make(map[string]uint64),
@@ -277,6 +286,7 @@ func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time) *profileBu
 		uniqueMap:   make(map[string]struct{}),
 		start:       start,
 		end:         end,
+		valueTP:     valueTp,
 	}
 }
 
@@ -384,7 +394,8 @@ func (pb *profileBuilder) addNodeEdge(parent, child *metricNode, childValue floa
 		}
 		pb.addEdge(parent.getName(""), child.getName(""), label, style, childValue)
 	} else {
-		for label, v := range parent.labelValue {
+		for label, value := range parent.labelInfoValue {
+			v := value.getValue(pb.valueTP)
 			if pb.ignoreFraction(v, pb.totalValue) {
 				continue
 			}
@@ -397,15 +408,12 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) er
 	name := n.getName("")
 	weight := selfCost
 	if len(n.label) > 0 {
-		for label, v := range n.labelValue {
+		for label, value := range n.labelInfoValue {
+			v := value.getValue(pb.valueTP)
 			if pb.ignoreFraction(v, pb.totalValue) {
 				continue
 			}
-			comment, err := n.getComment(pb, "")
-			if err != nil {
-				return err
-			}
-
+			comment := value.getComment(pb.valueTP)
 			labelValue := fmt.Sprintf(" %.2fs", v)
 			pb.addEdge(n.getName(""), n.getName(label), labelValue, "", v)
 			labelValue = fmt.Sprintf("%s\n %.2fs (%.2f%%)\n%s", n.getName(label), v, v*100/pb.totalValue, comment)
@@ -416,10 +424,7 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) er
 		selfCost = 0
 	}
 
-	comment, err := n.getComment(pb, "")
-	if err != nil {
-		return err
-	}
+	comment := n.value.getComment(pb.valueTP)
 	label := fmt.Sprintf("%s\n %.2fs (%.2f%%)\nof %.2fs (%.2f%%)\n%s",
 		name, selfCost, selfCost*100/pb.totalValue, nodeTotal, nodeTotal*100/pb.totalValue, comment)
 	pb.addNodeDef(n.getName(""), label, weight, selfCost)
