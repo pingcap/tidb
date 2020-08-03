@@ -1124,6 +1124,18 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	}, nil, nil)
 }
 
+func (s *testTableSuite) TestIssue18845(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`CREATE USER 'user18845'@'localhost';`)
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "user18845",
+		Hostname:     "localhost",
+		AuthUsername: "user18845",
+		AuthHostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery(`select count(*) from information_schema.columns;`)
+}
+
 // Test statements_summary_history.
 func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 	tk := s.newTestKitWithRoot(c)
@@ -1201,10 +1213,11 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	tk.MustExec("admin flush bindings")
 	tk.MustExec("admin evolve bindings")
 
-	tk.MustQuery(`select exec_count, digest_text
+	// `exec_count` may be bigger than 1 because other cases are also running.
+	tk.MustQuery(`select digest_text
 		from information_schema.statements_summary
 		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows(
-		"1 select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation , source from mysql . bind_info" +
+		"select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation , source from mysql . bind_info" +
 			" where update_time > ? order by update_time"))
 }
 

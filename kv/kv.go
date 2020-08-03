@@ -56,6 +56,8 @@ const (
 	ReplicaRead
 	// Set task ID
 	TaskID
+	// CollectRuntimeStats is used to enable collect runtime stats.
+	CollectRuntimeStats
 )
 
 // Priority value for transaction priority.
