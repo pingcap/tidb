@@ -149,7 +149,7 @@ func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
 				return nn, err
 			}
 			err = nil
-			// continue if n > 0 or r.err is io.EOF
+			// continue if n > 0 and r.err is io.EOF
 		}
 		cursor += int64(n)
 		originChecksum := binary.LittleEndian.Uint32(buf)
