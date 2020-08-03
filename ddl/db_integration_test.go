@@ -2331,10 +2331,17 @@ func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 
 func (s *testIntegrationSuite5) TestDropColumnWithCompositeIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
+	tk.MustExec("create database if not exists drop_composite_index_test")
+	tk.MustExec("use drop_composite_index_test")
 	tk.MustExec("create table t_drop_column_with_comp_idx(a int, b int, c int)")
-	tk.MustExec("create index idx on t_drop_column_with_comp_idx(b, c)")
+	tk.MustExec("create index idx_bc on t_drop_column_with_comp_idx(b, c)")
+	tk.MustExec("create index idx_b on t_drop_column_with_comp_idx(b)")
 	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
+	queryIndexOnTable := func(tableName string) string {
+		return fmt.Sprintf("select distinct index_name, is_visible from information_schema.statistics where table_schema = 'drop_composite_index_test' and table_name = '%s' order by index_name", tableName)
+	}
+	query := queryIndexOnTable("t_drop_column_with_comp_idx")
+	tk.MustQuery(query).Check(testkit.Rows("idx_b YES", "idx_bc YES"))
 	tk.MustExec("drop table if exists t_drop_column_with_comp_idx")
 }
 
