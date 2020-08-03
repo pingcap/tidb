@@ -16,12 +16,13 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/hint"
 	"math"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/pingcap/tidb/util/hint"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
