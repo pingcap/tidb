@@ -865,3 +865,13 @@ func (s *testSuite) TestPR15242ShallowCopy(c *C) {
 	tk.MustQuery(`select max(JSON_EXTRACT(a, '$.score')) as max_score,JSON_EXTRACT(a,'$.id') as id from t group by id order by id;`).Check(testkit.Rows("233 1", "233 2", "233 3"))
 
 }
+
+func (s *testSuite) TestIssue15958(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(y year);`)
+	tk.MustExec(`insert into t values (2020), (2000), (2050);`)
+	tk.MustQuery(`select sum(y) from t`).Check(testkit.Rows("6070"))
+	tk.MustQuery(`select avg(y) from t`).Check(testkit.Rows("2023.3333"))
+}
