@@ -300,7 +300,6 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 		// If the key is already locked, it will be deduplicated in LockKeys method later.
 		keys = append(keys, k)
 	})
-	// LockKeys will sort and deduplicate keys.
 	return keys, nil
 }
 
