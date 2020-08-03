@@ -366,7 +366,7 @@ func (s *testGCWorkerSuite) TestPrepareGC(c *C) {
 
 func (s *testGCWorkerSuite) TestDoGCForOneRegion(c *C) {
 	ctx := context.Background()
-	bo := tikv.NewBackoffer(ctx, tikv.GcOneRegionMaxBackoff)
+	bo := tikv.NewBackofferWithVars(ctx, tikv.GcOneRegionMaxBackoff, nil)
 	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(""))
 	c.Assert(err, IsNil)
 	var regionErr *errorpb.Error
@@ -497,8 +497,9 @@ func (s *testGCWorkerSuite) TestCheckScanLockMode(c *C) {
 }
 
 func (s *testGCWorkerSuite) TestNeedsGCOperationForStore(c *C) {
-	newStore := func(hasEngineLabel bool, engineLabel string) *metapb.Store {
+	newStore := func(state metapb.StoreState, hasEngineLabel bool, engineLabel string) *metapb.Store {
 		store := &metapb.Store{}
+		store.State = state
 		if hasEngineLabel {
 			store.Labels = []*metapb.StoreLabel{{Key: engineLabelKey, Value: engineLabel}}
 		}
@@ -506,23 +507,25 @@ func (s *testGCWorkerSuite) TestNeedsGCOperationForStore(c *C) {
 	}
 
 	// TiKV needs to do the store-level GC operations.
-	res, err := needsGCOperationForStore(newStore(false, ""))
-	c.Assert(err, IsNil)
-	c.Assert(res, IsTrue)
-	res, err = needsGCOperationForStore(newStore(true, ""))
-	c.Assert(err, IsNil)
-	c.Assert(res, IsTrue)
-	res, err = needsGCOperationForStore(newStore(true, engineLabelTiKV))
-	c.Assert(err, IsNil)
-	c.Assert(res, IsTrue)
+	for _, state := range []metapb.StoreState{metapb.StoreState_Up, metapb.StoreState_Offline, metapb.StoreState_Tombstone} {
+		needGC := state != metapb.StoreState_Tombstone
+		res, err := needsGCOperationForStore(newStore(state, false, ""))
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, needGC)
+		res, err = needsGCOperationForStore(newStore(state, true, ""))
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, needGC)
+		res, err = needsGCOperationForStore(newStore(state, true, engineLabelTiKV))
+		c.Assert(err, IsNil)
+		c.Assert(res, Equals, needGC)
 
-	// TiFlash does not need these operations.
-	res, err = needsGCOperationForStore(newStore(true, engineLabelTiFlash))
-	c.Assert(err, IsNil)
-	c.Assert(res, IsFalse)
-
+		// TiFlash does not need these operations.
+		res, err = needsGCOperationForStore(newStore(state, true, engineLabelTiFlash))
+		c.Assert(err, IsNil)
+		c.Assert(res, IsFalse)
+	}
 	// Throw an error for unknown store types.
-	_, err = needsGCOperationForStore(newStore(true, "invalid"))
+	_, err := needsGCOperationForStore(newStore(metapb.StoreState_Up, true, "invalid"))
 	c.Assert(err, NotNil)
 }
 
@@ -569,7 +572,7 @@ func (s *testGCWorkerSuite) testDeleteRangesFailureImpl(c *C, failType int) {
 	c.Assert(err, IsNil)
 	c.Assert(preparedRanges, DeepEquals, ranges)
 
-	stores, err := s.gcWorker.getUpStoresForGC(context.Background())
+	stores, err := s.gcWorker.getStoresForGC(context.Background())
 	c.Assert(err, IsNil)
 	c.Assert(len(stores), Equals, 3)
 
@@ -826,6 +829,39 @@ func (s *testGCWorkerSuite) TestResolveLockRangeInfine(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionCacheMiss(c *C) {
+	var (
+		scanCnt       int
+		scanCntRef    = &scanCnt
+		resolveCnt    int
+		resolveCntRef = &resolveCnt
+	)
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte) []*tikv.Lock {
+		*scanCntRef++
+		return []*tikv.Lock{
+			{
+				Key: []byte{1},
+			},
+			{
+				Key: []byte{1},
+			},
+		}
+	}
+	s.gcWorker.testingKnobs.resolveLocks = func(regionID tikv.RegionVerID) (ok bool, err error) {
+		*resolveCntRef++
+		if *resolveCntRef == 1 {
+			s.gcWorker.store.GetRegionCache().InvalidateCachedRegion(regionID)
+			// mock the region cache miss error
+			return false, nil
+		}
+		return true, nil
+	}
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{10})
+	c.Assert(err, IsNil)
+	c.Assert(resolveCnt, Equals, 2)
+	c.Assert(scanCnt, Equals, 1)
+}
+
 func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	gcSafePointCacheInterval = 0
 
@@ -977,7 +1013,7 @@ func (s *testGCWorkerSuite) makeMergedMockClient(c *C, count int) (*mergeLockSca
 
 	const scanLockLimit = 3
 
-	storesMap, err := s.gcWorker.getUpStoresMapForGC(context.Background())
+	storesMap, err := s.gcWorker.getStoresMapForGC(context.Background())
 	c.Assert(err, IsNil)
 	scanner := newMergeLockScanner(100000, s.client, storesMap)
 	scanner.scanLockLimit = scanLockLimit
