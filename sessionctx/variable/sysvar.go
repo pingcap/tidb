@@ -722,7 +722,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBFoundInPlanCache, BoolToIntStr(DefTiDBFoundInPlanCache)},
 	{ScopeGlobal, TiDBSlowLogMasking, BoolToIntStr(DefTiDBSlowLogMasking)},
 	{ScopeSession, TiDBEnableCollectExecutionInfo, BoolToIntStr(DefTiDBEnableCollectExecutionInfo)},
-	{ScopeSession, TiDBAllowAutoRandExplicitInsert, boolToOnOff(DefTiDBAllowAutoRandExplicitInsert)},
+	{ScopeGlobal | ScopeSession, TiDBAllowAutoRandExplicitInsert, boolToOnOff(DefTiDBAllowAutoRandExplicitInsert)},
 	{ScopeGlobal, TiDBLogDesensitization, BoolToIntStr(DefTiDBLogDesensitization)},
 	{ScopeGlobal, TiDBEnableTelemetry, BoolToIntStr(DefTiDBEnableTelemetry)},
 }
@@ -745,6 +745,12 @@ func initSynonymsSysVariables() {
 var SetNamesVariables = []string{
 	"character_set_client",
 	"character_set_connection",
+	"character_set_results",
+}
+
+// SetCharsetVariables is the system variable names related to set charset statements.
+var SetCharsetVariables = []string{
+	"character_set_client",
 	"character_set_results",
 }
 

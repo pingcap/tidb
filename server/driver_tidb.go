@@ -464,7 +464,8 @@ func convertColumnInfo(fld *ast.ResultField) (ci *ColumnInfo) {
 			// Consider the decimal point.
 			ci.ColumnLength++
 		}
-	} else if types.IsString(fld.Column.Tp) {
+	} else if types.IsString(fld.Column.Tp) ||
+		fld.Column.Tp == mysql.TypeEnum || fld.Column.Tp == mysql.TypeSet { // issue #18870
 		// Fix issue #4540.
 		// The flen is a hint, not a precise value, so most client will not use the value.
 		// But we found in rare MySQL client, like Navicat for MySQL(version before 12) will truncate
