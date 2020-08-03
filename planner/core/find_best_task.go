@@ -764,6 +764,8 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 	}
+	cop.partitionTable.pruningConds = ds.allConds
+	cop.partitionTable.partitionNames = ds.partitionNames
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
 		var partialCost, rowCount float64
@@ -958,6 +960,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
 	}
+	cop.partitionTable.pruningConds = ds.allConds
+	cop.partitionTable.partitionNames = ds.partitionNames
 	if !candidate.isSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
@@ -1356,6 +1360,8 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		tblColHists:       ds.TblColHists,
 		cst:               cost,
 	}
+	copTask.partitionTable.pruningConds = ds.allConds
+	copTask.partitionTable.partitionNames = ds.partitionNames
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
