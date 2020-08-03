@@ -1568,6 +1568,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// We should set only two variables (
 	// IgnoreErr and StrictSQLMode) to avoid setting the same bool variables and
 	// pushing them down to TiKV as flags.
+	sc.InOnDuplicateUpdate = false
 	switch stmt := s.(type) {
 	case *ast.UpdateStmt:
 		ResetUpdateStmtCtx(sc, stmt, vars)
@@ -1582,6 +1583,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.Priority = stmt.Priority
 	case *ast.InsertStmt:
 		sc.InInsertStmt = true
+		sc.InOnDuplicateUpdate = len(stmt.OnDuplicate) > 0
 		// For insert statement (not for update statement), disabling the StrictSQLMode
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
 		// but should not make DupKeyAsWarning or BadNullAsWarning,

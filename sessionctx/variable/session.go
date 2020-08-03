@@ -1459,7 +1459,7 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && (s.StmtCtx == nil || !s.StmtCtx.DupKeyAsWarning))
+	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.InOnDuplicateUpdate && !s.StmtCtx.DupKeyAsWarning)
 }
 
 // SetLocalSystemVar sets values of the local variables which in "server" scope.
