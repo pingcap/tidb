@@ -1,6 +1,7 @@
 package export
 
 import (
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
@@ -85,6 +86,10 @@ type mockTableIR struct {
 	colNames        []string
 	escapeBackSlash bool
 	rowErr          error
+}
+
+func (m *mockTableIR) Start(ctx context.Context, conn *sql.Conn) error {
+	return nil
 }
 
 func (m *mockTableIR) DatabaseName() string {

@@ -1,6 +1,7 @@
 package export
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -15,6 +16,8 @@ func (s *testPrepareSuite) TestPrepareDumpingDatabases(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	c.Assert(err, IsNil)
 
 	rows := sqlmock.NewRows([]string{"Database"}).
 		AddRow("db1").
@@ -24,7 +27,7 @@ func (s *testPrepareSuite) TestPrepareDumpingDatabases(c *C) {
 	mock.ExpectQuery("SHOW DATABASES").WillReturnRows(rows)
 	conf := DefaultConfig()
 	conf.Databases = []string{"db1", "db2", "db3"}
-	result, err := prepareDumpingDatabases(conf, db)
+	result, err := prepareDumpingDatabases(conf, conn)
 	c.Assert(err, IsNil)
 	c.Assert(result, DeepEquals, []string{"db1", "db2", "db3"})
 
@@ -33,12 +36,12 @@ func (s *testPrepareSuite) TestPrepareDumpingDatabases(c *C) {
 		AddRow("db1").
 		AddRow("db2")
 	mock.ExpectQuery("SHOW DATABASES").WillReturnRows(rows)
-	result, err = prepareDumpingDatabases(conf, db)
+	result, err = prepareDumpingDatabases(conf, conn)
 	c.Assert(err, IsNil)
 	c.Assert(result, DeepEquals, []string{"db1", "db2"})
 
 	mock.ExpectQuery("SHOW DATABASES").WillReturnError(fmt.Errorf("err"))
-	_, err = prepareDumpingDatabases(conf, db)
+	_, err = prepareDumpingDatabases(conf, conn)
 	c.Assert(err, NotNil)
 
 	rows = sqlmock.NewRows([]string{"Database"}).
@@ -48,7 +51,7 @@ func (s *testPrepareSuite) TestPrepareDumpingDatabases(c *C) {
 		AddRow("db5")
 	mock.ExpectQuery("SHOW DATABASES").WillReturnRows(rows)
 	conf.Databases = []string{"db1", "db2", "db4", "db6"}
-	_, err = prepareDumpingDatabases(conf, db)
+	_, err = prepareDumpingDatabases(conf, conn)
 	c.Assert(err, ErrorMatches, `Unknown databases \[db4,db6\]`)
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
 }
@@ -57,6 +60,8 @@ func (s *testPrepareSuite) TestListAllTables(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	c.Assert(err, IsNil)
 
 	data := NewDatabaseTables().
 		AppendTables("db1", "t1", "t2").
@@ -78,7 +83,7 @@ func (s *testPrepareSuite) TestListAllTables(c *C) {
 	query := "SELECT table_schema,table_name FROM information_schema.tables WHERE table_type = (.*)"
 	mock.ExpectQuery(query).WillReturnRows(rows)
 
-	tables, err := listAllTables(db, dbNames)
+	tables, err := listAllTables(conn, dbNames)
 	c.Assert(err, IsNil)
 
 	for d, t := range tables {
@@ -96,7 +101,7 @@ func (s *testPrepareSuite) TestListAllTables(c *C) {
 		AppendViews("db", "t2")
 	query = "SELECT table_schema,table_name FROM information_schema.tables WHERE table_type = (.*)"
 	mock.ExpectQuery(query).WillReturnRows(sqlmock.NewRows([]string{"table_schema", "table_name"}).AddRow("db", "t2"))
-	tables, err = listAllViews(db, []string{"db"})
+	tables, err = listAllViews(conn, []string{"db"})
 	c.Assert(err, IsNil)
 	c.Assert(len(tables), Equals, 1)
 	c.Assert(len(tables["db"]), Equals, 1)

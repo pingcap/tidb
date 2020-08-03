@@ -146,12 +146,22 @@ func (m *stringIter) HasNext() bool {
 type tableData struct {
 	database        string
 	table           string
+	query           string
 	chunkIndex      int
 	rows            *sql.Rows
 	colTypes        []*sql.ColumnType
 	selectedField   string
 	specCmts        []string
 	escapeBackslash bool
+}
+
+func (td *tableData) Start(ctx context.Context, conn *sql.Conn) error {
+	rows, err := conn.QueryContext(ctx, td.query)
+	if err != nil {
+		return err
+	}
+	td.rows = rows
+	return nil
 }
 
 func (td *tableData) ColumnTypes() []string {
@@ -241,7 +251,7 @@ func splitTableDataIntoChunks(
 	tableDataIRCh chan TableDataIR,
 	errCh chan error,
 	linear chan struct{},
-	dbName, tableName string, db *sql.DB, conf *Config) {
+	dbName, tableName string, db *sql.Conn, conf *Config) {
 	field, err := pickupPossibleField(dbName, tableName, db, conf)
 	if err != nil {
 		errCh <- withStack(err)
@@ -263,7 +273,7 @@ func splitTableDataIntoChunks(
 
 	var smin sql.NullString
 	var smax sql.NullString
-	row := db.QueryRow(query)
+	row := db.QueryRowContext(ctx, query)
 	err = row.Scan(&smin, &smax)
 	if err != nil {
 		log.Error("split chunks - get max min failed", zap.String("query", query), zap.Error(err))
@@ -329,11 +339,6 @@ LOOP:
 		chunkIndex += 1
 		where := fmt.Sprintf("%s(`%s` >= %d AND `%s` < %d)", nullValueCondition, escapeString(field), cutoff, escapeString(field), cutoff+estimatedStep)
 		query = buildSelectQuery(dbName, tableName, selectedField, buildWhereCondition(conf, where), orderByClause)
-		rows, err := db.Query(query)
-		if err != nil {
-			errCh <- errors.WithMessage(err, query)
-			return
-		}
 		if len(nullValueCondition) > 0 {
 			nullValueCondition = ""
 		}
@@ -341,7 +346,7 @@ LOOP:
 		td := &tableData{
 			database:      dbName,
 			table:         tableName,
-			rows:          rows,
+			query:         query,
 			chunkIndex:    chunkIndex,
 			colTypes:      colTypes,
 			selectedField: selectedField,

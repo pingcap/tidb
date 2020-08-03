@@ -1,6 +1,7 @@
 package export
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"net/url"
@@ -13,7 +14,7 @@ import (
 	"github.com/pingcap/dumpling/v4/log"
 )
 
-func ShowDatabases(db *sql.DB) ([]string, error) {
+func ShowDatabases(db *sql.Conn) ([]string, error) {
 	var res oneStrColumnTable
 	if err := simpleQuery(db, "SHOW DATABASES", res.handleOneRow); err != nil {
 		return nil, err
@@ -22,7 +23,7 @@ func ShowDatabases(db *sql.DB) ([]string, error) {
 }
 
 // ShowTables shows the tables of a database, the caller should use the correct database.
-func ShowTables(db *sql.DB) ([]string, error) {
+func ShowTables(db *sql.Conn) ([]string, error) {
 	var res oneStrColumnTable
 	if err := simpleQuery(db, "SHOW TABLES", res.handleOneRow); err != nil {
 		return nil, err
@@ -30,7 +31,7 @@ func ShowTables(db *sql.DB) ([]string, error) {
 	return res.data, nil
 }
 
-func ShowCreateDatabase(db *sql.DB, database string) (string, error) {
+func ShowCreateDatabase(db *sql.Conn, database string) (string, error) {
 	var oneRow [2]string
 	handleOneRow := func(rows *sql.Rows) error {
 		return rows.Scan(&oneRow[0], &oneRow[1])
@@ -43,7 +44,7 @@ func ShowCreateDatabase(db *sql.DB, database string) (string, error) {
 	return oneRow[1], nil
 }
 
-func ShowCreateTable(db *sql.DB, database, table string) (string, error) {
+func ShowCreateTable(db *sql.Conn, database, table string) (string, error) {
 	var oneRow [2]string
 	handleOneRow := func(rows *sql.Rows) error {
 		return rows.Scan(&oneRow[0], &oneRow[1])
@@ -56,7 +57,7 @@ func ShowCreateTable(db *sql.DB, database, table string) (string, error) {
 	return oneRow[1], nil
 }
 
-func ShowCreateView(db *sql.DB, database, view string) (string, error) {
+func ShowCreateView(db *sql.Conn, database, view string) (string, error) {
 	var oneRow [4]string
 	handleOneRow := func(rows *sql.Rows) error {
 		return rows.Scan(&oneRow[0], &oneRow[1], &oneRow[2], &oneRow[3])
@@ -69,16 +70,7 @@ func ShowCreateView(db *sql.DB, database, view string) (string, error) {
 	return oneRow[1], nil
 }
 
-func ListAllTables(db *sql.DB, database string) ([]string, error) {
-	var tables oneStrColumnTable
-	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = ? and table_type = 'BASE TABLE'"
-	if err := simpleQueryWithArgs(db, tables.handleOneRow, query, database); err != nil {
-		return nil, errors.WithMessage(err, query)
-	}
-	return tables.data, nil
-}
-
-func ListAllDatabasesTables(db *sql.DB, databaseNames []string, tableType TableType) (DatabaseTables, error) {
+func ListAllDatabasesTables(db *sql.Conn, databaseNames []string, tableType TableType) (DatabaseTables, error) {
 	var tableTypeStr string
 	switch tableType {
 	case TableTypeBase:
@@ -112,7 +104,16 @@ func ListAllDatabasesTables(db *sql.DB, databaseNames []string, tableType TableT
 	return dbTables, nil
 }
 
-func ListAllViews(db *sql.DB, database string) ([]string, error) {
+func ListAllTables(db *sql.Conn, database string) ([]string, error) {
+	var tables oneStrColumnTable
+	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = ? and table_type = 'BASE TABLE'"
+	if err := simpleQueryWithArgs(db, tables.handleOneRow, query, database); err != nil {
+		return nil, errors.WithMessage(err, query)
+	}
+	return tables.data, nil
+}
+
+func ListAllViews(db *sql.Conn, database string) ([]string, error) {
 	var views oneStrColumnTable
 	const query = "SELECT table_name FROM information_schema.tables WHERE table_schema = ? and table_type = 'VIEW'"
 	if err := simpleQueryWithArgs(db, views.handleOneRow, query, database); err != nil {
@@ -123,17 +124,15 @@ func ListAllViews(db *sql.DB, database string) ([]string, error) {
 
 func SelectVersion(db *sql.DB) (string, error) {
 	var versionInfo string
-	handleOneRow := func(rows *sql.Rows) error {
-		return rows.Scan(&versionInfo)
-	}
-	err := simpleQuery(db, "SELECT version()", handleOneRow)
+	row := db.QueryRow("SELECT version()")
+	err := row.Scan(&versionInfo)
 	if err != nil {
 		return "", withStack(err)
 	}
 	return versionInfo, nil
 }
 
-func SelectAllFromTable(conf *Config, db *sql.DB, database, table string) (TableDataIR, error) {
+func SelectAllFromTable(conf *Config, db *sql.Conn, database, table string) (TableDataIR, error) {
 	selectedField, err := buildSelectField(db, database, table)
 	if err != nil {
 		return nil, err
@@ -150,15 +149,11 @@ func SelectAllFromTable(conf *Config, db *sql.DB, database, table string) (Table
 	}
 
 	query := buildSelectQuery(database, table, selectedField, buildWhereCondition(conf, ""), orderByClause)
-	rows, err := db.Query(query)
-	if err != nil {
-		return nil, withStack(errors.WithMessage(err, query))
-	}
 
 	return &tableData{
 		database:        database,
 		table:           table,
-		rows:            rows,
+		query:           query,
 		colTypes:        colTypes,
 		selectedField:   selectedField,
 		escapeBackslash: conf.EscapeBackslash,
@@ -168,8 +163,8 @@ func SelectAllFromTable(conf *Config, db *sql.DB, database, table string) (Table
 	}, nil
 }
 
-func SelectFromSql(conf *Config, db *sql.DB) (TableDataIR, error) {
-	rows, err := db.Query(conf.Sql)
+func SelectFromSql(conf *Config, db *sql.Conn) (TableDataIR, error) {
+	rows, err := db.QueryContext(context.Background(), conf.Sql)
 	if err != nil {
 		return nil, withStack(errors.WithMessage(err, conf.Sql))
 	}
@@ -220,7 +215,7 @@ func buildSelectQuery(database, table string, fields string, where string, order
 	return query.String()
 }
 
-func buildOrderByClause(conf *Config, db *sql.DB, database, table string) (string, error) {
+func buildOrderByClause(conf *Config, db *sql.Conn, database, table string) (string, error) {
 	if !conf.SortByPk {
 		return "", nil
 	}
@@ -246,10 +241,10 @@ func buildOrderByClause(conf *Config, db *sql.DB, database, table string) (strin
 	return "", nil
 }
 
-func SelectTiDBRowID(db *sql.DB, database, table string) (bool, error) {
+func SelectTiDBRowID(db *sql.Conn, database, table string) (bool, error) {
 	const errBadFieldCode = 1054
 	tiDBRowIDQuery := fmt.Sprintf("SELECT _tidb_rowid from `%s`.`%s` LIMIT 0", escapeString(database), escapeString(table))
-	_, err := db.Exec(tiDBRowIDQuery)
+	_, err := db.ExecContext(context.Background(), tiDBRowIDQuery)
 	if err != nil {
 		errMsg := strings.ToLower(err.Error())
 		if strings.Contains(errMsg, fmt.Sprintf("%d", errBadFieldCode)) {
@@ -260,9 +255,9 @@ func SelectTiDBRowID(db *sql.DB, database, table string) (bool, error) {
 	return true, nil
 }
 
-func GetColumnTypes(db *sql.DB, fields, database, table string) ([]*sql.ColumnType, error) {
+func GetColumnTypes(db *sql.Conn, fields, database, table string) ([]*sql.ColumnType, error) {
 	query := fmt.Sprintf("SELECT %s FROM `%s`.`%s` LIMIT 1", fields, escapeString(database), escapeString(table))
-	rows, err := db.Query(query)
+	rows, err := db.QueryContext(context.Background(), query)
 	if err != nil {
 		return nil, withStack(errors.WithMessage(err, query))
 	}
@@ -270,11 +265,11 @@ func GetColumnTypes(db *sql.DB, fields, database, table string) ([]*sql.ColumnTy
 	return rows.ColumnTypes()
 }
 
-func GetPrimaryKeyName(db *sql.DB, database, table string) (string, error) {
+func GetPrimaryKeyName(db *sql.Conn, database, table string) (string, error) {
 	priKeyQuery := "SELECT column_name FROM information_schema.columns " +
 		"WHERE table_schema = ? AND table_name = ? AND column_key = 'PRI';"
 	var colName string
-	row := db.QueryRow(priKeyQuery, database, table)
+	row := db.QueryRowContext(context.Background(), priKeyQuery, database, table)
 	if err := row.Scan(&colName); err != nil {
 		if err == sql.ErrNoRows {
 			return "", nil
@@ -285,11 +280,11 @@ func GetPrimaryKeyName(db *sql.DB, database, table string) (string, error) {
 	return colName, nil
 }
 
-func GetUniqueIndexName(db *sql.DB, database, table string) (string, error) {
+func GetUniqueIndexName(db *sql.Conn, database, table string) (string, error) {
 	uniKeyQuery := "SELECT column_name FROM information_schema.columns " +
 		"WHERE table_schema = ? AND table_name = ? AND column_key = 'UNI';"
 	var colName string
-	row := db.QueryRow(uniKeyQuery, database, table)
+	row := db.QueryRowContext(context.Background(), uniKeyQuery, database, table)
 	if err := row.Scan(&colName); err != nil {
 		if err == sql.ErrNoRows {
 			return "", nil
@@ -320,7 +315,7 @@ func UseDatabase(db *sql.DB, databaseName string) error {
 	return withStack(err)
 }
 
-func ShowMasterStatus(db *sql.DB, fieldNum int) ([]string, error) {
+func ShowMasterStatus(db *sql.Conn, fieldNum int) ([]string, error) {
 	oneRow := make([]string, fieldNum)
 	addr := make([]interface{}, fieldNum)
 	for i := range oneRow {
@@ -387,17 +382,15 @@ func GetTiDBDDLIDs(db *sql.DB) ([]string, error) {
 
 func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	var count int
-	handleOneRow := func(rows *sql.Rows) error {
-		return rows.Scan(&count)
-	}
-	err := simpleQuery(db, "SELECT COUNT(1) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'", handleOneRow)
+	row := db.QueryRow("SELECT COUNT(1) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'")
+	err := row.Scan(&count)
 	if err != nil {
 		return false, err
 	}
 	return count > 0, nil
 }
 
-func getSnapshot(db *sql.DB) (string, error) {
+func getSnapshot(db *sql.Conn) (string, error) {
 	str, err := ShowMasterStatus(db, showMasterStatusFieldNum)
 	if err != nil {
 		return "", err
@@ -445,9 +438,25 @@ func resetDBWithSessionParams(db *sql.DB, dsn string, params map[string]interfac
 	return newDB, nil
 }
 
-func buildSelectField(db *sql.DB, dbName, tableName string) (string, error) {
+func createConnWithConsistency(ctx context.Context, db *sql.DB) (*sql.Conn, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	_, err = conn.ExecContext(ctx, "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+	if err != nil {
+		return nil, err
+	}
+	_, err = conn.ExecContext(ctx, "START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */")
+	if err != nil {
+		return nil, err
+	}
+	return conn, err
+}
+
+func buildSelectField(db *sql.Conn, dbName, tableName string) (string, error) {
 	query := `SELECT COLUMN_NAME,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=?;`
-	rows, err := db.Query(query, dbName, tableName)
+	rows, err := db.QueryContext(context.Background(), query, dbName, tableName)
 	if err != nil {
 		return "", err
 	}
@@ -488,12 +497,12 @@ func (o *oneStrColumnTable) handleOneRow(rows *sql.Rows) error {
 	return nil
 }
 
-func simpleQuery(db *sql.DB, sql string, handleOneRow func(*sql.Rows) error) error {
-	return simpleQueryWithArgs(db, handleOneRow, sql)
+func simpleQuery(conn *sql.Conn, sql string, handleOneRow func(*sql.Rows) error) error {
+	return simpleQueryWithArgs(conn, handleOneRow, sql)
 }
 
-func simpleQueryWithArgs(db *sql.DB, handleOneRow func(*sql.Rows) error, sql string, args ...interface{}) error {
-	rows, err := db.Query(sql, args...)
+func simpleQueryWithArgs(conn *sql.Conn, handleOneRow func(*sql.Rows) error, sql string, args ...interface{}) error {
+	rows, err := conn.QueryContext(context.Background(), sql, args...)
 	if err != nil {
 		return withStack(err)
 	}
@@ -507,7 +516,7 @@ func simpleQueryWithArgs(db *sql.DB, handleOneRow func(*sql.Rows) error, sql str
 	return rows.Err()
 }
 
-func pickupPossibleField(dbName, tableName string, db *sql.DB, conf *Config) (string, error) {
+func pickupPossibleField(dbName, tableName string, db *sql.Conn, conf *Config) (string, error) {
 	// If detected server is TiDB, try using _tidb_rowid
 	if conf.ServerInfo.ServerType == ServerTypeTiDB {
 		ok, err := SelectTiDBRowID(db, dbName, tableName)
@@ -539,7 +548,7 @@ func pickupPossibleField(dbName, tableName string, db *sql.DB, conf *Config) (st
 	query := "SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS " +
 		"WHERE TABLE_NAME = ? AND COLUMN_NAME = ?"
 	var fieldType string
-	row := db.QueryRow(query, tableName, fieldName)
+	row := db.QueryRowContext(context.Background(), query, tableName, fieldName)
 	err = row.Scan(&fieldType)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -555,7 +564,7 @@ func pickupPossibleField(dbName, tableName string, db *sql.DB, conf *Config) (st
 	return "", nil
 }
 
-func estimateCount(dbName, tableName string, db *sql.DB, field string, conf *Config) uint64 {
+func estimateCount(dbName, tableName string, db *sql.Conn, field string, conf *Config) uint64 {
 	query := fmt.Sprintf("EXPLAIN SELECT `%s` FROM `%s`.`%s`", field, escapeString(dbName), escapeString(tableName))
 
 	if conf.Where != "" {
@@ -592,13 +601,14 @@ func estimateCount(dbName, tableName string, db *sql.DB, field string, conf *Con
 	return 0
 }
 
-func detectEstimateRows(db *sql.DB, query string, fieldNames []string) uint64 {
-	row, err := db.Query(query)
+func detectEstimateRows(db *sql.Conn, query string, fieldNames []string) uint64 {
+	row, err := db.QueryContext(context.Background(), query)
 	if err != nil {
 		log.Warn("can't execute query from db",
 			zap.String("query", query), zap.Error(err))
 		return 0
 	}
+	defer row.Close()
 	row.Next()
 	columns, _ := row.Columns()
 	addr := make([]interface{}, len(columns))
@@ -638,18 +648,13 @@ func parseSnapshotToTSO(pool *sql.DB, snapshot string) (uint64, error) {
 		return snapshotTS, nil
 	}
 	var tso sql.NullInt64
-	err = simpleQueryWithArgs(pool, func(rows *sql.Rows) error {
-		err := rows.Scan(&tso)
-		if err != nil {
-			return err
-		}
-		if !tso.Valid {
-			return fmt.Errorf("snapshot %s format not supported. please use tso or '2006-01-02 15:04:05' format time", snapshot)
-		}
-		return nil
-	}, "SELECT unix_timestamp(?)", snapshot)
+	row := pool.QueryRow("SELECT unix_timestamp(?)", snapshot)
+	err = row.Scan(&tso)
 	if err != nil {
 		return 0, withStack(err)
+	}
+	if !tso.Valid {
+		return 0, withStack(fmt.Errorf("snapshot %s format not supported. please use tso or '2006-01-02 15:04:05' format time", snapshot))
 	}
 	return (uint64(tso.Int64)<<18)*1000 + 1, nil
 }
