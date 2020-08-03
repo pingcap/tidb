@@ -1890,13 +1890,14 @@ LOOP:
 			}
 			step := 10
 			rand.Seed(time.Now().Unix())
+			// Deletion and insertion may fail due to schema version changement.
+			errorMsg := "*Information schema is changed during the execution of the statement*"
 			maxRetries := 3
 			// delete some rows, and add some data
 			for i := count; i < count+step; i++ {
 				n := rand.Intn(count)
-				// Deletion and insertion may fail due to schema version changement.
-				tk.AssertErrorAndRetry(tmysql.ErrInfoSchemaExpired, maxRetries, "delete from t1 where c1 = ?", n)
-				tk.AssertErrorAndRetry(tmysql.ErrInfoSchemaExpired, maxRetries, "insert into t1 values (?, ?, ?)", i+10, i, i)
+				tk.AssertErrorAndRetry(errorMsg, maxRetries, "delete from t1 where c1 = ?", n)
+				tk.AssertErrorAndRetry(errorMsg, maxRetries, "insert into t1 values (?, ?, ?)", i+10, i, i)
 			}
 			count += step
 			times++

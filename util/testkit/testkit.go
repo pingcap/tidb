@@ -336,16 +336,14 @@ func WithPruneMode(tk *TestKit, mode variable.PartitionPruneMode, f func()) {
 }
 
 // AssertErrorAndRetry asserts the error and retries the sql.
-func (tk *TestKit) AssertErrorAndRetry(errCode, maxRetries int, sql string, args ...interface{}) {
+func (tk *TestKit) AssertErrorAndRetry(errorMsg string, maxRetries int, sql string, args ...interface{}) {
 	for i := 0; i <= maxRetries; i++ {
-		tk.c.Assert(i < maxRetries, check.IsTrue, check.Commentf("sql: %s, args: %v, retries: %d", sql, args, maxRetries))
-		res, err := tk.Exec(sql, args...)
+		tk.c.Assert(i < maxRetries, check.IsTrue)
+		res, err := tk.Exec(sql, args)
 		if err != nil {
-			tk.MustGetErrCode(err.Error(), errCode)
+			tk.c.Assert(err.Error(), check.Matches, errorMsg)
 		} else {
-			if res != nil {
-				tk.c.Assert(res.Close(), check.IsNil)
-			}
+			tk.c.Assert(res.Close(), check.IsNil)
 			break
 		}
 	}
