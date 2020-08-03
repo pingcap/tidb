@@ -63,7 +63,6 @@ type StatementContext struct {
 	IsDDLJobInQueue        bool
 	InInsertStmt           bool
 	InUpdateStmt           bool
-	InOnDuplicateUpdate    bool
 	InDeleteStmt           bool
 	InSelectStmt           bool
 	InLoadDataStmt         bool

@@ -1053,6 +1053,9 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}
+	if idx.Meta().Unique {
+		txn.GetUnionStore().CacheIndexName(t.physicalTableID, idx.Meta().ID, idx.Meta().Name.String())
+	}
 	if _, err := idx.Create(ctx, txn.GetUnionStore(), vals, h, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
