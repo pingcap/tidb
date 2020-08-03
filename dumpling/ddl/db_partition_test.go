@@ -2366,7 +2366,7 @@ func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
 	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
 
 	// Cover a bug that schema validator does not prevent transaction commit when
-	// the schema has changeed on the partitioned table.
+	// the schema has changed on the partitioned table.
 	// That bug will cause data and index inconsistency!
 	tk.MustExec("admin check table schema_change")
 	tk.MustQuery("select * from schema_change").Check(testkit.Rows())
