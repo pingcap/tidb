@@ -66,7 +66,7 @@ func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {
 
 	tk.MustExec("update pessimistic set v = 2 where v = 1")
 
-	// Update can see the change, so this statement affects 0 roews.
+	// Update can see the change, so this statement affects 0 rows.
 	tk1.MustExec("update pessimistic set v = 3 where v = 1")
 	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(0))
 	c.Assert(session.GetHistory(tk1.Se).Count(), Equals, 0)
@@ -1392,4 +1392,30 @@ func (s *testPessimisticSuite) TestPointGetWithDeleteInMem(c *C) {
 	tk2.MustQuery("select * from uk where c2 = 77").Check(testkit.Rows("10 77"))
 	tk2.MustQuery("select * from uk where c1 = 10").Check(testkit.Rows("10 77"))
 	tk.MustExec("drop table if exists uk")
+}
+
+func (s *testPessimisticSuite) TestPessimisticTxnWithDDLAddDropColumn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int)")
+	tk.MustExec("insert t1 values (1, 77), (2, 88)")
+	tk.MustExec("alter table t1 add index k2(c2)")
+	tk.MustExec("alter table t1 drop index k2")
+
+	// tk2 starts a pessimistic transaction and make some changes on table t1.
+	// tk executes some ddl statements add/drop column on table t1.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t1 set c2 = c1 * 10")
+	tk2.MustExec("alter table t1 add column c3 int after c1")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t1")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 <nil> 10", "2 <nil> 20"))
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values(5, 5, 5)")
+	tk2.MustExec("alter table t1 drop column c3")
+	tk2.MustExec("alter table t1 drop column c2")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2", "5"))
 }

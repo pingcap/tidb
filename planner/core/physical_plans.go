@@ -16,6 +16,7 @@ package core
 import (
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -74,6 +75,12 @@ type PhysicalTableReader struct {
 	StoreType kv.StoreType
 
 	IsCommonHandle bool
+
+	// Used by partition table.
+	PartitionTable struct {
+		PruningConds   []expression.Expression
+		PartitionNames []model.CIStr
+	}
 }
 
 // GetTablePlan exports the tablePlan.
@@ -158,6 +165,12 @@ type PhysicalIndexReader struct {
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
+
+	// Used by partition table.
+	PartitionTable struct {
+		PruningConds   []expression.Expression
+		PartitionNames []model.CIStr
+	}
 }
 
 // Clone implements PhysicalPlan interface.
@@ -236,6 +249,12 @@ type PhysicalIndexLookUpReader struct {
 	PushedLimit *PushedDownLimit
 
 	CommonHandleCols []*expression.Column
+
+	// Used by partition table.
+	PartitionTable struct {
+		PruningConds   []expression.Expression
+		PartitionNames []model.CIStr
+	}
 }
 
 // Clone implements PhysicalPlan interface.
@@ -258,8 +277,12 @@ func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
 	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
 		return nil, err
 	}
-	cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
-	cloned.PushedLimit = p.PushedLimit.Clone()
+	if p.ExtraHandleCol != nil {
+		cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
+	}
+	if p.PushedLimit != nil {
+		cloned.PushedLimit = p.PushedLimit.Clone()
+	}
 	return cloned, nil
 }
 
@@ -421,7 +444,8 @@ type PhysicalTableScan struct {
 	rangeDecidedBy []*expression.Column
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
-	HandleIdx []int
+	HandleIdx  []int
+	HandleCols HandleCols
 
 	StoreType kv.StoreType
 
@@ -573,7 +597,25 @@ type PhysicalApply struct {
 	PhysicalHashJoin
 
 	CanUseCache bool
+	Concurrency int
 	OuterSchema []*expression.CorrelatedColumn
+}
+
+// Clone implements PhysicalPlan interface.
+func (la *PhysicalApply) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalApply)
+	base, err := la.PhysicalHashJoin.Clone()
+	if err != nil {
+		return nil, err
+	}
+	hj := base.(*PhysicalHashJoin)
+	cloned.PhysicalHashJoin = *hj
+	cloned.CanUseCache = la.CanUseCache
+	cloned.Concurrency = la.Concurrency
+	for _, col := range la.OuterSchema {
+		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
+	}
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -601,6 +643,7 @@ type basePhysicalJoin struct {
 	InnerJoinKeys []*expression.Column
 	LeftJoinKeys  []*expression.Column
 	RightJoinKeys []*expression.Column
+	IsNullEQ      []bool
 	DefaultValues []types.Datum
 }
 
@@ -688,13 +731,14 @@ func (p *PhysicalHashJoin) ExtractCorrelatedCols() []*expression.CorrelatedColum
 
 // NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
 func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, newStats *property.StatsInfo, prop ...*property.PhysicalProperty) *PhysicalHashJoin {
-	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
+	leftJoinKeys, rightJoinKeys, isNullEQ, _ := p.GetJoinKeys()
 	baseJoin := basePhysicalJoin{
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
 		LeftJoinKeys:    leftJoinKeys,
 		RightJoinKeys:   rightJoinKeys,
+		IsNullEQ:        isNullEQ,
 		JoinType:        p.JoinType,
 		DefaultValues:   p.DefaultValues,
 		InnerChildIdx:   innerIdx,
@@ -1152,4 +1196,14 @@ func BuildMergeJoinPlan(ctx sessionctx.Context, joinType JoinType, leftKeys, rig
 		RightJoinKeys: rightKeys,
 	}
 	return PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(ctx, nil, 0)
+}
+
+// SafeClone clones this PhysicalPlan and handles its panic.
+func SafeClone(v PhysicalPlan) (_ PhysicalPlan, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Errorf("%v", r)
+		}
+	}()
+	return v.Clone()
 }

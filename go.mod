@@ -27,7 +27,7 @@ require (
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/pingcap/badger v1.5.1-0.20200604041313-19c397305fcc
-	github.com/pingcap/br v0.0.0-20200723130425-d904ae3349a1
+	github.com/pingcap/br v0.0.0-20200727092753-a475692725db
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
 	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
@@ -35,7 +35,7 @@ require (
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200715040832-c3e2e0b163ee
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
-	github.com/pingcap/parser v0.0.0-20200623082809-b74301ac298b
+	github.com/pingcap/parser v0.0.0-20200730092557-34a468e9b774
 	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200715061836-4971825321cf
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
 	github.com/pingcap/tidb-tools v4.0.1+incompatible
