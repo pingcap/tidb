@@ -796,6 +796,9 @@ type LoadData struct {
 	LinesInfo   *ast.LinesClause
 	IgnoreLines uint64
 
+	ColumnAssignments  []*ast.Assignment
+	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+
 	GenCols InsertGeneratedColumns
 }
 

@@ -838,6 +838,144 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 		dbt.mustExec("drop table if exists pn")
 	})
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test Column List Specification
+	_, err = fp.WriteString(
+		`1,2` + "\n" +
+			`3,4` + "\n")
+	c.Assert(err, IsNil)
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("drop table if exists pn")
+		dbt.mustExec("create table pn (c1 int, c2 int)")
+		dbt.mustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, c2)`)
+		dbt.Assert(err1, IsNil)
+		var (
+			a int
+			b int
+		)
+		rows := dbt.mustQuery("select * from pn")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 1)
+		dbt.Check(b, Equals, 2)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 3)
+		dbt.Check(b, Equals, 4)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+
+		dbt.mustExec("drop table if exists pn")
+	})
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test Column List Specification
+	_, err = fp.WriteString(
+		`1,2,3` + "\n" +
+			`4,5,6` + "\n")
+	c.Assert(err, IsNil)
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("drop table if exists pn")
+		dbt.mustExec("create table pn (c1 int, c2 int, c3 int)")
+		dbt.mustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, @dummy)`)
+		dbt.Assert(err1, IsNil)
+		var (
+			a int
+			b sql.NullString
+			c sql.NullString
+		)
+		rows := dbt.mustQuery("select * from pn")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b, &c)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 1)
+		dbt.Check(b.String, Equals, "")
+		dbt.Check(c.String, Equals, "")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b, &c)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 4)
+		dbt.Check(b.String, Equals, "")
+		dbt.Check(c.String, Equals, "")
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+
+		dbt.mustExec("drop table if exists pn")
+	})
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test Input Preprocessing
+	_, err = fp.WriteString(
+		`1,2,3` + "\n" +
+			`4,5,6` + "\n")
+	c.Assert(err, IsNil)
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("drop table if exists pn")
+		dbt.mustExec("create table pn (c1 int, c2 int, c3 int)")
+		dbt.mustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, @val1, @val2) SET c3 = @val2 * 100, c2 = CAST(@val1 AS UNSIGNED)`)
+		dbt.Assert(err1, IsNil)
+		var (
+			a int
+			b int
+			c int
+		)
+		rows := dbt.mustQuery("select * from pn")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b, &c)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 1)
+		dbt.Check(b, Equals, 2)
+		dbt.Check(c, Equals, 300)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b, &c)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 4)
+		dbt.Check(b, Equals, 5)
+		dbt.Check(c, Equals, 600)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+
+		dbt.mustExec("drop table if exists pn")
+	})
 }
 
 func (cli *testServerClient) runTestConcurrentUpdate(c *C) {
