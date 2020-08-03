@@ -872,7 +872,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	testCreateTable(c, ctx, d, dbInfo, baseTableInfo)
 
 	cancelState = model.StateNone
-	updateTest(&tests[45])
+	updateTest(&tests[34])
 	addedPartInfo := testAddedNewTablePartitionInfo(c, d, baseTableInfo, "p1", "maxvalue")
 	addPartitionArgs := []interface{}{addedPartInfo}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs, &cancelState)
@@ -880,13 +880,13 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	baseTable := testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
 	c.Assert(len(baseTable.Meta().Partition.Definitions), Equals, 1)
 
-	updateTest(&tests[46])
+	updateTest(&tests[35])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs, &cancelState)
 	c.Check(checkErr, IsNil)
 	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
 	c.Assert(len(baseTable.Meta().Partition.Definitions), Equals, 1)
 
-	updateTest(&tests[47])
+	updateTest(&tests[36])
 	doDDLJobSuccess(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs)
 	c.Check(checkErr, IsNil)
 	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
