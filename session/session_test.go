@@ -17,6 +17,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -69,6 +71,7 @@ var _ = Suite(&testSchemaSuite{})
 var _ = Suite(&testIsolationSuite{})
 var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
+var _ = SerialSuites(&testBackupRestoreSuite{})
 
 type testSessionSuiteBase struct {
 	cluster   *mocktikv.Cluster
@@ -91,6 +94,10 @@ type testSessionSuite3 struct {
 }
 
 type testSessionSerialSuite struct {
+	testSessionSuiteBase
+}
+
+type testBackupRestoreSuite struct {
 	testSessionSuiteBase
 }
 
@@ -2633,7 +2640,8 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("set @@tidb_backoff_lock_fast = 1")
 	tk.MustExec("set @@tidb_backoff_weight = 100")
-	tk.MustExec("create table if not exists kvvars (a int)")
+	tk.MustExec("create table if not exists kvvars (a int key)")
+	tk.MustExec("insert into kvvars values (1)")
 	tk.MustExec("begin")
 	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
@@ -2649,6 +2657,13 @@ func (s *testSessionSerialSuite) TestKVVars(c *C) {
 	c.Assert(err, IsNil)
 	vars = txn.GetVars()
 	c.Assert(vars.BackOffWeight, Equals, 50)
+
+	tk.MustExec("set @@autocommit = 1")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/probeSetVars", `return(true)`), IsNil)
+	tk.MustExec("select * from kvvars where a = 1")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/probeSetVars"), IsNil)
+	c.Assert(tikv.SetSuccess, IsTrue)
+	tikv.SetSuccess = false
 }
 
 func (s *testSessionSuite2) TestCommitRetryCount(c *C) {
@@ -3205,4 +3220,37 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	tk.MustExec("commit")
 
 	c.Assert(taskID1 != taskID2, IsTrue)
+}
+
+func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
+	// only run BR SQL integration test with tikv store.
+	if *withTiKV {
+		cfg := config.GetGlobalConfig()
+		cfg.Store = "tikv"
+		cfg.Path = s.pdAddr
+		config.StoreGlobalConfig(cfg)
+		tk := testkit.NewTestKitWithInit(c, s.store)
+		tk.MustExec("create database if not exists br")
+		tk.MustExec("use br")
+		tk.MustExec("create table t1(v int)")
+		tk.MustExec("insert into t1 values (1)")
+		tk.MustExec("insert into t1 values (2)")
+		tk.MustExec("insert into t1 values (3)")
+
+		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
+
+		tmpDir := path.Join(os.TempDir(), "bk1")
+		os.RemoveAll(tmpDir)
+		// backup database to tmp dir
+		tk.MustQuery("backup database br to 'local://" + tmpDir + "'")
+
+		// remove database for recovery
+		tk.MustExec("drop database br")
+
+		// restore database with backup data
+		tk.MustQuery("restore database br from 'local://" + tmpDir + "'")
+		tk.MustExec("use br")
+		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
+		tk.MustExec("drop database br")
+	}
 }
