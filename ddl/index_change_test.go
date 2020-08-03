@@ -194,7 +194,7 @@ func checkIndexExists(ctx sessionctx.Context, tbl table.Table, indexValue interf
 	if err != nil {
 		return errors.Trace(err)
 	}
-	doesExist, _, err := idx.Exist(ctx.GetSessionVars().StmtCtx, txn, types.MakeDatums(indexValue), kv.IntHandle(handle))
+	doesExist, _, err := idx.Exist(ctx.GetSessionVars().StmtCtx, txn.GetUnionStore(), types.MakeDatums(indexValue), kv.IntHandle(handle))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -329,7 +329,7 @@ func (s *testIndexChangeSuite) checkAddPublic(d *ddl, ctx sessionctx.Context, wr
 
 	var rows [][]types.Datum
 	publicTbl.IterRecords(ctx, publicTbl.FirstKey(), publicTbl.Cols(),
-		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			rows = append(rows, data)
 			return true, nil
 		})

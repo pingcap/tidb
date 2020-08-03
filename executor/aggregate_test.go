@@ -839,6 +839,19 @@ func (s *testSuiteAgg) TestAggEliminator(c *C) {
 	tk.MustQuery("select group_concat(b, b) from t group by a").Sort().Check(testkit.Rows("-1-1", "-2-2", "11", "<nil>"))
 }
 
+func (s *testSuiteAgg) TestClusterIndexMaxMinEliminator(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
+	for i := 0; i < 10+1; i++ {
+		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
+	}
+	tk.MustQuery("select max(a), min(a+b) from t;").Check(testkit.Rows("10 0"))
+	tk.MustQuery("select max(a+b), min(a+b) from t;").Check(testkit.Rows("20 0"))
+	tk.MustQuery("select min(a), max(a), min(b), max(b) from t;").Check(testkit.Rows("0 10 0 10"))
+}
+
 func (s *testSuiteAgg) TestMaxMinFloatScalaFunc(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -1057,4 +1070,14 @@ func (s *testSuiteAgg) TestIssue15690(c *C) {
 	tk.MustExec(`insert into t values('a'),('b');`)
 	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "a", "b"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+}
+
+func (s *testSuiteAgg) TestIssue15958(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(y year);`)
+	tk.MustExec(`insert into t values (2020), (2000), (2050);`)
+	tk.MustQuery(`select sum(y) from t`).Check(testkit.Rows("6070"))
+	tk.MustQuery(`select avg(y) from t`).Check(testkit.Rows("2023.3333"))
 }

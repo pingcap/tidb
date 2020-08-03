@@ -90,7 +90,7 @@
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " IndexJoin_10       root inner join, inner:TableReader_9, outer key:test.t1.a, inner key:test.t2.a",
+          " IndexJoin_12       root inner join, inner:TableReader_9, outer key:test.t1.a, inner key:test.t2.a",
           " ├─TableReader_30   root data:Selection_29",
           " │ └─Selection_29   cop  gt(test.t1.c, ?)",
           " │   └─TableScan_28 cop  table:t1, range:[?,?], keep order:false",
@@ -123,12 +123,23 @@
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " IndexJoin_10       root inner join, inner:TableReader_9, outer key:test.t1.a, inner key:test.t2.a",
+          " IndexJoin_12       root inner join, inner:TableReader_9, outer key:test.t1.a, inner key:test.t2.a",
           " ├─TableReader_30   root data:Selection_29",
           " │ └─Selection_29   cop  gt(test.t1.c, ?)",
           " │   └─TableScan_28 cop  table:t1, range:[?,?], keep order:false",
           " └─TableReader_9    root data:TableRangeScan_8",
           "   └─TableScan_8    cop  table:t2, range: decided by [test.t1.a], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select count(1) as num,a from t1 where a=1 group by a union select count(1) as num,a from t1 where a=3 group by a;",
+        "Plan": [
+          " HashAgg_17         root group by:Column#10, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10",
+          " └─Union_18         root ",
+          "   ├─Projection_19  root ?, test.t1.a",
+          "   │ └─Point_Get_20 root table:t1, handle:?",
+          "   └─Projection_21  root ?, test.t1.a",
+          "     └─Point_Get_22 root table:t1, handle:?"
         ]
       },
       {

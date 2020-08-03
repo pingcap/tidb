@@ -29,8 +29,8 @@ type partialResult4CumeDist struct {
 	rows     []chunk.Row
 }
 
-func (r *cumeDist) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4CumeDist{})
+func (r *cumeDist) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	return PartialResult(&partialResult4CumeDist{}), 0
 }
 
 func (r *cumeDist) ResetPartialResult(pr PartialResult) {
@@ -40,10 +40,10 @@ func (r *cumeDist) ResetPartialResult(pr PartialResult) {
 	p.rows = p.rows[:0]
 }
 
-func (r *cumeDist) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (r *cumeDist) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4CumeDist)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
-	return nil
+	return 0, nil
 }
 
 func (r *cumeDist) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

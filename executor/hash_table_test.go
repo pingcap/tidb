@@ -111,7 +111,7 @@ func (h hashCollision) Sum(b []byte) []byte               { panic("not implement
 func (h hashCollision) Size() int                         { panic("not implemented") }
 func (h hashCollision) BlockSize() int                    { panic("not implemented") }
 
-func (s *pkgTestSuite) TestHashRowContainer(c *C) {
+func (s *pkgTestSerialSuite) TestHashRowContainer(c *C) {
 	hashFunc := func() hash.Hash64 {
 		return fnv.New64()
 	}
@@ -134,7 +134,7 @@ func (s *pkgTestSuite) TestHashRowContainer(c *C) {
 	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
 }
 
-func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, spill bool) *hashRowContainer {
+func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, spill bool) *hashRowContainer {
 	sctx := mock.NewContext()
 	var err error
 	numRows := 10
@@ -154,19 +154,18 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(buildSideResultLabel)
 	if spill {
-		rowContainer.ActionSpill().Action(tracker)
 		tracker.SetBytesLimit(1)
+		rowContainer.rowContainer.ActionSpillForTest().Action(tracker)
 	}
-	err = rowContainer.PutChunk(chk0)
+	err = rowContainer.PutChunk(chk0, nil)
 	c.Assert(err, IsNil)
-	err = rowContainer.PutChunk(chk1)
+	err = rowContainer.PutChunk(chk1, nil)
 	c.Assert(err, IsNil)
-
-	c.Assert(rowContainer.alreadySpilled(), Equals, spill)
-	c.Assert(rowContainer.alreadySpilledSafe(), Equals, spill)
+	rowContainer.ActionSpill().(*chunk.SpillDiskAction).WaitForTest()
+	c.Assert(rowContainer.alreadySpilledSafeForTest(), Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() == 0, Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() > 0, Equals, !spill)
-	if rowContainer.alreadySpilled() {
+	if rowContainer.alreadySpilledSafeForTest() {
 		c.Assert(rowContainer.GetDiskTracker(), NotNil)
 		c.Assert(rowContainer.GetDiskTracker().BytesConsumed() > 0, Equals, true)
 	}

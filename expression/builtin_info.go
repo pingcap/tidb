@@ -19,7 +19,6 @@ package expression
 
 import (
 	"encoding/hex"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -778,10 +777,9 @@ func decodeKey(ctx sessionctx.Context, s string) string {
 		return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle.IntValue(), 10)
 	}
 	// Try decode as table index key.
-	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKeyPrefix(key)
+	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
 	if err == nil {
-		idxValueStr := fmt.Sprintf("%X", indexValues)
-		return "tableID=" + strconv.FormatInt(tableID, 10) + ", indexID=" + strconv.FormatInt(indexID, 10) + ", indexValues=" + idxValueStr
+		return "tableID=" + strconv.FormatInt(tableID, 10) + ", indexID=" + strconv.FormatInt(indexID, 10) + ", indexValues=" + strings.Join(indexValues, ",")
 	}
 
 	// TODO: try to decode other type key.
