@@ -531,7 +531,7 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.Al
 	}
 	if alloc := tbl.Allocators(nil).Get(tp); alloc != nil {
 		// The next value to allocate is `newBase`.
-		newEnd := newBase-1
+		newEnd := newBase - 1
 		err = alloc.Rebase(tblInfo.ID, newEnd, false)
 		if err != nil {
 			return ver, errors.Trace(err)
