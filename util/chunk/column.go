@@ -498,15 +498,6 @@ func (c *Column) Times() []types.Time {
 	return res
 }
 
-// MysqlJSONs returns an MysqlJSONs slice stored in this Column.
-func (c *Column) MysqlJSONs() []json.BinaryJSON {
-	var res []json.BinaryJSON
-	for i := 0; i < c.length; i++ {
-		res = append(res, c.GetJSON(i))
-	}
-	return res
-}
-
 // GetInt64 returns the int64 in the specific row.
 func (c *Column) GetInt64(rowID int) int64 {
 	return *(*int64)(unsafe.Pointer(&c.data[rowID*8]))
