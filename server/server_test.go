@@ -50,16 +50,20 @@ var (
 )
 
 func genPorts() (uint, uint) {
-	var ports []int
-	var err error
+	var (
+		ports []int
+		err   error
+	)
 	for ports, err = freeport.GetFreePorts(2); err != nil; ports, err = freeport.GetFreePorts(2) {
 	}
 	return uint(ports[0]), uint(ports[1])
 }
 
 func genPort() uint {
-	var port int
-	var err error
+	var (
+		port int
+		err  error
+	)
 	for port, err = freeport.GetFreePort(); err != nil; port, err = freeport.GetFreePort() {
 	}
 	return uint(port)
