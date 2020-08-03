@@ -325,7 +325,7 @@ func (pb *profileBuilder) addMetricTree(root *metricNode, name string) error {
 	}
 	pb.buf.WriteString(fmt.Sprintf(`subgraph %[1]s { "%[1]s" [shape=box fontsize=16 label="Type: %[1]s\lTime: %s\lDuration: %s\l"] }`, name, pb.start.String(), pb.end.Sub(pb.start).String()))
 	pb.buf.WriteByte('\n')
-	v, err := root.getValue(pb)
+	v, err := pb.GetMaxNodeValue(root)
 	if err != nil {
 		return err
 	}
@@ -335,6 +335,44 @@ func (pb *profileBuilder) addMetricTree(root *metricNode, name string) error {
 		pb.totalValue = 1
 	}
 	return pb.traversal(root)
+}
+
+func (pb *profileBuilder) GetTotalValue(root *metricNode) (float64, error) {
+	if pb.valueTP == metricValueSum {
+		return root.getValue(pb)
+	}
+	return pb.GetMaxNodeValue(root)
+}
+
+func (pb *profileBuilder) GetMaxNodeValue(root *metricNode) (float64, error) {
+	if root == nil {
+		return 0.0, nil
+	}
+	n := root
+	max, err := n.getValue(pb)
+	if err != nil {
+		return max, err
+	}
+	for _, v := range n.labelValue {
+		if v.getValue(pb.valueTP) > max {
+			max = v.getValue(pb.valueTP)
+		}
+	}
+	for _, child := range n.children {
+		childMax, err := pb.GetMaxNodeValue(child)
+		if err != nil {
+			return max, err
+		}
+		if childMax > max {
+			max = childMax
+		}
+		for _, v := range n.labelValue {
+			if v.getValue(pb.valueTP) > max {
+				max = v.getValue(pb.valueTP)
+			}
+		}
+	}
+	return max, nil
 }
 
 func (pb *profileBuilder) traversal(n *metricNode) error {
@@ -413,9 +451,10 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) er
 			if pb.ignoreFraction(v, pb.totalValue) {
 				continue
 			}
-			labelValue := fmt.Sprintf(" %.2fs", v)
+			vStr := time.Duration(v * float64(time.Second)).String()
+			labelValue := fmt.Sprintf(" %s", vStr)
 			pb.addEdge(n.getName(""), n.getName(label), labelValue, "", v)
-			labelValue = fmt.Sprintf("%s\n %.2fs (%.2f%%)", n.getName(label), v, v*100/pb.totalValue)
+			labelValue = fmt.Sprintf("%s\n %s (%.2f%%)", n.getName(label), vStr, v*100/pb.totalValue)
 			pb.addNodeDef(n.getName(label), labelValue, value.getComment(pb.valueTP), v, v)
 		}
 		weight = selfCost / 2
@@ -423,8 +462,9 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) er
 		selfCost = 0
 	}
 
-	label := fmt.Sprintf("%s\n %.2fs (%.2f%%)\nof %.2fs (%.2f%%)",
-		name, selfCost, selfCost*100/pb.totalValue, nodeTotal, nodeTotal*100/pb.totalValue)
+	label := fmt.Sprintf("%s\n %s (%.2f%%)\nof %s (%.2f%%)",
+		name, time.Duration(selfCost*float64(time.Second)).String(), selfCost*100/pb.totalValue,
+		time.Duration(nodeTotal*float64(time.Second)).String(), nodeTotal*100/pb.totalValue)
 	pb.addNodeDef(n.getName(""), label, n.value.getComment(pb.valueTP), weight, selfCost)
 	return nil
 }
