@@ -40,7 +40,7 @@ const (
 // return next weight of string. return (0, 0, 0) when string is done
 // `first` represent first 4 weights of rune
 // `second` represent last 4 weights of rune if exist, 0 if not
-// `newIndex` index of string no decode part
+// `newIndex` index of string not decoded part
 func next(s string, si int) (first, second uint64, newIndex int) {
 	var r rune
 	for si < len(s) {
