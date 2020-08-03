@@ -81,6 +81,23 @@ function build_explain_test()
     GO111MODULE=on go build -o $explain_test
 }
 
+ports=()
+function get_free_ports() {
+    read LOWERPORT UPPERPORT < /proc/sys/net/ipv4/ip_local_port_range
+    ports=()
+    while :
+    do
+        for port in $(shuf -i $LOWERPORT-$UPPERPORT -n 2 | sed 's/\s/\n/g'); do
+            ports+=("$port")
+        done
+        ss -lpn | grep -q ":${ports[0]}" || ss -lpn | grep -q ":${ports[1]}" || break
+    done
+}
+
+get_free_ports
+port=${ports[0]}
+status=${ports[1]}
+
 while getopts "t:s:r:b:c:i:h" opt; do
     case $opt in
         t)
@@ -156,10 +173,10 @@ rm -rf $explain_test_log
 
 echo "start tidb-server, log file: $explain_test_log"
 if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-    $tidb_server -config config.toml -store tikv -path "${TIKV_PATH}" > $explain_test_log 2>&1 &
+    $tidb_server -P "$port" -status "$status" -config config.toml -store tikv -path "${TIKV_PATH}" > $explain_test_log 2>&1 &
     SERVER_PID=$!
 else
-    $tidb_server -config config.toml -store mocktikv -path "" > $explain_test_log 2>&1 &
+    $tidb_server -P "$port" -status "$status" -config config.toml -store mocktikv -path "" > $explain_test_log 2>&1 &
     SERVER_PID=$!
 fi
 echo "tidb-server(PID: $SERVER_PID) started"
@@ -169,18 +186,18 @@ sleep 5
 if [ $record -eq 1 ]; then
     if [ "$record_case" = 'all' ]; then
         echo "record all cases"
-        $explain_test --record --log-level=error
+        $explain_test -port "$port" -status "$status" --record --log-level=error
     else
         echo "record result for case: \"$record_case\""
-        $explain_test --record $record_case --log-level=error
+        $explain_test -port "$port" -status "$status" --record $record_case --log-level=error
     fi
 elif [ $create -eq 1 ]; then
     if [ "$create_case" = 'all' ]; then
         echo "create all cases"
-        $explain_test --create --log-level=error
+        $explain_test -port "$port" -status "$status" --create --log-level=error
     else
         echo "create result for case: \"$create_case\""
-        $explain_test --create $create_case --log-level=error
+        $explain_test -port "$port" -status "$status" --create $create_case --log-level=error
     fi
 else
     if [ -z "$tests" ]; then
@@ -188,7 +205,7 @@ else
     else
         echo "run explain test cases: $tests"
     fi
-    $explain_test --log-level=error $tests
+    $explain_test -port "$port" -status "$status" --log-level=error $tests
 fi
 
 race=`grep 'DATA RACE' $explain_test_log || true`
