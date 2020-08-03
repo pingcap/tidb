@@ -455,7 +455,18 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			}
 		}
 	case types.ETJson:
-		return errors.Errorf("cannot convert type json.BinaryJSON to bool")
+		mysqljsons := buf.MysqlJSONs()
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if mysqljsons[i].IsZero() {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
 	}
 	return nil
 }

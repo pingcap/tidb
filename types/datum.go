@@ -1485,10 +1485,6 @@ func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
 	case KindMysqlJSON:
 		val := d.GetMysqlJSON()
 		isZero = val.IsZero()
-		if val.TypeCode == json.TypeCodeString {
-			iVal, err1 := StrToFloat(sc, string(val.GetString()), false)
-			isZero, err = iVal == 0, err1
-		}
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to bool", d.GetValue(), d.GetValue())
 	}
