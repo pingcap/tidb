@@ -1482,12 +1482,14 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
+const tiflashLabel = "tiflash"
+
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
 func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	isTiFlashStore := func(store *metapb.Store) bool {
 		isTiFlash := false
 		for _, label := range store.Labels {
-			if label.GetKey() == "engine" && label.GetValue() == "tiflash" {
+			if label.GetKey() == "engine" && label.GetValue() == tiflashLabel {
 				isTiFlash = true
 			}
 		}
@@ -1521,7 +1523,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 		var tp string
 		if isTiFlashStore(store) {
-			tp = "tiflash"
+			tp = tiflashLabel
 		} else {
 			tp = tikv.GetStoreTypeByMeta(store).Name()
 		}
@@ -1535,6 +1537,26 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		})
 	}
 	return servers, nil
+}
+
+// GetTiFlashStoreCount returns the count of tiflash server.
+func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
+	failpoint.Inject("mockTiFlashStoreCount", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(uint64(10), nil)
+		}
+	})
+
+	stores, err := GetStoreServerInfo(ctx)
+	if err != nil {
+		return cnt, err
+	}
+	for _, store := range stores {
+		if store.ServerType == tiflashLabel {
+			cnt++
+		}
+	}
+	return cnt, nil
 }
 
 var tableNameToColumns = map[string][]columnInfo{
