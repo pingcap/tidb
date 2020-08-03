@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testkit"
@@ -39,23 +38,20 @@ type testBatchCopSuite struct {
 var _ = Suite(&testBatchCopSuite{})
 
 func newStoreWithBootstrap(tiflashNum int) (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c cluster.Cluster) {
-			mockCluster := c.(*mocktikv.Cluster)
-			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
-			tiflashIdx := 0
-			for tiflashIdx < tiflashNum {
-				store2 := c.AllocID()
-				peer2 := c.AllocID()
-				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
-				mockCluster.AddStore(store2, addr2)
-				mockCluster.UpdateStoreAddr(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
-				mockCluster.AddPeer(region1, store2, peer2)
-				tiflashIdx++
-			}
-		}),
-		mockstore.WithStoreType(mockstore.MockTiKV),
-	)
+	var mockCluster = mocktikv.NewCluster()
+	_, _, region1 := mocktikv.BootstrapWithSingleStore(mockCluster)
+	tiflashIdx := 0
+	for tiflashIdx < tiflashNum {
+		store2 := mockCluster.AllocID()
+		peer2 := mockCluster.AllocID()
+		addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+		mockCluster.AddStore(store2, addr2)
+		mockCluster.UpdateStoreAddr(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+		mockCluster.AddPeer(region1, store2, peer2)
+		tiflashIdx++
+	}
+
+	store, err := mockstore.NewMockTikvStore(mockstore.WithCluster(mockCluster))
 
 	if err != nil {
 		return nil, nil, errors.Trace(err)
