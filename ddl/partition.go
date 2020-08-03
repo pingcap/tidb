@@ -22,11 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
->>>>>>> c7c98d7... ddl: add `addingDefinition` field for adding partition replica check (#18495)
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
@@ -43,12 +39,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
->>>>>>> c7c98d7... ddl: add `addingDefinition` field for adding partition replica check (#18495)
 )
 
 const (
@@ -848,18 +840,6 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-<<<<<<< HEAD
-	// If an error occurs, it returns that it cannot delete all partitions or that the partition doesn't exist.
-	err = checkDropTablePartition(tblInfo, partNames)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-	physicalTableIDs := removePartitionInfo(tblInfo, partNames)
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-	if err != nil {
-		return ver, errors.Trace(err)
-=======
 	var physicalTableIDs []int64
 	if job.Type == model.ActionAddTablePartition {
 		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
@@ -876,7 +856,6 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
->>>>>>> c7c98d7... ddl: add `addingDefinition` field for adding partition replica check (#18495)
 	}
 
 	// Finish this job.

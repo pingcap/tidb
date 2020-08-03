@@ -105,15 +105,10 @@ func IsJobRollbackable(job *model.Job) bool {
 			job.SchemaState == model.StateDeleteOnly {
 			return false
 		}
-<<<<<<< HEAD
-	case model.ActionDropColumn, model.ActionModifyColumn,
-		model.ActionDropTablePartition, model.ActionAddTablePartition,
-=======
 	case model.ActionAddTablePartition:
 		return job.SchemaState == model.StateNone || job.SchemaState == model.StateReplicaOnly
-	case model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn,
+	case model.ActionDropColumn, model.ActionModifyColumn,
 		model.ActionDropTablePartition,
->>>>>>> c7c98d7... ddl: add `addingDefinition` field for adding partition replica check (#18495)
 		model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
