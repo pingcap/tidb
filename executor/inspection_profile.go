@@ -17,12 +17,17 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/chunk"
 	"math"
 	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
+)
+
+const (
+	dateTimeFormat = "2006-01-02 15:04:05"
 )
 
 type profileBuilder struct {
@@ -48,6 +53,7 @@ type metricNode struct {
 	// isPartOfParent indicates the parent of this node not fully contain this node.
 	isPartOfParent bool
 	initialized    bool
+	labelComment map[string]string
 }
 
 func (n *metricNode) getName(label string) string {
@@ -76,6 +82,69 @@ func (n *metricNode) getValue(pb *profileBuilder) (float64, error) {
 		n.value = v
 	}
 	return n.value, nil
+}
+
+func (n *metricNode) getComment(pb *profileBuilder) (string, error) {
+	var query string
+	format := "2006-01-02 15:04:05"
+	queryCondition := fmt.Sprintf("where time >= '%v' and time <= '%v'", pb.start.Format(format), pb.end.Format(format))
+	if n.condition != "" {
+		queryCondition += (" and " + n.condition)
+	}
+
+	// 1. Get total count value.
+	if len(n.label) == 0 {
+		query = fmt.Sprintf("select sum(value), '' from `metrics_schema`.`%v_total_count` %v", n.table, queryCondition)
+	} else {
+		query = fmt.Sprintf("select sum(value), `%[3]s` from `metrics_schema`.`%[1]s_total_count` %[2]s group by `%[3]s` having sum(value) > 0",
+			n.table, queryCondition, strings.Join(n.label, "`,`"))
+	}
+	rows, _, err := pb.sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(context.Background(), query)
+	if err != nil {
+		return "", err
+	}
+	if len(rows) == 0 || rows[0].Len() == 0 {
+		return "", nil
+	}
+
+	totalCount := 0.0
+	for _, row := range rows {
+		v := row.GetFloat64(0)
+		label := ""
+		for i := 1; i < row.Len(); i++ {
+			if i > 1 {
+				label += ","
+			}
+			label += row.GetString(i)
+		}
+		if label == "" && len(n.label) > 0 {
+			continue
+		}
+		totalCount += v
+		n.labelComment[label] = fmt.Sprintf("total_count: %d\n",int64(v))
+	}
+	n.labelComment[""] = fmt.Sprintf("total_count: %d\n",int64(totalCount))
+
+	// 2. Get quantile value.
+	quantiles := []float64{0.99,0.90,0.80}
+	quantilesStr := []string{"P99","P90","P80"}
+	for i,quantile:= range quantiles {
+		
+	}
+
+	return "", nil
+}
+
+func (pb *profileBuilder) getMetricValueRows(n *metricNode) ([]chunk.Row, error) {
+	var query string
+	format := "2006-01-02 15:04:05"
+	queryCondition := fmt.Sprintf("where time >= '%v' and time <= '%v'", pb.start.Format(format), pb.end.Format(format))
+	if n.condition != "" {
+		queryCondition += (" and " + n.condition)
+	}
+	query = fmt.Sprintf("select sum(value), '' from `metrics_schema`.`%v_total_count` %v", n.table, queryCondition)A
+	rows, _, err := pb.sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(context.Background(), query)
+	return rows, err
 }
 
 func (pb *profileBuilder) getMetricValue(n *metricNode) (float64, error) {
