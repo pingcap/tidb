@@ -50,20 +50,20 @@ type profileBuilder struct {
 }
 
 type metricNode struct {
-	table          string
-	name           string
-	label          []string
-	condition      string
-	labelInfoValue map[string]*metricNodeValue
-	value          *metricNodeValue
-	unit           int64
-	children       []*metricNode
+	table      string
+	name       string
+	label      []string
+	condition  string
+	labelValue map[string]*metricValue
+	value      *metricValue
+	unit       int64
+	children   []*metricNode
 	// isPartOfParent indicates the parent of this node not fully contain this node.
 	isPartOfParent bool
 	initialized    bool
 }
 
-type metricNodeValue struct {
+type metricValue struct {
 	sum    float64
 	count  int
 	avgP99 float64
@@ -71,7 +71,7 @@ type metricNodeValue struct {
 	avgP80 float64
 }
 
-func (n *metricNodeValue) setQuantileValue(quantile, value float64) {
+func (n *metricValue) setQuantileValue(quantile, value float64) {
 	switch quantile {
 	case 0.99:
 		n.avgP99 = value
@@ -84,7 +84,7 @@ func (n *metricNodeValue) setQuantileValue(quantile, value float64) {
 	}
 }
 
-func (n *metricNodeValue) getValue(tp metricValueType) float64 {
+func (n *metricValue) getValue(tp metricValueType) float64 {
 	value := 0.0
 	switch tp {
 	case metricValueAvg:
@@ -101,7 +101,7 @@ func (n *metricNodeValue) getValue(tp metricValueType) float64 {
 	return value
 }
 
-func (n *metricNodeValue) getComment(tp metricValueType) string {
+func (n *metricValue) getComment(tp metricValueType) string {
 	if n.count == 0 {
 		return ""
 	}
@@ -129,11 +129,11 @@ func (n *metricNodeValue) getComment(tp metricValueType) string {
 	return buf.String()
 }
 
-func (n *metricNode) getLabeInfoValue(label string) *metricNodeValue {
-	comment, ok := n.labelInfoValue[label]
+func (n *metricNode) getLabelValue(label string) *metricValue {
+	comment, ok := n.labelValue[label]
 	if !ok {
-		comment = &metricNodeValue{}
-		n.labelInfoValue[label] = comment
+		comment = &metricValue{}
+		n.labelValue[label] = comment
 	}
 	return comment
 }
@@ -161,8 +161,8 @@ func (n *metricNode) getValue(pb *profileBuilder) (float64, error) {
 }
 
 func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
-	n.labelInfoValue = make(map[string]*metricNodeValue)
-	n.value = &metricNodeValue{}
+	n.labelValue = make(map[string]*metricValue)
+	n.value = &metricValue{}
 	queryCondition := fmt.Sprintf("where time >= '%v' and time <= '%v'", pb.start.Format(dateTimeFormat), pb.end.Format(dateTimeFormat))
 	if n.condition != "" {
 		queryCondition += (" and " + n.condition)
@@ -209,7 +209,7 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 	totalCount := 0.0
 	err := queryRows(query, func(label string, v float64) {
 		totalCount += v
-		n.getLabeInfoValue(label).count = int(v)
+		n.getLabelValue(label).count = int(v)
 	})
 	if err != nil {
 		return err
@@ -233,7 +233,7 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 			v = v / float64(n.unit)
 		}
 		totalSum += v
-		n.getLabeInfoValue(label).sum = v
+		n.getLabelValue(label).sum = v
 	})
 	if err != nil {
 		return err
@@ -261,7 +261,7 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 
 			totalValue += v
 			cnt++
-			n.getLabeInfoValue(label).setQuantileValue(quantile, v)
+			n.getLabelValue(label).setQuantileValue(quantile, v)
 		})
 		if err != nil {
 			return err
@@ -394,7 +394,7 @@ func (pb *profileBuilder) addNodeEdge(parent, child *metricNode, childValue floa
 		}
 		pb.addEdge(parent.getName(""), child.getName(""), label, style, childValue)
 	} else {
-		for label, value := range parent.labelInfoValue {
+		for label, value := range parent.labelValue {
 			v := value.getValue(pb.valueTP)
 			if pb.ignoreFraction(v, pb.totalValue) {
 				continue
@@ -408,7 +408,7 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) er
 	name := n.getName("")
 	weight := selfCost
 	if len(n.label) > 0 {
-		for label, value := range n.labelInfoValue {
+		for label, value := range n.labelValue {
 			v := value.getValue(pb.valueTP)
 			if pb.ignoreFraction(v, pb.totalValue) {
 				continue
