@@ -168,10 +168,10 @@ func testAddIndexWithPK(tk *testkit.TestKit, s *testSerialDBSuite, c *C) {
 func (s *testSerialDBSuite) TestAddIndexWithPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = false
 	})
-	defer config.RestoreFunc()()
 
 	testAddIndexWithPK(tk, s, c)
 	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
