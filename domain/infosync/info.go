@@ -79,7 +79,7 @@ const (
 )
 
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
-var ErrPrometheusAddrIsNotSet = terror.ClassDomain.New(errno.ErrPrometheusAddrIsNotSet, errno.MySQLErrName[errno.ErrPrometheusAddrIsNotSet])
+var ErrPrometheusAddrIsNotSet = errno.ClassDomain.New(errno.ErrPrometheusAddrIsNotSet, errno.MySQLErrName[errno.ErrPrometheusAddrIsNotSet])
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {

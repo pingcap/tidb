@@ -19,8 +19,8 @@ import (
 	"sort"
 	"sync/atomic"
 
-	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
+	terror "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"

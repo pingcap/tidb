@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
@@ -33,7 +32,7 @@ import (
 
 // Error instances.
 var (
-	ErrUnsupportedType = terror.ClassOptimizer.New(errno.ErrUnsupportedType, errno.MySQLErrName[errno.ErrUnsupportedType])
+	ErrUnsupportedType = errno.ClassOptimizer.New(errno.ErrUnsupportedType, errno.MySQLErrName[errno.ErrUnsupportedType])
 )
 
 // RangeType is alias for int.

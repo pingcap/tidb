@@ -14,8 +14,8 @@
 package plugin
 
 import (
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
+	terror "github.com/pingcap/tidb/errno"
 )
 
 var (

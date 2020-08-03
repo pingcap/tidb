@@ -19,7 +19,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// Error classes.
 var (
+	// RegDB is used for registering error class.
 	RegDB           = errors.NewRegistry("DB")
 	ClassAutoid     = RegDB.RegisterErrorClass(1, "autoid")
 	ClassDDL        = RegDB.RegisterErrorClass(2, "ddl")

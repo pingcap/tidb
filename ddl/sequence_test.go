@@ -14,10 +14,10 @@
 package ddl_test
 
 import (
-	"github.com/pingcap/errors"
 	"strconv"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"

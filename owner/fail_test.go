@@ -16,7 +16,6 @@ package owner
 
 import (
 	"context"
-	"github.com/pingcap/errors"
 	"math"
 	"net"
 	"os"
@@ -25,6 +24,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"

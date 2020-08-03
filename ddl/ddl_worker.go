@@ -24,6 +24,7 @@ import (
 	terror "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	old_terror "github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
@@ -733,7 +734,7 @@ func toTError(err error) *terror.Error {
 	}
 
 	// TODO: Add the error code.
-	return errno.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
+	return errno.ClassDDL.Synthesize(old_terror.CodeUnknown, err.Error())
 }
 
 // waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
