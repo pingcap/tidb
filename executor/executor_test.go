@@ -127,6 +127,7 @@ var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
 var _ = SerialSuites(&testPrepareSerialSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
+var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -4103,6 +4104,26 @@ func (s *testSuite8) TearDownTest(c *C) {
 	}
 }
 
+type testSerialSuite1 struct {
+	*baseTestSuite
+}
+
+func (s *testSerialSuite1) TearDownTest(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	r := tk.MustQuery("show full tables")
+	for _, tb := range r.Rows() {
+		tableName := tb[0]
+		if tb[1] == "VIEW" {
+			tk.MustExec(fmt.Sprintf("drop view %v", tableName))
+		} else if tb[1] == "SEQUENCE" {
+			tk.MustExec(fmt.Sprintf("drop sequence %v", tableName))
+		} else {
+			tk.MustExec(fmt.Sprintf("drop table %v", tableName))
+		}
+	}
+}
+
 func (s *testSuiteP2) TestStrToDateBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`select str_to_date('20190101','%Y%m%d%!') from dual`).Check(testkit.Rows("2019-01-01"))
@@ -4402,6 +4423,23 @@ func (s *testSplitTable) TestShowTableRegion(c *C) {
 	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
 	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
 	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
+
+	// Test pre-split table region when create table.
+	tk.MustExec("drop table if exists pt_pre")
+	tk.MustExec("create table pt_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2 partition by hash(a) partitions 3;")
+	re = tk.MustQuery("show table pt_pre regions")
+	rows = re.Rows()
+	// Table t_regions should have 4 regions now.
+	c.Assert(len(rows), Equals, 12)
+	tbl = testGetTableByName(c, tk.Se, "test", "pt_pre")
+	pi := tbl.Meta().GetPartitionInfo().Definitions
+	c.Assert(len(pi), Equals, 3)
+	for i, p := range pi {
+		c.Assert(rows[1+4*i][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", p.ID))
+		c.Assert(rows[2+4*i][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", p.ID))
+		c.Assert(rows[3+4*i][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", p.ID))
+	}
+
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
 
 	// Test split partition table.
@@ -5815,6 +5853,19 @@ func (s *testSuite1) TestDIVZeroInPartitionExpr(c *C) {
 	tk.MustGetErrCode("insert into t1 values (NULL), (0), (1)", mysql.ErrDivisionByZero)
 }
 
+// For issue 17256
+func (s *testSuite) TestGenerateColumnReplace(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int as (a + 1) virtual not null, unique index idx(b));")
+	tk.MustExec("REPLACE INTO `t1` (`a`) VALUES (2);")
+	tk.MustExec("REPLACE INTO `t1` (`a`) VALUES (2);")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("2 3"))
+	tk.MustExec("insert into `t1` (`a`) VALUES (2) on duplicate key update a = 3;")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("3 4"))
+}
+
 func (s *testSuite) TestSlowQuerySensitiveQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	originCfg := config.GetGlobalConfig()
@@ -5842,4 +5893,28 @@ func (s *testSuite) TestSlowQuerySensitiveQuery(c *C) {
 			"create user {user_sensitive@% password = ***};",
 			"set password for user user_sensitive@%;",
 		))
+}
+
+func (s *testSplitTable) TestKillTableReader(c *C) {
+	var retry = "github.com/pingcap/tidb/store/tikv/mockRetrySendReqToRegion"
+	defer func() {
+		c.Assert(failpoint.Disable(retry), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1),(2),(3)")
+	tk.MustExec("set @@tidb_distsql_scan_concurrency=1")
+	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 0)
+	c.Assert(failpoint.Enable(retry, `return(true)`), IsNil)
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		c.Assert(int(errors.Cause(tk.QueryToErr("select * from t")).(*terror.Error).ToSQLError().Code), Equals, int(executor.ErrQueryInterrupted.Code()))
+	}()
+	time.Sleep(1 * time.Second)
+	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 1)
+	wg.Wait()
 }
