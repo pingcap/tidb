@@ -1111,7 +1111,10 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 	f(c, err1, err2)
 }
 
-func (s *testStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
+func (s *serialTestStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	ctx := context.Background()
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
