@@ -2150,9 +2150,6 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	if err != nil {
 		return errors.Trace(err)
 	}
-<<<<<<< HEAD
-	autoIncID, err := t.Allocator(ctx, tp).NextGlobalAutoID(t.Meta().ID)
-=======
 	var actionType model.ActionType
 	switch tp {
 	case autoid.AutoRandomType:
@@ -2177,8 +2174,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		actionType = model.ActionRebaseAutoID
 	}
 
-	autoID, err := t.Allocators(ctx).Get(tp).NextGlobalAutoID(t.Meta().ID)
->>>>>>> 6e7994a... ddl: limit the range of auto_random_base (#18188)
+	autoID, err := t.Allocator(ctx, tp).NextGlobalAutoID(t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2187,11 +2183,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
 	// and TiDB-B finds 100 < 30001 but returns without any handling,
 	// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
-	newBase = mathutil.MaxInt64(newBase, autoIncID)
-	actionType := model.ActionRebaseAutoID
-	if tp == autoid.AutoRandomType {
-		actionType = model.ActionRebaseAutoRandomBase
-	}
+	newBase = mathutil.MaxInt64(newBase, autoID)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
