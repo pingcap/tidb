@@ -69,11 +69,12 @@ func DecodeNormalizedPlan(planString string) (string, error) {
 }
 
 type planDecoder struct {
-	buf       bytes.Buffer
-	depths    []int
-	indents   [][]rune
-	planInfos []*planInfo
-	addHeader bool
+	buf              bytes.Buffer
+	depths           []int
+	indents          [][]rune
+	planInfos        []*planInfo
+	addHeader        bool
+	cacheParentIdent map[int]int
 }
 
 type planInfo struct {
@@ -116,10 +117,12 @@ func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
 
 	// Calculated indentation of plans.
 	pd.initPlanTreeIndents()
+	pd.cacheParentIdent = make(map[int]int)
 	for i := 1; i < len(pd.depths); i++ {
 		parentIndex := pd.findParentIndex(i)
 		pd.fillIndent(parentIndex, i)
 	}
+
 	// Align the value of plan fields.
 	pd.alignFields()
 
@@ -179,13 +182,20 @@ func (pd *planDecoder) initPlanTreeIndents() {
 }
 
 func (pd *planDecoder) findParentIndex(childIndex int) int {
+	pd.cacheParentIdent[pd.depths[childIndex]] = childIndex
+	parentDepth := pd.depths[childIndex] - 1
+	if parentIdx, ok := pd.cacheParentIdent[parentDepth]; ok {
+		return parentIdx
+	}
 	for i := childIndex - 1; i > 0; i-- {
-		if pd.depths[i]+1 == pd.depths[childIndex] {
+		if pd.depths[i] == parentDepth {
+			pd.cacheParentIdent[pd.depths[i]] = i
 			return i
 		}
 	}
 	return 0
 }
+
 func (pd *planDecoder) fillIndent(parentIndex, childIndex int) {
 	depth := pd.depths[childIndex]
 	if depth == 0 {
@@ -221,13 +231,16 @@ func (pd *planDecoder) alignFields() {
 	fieldsLen := len(pd.planInfos[0].fields)
 	// Last field no need to align.
 	fieldsLen--
+	var buf []byte
 	for colIdx := 0; colIdx < fieldsLen; colIdx++ {
 		maxFieldLen := pd.getMaxFieldLength(colIdx)
 		for rowIdx, p := range pd.planInfos {
 			fillLen := maxFieldLen - pd.getPlanFieldLen(rowIdx, colIdx, p)
-			for i := 0; i < fillLen; i++ {
-				p.fields[colIdx] += " "
+			for len(buf) < fillLen {
+				buf = append(buf, ' ')
 			}
+			buf = buf[:fillLen]
+			p.fields[colIdx] += string(buf)
 		}
 	}
 }
