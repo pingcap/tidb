@@ -3707,8 +3707,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	c.Assert(err, IsNil)
 	_, err = writeOnlyTable.AddRecord(tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	c.Assert(err, IsNil)
-	err = tk.Se.StmtCommit(nil)
-	c.Assert(err, IsNil)
+	tk.Se.StmtCommit()
 	err = tk.Se.CommitTxn(ctx)
 	c.Assert(err, IsNil)
 
