@@ -66,7 +66,7 @@ func (s *testPessimisticSuite) TestPessimisticTxn(c *C) {
 
 	tk.MustExec("update pessimistic set v = 2 where v = 1")
 
-	// Update can see the change, so this statement affects 0 roews.
+	// Update can see the change, so this statement affects 0 rows.
 	tk1.MustExec("update pessimistic set v = 3 where v = 1")
 	c.Assert(tk1.Se.AffectedRows(), Equals, uint64(0))
 	c.Assert(session.GetHistory(tk1.Se).Count(), Equals, 0)
