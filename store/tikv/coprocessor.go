@@ -75,6 +75,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		vars:            vars,
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
+		rpcCancel:       NewRPCanceller(),
 	}
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
@@ -89,6 +90,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
+	}
+	if !it.req.Streaming {
+		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	}
 	it.open(ctx)
 	return it
@@ -390,6 +394,8 @@ type copIterator struct {
 
 	replicaReadSeed uint32
 
+	rpcCancel *RPCCanceller
+
 	wg sync.WaitGroup
 	// closed represents when the Close is called.
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
@@ -569,21 +575,34 @@ func (sender *copIteratorTaskSender) run() {
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
-	select {
-	case resp, ok = <-respCh:
-		if it.memTracker != nil && resp != nil {
-			it.memTracker.Consume(-int64(resp.MemSize()))
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case resp, ok = <-respCh:
+			if it.memTracker != nil && resp != nil {
+				it.memTracker.Consume(-int64(resp.MemSize()))
+			}
+			return
+		case <-it.finishCh:
+			exit = true
+			return
+		case <-ticker.C:
+			if atomic.LoadUint32(it.vars.Killed) == 1 {
+				resp = &copResponse{err: ErrQueryInterrupted}
+				ok = true
+				return
+			}
+		case <-ctx.Done():
+			// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
+			if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
+				close(it.finishCh)
+			}
+			exit = true
+			return
 		}
-	case <-it.finishCh:
-		exit = true
-	case <-ctx.Done():
-		// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
-		if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
-			close(it.finishCh)
-		}
-		exit = true
 	}
-	return
+
 }
 
 func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
@@ -1116,6 +1135,7 @@ func (it *copIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 		close(it.finishCh)
 	}
+	it.rpcCancel.CancelAll()
 	it.wg.Wait()
 	return nil
 }
