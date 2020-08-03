@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	flagPresumeKNE NewKeyFlags = 1 << iota
+	flagPresumeKNE KeyFlags = 1 << iota
 	flagPessimisticLock
+	flagNoNeedCommit
 
 	persistentFlags = flagPessimisticLock
 	// bit 1 => red, bit 0 => black
@@ -31,17 +32,22 @@ const (
 	nodeFlagsMask       = ^nodeColorBit
 )
 
-// NewKeyFlags are metadata associated with key
-type NewKeyFlags uint8
+// KeyFlags are metadata associated with key
+type KeyFlags uint8
 
 // HasPresumeKeyNotExists retruns whether the associated key use lazy check.
-func (f NewKeyFlags) HasPresumeKeyNotExists() bool {
+func (f KeyFlags) HasPresumeKeyNotExists() bool {
 	return f&flagPresumeKNE != 0
 }
 
 // HasPessimisticLock retruns whether the associated key has acquired pessimistic lock.
-func (f NewKeyFlags) HasPessimisticLock() bool {
+func (f KeyFlags) HasPessimisticLock() bool {
 	return f&flagPessimisticLock != 0
+}
+
+// HasNoNeedCommit returns whether the key should be used in 2pc commit phase.
+func (f KeyFlags) HasNoNeedCommit() bool {
+	return f&flagNoNeedCommit != 0
 }
 
 // FlagsOp describes KeyFlags modify operation.
@@ -56,9 +62,11 @@ const (
 	SetPessimisticLock
 	// DelPessimisticLock reverts SetPessimisticLock.
 	DelPessimisticLock
+	// SetNoNeedCommit marks the key shouldn't be used in 2pc commit phase.
+	SetNoNeedCommit
 )
 
-func applyFlagsOps(origin NewKeyFlags, ops ...FlagsOp) NewKeyFlags {
+func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 	for _, op := range ops {
 		switch op {
 		case SetPresumeKeyNotExists:
@@ -69,6 +77,8 @@ func applyFlagsOps(origin NewKeyFlags, ops ...FlagsOp) NewKeyFlags {
 			origin |= flagPessimisticLock
 		case DelPessimisticLock:
 			origin &= ^flagPessimisticLock
+		case SetNoNeedCommit:
+			origin |= flagNoNeedCommit
 		}
 	}
 	return origin
@@ -99,7 +109,7 @@ type memdb struct {
 	stages      []memdbCheckpoint
 }
 
-func newNewMemDB() *memdb {
+func newMemDB() *memdb {
 	db := new(memdb)
 	db.allocator.init()
 	db.root = nullAddr
@@ -163,7 +173,7 @@ func (db *memdb) DiscardValues() {
 	db.vlog.reset()
 }
 
-func (db *memdb) InspectStage(handle StagingHandle, f func(Key, NewKeyFlags, []byte)) {
+func (db *memdb) InspectStage(handle StagingHandle, f func(Key, KeyFlags, []byte)) {
 	idx := int(handle) - 1
 	tail := db.vlog.checkpoint()
 	head := db.stages[idx]
@@ -187,7 +197,7 @@ func (db *memdb) Get(_ context.Context, key Key) ([]byte, error) {
 	return db.vlog.getValue(x.vptr), nil
 }
 
-func (db *memdb) GetFlags(key Key) (NewKeyFlags, error) {
+func (db *memdb) GetFlags(key Key) (KeyFlags, error) {
 	x := db.tranverse(key, false)
 	if x.isNull() {
 		return 0, ErrNotExist
@@ -742,10 +752,10 @@ func (n *memdbNode) getKey() Key {
 	return ret
 }
 
-func (n *memdbNode) getKeyFlags() NewKeyFlags {
-	return NewKeyFlags(n.flags & nodeFlagsMask)
+func (n *memdbNode) getKeyFlags() KeyFlags {
+	return KeyFlags(n.flags & nodeFlagsMask)
 }
 
-func (n *memdbNode) setKeyFlags(f NewKeyFlags) {
+func (n *memdbNode) setKeyFlags(f KeyFlags) {
 	n.flags = (^nodeFlagsMask & n.flags) | uint8(f)
 }
