@@ -15,8 +15,6 @@ package expensivequery
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util/memory"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -29,9 +27,11 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
