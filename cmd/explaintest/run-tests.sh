@@ -19,6 +19,7 @@ build=1
 explain_test="./explain_test"
 importer=""
 tidb_server=""
+portgenerator=""
 explain_test_log="./explain-test.out"
 tests=""
 record=0
@@ -55,6 +56,8 @@ function help_message()
 
     -i <importer-path>: Use importer in <importer-path> for creating data.
 
+    -p <portgenerator-path>: Use port generator in <portgenerator-path> for generating port numbers.
+
 "
 }
 
@@ -65,6 +68,15 @@ function build_importer()
     rm -rf $importer
     GO111MODULE=on go build -o $importer github.com/pingcap/tidb/cmd/importer
 }
+
+function build_portgenerator()
+{
+    portgenerator="./portgenerator"
+    echo "building portgenerator binary: $portgenerator"
+    rm -rf $portgenerator
+    GO111MODULE=on go build -o $portgenerator github.com/pingcap/tidb/cmd/portgenerator
+}
+
 
 function build_tidb_server()
 {
@@ -81,24 +93,7 @@ function build_explain_test()
     GO111MODULE=on go build -o $explain_test
 }
 
-ports=()
-function get_free_ports() {
-    read LOWERPORT UPPERPORT < /proc/sys/net/ipv4/ip_local_port_range
-    ports=()
-    while :
-    do
-        for port in $(shuf -i $LOWERPORT-$UPPERPORT -n 2 | sed 's/\s/\n/g'); do
-            ports+=("$port")
-        done
-        ss -lpn | grep -q ":${ports[0]}" || ss -lpn | grep -q ":${ports[1]}" || break
-    done
-}
-
-get_free_ports
-port=${ports[0]}
-status=${ports[1]}
-
-while getopts "t:s:r:b:c:i:h" opt; do
+while getopts "t:s:r:b:c:i:h:p" opt; do
     case $opt in
         t)
             tests="$OPTARG"
@@ -135,6 +130,9 @@ while getopts "t:s:r:b:c:i:h" opt; do
         i)
             importer="$OPTARG"
             ;;
+        p)  
+            portgenerator="$OPTARG"
+            ;;
         *)
             help_message 1>&2
             exit 1
@@ -147,6 +145,11 @@ if [ $build -eq 1 ]; then
         build_tidb_server
     else
         echo "skip building tidb-server, using existing binary: $tidb_server"
+    fi
+    if [[ -z "$portgenerator" ]]; then
+        build_portgenerator
+    else
+        echo "skip building portgenerator, using existing binary: $portgenerator"
     fi
     if [[ -z "$importer" && $create -eq 1 ]]; then
         build_importer
@@ -164,12 +167,23 @@ else
     if [ -z "$importer" ]; then
         importer="./importer"
     fi
+    if [ -z "$portgenerator" ]; then
+        portgenerator="./portgenerator"
+    fi
     echo "skip building tidb-server, using existing binary: $tidb_server"
     echo "skip building explaintest, using existing binary: $explain_test"
     echo "skip building importer, using existing binary: $importer"
 fi
 
 rm -rf $explain_test_log
+
+ports=()
+for port in $($portgenerator -count 2); do
+    ports+=("$port")
+done
+
+port=${ports[0]}
+status=${ports[1]}
 
 echo "start tidb-server, log file: $explain_test_log"
 if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
