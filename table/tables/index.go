@@ -87,14 +87,20 @@ type index struct {
 	phyTblID               int64
 }
 
-func (c *index) checkContainNonBinaryString() bool {
-	for _, idxCol := range c.idxInfo.Columns {
-		col := c.tblInfo.Columns[idxCol.Offset]
+// ContainsNonBinaryString checks whether the index columns contains non binary string column, the input
+// colInfos should be column info correspond to the table contains the index.
+func ContainsNonBinaryString(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+	for _, idxCol := range idxCols {
+		col := colInfos[idxCol.Offset]
 		if col.EvalType() == types.ETString && !mysql.HasBinaryFlag(col.Flag) {
 			return true
 		}
 	}
 	return false
+}
+
+func (c *index) checkContainNonBinaryString() bool {
+	return ContainsNonBinaryString(c.idxInfo.Columns, c.tblInfo.Columns)
 }
 
 // NewIndex builds a new Index object.
@@ -264,7 +270,7 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 	}
 
 	var value []byte
-	if sctx.GetSessionVars().PresumeKeyNotExists {
+	if sctx.GetSessionVars().LazyCheckKeyNotExists() {
 		value, err = us.GetMemBuffer().Get(ctx, key)
 	} else {
 		value, err = us.Get(ctx, key)
@@ -274,7 +280,7 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 	}
 	if err != nil || len(value) == 0 {
 		var keyFlags kv.KeyFlags
-		if sctx.GetSessionVars().PresumeKeyNotExists && err != nil {
+		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
 			keyFlags = keyFlags.MarkPresumeKeyNotExists()
 		}
 		err = us.GetMemBuffer().SetWithFlags(key, keyFlags, idxVal)
