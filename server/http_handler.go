@@ -717,6 +717,7 @@ type tableFlashReplicaInfo struct {
 	ReplicaCount   uint64   `json:"replica_count"`
 	LocationLabels []string `json:"location_labels"`
 	Available      bool     `json:"available"`
+	HighPriority   bool     `json:"high_priority"`
 }
 
 func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -757,6 +758,15 @@ func (h flashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, rep
 				ReplicaCount:   tblInfo.TiFlashReplica.Count,
 				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
 				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+			})
+		}
+		for _, p := range pi.AddingDefinitions {
+			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+				ID:             p.ID,
+				ReplicaCount:   tblInfo.TiFlashReplica.Count,
+				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+				HighPriority:   true,
 			})
 		}
 		return replicaInfos
