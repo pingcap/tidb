@@ -348,6 +348,6 @@ func getPhysID(tblInfo *model.TableInfo, val int64) int64 {
 	if pi == nil {
 		return tblInfo.ID
 	}
-	partIdx := math.Abs(val) % int64(pi.Num)
+	partIdx := math.Abs(val % int64(pi.Num))
 	return pi.Definitions[partIdx].ID
 }
