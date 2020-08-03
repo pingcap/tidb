@@ -3975,9 +3975,9 @@ func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
 	failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
 
 	// Test for set replica count more than the tiflash store count.
-	s.mustExec(tk, c, "drop table if exists t_flash;")
-	tk.MustExec("create table t_flash(a int, b int)")
-	_, err = tk.Exec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
+	s.mustExec(c, "drop table if exists t_flash;")
+	s.tk.MustExec("create table t_flash(a int, b int)")
+	_, err = s.tk.Exec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
 }
