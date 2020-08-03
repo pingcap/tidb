@@ -308,8 +308,6 @@ func (c *Cluster) ScanRegions(startKey, endKey []byte, limit int) []*pd.Region {
 		regions = regions[:limit]
 	}
 
-	// metas := make([]*metapb.Region, 0, len(regions))
-	// leaders := make([]*metapb.Peer, 0, len(regions))
 	result := make([]*pd.Region, 0, len(regions))
 	for _, region := range regions {
 		leader := region.leaderPeer()
