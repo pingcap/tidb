@@ -2055,21 +2055,12 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 }
 
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
-<<<<<<< HEAD
-func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
+func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
 	s.tk.MustExec("drop table if exists t1,t2;")
 	defer s.tk.MustExec("drop table if exists t1,t2;")
 	s.tk.MustExec("create table t1 (a int, b int, c int, index idx1(c));")
-=======
-func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
-	tk.MustExec("drop table if exists t1,t2;")
-	defer tk.MustExec("drop table if exists t1,t2;")
-	tk.MustExec("create table t1 (a int, b int, c int, index idx1(c));")
->>>>>>> 6088e58... ddl: check the tiflash replica count when setting tiflash replica  (#18826)
 
 	tbl1 := testGetTableByName(c, s.s, "test_db", "t1")
 	doneCh := make(chan error, 2)
@@ -3862,19 +3853,11 @@ func (s *testDBSuite4) TestIssue9100(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:1503]A PRIMARY must include all columns in the table's partitioning function")
 }
 
-<<<<<<< HEAD
 func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
 	s.tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
 	defer s.mustExec(c, "drop table t_mcc;")
-=======
-func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
-	tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
-	defer s.mustExec(tk, c, "drop table t_mcc;")
->>>>>>> 6088e58... ddl: check the tiflash replica count when setting tiflash replica  (#18826)
 
 	result := s.tk.MustQuery(`show create table t_mcc`)
 	result.Check(testkit.Rows(
@@ -3898,23 +3881,13 @@ func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
 
 }
 
-<<<<<<< HEAD
-func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
+func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
 	s.mustExec(c, "drop table if exists t_flash;")
 	s.tk.MustExec("create table t_flash(a int, b int)")
 	defer s.mustExec(c, "drop table t_flash;")
-=======
-func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test_db")
-	s.mustExec(tk, c, "drop table if exists t_flash;")
-	tk.MustExec("create table t_flash(a int, b int)")
-	defer s.mustExec(tk, c, "drop table t_flash;")
->>>>>>> 6088e58... ddl: check the tiflash replica count when setting tiflash replica  (#18826)
 
 	t := s.testGetTable(c, "t_flash")
 	c.Assert(t.Meta().TiFlashReplica, IsNil)
@@ -4183,17 +4156,12 @@ func (s *testDBSuite2) TestWriteLocal(c *C) {
 	tk2.MustExec("unlock tables")
 }
 
-<<<<<<< HEAD
-func (s *testDBSuite2) TestSkipSchemaChecker(c *C) {
-	s.tk = testkit.NewTestKit(c, s.store)
-	tk := s.tk
-=======
 func (s *testSerialDBSuite) TestSkipSchemaChecker(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
 
-	tk := testkit.NewTestKit(c, s.store)
->>>>>>> 6088e58... ddl: check the tiflash replica count when setting tiflash replica  (#18826)
+	s.tk = testkit.NewTestKit(c, s.store)
+	tk := s.tk
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	defer tk.MustExec("drop table if exists t1")
