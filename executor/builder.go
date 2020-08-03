@@ -750,7 +750,20 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		Columns:      v.Columns,
 		GenExprs:     v.GenCols.Exprs,
 	}
-	err := insertVal.initInsertColumns()
+	loadDataInfo := &LoadDataInfo{
+		row:                make([]types.Datum, 0, len(insertVal.insertColumns)),
+		InsertValues:       insertVal,
+		Path:               v.Path,
+		Table:              tbl,
+		FieldsInfo:         v.FieldsInfo,
+		LinesInfo:          v.LinesInfo,
+		IgnoreLines:        v.IgnoreLines,
+		ColumnAssignments:  v.ColumnAssignments,
+		ColumnsAndUserVars: v.ColumnsAndUserVars,
+		Ctx:                b.ctx,
+	}
+	columnNames := loadDataInfo.initFieldMappings()
+	err := loadDataInfo.initLoadColumns(columnNames)
 	if err != nil {
 		b.err = err
 		return nil
@@ -759,16 +772,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		IsLocal:      v.IsLocal,
 		OnDuplicate:  v.OnDuplicate,
-		loadDataInfo: &LoadDataInfo{
-			row:          make([]types.Datum, len(insertVal.insertColumns)),
-			InsertValues: insertVal,
-			Path:         v.Path,
-			Table:        tbl,
-			FieldsInfo:   v.FieldsInfo,
-			LinesInfo:    v.LinesInfo,
-			IgnoreLines:  v.IgnoreLines,
-			Ctx:          b.ctx,
-		},
+		loadDataInfo: loadDataInfo,
 	}
 	var defaultLoadDataBatchCnt uint64 = 20000 // TODO this will be changed to variable in another pr
 	loadDataExec.loadDataInfo.InitQueues()
