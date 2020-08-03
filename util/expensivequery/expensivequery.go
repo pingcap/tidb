@@ -15,6 +15,8 @@ package expensivequery
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/util/memory"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -30,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -56,9 +57,14 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-	systemMem, err1 := memory.MemTotal()
-	if err1 != nil {
-		logutil.BgLogger().Warn("Get system memory fail.", zap.Error(err1))
+	var systemMemThreshold = config.GetGlobalConfig().AlertMemoryQuotaInstance
+	var err error
+	if systemMemThreshold == 0 {
+		systemMemThreshold, err = memory.MemTotal()
+		systemMemThreshold = systemMemThreshold / 10 * 8
+		if err != nil {
+			logutil.BgLogger().Warn("Get system memory fail.", zap.Error(err))
+		}
 	}
 	lastOOMtime := time.Time{}
 	// use 100ms as tickInterval temply, may use given interval or use defined variable later
@@ -89,11 +95,11 @@ func (eqh *Handle) Run() {
 			instanceStats := &runtime.MemStats{}
 			runtime.ReadMemStats(instanceStats)
 			instanceMem := instanceStats.HeapAlloc
-			if err1 == nil && instanceMem > systemMem/10*8 {
+			if err == nil && instanceMem > systemMemThreshold {
 				// At least ten seconds between two recordings that memory usage is less than threshold (80% system memory).
 				// If the memory is still exceeded, only records once.
 				if time.Since(lastOOMtime) > 10*time.Second {
-					eqh.oomRecord(instanceMem, systemMem)
+					eqh.oomRecord(instanceMem, systemMemThreshold)
 				}
 				lastOOMtime = time.Now()
 			}
@@ -109,7 +115,7 @@ var (
 	lastProfileFileName string
 )
 
-func (eqh *Handle) oomRecord(memUsage uint64, systemMem uint64) {
+func (eqh *Handle) oomRecord(memUsage uint64, systemMemThreshold uint64) {
 	var err error
 	if tmpDir == "" {
 		tmpDir, err = ioutil.TempDir("", "TiDBOOM")
@@ -128,7 +134,7 @@ func (eqh *Handle) oomRecord(memUsage uint64, systemMem uint64) {
 
 	logutil.BgLogger().Warn("The TiDB instance now takes a lot of memory, has the risk of OOM",
 		zap.Any("memUsage", memUsage),
-		zap.Any("systemMemoryTotal", systemMem),
+		zap.Any("systemMemThreshold", systemMemThreshold),
 	)
 	eqh.oomRecordSQL()
 	eqh.oomRecordProfile()
