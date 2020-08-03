@@ -334,3 +334,17 @@ func WithPruneMode(tk *TestKit, mode variable.PartitionPruneMode, f func()) {
 	tk.MustExec("set global tidb_partition_prune_mode=`" + string(mode) + "`")
 	f()
 }
+
+// AssertErrorAndRetry asserts the error and retries the sql.
+func (tk *TestKit) AssertErrorAndRetry(errorMsg string, maxRetries int, sql string, args ...interface{}) {
+	for i := 0; i <= maxRetries; i++ {
+		tk.c.Assert(i < maxRetries, check.IsTrue)
+		res, err := tk.Exec(sql, args)
+		if err != nil {
+			tk.c.Assert(err.Error(), check.Matches, errorMsg)
+		} else {
+			tk.c.Assert(res.Close(), check.IsNil)
+			break
+		}
+	}
+}
