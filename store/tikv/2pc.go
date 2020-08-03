@@ -66,18 +66,18 @@ func metricsTag(action string) string {
 
 // twoPhaseCommitter executes a two-phase commit protocol.
 type twoPhaseCommitter struct {
-	store            *tikvStore
-	txn              *tikvTxn
-	startTS          uint64
-	mutations        CommitterMutations
-	lockTTL          uint64
-	commitTS         uint64
-	priority         pb.CommandPri
-	connID           uint64 // connID is used for log.
-	cleanWg          sync.WaitGroup
-	detail           unsafe.Pointer
-	txnSize          int
-	noNeedCommitKeys map[string]struct{}
+	store               *tikvStore
+	txn                 *tikvTxn
+	startTS             uint64
+	mutations           CommitterMutations
+	lockTTL             uint64
+	commitTS            uint64
+	priority            pb.CommandPri
+	connID              uint64 // connID is used for log.
+	cleanWg             sync.WaitGroup
+	detail              unsafe.Pointer
+	txnSize             int
+	hasNoNeedCommitKeys bool
 
 	primaryKey  []byte
 	forUpdateTS uint64
@@ -213,14 +213,10 @@ func (c *twoPhaseCommitter) extractKeyExistsErr(key kv.Key) error {
 }
 
 func (c *twoPhaseCommitter) initKeysAndMutations() error {
-	var (
-		size            int
-		putCnt          int
-		delCnt          int
-		lockCnt         int
-		noNeedCommitKey = make(map[string]struct{})
-	)
+	var size, putCnt, delCnt, lockCnt, checkCnt int
+
 	txn := c.txn
+	memBuf := txn.GetMemBuffer()
 	sizeHint := len(txn.lockKeys) + txn.us.GetMemBuffer().Len()
 	mutations := NewCommiterMutations(sizeHint)
 	c.isPessimistic = txn.IsPessimistic()
@@ -251,7 +247,8 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 				// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
 				// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
 				op = pb.Op_CheckNotExists
-				noNeedCommitKey[string(k)] = struct{}{}
+				checkCnt++
+				memBuf.UpdateFlags(k, kv.SetNoNeedCommit)
 			} else {
 				// normal delete keys in optimistic txn can be delete without not exists checking
 				// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them
@@ -321,7 +318,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 			zap.Int("puts", putCnt),
 			zap.Int("dels", delCnt),
 			zap.Int("locks", lockCnt),
-			zap.Int("checks", len(noNeedCommitKey)),
+			zap.Int("checks", checkCnt),
 			zap.Uint64("txnStartTS", txn.startTS))
 	}
 
@@ -337,7 +334,7 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	commitDetail := &execdetails.CommitDetails{WriteSize: size, WriteKeys: mutations.len()}
 	metrics.TiKVTxnWriteKVCountHistogram.Observe(float64(commitDetail.WriteKeys))
 	metrics.TiKVTxnWriteSizeHistogram.Observe(float64(commitDetail.WriteSize))
-	c.noNeedCommitKeys = noNeedCommitKey
+	c.hasNoNeedCommitKeys = checkCnt > 0
 	c.mutations = mutations
 	c.lockTTL = txnLockTTL(txn.startTime, size)
 	c.priority = getTxnPriority(txn)
@@ -895,7 +892,10 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 }
 
 func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *execdetails.CommitDetails) error {
+	c.mutations.values = nil
+	c.txn.GetMemBuffer().DiscardValues()
 	start := time.Now()
+
 	commitBo := NewBackofferWithVars(ctx, CommitMaxBackoff, c.txn.vars)
 	err := c.commitMutations(commitBo, c.mutations)
 	commitDetail.CommitTime = time.Since(start)
@@ -927,14 +927,15 @@ func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *execdet
 }
 
 func (c *twoPhaseCommitter) stripNoNeedCommitKeys() {
-	if len(c.noNeedCommitKeys) == 0 {
+	if !c.hasNoNeedCommitKeys {
 		return
 	}
 	m := &c.mutations
 	var newIdx int
 	for oldIdx := range m.keys {
 		key := m.keys[oldIdx]
-		if _, ck := c.noNeedCommitKeys[string(key)]; ck {
+		flags, err := c.txn.GetMemBuffer().GetFlags(key)
+		if err == nil && flags.HasNoNeedCommit() {
 			continue
 		}
 		m.keys[newIdx] = key
