@@ -544,11 +544,6 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 	}()
 
 	st := &s.txn
-<<<<<<< HEAD
-	txnSize := st.Transaction.Size()
-=======
-	bufLen := st.stmtBufLen()
->>>>>>> 596c0eb... session: fix the problem that lost connection in the next sql after out of memory quota (#18567)
 
 	if _, err := st.Flush(); err != nil {
 		return err
