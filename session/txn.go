@@ -52,10 +52,6 @@ type TxnState struct {
 	stagingHandle kv.StagingHandle
 	mutations     map[int64]*binlog.TableMutation
 	dirtyTableOP  []dirtyTableOperation
-
-	// If doNotCommit is not nil, Commit() will not commit the transaction.
-	// doNotCommit flag may be set when StmtCommit fail.
-	doNotCommit error
 }
 
 func (st *TxnState) init() {
@@ -233,12 +229,6 @@ func (st *TxnState) Commit(ctx context.Context) error {
 			zap.Stack("something must be wrong"))
 		return errors.Trace(kv.ErrInvalidTxn)
 	}
-	if st.doNotCommit != nil {
-		if err1 := st.Transaction.Rollback(); err1 != nil {
-			logutil.BgLogger().Error("rollback error", zap.Error(err1))
-		}
-		return errors.Trace(st.doNotCommit)
-	}
 
 	// mockCommitError8942 is used for PR #8942.
 	failpoint.Inject("mockCommitError8942", func(val failpoint.Value) {
@@ -272,7 +262,6 @@ func (st *TxnState) Rollback() error {
 }
 
 func (st *TxnState) reset() {
-	st.doNotCommit = nil
 	st.cleanup()
 	st.changeToInvalid()
 }
@@ -422,23 +411,13 @@ func (s *session) HasDirtyContent(tid int64) bool {
 }
 
 // StmtCommit implements the sessionctx.Context interface.
-func (s *session) StmtCommit() error {
+func (s *session) StmtCommit() {
 	defer func() {
 		s.txn.cleanup()
 	}()
 
 	st := &s.txn
-	stmtLen := s.txn.countHint()
-
 	st.flushStmtBuf()
-
-	failpoint.Inject("mockStmtCommitError", func(val failpoint.Value) {
-		if val.(bool) && stmtLen > 3 {
-			err := errors.New("mock stmt commit error")
-			st.doNotCommit = err
-			failpoint.Return(err)
-		}
-	})
 
 	// Need to flush binlog.
 	for tableID, delta := range st.mutations {
@@ -452,7 +431,6 @@ func (s *session) StmtCommit() error {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
-	return nil
 }
 
 // StmtRollback implements the sessionctx.Context interface.
