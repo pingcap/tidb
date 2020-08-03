@@ -154,12 +154,12 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 //		|  Padding:       Ensure length of value always >= 10. (or >= 11 if UntouchedFlag exists.)
 //		|  IntHandle:     Only exists when table use int handles and index is unique.
 //		|  UntouchedFlag: Only exists when index is untouched.
-//      |
+//		|
 //		|  Layout of Options:
-//      |
-//      |     Segment:             Common Handle                 |     Global Index      | New Collation
-//      |     Layout:  CHandle Flag | CHandle Len | CHandle      | PidFlag | PartitionID | restoreData
-//      |     Length:     1         | 2           | len(CHandle) |    1    |    8        | len(restoreData)
+//		|
+//		|     Segment:             Common Handle                 |     Global Index      | New Collation
+// 		|     Layout:  CHandle Flag | CHandle Len | CHandle      | PidFlag | PartitionID | restoreData
+//		|     Length:     1         | 2           | len(CHandle) |    1    |    8        | len(restoreData)
 //		|
 //		|     Common Handle Segment: Exists when unique index used common handles.
 //		|     Global Index Segment:  Exists when index is global.
