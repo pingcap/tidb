@@ -786,7 +786,6 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 				return nil, err
 			}
 			idxMeta := v.Meta()
-			txn.GetUnionStore().CacheIndexName(t.physicalTableID, idxMeta.ID, idxMeta.Name.String())
 			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
 		}
 		if dupHandle, err := v.Create(sctx, txn.GetUnionStore(), indexVals, recordID, opts...); err != nil {
@@ -1052,9 +1051,6 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 	opts = append(opts, popts...)
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
-	}
-	if idx.Meta().Unique {
-		txn.GetUnionStore().CacheIndexName(t.physicalTableID, idx.Meta().ID, idx.Meta().Name.String())
 	}
 	if _, err := idx.Create(ctx, txn.GetUnionStore(), vals, h, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
