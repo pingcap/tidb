@@ -413,31 +413,29 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) er
 			if pb.ignoreFraction(v, pb.totalValue) {
 				continue
 			}
-			comment := value.getComment(pb.valueTP)
 			labelValue := fmt.Sprintf(" %.2fs", v)
 			pb.addEdge(n.getName(""), n.getName(label), labelValue, "", v)
-			labelValue = fmt.Sprintf("%s\n %.2fs (%.2f%%)\n%s", n.getName(label), v, v*100/pb.totalValue, comment)
-			pb.addNodeDef(n.getName(label), labelValue, v, v)
+			labelValue = fmt.Sprintf("%s\n %.2fs (%.2f%%)", n.getName(label), v, v*100/pb.totalValue)
+			pb.addNodeDef(n.getName(label), labelValue, value.getComment(pb.valueTP), v, v)
 		}
 		weight = selfCost / 2
 		// Since this node has labels, all cost was consume on the children, so the selfCost is 0.
 		selfCost = 0
 	}
 
-	comment := n.value.getComment(pb.valueTP)
-	label := fmt.Sprintf("%s\n %.2fs (%.2f%%)\nof %.2fs (%.2f%%)\n%s",
-		name, selfCost, selfCost*100/pb.totalValue, nodeTotal, nodeTotal*100/pb.totalValue, comment)
-	pb.addNodeDef(n.getName(""), label, weight, selfCost)
+	label := fmt.Sprintf("%s\n %.2fs (%.2f%%)\nof %.2fs (%.2f%%)",
+		name, selfCost, selfCost*100/pb.totalValue, nodeTotal, nodeTotal*100/pb.totalValue)
+	pb.addNodeDef(n.getName(""), label, n.value.getComment(pb.valueTP), weight, selfCost)
 	return nil
 }
 
-func (pb *profileBuilder) addNodeDef(name, labelValue string, fontWeight, colorWeight float64) {
+func (pb *profileBuilder) addNodeDef(name, labelValue, comment string, fontWeight, colorWeight float64) {
 	baseFontSize, maxFontGrowth := 5, 18.0
 	fontSize := baseFontSize
 	fontSize += int(math.Ceil(maxFontGrowth * math.Sqrt(math.Abs(fontWeight)/pb.totalValue)))
 
-	pb.buf.WriteString(fmt.Sprintf(`N%d [label="%s" fontsize=%d shape=box color="%s" fillcolor="%s"]`,
-		pb.getNameID(name), labelValue, fontSize,
+	pb.buf.WriteString(fmt.Sprintf(`N%d [label="%s" tooltip="%s" fontsize=%d shape=box color="%s" fillcolor="%s"]`,
+		pb.getNameID(name), labelValue, comment, fontSize,
 		pb.dotColor(colorWeight/pb.totalValue, false),
 		pb.dotColor(colorWeight/pb.totalValue, true)))
 	pb.buf.WriteByte('\n')
