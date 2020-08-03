@@ -368,8 +368,8 @@ func detachColumnsFromItem(expr expression.Expression, cols []*expression.Column
 	case ast.LogicAnd:
 		cnfItems := expression.FlattenCNFConditions(sf)
 		for _, item := range cnfItems {
-			currentOffsets := detachColumnsFromItem(item, cols)
-			if currentOffsets == false {
+			ok := detachColumnsFromItem(item, cols)
+			if !ok {
 				return false
 			}
 		}
