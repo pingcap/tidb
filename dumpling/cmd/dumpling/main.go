@@ -27,7 +27,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/dumpling/v4/cli"
 	"github.com/pingcap/dumpling/v4/export"
-	"github.com/pingcap/log"
+	"github.com/pingcap/dumpling/v4/log"
 	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"

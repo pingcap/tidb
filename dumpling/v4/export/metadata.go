@@ -2,6 +2,7 @@ package export
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -46,7 +47,7 @@ func (m *globalMetadata) recordFinishTime(t time.Time) {
 	m.buffer.WriteString("Finished dump at: " + t.Format(metadataTimeLayout) + "\n")
 }
 
-func (m *globalMetadata) recordGlobalMetaData(db *sql.DB, serverType ServerType) error {
+func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerType) error {
 	// get master status info
 	m.buffer.WriteString("SHOW MASTER STATUS:\n")
 	switch serverType {
@@ -107,7 +108,7 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.DB, serverType ServerType)
 			m.buffer.WriteString("\tPos: " + pos + "\n")
 		}
 		var gtidSet string
-		err = db.QueryRow("SELECT @@global.gtid_binlog_pos").Scan(&gtidSet)
+		err = db.QueryRowContext(context.Background(), "SELECT @@global.gtid_binlog_pos").Scan(&gtidSet)
 		if err != nil {
 			return err
 		}
