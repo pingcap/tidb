@@ -267,6 +267,8 @@ github.com/imtbkcat/errors v0.11.5-0.20200803022239-c93530080494 h1:7dJWj20NIi7o
 github.com/imtbkcat/errors v0.11.5-0.20200803022239-c93530080494/go.mod h1:g4vx//d6VakjJ0mk7iLBlKA8LFavV/sAVINT/1PFxeQ=
 github.com/imtbkcat/parser v0.0.0-20200730082543-5057fb0d6dd8 h1:yjTTJUHzaIepVKgAP8JJ8A0coTiU4XvNemf6MukoD0A=
 github.com/imtbkcat/parser v0.0.0-20200730082543-5057fb0d6dd8/go.mod h1:uSEiyp0BoI8DMHY8gZ1r251FHiXZ8Ly96bvonH5pE9k=
+github.com/imtbkcat/parser v0.0.0-20200803085704-1097cc782f79 h1:EXV3cY4IJ2IBJcISIYCnrMyr/6tB86WD3tSU6i2BINA=
+github.com/imtbkcat/parser v0.0.0-20200803085704-1097cc782f79/go.mod h1:uSEiyp0BoI8DMHY8gZ1r251FHiXZ8Ly96bvonH5pE9k=
 github.com/inconshreveable/mousetrap v1.0.0 h1:Z8tu5sraLXCXIcARxBp/8cbvlwVa7Z1NHg9XEKhtSvM=
 github.com/inconshreveable/mousetrap v1.0.0/go.mod h1:PxqpIevigyE2G7u3NXJIT2ANytuPF1OarO4DADm73n8=
 github.com/jessevdk/go-flags v1.4.0/go.mod h1:4FA24M0QyGHXBuZZK/XkWh8h0e1EYbRYJSGM75WSRxI=
