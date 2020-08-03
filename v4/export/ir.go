@@ -2,11 +2,13 @@ package export
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 )
 
 // TableDataIR is table data intermediate representation.
 type TableDataIR interface {
+	Start(context.Context, *sql.Conn) error
 	DatabaseName() string
 	TableName() string
 	ChunkIndex() int

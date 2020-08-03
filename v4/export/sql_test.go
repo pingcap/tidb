@@ -1,6 +1,7 @@
 package export
 
 import (
+	"context"
 	"errors"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -54,6 +55,8 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	c.Assert(err, IsNil)
 
 	mockConf := DefaultConfig()
 	mockConf.SortByPk = true
@@ -65,14 +68,14 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 	mock.ExpectExec("SELECT _tidb_rowid from `test`.`t`").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	orderByClause, err := buildOrderByClause(mockConf, db, "test", "t")
+	orderByClause, err := buildOrderByClause(mockConf, conn, "test", "t")
 	c.Assert(err, IsNil)
 
 	mock.ExpectQuery("SELECT COLUMN_NAME").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"column_name", "extra"}).AddRow("id", ""))
 
-	selectedField, err := buildSelectField(db, "test", "t")
+	selectedField, err := buildSelectField(conn, "test", "t")
 	c.Assert(err, IsNil)
 	q := buildSelectQuery("test", "t", selectedField, "", orderByClause)
 	c.Assert(q, Equals, "SELECT * FROM `test`.`t` ORDER BY _tidb_rowid")
@@ -81,14 +84,14 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 	mock.ExpectExec("SELECT _tidb_rowid from `test`.`t`").
 		WillReturnError(errors.New(`1054, "Unknown column '_tidb_rowid' in 'field list'"`))
 
-	orderByClause, err = buildOrderByClause(mockConf, db, "test", "t")
+	orderByClause, err = buildOrderByClause(mockConf, conn, "test", "t")
 	c.Assert(err, IsNil)
 
 	mock.ExpectQuery("SELECT COLUMN_NAME").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"column_name", "extra"}).AddRow("id", ""))
 
-	selectedField, err = buildSelectField(db, "test", "t")
+	selectedField, err = buildSelectField(conn, "test", "t")
 	c.Assert(err, IsNil)
 	q = buildSelectQuery("test", "t", selectedField, "", orderByClause)
 	c.Assert(q, Equals, "SELECT * FROM `test`.`t`")
@@ -104,14 +107,14 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 		mock.ExpectQuery("SELECT column_name FROM information_schema.columns").
 			WithArgs("test", "t").
 			WillReturnRows(sqlmock.NewRows([]string{"column_name"}).AddRow("id"))
-		orderByClause, err := buildOrderByClause(mockConf, db, "test", "t")
+		orderByClause, err := buildOrderByClause(mockConf, conn, "test", "t")
 		c.Assert(err, IsNil, cmt)
 
 		mock.ExpectQuery("SELECT COLUMN_NAME").
 			WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
 			WillReturnRows(sqlmock.NewRows([]string{"column_name", "extra"}).AddRow("id", ""))
 
-		selectedField, err = buildSelectField(db, "test", "t")
+		selectedField, err = buildSelectField(conn, "test", "t")
 		c.Assert(err, IsNil)
 		q = buildSelectQuery("test", "t", selectedField, "", orderByClause)
 		c.Assert(q, Equals, "SELECT * FROM `test`.`t` ORDER BY `id`", cmt)
@@ -128,14 +131,14 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 			WithArgs("test", "t").
 			WillReturnRows(sqlmock.NewRows([]string{"column_name"}))
 
-		orderByClause, err := buildOrderByClause(mockConf, db, "test", "t")
+		orderByClause, err := buildOrderByClause(mockConf, conn, "test", "t")
 		c.Assert(err, IsNil, cmt)
 
 		mock.ExpectQuery("SELECT COLUMN_NAME").
 			WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
 			WillReturnRows(sqlmock.NewRows([]string{"column_name", "extra"}).AddRow("id", ""))
 
-		selectedField, err = buildSelectField(db, "test", "t")
+		selectedField, err = buildSelectField(conn, "test", "t")
 		c.Assert(err, IsNil)
 		q := buildSelectQuery("test", "t", selectedField, "", orderByClause)
 		c.Assert(q, Equals, "SELECT * FROM `test`.`t`", cmt)
@@ -154,7 +157,7 @@ func (s *testDumpSuite) TestBuildSelectAllQuery(c *C) {
 			WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
 			WillReturnRows(sqlmock.NewRows([]string{"column_name", "extra"}).AddRow("id", ""))
 
-		selectedField, err := buildSelectField(db, "test", "t")
+		selectedField, err := buildSelectField(conn, "test", "t")
 		c.Assert(err, IsNil)
 		q := buildSelectQuery("test", "t", selectedField, "", "")
 		c.Assert(q, Equals, "SELECT * FROM `test`.`t`", cmt)
@@ -166,13 +169,15 @@ func (s *testDumpSuite) TestBuildSelectField(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
 	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	c.Assert(err, IsNil)
 
 	// generate columns not found
 	mock.ExpectQuery("SELECT COLUMN_NAME").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{"column_name", "extra"}).AddRow("id", ""))
 
-	selectedField, err := buildSelectField(db, "test", "t")
+	selectedField, err := buildSelectField(conn, "test", "t")
 	c.Assert(selectedField, Equals, "*")
 	c.Assert(err, IsNil)
 	c.Assert(mock.ExpectationsWereMet(), IsNil)
@@ -183,7 +188,7 @@ func (s *testDumpSuite) TestBuildSelectField(c *C) {
 		WillReturnRows(sqlmock.NewRows([]string{"column_name", "extra"}).
 			AddRow("id", "").AddRow("name", "").AddRow("quo`te", "").AddRow("generated", "VIRTUAL GENERATED"))
 
-	selectedField, err = buildSelectField(db, "test", "t")
+	selectedField, err = buildSelectField(conn, "test", "t")
 	c.Assert(selectedField, Equals, "`id`,`name`,`quo``te`")
 	c.Assert(err, IsNil)
 	c.Assert(mock.ExpectationsWereMet(), IsNil)

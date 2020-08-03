@@ -64,7 +64,7 @@ func detectServerInfo(db *sql.DB) (ServerInfo, error) {
 	return ParseServerInfo(versionStr), nil
 }
 
-func prepareDumpingDatabases(conf *Config, db *sql.DB) ([]string, error) {
+func prepareDumpingDatabases(conf *Config, db *sql.Conn) ([]string, error) {
 	databases, err := ShowDatabases(db)
 	if len(conf.Databases) == 0 {
 		return databases, err
@@ -86,12 +86,12 @@ func prepareDumpingDatabases(conf *Config, db *sql.DB) ([]string, error) {
 	}
 }
 
-func listAllTables(db *sql.DB, databaseNames []string) (DatabaseTables, error) {
+func listAllTables(db *sql.Conn, databaseNames []string) (DatabaseTables, error) {
 	log.Debug("list all the tables")
 	return ListAllDatabasesTables(db, databaseNames, TableTypeBase)
 }
 
-func listAllViews(db *sql.DB, databaseNames []string) (DatabaseTables, error) {
+func listAllViews(db *sql.Conn, databaseNames []string) (DatabaseTables, error) {
 	log.Debug("list all the views")
 	return ListAllDatabasesTables(db, databaseNames, TableTypeView)
 }

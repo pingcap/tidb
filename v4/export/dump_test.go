@@ -2,6 +2,7 @@ package export
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strconv"
 
@@ -25,6 +26,14 @@ func newMockWriter() *mockWriter {
 		tableMeta:    map[string]string{},
 		tableData:    nil,
 	}
+}
+
+func newMockConnectPool(c *C, db *sql.DB) *connectionsPool {
+	conn, err := db.Conn(context.Background())
+	c.Assert(err, IsNil)
+	connectPool := &connectionsPool{conns: make(chan *sql.Conn, 1)}
+	connectPool.releaseConn(conn)
+	return connectPool
 }
 
 func (m *mockWriter) WriteDatabaseMeta(ctx context.Context, db, createSQL string) error {
@@ -64,7 +73,8 @@ func (s *testDumpSuite) TestDumpDatabase(c *C) {
 	mock.ExpectQuery("SELECT (.) FROM `test`.`t`").WillReturnRows(rows)
 
 	mockWriter := newMockWriter()
-	err = dumpDatabases(context.Background(), mockConfig, db, mockWriter)
+	connectPool := newMockConnectPool(c, db)
+	err = dumpDatabases(context.Background(), mockConfig, connectPool, mockWriter)
 	c.Assert(err, IsNil)
 
 	c.Assert(len(mockWriter.databaseMeta), Equals, 1)
@@ -78,6 +88,8 @@ func (s *testDumpSuite) TestDumpTable(c *C) {
 	mockConfig.SortByPk = false
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
+	conn, err := db.Conn(context.Background())
+	c.Assert(err, IsNil)
 
 	showCreateTableResult := "CREATE TABLE t (a INT)"
 	rows := mock.NewRows([]string{"Table", "Create Table"}).AddRow("t", showCreateTableResult)
@@ -90,8 +102,13 @@ func (s *testDumpSuite) TestDumpTable(c *C) {
 	mock.ExpectQuery("SELECT (.) FROM `test`.`t`").WillReturnRows(rows)
 
 	mockWriter := newMockWriter()
-	err = dumpTable(context.Background(), mockConfig, db, "test", &TableInfo{Name: "t"}, mockWriter)
+	ctx := context.Background()
+	tableIRArray, err := dumpTable(ctx, mockConfig, conn, "test", &TableInfo{Name: "t"}, mockWriter)
 	c.Assert(err, IsNil)
+	for _, tableIR := range tableIRArray {
+		c.Assert(tableIR.Start(ctx, conn), IsNil)
+		c.Assert(mockWriter.WriteTableData(ctx, tableIR), IsNil)
+	}
 
 	c.Assert(mockWriter.tableMeta["test.t"], Equals, showCreateTableResult)
 	c.Assert(len(mockWriter.tableData), Equals, 1)
@@ -121,6 +138,8 @@ func (s *testDumpSuite) TestDumpTableWhereClause(c *C) {
 	mockConfig.Where = "a > 3 and a < 9"
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
+	conn, err := db.Conn(context.Background())
+	c.Assert(err, IsNil)
 
 	showCreateTableResult := "CREATE TABLE t (a INT)"
 	rows := mock.NewRows([]string{"Table", "Create Table"}).AddRow("t", showCreateTableResult)
@@ -137,8 +156,13 @@ func (s *testDumpSuite) TestDumpTableWhereClause(c *C) {
 	mock.ExpectQuery("SELECT (.) FROM `test`.`t` WHERE a > 3 and a < 9").WillReturnRows(rows)
 
 	mockWriter := newMockWriter()
-	err = dumpTable(context.Background(), mockConfig, db, "test", &TableInfo{Name: "t"}, mockWriter)
+	ctx := context.Background()
+	tableIRArray, err := dumpTable(ctx, mockConfig, conn, "test", &TableInfo{Name: "t"}, mockWriter)
 	c.Assert(err, IsNil)
+	for _, tableIR := range tableIRArray {
+		c.Assert(tableIR.Start(ctx, conn), IsNil)
+		c.Assert(mockWriter.WriteTableData(ctx, tableIR), IsNil)
+	}
 
 	c.Assert(mockWriter.tableMeta["test.t"], Equals, showCreateTableResult)
 	c.Assert(len(mockWriter.tableData), Equals, 1)
