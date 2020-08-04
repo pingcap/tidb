@@ -30,25 +30,6 @@ const (
 	dateTimeFormat = "2006-01-02 15:04:05"
 )
 
-type metricValueType int
-
-const (
-	metricValueSum metricValueType = 1
-	metricValueAvg metricValueType = 2
-	metricValueCnt metricValueType = 3
-)
-
-func (m metricValueType) String() string {
-	switch m {
-	case metricValueAvg:
-		return "avg"
-	case metricValueCnt:
-		return "count"
-	default:
-		return "sum"
-	}
-}
-
 type profileBuilder struct {
 	sctx        sessionctx.Context
 	idMap       map[string]uint64
@@ -83,6 +64,25 @@ type metricValue struct {
 	avgP80 float64
 }
 
+type metricValueType int
+
+const (
+	metricValueSum metricValueType = 1
+	metricValueAvg metricValueType = 2
+	metricValueCnt metricValueType = 3
+)
+
+func (m metricValueType) String() string {
+	switch m {
+	case metricValueAvg:
+		return "avg"
+	case metricValueCnt:
+		return "count"
+	default:
+		return "sum"
+	}
+}
+
 func (n *metricValue) setQuantileValue(quantile, value float64) {
 	switch quantile {
 	case 0.99:
@@ -110,7 +110,6 @@ func (n *metricValue) getValue(tp metricValueType) float64 {
 		timeValue = n.sum / float64(n.count)
 	default:
 		panic("should never happen")
-
 	}
 	if math.IsNaN(timeValue) {
 		return 0
@@ -143,15 +142,6 @@ func (n *metricValue) getComment() string {
 	return buf.String()
 }
 
-func (n *metricNode) getLabelValue(label string) *metricValue {
-	comment, ok := n.labelValue[label]
-	if !ok {
-		comment = &metricValue{}
-		n.labelValue[label] = comment
-	}
-	return comment
-}
-
 func (n *metricNode) getName(label string) string {
 	name := n.table
 	if n.name != "" {
@@ -163,7 +153,7 @@ func (n *metricNode) getName(label string) string {
 	return name
 }
 
-func (n *metricNode) getMetricValue(pb *profileBuilder) (*metricValue, error) {
+func (n *metricNode) getValue(pb *profileBuilder) (*metricValue, error) {
 	if !n.initialized {
 		n.initialized = true
 		err := n.initializeMetricValue(pb)
@@ -174,22 +164,20 @@ func (n *metricNode) getMetricValue(pb *profileBuilder) (*metricValue, error) {
 	return n.value, nil
 }
 
-func (n *metricNode) getValue(pb *profileBuilder) (*metricValue, error) {
-	return n.getMetricValue(pb)
-}
-
-func (n *metricNode) getValueString(pb *profileBuilder) (float64, error) {
-	v, err := n.getMetricValue(pb)
-	if err != nil {
-		return 0, err
+func (n *metricNode) getLabelValue(label string) *metricValue {
+	value, ok := n.labelValue[label]
+	if !ok {
+		value = &metricValue{}
+		n.labelValue[label] = value
 	}
-	return v.getValue(pb.valueTP), nil
+	return value
 }
 
 func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 	n.labelValue = make(map[string]*metricValue)
 	n.value = &metricValue{}
-	queryCondition := fmt.Sprintf("where time >= '%v' and time <= '%v'", pb.start.Format(dateTimeFormat), pb.end.Format(dateTimeFormat))
+	queryCondition := fmt.Sprintf("where time >= '%v' and time <= '%v' and value is not null and value>0",
+		pb.start.Format(dateTimeFormat), pb.end.Format(dateTimeFormat))
 	if n.condition != "" {
 		queryCondition += (" and " + n.condition)
 	}
@@ -270,7 +258,6 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 	quantiles := []float64{0.99, 0.90, 0.80}
 	for _, quantile := range quantiles {
 		condition := queryCondition + " and " + "quantile=" + strconv.FormatFloat(quantile, 'f', -1, 64)
-		condition += "and value is not null and value>0"
 		if len(n.label) == 0 {
 			query = fmt.Sprintf("select avg(value), '' from `metrics_schema`.`%v_duration` %v", n.table, condition)
 		} else {
@@ -284,7 +271,6 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 			if n.unit != 0 {
 				v = v / float64(n.unit)
 			}
-
 			totalValue += v
 			cnt++
 			n.getLabelValue(label).setQuantileValue(quantile, v)
@@ -294,7 +280,6 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 		}
 		n.value.setQuantileValue(quantile, totalValue/float64(cnt))
 	}
-
 	return nil
 }
 
@@ -312,7 +297,7 @@ func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time, tp string)
 		// Use sum when doesn't specified the type
 		valueTp = metricValueSum
 	default:
-		return nil, fmt.Errorf("unknown metric profile type: %v, expect value should be (sum, avg, count)", tp)
+		return nil, fmt.Errorf("unknown metric profile type: %v, expect value should be one of sum or avg or count", tp)
 	}
 	return &profileBuilder{
 		sctx:        sctx,
