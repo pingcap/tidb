@@ -3228,9 +3228,9 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	result = tk.MustQuery("SELECT 1.175494351E-37 div 1.7976931348623157E+308, 1.7976931348623157E+308 div -1.7976931348623157E+307, 1 div 1e-82;")
 	result.Check(testkit.Rows("0 -1 <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
-		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308, decimal(309,0) BINARY)'",
-		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308, decimal(309,0) BINARY)'",
-		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(-1.7976931348623158e+307, decimal(309,0) BINARY)'",
+		"Warning|1292|Truncated incorrect DECIMAL value: '1.7976931348623157e+308'",
+		"Warning|1292|Truncated incorrect DECIMAL value: '1.7976931348623157e+308'",
+		"Warning|1292|Truncated incorrect DECIMAL value: '-1.7976931348623158e+307'",
 		"Warning|1365|Division by 0"))
 	rs, err = tk.Exec("select 1e300 DIV 1.5")
 	c.Assert(err, IsNil)

@@ -750,7 +750,20 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		Columns:      v.Columns,
 		GenExprs:     v.GenCols.Exprs,
 	}
-	err := insertVal.initInsertColumns()
+	loadDataInfo := &LoadDataInfo{
+		row:                make([]types.Datum, 0, len(insertVal.insertColumns)),
+		InsertValues:       insertVal,
+		Path:               v.Path,
+		Table:              tbl,
+		FieldsInfo:         v.FieldsInfo,
+		LinesInfo:          v.LinesInfo,
+		IgnoreLines:        v.IgnoreLines,
+		ColumnAssignments:  v.ColumnAssignments,
+		ColumnsAndUserVars: v.ColumnsAndUserVars,
+		Ctx:                b.ctx,
+	}
+	columnNames := loadDataInfo.initFieldMappings()
+	err := loadDataInfo.initLoadColumns(columnNames)
 	if err != nil {
 		b.err = err
 		return nil
@@ -759,16 +772,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, nil, v.ExplainID()),
 		IsLocal:      v.IsLocal,
 		OnDuplicate:  v.OnDuplicate,
-		loadDataInfo: &LoadDataInfo{
-			row:          make([]types.Datum, len(insertVal.insertColumns)),
-			InsertValues: insertVal,
-			Path:         v.Path,
-			Table:        tbl,
-			FieldsInfo:   v.FieldsInfo,
-			LinesInfo:    v.LinesInfo,
-			IgnoreLines:  v.IgnoreLines,
-			Ctx:          b.ctx,
-		},
+		loadDataInfo: loadDataInfo,
 	}
 	var defaultLoadDataBatchCnt uint64 = 20000 // TODO this will be changed to variable in another pr
 	loadDataExec.loadDataInfo.InitQueues()
@@ -2790,7 +2794,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	return e, nil
 }
 
-func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) *IndexMergeReaderExecutor {
+func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) Executor {
 	ret, err := buildNoRangeIndexMergeReader(b, v)
 	if err != nil {
 		b.err = err
@@ -2813,7 +2817,23 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 	executorCounterIndexMergeReaderExecutor.Inc()
-	return ret
+
+	// TODO: Remove the following 3 lines code when the code is full implemented.
+	if !tryNewPartitionImplementation(b.ctx) {
+		return ret
+	}
+
+	if pi := ts.Table.GetPartitionInfo(); pi == nil {
+		return ret
+	}
+
+	nextPartition := nextPartitionForIndexMerge{ret}
+	exec, err := buildPartitionTable(b, ts.Table, v.PartitionTable.PruningConds, v.PartitionTable.PartitionNames, ret, nextPartition)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	return exec
 }
 
 // dataReaderBuilder build an executor.
