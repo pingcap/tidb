@@ -38,7 +38,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-func (s *testConfigSuite) TestNullableBoolUnmashal(c *C) {
+func (s *testConfigSuite) TestNullableBoolUnmarshal(c *C) {
 	var nb = nullableBool{false, false}
 	data, err := json.Marshal(nb)
 	c.Assert(err, IsNil)

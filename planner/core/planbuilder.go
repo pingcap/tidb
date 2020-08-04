@@ -2493,14 +2493,16 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 
 func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (Plan, error) {
 	p := &LoadData{
-		IsLocal:     ld.IsLocal,
-		OnDuplicate: ld.OnDuplicate,
-		Path:        ld.Path,
-		Table:       ld.Table,
-		Columns:     ld.Columns,
-		FieldsInfo:  ld.FieldsInfo,
-		LinesInfo:   ld.LinesInfo,
-		IgnoreLines: ld.IgnoreLines,
+		IsLocal:            ld.IsLocal,
+		OnDuplicate:        ld.OnDuplicate,
+		Path:               ld.Path,
+		Table:              ld.Table,
+		Columns:            ld.Columns,
+		FieldsInfo:         ld.FieldsInfo,
+		LinesInfo:          ld.LinesInfo,
+		IgnoreLines:        ld.IgnoreLines,
+		ColumnAssignments:  ld.ColumnAssignments,
+		ColumnsAndUserVars: ld.ColumnsAndUserVars,
 	}
 	user := b.ctx.GetSessionVars().User
 	var insertErr error
