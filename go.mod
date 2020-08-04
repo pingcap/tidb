@@ -26,6 +26,7 @@ require (
 	github.com/ngaut/unistore v0.0.0-20200630072006-0c4035925f69
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
+	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20200604041313-19c397305fcc
 	github.com/pingcap/br v0.0.0-20200727092753-a475692725db
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
