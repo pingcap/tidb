@@ -54,7 +54,8 @@ func genPorts() (uint, uint) {
 		ports []int
 		err   error
 	)
-	for ports, err = freeport.GetFreePorts(2); err != nil; ports, err = freeport.GetFreePorts(2) {
+	if ports, err = freeport.GetFreePorts(2); err != nil {
+		log.Fatal("no more free ports", zap.Error(err))
 	}
 	return uint(ports[0]), uint(ports[1])
 }
@@ -64,7 +65,8 @@ func genPort() uint {
 		port int
 		err  error
 	)
-	for port, err = freeport.GetFreePort(); err != nil; port, err = freeport.GetFreePort() {
+	if port, err = freeport.GetFreePort(); err != nil {
+		log.Fatal("no more free ports", zap.Error(err))
 	}
 	return uint(port)
 }

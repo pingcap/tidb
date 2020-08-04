@@ -40,17 +40,17 @@ import (
 const dbName = "test"
 
 var (
-	logLevel  string
-	port      uint
-	statsPort uint
-	record    bool
-	create    bool
+	logLevel   string
+	port       uint
+	statusPort uint
+	record     bool
+	create     bool
 )
 
 func init() {
 	flag.StringVar(&logLevel, "log-level", "error", "set log level: info, warn, error, debug [default: error]")
 	flag.UintVar(&port, "port", 4000, "tidb server port [default: 4000]")
-	flag.UintVar(&statsPort, "status", 10080, "tidb server status port [default: 10080]")
+	flag.UintVar(&statusPort, "status", 10080, "tidb server status port [default: 10080]")
 	flag.BoolVar(&record, "record", false, "record the test output in the result file")
 	flag.BoolVar(&create, "create", false, "create and import data into table, and save json file of stats")
 }
@@ -423,7 +423,7 @@ func (t *tester) create(tableName string, qText string) error {
 		return err
 	}
 
-	resp, err := http.Get("http://127.0.0.1:" + fmt.Sprint(statsPort) + "/stats/dump/" + dbName + "/" + tableName)
+	resp, err := http.Get("http://127.0.0.1:" + fmt.Sprint(statusPort) + "/stats/dump/" + dbName + "/" + tableName)
 	if err != nil {
 		return err
 	}

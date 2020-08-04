@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/phayes/freeport"
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 var (
@@ -20,7 +22,8 @@ func generatePorts(count int) []int {
 		err   error
 		ports []int
 	)
-	for ports, err = freeport.GetFreePorts(count); err != nil; ports, err = freeport.GetFreePorts(count) {
+	if ports, err = freeport.GetFreePorts(count); err != nil {
+		log.Fatal("no more free ports", zap.Error(err))
 	}
 	return ports
 }

@@ -42,6 +42,7 @@ function help_message()
     -b <y|Y|n|N>: \"y\" or \"Y\" for building test binaries [default \"y\" if this option is not specified].
                   \"n\" or \"N\" for not to build.
                   The building of tidb-server will be skiped if \"-s <tidb-server-path>\" is provided.
+                  The building of portgenerator will be skiped if \"-s <portgenerator-path>\" is provided.
 
     -r <test-name>|all: Run tests in file \"t/<test-name>.test\" and record result to file \"r/<test-name>.result\".
                         \"all\" for running all tests and record their results.
@@ -153,26 +154,43 @@ if [ $build -eq 1 ]; then
     fi
     if [[ -z "$importer" && $create -eq 1 ]]; then
         build_importer
-    else
+    elif [[ -n "$importer" ]]; then
         echo "skip building importer, using existing binary: $importer"
     fi
     build_explain_test
 else
     if [ -z "$tidb_server" ]; then
         tidb_server="./explaintest_tidb-server"
+        if [[ ! -f "$tidb_server" ]]; then
+            build_tidb_server
+        else
+            echo "skip building tidb-server, using existing binary: $tidb_server"
+        fi
     fi
     if [ -z "$explain_test" ]; then
         explain_test="./explain_test"
+        if [[ ! -f "$explain_test" ]]; then
+            build_explain_test
+        else
+            echo "skip building explaintest, using existing binary: $explain_test"
+        fi
     fi
     if [ -z "$importer" ]; then
         importer="./importer"
+        if [[ ! -f "$importer" ]]; then
+            build_importer
+        else
+            echo "skip building importer, using existing binary: $importer"
+        fi
     fi
     if [ -z "$portgenerator" ]; then
         portgenerator="./portgenerator"
+        if [[ ! -f "$portgenerator" ]]; then
+            build_portgenerator
+        else
+            echo "skip building portgenerator, using existing binary: $portgenerator"
+        fi
     fi
-    echo "skip building tidb-server, using existing binary: $tidb_server"
-    echo "skip building explaintest, using existing binary: $explain_test"
-    echo "skip building importer, using existing binary: $importer"
 fi
 
 rm -rf $explain_test_log
