@@ -1111,7 +1111,10 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 	f(c, err1, err2)
 }
 
-func (s *testStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
+func (s *serialTestStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	ctx := context.Background()
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
@@ -1300,7 +1303,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		for {
 			seCnt := atomic.LoadInt32(&sessionCnt)
 			// Make sure the two session have got the same information schema. And the first session can continue to go on,
-			// or the frist session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
+			// or the first session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
 			if currID == firstConnID || seCnt == finishedCnt {
 				break
 			}
