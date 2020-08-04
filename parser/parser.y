@@ -1465,6 +1465,12 @@ PlacementSpec:
 		spec.Tp = ast.PlacementAdd
 		$$ = spec
 	}
+|	"ALTER" "PLACEMENT" "POLICY" PlacementOpts
+	{
+		spec := $4.(*ast.PlacementSpec)
+		spec.Tp = ast.PlacementAlter
+		$$ = spec
+	}
 
 PlacementSpecList:
 	PlacementSpec
