@@ -1,7 +1,5 @@
 module github.com/pingcap/tidb
 
-replace github.com/pingcap/parser v0.0.0-20200623164729-3a18f1e5dceb => github.com/pingcap/parser v0.0.0-20200729094414-b5a528cdf2fc
-
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/Jeffail/gabs/v2 v2.5.1
