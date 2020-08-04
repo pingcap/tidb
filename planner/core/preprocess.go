@@ -112,8 +112,6 @@ type preprocessor struct {
 	ctx  sessionctx.Context
 	err  error
 	flag preprocessorFlag
-	// a temporary schema for AlterTableStmt tablename resolving
-	tmpTs string
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
@@ -876,14 +874,12 @@ func (p *preprocessor) checkContainDotColumn(stmt *ast.CreateTableStmt) {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-		if currentDB := p.ctx.GetSessionVars().CurrentDB; currentDB != "" {
-			tn.Schema = model.NewCIStr(currentDB)
-		} else if p.tmpTs != "" {
-			tn.Schema = model.NewCIStr(p.tmpTs)
-		} else {
+		currentDB := p.ctx.GetSessionVars().CurrentDB
+		if currentDB == "" {
 			p.err = errors.Trace(ErrNoDB)
 			return
 		}
+		tn.Schema = model.NewCIStr(currentDB)
 	}
 	if p.flag&inCreateOrDropTable > 0 {
 		// The table may not exist in create table or drop table statement.
@@ -983,13 +979,17 @@ func (p *preprocessor) resolveCreateTableStmt(node *ast.CreateTableStmt) {
 }
 
 func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
-	if node.Table.Schema.L != "" {
-		p.tmpTs = node.Table.Schema.L
-	}
 	for _, spec := range node.Specs {
 		if spec.Tp == ast.AlterTableRenameTable {
 			p.flag |= inCreateOrDropTable
 			break
+		} else if spec.Tp == ast.AlterTableAddConstraint {
+			if spec.Constraint.Refer != nil {
+				table := spec.Constraint.Refer.Table
+				if table.Schema.L == "" && node.Table.Schema.L != "" {
+					table.Schema = model.NewCIStr(node.Table.Schema.L)
+				}
+			}
 		}
 	}
 }
