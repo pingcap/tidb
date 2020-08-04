@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -141,8 +142,12 @@ func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
-	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	expects := testkit.Rows()
+	if collate.NewCollationEnabled() {
+		expects = testkit.Rows(`a b`)
+	}
+	tk.MustPointGet(`select * from t where a = "a ";`).Check(expects)
+	tk.MustPointGet(`select * from t where a = "a  ";`).Check(expects)
 
 	// Test CHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -152,12 +157,19 @@ func (s *testPointGetSuite) TestPointGetCharPK(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
-	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows())
-	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "";`).Check(testkit.Rows(` `))
-	tk.MustPointGet(`select * from t where a = "  ";`).Check(testkit.Rows())
-	tk.MustTableDual(`select * from t where a = "   ";`).Check(testkit.Rows())
 
+	if collate.NewCollationEnabled() {
+		tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a b`))
+		tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows(`a b`))
+		tk.MustPointGet(`select * from t where a = "  ";`).Check(testkit.Rows(` `))
+		tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows(` `))
+	} else {
+		tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows())
+		tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
+		tk.MustPointGet(`select * from t where a = "  ";`).Check(testkit.Rows())
+		tk.MustTableDual(`select * from t where a = "   ";`).Check(testkit.Rows())
+	}
 }
 
 func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
@@ -176,8 +188,13 @@ func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
-	tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
-	tk.MustTableDual(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+	if collate.NewCollationEnabled() {
+		tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a b`))
+		tk.MustPointGet(`select * from t tmp where a = "a  ";`).Check(testkit.Rows(`a b`))
+	} else {
+		tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
+		tk.MustTableDual(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+	}
 
 	// Test CHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -187,11 +204,18 @@ func (s *testPointGetSuite) TestPointGetAliasTableCharPK(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustPointGet(`select * from t tmp where a = "a";`).Check(testkit.Rows(`a b`))
-	tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
-	tk.MustTableDual(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t tmp where a = "";`).Check(testkit.Rows(` `))
-	tk.MustPointGet(`select * from t tmp where a = "  ";`).Check(testkit.Rows())
-	tk.MustTableDual(`select * from t tmp where a = "   ";`).Check(testkit.Rows())
+	if collate.NewCollationEnabled() {
+		tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows(`a b`))
+		tk.MustPointGet(`select * from t tmp where a = "a  ";`).Check(testkit.Rows(`a b`))
+		tk.MustPointGet(`select * from t tmp where a = "  ";`).Check(testkit.Rows(` `))
+		tk.MustPointGet(`select * from t tmp where a = "   ";`).Check(testkit.Rows(` `))
+	} else {
+		tk.MustPointGet(`select * from t tmp where a = "a ";`).Check(testkit.Rows())
+		tk.MustTableDual(`select * from t tmp where a = "a  ";`).Check(testkit.Rows())
+		tk.MustPointGet(`select * from t tmp where a = "  ";`).Check(testkit.Rows())
+		tk.MustTableDual(`select * from t tmp where a = "   ";`).Check(testkit.Rows())
+	}
 
 	// Test both wildcard and column name exist in select field list
 	tk.MustExec(`set @@sql_mode="";`)
@@ -248,8 +272,13 @@ func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
-	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	if collate.NewCollationEnabled() {
+		tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows(`a b`))
+		tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows(`a b`))
+	} else {
+		tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows())
+		tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	}
 
 	// Test CHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -259,13 +288,20 @@ func (s *testPointGetSuite) TestIndexLookupChar(c *C) {
 
 	tk.MustExec(`set @@sql_mode="";`)
 	tk.MustIndexLookup(`select * from t where a = "a";`).Check(testkit.Rows(`a b`))
-	tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
 	tk.MustIndexLookup(`select * from t where a = "";`).Check(testkit.Rows(` `))
-	tk.MustIndexLookup(`select * from t where a = " ";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "  ";`).Check(testkit.Rows())
-	tk.MustIndexLookup(`select * from t where a = "   ";`).Check(testkit.Rows())
-
+	if collate.NewCollationEnabled() {
+		tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows(`a b`))
+		tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows(`a b`))
+		tk.MustIndexLookup(`select * from t where a = " ";`).Check(testkit.Rows(` `))
+		tk.MustIndexLookup(`select * from t where a = "  ";`).Check(testkit.Rows(` `))
+		tk.MustIndexLookup(`select * from t where a = "   ";`).Check(testkit.Rows(` `))
+	} else {
+		tk.MustIndexLookup(`select * from t where a = "a ";`).Check(testkit.Rows())
+		tk.MustIndexLookup(`select * from t where a = "a  ";`).Check(testkit.Rows())
+		tk.MustIndexLookup(`select * from t where a = " ";`).Check(testkit.Rows())
+		tk.MustIndexLookup(`select * from t where a = "  ";`).Check(testkit.Rows())
+		tk.MustIndexLookup(`select * from t where a = "   ";`).Check(testkit.Rows())
+	}
 }
 
 func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
@@ -283,9 +319,14 @@ func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
 	tk.MustExec(`insert into t values("a ", "b ");`)
 
 	tk.MustExec(`set @@sql_mode="";`)
-	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	if collate.NewCollationEnabled() {
+		tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows(`a  b `))
+		tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows(`a  b `))
+	} else {
+		tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
+		tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
+	}
 
 	// // Test VARCHAR BINARY.
 	tk.MustExec(`drop table if exists t;`)
@@ -294,13 +335,19 @@ func (s *testPointGetSuite) TestPointGetVarcharPK(c *C) {
 	tk.MustExec(`insert into t values("a ", "b ");`)
 
 	tk.MustExec(`set @@sql_mode="";`)
-	tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "a ";`).Check(testkit.Rows(`a  b `))
-	tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
-	tk.MustPointGet(`select * from t where a = " ";`).Check(testkit.Rows())
 	tk.MustPointGet(`select * from t where a = "  ";`).Check(testkit.Rows(`     `))
-	tk.MustTableDual(`select * from t where a = "   ";`).Check(testkit.Rows())
-
+	if collate.NewCollationEnabled() {
+		tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows(`a  b `))
+		tk.MustPointGet(`select * from t where a = "a  ";`).Check(testkit.Rows(`a  b `))
+		tk.MustPointGet(`select * from t where a = " ";`).Check(testkit.Rows(`     `))
+		tk.MustPointGet(`select * from t where a = "   ";`).Check(testkit.Rows(`     `))
+	} else {
+		tk.MustPointGet(`select * from t where a = "a";`).Check(testkit.Rows())
+		tk.MustTableDual(`select * from t where a = "a  ";`).Check(testkit.Rows())
+		tk.MustPointGet(`select * from t where a = " ";`).Check(testkit.Rows())
+		tk.MustTableDual(`select * from t where a = "   ";`).Check(testkit.Rows())
+	}
 }
 
 func (s *testPointGetSuite) TestPointGetBinaryPK(c *C) {

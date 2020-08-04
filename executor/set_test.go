@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -137,10 +138,14 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_bin")
 
-	tk.MustExec("set names latin1 collate latin1_swedish_ci")
+	coll := "latin1_swedish_ci"
+	if collate.NewCollationEnabled() {
+		coll = "latin1_bin"
+	}
+	tk.MustExec("set names latin1 collate " + coll)
 	charset, collation = vars.GetCharsetInfo()
 	c.Assert(charset, Equals, "latin1")
-	c.Assert(collation, Equals, "latin1_swedish_ci")
+	c.Assert(collation, Equals, coll)
 
 	tk.MustExec("set names utf8 collate default")
 	charset, collation = vars.GetCharsetInfo()

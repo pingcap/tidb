@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -39,7 +41,11 @@ func (s *testSuite3) TestCharsetDatabase(c *C) {
 	testSQL := `create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;`
 	tk.MustExec(testSQL)
 
-	testSQL = `create database if not exists cd_test_latin1 CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
+	coll := "latin1_swedish_ci"
+	if collate.NewCollationEnabled() {
+		coll = "latin1_bin"
+	}
+	testSQL = fmt.Sprintf(`create database if not exists cd_test_latin1 CHARACTER SET latin1 COLLATE %s;`, coll)
 	tk.MustExec(testSQL)
 
 	testSQL = `use cd_test_utf8;`
@@ -50,7 +56,7 @@ func (s *testSuite3) TestCharsetDatabase(c *C) {
 	testSQL = `use cd_test_latin1;`
 	tk.MustExec(testSQL)
 	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
+	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows(coll))
 }
 
 func (s *testSuite3) TestDo(c *C) {

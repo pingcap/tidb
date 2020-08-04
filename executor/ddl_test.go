@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -144,12 +145,12 @@ func (s *testSuite6) TestCreateTable(c *C) {
 
 	// test Err case for multiple collate specified in column when create.
 	tk.MustExec("drop table if exists test_err_multiple_collate;")
-	_, err = tk.Exec("create table test_err_multiple_collate (a char(1) charset utf8mb4 collate utf8_unicode_ci collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	_, err = tk.Exec("create table test_err_multiple_collate (a char(1) charset utf8mb4 collate utf8_bin collate utf8_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_unicode_ci", "utf8mb4").Error())
+	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8_bin", "utf8mb4").Error())
 
 	tk.MustExec("drop table if exists test_err_multiple_collate;")
-	_, err = tk.Exec("create table test_err_multiple_collate (a char(1) collate utf8_unicode_ci collate utf8mb4_general_ci) charset utf8mb4 collate utf8mb4_bin")
+	_, err = tk.Exec("create table test_err_multiple_collate (a char(1) collate utf8_general_ci collate utf8mb4_general_ci) charset utf8mb4 collate utf8mb4_bin")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, ddl.ErrCollationCharsetMismatch.GenWithStackByArgs("utf8mb4_general_ci", "utf8").Error())
 
@@ -375,7 +376,7 @@ func (s *testSuite6) TestCreateDropDatabase(c *C) {
 	tk.MustQuery("show create database charset_test;").Check(testutil.RowsWithSep("|",
 		"charset_test|CREATE DATABASE `charset_test` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */",
 	))
-	tk.MustGetErrMsg("create database charset_test charset utf8 collate utf8mb4_unicode_ci;", "[ddl:1253]COLLATION 'utf8mb4_unicode_ci' is not valid for CHARACTER SET 'utf8'")
+	tk.MustGetErrMsg("create database charset_test charset utf8 collate utf8mb4_general_ci;", "[ddl:1253]COLLATION 'utf8mb4_general_ci' is not valid for CHARACTER SET 'utf8'")
 }
 
 func (s *testSuite6) TestCreateDropTable(c *C) {
@@ -550,14 +551,18 @@ func (s *testSuite6) TestAlterTableModifyColumn(c *C) {
 func (s *testSuite6) TestDefaultDBAfterDropCurDB(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	testSQL := `create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;`
+	coll := "latin1_swedish_ci"
+	if collate.NewCollationEnabled() {
+		coll = "latin1_bin"
+	}
+	testSQL := fmt.Sprintf(`create database if not exists test_db CHARACTER SET latin1 COLLATE %s;`, coll)
 	tk.MustExec(testSQL)
 
 	testSQL = `use test_db;`
 	tk.MustExec(testSQL)
 	tk.MustQuery(`select database();`).Check(testkit.Rows("test_db"))
 	tk.MustQuery(`select @@character_set_database;`).Check(testkit.Rows("latin1"))
-	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows("latin1_swedish_ci"))
+	tk.MustQuery(`select @@collation_database;`).Check(testkit.Rows(coll))
 
 	testSQL = `drop database test_db;`
 	tk.MustExec(testSQL)

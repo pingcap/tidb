@@ -16,6 +16,7 @@ package util
 import (
 	"bytes"
 	"crypto/x509/pkix"
+	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/testleak"
@@ -224,6 +226,10 @@ func (*testMiscSuite) TestToPB(c *C) {
 	}
 	column2.Collate = "utf8mb4_bin"
 
-	c.Assert(ColumnToProto(column).String(), Equals, "column_id:1 collation:45 columnLen:-1 decimal:-1 ")
-	c.Assert(ColumnsToProto([]*model.ColumnInfo{column, column2}, false)[0].String(), Equals, "column_id:1 collation:45 columnLen:-1 decimal:-1 ")
+	collateID := 45
+	if collate.NewCollationEnabled() {
+		collateID = -45
+	}
+	c.Assert(ColumnToProto(column).String(), Equals, fmt.Sprintf("column_id:1 collation:%d columnLen:-1 decimal:-1 ", collateID))
+	c.Assert(ColumnsToProto([]*model.ColumnInfo{column, column2}, false)[0].String(), Equals, fmt.Sprintf("column_id:1 collation:%d columnLen:-1 decimal:-1 ", collateID))
 }

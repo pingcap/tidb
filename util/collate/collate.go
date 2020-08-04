@@ -220,6 +220,8 @@ func IsCICollation(collate string) bool {
 }
 
 func init() {
+	newCollationEnabled = 1
+
 	newCollatorMap = make(map[string]Collator)
 	newCollatorIDMap = make(map[int]Collator)
 
