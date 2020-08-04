@@ -6421,17 +6421,17 @@ func (s *testIntegrationSuite) TestIssue1223(c *C) {
 	tk.MustExec("insert into testjson set j='{\"test\":true}';")
 	tk.MustExec("insert into testjson set j='{\"test\":false}';")
 	tk.MustQuery("SELECT * FROM testjson WHERE JSON_EXTRACT(j,'$.test');").Check(testkit.Rows("{\"test\": 3}",
-		"{\"test\": \"0\"}","{\"test\": \"aaabbb\"}","{\"test\": 3.1415}","{\"test\": []}","{\"test\": [1, 2]}",
-		"{\"test\": [\"b\", \"c\"]}","{\"test\": {\"ke\": \"val\"}}","{\"test\": \"2015-07-27 09:43:47\"}",
-		"{\"test\": \"0000-00-00 00:00:00\"}","{\"test\": \"0778\"}","{\"test\": \"0000\"}",
-		"{\"test\": [null]}","{\"test\": true}","{\"test\": false}"))
+		"{\"test\": \"0\"}", "{\"test\": \"aaabbb\"}", "{\"test\": 3.1415}", "{\"test\": []}", "{\"test\": [1, 2]}",
+		"{\"test\": [\"b\", \"c\"]}", "{\"test\": {\"ke\": \"val\"}}", "{\"test\": \"2015-07-27 09:43:47\"}",
+		"{\"test\": \"0000-00-00 00:00:00\"}", "{\"test\": \"0778\"}", "{\"test\": \"0000\"}",
+		"{\"test\": [null]}", "{\"test\": true}", "{\"test\": false}"))
 	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('json_extract','tikv','');")
 	tk.MustExec("admin reload expr_pushdown_blacklist;")
 	tk.MustQuery("SELECT * FROM testjson WHERE JSON_EXTRACT(j,'$.test');").Check(testkit.Rows("{\"test\": 3}",
-		"{\"test\": \"0\"}","{\"test\": \"aaabbb\"}","{\"test\": 3.1415}","{\"test\": []}","{\"test\": [1, 2]}",
-		"{\"test\": [\"b\", \"c\"]}","{\"test\": {\"ke\": \"val\"}}","{\"test\": \"2015-07-27 09:43:47\"}",
-		"{\"test\": \"0000-00-00 00:00:00\"}","{\"test\": \"0778\"}","{\"test\": \"0000\"}",
-		"{\"test\": [null]}","{\"test\": true}","{\"test\": false}"))
+		"{\"test\": \"0\"}", "{\"test\": \"aaabbb\"}", "{\"test\": 3.1415}", "{\"test\": []}", "{\"test\": [1, 2]}",
+		"{\"test\": [\"b\", \"c\"]}", "{\"test\": {\"ke\": \"val\"}}", "{\"test\": \"2015-07-27 09:43:47\"}",
+		"{\"test\": \"0000-00-00 00:00:00\"}", "{\"test\": \"0778\"}", "{\"test\": \"0000\"}",
+		"{\"test\": [null]}", "{\"test\": true}", "{\"test\": false}"))
 }
 
 func (s *testIntegrationSuite) TestIssue15743(c *C) {

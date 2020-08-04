@@ -152,9 +152,9 @@ func (bj BinaryJSON) IsZero() bool {
 	case TypeCodeString:
 		isZero = false
 	case TypeCodeLiteral:
-		if bj.Value[0] == LiteralNil{
+		if bj.Value[0] == LiteralNil {
 			isZero = true
-		}else{
+		} else {
 			isZero = false
 		}
 	case TypeCodeInt64:
