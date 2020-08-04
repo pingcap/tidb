@@ -336,9 +336,9 @@
       "IndexLookUp(Index(t1.a)[[1,1]], Table(t1)->Sel([le(test.t1.b, 2)]))",
       "TableReader(Table(t2)->Sel([le(test.t2.a, 2)]))",
       "Analyze{Index(a),Index(b)}",
-      "PartitionUnionAll{TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))->TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))}",
-      "PartitionUnionAll{IndexReader(Index(t4.b)[[-inf,2)])->IndexReader(Index(t4.b)[[-inf,2)])}",
-      "TableReader(Table(t4)->Sel([eq(test.t4.a, 1) le(test.t4.b, 2)]))"
+      "TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))",
+      "IndexReader(Index(t4.b)[[-inf,2)])",
+      "IndexLookUp(Index(t4.a)[[1,1]], Table(t4)->Sel([le(test.t4.b, 2)]))"
     ]
   },
   {

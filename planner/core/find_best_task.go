@@ -679,6 +679,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				!candidate.path.Index.HasPrefixIndex() &&
 				len(candidate.path.Ranges[0].LowVal) == len(candidate.path.Index.Columns)
 		}
+		if ds.table.Meta().GetPartitionInfo() != nil && !tryOldPartitionImplementation(ds.ctx) {
+			canConvertPointGet = false
+		}
 		if canConvertPointGet {
 			allRangeIsPoint := true
 			for _, ran := range path.Ranges {
