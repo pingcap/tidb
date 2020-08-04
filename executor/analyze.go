@@ -909,18 +909,14 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 }
 
 func (e *AnalyzeFastExec) handleBatchSeekResponse(kvMap map[string][]byte) (err error) {
-	redundant := uint64(e.sampCursor+int32(len(kvMap))) - e.opts[ast.AnalyzeOptNumSamples]
-	for k := range kvMap {
-		if redundant == 0 {
-			break
-		}
-		delete(kvMap, k)
-		redundant--
-	}
 	length := int32(len(kvMap))
 	newCursor := atomic.AddInt32(&e.sampCursor, length)
 	samplePos := newCursor - length
 	for sKey, sValue := range kvMap {
+		exceedNeededSampleCounts := uint64(samplePos) >= e.opts[ast.AnalyzeOptNumSamples]
+		if exceedNeededSampleCounts {
+			break
+		}
 		err = e.updateCollectorSamples(sValue, kv.Key(sKey), samplePos)
 		if err != nil {
 			return err
@@ -1113,7 +1109,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	for i := 0; i < length; i++ {
 		// Build collector properties.
 		collector := e.collectors[i]
-		collector.Samples = collector.Samples[:e.sampCursor]
+		collector.Samples = collector.Samples[:e.opts[ast.AnalyzeOptNumSamples]]
 		sort.Slice(collector.Samples, func(i, j int) bool { return collector.Samples[i].Handle.Compare(collector.Samples[j].Handle) < 0 })
 		collector.CalcTotalSize()
 		// Adjust the row count in case the count of `tblStats` is not accurate and too small.
