@@ -30,6 +30,8 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	parsertypes "github.com/pingcap/parser/types"
+	pd "github.com/pingcap/pd/v4/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -595,6 +597,7 @@ func setGlobalVars() {
 			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
 	}
 	tikv.StoreLivenessTimeout = t
+	parsertypes.TiDBStrictIntegerDisplayWidth = config.GetGlobalConfig().StrictIntegerDisplayWidth
 }
 
 func setupLog() {

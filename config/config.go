@@ -150,6 +150,8 @@ type Config struct {
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 	// EnableGlobalIndex enables creating global index.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
+	// StrictIntegerDisplayWidth indicates whether deprecating the max display length for integer.
+	StrictIntegerDisplayWidth bool `toml:"strict-integer-display-length" json:"strict-integer-display-length"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -722,6 +724,7 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
+	StrictIntegerDisplayWidth:  false,
 }
 
 var (

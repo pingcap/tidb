@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	parsertypes "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
@@ -5299,7 +5300,9 @@ func init() {
 	domain.SchemaOutOfDateRetryTimes = int32(50)
 }
 
-func (s *testDBSuite7) TestCreateTableWithIntegerLengthWaring(c *C) {
+func (s *testSerialDBSuite) TestCreateTableWithIntegerLengthWaring(c *C) {
+	// Inject the strict-integer-display-width variable in parser directly.
+	parsertypes.TiDBStrictIntegerDisplayWidth = true
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -5348,4 +5351,5 @@ func (s *testDBSuite7) TestCreateTableWithIntegerLengthWaring(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
+	parsertypes.TiDBStrictIntegerDisplayWidth = false
 }
