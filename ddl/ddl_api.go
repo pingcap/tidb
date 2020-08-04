@@ -20,6 +20,7 @@ package ddl
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -5165,6 +5166,55 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	return errors.Trace(err)
 }
 
+func checkPlacementSpecConstraint(label string) (placement.LabelConstraint, error) {
+	r := placement.LabelConstraint{}
+
+	if len(label) < 4 {
+		return r, errors.Errorf("constraint too short to be valid: %s", label)
+	}
+
+	var op placement.LabelConstraintOp
+	switch label[0] {
+	case '+':
+		op = placement.In
+	case '-':
+		op = placement.NotIn
+	default:
+		return r, errors.Errorf("unknown operation: %c", label[0])
+	}
+
+	kv := strings.Split(label[1:], "=")
+	if len(kv) != 2 {
+		return r, errors.Errorf("invalid constraint format: %s", label)
+	}
+
+	key := strings.TrimSpace(kv[0])
+	if key == "" {
+		return r, errors.Errorf("empty constraint key: %s", label)
+	}
+
+	val := strings.TrimSpace(kv[1])
+	if val == "" {
+		return r, errors.Errorf("empty constraint val: %s", label)
+	}
+
+	r.Key = key
+	r.Op = op
+	r.Values = []string{val}
+	return r, nil
+}
+
+func checkPlacementSpecConstraints(rule *placement.Rule, labels []string) error {
+	for _, str := range labels {
+		label, err := checkPlacementSpecConstraint(strings.TrimSpace(str))
+		if err != nil {
+			return err
+		}
+		rule.LabelConstraints = append(rule.LabelConstraints, label)
+	}
+	return nil
+}
+
 func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) {
 	rules := make([]*placement.Rule, 0, len(specs))
 	for k, spec := range specs {
@@ -5193,46 +5243,47 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 			return rules, errors.Errorf("invalid placement spec[%d], unknown role: %d", k, spec.Role)
 		}
 
-		for _, label := range strings.Split(spec.Constraints, ",") {
-			label = strings.TrimSpace(label)
+		cnstr := strings.TrimSpace(spec.Constraints)
 
-			if len(label) < 4 {
-				return rules, errors.Errorf("invalid placement spec[%d], constraint too short to be valid: %s", k, label)
+		var err error
+		if len(cnstr) > 0 && cnstr[0] == '[' {
+			constraints := []string{}
+			err = json.Unmarshal([]byte(cnstr), &constraints)
+			if err == nil {
+				err = checkPlacementSpecConstraints(rule, constraints)
+				if err == nil {
+					rules = append(rules, rule)
+				}
 			}
-
-			var op placement.LabelConstraintOp
-			switch label[0] {
-			case '+':
-				op = placement.In
-			case '-':
-				op = placement.NotIn
-			default:
-				return rules, errors.Errorf("invalid placement spec[%d], unknown operation: %c", k, label[0])
+		} else if len(cnstr) > 0 && cnstr[0] == '{' {
+			constraints := map[string]int{}
+			err = json.Unmarshal([]byte(cnstr), &constraints)
+			if err == nil {
+				for labels, cnt := range constraints {
+					newrule := &placement.Rule{}
+					*newrule = *rule
+					if cnt <= 0 {
+						err = errors.New("negative or zero count")
+						break
+					} else {
+						// TODO: handle or remove it in later commits
+						rule.Count -= cnt
+					}
+					newrule.Count = cnt
+					err = checkPlacementSpecConstraints(newrule, strings.Split(strings.TrimSpace(labels), ","))
+					if err != nil {
+						break
+					}
+					rules = append(rules, newrule)
+				}
 			}
-
-			kv := strings.Split(label[1:], "=")
-			if len(kv) != 2 {
-				return rules, errors.Errorf("invalid placement spec[%d], invalid constraint format: %s", k, label)
-			}
-
-			key := strings.TrimSpace(kv[0])
-			if key == "" {
-				return rules, errors.Errorf("invalid placement spec[%d], empty constraint key: %s", k, label)
-			}
-
-			val := strings.TrimSpace(kv[1])
-			if val == "" {
-				return rules, errors.Errorf("invalid placement spec[%d], empty constraint val: %s", k, label)
-			}
-
-			rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
-				Key:    key,
-				Op:     op,
-				Values: []string{val},
-			})
+		} else {
+			err = errors.Errorf("invalid constraint: %s", cnstr)
 		}
 
-		rules = append(rules, rule)
+		if err != nil {
+			return rules, errors.Wrapf(err, "invalid placement spec[%d]", k)
+		}
 	}
 	return rules, nil
 }
@@ -5276,10 +5327,6 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 	}
 
 	err = d.doDDLJob(ctx, job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
