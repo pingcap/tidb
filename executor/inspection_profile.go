@@ -35,7 +35,19 @@ type metricValueType int
 const (
 	metricValueSum metricValueType = 1
 	metricValueAvg metricValueType = 2
+	metricValueCnt metricValueType = 3
 )
+
+func (m metricValueType) String() string {
+	switch m {
+	case metricValueAvg:
+		return "avg"
+	case metricValueCnt:
+		return "count"
+	default:
+		return "sum"
+	}
+}
 
 type profileBuilder struct {
 	sctx        sessionctx.Context
@@ -85,20 +97,25 @@ func (n *metricValue) setQuantileValue(quantile, value float64) {
 }
 
 func (n *metricValue) getValue(tp metricValueType) float64 {
-	value := 0.0
+	timeValue := 0.0
 	switch tp {
+	case metricValueCnt:
+		return float64(n.count)
+	case metricValueSum:
+		timeValue = n.sum
 	case metricValueAvg:
 		if n.count == 0 {
 			return 0.0
 		}
-		value = n.sum / float64(n.count)
+		timeValue = n.sum / float64(n.count)
 	default:
-		value = n.sum
+		panic("should never happen")
+
 	}
-	if math.IsNaN(value) {
+	if math.IsNaN(timeValue) {
 		return 0
 	}
-	return value
+	return timeValue
 }
 
 func (n *metricValue) getComment(tp metricValueType) string {
@@ -149,15 +166,27 @@ func (n *metricNode) getName(label string) string {
 	return name
 }
 
-func (n *metricNode) getValue(pb *profileBuilder) (float64, error) {
+func (n *metricNode) getMetricValue(pb *profileBuilder) (*metricValue, error) {
 	if !n.initialized {
 		n.initialized = true
 		err := n.initializeMetricValue(pb)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 	}
-	return n.value.getValue(pb.valueTP), nil
+	return n.value, nil
+}
+
+func (n *metricNode) getValue(pb *profileBuilder) (*metricValue, error) {
+	return n.getMetricValue(pb)
+}
+
+func (n *metricNode) getValueString(pb *profileBuilder) (float64, error) {
+	v, err := n.getMetricValue(pb)
+	if err != nil {
+		return 0, err
+	}
+	return v.getValue(pb.valueTP), nil
 }
 
 func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
@@ -273,10 +302,20 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 }
 
 // NewProfileBuilder returns a new profileBuilder.
-func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time, tp string) *profileBuilder {
+func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time, tp string) (*profileBuilder, error) {
 	valueTp := metricValueSum
-	if strings.ToLower(tp) == "avg" {
+	switch strings.ToLower(tp) {
+	case metricValueSum.String():
+		valueTp = metricValueSum
+	case metricValueAvg.String():
 		valueTp = metricValueAvg
+	case metricValueCnt.String():
+		valueTp = metricValueCnt
+	case "":
+		// Use sum when doesn't specified the type
+		valueTp = metricValueSum
+	default:
+		return nil, fmt.Errorf("unknown metric profile type: %v, expect value should be (sum, avg, count)", tp)
 	}
 	return &profileBuilder{
 		sctx:        sctx,
@@ -287,7 +326,7 @@ func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time, tp string)
 		start:       start,
 		end:         end,
 		valueTP:     valueTp,
-	}
+	}, nil
 }
 
 // Collect uses to collect the related metric information.
@@ -325,7 +364,7 @@ func (pb *profileBuilder) addMetricTree(root *metricNode, name string) error {
 	}
 	pb.buf.WriteString(fmt.Sprintf(`subgraph %[1]s { "%[1]s" [shape=box fontsize=16 label="Type: %[1]s\lTime: %s\lDuration: %s\l"] }`, name, pb.start.String(), pb.end.Sub(pb.start).String()))
 	pb.buf.WriteByte('\n')
-	v, err := pb.GetMaxNodeValue(root)
+	v, err := pb.GetTotalValue(root)
 	if err != nil {
 		return err
 	}
@@ -338,10 +377,16 @@ func (pb *profileBuilder) addMetricTree(root *metricNode, name string) error {
 }
 
 func (pb *profileBuilder) GetTotalValue(root *metricNode) (float64, error) {
-	if pb.valueTP == metricValueSum {
-		return root.getValue(pb)
+	switch pb.valueTP {
+	case metricValueSum, metricValueCnt:
+		value, err := root.getValue(pb)
+		if err != nil {
+			return 0.0, err
+		}
+		return value.getValue(pb.valueTP), nil
+	default:
+		return pb.GetMaxNodeValue(root)
 	}
-	return pb.GetMaxNodeValue(root)
 }
 
 func (pb *profileBuilder) GetMaxNodeValue(root *metricNode) (float64, error) {
@@ -349,10 +394,11 @@ func (pb *profileBuilder) GetMaxNodeValue(root *metricNode) (float64, error) {
 		return 0.0, nil
 	}
 	n := root
-	max, err := n.getValue(pb)
+	value, err := n.getValue(pb)
 	if err != nil {
-		return max, err
+		return 0.0, err
 	}
+	max := value.getValue(pb.valueTP)
 	for _, v := range n.labelValue {
 		if v.getValue(pb.valueTP) > max {
 			max = v.getValue(pb.valueTP)
@@ -384,12 +430,12 @@ func (pb *profileBuilder) traversal(n *metricNode) error {
 		return nil
 	}
 	pb.uniqueMap[nodeName] = struct{}{}
-	selfValue, err := n.getValue(pb)
+	nodeValue, err := n.getValue(pb)
 	if err != nil {
 		return err
 	}
 
-	if pb.ignoreFraction(selfValue, pb.totalValue) {
+	if pb.ignoreFraction(nodeValue, pb.totalValue) {
 		return nil
 	}
 	totalChildrenValue := float64(0)
@@ -400,9 +446,11 @@ func (pb *profileBuilder) traversal(n *metricNode) error {
 		}
 		pb.addNodeEdge(n, child, childValue)
 		if !child.isPartOfParent {
-			totalChildrenValue += childValue
+			totalChildrenValue += childValue.getValue(pb.valueTP)
 		}
 	}
+
+	selfValue := nodeValue.getValue(pb.valueTP)
 	selfCost := selfValue - totalChildrenValue
 	err = pb.addNode(n, selfCost, selfValue)
 	if err != nil {
@@ -417,7 +465,7 @@ func (pb *profileBuilder) traversal(n *metricNode) error {
 	return nil
 }
 
-func (pb *profileBuilder) addNodeEdge(parent, child *metricNode, childValue float64) {
+func (pb *profileBuilder) addNodeEdge(parent, child *metricNode, childValue *metricValue) {
 	if pb.ignoreFraction(childValue, pb.totalValue) {
 		return
 	}
@@ -428,16 +476,15 @@ func (pb *profileBuilder) addNodeEdge(parent, child *metricNode, childValue floa
 	if len(parent.label) == 0 {
 		label := ""
 		if !child.isPartOfParent {
-			label = fmt.Sprintf(" %.2fs", childValue)
+			label = pb.formatValueByTp(childValue.getValue(pb.valueTP))
 		}
-		pb.addEdge(parent.getName(""), child.getName(""), label, style, childValue)
+		pb.addEdge(parent.getName(""), child.getName(""), label, style, childValue.getValue(pb.valueTP))
 	} else {
 		for label, value := range parent.labelValue {
-			v := value.getValue(pb.valueTP)
-			if pb.ignoreFraction(v, pb.totalValue) {
+			if pb.ignoreFraction(value, pb.totalValue) {
 				continue
 			}
-			pb.addEdge(parent.getName(label), child.getName(""), "", style, childValue)
+			pb.addEdge(parent.getName(label), child.getName(""), "", style, childValue.getValue(pb.valueTP))
 		}
 	}
 }
@@ -447,11 +494,11 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) er
 	weight := selfCost
 	if len(n.label) > 0 {
 		for label, value := range n.labelValue {
-			v := value.getValue(pb.valueTP)
-			if pb.ignoreFraction(v, pb.totalValue) {
+			if pb.ignoreFraction(value, pb.totalValue) {
 				continue
 			}
-			vStr := time.Duration(v * float64(time.Second)).String()
+			v := value.getValue(pb.valueTP)
+			vStr := pb.formatValueByTp(v)
 			labelValue := fmt.Sprintf(" %s", vStr)
 			pb.addEdge(n.getName(""), n.getName(label), labelValue, "", v)
 			labelValue = fmt.Sprintf("%s\n %s (%.2f%%)", n.getName(label), vStr, v*100/pb.totalValue)
@@ -463,8 +510,9 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) er
 	}
 
 	label := fmt.Sprintf("%s\n %s (%.2f%%)\nof %s (%.2f%%)",
-		name, time.Duration(selfCost*float64(time.Second)).String(), selfCost*100/pb.totalValue,
-		time.Duration(nodeTotal*float64(time.Second)).String(), nodeTotal*100/pb.totalValue)
+		name,
+		pb.formatValueByTp(selfCost), selfCost*100/pb.totalValue,
+		pb.formatValueByTp(nodeTotal), nodeTotal*100/pb.totalValue)
 	pb.addNodeDef(n.getName(""), label, n.value.getComment(pb.valueTP), weight, selfCost)
 	return nil
 }
@@ -495,8 +543,25 @@ func (pb *profileBuilder) addEdge(from, to, label, style string, value float64) 
 	pb.buf.WriteByte('\n')
 }
 
-func (pb *profileBuilder) ignoreFraction(value, total float64) bool {
+func (pb *profileBuilder) ignoreFraction(v *metricValue, total float64) bool {
+	value := v.getValue(pb.valueTP)
 	return value*100/total < 0.01
+}
+
+func (pb *profileBuilder) formatValueByTp(value float64) string {
+	switch pb.valueTP {
+	case metricValueCnt:
+		return strconv.Itoa(int(value))
+	case metricValueSum, metricValueAvg:
+		if math.IsNaN(value) {
+			return ""
+		}
+		if value > 1 {
+			return fmt.Sprintf("%.2fs", value)
+		}
+		return time.Duration(int64(value * float64(time.Second))).String()
+	}
+	panic("should never happen")
 }
 
 // dotColor function is copy from https://github.com/google/pprof.
