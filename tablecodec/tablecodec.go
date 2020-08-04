@@ -130,6 +130,9 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle kv.Handle, err error) {
 	if len(key) == 8 {
 		var intHandle int64
 		key, intHandle, err = codec.DecodeInt(key)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
 		return tableID, kv.IntHandle(intHandle), nil
 	}
 	h, err := kv.NewCommonHandle(key)
