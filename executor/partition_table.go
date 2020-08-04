@@ -107,7 +107,7 @@ func nextPartitionWithTrace(ctx context.Context, n nextPartition, tbl table.Phys
 	return n.nextPartition(ctx, tbl)
 }
 
-// Next implements the Executor interface.
+// Open implements the Executor interface.
 func (e *PartitionTableExecutor) Open(ctx context.Context) error {
 	// Open is actually done in the calling of Next()
 	return nil
