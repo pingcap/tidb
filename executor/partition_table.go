@@ -88,7 +88,6 @@ type nextPartitionForUnionScan struct {
 // For union scan on partitioned table, the executor should be PartitionTable->UnionScan->TableReader rather than
 // UnionScan->PartitionTable->TableReader
 func (n nextPartitionForUnionScan) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
-	fmt.Println("change to next partition ===", tbl.GetPhysicalID())
 	childExec, err := n.child.nextPartition(ctx, tbl)
 	if err != nil {
 		return nil, err
