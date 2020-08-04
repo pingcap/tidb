@@ -24,7 +24,6 @@ import (
 const (
 	maxHeight      = 16
 	nodeHeaderSize = int(unsafe.Sizeof(nodeHeader{}))
-	initBlockSize  = 4 * 1024
 )
 
 // sandbox is a space to keep pending kvs.
@@ -98,7 +97,6 @@ func (sb *sandbox) PutWithFlags(key []byte, flags KeyFlags, value []byte) {
 	if !exists {
 		height = sb.randomHeight()
 	} else {
-		flags = flags.Merge(next[0].flags)
 		height = sb.prepareOverwrite(next[:])
 	}
 
@@ -404,7 +402,6 @@ func (sb *sandbox) merge(new *sandbox) int {
 
 		height := int(newNode.height)
 		if exists {
-			newNode.flags = newNode.flags.Merge(ms.next[0].flags)
 			height = sb.prepareOverwrite(ms.next[:])
 			if height > int(newNode.height) {
 				// The space is not enough, we have to create a new node.
