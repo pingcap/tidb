@@ -5265,10 +5265,9 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 					if cnt <= 0 {
 						err = errors.New("negative or zero count")
 						break
-					} else {
-						// TODO: handle or remove it in later commits
-						rule.Count -= cnt
 					}
+					// TODO: handle or remove it in later commits
+					rule.Count -= cnt
 					newrule.Count = cnt
 					err = checkPlacementSpecConstraints(newrule, strings.Split(strings.TrimSpace(labels), ","))
 					if err != nil {
