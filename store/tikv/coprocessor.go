@@ -76,7 +76,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	// judge whether using sync send
-	if req.StoreType != kv.TiDB {
+	if req.StoreType != kv.TiDB && !req.KeepOrder {
 		it.syncSend = false
 	}
 	if it.syncSend {
