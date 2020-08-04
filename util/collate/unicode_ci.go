@@ -139,21 +139,21 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 	sn, ss := uint64(0), uint64(0)
 	si := 0
 
-	appendBuf := func(n uint64) {
-		for n != 0 {
-			w := n & 0xFFFF
-			buf = append(buf, byte(w>>8), byte(w))
-			n >>= 16
-		}
-	}
-
 	for {
 		sn, ss, si = next(str, si)
 		if sn == 0 {
 			return buf
 		}
-		appendBuf(sn)
-		appendBuf(ss)
+		for sn != 0 {
+			w := sn & 0xFFFF
+			buf = append(buf, byte(w>>8), byte(w))
+			sn >>= 16
+		}
+		for ss != 0 {
+			w := ss & 0xFFFF
+			buf = append(buf, byte(w>>8), byte(w))
+			ss >>= 16
+		}
 	}
 }
 
