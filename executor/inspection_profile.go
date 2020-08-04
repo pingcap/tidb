@@ -282,7 +282,7 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 
 // NewProfileBuilder returns a new profileBuilder.
 func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time, tp string) (*profileBuilder, error) {
-	valueTp := metricValueSum
+	var valueTp metricValueType
 	switch strings.ToLower(tp) {
 	case metricValueSum.String():
 		valueTp = metricValueSum
@@ -291,7 +291,7 @@ func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time, tp string)
 	case metricValueCnt.String():
 		valueTp = metricValueCnt
 	case "":
-		// Use sum when doesn't specified the type
+		// Use type sum when doesn't specified the type, this is used to compatible with old behaviour.
 		valueTp = metricValueSum
 	default:
 		return nil, fmt.Errorf("unknown metric profile type: %v, expect value should be one of sum or avg or count", tp)
