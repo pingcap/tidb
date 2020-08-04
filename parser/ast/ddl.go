@@ -3454,6 +3454,7 @@ type PlacementActionType int
 
 const (
 	PlacementAdd PlacementActionType = iota + 1
+	PlacementAlter
 )
 
 type PlacementRole int
@@ -3478,6 +3479,8 @@ func (n *PlacementSpec) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case PlacementAdd:
 		ctx.WriteKeyWord("ADD PLACEMENT POLICY ")
+	case PlacementAlter:
+		ctx.WriteKeyWord("ALTER PLACEMENT POLICY ")
 	default:
 		return errors.Errorf("invalid PlacementActionType: %d", n.Tp)
 	}
