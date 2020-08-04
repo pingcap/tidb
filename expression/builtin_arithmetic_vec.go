@@ -665,14 +665,6 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 		defer b.bufAllocator.put(buf[i])
 
 		err = arg.VecEvalDecimal(b.ctx, input, buf[i])
-		// Its behavior is consistent with MySQL.
-		if terror.ErrorEqual(err, types.ErrTruncated) {
-			err = nil
-		}
-		if terror.ErrorEqual(err, types.ErrOverflow) {
-			newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", arg)
-			err = sc.HandleOverflow(newErr, newErr)
-		}
 		if err != nil {
 			return err
 		}

@@ -809,7 +809,15 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 	for i := 0; i < n; i++ {
 		if !b.inUnion || bufreal[i] >= 0 {
 			if err = resdecimal[i].FromFloat64(bufreal[i]); err != nil {
-				return err
+				if types.ErrOverflow.Equal(err) {
+					err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+				}
+				if types.ErrTruncated.Equal(err) {
+					err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+				}
+				if err != nil {
+					return err
+				}
 			}
 		}
 		dec, err := types.ProduceDecWithSpecifiedTp(&resdecimal[i], b.tp, b.ctx.GetSessionVars().StmtCtx)

@@ -804,6 +804,12 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 	res = new(types.MyDecimal)
 	if !b.inUnion || val >= 0 {
 		err = res.FromFloat64(val)
+		if types.ErrOverflow.Equal(err) {
+			err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+		}
+		if types.ErrTruncated.Equal(err) {
+			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+		}
 		if err != nil {
 			return res, false, err
 		}
