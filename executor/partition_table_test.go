@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *partitionTableSuite) TestThreeReader(c *C) {
+func (s *partitionTableSuite) TestFourReader(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists pt")
 	tk.MustExec(`create table pt (id int, c int, key i_id(id), key i_c(c)) partition by range (c) (
@@ -49,4 +49,8 @@ partition p2 values less than (10))`)
 	tk.MustQuery("select /*+ use_index(pt, i_id) */ * from pt where id < 4 and c > 10").Check(testkit.Rows())
 	tk.MustQuery("select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c > 8").Check(testkit.Rows("9 9"))
 	tk.MustQuery("select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c < 2 or c >= 9").Check(testkit.Rows("0 0", "9 9"))
+
+	// Index Merge
+	tk.MustExec("set @@tidb_enable_index_merge = 1")
+	tk.MustQuery("select /*+ use_index(i_c, i_id) */ * from pt where id = 4 or c < 7").Check(testkit.Rows("0 0", "2 2", "4 4", "6 6"))
 }
