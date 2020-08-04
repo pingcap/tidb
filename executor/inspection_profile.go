@@ -118,22 +118,19 @@ func (n *metricValue) getValue(tp metricValueType) float64 {
 	return timeValue
 }
 
-func (n *metricValue) getComment(tp metricValueType) string {
+func (n *metricValue) getComment() string {
 	if n.count == 0 {
 		return ""
 	}
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	buf.WriteString("total_time: ")
+	buf.WriteString(time.Duration(int64(n.sum * float64(time.Second))).String())
+	buf.WriteByte('\n')
 	buf.WriteString("total_count: ")
 	buf.WriteString(strconv.Itoa(n.count))
 	buf.WriteByte('\n')
-	switch tp {
-	case metricValueAvg:
-		buf.WriteString("total_time: ")
-		buf.WriteString(time.Duration(int64(n.sum * float64(time.Second))).String())
-	default:
-		buf.WriteString("avg_time: ")
-		buf.WriteString(time.Duration(int64(n.sum / float64(n.count) * float64(time.Second))).String())
-	}
+	buf.WriteString("avg_time: ")
+	buf.WriteString(time.Duration(int64(n.sum / float64(n.count) * float64(time.Second))).String())
 	buf.WriteByte('\n')
 	buf.WriteString("avgP99: ")
 	buf.WriteString(time.Duration(int64(n.avgP99 * float64(time.Second))).String())
@@ -335,7 +332,7 @@ func (pb *profileBuilder) Collect() error {
 	pb.buf.WriteByte('\n')
 	pb.buf.WriteString(`node [style=filled fillcolor="#f8f8f8"]`)
 	pb.buf.WriteByte('\n')
-	err := pb.addMetricTree(pb.genTiDBQueryTree(), "tidb_query_total_time")
+	err := pb.addMetricTree(pb.genTiDBQueryTree(), "tidb_query")
 	if err != nil {
 		return err
 	}
@@ -362,7 +359,14 @@ func (pb *profileBuilder) addMetricTree(root *metricNode, name string) error {
 	if root == nil {
 		return nil
 	}
-	pb.buf.WriteString(fmt.Sprintf(`subgraph %[1]s { "%[1]s" [shape=box fontsize=16 label="Type: %[1]s\lTime: %s\lDuration: %s\l"] }`, name, pb.start.String(), pb.end.Sub(pb.start).String()))
+	tp := "total_time"
+	switch pb.valueTP {
+	case metricValueAvg:
+		tp = "avg_time"
+	case metricValueCnt:
+		tp = "total_count"
+	}
+	pb.buf.WriteString(fmt.Sprintf(`subgraph %[1]s { "%[1]s" [shape=box fontsize=16 label="Type: %[1]s\lTime: %s\lDuration: %s\l"] }`, name+"_"+tp, pb.start.String(), pb.end.Sub(pb.start).String()))
 	pb.buf.WriteByte('\n')
 	v, err := pb.GetTotalValue(root)
 	if err != nil {
@@ -502,7 +506,7 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) er
 			labelValue := fmt.Sprintf(" %s", vStr)
 			pb.addEdge(n.getName(""), n.getName(label), labelValue, "", v)
 			labelValue = fmt.Sprintf("%s\n %s (%.2f%%)", n.getName(label), vStr, v*100/pb.totalValue)
-			pb.addNodeDef(n.getName(label), labelValue, value.getComment(pb.valueTP), v, v)
+			pb.addNodeDef(n.getName(label), labelValue, value.getComment(), v, v)
 		}
 		weight = selfCost / 2
 		// Since this node has labels, all cost was consume on the children, so the selfCost is 0.
@@ -513,7 +517,7 @@ func (pb *profileBuilder) addNode(n *metricNode, selfCost, nodeTotal float64) er
 		name,
 		pb.formatValueByTp(selfCost), selfCost*100/pb.totalValue,
 		pb.formatValueByTp(nodeTotal), nodeTotal*100/pb.totalValue)
-	pb.addNodeDef(n.getName(""), label, n.value.getComment(pb.valueTP), weight, selfCost)
+	pb.addNodeDef(n.getName(""), label, n.value.getComment(), weight, selfCost)
 	return nil
 }
 
@@ -557,7 +561,14 @@ func (pb *profileBuilder) formatValueByTp(value float64) string {
 			return ""
 		}
 		if value > 1 {
+			// second unit
 			return fmt.Sprintf("%.2fs", value)
+		} else if value*1000 > 1 {
+			// millisecond unit
+			return fmt.Sprintf("%.2f ms", value*1000)
+		} else if value*1000*1000 > 1 {
+			// microsecond unit
+			return fmt.Sprintf("%.2f ms", value*1000*1000)
 		}
 		return time.Duration(int64(value * float64(time.Second))).String()
 	}
