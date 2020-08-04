@@ -1180,7 +1180,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 	for i, pair := range pairs {
 		if partitionColName.Name.L == pair.colName {
 			val := pair.value.GetInt64()
-			pos := math.Abs(val) % int64(pi.Num)
+			pos := math.Abs(val % int64(pi.Num))
 			return &pi.Definitions[pos], i
 		}
 	}
