@@ -5166,7 +5166,7 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	return errors.Trace(err)
 }
 
-func checkPlacementSpecConstraint(label string) (placement.LabelConstraint, error) {
+func checkPlacementLabelConstraint(label string) (placement.LabelConstraint, error) {
 	r := placement.LabelConstraint{}
 
 	if len(label) < 4 {
