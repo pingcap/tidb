@@ -325,7 +325,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 			statistics.HistogramNeededIndices.Delete(pidx)
 			continue
 		}
-		hg, err := h.histogramFromStorage(reader, pidx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), idx.NDV, 0, idx.LastUpdateVersion, idx.NullCount, idx.TotColSize, idx.Correlation)
+		hg, err := h.histogramFromStorage(reader, pidx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), idx.NDV, 1, idx.LastUpdateVersion, idx.NullCount, 0, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
