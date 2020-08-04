@@ -5206,7 +5206,7 @@ func checkPlacementLabelConstraint(label string) (placement.LabelConstraint, err
 
 func checkPlacementLabelConstraints(rule *placement.Rule, labels []string) error {
 	for _, str := range labels {
-		label, err := checkPlacementSpecConstraint(strings.TrimSpace(str))
+		label, err := checkPlacementLabelConstraint(strings.TrimSpace(str))
 		if err != nil {
 			return err
 		}
@@ -5250,7 +5250,7 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 			constraints := []string{}
 			err = json.Unmarshal([]byte(cnstr), &constraints)
 			if err == nil {
-				err = checkPlacementSpecConstraints(rule, constraints)
+				err = checkPlacementLabelConstraints(rule, constraints)
 				if err == nil {
 					rules = append(rules, rule)
 				}
@@ -5269,7 +5269,7 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 					// TODO: handle or remove it in later commits
 					rule.Count -= cnt
 					newrule.Count = cnt
-					err = checkPlacementSpecConstraints(newrule, strings.Split(strings.TrimSpace(labels), ","))
+					err = checkPlacementLabelConstraints(newrule, strings.Split(strings.TrimSpace(labels), ","))
 					if err != nil {
 						break
 					}
