@@ -354,3 +354,41 @@ func (s *testSuite11) TestReplaceClusterIndex(c *C) {
 	tk.MustExec(`replace into rt1pk1u(id, uk, v) values("aaa", 2, 11)`)
 	tk.MustQuery(`select * from rt1pk1u`).Check(testkit.Rows("aaa 2 11"))
 }
+
+func (s *testSuite11) TestPessimisticUpdatePKLazyCheck(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	s.testUpdatePKLazyCheck(c, tk, true)
+	s.testUpdatePKLazyCheck(c, tk, false)
+}
+
+func (s *testSuite11) testUpdatePKLazyCheck(c *C, tk *testkit.TestKit, clusteredIndex bool) {
+	tk.MustExec(fmt.Sprintf(`set @@tidb_enable_clustered_index=%v`, clusteredIndex))
+	tk.MustExec(`drop table if exists upk`)
+	tk.MustExec(`create table upk (a int, b int, c int, primary key (a, b))`)
+	tk.MustExec(`insert upk values (1, 1, 1), (2, 2, 2), (3, 3, 3)`)
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update upk set b = b + 1 where a between 1 and 2")
+	c.Assert(getPresumeExistsCount(c, tk.Se), Equals, 2)
+	_, err := tk.Exec("update upk set a = 3, b = 3 where a between 1 and 2")
+	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	tk.MustExec("commit")
+}
+
+func getPresumeExistsCount(c *C, se session.Session) int {
+	txn, err := se.Txn(false)
+	c.Assert(err, IsNil)
+	buf := txn.GetMemBuffer()
+	it, err := buf.Iter(nil, nil)
+	c.Assert(err, IsNil)
+	presumeNotExistsCnt := 0
+	for it.Valid() {
+		flags, err1 := buf.GetFlags(it.Key())
+		c.Assert(err1, IsNil)
+		err = it.Next()
+		c.Assert(err, IsNil)
+		if flags.HasPresumeKeyNotExists() {
+			presumeNotExistsCnt++
+		}
+	}
+	return presumeNotExistsCnt
+}

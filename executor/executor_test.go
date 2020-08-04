@@ -575,8 +575,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		}
 		ld.SetMessage()
 		tk.CheckLastMessage(tt.expectedMsg)
-		err := ctx.StmtCommit(nil)
-		c.Assert(err, IsNil)
+		ctx.StmtCommit()
 		txn, err := ctx.Txn(true)
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
@@ -4397,6 +4396,7 @@ func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	tk.MustExec("set global tidb_scatter_region = 1")
 	tk.MustExec("drop database if exists cluster_index_regions;")
 	tk.MustExec("create database cluster_index_regions;")
 	tk.MustExec("use cluster_index_regions;")

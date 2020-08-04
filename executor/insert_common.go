@@ -457,9 +457,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
-	if err := e.ctx.StmtCommit(e.memTracker); err != nil {
-		return err
-	}
+	e.ctx.StmtCommit()
 	if err := e.ctx.NewTxn(ctx); err != nil {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
