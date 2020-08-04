@@ -677,6 +677,8 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	return do
 }
 
+const serverIDForStandalone = 1 // serverID for standalone deployment.
+
 // Init initializes a domain.
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
@@ -756,6 +758,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		} else {
 			logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
 		}
+	} else {
+		// set serverID for standalone deployment to enable 'KILL',
+		//   while `serverID == 0` means serverID is invalid, and 'KILL' is disabled.
+		atomic.StoreUint64(&do.serverID, serverIDForStandalone)
 	}
 
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID, do.etcdClient, skipRegisterToDashboard)
