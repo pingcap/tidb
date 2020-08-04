@@ -5227,7 +5227,7 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 		switch spec.Tp {
 		case ast.PlacementAdd:
 		default:
-			return rules, errors.Errorf("invalid placement spec[%d], unknown action type: %d", k, spec.Tp)
+			return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(k, fmt.Sprintf("unknown action type: %d", spec.Tp))
 		}
 
 		switch spec.Role {
@@ -5240,7 +5240,7 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 		case ast.PlacementRoleVoter:
 			rule.Role = placement.Voter
 		default:
-			return rules, errors.Errorf("invalid placement spec[%d], unknown role: %d", k, spec.Role)
+			return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(k, fmt.Sprintf("unknown role: %d", spec.Role))
 		}
 
 		cnstr := strings.TrimSpace(spec.Constraints)
@@ -5281,7 +5281,7 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 		}
 
 		if err != nil {
-			return rules, errors.Wrapf(err, "invalid placement spec[%d]", k)
+			return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(k, err)
 		}
 	}
 	return rules, nil
