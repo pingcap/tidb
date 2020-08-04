@@ -5204,7 +5204,7 @@ func checkPlacementSpecConstraint(label string) (placement.LabelConstraint, erro
 	return r, nil
 }
 
-func checkPlacementSpecConstraints(rule *placement.Rule, labels []string) error {
+func checkPlacementLabelConstraints(rule *placement.Rule, labels []string) error {
 	for _, str := range labels {
 		label, err := checkPlacementSpecConstraint(strings.TrimSpace(str))
 		if err != nil {
