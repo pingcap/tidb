@@ -26,11 +26,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/phayes/freeport"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -49,12 +49,26 @@ var (
 	regression                 = true
 )
 
-func genPort() uint {
-	return uint(atomic.AddUint32(&portGenerator, 1))
+func genPorts() (uint, uint) {
+	var (
+		ports []int
+		err   error
+	)
+	if ports, err = freeport.GetFreePorts(2); err != nil {
+		log.Fatal("no more free ports", zap.Error(err))
+	}
+	return uint(ports[0]), uint(ports[1])
 }
 
-func genStatusPort() uint {
-	return uint(atomic.AddUint32(&statusPortGenerator, 1))
+func genPort() uint {
+	var (
+		port int
+		err  error
+	)
+	if port, err = freeport.GetFreePort(); err != nil {
+		log.Fatal("no more free ports", zap.Error(err))
+	}
+	return uint(port)
 }
 
 func TestT(t *testing.T) {
@@ -76,9 +90,10 @@ type testServerClient struct {
 
 // newTestServerClient return a testServerClient with unique address
 func newTestServerClient() *testServerClient {
+	port, statusPort := genPorts()
 	return &testServerClient{
-		port:         genPort(),
-		statusPort:   genStatusPort(),
+		port:         port,
+		statusPort:   statusPort,
 		statusScheme: "http",
 	}
 }
