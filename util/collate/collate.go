@@ -14,6 +14,7 @@
 package collate
 
 import (
+	"os"
 	"sort"
 	"sync/atomic"
 
@@ -227,6 +228,10 @@ func IsCICollation(collate string) bool {
 }
 
 func init() {
+	if os.Getenv("__TIDB_TEST_NEW_COLLATION_ENABLED") == "1" {
+		newCollationEnabled = 1
+	}
+
 	newCollatorMap = make(map[string]Collator)
 	newCollatorIDMap = make(map[int]Collator)
 

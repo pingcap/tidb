@@ -682,12 +682,12 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			")"))
 
 	// for issue #11831
-	tk.MustExec("create table ttt4(a varchar(123) default null collate utf8mb4_unicode_ci)engine=innodb default charset=utf8mb4 collate=utf8mb4_unicode_ci;")
+	tk.MustExec("create table ttt4(a varchar(123) default null collate utf8mb4_general_ci)engine=innodb default charset=utf8mb4 collate=utf8mb4_general_ci;")
 	tk.MustQuery("show create table `ttt4`").Check(testutil.RowsWithSep("|",
 		""+
 			"ttt4 CREATE TABLE `ttt4` (\n"+
-			"  `a` varchar(123) COLLATE utf8mb4_unicode_ci DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+			"  `a` varchar(123) COLLATE utf8mb4_general_ci DEFAULT NULL\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
 	))
 	tk.MustExec("create table ttt5(a varchar(123) default null)engine=innodb default charset=utf8mb4 collate=utf8mb4_bin;")
 	tk.MustQuery("show create table `ttt5`").Check(testutil.RowsWithSep("|",

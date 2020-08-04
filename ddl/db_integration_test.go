@@ -764,7 +764,7 @@ func (s *testIntegrationSuite3) TestChangingCharsetToUtf8(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(a varchar(20) charset utf8)")
 	tk.MustExec("insert into t1 values (?)", "t1_value")
-	tk.MustExec("alter table t1 collate uTf8mB4_uNiCoDe_Ci charset Utf8mB4 charset uTF8Mb4 collate UTF8MB4_BiN")
+	tk.MustExec("alter table t1 collate uTf8mB4_genERal_Ci charset Utf8mB4 charset uTF8Mb4 collate UTF8MB4_BiN")
 	tk.MustExec("alter table t1 modify column a varchar(20) charset utf8mb4")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("t1_value"))
 
@@ -780,8 +780,8 @@ func (s *testIntegrationSuite3) TestChangingCharsetToUtf8(c *C) {
 	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4 collate utf8mb4_general_ci", errno.ErrUnsupportedDDLOperation)
 
 	tk.MustGetErrCode("alter table t modify column a varchar(20) charset utf8mb4 collate utf8bin", errno.ErrUnknownCollation)
-	tk.MustGetErrCode("alter table t collate LATIN1_GENERAL_CI charset utf8 collate utf8_bin", errno.ErrConflictingDeclarations)
-	tk.MustGetErrCode("alter table t collate LATIN1_GENERAL_CI collate UTF8MB4_UNICODE_ci collate utf8_bin", errno.ErrCollationCharsetMismatch)
+	tk.MustGetErrCode("alter table t collate UTF8MB4_GENERAL_CI charset utf8 collate utf8_bin", errno.ErrConflictingDeclarations)
+	tk.MustGetErrCode("alter table t collate UTF8MB4_GENERAL_CI collate UTF8MB4_GENERAL_ci collate utf8_bin", errno.ErrCollationCharsetMismatch)
 }
 
 func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
@@ -908,16 +908,16 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	}
 
 	tk.MustExec("drop table t")
-	tk.MustExec("create table t(a varchar(5) charset utf8 collate utf8_unicode_ci) charset utf8 collate utf8_unicode_ci")
-	tk.MustExec("alter table t collate utf8_danish_ci")
+	tk.MustExec("create table t(a varchar(5) charset utf8 collate utf8_general_ci) charset utf8 collate utf8_general_ci")
+	tk.MustExec("alter table t collate utf8_bin")
 	tbl = testGetTableByName(c, s.ctx, "test", "t")
 	c.Assert(tbl, NotNil)
 	c.Assert(tbl.Meta().Charset, Equals, "utf8")
-	c.Assert(tbl.Meta().Collate, Equals, "utf8_danish_ci")
+	c.Assert(tbl.Meta().Collate, Equals, "utf8_bin")
 	for _, col := range tbl.Meta().Columns {
 		c.Assert(col.Charset, Equals, "utf8")
 		// Column collate should remain unchanged.
-		c.Assert(col.Collate, Equals, "utf8_unicode_ci")
+		c.Assert(col.Collate, Equals, "utf8_general_ci")
 	}
 }
 
@@ -1863,7 +1863,7 @@ func (s *testIntegrationSuite5) TestChangingDBCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
 	tk.MustExec("DROP DATABASE IF EXISTS alterdb1")
-	tk.MustExec("CREATE DATABASE alterdb1 CHARSET=utf8 COLLATE=utf8_unicode_ci")
+	tk.MustExec("CREATE DATABASE alterdb1 CHARSET=utf8 COLLATE=utf8_bin")
 
 	// No default DB errors.
 	noDBFailedCases := []struct {
@@ -1910,7 +1910,7 @@ func (s *testIntegrationSuite5) TestChangingDBCharset(c *C) {
 	verifyDBCharsetAndCollate("alterdb1", "utf8mb4", "utf8mb4_general_ci")
 
 	tk.MustExec("DROP DATABASE IF EXISTS alterdb2")
-	tk.MustExec("CREATE DATABASE alterdb2 CHARSET=utf8 COLLATE=utf8_unicode_ci")
+	tk.MustExec("CREATE DATABASE alterdb2 CHARSET=utf8 COLLATE=utf8_bin")
 	tk.MustExec("USE alterdb2")
 
 	failedCases := []struct {
@@ -1954,8 +1954,8 @@ func (s *testIntegrationSuite5) TestChangingDBCharset(c *C) {
 	for _, fc := range failedCases {
 		c.Assert(tk.ExecToErr(fc.stmt).Error(), Equals, fc.errMsg, Commentf("%v", fc.stmt))
 	}
-	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8' COLLATE = 'utf8_unicode_ci'")
-	verifyDBCharsetAndCollate("alterdb2", "utf8", "utf8_unicode_ci")
+	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8' COLLATE = 'utf8_general_ci'")
+	verifyDBCharsetAndCollate("alterdb2", "utf8", "utf8_general_ci")
 
 	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4'")
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_bin")

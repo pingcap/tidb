@@ -208,7 +208,7 @@ if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
     $tidb_server -P "$port" -status "$status" -config config.toml -store tikv -path "${TIKV_PATH}" > $explain_test_log 2>&1 &
     SERVER_PID=$!
 else
-    $tidb_server -P "$port" -status "$status" -config config.toml -store mocktikv -path "" > $explain_test_log 2>&1 &
+    $tidb_server -P "$port" -status "$status" -config config.toml -store unistore -path "" > $explain_test_log 2>&1 &
     SERVER_PID=$!
 fi
 echo "tidb-server(PID: $SERVER_PID) started"

@@ -121,7 +121,7 @@ func (s *partitionTableSuite) TestPartitionReaderUnderApply(c *C) {
 		  c_double double DEFAULT NULL,
 		  c_decimal decimal(12,6) DEFAULT NULL,
 		  PRIMARY KEY (c_int,c_str,c_datetime)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 		 PARTITION BY RANGE (c_int)
 		(PARTITION p0 VALUES LESS THAN (2) ENGINE = InnoDB,
 		 PARTITION p1 VALUES LESS THAN (4) ENGINE = InnoDB,
