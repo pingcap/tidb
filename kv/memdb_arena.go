@@ -19,6 +19,14 @@ import (
 	"unsafe"
 )
 
+const (
+	alignMask = 1<<32 - 8 // 29 bit 1 and 3 bit 0.
+
+	nullBlockOffset = math.MaxUint32
+	maxBlockSize    = 128 << 20
+	initBlockSize   = 4 * 1024
+)
+
 var (
 	nullAddr = memdbArenaAddr{math.MaxUint32, math.MaxUint32}
 	endian   = binary.LittleEndian
@@ -298,7 +306,7 @@ func (l *memdbVlog) revertToCheckpoint(db *memdb, cp *memdbCheckpoint) {
 	}
 }
 
-func (l *memdbVlog) inspectKVInLog(db *memdb, head, tail *memdbCheckpoint, f func(Key, NewKeyFlags, []byte)) {
+func (l *memdbVlog) inspectKVInLog(db *memdb, head, tail *memdbCheckpoint, f func(Key, KeyFlags, []byte)) {
 	cursor := *tail
 	for !head.isSamePosition(&cursor) {
 		cursorAddr := memdbArenaAddr{idx: uint32(cursor.blocks - 1), off: uint32(cursor.offsetInBlock)}
