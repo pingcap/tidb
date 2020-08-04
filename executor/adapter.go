@@ -239,6 +239,11 @@ func (a *ExecStmt) OriginText() string {
 	return a.Text
 }
 
+/// GetHints return the SQL plan hints as a string.
+func (a *ExecStmt) GetHints() string {
+	return hint.RestoreOptimizerHints(plannercore.GenHintsFromPhysicalPlan(a.Plan))
+}
+
 // IsPrepared returns true if stmt is a prepare statement.
 func (a *ExecStmt) IsPrepared() bool {
 	return a.isPreparedStmt
@@ -860,6 +865,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		Succ:              succ,
 		Plan:              getPlanTree(a.Plan),
 		PlanDigest:        planDigest,
+		Hints:             a.GetHints(),
 		Prepared:          a.isPreparedStmt,
 		HasMoreResults:    hasMoreResults,
 		PlanFromCache:     sessVars.FoundInPlanCache,
@@ -980,7 +986,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	memMax := stmtCtx.MemTracker.MaxConsumed()
 	diskMax := stmtCtx.DiskTracker.MaxConsumed()
 	sql := a.GetTextToLog()
-	hints := hint.RestoreOptimizerHints(plannercore.GenHintsFromPhysicalPlan(a.Plan))
+	hints := a.GetHints()
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:    sql,
