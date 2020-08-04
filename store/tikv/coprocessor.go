@@ -76,8 +76,18 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	// judge whether using sync send
-	if req.StoreType != kv.TiDB && !req.KeepOrder {
+	if req.StoreType != kv.TiDB {
 		it.syncSend = false
+	}
+	if it.req.KeepOrder {
+		it.sendRate = newRateLimit(2 * it.concurrency)
+		if it.syncSend {
+			it.asyncTasksOrderResCh = nil
+		} else {
+			it.asyncTasksOrderResCh = make(chan chan *copResponse, 2048)
+		}
+	} else {
+		it.respChan = make(chan *copResponse, it.concurrency)
 	}
 	if it.syncSend {
 		it.asyncTasksChan = nil
@@ -95,19 +105,18 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.wg.Add(1)
 		go func() {
 			defer it.wg.Done()
-			AsyncBuildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req, it.asyncTasksChan)
+			AsyncBuildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req, it.asyncTasksChan, it.asyncTasksOrderResCh)
 			close(it.asyncTasksChan)
+			if it.asyncTasksOrderResCh != nil {
+				close(it.asyncTasksOrderResCh)
+			}
 		}()
 	}
 	if it.concurrency < 1 {
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
-	if it.req.KeepOrder {
-		it.sendRate = newRateLimit(2 * it.concurrency)
-	} else {
-		it.respChan = make(chan *copResponse, it.concurrency)
-	}
+
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	}
@@ -244,7 +253,7 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request, receiver chan *copTask) {
+func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request, receiver chan *copTask, respReceiver chan chan *copResponse) {
 	cmdType := tikvrpc.CmdCop
 	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
@@ -256,7 +265,7 @@ func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 			rLen := ranges.len()
 			for i := rLen; i > 0; {
 				nextI := mathutil.Max(i-rangesPerTask, 0)
-				receiver <- &copTask{
+				task := &copTask{
 					region: regionWithRangeInfo.Region,
 					ranges: ranges.slice(nextI, i),
 					// Channel buffer is 2 for handling region split.
@@ -264,6 +273,10 @@ func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 					respChan:  make(chan *copResponse, 2),
 					cmdType:   cmdType,
 					storeType: req.StoreType,
+				}
+				receiver <- task
+				if respReceiver != nil {
+					respReceiver <- task.respChan
 				}
 				i = nextI
 			}
@@ -276,7 +289,7 @@ func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 			rLen := ranges.len()
 			for i := 0; i < rLen; {
 				nextI := mathutil.Min(i+rangesPerTask, rLen)
-				receiver <- &copTask{
+				task := &copTask{
 					region: regionWithRangeInfo.Region,
 					ranges: ranges.slice(i, nextI),
 					// Channel buffer is 2 for handling region split.
@@ -284,6 +297,10 @@ func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 					respChan:  make(chan *copResponse, 2),
 					cmdType:   cmdType,
 					storeType: req.StoreType,
+				}
+				receiver <- task
+				if respReceiver != nil {
+					respReceiver <- task.respChan
 				}
 				i = nextI
 			}
@@ -511,6 +528,8 @@ type copIterator struct {
 	syncSend bool
 
 	asyncTasksChan chan *copTask
+
+	asyncTasksOrderResCh chan chan *copResponse
 
 	minCommitTSPushed
 }
@@ -773,24 +792,45 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return nil, nil
 		}
 	} else {
-		for {
-			if it.curr >= len(it.tasks) {
-				// Resp will be nil if iterator is finishCh.
-				return nil, nil
+		// keep order
+		if it.syncSend {
+			for {
+				if it.curr >= len(it.tasks) {
+					// Resp will be nil if iterator is finishCh.
+					return nil, nil
+				}
+				task := it.tasks[it.curr]
+				resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
+				if closed {
+					// Close() is already called, so Next() is invalid.
+					return nil, nil
+				}
+				if ok {
+					break
+				}
+				// Switch to next task.
+				it.tasks[it.curr] = nil
+				it.curr++
+				it.sendRate.putToken()
 			}
-			task := it.tasks[it.curr]
-			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
-			if closed {
-				// Close() is already called, so Next() is invalid.
-				return nil, nil
+		} else {
+			select {
+			case respChan, okk := <-it.asyncTasksOrderResCh:
+				{
+					if !okk {
+						return nil, nil
+					}
+					resp, ok, closed = it.recvFromRespCh(ctx, respChan)
+					if closed {
+						// Close() is already called, so Next() is invalid.
+						return nil, nil
+					}
+					if ok {
+						break
+					}
+					it.sendRate.putToken()
+				}
 			}
-			if ok {
-				break
-			}
-			// Switch to next task.
-			it.tasks[it.curr] = nil
-			it.curr++
-			it.sendRate.putToken()
 		}
 	}
 
