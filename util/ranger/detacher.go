@@ -409,18 +409,26 @@ func detachColumnsFromItem(expr expression.Expression, cols []*expression.Column
 	return false
 }
 
-// getDNFItems checks if sf is a logicOr function and all items in sf only contain logicAnd, In, LT, LE, GT, GE, EQ and NE.
+// checkAndGetDNFItems checks if sf is a logicOr function and all items in sf only contain logicAnd, In, LT, LE, GT, GE, EQ and NE.
 // If so, it will return item list. Otherwise, return nil.
-func getDNFItems(sf *expression.ScalarFunction, cols []*expression.Column) []expression.Expression {
+func checkAndGetDNFItems(sf *expression.ScalarFunction, cols []*expression.Column) []expression.Expression {
+	checker := conditionChecker{
+		checkExpandDNF: true,
+		cols:           cols,
+		containCols:    make([]bool, len(cols)),
+	}
 	if sf.FuncName.L != ast.LogicOr {
 		return nil
 	}
 	dnfItems := expression.FlattenDNFConditions(sf)
 	for _, item := range dnfItems {
-		ok := detachColumnsFromItem(item, cols)
+		ok := checker.check(item)
 		if !ok {
 			return nil
 		}
+	}
+	if checker.getColumnNumber() <= 1 {
+		return nil
 	}
 	return dnfItems
 }
@@ -429,36 +437,46 @@ func getDNFItems(sf *expression.ScalarFunction, cols []*expression.Column) []exp
 // 		1. Only contains logicAnd, In, LT, LE, GT, GE, EQ and NE.
 //		2. For In function, it satisfies 'column in (constant list)'.
 // 		3. For LT, LE, GT, GE, EQ and NE functions, they satisfy one side is constant and another is column.
-// If the expansion is successful, it will return other conditions and all items expanded. Otherwise, return nil, nil.
+// If the expansion is successful, it will return the new conditions. Otherwise, return the old conditions.
 //
 // This is to correctly select the composite index in similar example
 //    'select * from t where a = 1 and ((b = 1 and c = 1) or (b = 2 and c = 2))'. (issue/14795)
-func expandDNF(conditions []expression.Expression, cols []*expression.Column) ([]expression.Expression, []expression.Expression) {
-	var resCond []expression.Expression
+func expandDNF(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column) []expression.Expression {
+	var restCond []expression.Expression
 	var dnfItems []expression.Expression
 	if conditions == nil {
-		return nil, nil
+		return nil
 	}
 	for _, cond := range conditions {
-		eqOrIn := getEqOrInColOffset(cond, cols)
-		if eqOrIn != -1 {
-			resCond = append(resCond, cond)
-		} else {
-			sf, ok := cond.(*expression.ScalarFunction)
-			if !ok {
-				return nil, nil
-			}
-			if sf.FuncName.L != ast.LogicOr || dnfItems != nil {
-				resCond = append(resCond, cond)
-				continue
-			}
-			dnfItems = getDNFItems(sf, cols)
-			if dnfItems == nil {
-				resCond = append(resCond, cond)
-			}
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok {
+			return conditions
+		}
+		if sf.FuncName.L != ast.LogicOr || dnfItems != nil {
+			restCond = append(restCond, cond)
+			continue
+		}
+		dnfItems = checkAndGetDNFItems(sf, cols)
+		if dnfItems == nil {
+			restCond = append(restCond, cond)
 		}
 	}
-	return resCond, dnfItems
+
+	if restCond == nil || dnfItems == nil {
+		return conditions
+	}
+
+	var rebuildItems []expression.Expression
+	var newConditions []expression.Expression
+	var rebuildConditions []expression.Expression
+
+	for _, item := range dnfItems {
+		tempConditions := make([]expression.Expression, len(restCond))
+		copy(tempConditions, restCond)
+		newConditions = append(tempConditions, item)
+		rebuildItems = append(rebuildItems, expression.ComposeCNFCondition(sctx, newConditions...))
+	}
+	return append(rebuildConditions, expression.ComposeDNFCondition(sctx, rebuildItems...))
 }
 
 // DetachCondAndBuildRangeForIndex will detach the index filters from table filters.
@@ -471,18 +489,7 @@ func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expre
 		newTpSlice = append(newTpSlice, newFieldType(col.RetType))
 	}
 	// In order to avoid exponential exploding, only expand once here.
-	if restConditions, dnfItems := expandDNF(conditions, cols); restConditions != nil && dnfItems != nil {
-		var rebuildItems []expression.Expression
-		var newConditions []expression.Expression
-		var rebuildConditions []expression.Expression
-		for _, item := range dnfItems {
-			tempConditions := make([]expression.Expression, len(restConditions))
-			copy(tempConditions, restConditions)
-			newConditions = append(tempConditions, item)
-			rebuildItems = append(rebuildItems, expression.ComposeCNFCondition(sctx, newConditions...))
-		}
-		conditions = append(rebuildConditions, expression.ComposeDNFCondition(sctx, rebuildItems...))
-	}
+	conditions = expandDNF(sctx, conditions, cols)
 	if len(conditions) == 1 {
 		if sf, ok := conditions[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			ranges, accesses, hasResidual, err := detachDNFCondAndBuildRangeForIndex(sctx, sf, cols, newTpSlice, lengths)

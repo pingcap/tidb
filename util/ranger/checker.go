@@ -25,6 +25,11 @@ type conditionChecker struct {
 	colUniqueID   int64
 	shouldReserve bool // check if a access condition should be reserved in filter conditions.
 	length        int
+
+	// When checkExpandDNF is true, this conditionChecker is used to check if this condition is expandable DNFItem.
+	checkExpandDNF bool
+	cols           []*expression.Column
+	containCols    []bool
 }
 
 func (c *conditionChecker) check(condition expression.Expression) bool {
@@ -45,7 +50,12 @@ func (c *conditionChecker) check(condition expression.Expression) bool {
 func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
 	_, collation := scalar.CharsetAndCollation(scalar.GetCtx())
 	switch scalar.FuncName.L {
-	case ast.LogicOr, ast.LogicAnd:
+	case ast.LogicOr:
+		if !c.checkExpandDNF {
+			return c.check(scalar.GetArgs()[0]) && c.check(scalar.GetArgs()[1])
+		}
+		return false
+	case ast.LogicAnd:
 		return c.check(scalar.GetArgs()[0]) && c.check(scalar.GetArgs()[1])
 	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT:
 		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
@@ -161,5 +171,25 @@ func (c *conditionChecker) checkColumn(expr expression.Expression) bool {
 	if !ok {
 		return false
 	}
-	return c.colUniqueID == col.UniqueID
+	if !c.checkExpandDNF {
+		return c.colUniqueID == col.UniqueID
+	}
+	for i, item := range c.cols {
+		if col.UniqueID == item.UniqueID {
+			c.containCols[i] = true
+			return true
+		}
+	}
+	return false
+}
+
+// getColumnNumber calculates the number of true in c.containCols and returns the number.
+func (c *conditionChecker) getColumnNumber() int {
+	total := int(0)
+	for _, ok := range c.containCols {
+		if ok {
+			total++
+		}
+	}
+	return total
 }
