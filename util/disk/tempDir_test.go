@@ -14,10 +14,11 @@
 package disk
 
 import (
-	"github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
 	"os"
 	"testing"
+
+	"github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 )
 
 func TestT(t *testing.T) {
