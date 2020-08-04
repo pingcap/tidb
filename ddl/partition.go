@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/pd/v4/server/schedule/placement"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
@@ -1445,4 +1447,43 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	}
 	tblInfo.Partition.Definitions = newDefs
 	return nil
+}
+
+func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
+	var partitionID int64
+	var rules []*placement.Rule
+	err := job.DecodeArgs(&partitionID, &rules)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return 0, err
+	}
+
+	ptInfo := tblInfo.GetPartitionInfo()
+	if ptInfo.GetNameByID(partitionID) == "" {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
+	}
+
+	for i, rule := range rules {
+		rule.ID = fmt.Sprintf("%d_%d_%d_%d_%d", job.SchemaID, tblInfo.ID, partitionID, job.ID, i)
+	}
+
+	ver, err := t.GetSchemaVersion()
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	err = infosync.UpdatePlacementRules(nil, rules)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
 }
