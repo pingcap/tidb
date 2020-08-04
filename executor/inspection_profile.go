@@ -83,18 +83,18 @@ func (m metricValueType) String() string {
 	}
 }
 
-func (n *metricValue) getValue(tp metricValueType) float64 {
+func (m *metricValue) getValue(tp metricValueType) float64 {
 	timeValue := 0.0
 	switch tp {
 	case metricValueCnt:
-		return float64(n.count)
+		return float64(m.count)
 	case metricValueSum:
-		timeValue = n.sum
+		timeValue = m.sum
 	case metricValueAvg:
-		if n.count == 0 {
+		if m.count == 0 {
 			return 0.0
 		}
-		timeValue = n.sum / float64(n.count)
+		timeValue = m.sum / float64(m.count)
 	default:
 		panic("should never happen")
 	}
@@ -104,28 +104,28 @@ func (n *metricValue) getValue(tp metricValueType) float64 {
 	return timeValue
 }
 
-func (n *metricValue) getComment() string {
-	if n.count == 0 {
+func (m *metricValue) getComment() string {
+	if m.count == 0 {
 		return ""
 	}
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
 	buf.WriteString("total_time: ")
-	buf.WriteString(time.Duration(int64(n.sum * float64(time.Second))).String())
+	buf.WriteString(time.Duration(int64(m.sum * float64(time.Second))).String())
 	buf.WriteByte('\n')
 	buf.WriteString("total_count: ")
-	buf.WriteString(strconv.Itoa(n.count))
+	buf.WriteString(strconv.Itoa(m.count))
 	buf.WriteByte('\n')
 	buf.WriteString("avg_time: ")
-	buf.WriteString(time.Duration(int64(n.sum / float64(n.count) * float64(time.Second))).String())
+	buf.WriteString(time.Duration(int64(m.sum / float64(m.count) * float64(time.Second))).String())
 	buf.WriteByte('\n')
 	buf.WriteString("avgP99: ")
-	buf.WriteString(time.Duration(int64(n.avgP99 * float64(time.Second))).String())
+	buf.WriteString(time.Duration(int64(m.avgP99 * float64(time.Second))).String())
 	buf.WriteByte('\n')
 	buf.WriteString("avgP90: ")
-	buf.WriteString(time.Duration(int64(n.avgP90 * float64(time.Second))).String())
+	buf.WriteString(time.Duration(int64(m.avgP90 * float64(time.Second))).String())
 	buf.WriteByte('\n')
 	buf.WriteString("avgP80: ")
-	buf.WriteString(time.Duration(int64(n.avgP80 * float64(time.Second))).String())
+	buf.WriteString(time.Duration(int64(m.avgP80 * float64(time.Second))).String())
 	return buf.String()
 }
 
