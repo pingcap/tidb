@@ -117,7 +117,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 		partition p2 values less than (1991),
 		partition p3 values less than (1995)
 	);`
-	tk.MustGetErrCode(sql4, tmysaql.ErrPartitionMaxvalue)
+	tk.MustGetErrCode(sql4, tmysql.ErrPartitionMaxvalue)
 
 	_, err = tk.Exec(`CREATE TABLE rc (
 		a INT NOT NULL,
