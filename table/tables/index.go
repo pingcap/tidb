@@ -282,11 +282,11 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 		return nil, err
 	}
 	if err != nil || len(value) == 0 {
-		var keyFlags kv.KeyFlags
 		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
-			keyFlags = keyFlags.MarkPresumeKeyNotExists()
+			err = us.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
+		} else {
+			err = us.GetMemBuffer().Set(key, idxVal)
 		}
-		err = us.GetMemBuffer().SetWithFlags(key, keyFlags, idxVal)
 		return nil, err
 	}
 

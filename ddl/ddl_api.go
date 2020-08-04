@@ -19,6 +19,7 @@ package ddl
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strconv"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	field_types "github.com/pingcap/parser/types"
+	"github.com/pingcap/pd/v4/server/schedule/placement"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -43,10 +45,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
@@ -56,6 +60,16 @@ import (
 )
 
 const expressionIndexPrefix = "_V$"
+
+const placementRuleDefaultGroupID = "TiDB_DDL"
+
+const (
+	placementRuleIndexDefault int = iota
+	placementRuleIndexDatabase
+	placementRuleIndexTable
+	placementRuleIndexPartition
+	placementRuleIndexIndex
+)
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
 	dbInfo := &model.DBInfo{Name: schema}
@@ -2265,6 +2279,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			isAlterTable := true
 			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
+		case ast.AlterTableAlterPartition:
+			err = d.AlterTablePartition(ctx, ident, spec)
 		case ast.AlterTablePartition:
 			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
 			err = errors.New("alter table partition is unsupported")
@@ -5145,6 +5161,125 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	}
 
 	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) {
+	rules := make([]*placement.Rule, 0, len(specs))
+	for k, spec := range specs {
+		rule := &placement.Rule{
+			GroupID:  placementRuleDefaultGroupID,
+			Count:    int(spec.Replicas),
+			Override: true,
+		}
+
+		switch spec.Tp {
+		case ast.PlacementAdd:
+		default:
+			return rules, errors.Errorf("invalid placement spec[%d], unknown action type: %d", k, spec.Tp)
+		}
+
+		switch spec.Role {
+		case ast.PlacementRoleFollower:
+			rule.Role = placement.Follower
+		case ast.PlacementRoleLeader:
+			rule.Role = placement.Leader
+		case ast.PlacementRoleLearner:
+			rule.Role = placement.Learner
+		case ast.PlacementRoleVoter:
+			rule.Role = placement.Voter
+		default:
+			return rules, errors.Errorf("invalid placement spec[%d], unknown role: %d", k, spec.Role)
+		}
+
+		for _, label := range strings.Split(spec.Constraints, ",") {
+			label = strings.TrimSpace(label)
+
+			if len(label) < 4 {
+				return rules, errors.Errorf("invalid placement spec[%d], constraint too short to be valid: %s", k, label)
+			}
+
+			var op placement.LabelConstraintOp
+			switch label[0] {
+			case '+':
+				op = placement.In
+			case '-':
+				op = placement.NotIn
+			default:
+				return rules, errors.Errorf("invalid placement spec[%d], unknown operation: %c", k, label[0])
+			}
+
+			kv := strings.Split(label[1:], "=")
+			if len(kv) != 2 {
+				return rules, errors.Errorf("invalid placement spec[%d], invalid constraint format: %s", k, label)
+			}
+
+			key := strings.TrimSpace(kv[0])
+			if key == "" {
+				return rules, errors.Errorf("invalid placement spec[%d], empty constraint key: %s", k, label)
+			}
+
+			val := strings.TrimSpace(kv[1])
+			if val == "" {
+				return rules, errors.Errorf("invalid placement spec[%d], empty constraint val: %s", k, label)
+			}
+
+			rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
+				Key:    key,
+				Op:     op,
+				Values: []string{val},
+			})
+		}
+
+		rules = append(rules, rule)
+	}
+	return rules, nil
+}
+
+func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	meta := tb.Meta()
+	if meta.Partition == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	partitionID, err := tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	rules, err := checkPlacementSpecs(spec.PlacementSpecs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
+	for _, rule := range rules {
+		rule.Index = placementRuleIndexPartition
+		rule.StartKeyHex = startKey
+		rule.EndKeyHex = endKey
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterTableAlterPartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partitionID, rules},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
