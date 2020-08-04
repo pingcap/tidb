@@ -83,19 +83,6 @@ func (m metricValueType) String() string {
 	}
 }
 
-func (n *metricValue) setQuantileValue(quantile, value float64) {
-	switch quantile {
-	case 0.99:
-		n.avgP99 = value
-	case 0.90:
-		n.avgP90 = value
-	case 0.80:
-		n.avgP80 = value
-	default:
-		panic("should never happen")
-	}
-}
-
 func (n *metricValue) getValue(tp metricValueType) float64 {
 	timeValue := 0.0
 	switch tp {
@@ -255,6 +242,16 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 	n.value.sum = totalSum
 
 	// 3. Get quantile value.
+	setQuantileValue := func(metricValue *metricValue, quantile, value float64) {
+		switch quantile {
+		case 0.99:
+			metricValue.avgP99 = value
+		case 0.90:
+			metricValue.avgP90 = value
+		case 0.80:
+			metricValue.avgP80 = value
+		}
+	}
 	quantiles := []float64{0.99, 0.90, 0.80}
 	for _, quantile := range quantiles {
 		condition := queryCondition + " and " + "quantile=" + strconv.FormatFloat(quantile, 'f', -1, 64)
@@ -273,12 +270,12 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 			}
 			totalValue += v
 			cnt++
-			n.getLabelValue(label).setQuantileValue(quantile, v)
+			setQuantileValue(n.getLabelValue(label), quantile, v)
 		})
 		if err != nil {
 			return err
 		}
-		n.value.setQuantileValue(quantile, totalValue/float64(cnt))
+		setQuantileValue(n.value, quantile, totalValue/float64(cnt))
 	}
 	return nil
 }
