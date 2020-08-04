@@ -915,6 +915,7 @@ func (e *AnalyzeFastExec) handleBatchSeekResponse(kvMap map[string][]byte) (err 
 	for sKey, sValue := range kvMap {
 		exceedNeededSampleCounts := uint64(samplePos) >= e.opts[ast.AnalyzeOptNumSamples]
 		if exceedNeededSampleCounts {
+			atomic.StoreInt32(&e.sampCursor, int32(e.opts[ast.AnalyzeOptNumSamples]))
 			break
 		}
 		err = e.updateCollectorSamples(sValue, kv.Key(sKey), samplePos)
@@ -1109,7 +1110,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	for i := 0; i < length; i++ {
 		// Build collector properties.
 		collector := e.collectors[i]
-		collector.Samples = collector.Samples[:e.opts[ast.AnalyzeOptNumSamples]]
+		collector.Samples = collector.Samples[:e.sampCursor]
 		sort.Slice(collector.Samples, func(i, j int) bool { return collector.Samples[i].Handle.Compare(collector.Samples[j].Handle) < 0 })
 		collector.CalcTotalSize()
 		// Adjust the row count in case the count of `tblStats` is not accurate and too small.

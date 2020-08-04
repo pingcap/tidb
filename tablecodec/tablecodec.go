@@ -445,39 +445,40 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	if row == nil {
 		row = make(map[int64]types.Datum, len(cols))
 	}
-	var err error
-	forEachColumnIDMatch(handleColIDs, cols, func(colID int64, ft *types.FieldType, idx int) {
-		if handle.IsInt() {
-			if mysql.HasUnsignedFlag(ft.Flag) {
-				row[colID] = types.NewUintDatum(uint64(handle.IntValue()))
-			} else {
-				row[colID] = types.NewIntDatum(handle.IntValue())
-			}
-			return
-		}
-		// Decode common handle to Datum.
-		var d types.Datum
-		if _, d, err = codec.DecodeOne(handle.EncodedCol(idx)); err != nil {
-			return
-		}
-		if d, err = Unflatten(d, ft, loc); err != nil {
-			return
-		}
-		row[colID] = d
-	})
-	return row, err
-}
-
-func forEachColumnIDMatch(handleColIDs []int64, cols map[int64]*types.FieldType,
-	f func(id int64, fieldTp *types.FieldType, idx int)) {
 	for id, ft := range cols {
 		for idx, hid := range handleColIDs {
 			if id != hid {
 				continue
 			}
-			f(id, ft, idx)
+			d, err := decodeHandleToDatum(handle, ft, idx)
+			if err != nil {
+				return row, err
+			}
+			d, err = Unflatten(d, ft, loc)
+			if err != nil {
+				return row, err
+			}
+			row[id] = d
+			break
 		}
 	}
+	return row, nil
+}
+
+func decodeHandleToDatum(handle kv.Handle, ft *types.FieldType, idx int) (types.Datum, error) {
+	var d types.Datum
+	var err error
+	if handle.IsInt() {
+		if mysql.HasUnsignedFlag(ft.Flag) {
+			d = types.NewUintDatum(uint64(handle.IntValue()))
+		} else {
+			d = types.NewIntDatum(handle.IntValue())
+		}
+		return d, nil
+	}
+	// Decode common handle to Datum.
+	_, d, err = codec.DecodeOne(handle.EncodedCol(idx))
+	return d, err
 }
 
 // CutRowNew cuts encoded row into byte slices and return columns' byte slice.
