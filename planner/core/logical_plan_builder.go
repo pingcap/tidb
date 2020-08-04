@@ -1338,7 +1338,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node) (uVal uint64, isNull bo
 		}
 	case string:
 		sc := ctx.GetSessionVars().StmtCtx
-		uVal, err := types.StrToUint(sc, v)
+		uVal, err := types.StrToUint(sc, v, false)
 		if err != nil {
 			return 0, false, false
 		}
@@ -1456,7 +1456,6 @@ type havingWindowAndOrderbyExprResolver struct {
 	inWindowFunc bool
 	inWindowSpec bool
 	inExpr       bool
-	orderBy      bool
 	err          error
 	p            LogicalPlan
 	selectFields []*ast.SelectField
@@ -1548,10 +1547,10 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		a.inWindowSpec = false
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) || a.curClause == fieldList {
+		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.curClause == orderByClause && a.inExpr) || a.curClause == fieldList {
 			resolveFieldsFirst = false
 		}
-		if !a.inAggFunc && !a.orderBy {
+		if !a.inAggFunc && a.curClause != orderByClause {
 			for _, item := range a.gbyItems {
 				if col, ok := item.Expr.(*ast.ColumnNameExpr); ok &&
 					(colMatch(v.Name, col.Name) || colMatch(col.Name, v.Name)) {
@@ -1571,8 +1570,22 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 				return node, false
 			}
 			if index == -1 {
-				if a.orderBy {
+				if a.curClause == orderByClause {
 					index, a.err = a.resolveFromPlan(v, a.p)
+				} else if a.curClause == havingClause && v.Name.Table.L != "" {
+					// For SQLs like:
+					//   select a from t b having b.a;
+					index, a.err = a.resolveFromPlan(v, a.p)
+					if a.err != nil {
+						return node, false
+					}
+					if index != -1 {
+						// For SQLs like:
+						//   select a+1 from t having t.a;
+						newV := v
+						newV.Name = &ast.ColumnName{Name: v.Name.Name}
+						index, a.err = resolveFromSelectFields(newV, a.selectFields, true)
+					}
 				} else {
 					index, a.err = resolveFromSelectFields(v, a.selectFields, true)
 				}
@@ -1644,7 +1657,6 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	}
 	havingAggMapper := extractor.aggMapper
 	extractor.aggMapper = make(map[*ast.AggregateFuncExpr]int)
-	extractor.orderBy = true
 	extractor.inExpr = false
 	// Extract agg funcs from order by clause.
 	if sel.OrderBy != nil {
@@ -2306,15 +2318,11 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ:
-<<<<<<< HEAD
 			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
-=======
-			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case TiDBBroadCastJoin, HintBCJ:
-			BCTables = append(BCTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+			BCTables = append(BCTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case HintBCJPreferLocal:
-			BCJPreferLocalTables = append(BCJPreferLocalTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
->>>>>>> 29178df... planner, executor: support broadcast join for tiflash engine. (#17232)
+			BCJPreferLocalTables = append(BCJPreferLocalTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case TiDBIndexNestedLoopJoin, HintINLJ:
 			INLJTables = append(INLJTables, tableNames2HintTableInfo(b.ctx, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case HintINLHJ:

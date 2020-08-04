@@ -149,18 +149,12 @@ func (p *PhysicalLimit) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*t
 }
 
 // ToPB implements PhysicalPlan ToPB interface.
-<<<<<<< HEAD
-func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
+func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	tsExec := &tipb.TableScan{
 		TableId: p.Table.ID,
 		Columns: util.ColumnsToProto(p.Columns, p.Table.PKIsHandle),
 		Desc:    p.Desc,
 	}
-=======
-func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
-	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns)
-	tsExec.Desc = p.Desc
->>>>>>> 29178df... planner, executor: support broadcast join for tiflash engine. (#17232)
 	if p.isPartition {
 		tsExec.TableId = p.physicalTableID
 	}

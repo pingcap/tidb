@@ -439,30 +439,12 @@ type PhysicalMergeJoin struct {
 	Desc bool
 }
 
-<<<<<<< HEAD
-=======
 // PhysicalBroadCastJoin only works for TiFlash Engine, which broadcast the small table to every replica of probe side of tables.
 type PhysicalBroadCastJoin struct {
 	basePhysicalJoin
 	globalChildIndex int
 }
 
-// Clone implements PhysicalPlan interface.
-func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
-	cloned := new(PhysicalMergeJoin)
-	base, err := p.basePhysicalJoin.cloneWithSelf(cloned)
-	if err != nil {
-		return nil, err
-	}
-	cloned.basePhysicalJoin = *base
-	for _, cf := range p.CompareFuncs {
-		cloned.CompareFuncs = append(cloned.CompareFuncs, cf)
-	}
-	cloned.Desc = p.Desc
-	return cloned, nil
-}
-
->>>>>>> 29178df... planner, executor: support broadcast join for tiflash engine. (#17232)
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
 type PhysicalLock struct {
 	basePhysicalPlan

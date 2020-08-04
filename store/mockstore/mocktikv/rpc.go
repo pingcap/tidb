@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // For gofail injection.
@@ -663,8 +664,6 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 	return resp
 }
 
-<<<<<<< HEAD
-=======
 func drainRowsFromExecutor(ctx context.Context, e executor, req *tipb.DAGRequest) (tipb.Chunk, error) {
 	var chunk tipb.Chunk
 	for {
@@ -703,7 +702,6 @@ func (h *rpcHandler) handleBatchCopRequest(ctx context.Context, req *coprocessor
 	return client, nil
 }
 
->>>>>>> 29178df... planner, executor: support broadcast join for tiflash engine. (#17232)
 // Client is a client that sends RPC.
 // This is same with tikv.Client, define again for avoid circle import.
 type Client interface {
@@ -1039,6 +1037,44 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			panic(fmt.Sprintf("unknown coprocessor request type: %v", r.GetTp()))
 		}
 		resp.Resp = res
+	case tikvrpc.CmdBatchCop:
+		failpoint.Inject("BatchCopCancelled", func(value failpoint.Value) {
+			if value.(bool) {
+				failpoint.Return(nil, context.Canceled)
+			}
+		})
+
+		failpoint.Inject("BatchCopRpcErr"+addr, func(value failpoint.Value) {
+			if value.(string) == addr {
+				failpoint.Return(nil, errors.New("rpc error"))
+			}
+		})
+		r := req.BatchCop()
+		if err := handler.checkRequestContext(reqCtx); err != nil {
+			resp.Resp = &tikvrpc.BatchCopStreamResponse{
+				Tikv_BatchCoprocessorClient: &mockBathCopErrClient{Error: err},
+				BatchResponse: &coprocessor.BatchResponse{
+					OtherError: err.Message,
+				},
+			}
+		}
+		ctx1, cancel := context.WithCancel(ctx)
+		batchCopStream, err := handler.handleBatchCopRequest(ctx1, r)
+		if err != nil {
+			cancel()
+			return nil, errors.Trace(err)
+		}
+		batchResp := &tikvrpc.BatchCopStreamResponse{Tikv_BatchCoprocessorClient: batchCopStream}
+		batchResp.Lease.Cancel = cancel
+		batchResp.Timeout = timeout
+		c.streamTimeout <- &batchResp.Lease
+
+		first, err := batchResp.Recv()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		batchResp.BatchResponse = first
+		resp.Resp = batchResp
 	case tikvrpc.CmdCopStream:
 		r := req.Cop()
 		if err := handler.checkRequestContext(reqCtx); err != nil {

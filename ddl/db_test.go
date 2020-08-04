@@ -1239,6 +1239,8 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 	}{
 		{model.ActionAddTablePartition, model.JobStateNone, model.StateNone, true},
 		{model.ActionDropTablePartition, model.JobStateNone, model.StateNone, true},
+		// Add table partition now can be cancelled in ReplicaOnly state.
+		{model.ActionAddTablePartition, model.JobStateRunning, model.StateReplicaOnly, true},
 		{model.ActionAddTablePartition, model.JobStateRunning, model.StatePublic, false},
 		{model.ActionDropTablePartition, model.JobStateRunning, model.StatePublic, false},
 	}
@@ -2055,7 +2057,7 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 }
 
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
-func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
+func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
 	s.tk.MustExec("drop table if exists t1,t2;")
@@ -2125,6 +2127,9 @@ func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	checkTbl2()
 
 	// Test for table has tiflash  replica.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	s.tk.MustExec("drop table if exists t1,t2;")
 	s.tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
@@ -2639,7 +2644,7 @@ func (s *testDBSuite3) TestFKOnGeneratedColumns(c *C) {
 	s.tk.MustExec("drop table t1,t2,t3,t4,t5;")
 }
 
-func (s *testDBSuite3) TestTruncateTable(c *C) {
+func (s *testSerialDBSuite) TestTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table truncate_table (c1 int, c2 int)")
@@ -2686,6 +2691,9 @@ func (s *testDBSuite3) TestTruncateTable(c *C) {
 	c.Assert(hasOldTableData, IsFalse)
 
 	// Test for truncate table should clear the tiflash available status.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
@@ -3875,7 +3883,8 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 
 }
 
-func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
+func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
 	s.tk = testkit.NewTestKit(c, s.store)
 	s.tk.MustExec("use test_db")
 	s.mustExec(c, "drop table if exists t_flash;")
@@ -3965,6 +3974,14 @@ func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
 	t, dbInfo = is.FindTableByPartitionID(t.Meta().ID)
 	c.Assert(t, IsNil)
 	c.Assert(dbInfo, IsNil)
+	failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
+	// Test for set replica count more than the tiflash store count.
+	s.mustExec(c, "drop table if exists t_flash;")
+	s.tk.MustExec("create table t_flash(a int, b int)")
+	_, err = s.tk.Exec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
 }
 
 func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
@@ -4141,7 +4158,10 @@ func (s *testDBSuite2) TestWriteLocal(c *C) {
 	tk2.MustExec("unlock tables")
 }
 
-func (s *testDBSuite2) TestSkipSchemaChecker(c *C) {
+func (s *testSerialDBSuite) TestSkipSchemaChecker(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	s.tk = testkit.NewTestKit(c, s.store)
 	tk := s.tk
 	tk.MustExec("use test")
