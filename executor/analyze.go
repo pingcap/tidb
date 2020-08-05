@@ -919,9 +919,17 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 
+	rander := rand.New(rand.NewSource(e.randSeed + int64(e.rowCount)))
 	for i := workID; i < len(e.sampTasks); i += e.concurrency {
 		task := e.sampTasks[i]
-		snapshot.SetOption(kv.SampleStep, e.estSampStep)
+		// randomize the estimate step in range [step - 2 * sqrt(step), step]
+		var step uint32
+		step = e.estSampStep
+		if step > 4 { // 2*sqrt(x) < x
+			lower, upper := step - uint32(2 * math.Sqrt(float64(step))), step
+			step = uint32(rander.Intn(int(upper - lower))) + lower
+		}
+		snapshot.SetOption(kv.SampleStep, step)
 		kvMap := make(map[string][]byte)
 		var iter kv.Iterator
 		iter, *err = snapshot.Iter(task.StartKey, task.EndKey)
