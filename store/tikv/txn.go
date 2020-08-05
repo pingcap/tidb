@@ -340,7 +340,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			if lockCtx.PessimisticLockWaited != nil {
 				if atomic.LoadInt32(lockCtx.PessimisticLockWaited) > 0 {
 					timeWaited := time.Since(lockCtx.WaitStartTime)
-					*lockCtx.LockKeysDuration = timeWaited
+					atomic.StoreInt64(lockCtx.LockKeysDuration, int64(timeWaited))
 					metrics.TiKVPessimisticLockKeysDuration.Observe(timeWaited.Seconds())
 				}
 			}
