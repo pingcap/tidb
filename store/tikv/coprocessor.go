@@ -82,15 +82,15 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	if it.req.KeepOrder {
 		it.sendRate = newRateLimit(2 * it.concurrency)
 		if it.syncSend {
-			it.asyncTasksOrderResCh = nil
+			it.asyncOrderTasksCh = nil
 		} else {
-			it.asyncTasksOrderResCh = make(chan chan *copResponse, 2048)
+			it.asyncOrderTasksCh = make(chan *copTask, 2048)
 		}
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
 	}
 	if it.syncSend {
-		it.asyncTasksChan = nil
+		it.asyncTasksCh = nil
 		tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
 		if err != nil {
 			return copErrorResponse{err}
@@ -101,14 +101,14 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		}
 	} else {
 		// start to asynchronously build tasks
-		it.asyncTasksChan = make(chan *copTask, 2048)
+		it.asyncTasksCh = make(chan *copTask, 2048)
 		it.wg.Add(1)
 		go func() {
 			defer it.wg.Done()
-			AsyncBuildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req, it.asyncTasksChan, it.asyncTasksOrderResCh)
-			close(it.asyncTasksChan)
-			if it.asyncTasksOrderResCh != nil {
-				close(it.asyncTasksOrderResCh)
+			AsyncBuildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req, it.asyncTasksCh, it.asyncOrderTasksCh, &it.closed)
+			close(it.asyncTasksCh)
+			if it.asyncOrderTasksCh != nil {
+				close(it.asyncOrderTasksCh)
 			}
 		}()
 	}
@@ -253,7 +253,7 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request, receiver chan *copTask, respReceiver chan chan *copResponse) {
+func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request, receiver chan *copTask, orderReceiver chan *copTask, closed *uint32) {
 	cmdType := tikvrpc.CmdCop
 	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
@@ -275,13 +275,13 @@ func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 					storeType: req.StoreType,
 				}
 				receiver <- task
-				if respReceiver != nil {
-					respReceiver <- task.respChan
+				if orderReceiver != nil {
+					orderReceiver <- task
 				}
 				i = nextI
 			}
 		}
-		splitRangesDesc(bo, cache, ranges, appendTask)
+		splitRangesDesc(bo, cache, ranges, appendTask, closed)
 	} else {
 		appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
 			// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
@@ -299,13 +299,13 @@ func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 					storeType: req.StoreType,
 				}
 				receiver <- task
-				if respReceiver != nil {
-					respReceiver <- task.respChan
+				if orderReceiver != nil {
+					orderReceiver <- task
 				}
 				i = nextI
 			}
 		}
-		splitRanges(bo, cache, ranges, appendTask)
+		splitRanges(bo, cache, ranges, appendTask, closed)
 	}
 
 }
@@ -341,7 +341,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv
 		}
 	}
 
-	err := splitRanges(bo, cache, ranges, appendTask)
+	err := splitRanges(bo, cache, ranges, appendTask, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -382,7 +382,7 @@ func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error
 	return tasks, nil
 }
 
-func splitRangesDesc(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(regionWithRangeInfo *KeyLocation, ranges *copRanges)) error {
+func splitRangesDesc(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(regionWithRangeInfo *KeyLocation, ranges *copRanges), closed *uint32) error {
 	for ranges.len() > 0 {
 		i := ranges.len() - 1
 		loc, err := cache.LocateEndKey(bo, ranges.at(i).EndKey)
@@ -421,10 +421,13 @@ func splitRangesDesc(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn fu
 			fn(loc, taskRanges)
 			ranges = ranges.slice(0, i+1)
 		}
+		if closed != nil && atomic.LoadUint32(closed) == 1 {
+			return nil
+		}
 	}
 	return nil
 }
-func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(regionWithRangeInfo *KeyLocation, ranges *copRanges)) error {
+func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(regionWithRangeInfo *KeyLocation, ranges *copRanges), closed *uint32) error {
 	for ranges.len() > 0 {
 		loc, err := cache.LocateKey(bo, ranges.at(0).StartKey)
 		if err != nil {
@@ -465,8 +468,10 @@ func splitRanges(bo *Backoffer, cache *RegionCache, ranges *copRanges, fn func(r
 			fn(loc, taskRanges)
 			ranges = ranges.slice(i, ranges.len())
 		}
+		if closed != nil && atomic.LoadUint32(closed) == 1 {
+			return nil
+		}
 	}
-
 	return nil
 }
 
@@ -481,7 +486,7 @@ func SplitRegionRanges(bo *Backoffer, cache *RegionCache, keyRanges []kv.KeyRang
 		}
 	}
 
-	err := splitRanges(bo, cache, &ranges, appendRange)
+	err := splitRanges(bo, cache, &ranges, appendRange, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -503,6 +508,7 @@ type copIterator struct {
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
+	task  *copTask
 	curr  int
 	// sendRate controls the sending rate of copIteratorTaskSender, if keepOrder,
 	// to prevent all tasks being done (aka. all of the responses are buffered)
@@ -527,9 +533,9 @@ type copIterator struct {
 
 	syncSend bool
 
-	asyncTasksChan chan *copTask
+	asyncTasksCh chan *copTask
 
-	asyncTasksOrderResCh chan chan *copResponse
+	asyncOrderTasksCh chan *copTask
 
 	minCommitTSPushed
 }
@@ -672,7 +678,7 @@ func (it *copIterator) open(ctx context.Context) {
 		tasks:          it.tasks,
 		finishCh:       it.finishCh,
 		sendRate:       it.sendRate,
-		asyncTasksChan: it.asyncTasksChan,
+		asyncTasksChan: it.asyncTasksCh,
 	}
 	taskSender.respChan = it.respChan
 	go taskSender.run()
@@ -814,23 +820,27 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				it.sendRate.putToken()
 			}
 		} else {
-			select {
-			case respChan, okk := <-it.asyncTasksOrderResCh:
-				{
-					if !okk {
-						return nil, nil
+			for {
+				if it.task == nil {
+					select {
+					case it.task, ok = <-it.asyncOrderTasksCh:
+						if !ok {
+							return nil, nil
+						}
 					}
-					resp, ok, closed = it.recvFromRespCh(ctx, respChan)
-					if closed {
-						// Close() is already called, so Next() is invalid.
-						return nil, nil
-					}
-					if ok {
-						break
-					}
-					it.sendRate.putToken()
 				}
+				resp, ok, closed = it.recvFromRespCh(ctx, it.task.respChan)
+				if closed {
+					// Close() is already called, so Next() is invalid.
+					return nil, nil
+				}
+				if ok {
+					break
+				}
+				it.task = nil
+				it.sendRate.putToken()
 			}
+
 		}
 	}
 
@@ -1302,6 +1312,14 @@ func (worker *copIteratorWorker) calculateRemain(ranges *copRanges, split *copro
 }
 
 func (it *copIterator) Close() error {
+	if it.asyncOrderTasksCh != nil {
+		for range it.asyncOrderTasksCh {
+		}
+	}
+	if it.asyncTasksCh != nil {
+		for range it.asyncTasksCh {
+		}
+	}
 	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 		close(it.finishCh)
 	}

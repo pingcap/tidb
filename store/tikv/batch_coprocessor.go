@@ -112,7 +112,7 @@ func buildBatchCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 			})
 		}
 
-		err := splitRanges(bo, cache, ranges, appendTask)
+		err := splitRanges(bo, cache, ranges, appendTask, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

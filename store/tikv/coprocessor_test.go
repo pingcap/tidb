@@ -50,7 +50,7 @@ func (s *testCoprocessorSuite) TestAsyncBuildTasks(c *C) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			AsyncBuildCopTasks(bo, cache, ranges, req, asyncTasksChan, nil)
+			AsyncBuildCopTasks(bo, cache, ranges, req, asyncTasksChan, nil, nil)
 			close(asyncTasksChan)
 		}()
 		wg.Wait()
