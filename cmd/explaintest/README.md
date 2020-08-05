@@ -28,6 +28,8 @@ Usage: ./run-tests.sh [options]
                     "all" for creating stats of all tests.
 
     -i <importer-path>: Use importer in <importer-path> for creating data.
+
+    -p <portgenerator-path>: Use port generator in <portgenerator-path> for generating port numbers.
 ```
 
 ## How it works
