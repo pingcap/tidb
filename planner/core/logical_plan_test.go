@@ -2576,7 +2576,7 @@ func (s *testPlanSuite) TestWindowFunction(c *C) {
 		// Test issue 11943
 		{
 			sql:    "SELECT ROW_NUMBER() OVER (partition by b) + a FROM t",
-			result: "TableReader(Table(t))->Sort->Window(row_number() over(partition by test.t.b))->Projection->Projection",
+			result: "TableReader(Table(t))->Sort->Window(row_number() over(partition by test.t.b))->Projection",
 		},
 	}
 
