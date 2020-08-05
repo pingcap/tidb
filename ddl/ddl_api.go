@@ -5170,7 +5170,7 @@ func checkPlacementLabelConstraint(label string) (placement.LabelConstraint, err
 	r := placement.LabelConstraint{}
 
 	if len(label) < 4 {
-		return r, errors.Errorf("constraint too short to be valid: %s", label)
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
 	}
 
 	var op placement.LabelConstraintOp
@@ -5180,22 +5180,22 @@ func checkPlacementLabelConstraint(label string) (placement.LabelConstraint, err
 	case '-':
 		op = placement.NotIn
 	default:
-		return r, errors.Errorf("unknown operation: %c", label[0])
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
 	}
 
 	kv := strings.Split(label[1:], "=")
 	if len(kv) != 2 {
-		return r, errors.Errorf("invalid constraint format: %s", label)
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
 	}
 
 	key := strings.TrimSpace(kv[0])
 	if key == "" {
-		return r, errors.Errorf("empty constraint key: %s", label)
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
 	}
 
 	val := strings.TrimSpace(kv[1])
 	if val == "" {
-		return r, errors.Errorf("empty constraint val: %s", label)
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
 	}
 
 	r.Key = key
@@ -5271,7 +5271,7 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 						newrule := &placement.Rule{}
 						*newrule = *rule
 						if cnt <= 0 {
-							err = errors.New("negative or zero count")
+							err = errors.Errorf("count should be non-positive, but got %d", cnt)
 							break
 						}
 						// TODO: handle or remove it in later commits
@@ -5285,7 +5285,7 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 					}
 				}
 			} else {
-				err = errors.Errorf("invalid constraint: %s", cnstr)
+				err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
 			}
 		}
 

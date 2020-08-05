@@ -69,13 +69,13 @@ add placement policy
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
 
-	// label/dict detection
+	// list/dict detection
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints=',,,'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*invalid constraint.*")
+	c.Assert(err, ErrorMatches, ".*array or object.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -97,56 +97,60 @@ add placement policy
 	constraints='[",,,"]'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*constraint too short to be valid.*")
+	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+    "]'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*constraint too short to be valid.*")
+	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
+	// unknown operation
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["0000"]'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*unknown operation.*")
+	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
+	// without =
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+000"]'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*invalid constraint format.*")
+	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
+	// empty key
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+ =zone1"]'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*empty constraint key.*")
+	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+  =   z"]'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*empty constraint key.*")
+	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
+	// empty value
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+zone="]'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*empty constraint val.*")
+	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
 	constraints='["+z  =   "]'
 	role=leader
 	replicas=3`)
-	c.Assert(err, ErrorMatches, ".*empty constraint val.*")
+	c.Assert(err, ErrorMatches, ".*label constraint should be in format.*")
 
 	_, err = tk.Exec(`alter table t1 alter partition p
 add placement policy
