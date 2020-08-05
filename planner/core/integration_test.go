@@ -1455,6 +1455,7 @@ partition p1 values less than (7),
 partition p2 values less than (10))`)
 
 	tk.MustExec("set @try_new_partition_implementation = 1;")
+	tk.MustExec("set @@tidb_enable_index_merge = 1;")
 
 	var input []string
 	var output []struct {
