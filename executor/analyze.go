@@ -16,6 +16,8 @@ package executor
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"math"
 	"math/rand"
 	"runtime"
@@ -28,7 +30,6 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/debugpb"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -563,7 +563,6 @@ func pkColsCount(handleCols core.HandleCols) int {
 var (
 	fastAnalyzeHistogramSample        = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "sample")
 	fastAnalyzeHistogramAccessRegions = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "access_regions")
-	fastAnalyzeHistogramRegionError   = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "region_error")
 	fastAnalyzeHistogramScanKeys      = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "scan_keys")
 )
 
@@ -605,13 +604,6 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 	return results
 }
 
-// AnalyzeFastTask is the task for build stats.
-type AnalyzeFastTask struct {
-	Location    *tikv.KeyLocation
-	BeginOffset uint64
-	EndOffset   uint64
-}
-
 // AnalyzeFastExec represents Fast Analyze executor.
 type AnalyzeFastExec struct {
 	ctx             sessionctx.Context
@@ -624,10 +616,9 @@ type AnalyzeFastExec struct {
 	tblInfo         *model.TableInfo
 	cache           *tikv.RegionCache
 	wg              *sync.WaitGroup
-	sampLocs        chan *tikv.KeyLocation
 	rowCount        uint64
 	sampCursor      int32
-	sampTasks       []*AnalyzeFastTask
+	sampTasks       []*tikv.KeyLocation
 	estSampStep     uint32 // estimate sample step
 	scanTasks       []*tikv.KeyLocation
 	collectors      []*statistics.SampleCollector
@@ -635,59 +626,27 @@ type AnalyzeFastExec struct {
 	job             *statistics.AnalyzeJob
 }
 
-func (e *AnalyzeFastExec) getSampRegionsRowCount(bo *tikv.Backoffer, needRebuild *bool, err *error, sampTasks *[]*AnalyzeFastTask) {
-	defer func() {
-		if *needRebuild {
-			for ok := true; ok; _, ok = <-e.sampLocs {
-				// Do nothing, just clear the channel.
-			}
-		}
-		e.wg.Done()
-	}()
-	client := e.ctx.GetStore().(tikv.Storage).GetTiKVClient()
-	for {
-		loc, ok := <-e.sampLocs
+func (e *AnalyzeFastExec) getTableRowCount() (uint64, error) {
+	dom := domain.GetDomain(e.ctx)
+	sql := fmt.Sprintf("select count from mysql.stats_meta where table_id = %d order by version limit 1;", e.tblInfo.ID)
+	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if len(rows) == 0 || rows[0].GetInt64(0) == 0 {
+		dbInfo, ok := dom.InfoSchema().SchemaByTable(e.tblInfo)
 		if !ok {
-			return
+			return 0, errors.Trace(errors.Errorf("database not found"))
 		}
-		req := tikvrpc.NewRequest(tikvrpc.CmdDebugGetRegionProperties, &debugpb.GetRegionPropertiesRequest{
-			RegionId: loc.Region.GetID(),
-		})
-		var resp *tikvrpc.Response
-		var rpcCtx *tikv.RPCContext
-		// we always use the first follower when follower read is enabled
-		rpcCtx, *err = e.cache.GetTiKVRPCContext(bo, loc.Region, e.ctx.GetSessionVars().GetReplicaRead(), 0)
-		if *err != nil {
-			return
+		sql := fmt.Sprintf("select count(*) from %s.%s;", dbInfo.Name.L, e.tblInfo.Name.L)
+		rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		if err != nil {
+			return 0, errors.Trace(err)
 		}
-
-		ctx := context.Background()
-		resp, *err = client.SendRequest(ctx, rpcCtx.Addr, req, tikv.ReadTimeoutMedium)
-		if *err != nil {
-			return
-		}
-		if resp.Resp == nil || len(resp.Resp.(*debugpb.GetRegionPropertiesResponse).Props) == 0 {
-			*needRebuild = true
-			return
-		}
-		for _, prop := range resp.Resp.(*debugpb.GetRegionPropertiesResponse).Props {
-			if prop.Name == "mvcc.num_rows" {
-				var cnt uint64
-				cnt, *err = strconv.ParseUint(prop.Value, 10, 64)
-				if *err != nil {
-					return
-				}
-				newCount := atomic.AddUint64(&e.rowCount, cnt)
-				task := &AnalyzeFastTask{
-					Location:    loc,
-					BeginOffset: newCount - cnt,
-					EndOffset:   newCount,
-				}
-				*sampTasks = append(*sampTasks, task)
-				break
-			}
-		}
+		cnt := rows[0].GetInt64(0)
+		return uint64(cnt), nil
 	}
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return uint64(rows[0].GetInt64(0)), nil
 }
 
 // getNextSampleKey gets the next sample key after last failed request. It only retries the needed region.
@@ -700,27 +659,27 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 		return startKey, nil
 	}
 	sort.Slice(e.sampTasks, func(i, j int) bool {
-		return bytes.Compare(e.sampTasks[i].Location.StartKey, e.sampTasks[j].Location.StartKey) < 0
+		return bytes.Compare(e.sampTasks[i].StartKey, e.sampTasks[j].StartKey) < 0
 	})
 	// The sample task should be consecutive with scan task.
-	if len(e.scanTasks) > 0 && bytes.Equal(e.scanTasks[0].StartKey, startKey) && !bytes.Equal(e.scanTasks[0].EndKey, e.sampTasks[0].Location.StartKey) {
+	if len(e.scanTasks) > 0 && bytes.Equal(e.scanTasks[0].StartKey, startKey) && !bytes.Equal(e.scanTasks[0].EndKey, e.sampTasks[0].StartKey) {
 		e.scanTasks = e.scanTasks[:0]
 		e.sampTasks = e.sampTasks[:0]
 		return startKey, nil
 	}
 	prefixLen := 0
 	for ; prefixLen < len(e.sampTasks)-1; prefixLen++ {
-		if !bytes.Equal(e.sampTasks[prefixLen].Location.EndKey, e.sampTasks[prefixLen+1].Location.StartKey) {
+		if !bytes.Equal(e.sampTasks[prefixLen].EndKey, e.sampTasks[prefixLen+1].StartKey) {
 			break
 		}
 	}
 	// Find the last one that could align with region bound.
 	for ; prefixLen >= 0; prefixLen-- {
-		loc, err := e.cache.LocateKey(bo, e.sampTasks[prefixLen].Location.EndKey)
+		loc, err := e.cache.LocateKey(bo, e.sampTasks[prefixLen].EndKey)
 		if err != nil {
 			return nil, err
 		}
-		if bytes.Equal(loc.StartKey, e.sampTasks[prefixLen].Location.EndKey) {
+		if bytes.Equal(loc.StartKey, e.sampTasks[prefixLen].EndKey) {
 			startKey = loc.StartKey
 			break
 		}
@@ -736,53 +695,25 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 
 // buildSampTask returns two variables, the first bool is whether the task meets region error
 // and need to rebuild.
-func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
-	// Do get regions row count.
+func (e *AnalyzeFastExec) buildSampTask() (err error) {
 	bo := tikv.NewBackofferWithVars(context.Background(), 500, nil)
-	needRebuildForRoutine := make([]bool, e.concurrency)
-	errs := make([]error, e.concurrency)
-	sampTasksForRoutine := make([][]*AnalyzeFastTask, e.concurrency)
-	e.sampLocs = make(chan *tikv.KeyLocation, e.concurrency)
-	e.wg.Add(e.concurrency)
-	for i := 0; i < e.concurrency; i++ {
-		go e.getSampRegionsRowCount(bo, &needRebuildForRoutine[i], &errs[i], &sampTasksForRoutine[i])
+	e.rowCount, err = e.getTableRowCount()
+	if err != nil {
+		return err
 	}
-
-	defer func() {
-		close(e.sampLocs)
-		e.wg.Wait()
-		if err != nil {
-			return
-		}
-		for i := 0; i < e.concurrency; i++ {
-			if errs[i] != nil {
-				err = errs[i]
-			}
-			needRebuild = needRebuild || needRebuildForRoutine[i]
-			e.sampTasks = append(e.sampTasks, sampTasksForRoutine[i]...)
-		}
-	}()
-
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.physicalTableID)
 	targetKey, err := e.getNextSampleKey(bo, startKey)
 	if err != nil {
-		return false, err
-	}
-	e.rowCount = 0
-	for _, task := range e.sampTasks {
-		cnt := task.EndOffset - task.BeginOffset
-		task.BeginOffset = e.rowCount
-		task.EndOffset = e.rowCount + cnt
-		e.rowCount += cnt
+		return err
 	}
 	accessRegionsCounter := 0
 	for {
 		// Search for the region which contains the targetKey.
 		loc, err := e.cache.LocateKey(bo, targetKey)
 		if err != nil {
-			return false, err
+			return err
 		}
 		if bytes.Compare(endKey, loc.StartKey) < 0 {
 			break
@@ -794,7 +725,7 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 
 		// If the KV pairs in the region all belonging to the table, add it to the sample task.
 		if bytes.Compare(startKey, loc.StartKey) <= 0 && len(loc.EndKey) != 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
-			e.sampLocs <- loc
+			e.sampTasks = append(e.sampTasks, )
 			continue
 		}
 
@@ -809,7 +740,7 @@ func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	}
 	fastAnalyzeHistogramAccessRegions.Observe(float64(accessRegionsCounter))
 
-	return false, nil
+	return nil
 }
 
 func (e *AnalyzeFastExec) decodeValues(handle kv.Handle, sValue []byte) (values map[int64]types.Datum, err error) {
@@ -932,7 +863,6 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, er
 	sampleSize := int64(e.opts[ast.AnalyzeOptNumSamples])
 	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
-		e.rowCount++
 		scanKeysSize++
 		randNum := rander.Int63n(int64(e.rowCount))
 		if randNum > sampleSize && e.sampCursor == int32(sampleSize) {
@@ -995,7 +925,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 		snapshot.SetOption(kv.SampleStep, e.estSampStep)
 		kvMap := make(map[string][]byte)
 		var iter kv.Iterator
-		iter, *err = snapshot.Iter(task.Location.StartKey, task.Location.EndKey)
+		iter, *err = snapshot.Iter(task.StartKey, task.EndKey)
 		if *err != nil {
 			return
 		}
@@ -1143,23 +1073,11 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 		e.randSeed = RandSeed
 	}
 
-	// Only four rebuilds for sample task are allowed.
-	needRebuild, maxBuildTimes := true, 5
-	regionErrorCounter := 0
-	for counter := maxBuildTimes; needRebuild && counter > 0; counter-- {
-		regionErrorCounter++
-		needRebuild, err = e.buildSampTask()
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	fastAnalyzeHistogramRegionError.Observe(float64(regionErrorCounter))
-	if needRebuild {
-		errMsg := "build fast analyze task failed, exceed maxBuildTimes: %v"
-		return nil, nil, errors.Errorf(errMsg, maxBuildTimes)
+	err = e.buildSampTask()
+	if err != nil {
+		return nil, nil, err
 	}
 
-	defer e.job.Update(int64(e.rowCount))
 	totalSampSize := e.opts[ast.AnalyzeOptNumSamples]
 	e.estSampStep = uint32(e.rowCount / totalSampSize)
 	return e.runTasks()
