@@ -459,7 +459,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 				zap.Uint64("region", id.GetID()),
 				zap.String("store", store.addr))
-			return nil, nil
+			continue
 		}
 		return &RPCContext{
 			Region:     id,
