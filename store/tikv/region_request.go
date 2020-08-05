@@ -136,7 +136,8 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctxs []copTaskAndR
 	for _, failedCtx := range ctxs {
 		ctx := failedCtx.ctx
 		if ctx.Meta != nil {
-			ss.regionCache.OnSendFail(bo, ctx, ss.needReloadRegion(ctx), err)
+			// If multiple regions fail on same store, we must reload it sooner or later.
+			ss.regionCache.OnSendFail(bo, ctx, true, err)
 		}
 	}
 
