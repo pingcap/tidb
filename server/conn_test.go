@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"github.com/pingcap/tidb/util/expensivequery"
 	"io"
 	"sync/atomic"
 	"time"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
