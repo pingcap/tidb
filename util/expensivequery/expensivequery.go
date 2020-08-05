@@ -57,11 +57,11 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-	var systemMemThreshold = config.GetGlobalConfig().AlertMemoryQuotaInstance
+	var serverMemoryQuota = config.GetGlobalConfig().Performance.ServerMemoryQuota
 	var err error
-	if systemMemThreshold == 0 {
-		systemMemThreshold, err = memory.MemTotal()
-		systemMemThreshold = systemMemThreshold / 10 * 8
+	if serverMemoryQuota == 0 {
+		serverMemoryQuota, err = memory.MemTotal()
+		serverMemoryQuota = serverMemoryQuota / 10 * 8
 		if err != nil {
 			logutil.BgLogger().Warn("Get system memory fail.", zap.Error(err))
 		}
@@ -95,11 +95,11 @@ func (eqh *Handle) Run() {
 			instanceStats := &runtime.MemStats{}
 			runtime.ReadMemStats(instanceStats)
 			instanceMem := instanceStats.HeapAlloc
-			if err == nil && instanceMem > systemMemThreshold {
+			if err == nil && instanceMem > serverMemoryQuota {
 				// At least ten seconds between two recordings that memory usage is less than threshold (80% system memory).
 				// If the memory is still exceeded, only records once.
 				if time.Since(lastOOMtime) > 10*time.Second {
-					eqh.oomRecord(instanceMem, systemMemThreshold)
+					eqh.oomRecord(instanceMem, serverMemoryQuota)
 				}
 				lastOOMtime = time.Now()
 			}
@@ -110,12 +110,14 @@ func (eqh *Handle) Run() {
 }
 
 var (
-	tmpDir              string
-	LastLogFileName     []string
+	tmpDir string
+	// LastLogFileName indicates the last 5 files records OOM SQLs.
+	LastLogFileName []string
+	// LastProfileFileName indicates the last 5 files records OOM profiles.
 	LastProfileFileName []string
 )
 
-func (eqh *Handle) oomRecord(memUsage uint64, systemMemThreshold uint64) {
+func (eqh *Handle) oomRecord(memUsage uint64, serverMemoryQuota uint64) {
 	var err error
 	if tmpDir == "" {
 		tmpDir, err = ioutil.TempDir("", "TiDBOOM")
@@ -136,7 +138,7 @@ func (eqh *Handle) oomRecord(memUsage uint64, systemMemThreshold uint64) {
 
 	logutil.BgLogger().Warn("The TiDB instance now takes a lot of memory, has the risk of OOM",
 		zap.Any("memUsage", memUsage),
-		zap.Any("systemMemThreshold", systemMemThreshold),
+		zap.Any("serverMemoryQuota", serverMemoryQuota),
 	)
 	eqh.oomRecordSQL()
 	eqh.oomRecordProfile()

@@ -646,9 +646,9 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 }
 
 func (ts *ConnTestSuite) TestOOMRecord(c *C) {
-	config.GetGlobalConfig().AlertMemoryQuotaInstance = 200 << 20 // 200 MB
+	config.GetGlobalConfig().Performance.ServerMemoryQuota = 200 << 20 // 200 MB
 	defer func() {
-		config.GetGlobalConfig().AlertMemoryQuotaInstance = 0
+		config.GetGlobalConfig().Performance.ServerMemoryQuota = 0
 	}()
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
