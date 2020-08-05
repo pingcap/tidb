@@ -452,7 +452,9 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	case kv.TaskID:
 		s.taskID = val.(uint64)
 	case kv.CollectRuntimeStats:
+		s.mu.Lock()
 		s.stats = val.(*SnapshotRuntimeStats)
+		s.mu.Unlock()
 	}
 }
 
@@ -462,7 +464,9 @@ func (s *tikvSnapshot) DelOption(opt kv.Option) {
 	case kv.ReplicaRead:
 		s.replicaRead = kv.ReplicaReadLeader
 	case kv.CollectRuntimeStats:
+		s.mu.Lock()
 		s.stats = nil
+		s.mu.Unlock()
 	}
 }
 
@@ -584,6 +588,9 @@ func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.stats == nil {
+		return
+	}
 	if s.stats.backoffSleepMS == nil {
 		s.stats.backoffSleepMS = bo.backoffSleepMS
 		s.stats.backoffTimes = bo.backoffTimes
@@ -600,6 +607,9 @@ func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
 func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RegionRequestRuntimeStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.stats == nil {
+		return
+	}
 	if s.stats.rpcStats == nil {
 		s.stats.rpcStats = stats
 		return
