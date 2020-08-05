@@ -58,6 +58,8 @@ const (
 	TaskID
 	// CollectRuntimeStats is used to enable collect runtime stats.
 	CollectRuntimeStats
+	// CheckExist map for key existence check.
+	CheckExists
 )
 
 // Priority value for transaction priority.
@@ -226,6 +228,7 @@ type LockCtx struct {
 	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
+	CheckKeyExists        map[string]struct{}
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
