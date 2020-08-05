@@ -5217,7 +5217,13 @@ func checkPlacementLabelConstraints(rule *placement.Rule, labels []string) error
 
 func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) {
 	rules := make([]*placement.Rule, 0, len(specs))
-	for k, spec := range specs {
+
+	var err error
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+
+	for _, spec := range specs {
 		rule := &placement.Rule{
 			GroupID:  placementRuleDefaultGroupID,
 			Count:    int(spec.Replicas),
@@ -5227,61 +5233,69 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 		switch spec.Tp {
 		case ast.PlacementAdd:
 		default:
-			return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(k, fmt.Sprintf("unknown action type: %d", spec.Tp))
+			err = errors.Errorf("unknown action type: %d", spec.Tp)
 		}
 
-		switch spec.Role {
-		case ast.PlacementRoleFollower:
-			rule.Role = placement.Follower
-		case ast.PlacementRoleLeader:
-			rule.Role = placement.Leader
-		case ast.PlacementRoleLearner:
-			rule.Role = placement.Learner
-		case ast.PlacementRoleVoter:
-			rule.Role = placement.Voter
-		default:
-			return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(k, fmt.Sprintf("unknown role: %d", spec.Role))
+		if err == nil {
+			switch spec.Role {
+			case ast.PlacementRoleFollower:
+				rule.Role = placement.Follower
+			case ast.PlacementRoleLeader:
+				rule.Role = placement.Leader
+			case ast.PlacementRoleLearner:
+				rule.Role = placement.Learner
+			case ast.PlacementRoleVoter:
+				rule.Role = placement.Voter
+			default:
+				err = errors.Errorf("unknown role: %d", spec.Role)
+			}
 		}
 
-		cnstr := strings.TrimSpace(spec.Constraints)
+		if err == nil {
+			cnstr := strings.TrimSpace(spec.Constraints)
 
-		var err error
-		if len(cnstr) > 0 && cnstr[0] == '[' {
-			constraints := []string{}
-			err = json.Unmarshal([]byte(cnstr), &constraints)
-			if err == nil {
-				err = checkPlacementLabelConstraints(rule, constraints)
+			if len(cnstr) > 0 && cnstr[0] == '[' {
+				constraints := []string{}
+				err = json.Unmarshal([]byte(cnstr), &constraints)
 				if err == nil {
-					rules = append(rules, rule)
-				}
-			}
-		} else if len(cnstr) > 0 && cnstr[0] == '{' {
-			constraints := map[string]int{}
-			err = json.Unmarshal([]byte(cnstr), &constraints)
-			if err == nil {
-				for labels, cnt := range constraints {
-					newrule := &placement.Rule{}
-					*newrule = *rule
-					if cnt <= 0 {
-						err = errors.New("negative or zero count")
-						break
+					err = checkPlacementLabelConstraints(rule, constraints)
+					if err == nil {
+						rules = append(rules, rule)
 					}
-					// TODO: handle or remove it in later commits
-					rule.Count -= cnt
-					newrule.Count = cnt
-					err = checkPlacementLabelConstraints(newrule, strings.Split(strings.TrimSpace(labels), ","))
-					if err != nil {
-						break
-					}
-					rules = append(rules, newrule)
 				}
+			} else if len(cnstr) > 0 && cnstr[0] == '{' {
+				constraints := map[string]int{}
+				err = json.Unmarshal([]byte(cnstr), &constraints)
+				if err == nil {
+					for labels, cnt := range constraints {
+						newrule := &placement.Rule{}
+						*newrule = *rule
+						if cnt <= 0 {
+							err = errors.New("negative or zero count")
+							break
+						}
+						// TODO: handle or remove it in later commits
+						rule.Count -= cnt
+						newrule.Count = cnt
+						err = checkPlacementLabelConstraints(newrule, strings.Split(strings.TrimSpace(labels), ","))
+						if err != nil {
+							break
+						}
+						rules = append(rules, newrule)
+					}
+				}
+			} else {
+				err = errors.Errorf("invalid constraint: %s", cnstr)
 			}
-		} else {
-			err = errors.Errorf("invalid constraint: %s", cnstr)
 		}
 
 		if err != nil {
-			return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(k, err)
+			sb.Reset()
+			if e := spec.Restore(restoreCtx); e == nil {
+				return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
+			} else {
+				return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(e, err)
+			}
 		}
 	}
 	return rules, nil
