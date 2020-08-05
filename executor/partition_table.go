@@ -66,6 +66,16 @@ func (n nextPartitionForIndexReader) nextPartition(ctx context.Context, tbl tabl
 	return exec, nil
 }
 
+type nextPartitionForIndexMerge struct {
+	exec *IndexMergeReaderExecutor
+}
+
+func (n nextPartitionForIndexMerge) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
+	exec := n.exec
+	exec.table = tbl
+	return exec, nil
+}
+
 func nextPartitionWithTrace(ctx context.Context, n nextPartition, tbl table.PhysicalTable) (Executor, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("nextPartition %d", tbl.GetPhysicalID()), opentracing.ChildOf(span.Context()))
