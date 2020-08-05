@@ -374,6 +374,7 @@ type Performance struct {
 	// Deprecated: use ServerMemoryQuota instead
 	MaxMemory            uint64  `toml:"max-memory" json:"max-memory"`
 	ServerMemoryQuota    uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
+	ServerMemoryAlert    float64 `toml:"server-memory-alert" json:"server-memory-alert"`
 	StatsLease           string  `toml:"stats-lease" json:"stats-lease"`
 	StmtCountLimit       uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	FeedbackProbability  float64 `toml:"feedback-probability" json:"feedback-probability"`

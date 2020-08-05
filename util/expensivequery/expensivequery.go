@@ -57,13 +57,14 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
+	var oomAlert = true
 	var serverMemoryQuota = config.GetGlobalConfig().Performance.ServerMemoryQuota
 	var err error
 	if serverMemoryQuota == 0 {
 		serverMemoryQuota, err = memory.MemTotal()
-		serverMemoryQuota = serverMemoryQuota / 10 * 8
 		if err != nil {
 			logutil.BgLogger().Warn("Get system memory fail.", zap.Error(err))
+			oomAlert = false
 		}
 	}
 	lastOOMtime := time.Time{}
@@ -95,7 +96,7 @@ func (eqh *Handle) Run() {
 			instanceStats := &runtime.MemStats{}
 			runtime.ReadMemStats(instanceStats)
 			instanceMem := instanceStats.HeapAlloc
-			if err == nil && instanceMem > serverMemoryQuota {
+			if oomAlert && instanceMem > serverMemoryQuota/10*8 {
 				// At least ten seconds between two recordings that memory usage is less than threshold (80% system memory).
 				// If the memory is still exceeded, only records once.
 				if time.Since(lastOOMtime) > 10*time.Second {
