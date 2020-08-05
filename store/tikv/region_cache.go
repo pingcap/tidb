@@ -459,6 +459,7 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 				zap.Uint64("region", id.GetID()),
 				zap.String("store", store.addr))
+			// TiFlash will always try to find out a valid peer, avoiding to retry too many times.
 			continue
 		}
 		return &RPCContext{
