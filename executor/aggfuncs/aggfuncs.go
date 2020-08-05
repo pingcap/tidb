@@ -101,33 +101,33 @@ var (
 
 const (
 	// DefInt64Size is the size of int64
-	DefInt64Size = 8
+	DefInt64Size = unsafe.Sizeof(int64(0))
 	// DefFloat64Size is the size of float64
-	DefFloat64Size = 8
+	DefFloat64Size = unsafe.Sizeof(float64(0))
 
 	// DefPartialResult4AvgDecimalSize is the size of partialResult4AvgDecimal
-	DefPartialResult4AvgDecimalSize = 48
+	DefPartialResult4AvgDecimalSize = unsafe.Sizeof(partialResult4AvgDecimal{})
 	// DefPartialResult4AvgDistinctDecimalSize is the size of partialResult4AvgDistinctDecimal
-	DefPartialResult4AvgDistinctDecimalSize = 56
+	DefPartialResult4AvgDistinctDecimalSize = unsafe.Sizeof(partialResult4AvgDistinctDecimal{})
 	// DefPartialResult4AvgFloat64Size is the size of partialResult4AvgFloat64
-	DefPartialResult4AvgFloat64Size = 16
+	DefPartialResult4AvgFloat64Size = unsafe.Sizeof(partialResult4AvgFloat64{})
 	// DefPartialResult4AvgDistinctFloat64Size is the size of partialResult4AvgDistinctFloat64
-	DefPartialResult4AvgDistinctFloat64Size = 24
+	DefPartialResult4AvgDistinctFloat64Size = unsafe.Sizeof(partialResult4AvgDistinctFloat64{})
 
 	// DefPartialResult4CountDistinctIntSize is the size of partialResult4CountDistinctInt
-	DefPartialResult4CountDistinctIntSize = 8
+	DefPartialResult4CountDistinctIntSize = unsafe.Sizeof(partialResult4CountDistinctInt{})
 	// DefPartialResult4CountDistinctRealSize is the size of partialResult4CountDistinctReal
-	DefPartialResult4CountDistinctRealSize = 8
+	DefPartialResult4CountDistinctRealSize = unsafe.Sizeof(partialResult4CountDistinctReal{})
 	// DefPartialResult4CountDistinctDecimalSize is the size of partialResult4CountDistinctDecimal
-	DefPartialResult4CountDistinctDecimalSize = 8
+	DefPartialResult4CountDistinctDecimalSize = unsafe.Sizeof(partialResult4CountDistinctDecimal{})
 	// DefPartialResult4CountDistinctDurationSize is the size of partialResult4CountDistinctDuration
-	DefPartialResult4CountDistinctDurationSize = 8
+	DefPartialResult4CountDistinctDurationSize = unsafe.Sizeof(partialResult4CountDistinctDuration{})
 	// DefPartialResult4CountDistinctStringSize is the size of partialResult4CountDistinctString
-	DefPartialResult4CountDistinctStringSize = 8
+	DefPartialResult4CountDistinctStringSize = unsafe.Sizeof(partialResult4CountDistinctString{})
 	// DefPartialResult4CountWithDistinctSize is the size of partialResult4CountWithDistinct
-	DefPartialResult4CountWithDistinctSize = 8
+	DefPartialResult4CountWithDistinctSize = unsafe.Sizeof(partialResult4CountWithDistinct{})
 	// DefPartialResult4ApproxCountDistinctSize is the size of partialResult4ApproxCountDistinct
-	DefPartialResult4ApproxCountDistinctSize = 72
+	DefPartialResult4ApproxCountDistinctSize = unsafe.Sizeof(partialResult4ApproxCountDistinct{})
 )
 
 // PartialResult represents data structure to store the partial result for the
