@@ -479,6 +479,17 @@ func SnapCacheHitCount(snap kv.Snapshot) int {
 	return int(atomic.LoadInt64(&tikvSnap.mu.hitCnt))
 }
 
+// SnapCacheSize gets the snapshot cache size.
+func SnapCacheSize(snap kv.Snapshot) int {
+	tikvSnap, ok := snap.(*tikvSnapshot)
+	if !ok {
+		return 0
+	}
+	tikvSnap.mu.RLock()
+	defer tikvSnap.mu.RLock()
+	return len(tikvSnap.mu.cached)
+}
+
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
 	if locked := keyErr.GetLocked(); locked != nil {
 		return NewLock(locked), nil
