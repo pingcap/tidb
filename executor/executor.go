@@ -965,7 +965,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	sctx := se.GetSessionVars().StmtCtx
 	if !sctx.InUpdateStmt && !sctx.InDeleteStmt {
-		se.GetSessionVars().TxnCtx.ForUpdate = true
+		atomic.StoreUint32(&se.GetSessionVars().TxnCtx.ForUpdate, 1)
 	}
 	// Lock keys only once when finished fetching all results.
 	txn, err := se.Txn(true)
