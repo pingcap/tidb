@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -641,4 +643,45 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	c.Assert(tk.Se.GetSessionVars().TxnCtx.PessimisticCacheHit, Equals, 5)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
+}
+
+func (ts *ConnTestSuite) TestOOMRecord(c *C) {
+	config.GetGlobalConfig().AlertMemoryQuotaInstance = 200 << 20 // 200 MB
+	defer func() {
+		config.GetGlobalConfig().AlertMemoryQuotaInstance = 0
+	}()
+	se, err := session.CreateSession4Test(ts.store)
+	c.Assert(err, IsNil)
+
+	connID := 1
+	se.SetConnectionID(uint64(connID))
+	tc := &TiDBContext{
+		Session: se,
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc := &clientConn{
+		connectionID: uint32(connID),
+		server: &Server{
+			capability: defaultCapability,
+		},
+		ctx:   tc,
+		alloc: arena.NewAllocator(32 * 1024),
+	}
+	srv := &Server{
+		clients: map[uint32]*clientConn{
+			uint32(connID): cc,
+		},
+	}
+	handle := ts.dom.ExpensiveQueryHandle().SetSessionManager(srv)
+	go handle.Run()
+
+	time.Sleep(500 * time.Millisecond)
+	c.Assert(len(expensivequery.LastLogFileName), Equals, 0)
+	c.Assert(len(expensivequery.LastProfileFileName), Equals, 0)
+	t := bytes.Repeat([]byte{1}, 200<<20)
+	time.Sleep(500 * time.Millisecond)
+	c.Assert(len(expensivequery.LastLogFileName), Equals, 1)
+	c.Assert(len(expensivequery.LastProfileFileName), Equals, 1)
+	// Avoid GC
+	c.Assert(t[200<<20-1], Equals, uint8(1))
 }

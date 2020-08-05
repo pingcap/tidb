@@ -111,8 +111,8 @@ func (eqh *Handle) Run() {
 
 var (
 	tmpDir              string
-	lastLogFileName     string
-	lastProfileFileName string
+	LastLogFileName     []string
+	LastProfileFileName []string
 )
 
 func (eqh *Handle) oomRecord(memUsage uint64, systemMemThreshold uint64) {
@@ -123,14 +123,16 @@ func (eqh *Handle) oomRecord(memUsage uint64, systemMemThreshold uint64) {
 			return
 		}
 	}
-	tryRemove := func(filename string) {
-		if filename == "" {
+	tryRemove := func(filename []string) {
+		// Keep the last 5 files
+		if len(filename) < 5 {
 			return
 		}
-		err = os.Remove(filename)
+		err = os.Remove(filename[0])
+		filename = filename[1:]
 	}
-	tryRemove(lastLogFileName)
-	tryRemove(lastProfileFileName)
+	tryRemove(LastLogFileName)
+	tryRemove(LastProfileFileName)
 
 	logutil.BgLogger().Warn("The TiDB instance now takes a lot of memory, has the risk of OOM",
 		zap.Any("memUsage", memUsage),
@@ -151,8 +153,9 @@ func (eqh *Handle) oomRecordSQL() {
 	}
 	now := time.Now()
 
-	lastLogFileName = filepath.Join(tmpDir, "oom_sql"+time.Now().Format(time.RFC3339))
-	f, err := os.Create(lastLogFileName)
+	fileName := filepath.Join(tmpDir, "oom_sql"+time.Now().Format(time.RFC3339))
+	LastLogFileName = append(LastLogFileName, fileName)
+	f, err := os.Create(fileName)
 	if err != nil {
 		logutil.BgLogger().Warn("Create oom record file fail.", zap.Error(err))
 		return
@@ -198,12 +201,13 @@ func (eqh *Handle) oomRecordSQL() {
 		return pinfo[i].Time.Before(pinfo[j].Time)
 	})
 
-	logutil.BgLogger().Warn("Get oom sql successfully.", zap.Any("SQLs file path:", lastLogFileName))
+	logutil.BgLogger().Warn("Get oom sql successfully.", zap.Any("SQLs file path:", LastLogFileName))
 }
 
 func (eqh *Handle) oomRecordProfile() {
-	lastProfileFileName = filepath.Join(tmpDir, "heap.profile"+time.Now().Format(time.RFC3339))
-	f, err := os.Create(lastProfileFileName)
+	fileName := filepath.Join(tmpDir, "heap.profile"+time.Now().Format(time.RFC3339))
+	LastProfileFileName = append(LastProfileFileName, fileName)
+	f, err := os.Create(fileName)
 	if err != nil {
 		logutil.BgLogger().Warn("Create heap profile file fail.", zap.Error(err))
 		return
@@ -220,7 +224,7 @@ func (eqh *Handle) oomRecordProfile() {
 		logutil.BgLogger().Warn("Write heap profile file fail.", zap.Error(err))
 		return
 	}
-	logutil.BgLogger().Warn("Get heap profile successfully.", zap.Any("Profile file path:", lastProfileFileName))
+	logutil.BgLogger().Warn("Get heap profile successfully.", zap.Any("Profile file path:", LastProfileFileName))
 }
 
 // LogOnQueryExceedMemQuota prints a log when memory usage of connID is out of memory quota.
