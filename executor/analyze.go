@@ -932,8 +932,8 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 		var step uint32
 		step = e.estSampStep
 		if step > 4 { // 2*sqrt(x) < x
-			lower, upper := step - uint32(2 * math.Sqrt(float64(step))), step
-			step = uint32(rander.Intn(int(upper - lower))) + lower
+			lower, upper := step-uint32(2*math.Sqrt(float64(step))), step
+			step = uint32(rander.Intn(int(upper-lower))) + lower
 		}
 		snapshot.SetOption(kv.SampleStep, step)
 		kvMap := make(map[string][]byte)
