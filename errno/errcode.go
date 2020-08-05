@@ -1044,7 +1044,6 @@ const (
 	ErrBRIERestoreFailed                   = 8125
 	ErrBRIEImportFailed                    = 8126
 	ErrBRIEExportFailed                    = 8127
-	ErrInvalidPlacementSpec                = 8128
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1081,6 +1080,7 @@ const (
 	ErrUnsupportedConstraintCheck         = 8231
 	ErrTableOptionUnionUnsupported        = 8232
 	ErrTableOptionInsertMethodUnsupported = 8233
+	ErrInvalidPlacementSpec               = 8234
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout        = 9001
