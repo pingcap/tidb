@@ -19,7 +19,9 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/util/expensivequery"
 	"io"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -33,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/arena"
-	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -676,12 +677,10 @@ func (ts *ConnTestSuite) TestOOMRecord(c *C) {
 	go handle.Run()
 
 	time.Sleep(500 * time.Millisecond)
-	c.Assert(len(expensivequery.LastLogFileName), Equals, 0)
-	c.Assert(len(expensivequery.LastProfileFileName), Equals, 0)
+	c.Assert(atomic.LoadUint32(&expensivequery.OOMRecordCount), Equals, 0)
 	t := bytes.Repeat([]byte{1}, 200<<20)
 	time.Sleep(500 * time.Millisecond)
-	c.Assert(len(expensivequery.LastLogFileName), Equals, 1)
-	c.Assert(len(expensivequery.LastProfileFileName), Equals, 1)
+	c.Assert(atomic.LoadUint32(&expensivequery.OOMRecordCount), Equals, 1)
 	// Avoid GC
 	c.Assert(t[200<<20-1], Equals, uint8(1))
 }
