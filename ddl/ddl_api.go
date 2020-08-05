@@ -5215,6 +5215,52 @@ func checkPlacementLabelConstraints(rule *placement.Rule, labels []string) error
 	return nil
 }
 
+func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule, cnstr string) ([]*placement.Rule, error) {
+	cnstr = strings.TrimSpace(cnstr)
+	var err error
+	if len(cnstr) > 0 && cnstr[0] == '[' {
+		constraints := []string{}
+
+		err = json.Unmarshal([]byte(cnstr), &constraints)
+		if err != nil {
+			return rules, err
+		}
+
+		err = checkPlacementLabelConstraints(rule, constraints)
+		if err != nil {
+			return rules, err
+		}
+
+		rules = append(rules, rule)
+	} else if len(cnstr) > 0 && cnstr[0] == '{' {
+		constraints := map[string]int{}
+		err = json.Unmarshal([]byte(cnstr), &constraints)
+		if err != nil {
+			return rules, err
+		}
+
+		for labels, cnt := range constraints {
+			newrule := &placement.Rule{}
+			*newrule = *rule
+			if cnt <= 0 {
+				err = errors.Errorf("count should be non-positive, but got %d", cnt)
+				break
+			}
+			// TODO: handle or remove rule.Count in later commits
+			rule.Count -= cnt
+			newrule.Count = cnt
+			err = checkPlacementLabelConstraints(newrule, strings.Split(strings.TrimSpace(labels), ","))
+			if err != nil {
+				break
+			}
+			rules = append(rules, newrule)
+		}
+	} else {
+		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
+	}
+	return rules, err
+}
+
 func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) {
 	rules := make([]*placement.Rule, 0, len(specs))
 
@@ -5252,41 +5298,7 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 		}
 
 		if err == nil {
-			cnstr := strings.TrimSpace(spec.Constraints)
-
-			if len(cnstr) > 0 && cnstr[0] == '[' {
-				constraints := []string{}
-				err = json.Unmarshal([]byte(cnstr), &constraints)
-				if err == nil {
-					err = checkPlacementLabelConstraints(rule, constraints)
-					if err == nil {
-						rules = append(rules, rule)
-					}
-				}
-			} else if len(cnstr) > 0 && cnstr[0] == '{' {
-				constraints := map[string]int{}
-				err = json.Unmarshal([]byte(cnstr), &constraints)
-				if err == nil {
-					for labels, cnt := range constraints {
-						newrule := &placement.Rule{}
-						*newrule = *rule
-						if cnt <= 0 {
-							err = errors.Errorf("count should be non-positive, but got %d", cnt)
-							break
-						}
-						// TODO: handle or remove it in later commits
-						rule.Count -= cnt
-						newrule.Count = cnt
-						err = checkPlacementLabelConstraints(newrule, strings.Split(strings.TrimSpace(labels), ","))
-						if err != nil {
-							break
-						}
-						rules = append(rules, newrule)
-					}
-				}
-			} else {
-				err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
-			}
+			rules, err = checkPlacementSpecConstraint(rules, rule, spec.Constraints)
 		}
 
 		if err != nil {
