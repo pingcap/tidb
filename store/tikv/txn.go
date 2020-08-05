@@ -362,9 +362,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		}
 	}()
 	txn.mu.Lock()
-	logutil.Logger(ctx).Info("[for debug] key len", zap.Int("len", len(keysInput)))
 	for _, key := range keysInput {
-		logutil.Logger(ctx).Info("[for debug] key", zap.Stringer("key", key))
 		// The value of lockedMap is only used by pessimistic transactions.
 		valueExist, locked := txn.lockedMap[string(key)]
 		_, checkKeyExists := lockCtx.CheckKeyExists[string(key)]
