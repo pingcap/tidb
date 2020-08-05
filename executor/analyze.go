@@ -628,12 +628,16 @@ type AnalyzeFastExec struct {
 
 func (e *AnalyzeFastExec) getTableRowCount() (uint64, error) {
 	dom := domain.GetDomain(e.ctx)
-	sql := fmt.Sprintf("select count from mysql.stats_meta where table_id = %d order by version limit 1;", e.tblInfo.ID)
+	sql := fmt.Sprintf("select count(1) from mysql.stats_histograms where table_id = %d;", e.tblInfo.ID)
 	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-	if len(rows) == 0 || rows[0].GetInt64(0) == 0 {
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	hasBeenAnalyzed := len(rows) != 0
+	if !hasBeenAnalyzed {
 		dbInfo, ok := dom.InfoSchema().SchemaByTable(e.tblInfo)
 		if !ok {
-			return 0, errors.Trace(errors.Errorf("database not found"))
+			return 0, errors.Trace(errors.Errorf("database not found for table %s", e.tblInfo.Name))
 		}
 		sql := fmt.Sprintf("select count(*) from %s.%s;", dbInfo.Name.L, e.tblInfo.Name.L)
 		rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
@@ -643,6 +647,8 @@ func (e *AnalyzeFastExec) getTableRowCount() (uint64, error) {
 		cnt := rows[0].GetInt64(0)
 		return uint64(cnt), nil
 	}
+	sql = fmt.Sprintf("select count from mysql.stats_meta where table_id = %d;", e.tblInfo.ID)
+	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
