@@ -202,7 +202,11 @@
       // Partition selection
       "select * from pt partition (p0) where c > 8",
       "select c from pt partition (p0, p2) where c > 8",
-      "select /*+ use_index(pt, i_id) */ * from pt partition (p1, p2) where c < 3 and id = 5"
+      "select /*+ use_index(pt, i_id) */ * from pt partition (p1, p2) where c < 3 and id = 5",
+
+      // Index Merge
+      "select * from pt where id = 4 or c < 7",
+      "select * from pt where id > 4 or c = 7"
     ]
   }
 ]

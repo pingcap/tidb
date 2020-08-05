@@ -127,13 +127,19 @@ func DecodeRecordKey(key kv.Key) (tableID int64, handle kv.Handle, err error) {
 	}
 
 	key = key[recordPrefixSepLength:]
-	var intHandle int64
-	key, intHandle, err = codec.DecodeInt(key)
-	if err != nil {
-		return 0, nil, errors.Trace(err)
+	if len(key) == 8 {
+		var intHandle int64
+		key, intHandle, err = codec.DecodeInt(key)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
+		return tableID, kv.IntHandle(intHandle), nil
 	}
-	handle = kv.IntHandle(intHandle)
-	return
+	h, err := kv.NewCommonHandle(key)
+	if err != nil {
+		return 0, nil, errInvalidRecordKey.GenWithStack("invalid record key - %q %v", k, err)
+	}
+	return tableID, h, nil
 }
 
 // DecodeIndexKey decodes the key and gets the tableID, indexID, indexValues.
@@ -145,24 +151,36 @@ func DecodeIndexKey(key kv.Key) (tableID int64, indexID int64, indexValues []str
 		return 0, 0, nil, errors.Trace(err)
 	}
 	if isRecord {
-		return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q", k)
+		err = errInvalidIndexKey.GenWithStack("invalid index key - %q", k)
+		return 0, 0, nil, err
 	}
 	indexKey := key[prefixLen+idLen:]
-	for len(indexKey) > 0 {
-		// FIXME: Without the schema information, we can only decode the raw kind of
-		// the column. For instance, MysqlTime is internally saved as uint64.
-		remain, d, e := codec.DecodeOne(indexKey)
+	indexValues, err = DecodeValuesBytesToStrings(indexKey)
+	if err != nil {
+		err = errInvalidIndexKey.GenWithStack("invalid index key - %q %v", k, err)
+		return 0, 0, nil, err
+	}
+	return tableID, indexID, indexValues, nil
+}
+
+// DecodeValuesBytesToStrings decode the raw bytes to strings for each columns.
+// FIXME: Without the schema information, we can only decode the raw kind of
+// the column. For instance, MysqlTime is internally saved as uint64.
+func DecodeValuesBytesToStrings(b []byte) ([]string, error) {
+	var datumValues []string
+	for len(b) > 0 {
+		remain, d, e := codec.DecodeOne(b)
 		if e != nil {
-			return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", k, e)
+			return nil, e
 		}
 		str, e1 := d.ToString()
 		if e1 != nil {
-			return 0, 0, nil, errInvalidIndexKey.GenWithStack("invalid index key - %q %v", k, e1)
+			return nil, e
 		}
-		indexValues = append(indexValues, str)
-		indexKey = remain
+		datumValues = append(datumValues, str)
+		b = remain
 	}
-	return tableID, indexID, indexValues, nil
+	return datumValues, nil
 }
 
 // DecodeMetaKey decodes the key and get the meta key and meta field.
