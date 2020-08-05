@@ -100,12 +100,15 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 			it.concurrency = len(tasks)
 		}
 	} else {
+		it.asyncSendErr = make(chan *error, 1)
 		// start to asynchronously build tasks
 		it.asyncTasksCh = make(chan *copTask, 2048)
 		it.wg.Add(1)
 		go func() {
 			defer it.wg.Done()
-			AsyncBuildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req, it.asyncTasksCh, it.asyncOrderTasksCh, &it.closed)
+			err := AsyncBuildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req, it.asyncTasksCh, it.asyncOrderTasksCh, &it.closed)
+			it.asyncSendErr <- &err
+			close(it.asyncSendErr)
 			close(it.asyncTasksCh)
 			if it.asyncOrderTasksCh != nil {
 				close(it.asyncOrderTasksCh)
@@ -253,7 +256,7 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request, receiver chan *copTask, orderReceiver chan *copTask, closed *uint32) {
+func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request, receiver chan *copTask, orderReceiver chan *copTask, closed *uint32) error {
 	cmdType := tikvrpc.CmdCop
 	if req.Streaming {
 		cmdType = tikvrpc.CmdCopStream
@@ -281,7 +284,7 @@ func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 				i = nextI
 			}
 		}
-		splitRangesDesc(bo, cache, ranges, appendTask, closed)
+		return splitRangesDesc(bo, cache, ranges, appendTask, closed)
 	} else {
 		appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
 			// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
@@ -305,9 +308,9 @@ func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 				i = nextI
 			}
 		}
-		splitRanges(bo, cache, ranges, appendTask, closed)
+		return splitRanges(bo, cache, ranges, appendTask, closed)
 	}
-
+	return nil
 }
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*copTask, error) {
 	start := time.Now()
@@ -508,8 +511,10 @@ type copIterator struct {
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
-	task  *copTask
-	curr  int
+
+	task *copTask
+
+	curr int
 	// sendRate controls the sending rate of copIteratorTaskSender, if keepOrder,
 	// to prevent all tasks being done (aka. all of the responses are buffered)
 	sendRate *rateLimit
@@ -536,6 +541,8 @@ type copIterator struct {
 	asyncTasksCh chan *copTask
 
 	asyncOrderTasksCh chan *copTask
+
+	asyncSendErr chan *error
 
 	minCommitTSPushed
 }
@@ -789,6 +796,15 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
+	if it.asyncSendErr != nil {
+		select {
+		case err := <-it.asyncSendErr:
+			{
+				return nil, *err
+			}
+		default:
+		}
+	}
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 	if it.respChan != nil {
