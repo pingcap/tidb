@@ -247,6 +247,20 @@ func (h *Handle) GetMemConsumed() (size int64) {
 	return
 }
 
+// GetAllTableStatsMemUsage get all the mem usage with true table.
+// only used by test.
+func (h *Handle) GetAllTableStatsMemUsage() int64 {
+	h.statsCache.Lock()
+	data := h.statsCache.Value.Load().(statsCache)
+	allUsage := int64(0)
+	for _, t := range data.tables {
+		allUsage += t.MemoryUsage()
+	}
+
+	h.statsCache.Unlock()
+	return allUsage
+}
+
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)
