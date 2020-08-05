@@ -618,6 +618,7 @@ var defaultConf = Config{
 	Performance: Performance{
 		MaxMemory:            0,
 		ServerMemoryQuota:    0,
+		ServerMemoryAlert:    0.8,
 		TCPKeepAlive:         true,
 		CrossJoin:            true,
 		StatsLease:           "3s",
