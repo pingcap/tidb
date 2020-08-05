@@ -5291,11 +5291,10 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 
 		if err != nil {
 			sb.Reset()
-			if e := spec.Restore(restoreCtx); e == nil {
-				return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
-			} else {
+			if e := spec.Restore(restoreCtx); e != nil {
 				return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(e, err)
 			}
+			return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
 		}
 	}
 	return rules, nil
