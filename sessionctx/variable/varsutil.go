@@ -497,6 +497,61 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set Broadcast Join to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")
 		}
 		return value, nil
+	case TiDBSkipUTF8Check, TiDBSkipASCIICheck, TiDBOptAggPushDown,
+		TiDBOptDistinctAggPushDown, TiDBOptInSubqToJoinAndAgg, TiDBOptAlwaysPreferIndex, TiDBEnableFastAnalyze,
+		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
+		TiDBBatchDelete, TiDBBatchCommit, TiDBEnableCascadesPlanner, TiDBEnableWindowFunction, TiDBPProfSQLCPU,
+		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
+		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
+		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
+		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo,
+		TiDBAllowAutoRandExplicitInsert, TiDBEnableClusteredIndex, TiDBEnableTelemetry:
+		fallthrough
+	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
+		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
+		SkipNameResolve, SQLSafeUpdates, serverReadOnly, SlaveAllowBatching,
+		Flush, PerformanceSchema, LocalInFile, ShowOldTemporals, KeepFilesOnCreate, AutoCommit,
+		SQLWarnings, UniqueChecks, OldAlterTable, LogBinTrustFunctionCreators, SQLBigSelects,
+		BinlogDirectNonTransactionalUpdates, SQLQuoteShowCreate, AutomaticSpPrivileges,
+		RelayLogPurge, SQLAutoIsNull, QueryCacheWlockInvalidate, ValidatePasswordCheckUserName,
+		SuperReadOnly, BinlogOrderCommits, MasterVerifyChecksum, BinlogRowQueryLogEvents, LogSlowSlaveStatements,
+		LogSlowAdminStatements, LogQueriesNotUsingIndexes, Profiling:
+		if strings.EqualFold(value, "ON") {
+			return "1", nil
+		} else if strings.EqualFold(value, "OFF") {
+			return "0", nil
+		}
+		val, err := strconv.ParseInt(value, 10, 64)
+		if err == nil {
+			if val == 0 {
+				return "0", nil
+			} else if val == 1 {
+				return "1", nil
+			}
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case MyISAMUseMmap, InnodbTableLocks, InnodbStatusOutput, InnodbAdaptiveFlushing, InnodbRandomReadAhead,
+		InnodbStatsPersistent, InnodbBufferPoolLoadAbort, InnodbBufferPoolLoadNow, InnodbBufferPoolDumpNow,
+		InnodbCmpPerIndexEnabled, InnodbFilePerTable, InnodbPrintAllDeadlocks,
+		InnodbStrictMode, InnodbAdaptiveHashIndex, InnodbFtEnableStopword, InnodbStatusOutputLocks:
+		if strings.EqualFold(value, "ON") {
+			return "1", nil
+		} else if strings.EqualFold(value, "OFF") {
+			return "0", nil
+		}
+		val, err := strconv.ParseInt(value, 10, 64)
+		if err == nil {
+			if val == 1 || val < 0 {
+				return "1", nil
+			} else if val == 0 {
+				return "0", nil
+			}
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case MaxExecutionTime:
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case ThreadPoolSize:
+		return checkUInt64SystemVar(name, value, 1, 64, vars)
 	case TiDBEnableTablePartition:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":

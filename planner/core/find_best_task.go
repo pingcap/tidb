@@ -583,6 +583,22 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			candidates = append(candidates, currentCandidate)
 		}
 	}
+
+	if ds.ctx.GetSessionVars().GetAllowAlwaysPreferIndex() {
+		noTablePathCandidate := make([]*candidatePath, 0, 4)
+		tablePathCandidate := make([]*candidatePath, 0, 4)
+		for _, c := range candidates {
+			if !c.path.IsTablePath() {
+				noTablePathCandidate = append(noTablePathCandidate, c)
+			} else {
+				tablePathCandidate = append(tablePathCandidate, c)
+			}
+		}
+		if len(noTablePathCandidate) > 0 {
+			return noTablePathCandidate
+		}
+	}
+
 	return candidates
 }
 
