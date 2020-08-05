@@ -1017,7 +1017,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 				return nil, errors.Trace(err)
 			}
 		}
-		metas, leaders, err := c.pdClient.ScanRegions(bo.ctx, startKey, endKey, limit)
+		regionsInfo, err := c.pdClient.ScanRegions(bo.ctx, startKey, endKey, limit)
 		if err != nil {
 			tikvRegionCacheCounterWithScanRegionsError.Inc()
 			backoffErr = errors.Errorf(
@@ -1030,20 +1030,17 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 
 		tikvRegionCacheCounterWithScanRegionsOK.Inc()
 
-		if len(metas) == 0 {
+		if len(regionsInfo) == 0 {
 			return nil, errors.New("PD returned no region")
 		}
-		if len(metas) != len(leaders) {
-			return nil, errors.New("PD returned mismatching region metas and leaders")
-		}
-		regions := make([]*Region, 0, len(metas))
-		for i, meta := range metas {
-			region := &Region{meta: meta}
+		regions := make([]*Region, 0, len(regionsInfo))
+		for _, r := range regionsInfo {
+			region := &Region{meta: r.Meta}
 			err := region.init(c)
 			if err != nil {
 				return nil, err
 			}
-			leader := leaders[i]
+			leader := r.Leader
 			// Leader id = 0 indicates no leader.
 			if leader.GetId() != 0 {
 				c.switchWorkLeaderToPeer(region, leader.GetStoreId())
@@ -1053,7 +1050,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 		if len(regions) == 0 {
 			return nil, errors.New("receive Regions with no peer")
 		}
-		if len(regions) < len(metas) {
+		if len(regions) < len(regionsInfo) {
 			logutil.Logger(context.Background()).Debug(
 				"regionCache: scanRegion finished but some regions has no leader.")
 		}
