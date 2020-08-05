@@ -54,3 +54,22 @@ partition p2 values less than (10))`)
 	tk.MustExec("set @@tidb_enable_index_merge = 1")
 	tk.MustQuery("select /*+ use_index(i_c, i_id) */ * from pt where id = 4 or c < 7").Check(testkit.Rows("0 0", "2 2", "4 4", "6 6"))
 }
+
+func (s *partitionTableSuite) TestPartitionIndexJoin(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists p, t")
+	tk.MustExec(`create table p (id int, c int, key i_id(id), key i_c(c)) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10))`)
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("insert into p values (3,3), (4,4), (6,6), (9,9)")
+	tk.MustExec("insert into t values (4), (9)")
+
+	tk.MustExec("set @try_new_partition_implementation = 1;")
+
+	// Build indexLookUp in index join
+	tk.MustQuery("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id").Sort().Check(testkit.Rows("4 4 4", "9 9 9"))
+	// Build index reader in index join
+	tk.MustQuery("select /*+ INL_JOIN(p) */ p.id from p, t where p.id = t.id").Check(testkit.Rows("4", "9"))
+}
