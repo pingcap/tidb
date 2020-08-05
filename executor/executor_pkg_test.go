@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/mysql"
@@ -260,7 +261,10 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 		conf.OOMUseTmpStorage = true
 		conf.MemQuotaQuery = 1
 	})
-
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
+	}()
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
@@ -295,7 +299,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	// Test only 1 partition and all data in memory.
 	c.Assert(len(exec.partitionList), Equals, 1)
-	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, false)
+	c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, false)
 	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
 	err = exec.Close()
 	c.Assert(err, IsNil)
@@ -312,11 +316,21 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 		}
 	}
 	// Test 2 partitions and all data in disk.
-	c.Assert(len(exec.partitionList), Equals, 2)
-	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, true)
-	c.Assert(exec.partitionList[1].AlreadySpilled(), Equals, true)
-	c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
-	c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
+	// Now spilling is in parallel.
+	// Maybe the second add() will called before spilling, depends on
+	// Golang goroutine scheduling. So the result has two possibilities.
+	if len(exec.partitionList) == 2 {
+		c.Assert(len(exec.partitionList), Equals, 2)
+		c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
+		c.Assert(exec.partitionList[1].AlreadySpilledSafeForTest(), Equals, true)
+		c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
+		c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
+	} else {
+		c.Assert(len(exec.partitionList), Equals, 1)
+		c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
+		c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	}
+
 	err = exec.Close()
 	c.Assert(err, IsNil)
 
@@ -333,8 +347,47 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	// Test only 1 partition but spill disk.
 	c.Assert(len(exec.partitionList), Equals, 1)
-	c.Assert(exec.partitionList[0].AlreadySpilled(), Equals, true)
+	c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
 	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	err = exec.Close()
+	c.Assert(err, IsNil)
+
+	// Test partition nums.
+	ctx = mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 16864*50)
+	ctx.GetSessionVars().StmtCtx.MemTracker.Consume(16864 * 45)
+	cas = &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	opt = mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+		ndvs:   cas.ndvs,
+	}
+	dataSource = buildMockDataSource(opt)
+	exec = &SortExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
+		schema:       dataSource.schema,
+	}
+	for _, idx := range cas.orderByIdx {
+		exec.ByItems = append(exec.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
+	}
+	tmpCtx = context.Background()
+	chk = newFirstChunk(exec)
+	dataSource.prepareChunks()
+	err = exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Don't spill too many partitions.
+	c.Assert(len(exec.partitionList) <= 4, IsTrue)
 	err = exec.Close()
 	c.Assert(err, IsNil)
 }

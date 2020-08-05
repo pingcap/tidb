@@ -22,15 +22,15 @@ The type of `table_id` and `handle` are int64, so the row key is always of the s
 
 #### non-unique index key format
 ```
-t | {table_id} | _i | {index_column_values} | encoded_handle // component
-1 | 8          | 2  | size of the values    | 9              // byte size
+t | {table_id} | _i | {index_id} | {index_column_values} | encoded_handle // component
+1 | 8          | 2  | 8          | size of the values    | 9              // byte size
 ```
 The handle is the suffix of the index key.
 
 #### unique index key format
 ```
-t | {table_id} | _i | {index_column_values} // component
-1 | 8          | 2  | size of the values    // byte size
+t | {table_id} | _i | {index_id} | {index_column_values} // component
+1 | 8          | 2  | 8          | size of the values    // byte size
 ```
 The handle is in the value of the index entry.
 
@@ -132,8 +132,8 @@ The row key length can be more than 19.
 
 #### non-unique index key format
 ```
- t | {table_id} | _i | {idx_col_vals}     | {common_handle}     // component
- 1 | 8          | 2  | len(idx_col_vals) | len(common_handle) // byte size
+ t | {table_id} | _i | {index_id} | {idx_col_vals}     | {common_handle}    // component
+ 1 | 8          | 2  | 8          | len(idx_col_vals)  | len(common_handle) // byte size
 ```
 Non-unique index value is unchanged.
 
@@ -141,9 +141,10 @@ Non-unique index value is unchanged.
 ```
  {tailLen} | {common_handle_flag} | {common_handle_len} | {common_handle}    // component
  1         | 1                    | 2                   | len(common_handle) // byte size
-
 ```
 The unique index key is unchanged.
+
+For more intuitive information, check [the docs](https://docs.google.com/document/d/1Co5iMiaxitv3okJmLYLJxZYCNChcjzswJMRr-_45Eqg/edit?usp=sharing)
 
 ### Planner
 

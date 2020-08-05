@@ -17,6 +17,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -70,6 +72,7 @@ var _ = Suite(&testSchemaSuite{})
 var _ = Suite(&testIsolationSuite{})
 var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
+var _ = SerialSuites(&testBackupRestoreSuite{})
 
 type testSessionSuiteBase struct {
 	cluster cluster.Cluster
@@ -91,6 +94,10 @@ type testSessionSuite3 struct {
 }
 
 type testSessionSerialSuite struct {
+	testSessionSuiteBase
+}
+
+type testBackupRestoreSuite struct {
 	testSessionSuiteBase
 }
 
@@ -2627,52 +2634,33 @@ func (s *testSessionSuite2) TestDBUserNameLength(c *C) {
 }
 
 func (s *testSessionSerialSuite) TestKVVars(c *C) {
-	c.Skip("there is no backoff here in the large txn, so this test is stale")
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("create table kvvars (a int, b int)")
-	tk.MustExec("insert kvvars values (1, 1)")
-	tk2 := testkit.NewTestKitWithInit(c, s.store)
-	tk2.MustExec("set @@tidb_backoff_lock_fast = 1")
-	tk2.MustExec("set @@tidb_backoff_weight = 100")
-	backoffVal := new(int64)
-	backOffWeightVal := new(int32)
-	tk2.Se.GetSessionVars().KVVars.Hook = func(name string, vars *kv.Variables) {
-		atomic.StoreInt64(backoffVal, int64(vars.BackoffLockFast))
-		atomic.StoreInt32(backOffWeightVal, int32(vars.BackOffWeight))
-	}
-	wg := new(sync.WaitGroup)
-	wg.Add(2)
-	go func() {
-		for {
-			tk2.MustQuery("select * from kvvars")
-			if atomic.LoadInt64(backoffVal) != 0 {
-				break
-			}
-		}
-		wg.Done()
-	}()
+	tk.MustExec("set @@tidb_backoff_lock_fast = 1")
+	tk.MustExec("set @@tidb_backoff_weight = 100")
+	tk.MustExec("create table if not exists kvvars (a int key)")
+	tk.MustExec("insert into kvvars values (1)")
+	tk.MustExec("begin")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	vars := txn.GetVars()
+	c.Assert(vars.BackoffLockFast, Equals, 1)
+	c.Assert(vars.BackOffWeight, Equals, 100)
+	tk.MustExec("rollback")
+	tk.MustExec("set @@tidb_backoff_weight = 50")
+	tk.MustExec("set @@autocommit = 0")
+	tk.MustExec("select * from kvvars")
+	c.Assert(tk.Se.GetSessionVars().InTxn(), IsTrue)
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	vars = txn.GetVars()
+	c.Assert(vars.BackOffWeight, Equals, 50)
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockSleepBetween2PC", "return"), IsNil)
-	go func() {
-		for {
-			tk.MustExec("update kvvars set b = b + 1 where a = 1")
-			if atomic.LoadInt64(backoffVal) != 0 {
-				break
-			}
-		}
-		wg.Done()
-	}()
-	wg.Wait()
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockSleepBetween2PC"), IsNil)
-
-	for {
-		tk2.MustQuery("select * from kvvars")
-		if atomic.LoadInt32(backOffWeightVal) != 0 {
-			break
-		}
-	}
-	c.Assert(atomic.LoadInt64(backoffVal), Equals, int64(1))
-	c.Assert(atomic.LoadInt32(backOffWeightVal), Equals, int32(100))
+	tk.MustExec("set @@autocommit = 1")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/probeSetVars", `return(true)`), IsNil)
+	tk.MustExec("select * from kvvars where a = 1")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/probeSetVars"), IsNil)
+	c.Assert(tikv.SetSuccess, IsTrue)
+	tikv.SetSuccess = false
 }
 
 func (s *testSessionSuite2) TestCommitRetryCount(c *C) {
@@ -2871,7 +2859,6 @@ func (s *testSessionSuite2) TestUpdatePrivilege(c *C) {
 	tk.MustExec("create user xxx;")
 	tk.MustExec("grant all on test.t1 to xxx;")
 	tk.MustExec("grant select on test.t2 to xxx;")
-	tk.MustExec("flush privileges;")
 
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "xxx", Hostname: "localhost"},
@@ -2926,7 +2913,6 @@ and s.b !='xx';`)
 	tk.MustExec("create database tp")
 	tk.MustExec("grant all privileges on ap.* to xxx")
 	tk.MustExec("grant select on tp.* to xxx")
-	tk.MustExec("flush privileges")
 	tk.MustExec("create table tp.record( id int,name varchar(128),age int)")
 	tk.MustExec("insert into tp.record (id,name,age) values (1,'john',18),(2,'lary',19),(3,'lily',18)")
 	tk.MustExec("create table ap.record( id int,name varchar(128),age int)")
@@ -3181,6 +3167,7 @@ func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 		tk1.MustExec("update forupdate_on_partition set first_name='sw' where age=25")
 		ch <- 0
 		tk1.MustExec("commit")
+		ch <- 0
 	}()
 
 	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
@@ -3191,6 +3178,7 @@ func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 	// tk1 should be blocked until tk commit, check the order.
 	c.Assert(<-ch, Equals, int32(1))
 	c.Assert(<-ch, Equals, int32(0))
+	<-ch // wait for goroutine to quit.
 
 	// Once again...
 	// This time, test for the update-update conflict.
@@ -3202,6 +3190,7 @@ func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 		tk1.MustExec("update forupdate_on_partition set first_name = 'xxx' where age=25")
 		ch <- 0
 		tk1.MustExec("commit")
+		ch <- 0
 	}()
 
 	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
@@ -3212,6 +3201,7 @@ func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 	// tk1 should be blocked until tk commit, check the order.
 	c.Assert(<-ch, Equals, int32(1))
 	c.Assert(<-ch, Equals, int32(0))
+	<-ch // wait for goroutine to quit.
 }
 
 func (s *testSchemaSuite) TestTxnSize(c *C) {
@@ -3239,4 +3229,37 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	tk.MustExec("commit")
 
 	c.Assert(taskID1 != taskID2, IsTrue)
+}
+
+func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
+	// only run BR SQL integration test with tikv store.
+	if *withTiKV {
+		cfg := config.GetGlobalConfig()
+		cfg.Store = "tikv"
+		cfg.Path = s.pdAddr
+		config.StoreGlobalConfig(cfg)
+		tk := testkit.NewTestKitWithInit(c, s.store)
+		tk.MustExec("create database if not exists br")
+		tk.MustExec("use br")
+		tk.MustExec("create table t1(v int)")
+		tk.MustExec("insert into t1 values (1)")
+		tk.MustExec("insert into t1 values (2)")
+		tk.MustExec("insert into t1 values (3)")
+
+		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
+
+		tmpDir := path.Join(os.TempDir(), "bk1")
+		os.RemoveAll(tmpDir)
+		// backup database to tmp dir
+		tk.MustQuery("backup database br to 'local://" + tmpDir + "'")
+
+		// remove database for recovery
+		tk.MustExec("drop database br")
+
+		// restore database with backup data
+		tk.MustQuery("restore database br from 'local://" + tmpDir + "'")
+		tk.MustExec("use br")
+		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
+		tk.MustExec("drop database br")
+	}
 }

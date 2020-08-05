@@ -14,9 +14,12 @@
 package infosync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
@@ -29,6 +32,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/pd/v4/server/schedule/placement"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
@@ -41,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
-	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.uber.org/zap"
@@ -128,14 +132,14 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 }
 
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
-func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client) (*InfoSyncer, error) {
+func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Client, skipRegisterToDashBoard bool) (*InfoSyncer, error) {
 	is := &InfoSyncer{
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 	}
-	err := is.init(ctx)
+	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
 		return nil, err
 	}
@@ -144,10 +148,13 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Clie
 }
 
 // Init creates a new etcd session and stores server info to etcd.
-func (is *InfoSyncer) init(ctx context.Context) error {
+func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) error {
 	err := is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 	if err != nil {
 		return err
+	}
+	if skipRegisterToDashboard {
+		return nil
 	}
 	return is.newTopologySessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 }
@@ -259,6 +266,71 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 		break
 	}
 	return progressMap, nil
+}
+
+func doRequest(ctx context.Context, addrs []string, route, method string, body io.Reader) error {
+	var err error
+	var req *http.Request
+	for _, addr := range addrs {
+		var url string
+		if strings.HasPrefix(addr, "http://") {
+			url = fmt.Sprintf("%s%s", addr, route)
+		} else {
+			url = fmt.Sprintf("http://%s%s", addr, route)
+		}
+
+		if ctx != nil {
+			req, err = http.NewRequestWithContext(ctx, method, url, body)
+		} else {
+			req, err = http.NewRequest(method, url, body)
+		}
+		if err != nil {
+			return err
+		}
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		res, err := http.DefaultClient.Do(req)
+		if err == nil {
+			defer terror.Log(res.Body.Close())
+			if res.StatusCode != http.StatusOK {
+				bodyBytes, err := ioutil.ReadAll(res.Body)
+				return errors.Wrapf(err, "%s", bodyBytes)
+			}
+			return nil
+		}
+	}
+	return err
+}
+
+// UpdatePlacementRules is used to notify PD changes of placement rules.
+func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+
+	var addrs []string
+	if is.etcdCli != nil {
+		addrs = is.etcdCli.Endpoints()
+	}
+
+	if len(addrs) == 0 {
+		return errors.Errorf("pd unavailable")
+	}
+
+	b, err := json.Marshal(rules)
+	if err != nil {
+		return err
+	}
+
+	err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules"), http.MethodPost, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
@@ -610,7 +682,7 @@ func getServerInfo(id string) *ServerInfo {
 		StartTimestamp: time.Now().Unix(),
 	}
 	info.Version = mysql.ServerVersion
-	info.GitHash = printer.TiDBGitHash
+	info.GitHash = versioninfo.TiDBGitHash
 
 	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {

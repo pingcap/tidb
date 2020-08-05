@@ -38,7 +38,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-func (s *testConfigSuite) TestNullableBoolUnmashal(c *C) {
+func (s *testConfigSuite) TestNullableBoolUnmarshal(c *C) {
 	var nb = nullableBool{false, false}
 	data, err := json.Marshal(nb)
 	c.Assert(err, IsNil)
@@ -190,13 +190,16 @@ max-server-connections = 200
 mem-quota-query = 10000
 nested-loop-join-cache-capacity = 100
 max-index-length = 3080
+skip-register-to-dashboard = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
 commit-timeout="41s"
+enable-async-commit=true
 max-batch-size=128
 region-cache-ttl=6000
 store-limit=0
+ttl-refreshed-txn-size=8192
 [stmt-summary]
 enable=false
 enable-internal-query=true
@@ -226,9 +229,11 @@ engines = ["tiflash"]
 	c.Assert(conf.AlterPrimaryKey, Equals, true)
 
 	c.Assert(conf.TiKVClient.CommitTimeout, Equals, "41s")
+	c.Assert(conf.TiKVClient.EnableAsyncCommit, Equals, true)
 	c.Assert(conf.TiKVClient.MaxBatchSize, Equals, uint(128))
 	c.Assert(conf.TiKVClient.RegionCacheTTL, Equals, uint(6000))
 	c.Assert(conf.TiKVClient.StoreLimit, Equals, int64(0))
+	c.Assert(conf.TiKVClient.TTLRefreshedTxnSize, Equals, int64(8192))
 	c.Assert(conf.TokenLimit, Equals, uint(1000))
 	c.Assert(conf.EnableTableLock, IsTrue)
 	c.Assert(conf.DelayCleanTableLock, Equals, uint64(5))
@@ -247,6 +252,7 @@ engines = ["tiflash"]
 	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
+	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
 
 	_, err = f.WriteString(`
 [log.file]
@@ -453,7 +459,6 @@ func (s *testConfigSuite) TestParsePath(c *C) {
 }
 
 func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
-
 	tests := []struct {
 		host       string
 		statusHost string
@@ -479,4 +484,38 @@ func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
 		tempStorageDir := encodeDefTempStorageDir(test.host, test.statusHost, test.port, test.statusPort)
 		c.Assert(tempStorageDir, Equals, filepath.Join(dirPrefix, test.expect, "tmp-storage"))
 	}
+}
+
+func (s *testConfigSuite) TestModifyThroughLDFlags(c *C) {
+	tests := []struct {
+		Edition               string
+		CheckBeforeDropLDFlag string
+		EnableTelemetry       bool
+		CheckTableBeforeDrop  bool
+	}{
+		{"Community", "None", true, false},
+		{"Community", "1", true, true},
+		{"Enterprise", "None", false, false},
+		{"Enterprise", "1", false, true},
+	}
+
+	originalEnableTelemetry := defaultConf.EnableTelemetry
+	originalCheckTableBeforeDrop := CheckTableBeforeDrop
+	originalGlobalConfig := GetGlobalConfig()
+
+	for _, test := range tests {
+		defaultConf.EnableTelemetry = true
+		CheckTableBeforeDrop = false
+
+		initByLDFlags(test.Edition, test.CheckBeforeDropLDFlag)
+
+		conf := GetGlobalConfig()
+		c.Assert(conf.EnableTelemetry, Equals, test.EnableTelemetry)
+		c.Assert(defaultConf.EnableTelemetry, Equals, test.EnableTelemetry)
+		c.Assert(CheckTableBeforeDrop, Equals, test.CheckTableBeforeDrop)
+	}
+
+	defaultConf.EnableTelemetry = originalEnableTelemetry
+	CheckTableBeforeDrop = originalCheckTableBeforeDrop
+	StoreGlobalConfig(originalGlobalConfig)
 }
