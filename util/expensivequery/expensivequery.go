@@ -113,7 +113,7 @@ var (
 	tmpDir              string
 	lastLogFileName     []string
 	lastProfileFileName []string
-	// Count counts the number of trigger oom record
+	// OOMRecordCount counts the number of trigger oom record
 	OOMRecordCount uint32
 )
 
