@@ -942,13 +942,6 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = kv.LockNoWait
 	}
 
-	if len(e.keys) > 0 {
-		// This operation is only for schema validator check.
-		for id := range e.tblID2Handle {
-			e.ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
-		}
-	}
-
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
 }
 
