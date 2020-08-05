@@ -5339,6 +5339,10 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 	}
 
 	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
