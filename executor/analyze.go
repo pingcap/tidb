@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"math"
 	"math/rand"
 	"runtime"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -725,7 +725,7 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 
 		// If the KV pairs in the region all belonging to the table, add it to the sample task.
 		if bytes.Compare(startKey, loc.StartKey) <= 0 && len(loc.EndKey) != 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
-			e.sampTasks = append(e.sampTasks, )
+			e.sampTasks = append(e.sampTasks)
 			continue
 		}
 
@@ -921,7 +921,6 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 
 	for i := workID; i < len(e.sampTasks); i += e.concurrency {
 		task := e.sampTasks[i]
-
 		snapshot.SetOption(kv.SampleStep, e.estSampStep)
 		kvMap := make(map[string][]byte)
 		var iter kv.Iterator
