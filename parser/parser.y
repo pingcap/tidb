@@ -2013,6 +2013,13 @@ AlterTableSpec:
 			Visibility: $4.(ast.IndexVisibility),
 		}
 	}
+|	PlacementSpecList %prec lowerThanComma
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:             ast.AlterTablePlacement,
+			PlacementSpecs: $1.([]*ast.PlacementSpec),
+		}
+	}
 
 ReorganizePartitionRuleOpt:
 	/* empty */ %prec lowerThanRemove
