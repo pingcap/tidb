@@ -1486,3 +1486,15 @@ func (s *testPessimisticSuite) TestPessimisticTxnWithDDLChangeColumn(c *C) {
 
 	tk2.MustExec("drop database if exists test_db")
 }
+
+func (s *testPessimisticSuite) TestPessimisticUnionForUpdate(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, v int, k int, primary key (id), key kk(k))")
+	tk.MustExec("insert into t select 1, 1, 1")
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("(select * from t where id between 0 and 1 for update) union all (select * from t where id between 0 and 1 for update)")
+	tk.MustExec("update t set k = 2 where k = 1")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
+}
