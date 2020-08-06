@@ -5240,20 +5240,20 @@ func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule,
 		}
 
 		for labels, cnt := range constraints {
-			newrule := &placement.Rule{}
-			*newrule = *rule
+			newRule := &placement.Rule{}
+			*newRule = *rule
 			if cnt <= 0 {
 				err = errors.Errorf("count should be non-positive, but got %d", cnt)
 				break
 			}
 			// TODO: handle or remove rule.Count in later commits
 			rule.Count -= cnt
-			newrule.Count = cnt
-			err = checkPlacementLabelConstraints(newrule, strings.Split(strings.TrimSpace(labels), ","))
+			newRule.Count = cnt
+			err = checkPlacementLabelConstraints(newRule, strings.Split(strings.TrimSpace(labels), ","))
 			if err != nil {
 				break
 			}
-			rules = append(rules, newrule)
+			rules = append(rules, newRule)
 		}
 	} else {
 		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
