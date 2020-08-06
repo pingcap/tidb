@@ -1824,6 +1824,19 @@ func WrapWithCastAsInt(ctx sessionctx.Context, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
+// WrapWithCastAsFixLenInt wraps `expr` with `cast` if the return type of expr is not
+// type int or is hybrid, otherwise, returns `expr` directly.
+func WrapWithCastAsFixLenInt(ctx sessionctx.Context, expr Expression) Expression {
+	if expr.GetType().EvalType() == types.ETInt && !expr.GetType().Hybrid() {
+		return expr
+	}
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.Flen, tp.Decimal = expr.GetType().Flen, 0
+	types.SetBinChsClnFlag(tp)
+	tp.Flag |= expr.GetType().Flag & mysql.UnsignedFlag
+	return BuildCastFunction(ctx, expr, tp)
+}
+
 // WrapWithCastAsReal wraps `expr` with `cast` if the return type of expr is not
 // type real, otherwise, returns `expr` directly.
 func WrapWithCastAsReal(ctx sessionctx.Context, expr Expression) Expression {

@@ -1303,6 +1303,14 @@ func (c *compareFunctionClass) generateCmpSigs(ctx sessionctx.Context, args []Ex
 		for i := range args {
 			DisableParseJSONFlag4Expr(args[i])
 		}
+	} else if tp == types.ETInt && args[0].GetType().Tp != args[1].GetType().Tp {
+		// Cast arg type from BIT to fix-length int for the correctness of hash join,
+		// if one arg has type BIT and the other has different int type
+		for i := range args {
+			if args[i].GetType().Tp == mysql.TypeBit {
+				args[i] = WrapWithCastAsFixLenInt(ctx, args[i])
+			}
+		}
 	}
 	bf.tp.Flen = 1
 	switch tp {

@@ -80,6 +80,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 
 func (s *testEvaluatorSuite) TestCompare(c *C) {
 	intVal, uintVal, realVal, stringVal, decimalVal := 1, uint64(1), 1.1, "123", types.NewDecFromFloatForTest(123.123)
+	bitVal := types.BinaryLiteral([]byte{1})
 	timeVal := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
 	durationVal := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second}
 	jsonVal := json.CreateBinary("123")
@@ -116,6 +117,9 @@ func (s *testEvaluatorSuite) TestCompare(c *C) {
 		{uintVal, intVal, ast.EQ, mysql.TypeLonglong, 1},
 		{intVal, uintVal, ast.NullEQ, mysql.TypeLonglong, 1},
 		{intVal, uintVal, ast.EQ, mysql.TypeLonglong, 1},
+		{bitVal, intVal, ast.EQ, mysql.TypeLonglong, 1},
+		{intVal, bitVal, ast.EQ, mysql.TypeLonglong, 1},
+		{bitVal, bitVal, ast.EQ, mysql.TypeBit, 1},
 		{timeVal, timeVal, ast.LT, mysql.TypeDatetime, 0},
 		{timeVal, timeVal, ast.LE, mysql.TypeDatetime, 1},
 		{timeVal, timeVal, ast.GT, mysql.TypeDatetime, 0},

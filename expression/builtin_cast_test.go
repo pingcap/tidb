@@ -1175,6 +1175,11 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 			123, 123, types.NewDecFromInt(123), "123",
 		},
 		{
+			&Column{RetType: types.NewFieldType(mysql.TypeBit), Index: 0},
+			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(123)}),
+			123, 123, types.NewDecFromInt(123), "123",
+		},
+		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
 			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(123.555)}),
 			124, 123.555, types.NewDecFromFloatForTest(123.555), "123.555",
@@ -1238,6 +1243,14 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		c.Assert(err, IsNil, Commentf("cast[%v]: %#v", i, t))
 		c.Assert(isNull, Equals, false)
 		c.Assert(intRes, Equals, t.intRes)
+
+		// Test wrapping with CastAsFixLenInt.
+		fixLenIntExpr := WrapWithCastAsFixLenInt(ctx, t.expr)
+		c.Assert(intExpr.GetType().EvalType(), Equals, types.ETInt)
+		fixLenIntRes, isNull, err := fixLenIntExpr.EvalInt(ctx, t.row.ToRow())
+		c.Assert(err, IsNil, Commentf("cast[%v]: %#v", i, t))
+		c.Assert(isNull, Equals, false)
+		c.Assert(fixLenIntRes, Equals, t.intRes)
 
 		// Test wrapping with CastAsReal.
 		realExpr := WrapWithCastAsReal(ctx, t.expr)
