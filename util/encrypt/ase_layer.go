@@ -16,7 +16,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
-	"hash/crc32"
 	"io"
 	"sync"
 )
@@ -24,6 +23,7 @@ import (
 const (
 	// the size of whole checksum block
 	blockSize = 16
+	nonceSize = 8
 )
 
 var blockBufPool = sync.Pool{
@@ -42,17 +42,25 @@ type Writer struct {
 	w       io.WriteCloser
 	n       int
 	buf     []byte
-	counter uint32
-	nonce   uint32
+	counter uint64
+	nonce   uint64
 	key     []byte
 }
 
 // NewWriter returns a new Writer which calculates and stores a CRC-32 checksum for the payload before
 // writing to the underlying object.
-func NewWriter(w io.WriteCloser) *Writer {
-	checksumWriter := &Writer{w: w}
-	checksumWriter.buf = make([]byte, blockSize)
-	return checksumWriter
+func NewWriter(w io.WriteCloser, key []byte, nonce uint64) (*Writer, error) {
+	k := len(key)
+	switch k {
+	default:
+		return nil, aes.KeySizeError(k)
+	case 16, 24, 32:
+	}
+	writer := &Writer{w: w}
+	writer.buf = make([]byte, blockSize)
+	writer.key = key
+	writer.nonce = nonce
+	return writer, nil
 }
 
 // AvailableSize returns how many bytes are unused in the buffer.
@@ -61,7 +69,7 @@ func (w *Writer) AvailableSize() int { return blockSize - w.n }
 // Write implements the io.Writer interface.
 func (w *Writer) Write(p []byte) (n int, err error) {
 	for len(p) > w.AvailableSize() && w.err == nil {
-		copiedNum := copy(w.buf, p)
+		copiedNum := copy(w.buf[w.n:], p)
 		w.n += copiedNum
 		err = w.Flush()
 		if err != nil {
@@ -92,18 +100,19 @@ func (w *Writer) Flush() error {
 	}
 	counter := blockBufPool.Get().([]byte)
 	defer blockBufPool.Put(counter)
-	cipherText := blockBufPool.Get().([]byte)
-	defer blockBufPool.Put(cipherText)
+	encryptTextText := blockBufPool.Get().([]byte)
+	defer blockBufPool.Put(encryptTextText)
 
-	binary.LittleEndian.PutUint32(counter, w.nonce<<16|w.counter)
+	binary.LittleEndian.PutUint64(counter, w.nonce)
+	binary.LittleEndian.PutUint64(counter[8:], w.counter)
 	block, err := aes.NewCipher(w.key)
 	if err != nil {
 		return err
 	}
 	blockMode := cipher.NewCTR(block, counter)
-	blockMode.XORKeyStream(cipherText, w.buf[:w.n])
+	blockMode.XORKeyStream(encryptTextText, w.buf[:w.n])
 
-	n, err := w.w.Write(cipherText)
+	n, err := w.w.Write(encryptTextText)
 	if n < w.n && err == nil {
 		err = io.ErrShortWrite
 	}
@@ -128,14 +137,22 @@ func (w *Writer) Close() (err error) {
 // Reader implements an io.ReadAt, reading from the input source after verifying the checksum.
 type Reader struct {
 	r     io.ReaderAt
-	nonce uint32
+	nonce uint64
 	key   []byte
 }
 
 // NewReader returns a new Reader which can read from the input source after verifying the checksum.
-func NewReader(r io.ReaderAt) *Reader {
-	checksumReader := &Reader{r: r}
-	return checksumReader
+func NewReader(r io.ReaderAt, key []byte, nonce uint64) (*Reader, error) {
+	k := len(key)
+	switch k {
+	default:
+		return nil, aes.KeySizeError(k)
+	case 16, 24, 32:
+	}
+	reader := &Reader{r: r}
+	reader.key = key
+	reader.nonce = nonce
+	return reader, nil
 }
 
 // ReadAt implements the io.ReadAt interface.
@@ -144,15 +161,18 @@ func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
 		return 0, nil
 	}
 	offset := off % blockSize
-
-	cursor := off / blockSize * blockSize
+	startBlock := off / blockSize
+	cursor := startBlock * blockSize
 
 	buf := blockBufPool.Get().([]byte)
 	defer blockBufPool.Put(buf)
-	counter := blockBufPool.Get().([]byte)
-	defer blockBufPool.Put(counter)
+	counterBuf := blockBufPool.Get().([]byte)
+	defer blockBufPool.Put(counterBuf)
+	decryptText := blockBufPool.Get().([]byte)
+	defer blockBufPool.Put(decryptText)
 
 	var n int
+	counter := uint64(startBlock)
 	for len(p) > 0 && err == nil {
 		n, err = r.r.ReadAt(buf, cursor)
 		if err != nil {
@@ -162,24 +182,21 @@ func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
 			err = nil
 			// continue if n > 0 and r.err is io.EOF
 		}
-		counter := cursor
 		cursor += int64(n)
-		binary.LittleEndian.PutUint32(counter, r.nonce<<16|int32(cursor))
-		block, err := aes.NewCipher(w.key)
+		binary.LittleEndian.PutUint64(counterBuf, r.nonce)
+		binary.LittleEndian.PutUint64(counterBuf[8:], counter)
+		block, err := aes.NewCipher(r.key)
 		if err != nil {
-			return err
+			return nn, err
 		}
-		blockMode := cipher.NewCTR(block, counter)
-		blockMode.XORKeyStream(cipherText, w.buf[:w.n])
+		blockMode := cipher.NewCTR(block, counterBuf)
+		blockMode.XORKeyStream(decryptText, buf)
 
-		checksum := crc32.Checksum(buf[checksumSize:n], crc32.MakeTable(crc32.IEEE))
-		if originChecksum != checksum {
-			return nn, errChecksumFail
-		}
-		n1 := copy(p, buf[checksumSize+offsetInPayload:n])
+		n1 := copy(p, decryptText[offset:n])
 		nn += n1
 		p = p[n1:]
-		offsetInPayload = 0
+		offset = 0
+		counter++
 	}
 	return nn, err
 }
