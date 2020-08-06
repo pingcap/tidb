@@ -136,7 +136,7 @@ var (
 
 	// CollationStrictness indicates the strictness of comparison of the collation. The unequal order in a weak collation also holds in a strict collation.
 	// For example, if a != b in a weak collation(e.g. general_ci), then there must be a != b in a strict collation(e.g. _bin).
-	// collation group id in value is strict than collation group id in key
+	// collation group id in value is stricter than collation group id in key
 	CollationStrictness = map[int][]int{
 		1: {3, 4},
 		3: {4},

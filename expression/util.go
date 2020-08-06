@@ -256,16 +256,16 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 }
 
 func canSubstituted(coll, newFuncColl string) bool {
-	collGroupId, ok1 := CollationStrictnessGroup[coll]
-	newFuncCollGroupId, ok2 := CollationStrictnessGroup[newFuncColl]
+	collGroupID, ok1 := CollationStrictnessGroup[coll]
+	newFuncCollGroupID, ok2 := CollationStrictnessGroup[newFuncColl]
 
 	if ok1 && ok2 {
-		if collGroupId == newFuncCollGroupId {
+		if collGroupID == newFuncCollGroupID {
 			return true
 		}
 
-		for _, id := range CollationStrictness[collGroupId] {
-			if newFuncCollGroupId == id {
+		for _, id := range CollationStrictness[collGroupID] {
+			if newFuncCollGroupID == id {
 				return true
 			}
 		}
