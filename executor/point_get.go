@@ -178,7 +178,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if e.idxInfo != nil {
 		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
-			handleBytes, err := EncodeUniqueIndexValues(e.ctx, e.tblInfo, e.idxInfo, e.idxVals)
+			handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, e.idxInfo, e.idxVals)
 			if err != nil {
 				return err
 			}
@@ -337,15 +337,15 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 
 // EncodeUniqueIndexKey encodes a unique index key.
 func EncodeUniqueIndexKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, err error) {
-	encodedIdxVals, err := EncodeUniqueIndexValues(ctx, tblInfo, idxInfo, idxVals)
+	encodedIdxVals, err := EncodeUniqueIndexValuesForKey(ctx, tblInfo, idxInfo, idxVals)
 	if err != nil {
 		return nil, err
 	}
 	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
 }
 
-// EncodeUniqueIndexValues encodes a unique index values.
-func EncodeUniqueIndexValues(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum) (_ []byte, err error) {
+// EncodeUniqueIndexValuesForKey encodes unique index values for a key.
+func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum) (_ []byte, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	for i := range idxVals {
 		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
