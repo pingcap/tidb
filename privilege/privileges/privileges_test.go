@@ -385,6 +385,19 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(gs, HasLen, 3)
 }
 
+func (s *testPrivilegeSuite) TestShowColumnGrants(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `USE test`)
+	mustExec(c, se, `CREATE USER 'column'@'%'`)
+	mustExec(c, se, `CREATE TABLE column_table (a int, b int, c int)`)
+	mustExec(c, se, `GRANT Select(a),Update(a,b),Insert(c) ON test.column_table TO  'column'@'%'`)
+
+	pc := privilege.GetPrivilegeManager(se)
+	gs, err := pc.ShowGrants(se, &auth.UserIdentity{Username: "column", Hostname: "%"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(strings.Join(gs, " "), Equals, "GRANT USAGE ON *.* TO 'column'@'%' GRANT Select(a), Insert(c), Update(a, b) ON test.column_table TO 'column'@'%'")
+}
+
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(sessionctx.Context)
