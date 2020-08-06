@@ -254,8 +254,15 @@ func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreT
 	if err != nil {
 		return nil, err
 	}
+	pbJoinType := tipb.JoinType_TypeInnerJoin
+	switch p.JoinType {
+	case LeftOuterJoin:
+		pbJoinType = tipb.JoinType_TypeLeftOuterJoin
+	case RightOuterJoin:
+		pbJoinType = tipb.JoinType_TypeRightOuterJoin
+	}
 	join := &tipb.Join{
-		JoinType:      tipb.JoinType_TypeInnerJoin,
+		JoinType:      pbJoinType,
 		JoinExecType:  tipb.JoinExecType_TypeHashJoin,
 		InnerIdx:      int64(p.InnerChildIdx),
 		LeftJoinKeys:  left,

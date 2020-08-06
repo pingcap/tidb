@@ -258,7 +258,6 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	if err != nil {
 		return err
 	}
-	rows = rows[:0]
 	memTracker.Consume(-memUsageOfRows)
 	return nil
 }
