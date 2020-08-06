@@ -301,11 +301,18 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 	c.txnSize = size
 
 	if len(c.primaryKey) == 0 {
+		var minLen int
+		index := -1
 		for i, op := range mutations.ops {
 			if op != pb.Op_CheckNotExists {
-				c.primaryKey = mutations.keys[i]
-				break
+				if index < 0 || minLen > len(mutations.keys[i]) {
+					index = i
+					minLen = len(mutations.keys[i])
+				}
 			}
+		}
+		if index >= 0 {
+			c.primaryKey = mutations.keys[index]
 		}
 	}
 
