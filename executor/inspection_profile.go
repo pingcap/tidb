@@ -294,7 +294,7 @@ func NewProfileBuilder(sctx sessionctx.Context, start, end time.Time, tp string)
 		// Use type sum when doesn't specified the type, this is used to compatible with old behaviour.
 		valueTp = metricValueSum
 	default:
-		return nil, fmt.Errorf("unknown metric profile type: %v, expect value should be one of sum or avg or count", tp)
+		return nil, fmt.Errorf("unknown metric profile type: %v, expect value should be one of 'sum', 'avg' or 'count'", tp)
 	}
 	return &profileBuilder{
 		sctx:        sctx,
