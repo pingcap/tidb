@@ -24,7 +24,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite1) TestPreparedNameResolver(c *C) {
@@ -106,7 +105,6 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 }
 
 func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
-	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
