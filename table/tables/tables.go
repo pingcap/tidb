@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -112,11 +113,11 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
-			expr, err := parseExpression(colInfo.GeneratedExprString)
+			expr, err := generatedexpr.ParseExpression(colInfo.GeneratedExprString)
 			if err != nil {
 				return nil, err
 			}
-			expr, err = simpleResolveName(expr, tblInfo)
+			expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -124,7 +125,7 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 		}
 		// default value is expr.
 		if col.DefaultIsExpr {
-			expr, err := parseExpression(colInfo.DefaultValue.(string))
+			expr, err := generatedexpr.ParseExpression(colInfo.DefaultValue.(string))
 			if err != nil {
 				return nil, err
 			}

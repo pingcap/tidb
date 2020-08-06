@@ -1160,18 +1160,20 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 		indexedCols[i] = cols[v.Offset]
 	}
 
-	var containsVirtualCol bool
-	decodeColMap, err := decoder.BuildFullDecodeColMap(indexedCols, t, func(genCol *table.Column) (expression.Expression, error) {
-		containsVirtualCol = true
-		return expression.ParseSimpleExprCastWithTableInfo(sessCtx, genCol.GeneratedExprString, t.Meta(), &genCol.FieldType)
-	})
-	if err != nil {
-		return nil, err
-	}
+	dbName := model.NewCIStr(sessCtx.GetSessionVars().CurrentDB)
+	exprCols, _ := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
+	mockSchema := expression.NewSchema(exprCols...)
 
-	if containsVirtualCol {
-		decoder.SubstituteGenColsInDecodeColMap(decodeColMap)
-		decoder.RemoveUnusedVirtualCols(decodeColMap, indexedCols)
+	decodeColMap := decoder.BuildFullDecodeColMap(t, mockSchema)
+
+	var err error
+	for _, col := range decodeColMap {
+		if col.GenExpr != nil {
+			col.GenExpr, err = col.GenExpr.ResolveIndices(mockSchema)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	return decodeColMap, nil
 }

@@ -70,7 +70,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		// since converting "aaaa" to an int will cause DataTruncate error.
 		{"'aaaa'=a", "eq(cast(aaaa, double BINARY), cast(a, double BINARY))"},
 	}
-	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns)
+	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns, tblInfo)
 	schema := NewSchema(cols...)
 	for _, t := range tests {
 		f, err := ParseSimpleExprsWithNames(s.ctx, t.exprStr, schema, names)
