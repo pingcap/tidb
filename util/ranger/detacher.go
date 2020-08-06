@@ -112,7 +112,7 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 			offset = curOffset
 		}
 		return offset
-	case ast.EQ:
+	case ast.EQ, ast.NullEQ:
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
 				return -1

@@ -1073,6 +1073,23 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			resultStr:   "[[1,1] [2,2] [3,3]]",
 			length:      types.UnspecifiedLength,
 		},
+		// test cases for nulleq
+		{
+			colPos:      0,
+			exprStr:     "a <=> 1",
+			accessConds: "[nulleq(test.t.a, 1)]",
+			filterConds: "",
+			resultStr:   "[[1,1]]",
+			length:      types.UnspecifiedLength,
+		},
+		{
+			colPos:      0,
+			exprStr:     "a <=> null",
+			accessConds: "[nulleq(test.t.a, <nil>)]",
+			filterConds: "",
+			resultStr:   "[[NULL,NULL]]",
+			length:      types.UnspecifiedLength,
+		},
 	}
 
 	ctx := context.Background()
