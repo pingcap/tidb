@@ -239,11 +239,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
 					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
 					if coll == newColl {
-						collStrictness, ok1 := CollationStrictness[coll]
-						newResStrictness, ok2 := CollationStrictness[newFuncExpr.GetType().Collate]
-						if ok1 && ok2 && newResStrictness >= collStrictness {
-							changed = true
-						}
+						changed = canSubstituted(coll, newFuncExpr.GetType().Collate)
 					}
 				}
 			}
@@ -257,6 +253,25 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		}
 	}
 	return false, expr
+}
+
+func canSubstituted(coll, newFuncColl string) bool {
+	collGroupId, ok1 := CollationStrictnessGroup[coll]
+	newFuncCollGroupId, ok2 := CollationStrictnessGroup[newFuncColl]
+
+	if ok1 && ok2 {
+		if collGroupId == newFuncCollGroupId {
+			return true
+		}
+
+		for _, id := range CollationStrictness[collGroupId] {
+			if newFuncCollGroupId == id {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // getValidPrefix gets a prefix of string which can parsed to a number with base. the minimum base is 2 and the maximum is 36.
