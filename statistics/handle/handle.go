@@ -250,14 +250,12 @@ func (h *Handle) GetMemConsumed() (size int64) {
 // GetAllTableStatsMemUsage get all the mem usage with true table.
 // only used by test.
 func (h *Handle) GetAllTableStatsMemUsage() int64 {
-	h.statsCache.Lock()
 	data := h.statsCache.Value.Load().(statsCache)
+	cache := data.copy()
 	allUsage := int64(0)
-	for _, t := range data.tables {
+	for _, t := range cache.tables {
 		allUsage += t.MemoryUsage()
 	}
-
-	h.statsCache.Unlock()
 	return allUsage
 }
 
