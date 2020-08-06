@@ -428,7 +428,7 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.SchemaState = model.StateDeleteReorganization
 		setColumnsState(colInfos, model.StateDeleteReorganization)
 		if len(idxInfos) > 0 {
-			setIndicesState(tblInfo, idxInfos, model.StateDeleteOnly)
+			setIndicesState(tblInfo, idxInfos, model.StateDeleteReorganization)
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
 	case model.StateDeleteReorganization:
@@ -438,7 +438,7 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if len(idxInfos) > 0 {
 			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 			for _, idx := range tblInfo.Indices {
-				if !indexInfoContains(idx.Name.L, idxInfos) {
+				if !indexInfoContains(idx.ID, idxInfos) {
 					newIndices = append(newIndices, idx)
 				}
 			}
@@ -579,7 +579,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if len(idxInfos) > 0 {
 			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 			for _, idx := range tblInfo.Indices {
-				if !indexInfoContains(idx.Name.L, idxInfos) {
+				if !indexInfoContains(idx.ID, idxInfos) {
 					newIndices = append(newIndices, idx)
 				}
 			}
@@ -1038,9 +1038,9 @@ func isVirtualGeneratedColumn(col *model.ColumnInfo) bool {
 	return false
 }
 
-func indexInfoContains(idxName string, idxInfos []*model.IndexInfo) bool {
+func indexInfoContains(idxID int64, idxInfos []*model.IndexInfo) bool {
 	for _, idxInfo := range idxInfos {
-		if idxName == idxInfo.Name.L {
+		if idxID == idxInfo.ID {
 			return true
 		}
 	}
