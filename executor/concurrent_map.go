@@ -39,14 +39,14 @@ func newConcurrentMap() concurrentMap {
 	return m
 }
 
-// GetShard returns shard under given key
-func (m concurrentMap) GetShard(hashKey uint64) *concurrentMapShared {
+// getShard returns shard under given key
+func (m concurrentMap) getShard(hashKey uint64) *concurrentMapShared {
 	return m[hashKey%uint64(ShardCount)]
 }
 
 // Insert inserts a value in a shard safely
 func (m concurrentMap) Insert(key uint64, value *entry) {
-	shard := m.GetShard(key)
+	shard := m.getShard(key)
 	shard.Lock()
 	v, ok := shard.items[key]
 	if !ok {
@@ -67,7 +67,7 @@ type UpsertCb func(exist bool, valueInMap, newValue *entry) *entry
 
 // Upsert: Insert or Update - updates existing element or inserts a new one using UpsertCb
 func (m concurrentMap) Upsert(key uint64, value *entry, cb UpsertCb) (res *entry) {
-	shard := m.GetShard(key)
+	shard := m.getShard(key)
 	shard.Lock()
 	v, ok := shard.items[key]
 	res = cb(ok, v, value)
@@ -81,7 +81,7 @@ func (m concurrentMap) Upsert(key uint64, value *entry, cb UpsertCb) (res *entry
 // Otherwise, we should use RLock() for concurrent reads and writes.
 func (m concurrentMap) Get(key uint64) (*entry, bool) {
 	// Get shard
-	shard := m.GetShard(key)
+	shard := m.getShard(key)
 	// shard.RLock()
 	// Get item from shard.
 	val, ok := shard.items[key]

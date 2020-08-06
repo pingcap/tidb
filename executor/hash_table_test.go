@@ -57,10 +57,10 @@ func (s *pkgTestSuite) testHashTables(c *C) {
 		c.Check(ht.Len(), Equals, uint64(totalCount))
 	}
 	// test unsafeHashTable
-	ht = newUnsafeHashTable(0, true)
+	ht = newUnsafeHashTable(0)
 	test()
 	// test ConcurrentMapHashTable
-	ht = newConcurrentMapHashTable(0)
+	ht = newConcurrentMapHashTable()
 	test()
 }
 

@@ -506,7 +506,7 @@ func (iw *indexHashJoinInnerWorker) getNewJoinResult(ctx context.Context) (*inde
 
 func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Context, task *indexHashJoinTask, h hash.Hash64) {
 	buf, numChks := make([]byte, 1), task.outerResult.NumChunks()
-	task.lookupMap = newUnsafeHashTable(task.outerResult.Len(), true)
+	task.lookupMap = newUnsafeHashTable(task.outerResult.Len())
 	for chkIdx := 0; chkIdx < numChks; chkIdx++ {
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()

@@ -114,7 +114,7 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 	c := &hashRowContainer{
 		sc:           sCtx.GetSessionVars().StmtCtx,
 		hCtx:         hCtx,
-		hashTable:    newConcurrentMapHashTable(estCount),
+		hashTable:    newConcurrentMapHashTable(),
 		rowContainer: rc,
 	}
 
@@ -303,6 +303,7 @@ type baseHashTable interface {
 	Len() uint64
 }
 
+// TODO (fangzhuhe) remove unsafeHashTable later if it not used anymore
 // unsafeHashTable stores multiple rowPtr of rows for a given key with minimum GC overhead.
 // A given key can store multiple values.
 // It is not thread-safe, should only be used in one goroutine.
@@ -310,16 +311,14 @@ type unsafeHashTable struct {
 	hashMap    map[uint64]*entry
 	entryStore *entryStore
 	length     uint64
-	keepOrder  bool
 }
 
 // newUnsafeHashTable creates a new unsafeHashTable. estCount means the estimated size of the hashMap.
 // If unknown, set it to 0.
-func newUnsafeHashTable(estCount int, keepOrder bool) *unsafeHashTable {
+func newUnsafeHashTable(estCount int) *unsafeHashTable {
 	ht := new(unsafeHashTable)
 	ht.hashMap = make(map[uint64]*entry, estCount)
 	ht.entryStore = newEntryStore()
-	ht.keepOrder = keepOrder
 	return ht
 }
 
@@ -340,13 +339,6 @@ func (ht *unsafeHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
 		rowPtrs = append(rowPtrs, entryAddr.ptr)
 		entryAddr = entryAddr.next
 	}
-	// Keep the order of input.
-	if ht.keepOrder {
-		for i := 0; i < len(rowPtrs)/2; i++ {
-			j := len(rowPtrs) - 1 - i
-			rowPtrs[i], rowPtrs[j] = rowPtrs[j], rowPtrs[i]
-		}
-	}
 	return
 }
 
@@ -362,7 +354,7 @@ type concurrentMapHashTable struct {
 }
 
 // newConcurrentMapHashTable creates a concurrentMapHashTable
-func newConcurrentMapHashTable(estCount int) *concurrentMapHashTable {
+func newConcurrentMapHashTable() *concurrentMapHashTable {
 	ht := new(concurrentMapHashTable)
 	ht.hashMap = newConcurrentMap()
 	ht.entryStore = newEntryStore()
