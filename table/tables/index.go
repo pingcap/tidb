@@ -87,14 +87,20 @@ type index struct {
 	phyTblID               int64
 }
 
-func (c *index) checkContainNonBinaryString() bool {
-	for _, idxCol := range c.idxInfo.Columns {
-		col := c.tblInfo.Columns[idxCol.Offset]
+// ContainsNonBinaryString checks whether the index columns contains non binary string column, the input
+// colInfos should be column info correspond to the table contains the index.
+func ContainsNonBinaryString(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+	for _, idxCol := range idxCols {
+		col := colInfos[idxCol.Offset]
 		if col.EvalType() == types.ETString && !mysql.HasBinaryFlag(col.Flag) {
 			return true
 		}
 	}
 	return false
+}
+
+func (c *index) checkContainNonBinaryString() bool {
+	return ContainsNonBinaryString(c.idxInfo.Columns, c.tblInfo.Columns)
 }
 
 // NewIndex builds a new Index object.
@@ -213,6 +219,9 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 //		|     Length:   8    |  1
 //		+
 func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
+	if c.Meta().Unique {
+		us.CacheIndexName(c.phyTblID, c.Meta().ID, c.Meta().Name.String())
+	}
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {
 		fn(&opt)
@@ -264,7 +273,7 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 	}
 
 	var value []byte
-	if sctx.GetSessionVars().PresumeKeyNotExists {
+	if sctx.GetSessionVars().LazyCheckKeyNotExists() {
 		value, err = us.GetMemBuffer().Get(ctx, key)
 	} else {
 		value, err = us.Get(ctx, key)
@@ -273,11 +282,11 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 		return nil, err
 	}
 	if err != nil || len(value) == 0 {
-		var keyFlags kv.KeyFlags
-		if sctx.GetSessionVars().PresumeKeyNotExists && err != nil {
-			keyFlags = keyFlags.MarkPresumeKeyNotExists()
+		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
+			err = us.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
+		} else {
+			err = us.GetMemBuffer().Set(key, idxVal)
 		}
-		err = us.GetMemBuffer().SetWithFlags(key, keyFlags, idxVal)
 		return nil, err
 	}
 

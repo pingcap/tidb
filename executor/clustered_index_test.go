@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -102,4 +103,26 @@ func (s *testClusteredSuite) TestClusteredHint(c *C) {
 	tk.MustExec("drop table if exists ht")
 	tk.MustExec("create table ht (a varchar(64) primary key, b int)")
 	tk.MustQuery("select * from ht use index (`PRIMARY`)")
+}
+
+func (s *testClusteredSuite) TestClusteredBatchPointGet(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b)) PARTITION BY HASH(a) PARTITIONS 3")
+	tk.MustExec("insert t values (1, 1, 1), (3, 3, 3), (5, 5, 5)")
+	tk.MustQuery("select * from t where (a, b) in ((1, 1), (3, 3), (5, 5))").Check(
+		testkit.Rows("1 1 1", "3 3 3", "5 5 5"))
+}
+
+func (s *testClusteredSuite) TestClusteredInsertIgnoreBatchGetKeyCount(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a varchar(10) primary key, b int)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert ignore t values ('a', 1)")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	snapSize := tikv.SnapCacheSize(txn.GetSnapshot())
+	c.Assert(snapSize, Equals, 1)
+	tk.MustExec("rollback")
 }

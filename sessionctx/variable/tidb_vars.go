@@ -300,6 +300,9 @@ const (
 	// tidb_window_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
 
+	// tidb_enable_parallel_apply is used for parallel apply.
+	TiDBEnableParallelApply = "tidb_enable_parallel_apply"
+
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 
@@ -535,6 +538,7 @@ const (
 	DefTiDBLogDesensitization          = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
+	DefTiDBEnableParallelApply         = false
 )
 
 // Process global variables.

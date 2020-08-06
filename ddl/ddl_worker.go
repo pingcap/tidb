@@ -529,6 +529,9 @@ func skipWriteBinlog(job *model.Job) bool {
 	// it's used to update table's TiFlash replica available status.
 	case model.ActionUpdateTiFlashReplicaStatus:
 		return true
+	// It is done without modifying table info, bin log is not needed
+	case model.ActionAlterTableAlterPartition:
+		return true
 	}
 
 	return false
@@ -670,13 +673,15 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionUnlockTable:
 		ver, err = onUnlockTables(t, job)
 	case model.ActionSetTiFlashReplica:
-		ver, err = onSetTableFlashReplica(t, job)
+		ver, err = w.onSetTableFlashReplica(t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
 		ver, err = onUpdateFlashReplicaStatus(t, job)
 	case model.ActionCreateSequence:
 		ver, err = onCreateSequence(d, t, job)
 	case model.ActionAlterIndexVisibility:
 		ver, err = onAlterIndexVisibility(t, job)
+	case model.ActionAlterTableAlterPartition:
+		ver, err = onAlterTablePartition(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

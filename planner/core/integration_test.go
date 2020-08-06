@@ -14,7 +14,9 @@
 package core_test
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -693,6 +695,7 @@ func (s *testIntegrationSuite) TestPartitionPruningForInExpr(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(11), b int) partition by range (a) (partition p0 values less than (4), partition p1 values less than(10), partition p2 values less than maxvalue);")
 	tk.MustExec("insert into t values (1, 1),(10, 10),(11, 11)")
+	tk.MustExec("set @try_new_partition_implementation = 1")
 
 	var input []string
 	var output []struct {
@@ -1374,10 +1377,10 @@ func (s *testIntegrationSuite) TestAccessPathOnClusterIndex(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
 		})
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
 
@@ -1419,4 +1422,73 @@ func (s *testIntegrationSuite) TestIndexJoinOnClusteredIndex(c *C) {
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
 	}
+}
+func (s *testIntegrationSerialSuite) TestIssue18984(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t2")
+	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a, b))")
+	tk.MustExec("create table t2(a int, b int, c int, d int, primary key(a,b), index idx(c))")
+	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("insert into t2 values(1,2,3,4), (2,4,3,5), (1,3,1,1)")
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t) */ * from t right outer join t2 on t.a=t2.c").Check(testkit.Rows(
+		"1 1 1 1 3 1 1",
+		"3 3 3 1 2 3 4",
+		"3 3 3 2 4 3 5"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t2) */ * from t left outer join t2 on t.a=t2.c").Check(testkit.Rows(
+		"1 1 1 1 3 1 1",
+		"2 2 2 <nil> <nil> <nil> <nil>",
+		"3 3 3 1 2 3 4",
+		"3 3 3 2 4 3 5"))
+}
+
+func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b varchar(20))")
+	tk.MustExec("insert into t values (1,1)")
+
+	res := tk.MustQuery("explain analyze select * from t where a=1;")
+	checkExplain := func(rpc string) {
+		resBuff := bytes.NewBufferString("")
+		for _, row := range res.Rows() {
+			fmt.Fprintf(resBuff, "%s\n", row)
+		}
+		explain := resBuff.String()
+		c.Assert(strings.Contains(explain, rpc+":{num_rpc:"), IsTrue, Commentf("%s", explain))
+		c.Assert(strings.Contains(explain, "total_time:"), IsTrue, Commentf("%s", explain))
+	}
+	checkExplain("Get")
+	res = tk.MustQuery("explain analyze select * from t where a in (1,2,3);")
+	checkExplain("BatchGet")
+}
+
+func (s *testIntegrationSuite) TestPartitionExplain(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (id int, c int, key i_id(id), key i_c(c)) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10))`)
+
+	tk.MustExec("set @try_new_partition_implementation = 1;")
+	tk.MustExec("set @@tidb_enable_index_merge = 1;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+	}
+
+	tk.MustExec("set @try_new_partition_implementation = null;")
 }

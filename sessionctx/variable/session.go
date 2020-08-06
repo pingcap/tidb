@@ -163,11 +163,11 @@ type TransactionContext struct {
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
-	ForUpdate      bool
 	CouldRetry     bool
 	IsPessimistic  bool
 	Isolation      string
 	LockExpire     uint32
+	ForUpdate      uint32
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -701,6 +701,9 @@ type SessionVars struct {
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
 
+	// EnableParallelApply indicates that thether to use parallel apply.
+	EnableParallelApply bool
+
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
 }
@@ -795,6 +798,7 @@ func NewSessionVars() *SessionVars {
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
+		EnableParallelApply:         DefTiDBEnableParallelApply,
 		EnableLogDesensitization:    DefTiDBLogDesensitization,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
 	}
@@ -1410,6 +1414,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	case TiDBEnableClusteredIndex:
 		s.EnableClusteredIndex = TiDBOptOn(val)
+	case TiDBEnableParallelApply:
+		s.EnableParallelApply = TiDBOptOn(val)
 	case TiDBSlowLogMasking, TiDBLogDesensitization:
 		s.EnableLogDesensitization = TiDBOptOn(val)
 	case TiDBShardAllocateStep:
@@ -1452,6 +1458,11 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 	// Because `prevStmt` may be truncated, so it's senseless to normalize it.
 	// Even if `prevStmtDigest` is empty but `prevStmt` is not, just return it anyway.
 	return s.prevStmtDigest
+}
+
+// LazyCheckKeyNotExists returns if we can lazy check key not exists.
+func (s *SessionVars) LazyCheckKeyNotExists() bool {
+	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
 }
 
 // SetLocalSystemVar sets values of the local variables which in "server" scope.

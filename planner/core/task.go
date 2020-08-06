@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
@@ -69,6 +70,12 @@ type copTask struct {
 	// rootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
 	rootTaskConds []expression.Expression
+
+	// For table partition.
+	partitionTable struct {
+		pruningConds   []expression.Expression
+		partitionNames []model.CIStr
+	}
 }
 
 func (t *copTask) invalid() bool {
@@ -654,6 +661,8 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		ExtraHandleCol:   t.extraHandleCol,
 		CommonHandleCols: t.commonHandleCols,
 	}.Init(ctx, t.tablePlan.SelectBlockOffset())
+	p.PartitionTable.PruningConds = t.partitionTable.pruningConds
+	p.PartitionTable.PartitionNames = t.partitionTable.partitionNames
 	setTableScanToTableRowIDScan(p.tablePlan)
 	p.stats = t.tablePlan.statsInfo()
 	// Add cost of building table reader executors. Handles are extracted in batch style,
@@ -718,7 +727,12 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		cst: t.cst,
 	}
 	if t.idxMergePartPlans != nil {
-		p := PhysicalIndexMergeReader{partialPlans: t.idxMergePartPlans, tablePlan: t.tablePlan}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
+		p := PhysicalIndexMergeReader{
+			partialPlans: t.idxMergePartPlans,
+			tablePlan:    t.tablePlan,
+		}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
+		p.PartitionTable.PruningConds = t.partitionTable.pruningConds
+		p.PartitionTable.PartitionNames = t.partitionTable.partitionNames
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
 		return newTask
@@ -727,6 +741,8 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
+		p.PartitionTable.PruningConds = t.partitionTable.pruningConds
+		p.PartitionTable.PartitionNames = t.partitionTable.partitionNames
 		p.stats = t.indexPlan.statsInfo()
 		newTask.p = p
 	} else {
@@ -745,6 +761,8 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			StoreType:      ts.StoreType,
 			IsCommonHandle: ts.Table.IsCommonHandle,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
+		p.PartitionTable.PruningConds = t.partitionTable.pruningConds
+		p.PartitionTable.PartitionNames = t.partitionTable.partitionNames
 		p.stats = t.tablePlan.statsInfo()
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		newTask.p = p
