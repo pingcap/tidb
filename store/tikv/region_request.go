@@ -72,6 +72,7 @@ type RegionRequestRuntimeStats struct {
 	stats map[tikvrpc.CmdType]*rpcRuntimeStats
 }
 
+// NewRegionRequestRuntimeStats returns a new RegionRequestRuntimeStats.
 func NewRegionRequestRuntimeStats() RegionRequestRuntimeStats {
 	return RegionRequestRuntimeStats{
 		stats: make(map[tikvrpc.CmdType]*rpcRuntimeStats),
@@ -84,6 +85,7 @@ type rpcRuntimeStats struct {
 	consume int64
 }
 
+// String implements fmt.Stringer interface.
 func (r *RegionRequestRuntimeStats) String() string {
 	var buf bytes.Buffer
 	for k, v := range r.stats {
@@ -95,6 +97,7 @@ func (r *RegionRequestRuntimeStats) String() string {
 	return buf.String()
 }
 
+// Merge merges other RegionRequestRuntimeStats.
 func (r *RegionRequestRuntimeStats) Merge(rs RegionRequestRuntimeStats) {
 	for cmd, v := range rs.stats {
 		stat, ok := r.stats[cmd]

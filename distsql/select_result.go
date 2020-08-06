@@ -321,6 +321,7 @@ func (r *selectResult) Close() error {
 	return r.resp.Close()
 }
 
+// HasCopRuntimeStats is a interface uses to check whether the result has cop runtime stats.
 type HasCopRuntimeStats interface {
 	// GetCopRuntimeStats gets the cop runtime stats information.
 	GetCopRuntimeStats() *tikv.CopRuntimeStats
