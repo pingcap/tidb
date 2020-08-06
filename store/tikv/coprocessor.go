@@ -91,6 +91,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 	if it.syncSend {
 		it.asyncTasksCh = nil
+		it.asyncSendErr = nil
 		tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
 		if err != nil {
 			return copErrorResponse{err}
@@ -100,14 +101,16 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 			it.concurrency = len(tasks)
 		}
 	} else {
-		it.asyncSendErr = make(chan *error, 1)
+		it.asyncSendErr = make(chan error, 1)
 		// start to asynchronously build tasks
 		it.asyncTasksCh = make(chan *copTask, 2048)
 		it.wg.Add(1)
 		go func() {
 			defer it.wg.Done()
 			err := AsyncBuildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req, it.asyncTasksCh, it.asyncOrderTasksCh, &it.closed)
-			it.asyncSendErr <- &err
+			if err != nil {
+				it.asyncSendErr <- err
+			}
 			close(it.asyncSendErr)
 			close(it.asyncTasksCh)
 			if it.asyncOrderTasksCh != nil {
@@ -542,7 +545,7 @@ type copIterator struct {
 
 	asyncOrderTasksCh chan *copTask
 
-	asyncSendErr chan *error
+	asyncSendErr chan error
 
 	minCommitTSPushed
 }
@@ -799,8 +802,8 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	if it.asyncSendErr != nil {
 		select {
 		case err := <-it.asyncSendErr:
-			{
-				return nil, *err
+			if err != nil {
+				return nil, err
 			}
 		default:
 		}
