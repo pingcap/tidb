@@ -973,8 +973,8 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t100    \t\n" +
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t100    \t\n" +
 		"\t├─IndexScan_8 \tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
@@ -994,8 +994,8 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t100    \t\n" +
+	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t100    \t\n" +
 		"\t├─IndexScan_8 \tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
@@ -1044,8 +1044,8 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t1000   \t\n" +
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t1000   \t\n" +
 		"\t├─IndexScan_8 \tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
@@ -1063,8 +1063,8 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t1000   \t\n" +
+	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t1000   \t\n" +
 		"\t├─IndexScan_8 \tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
 		"\t└─TableScan_9 \tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
