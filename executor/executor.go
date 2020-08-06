@@ -921,13 +921,6 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = kv.LockNoWait
 	}
 
-	if len(e.keys) > 0 {
-		// This operation is only for schema validator check.
-		for id := range e.tblID2Handle {
-			e.ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
-		}
-	}
-
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
 }
 
@@ -941,6 +934,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
 		LockExpired:           &seVars.TxnCtx.LockExpire,
+		CheckKeyExists:        seVars.StmtCtx.CheckKeyExists,
 	}
 }
 
@@ -951,7 +945,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	sctx := se.GetSessionVars().StmtCtx
 	if !sctx.InUpdateStmt && !sctx.InDeleteStmt {
-		se.GetSessionVars().TxnCtx.ForUpdate = true
+		atomic.StoreUint32(&se.GetSessionVars().TxnCtx.ForUpdate, 1)
 	}
 	// Lock keys only once when finished fetching all results.
 	txn, err := se.Txn(true)
@@ -1677,6 +1671,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+	sc.CheckKeyExists = make(map[string]struct{})
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount

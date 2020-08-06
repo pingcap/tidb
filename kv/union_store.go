@@ -107,6 +107,10 @@ func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
 			e, ok := us.opts.Get(PresumeKeyNotExistsError)
 			if ok {
 				us.keyExistErrs[string(k)] = e.(*existErrInfo)
+				if val, ok := us.opts.Get(CheckExists); ok {
+					checkExistMap := val.(map[string]struct{})
+					checkExistMap[string(k)] = struct{}{}
+				}
 			}
 			return nil, ErrNotExist
 		}
