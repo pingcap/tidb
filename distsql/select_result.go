@@ -18,6 +18,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -359,7 +361,7 @@ func (s *selectResultRuntimeStats) String() string {
 		size := len(s.copRespTime)
 		buf.WriteString(", ")
 		if size == 1 {
-			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max:%v} proc_keys: {max: %v}", s.copRespTime[0], s.procKeys[0]))
+			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max:%v, proc_keys: %v}", s.copRespTime[0], s.procKeys[0]))
 		} else {
 			sort.Slice(s.copRespTime, func(i, j int) bool {
 				return s.copRespTime[i] < s.copRespTime[j]
@@ -375,9 +377,31 @@ func (s *selectResultRuntimeStats) String() string {
 			sort.Slice(s.procKeys, func(i, j int) bool {
 				return s.procKeys[i] < s.procKeys[j]
 			})
+			totalKeys := int64(0)
+			for _, v := range s.procKeys {
+				totalKeys += v
+			}
 			keyMax := s.procKeys[size-1]
 			keyP95 := s.procKeys[size*19/20]
-			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max :%v, min:%v, avg:%v, p80:%v, p95:%v}, proc_keys: {max:%v, p95:%v}", size, vMax, vMin, vAvg, vP80, vP95, keyMax, keyP95))
+			buf.WriteString("cop_task: {")
+			if s.totalProcessTime > 0 {
+				buf.WriteString("total_process_time: ")
+				buf.WriteString(s.totalProcessTime.String())
+				if s.totalWaitTime > 0 {
+					buf.WriteString(", ")
+					buf.WriteString("total_wait_time: ")
+					buf.WriteString(s.totalWaitTime.String())
+				}
+				if totalKeys > 0 {
+					buf.WriteString(", ")
+					buf.WriteString("total_process_keys: ")
+					buf.WriteString(strconv.Itoa(int(totalKeys)))
+				}
+			}
+			if !strings.HasSuffix(buf.String(), "{") {
+				buf.WriteString(", ")
+			}
+			buf.WriteString(fmt.Sprintf("num: %v, max: %v, min: %v, avg: %v, p80: %v, p95: %v, max_process_keys: %v, p95_process_keys: %v}", size, vMax, vMin, vAvg, vP80, vP95, keyMax, keyP95))
 		}
 	}
 
@@ -387,22 +411,10 @@ func (s *selectResultRuntimeStats) String() string {
 		buf.WriteString(rpcStatsStr)
 	}
 
-	if s.totalProcessTime > 0 {
-		buf.WriteString(", ")
-		buf.WriteString(fmt.Sprintf("Coprocessor: {total_process_time: %s", s.totalProcessTime.String()))
-		if s.totalWaitTime > 0 {
-			buf.WriteString(", ")
-			buf.WriteString("total_wait_time: ")
-			buf.WriteString(s.totalWaitTime.String())
-		}
-		buf.WriteString("}")
-	}
-
 	if len(s.backoffSleep) > 0 {
-		buf.WriteString(", ")
 		for k, v := range s.backoffTimes {
 			if buf.Len() > 0 {
-				buf.WriteByte(',')
+				buf.WriteString(", ")
 			}
 			d := s.backoffSleep[k]
 			buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k, v, d.String()))
