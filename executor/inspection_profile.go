@@ -67,9 +67,9 @@ type metricValue struct {
 type metricValueType int
 
 const (
-	metricValueSum metricValueType = 1
-	metricValueAvg metricValueType = 2
-	metricValueCnt metricValueType = 3
+	metricValueSum metricValueType = iota + 1
+	metricValueAvg
+	metricValueCnt
 )
 
 func (m metricValueType) String() string {
@@ -160,6 +160,35 @@ func (n *metricNode) getLabelValue(label string) *metricValue {
 	return value
 }
 
+func (n *metricNode) queryRowsByLabel(pb *profileBuilder, query string, handleRowFn func(label string, v float64)) error {
+	rows, _, err := pb.sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(context.Background(), query)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 || rows[0].Len() == 0 {
+		return nil
+	}
+
+	for _, row := range rows {
+		v := row.GetFloat64(0)
+		if n.unit != 0 {
+			v = v / float64(n.unit)
+		}
+		label := ""
+		for i := 1; i < row.Len(); i++ {
+			if i > 1 {
+				label += ","
+			}
+			label += row.GetString(i)
+		}
+		if label == "" && len(n.label) > 0 {
+			continue
+		}
+		handleRowFn(label, v)
+	}
+	return nil
+}
+
 func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 	n.labelValue = make(map[string]*metricValue)
 	n.value = &metricValue{}
@@ -167,35 +196,6 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 		pb.start.Format(dateTimeFormat), pb.end.Format(dateTimeFormat))
 	if n.condition != "" {
 		queryCondition += (" and " + n.condition)
-	}
-
-	queryRows := func(query string, fn func(label string, v float64)) error {
-		rows, _, err := pb.sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQLWithContext(context.Background(), query)
-		if err != nil {
-			return err
-		}
-		if len(rows) == 0 || rows[0].Len() == 0 {
-			return nil
-		}
-
-		for _, row := range rows {
-			v := row.GetFloat64(0)
-			if n.unit != 0 {
-				v = v / float64(n.unit)
-			}
-			label := ""
-			for i := 1; i < row.Len(); i++ {
-				if i > 1 {
-					label += ","
-				}
-				label += row.GetString(i)
-			}
-			if label == "" && len(n.label) > 0 {
-				continue
-			}
-			fn(label, v)
-		}
-		return nil
 	}
 
 	var query string
@@ -208,7 +208,7 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 	}
 
 	totalCount := 0.0
-	err := queryRows(query, func(label string, v float64) {
+	err := n.queryRowsByLabel(pb, query, func(label string, v float64) {
 		totalCount += v
 		n.getLabelValue(label).count = int(v)
 	})
@@ -229,7 +229,7 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 			n.table, queryCondition, strings.Join(n.label, "`,`"))
 	}
 	totalSum := 0.0
-	err = queryRows(query, func(label string, v float64) {
+	err = n.queryRowsByLabel(pb, query, func(label string, v float64) {
 		if n.unit != 0 {
 			v = v / float64(n.unit)
 		}
@@ -264,7 +264,7 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 
 		totalValue := 0.0
 		cnt := 0
-		err = queryRows(query, func(label string, v float64) {
+		err = n.queryRowsByLabel(pb, query, func(label string, v float64) {
 			if n.unit != 0 {
 				v = v / float64(n.unit)
 			}
