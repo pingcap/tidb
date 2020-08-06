@@ -146,11 +146,11 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		c.Assert(err, IsNil, comment)
 		tp := p.Schema().Columns[0].RetType
 
-		c.Assert(tp.Tp, Equals, tt.tp, comment)
-		c.Assert(tp.Charset, Equals, tt.chs, comment)
-		c.Assert(tp.Flag, Equals, tt.flag, comment)
-		c.Assert(tp.Flen, Equals, tt.flen, comment)
-		c.Assert(tp.Decimal, Equals, tt.decimal, comment)
+		c.Check(tp.Tp, Equals, tt.tp, comment)
+		c.Check(tp.Charset, Equals, tt.chs, comment)
+		c.Check(tp.Flag, Equals, tt.flag, comment)
+		c.Check(tp.Flen, Equals, tt.flen, comment)
+		c.Check(tp.Decimal, Equals, tt.decimal, comment)
 	}
 }
 
@@ -242,7 +242,7 @@ func (s *testInferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"CONCAT(c_binary, c_int_d)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 40, types.UnspecifiedLength},
 		{"CONCAT(c_bchar, c_int_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 40, types.UnspecifiedLength},
 		{"CONCAT(c_bchar, 0x80)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 23, types.UnspecifiedLength},
-		{"CONCAT('T', 'i', 'DB')", mysql.TypeVarString, charset.CharsetUTF8MB4, 0 | mysql.NotNullFlag, 4, types.UnspecifiedLength},
+		{"CONCAT('T', 'i', 'DB')", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 4, types.UnspecifiedLength},
 		{"CONCAT('T', 'i', 'DB', c_binary)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 24, types.UnspecifiedLength},
 		{"CONCAT_WS('-', 'T', 'i', 'DB')", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 6, types.UnspecifiedLength},
 		{"CONCAT_WS(',', 'TiDB', c_binary)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 25, types.UnspecifiedLength},
@@ -253,7 +253,7 @@ func (s *testInferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"lower(c_binary)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
 		{"upper(c_int_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 20, types.UnspecifiedLength},
 		{"upper(c_binary)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
-		{"replace(1234, 2, 55)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0 | mysql.NotNullFlag, 20, types.UnspecifiedLength},
+		{"replace(1234, 2, 55)", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 20, types.UnspecifiedLength},
 		{"replace(c_binary, 1, 2)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
 		{"to_base64(c_binary)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 28, types.UnspecifiedLength},
 		{"substr(c_int_d, c_int_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 20, types.UnspecifiedLength},
@@ -1200,14 +1200,14 @@ func (s *testInferTypeSuite) createTestCase4OtherFuncs() []typeInferTestCase {
 
 func (s *testInferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
-		{`time_format('150:02:28', '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8MB4, 0 | mysql.NotNullFlag, 44, types.UnspecifiedLength},
-		{`time_format(123456, '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8MB4, 0 | mysql.NotNullFlag, 44, types.UnspecifiedLength},
+		{`time_format('150:02:28', '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 44, types.UnspecifiedLength},
+		{`time_format(123456, '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 44, types.UnspecifiedLength},
 		{`time_format('bad string', '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 44, types.UnspecifiedLength},
 		{`time_format(null, '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 44, types.UnspecifiedLength},
 
 		{`date_format(null, '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 44, types.UnspecifiedLength},
-		{`date_format('2017-06-15', '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8MB4, 0 | mysql.NotNullFlag, 44, types.UnspecifiedLength},
-		{`date_format(151113102019.12, '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8MB4, 0 | mysql.NotNullFlag, 44, types.UnspecifiedLength},
+		{`date_format('2017-06-15', '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 44, types.UnspecifiedLength},
+		{`date_format(151113102019.12, '%r%r%r%r')`, mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 44, types.UnspecifiedLength},
 
 		{"timestampadd(HOUR, c_int_d, c_timestamp_d)", mysql.TypeString, charset.CharsetUTF8MB4, 0, 19, types.UnspecifiedLength},
 		{"timestampadd(minute, c_double_d, c_timestamp_d)", mysql.TypeString, charset.CharsetUTF8MB4, 0, 19, types.UnspecifiedLength},
@@ -1703,7 +1703,7 @@ func (s *testInferTypeSuite) createTestCase4TimeFuncs() []typeInferTestCase {
 
 		{"utc_date()  ", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
 		{"curdate()", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
-		{"sysdate(4)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
+		{"sysdate(4)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 19, 0},
 		{"current_date() ", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 10, 0},
 
 		{"date(c_int_d      )", mysql.TypeDate, charset.CharsetBin, mysql.BinaryFlag, 10, 0},

@@ -2046,6 +2046,8 @@ func (c *sysDateFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 			bf.tp.Decimal = int(fsp)
 		}
 	}
+	// Illegal parameters have been filtered out in the parser, so the result is always not null.
+	bf.tp.Flag |= mysql.NotNullFlag
 
 	var sig builtinFunc
 	if len(args) == 1 {
