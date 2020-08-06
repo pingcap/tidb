@@ -260,7 +260,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 
 		cntPlan += curCntPlan
-		planCounter.Dec(int64(curCntPlan))
+		planCounter.Dec(curCntPlan)
 
 		if planCounter.Empty() {
 			bestTask = curTask
