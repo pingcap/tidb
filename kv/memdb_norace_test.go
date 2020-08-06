@@ -13,7 +13,7 @@
 
 // +build !race
 
-package memdb
+package kv
 
 import (
 	"encoding/binary"
@@ -21,7 +21,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/goleveldb/leveldb/comparer"
-	"github.com/pingcap/goleveldb/leveldb/memdb"
+	leveldb "github.com/pingcap/goleveldb/leveldb/memdb"
 )
 
 // The test takes too long under the race detector.
@@ -34,10 +34,10 @@ func (s testMemDBSuite) TestRandom(c *C) {
 		rand.Read(keys[i])
 	}
 
-	p1 := NewSandbox()
-	p2 := memdb.New(comparer.DefaultComparer, 4*1024)
+	p1 := newMemDB()
+	p2 := leveldb.New(comparer.DefaultComparer, 4*1024)
 	for _, k := range keys {
-		p1.Put(k, k)
+		p1.Set(k, k)
 		_ = p2.Put(k, k)
 	}
 
@@ -47,10 +47,16 @@ func (s testMemDBSuite) TestRandom(c *C) {
 	rand.Shuffle(cnt, func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
 
 	for _, k := range keys {
-		newValue := make([]byte, rand.Intn(19)+1)
-		rand.Read(newValue)
-		p1.Put(k, newValue)
-		_ = p2.Put(k, newValue)
+		op := rand.Float64()
+		if op < 0.35 {
+			p1.DeleteKey(k)
+			p2.Delete(k)
+		} else {
+			newValue := make([]byte, rand.Intn(19)+1)
+			rand.Read(newValue)
+			p1.Set(k, newValue)
+			_ = p2.Put(k, newValue)
+		}
 	}
 	s.checkConsist(c, p1, p2)
 }
@@ -58,12 +64,14 @@ func (s testMemDBSuite) TestRandom(c *C) {
 // The test takes too long under the race detector.
 func (s testMemDBSuite) TestRandomDerive(c *C) {
 	c.Parallel()
-	s.testRandomDeriveRecur(c, NewSandbox(), memdb.New(comparer.DefaultComparer, 4*1024), 0)
+	db := newMemDB()
+	golden := leveldb.New(comparer.DefaultComparer, 4*1024)
+	s.testRandomDeriveRecur(c, db, golden, 0)
 }
 
-func (s testMemDBSuite) testRandomDeriveRecur(c *C, sb *Sandbox, db *memdb.DB, depth int) {
+func (s testMemDBSuite) testRandomDeriveRecur(c *C, db *memdb, golden *leveldb.DB, depth int) [][2][]byte {
 	var keys [][]byte
-	if rand.Float64() < 0.5 {
+	if op := rand.Float64(); op < 0.33 {
 		start, end := rand.Intn(512), rand.Intn(512)+512
 		cnt := end - start
 		keys = make([][]byte, cnt)
@@ -71,11 +79,17 @@ func (s testMemDBSuite) testRandomDeriveRecur(c *C, sb *Sandbox, db *memdb.DB, d
 			keys[i] = make([]byte, 8)
 			binary.BigEndian.PutUint64(keys[i], uint64(start+i))
 		}
-	} else {
+	} else if op < 0.66 {
 		keys = make([][]byte, rand.Intn(512)+512)
 		for i := range keys {
 			keys[i] = make([]byte, rand.Intn(19)+1)
 			rand.Read(keys[i])
+		}
+	} else {
+		keys = make([][]byte, 512)
+		for i := range keys {
+			keys[i] = make([]byte, 8)
+			binary.BigEndian.PutUint64(keys[i], uint64(i))
 		}
 	}
 
@@ -85,25 +99,41 @@ func (s testMemDBSuite) testRandomDeriveRecur(c *C, sb *Sandbox, db *memdb.DB, d
 		rand.Read(vals[i])
 	}
 
-	sbBuf := sb.Derive()
-	dbBuf := memdb.New(comparer.DefaultComparer, 4*1024)
+	h := db.Staging()
+	opLog := make([][2][]byte, 0, len(keys))
 	for i := range keys {
-		sbBuf.Put(keys[i], vals[i])
-		_ = dbBuf.Put(keys[i], vals[i])
+		db.Set(keys[i], vals[i])
+		old, err := golden.Get(keys[i])
+		if err != nil {
+			opLog = append(opLog, [2][]byte{keys[i], nil})
+		} else {
+			opLog = append(opLog, [2][]byte{keys[i], old})
+		}
+		golden.Put(keys[i], vals[i])
 	}
 
-	if depth < 1000 {
-		s.testRandomDeriveRecur(c, sbBuf, dbBuf, depth+1)
+	if depth < 2000 {
+		childOps := s.testRandomDeriveRecur(c, db, golden, depth+1)
+		opLog = append(opLog, childOps...)
 	}
 
 	if rand.Float64() < 0.3 && depth > 0 {
-		sbBuf.Discard()
-	} else {
-		sbBuf.Flush()
-		it := dbBuf.NewIterator(nil)
-		for it.First(); it.Valid(); it.Next() {
-			_ = db.Put(it.Key(), it.Value())
+		db.Cleanup(h)
+		for i := len(opLog) - 1; i >= 0; i-- {
+			if opLog[i][1] == nil {
+				golden.Delete(opLog[i][0])
+			} else {
+				golden.Put(opLog[i][0], opLog[i][1])
+			}
 		}
+		opLog = nil
+	} else {
+		db.Release(h)
 	}
-	s.checkConsist(c, sb, db)
+
+	if depth%200 == 0 {
+		s.checkConsist(c, db, golden)
+	}
+
+	return opLog
 }

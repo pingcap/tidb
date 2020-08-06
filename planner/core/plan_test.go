@@ -14,7 +14,10 @@
 package core_test
 
 import (
+	"bytes"
+	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -189,6 +192,11 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 			sql2:   "SELECT * from t1 where a!=2 order by c limit 2",
 			isSame: true,
 		},
+		{ // test for union
+			sql1:   "select count(1) as num,a from t1 where a=1 group by a union select count(1) as num,a from t1 where a=3 group by a;",
+			sql2:   "select count(1) as num,a from t1 where a=2 group by a union select count(1) as num,a from t1 where a=4 group by a;",
+			isSame: true,
+		},
 	}
 	for _, testCase := range normalizedDigestCases {
 		testNormalizeDigest(tk, c, testCase.sql1, testCase.sql2, testCase.isSame)
@@ -231,4 +239,81 @@ func compareStringSlice(c *C, ss1, ss2 []string) {
 	for i, s := range ss1 {
 		c.Assert(s, Equals, ss2[i])
 	}
+}
+
+func (s *testPlanNormalize) TestNthPlanHint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tt")
+	tk.MustExec("create table tt (a int,b int, index(a), index(b));")
+	tk.MustExec("insert into tt values (1, 1), (2, 2), (3, 4)")
+
+	tk.MustExec("explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
+
+	// Test hints for nth_plan(x).
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, index(a), index(b), index(a,b))")
+	tk.MustQuery("explain format='hint' select * from t where a=1 and b=1").Check(testkit.Rows(
+		"use_index(@`sel_1` `test`.`t` `a_2`)"))
+	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) */ * from t where a=1 and b=1").Check(testkit.Rows(
+		"use_index(@`sel_1` `test`.`t` ), nth_plan(1)"))
+	tk.MustQuery("explain format='hint' select /*+ nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
+		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(2)"))
+
+	tk.MustExec("explain format='hint' select /*+ nth_plan(3) */ * from t where a=1 and b=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
+
+	// Test warning for multiply hints.
+	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
+		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(1), nth_plan(2)"))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)",
+		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)"))
+
+	// Test the correctness of generated plans.
+	tk.MustExec("insert into t values (1,1,1)")
+	tk.MustQuery("select  /*+ nth_plan(1) */ * from t where a=1 and b=1;").Check(testkit.Rows(
+		"1 1 1"))
+	tk.MustQuery("select  /*+ nth_plan(2) */ * from t where a=1 and b=1;").Check(testkit.Rows(
+		"1 1 1"))
+	tk.MustQuery("select  /*+ nth_plan(1) */ * from tt where a=1 and b=1;").Check(testkit.Rows(
+		"1 1"))
+	tk.MustQuery("select  /*+ nth_plan(2) */ * from tt where a=1 and b=1;").Check(testkit.Rows(
+		"1 1"))
+	tk.MustQuery("select  /*+ nth_plan(3) */ * from tt where a=1 and b=1;").Check(testkit.Rows(
+		"1 1"))
+}
+
+func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10) key,b int);")
+	tk.MustExec("set @@tidb_slow_log_threshold=200000")
+
+	// generate SQL
+	buf := bytes.NewBuffer(make([]byte, 0, 1024*1024*4))
+	for i := 0; i < 50000; i++ {
+		if i > 0 {
+			buf.WriteString(" union ")
+		}
+		buf.WriteString(fmt.Sprintf("select count(1) as num,a from t where a='%v' group by a", i))
+	}
+	query := buf.String()
+	tk.Se.GetSessionVars().PlanID = 0
+	tk.MustExec(query)
+	info := tk.Se.ShowProcess()
+	c.Assert(info, NotNil)
+	p, ok := info.Plan.(core.PhysicalPlan)
+	c.Assert(ok, IsTrue)
+	// TODO: optimize the encode plan performance when encode plan with runtimeStats
+	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+	encodedPlanStr := core.EncodePlan(p)
+	start := time.Now()
+	_, err := plancodec.DecodePlan(encodedPlanStr)
+	c.Assert(err, IsNil)
+	c.Assert(time.Since(start).Seconds(), Less, 3.0)
 }

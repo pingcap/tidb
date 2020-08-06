@@ -82,8 +82,14 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	} else {
 		for i, row := range rows {
 			var err error
-			if i == 0 {
-				err = e.addRecordWithAutoIDHint(ctx, row, len(rows))
+			sizeHintStep := int(sessVars.ShardAllocateStep)
+			if i%sizeHintStep == 0 {
+				sizeHint := sizeHintStep
+				remain := len(rows) - i
+				if sizeHint > remain {
+					sizeHint = remain
+				}
+				err = e.addRecordWithAutoIDHint(ctx, row, sizeHint)
 			} else {
 				err = e.addRecord(ctx, row)
 			}

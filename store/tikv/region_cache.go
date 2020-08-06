@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/v4/client"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
@@ -460,7 +459,8 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 				zap.Uint64("region", id.GetID()),
 				zap.String("store", store.addr))
-			return nil, nil
+			// TiFlash will always try to find out a valid peer, avoiding to retry too many times.
+			continue
 		}
 		return &RPCContext{
 			Region:     id,
@@ -666,11 +666,11 @@ func (c *RegionCache) GroupKeysByRegion(bo *Backoffer, keys [][]byte, filter fun
 
 type groupedMutations struct {
 	region    RegionVerID
-	mutations committerMutations
+	mutations CommitterMutations
 }
 
 // GroupSortedMutationsByRegion separates keys into groups by their belonging Regions.
-func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m committerMutations) ([]groupedMutations, error) {
+func (c *RegionCache) GroupSortedMutationsByRegion(bo *Backoffer, m CommitterMutations) ([]groupedMutations, error) {
 	var (
 		groups  []groupedMutations
 		lastLoc *KeyLocation
@@ -1018,7 +1018,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 				return nil, errors.Trace(err)
 			}
 		}
-		metas, leaders, err := c.pdClient.ScanRegions(bo.ctx, startKey, endKey, limit)
+		regionsInfo, err := c.pdClient.ScanRegions(bo.ctx, startKey, endKey, limit)
 		if err != nil {
 			tikvRegionCacheCounterWithScanRegionsError.Inc()
 			backoffErr = errors.Errorf(
@@ -1031,20 +1031,17 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 
 		tikvRegionCacheCounterWithScanRegionsOK.Inc()
 
-		if len(metas) == 0 {
+		if len(regionsInfo) == 0 {
 			return nil, errors.New("PD returned no region")
 		}
-		if len(metas) != len(leaders) {
-			return nil, errors.New("PD returned mismatching region metas and leaders")
-		}
-		regions := make([]*Region, 0, len(metas))
-		for i, meta := range metas {
-			region := &Region{meta: meta}
+		regions := make([]*Region, 0, len(regionsInfo))
+		for _, r := range regionsInfo {
+			region := &Region{meta: r.Meta}
 			err := region.init(c)
 			if err != nil {
 				return nil, err
 			}
-			leader := leaders[i]
+			leader := r.Leader
 			// Leader id = 0 indicates no leader.
 			if leader.GetId() != 0 {
 				c.switchWorkLeaderToPeer(region, leader.GetStoreId())
@@ -1054,7 +1051,7 @@ func (c *RegionCache) scanRegions(bo *Backoffer, startKey, endKey []byte, limit 
 		if len(regions) == 0 {
 			return nil, errors.New("receive Regions with no peer")
 		}
-		if len(regions) < len(metas) {
+		if len(regions) < len(regionsInfo) {
 			logutil.Logger(context.Background()).Debug(
 				"regionCache: scanRegion finished but some regions has no leader.")
 		}
@@ -1546,8 +1543,9 @@ retry:
 type livenessState uint32
 
 var (
-	livenessSf           singleflight.Group
-	storeLivenessTimeout time.Duration
+	livenessSf singleflight.Group
+	// StoreLivenessTimeout is the max duration of resolving liveness of a TiKV instance.
+	StoreLivenessTimeout time.Duration
 )
 
 const (
@@ -1557,23 +1555,18 @@ const (
 	offline
 )
 
-func init() {
-	t, err := time.ParseDuration(config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout)
-	if err != nil {
-		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
-			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
-	}
-	storeLivenessTimeout = t
-}
-
 func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
+	if StoreLivenessTimeout == 0 {
+		return unreachable
+	}
+
 	saddr := s.saddr
 	if len(saddr) == 0 {
 		l = unknown
 		return
 	}
 	rsCh := livenessSf.DoChan(saddr, func() (interface{}, error) {
-		return invokeKVStatusAPI(saddr, storeLivenessTimeout), nil
+		return invokeKVStatusAPI(saddr, StoreLivenessTimeout), nil
 	})
 	var ctx context.Context
 	if bo != nil {
