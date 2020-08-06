@@ -1157,6 +1157,26 @@
           "└─Selection_7(Probe) 3.32 cop[tikv]  lt(test.pt.c, 3)",
           "  └─TableRowIDScan_6 10.00 cop[tikv] table:pt keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "select * from pt where id = 4 or c < 7",
+        "Plan": [
+          "Projection_4 8000.00 root  test.pt.id, test.pt.c",
+          "└─IndexMerge_11 3333.33 root partition:all ",
+          "  ├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:pt, index:i_id(id) range:[4,4], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan_9(Build) 3323.33 cop[tikv] table:pt, index:i_c(c) range:[-inf,7), keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_10(Probe) 3333.33 cop[tikv] table:pt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from pt where id > 4 or c = 7",
+        "Plan": [
+          "Projection_4 8000.00 root  test.pt.id, test.pt.c",
+          "└─IndexMerge_11 3343.33 root partition:all ",
+          "  ├─IndexRangeScan_8(Build) 3333.33 cop[tikv] table:pt, index:i_id(id) range:(4,+inf], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan_9(Build) 10.00 cop[tikv] table:pt, index:i_c(c) range:[7,7], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan_10(Probe) 3343.33 cop[tikv] table:pt keep order:false, stats:pseudo"
+        ]
       }
     ]
   }

@@ -250,12 +250,13 @@ type LockCtx struct {
 	LockWaitTime          int64
 	WaitStartTime         time.Time
 	PessimisticLockWaited *int32
-	LockKeysDuration      *time.Duration
+	LockKeysDuration      *int64
 	LockKeysCount         *int32
 	ReturnValues          bool
 	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
+	CheckKeyExists        map[string]struct{}
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
