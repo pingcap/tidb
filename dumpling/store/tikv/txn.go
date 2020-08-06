@@ -62,7 +62,7 @@ type tikvTxn struct {
 	startTime time.Time // Monotonic timestamp for recording txn time consuming.
 	commitTS  uint64
 	lockKeys  [][]byte
-	lockedMap map[string]struct{}
+	lockedMap map[string]bool
 	mu        sync.Mutex // For thread-safe LockKeys function.
 	setCnt    int64
 	vars      *kv.Variables
@@ -100,7 +100,7 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64, replicaReadSeed uin
 	return &tikvTxn{
 		snapshot:  snapshot,
 		us:        kv.NewUnionStore(snapshot),
-		lockedMap: map[string]struct{}{},
+		lockedMap: make(map[string]bool),
 		store:     store,
 		startTS:   startTS,
 		startTime: time.Now(),
@@ -350,9 +350,17 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		}
 	}()
 	for _, key := range keysInput {
-		if _, ok := txn.lockedMap[string(key)]; !ok {
+		// The value of lockedMap is only used by pessimistic transactions.
+		valueExist, locked := txn.lockedMap[string(key)]
+		_, checkKeyExists := lockCtx.CheckKeyExists[string(key)]
+		if !locked {
 			keys = append(keys, key)
-		} else if lockCtx.ReturnValues {
+		} else if txn.IsPessimistic() {
+			if checkKeyExists && valueExist {
+				return txn.committer.extractKeyExistsErr(key)
+			}
+		}
+		if lockCtx.ReturnValues && locked {
 			// An already locked key can not return values, we add an entry to let the caller get the value
 			// in other ways.
 			lockCtx.Values[string(key)] = kv.ReturnedValue{AlreadyLocked: true}
@@ -425,7 +433,15 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	}
 	txn.lockKeys = append(txn.lockKeys, keys...)
 	for _, key := range keys {
-		txn.lockedMap[string(key)] = struct{}{}
+		// PointGet and BatchPointGet will return value in pessimistic lock response, the value may not exist.
+		// For other lock modes, the locked key values always exist.
+		if lockCtx.ReturnValues {
+			val, _ := lockCtx.Values[string(key)]
+			valExists := len(val.Value) > 0
+			txn.lockedMap[string(key)] = valExists
+		} else {
+			txn.lockedMap[string(key)] = true
+		}
 	}
 	txn.dirty = true
 	return nil
