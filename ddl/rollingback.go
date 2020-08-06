@@ -168,7 +168,9 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 			switch indexInfo.State {
 			case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
 				// We can not rollback now, so just continue to drop index.
-				// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
+				// In function isJobRollbackable will let job rollback when state is StateNone.
+				// When there is no index related to the drop column job it is OK, but when there has indices, we should
+				// make sure the job is not rollback.
 				job.State = model.JobStateRunning
 				return ver, nil
 			case model.StatePublic:
@@ -208,7 +210,9 @@ func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error)
 			switch indexInfo.State {
 			case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
 				// We can not rollback now, so just continue to drop index.
-				// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
+				// In function isJobRollbackable will let job rollback when state is StateNone.
+				// When there is no index related to the drop columns job it is OK, but when there has indices, we should
+				// make sure the job is not rollback.
 				job.State = model.JobStateRunning
 				return ver, nil
 			case model.StatePublic:
