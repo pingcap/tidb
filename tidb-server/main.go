@@ -273,6 +273,7 @@ func setCPUAffinity() {
 		exit()
 	}
 	runtime.GOMAXPROCS(len(cpu))
+	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 }
 
 func setHeapProfileTracker() {
@@ -424,6 +425,7 @@ func reloadConfig(nc, c *config.Config) {
 	}
 	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
 		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
+		metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 	}
 	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
 		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
@@ -556,6 +558,7 @@ func setGlobalVars() {
 	// We should respect to user's settings in config file.
 	// The default value of MaxProcs is 0, runtime.GOMAXPROCS(0) is no-op.
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
+	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
