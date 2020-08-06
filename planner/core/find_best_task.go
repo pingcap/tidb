@@ -589,6 +589,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			for i, c := range candidates {
 				if c.path.IsTablePath() {
 					candidates = append(candidates[:i], candidates[i+1:]...)
+					break
 				}
 			}
 		}
