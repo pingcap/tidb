@@ -98,7 +98,7 @@ type baseExecutor struct {
 	maxChunkSize  int
 	children      []Executor
 	retFieldTypes []*types.FieldType
-	runtimeStats  *execdetails.RuntimeStats
+	runtimeStats  *execdetails.BasicRuntimeStats
 }
 
 // globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
@@ -199,7 +199,8 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if e.id != nil {
-			e.runtimeStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.id.String())
+			e.runtimeStats = &execdetails.BasicRuntimeStats{}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id.String(), e.runtimeStats)
 		}
 	}
 	if schema != nil {
@@ -940,6 +941,7 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
 		LockExpired:           &seVars.TxnCtx.LockExpire,
+		CheckKeyExists:        seVars.StmtCtx.CheckKeyExists,
 	}
 }
 
@@ -1543,10 +1545,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
 		TaskID:      stmtctx.AllocateTaskID(),
 	}
-	if config.GetGlobalConfig().OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
+	globalConfig := config.GetGlobalConfig()
+	if globalConfig.OOMUseTmpStorage && GlobalDiskUsageTracker != nil {
 		sc.DiskTracker.AttachToGlobalTracker(GlobalDiskUsageTracker)
 	}
-	switch config.GetGlobalConfig().OOMAction {
+	switch globalConfig.OOMAction {
 	case config.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: ctx.GetSessionVars().ConnectionID}
 		action.SetLogHook(domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota)
@@ -1670,7 +1673,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
 	}
+	if globalConfig.EnableCollectExecutionInfo {
+		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+	}
+
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+	sc.CheckKeyExists = make(map[string]struct{})
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount

@@ -54,6 +54,15 @@ func (s *testSuiteJoin1) TestJoinPanic(c *C) {
 	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
 	err := tk.ExecToErr("SELECT * FROM events e JOIN (SELECT clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
 	c.Check(err, NotNil)
+
+	// Test for PR 18983, use to detect race.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tpj1,tpj2;")
+	tk.MustExec("create table tpj1 (id int, b int,  unique index (id));")
+	tk.MustExec("create table tpj2 (id int, b int,  unique index (id));")
+	tk.MustExec("insert into tpj1 values  (1,1);")
+	tk.MustExec("insert into tpj2 values  (1,1);")
+	tk.MustQuery("select tpj1.b,tpj2.b from tpj1 left join tpj2 on tpj1.id=tpj2.id where tpj1.id=1;").Check(testkit.Rows("1 1"))
 }
 
 func (s *testSuite) TestJoinInDisk(c *C) {
@@ -2087,6 +2096,17 @@ func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
 	}()
 	err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
 	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
+}
+
+func (s *testSuiteJoin1) TestIssue18564(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, primary key(a), index idx(b,a));")
+	tk.MustExec("create table t2(a int, b int, primary key(a), index idx(b,a));")
+	tk.MustExec("insert into t1 values(1, 1)")
+	tk.MustExec("insert into t2 values(1, 1)")
+	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t1 FORCE INDEX (idx) join t2 on t1.b=t2.b and t1.a = t2.a").Check(testkit.Rows("1 1 1 1"))
 }
 
 func (s *testSuite9) TestIssue18572_1(c *C) {

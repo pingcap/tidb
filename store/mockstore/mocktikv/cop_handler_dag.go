@@ -507,6 +507,42 @@ type mockCopStreamClient struct {
 	finished bool
 }
 
+type mockBathCopErrClient struct {
+	mockClientStream
+
+	*errorpb.Error
+}
+
+func (mock *mockBathCopErrClient) Recv() (*coprocessor.BatchResponse, error) {
+	return &coprocessor.BatchResponse{
+		OtherError: mock.Error.Message,
+	}, nil
+}
+
+type mockBatchCopDataClient struct {
+	mockClientStream
+
+	chunks []tipb.Chunk
+	idx    int
+}
+
+func (mock *mockBatchCopDataClient) Recv() (*coprocessor.BatchResponse, error) {
+	if mock.idx < len(mock.chunks) {
+		res := tipb.SelectResponse{
+			Chunks: []tipb.Chunk{mock.chunks[mock.idx]},
+		}
+		raw, err := res.Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		mock.idx++
+		return &coprocessor.BatchResponse{
+			Data: raw,
+		}, nil
+	}
+	return nil, io.EOF
+}
+
 type mockCopStreamErrClient struct {
 	mockClientStream
 
