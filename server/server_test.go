@@ -26,11 +26,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/phayes/freeport"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -49,12 +49,26 @@ var (
 	regression                 = true
 )
 
-func genPort() uint {
-	return uint(atomic.AddUint32(&portGenerator, 1))
+func genPorts() (uint, uint) {
+	var (
+		ports []int
+		err   error
+	)
+	if ports, err = freeport.GetFreePorts(2); err != nil {
+		log.Fatal("no more free ports", zap.Error(err))
+	}
+	return uint(ports[0]), uint(ports[1])
 }
 
-func genStatusPort() uint {
-	return uint(atomic.AddUint32(&statusPortGenerator, 1))
+func genPort() uint {
+	var (
+		port int
+		err  error
+	)
+	if port, err = freeport.GetFreePort(); err != nil {
+		log.Fatal("no more free ports", zap.Error(err))
+	}
+	return uint(port)
 }
 
 func TestT(t *testing.T) {
@@ -76,9 +90,10 @@ type testServerClient struct {
 
 // newTestServerClient return a testServerClient with unique address
 func newTestServerClient() *testServerClient {
+	port, statusPort := genPorts()
 	return &testServerClient{
-		port:         genPort(),
-		statusPort:   genStatusPort(),
+		port:         port,
+		statusPort:   statusPort,
 		statusScheme: "http",
 	}
 }
@@ -838,6 +853,144 @@ func (cli *testServerClient) runTestLoadData(c *C, server *Server) {
 
 		dbt.mustExec("drop table if exists pn")
 	})
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test Column List Specification
+	_, err = fp.WriteString(
+		`1,2` + "\n" +
+			`3,4` + "\n")
+	c.Assert(err, IsNil)
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("drop table if exists pn")
+		dbt.mustExec("create table pn (c1 int, c2 int)")
+		dbt.mustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, c2)`)
+		dbt.Assert(err1, IsNil)
+		var (
+			a int
+			b int
+		)
+		rows := dbt.mustQuery("select * from pn")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 1)
+		dbt.Check(b, Equals, 2)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 3)
+		dbt.Check(b, Equals, 4)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+
+		dbt.mustExec("drop table if exists pn")
+	})
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test Column List Specification
+	_, err = fp.WriteString(
+		`1,2,3` + "\n" +
+			`4,5,6` + "\n")
+	c.Assert(err, IsNil)
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("drop table if exists pn")
+		dbt.mustExec("create table pn (c1 int, c2 int, c3 int)")
+		dbt.mustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, @dummy)`)
+		dbt.Assert(err1, IsNil)
+		var (
+			a int
+			b sql.NullString
+			c sql.NullString
+		)
+		rows := dbt.mustQuery("select * from pn")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b, &c)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 1)
+		dbt.Check(b.String, Equals, "")
+		dbt.Check(c.String, Equals, "")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b, &c)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 4)
+		dbt.Check(b.String, Equals, "")
+		dbt.Check(c.String, Equals, "")
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+
+		dbt.mustExec("drop table if exists pn")
+	})
+
+	err = fp.Close()
+	c.Assert(err, IsNil)
+	err = os.Remove(path)
+	c.Assert(err, IsNil)
+
+	fp, err = os.Create(path)
+	c.Assert(err, IsNil)
+	c.Assert(fp, NotNil)
+
+	// Test Input Preprocessing
+	_, err = fp.WriteString(
+		`1,2,3` + "\n" +
+			`4,5,6` + "\n")
+	c.Assert(err, IsNil)
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params = map[string]string{"sql_mode": "''"}
+	}, "LoadData", func(dbt *DBTest) {
+		dbt.mustExec("drop table if exists pn")
+		dbt.mustExec("create table pn (c1 int, c2 int, c3 int)")
+		dbt.mustExec("set @@tidb_dml_batch_size = 1")
+		_, err1 := dbt.db.Exec(`load data local infile '/tmp/load_data_test.csv' into table pn FIELDS TERMINATED BY ',' (c1, @val1, @val2) SET c3 = @val2 * 100, c2 = CAST(@val1 AS UNSIGNED)`)
+		dbt.Assert(err1, IsNil)
+		var (
+			a int
+			b int
+			c int
+		)
+		rows := dbt.mustQuery("select * from pn")
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b, &c)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 1)
+		dbt.Check(b, Equals, 2)
+		dbt.Check(c, Equals, 300)
+		dbt.Check(rows.Next(), IsTrue, Commentf("unexpected data"))
+		err = rows.Scan(&a, &b, &c)
+		dbt.Check(err, IsNil)
+		dbt.Check(a, Equals, 4)
+		dbt.Check(b, Equals, 5)
+		dbt.Check(c, Equals, 600)
+		dbt.Check(rows.Next(), IsFalse, Commentf("unexpected data"))
+
+		dbt.mustExec("drop table if exists pn")
+	})
 }
 
 func (cli *testServerClient) runTestConcurrentUpdate(c *C) {
@@ -952,7 +1105,6 @@ func (cli *testServerClient) runTestAuth(c *C) {
 		dbt.mustExec(`GRANT ALL on test.* to 'authtest'`)
 		dbt.mustExec(`GRANT authtest_r1 to 'authtest'`)
 		dbt.mustExec(`SET DEFAULT ROLE authtest_r1 TO authtest`)
-		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	cli.runTests(c, func(config *mysql.Config) {
 		config.User = "authtest"
@@ -989,7 +1141,6 @@ func (cli *testServerClient) runTestAuth(c *C) {
 	cli.runTests(c, nil, func(dbt *DBTest) {
 		dbt.mustExec(`CREATE USER 'authtest2'@'localhost' IDENTIFIED BY '123';`)
 		dbt.mustExec(`GRANT ALL on test.* to 'authtest2'@'localhost'`)
-		dbt.mustExec(`FLUSH PRIVILEGES;`)
 	})
 	cli.runTests(c, func(config *mysql.Config) {
 		config.User = "authtest2"
@@ -1034,7 +1185,6 @@ func (cli *testServerClient) runTestIssue3682(c *C) {
 		dbt.mustExec(`CREATE USER 'issue3682'@'%' IDENTIFIED BY '123';`)
 		dbt.mustExec(`GRANT ALL on test.* to 'issue3682'`)
 		dbt.mustExec(`GRANT ALL on mysql.* to 'issue3682'`)
-		dbt.mustExec(`FLUSH PRIVILEGES`)
 	})
 	cli.runTests(c, func(config *mysql.Config) {
 		config.User = "issue3682"

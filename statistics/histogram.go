@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
@@ -110,6 +111,18 @@ func (hg *Histogram) GetLower(idx int) *types.Datum {
 func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.Tp)
 	return &d
+}
+
+// MemoryUsage returns the total memory usage of this Histogram.
+// everytime changed the Histogram of the table, it will cost O(n)
+// complexity so calculate the memoryUsage might cost little time.
+// We ignore the size of other metadata in Histogram.
+func (hg *Histogram) MemoryUsage() (sum int64) {
+	if hg == nil {
+		return
+	}
+	sum = hg.Bounds.MemoryUsage() + int64(cap(hg.Buckets)*int(unsafe.Sizeof(Bucket{}))) + int64(cap(hg.scalars)*int(unsafe.Sizeof(scalar{})))
+	return
 }
 
 // AvgColSize is the average column size of the histogram. These sizes are derived from function `encode`
@@ -738,6 +751,16 @@ func (c *Column) String() string {
 	return c.Histogram.ToString(0)
 }
 
+// MemoryUsage returns the total memory usage of Histogram and CMSketch in Column.
+// We ignore the size of other metadata in Column
+func (c *Column) MemoryUsage() (sum int64) {
+	sum = c.Histogram.MemoryUsage()
+	if c.CMSketch != nil {
+		sum += c.CMSketch.MemoryUsage()
+	}
+	return
+}
+
 // HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
@@ -764,7 +787,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		return 0.0, nil
 	}
 	if c.NDV > 0 && c.outOfRange(val) {
-		return float64(modifyCount) / float64(c.NDV), nil
+		return outOfRangeEQSelectivity(c.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
@@ -829,7 +852,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		// The interval case.
 		cnt := c.BetweenRowCount(lowVal, highVal)
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			cnt += float64(modifyCount) / outOfRangeBetweenRate
+			cnt += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount()
 		}
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boudaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
@@ -881,6 +904,16 @@ func (idx *Index) IsInvalid(collPseudo bool) bool {
 	return (collPseudo && idx.NotAccurate()) || idx.TotalRowCount() == 0
 }
 
+// MemoryUsage returns the total memory usage of a Histogram and CMSketch in Index.
+// We ignore the size of other metadata in Index.
+func (idx *Index) MemoryUsage() (sum int64) {
+	sum = idx.Histogram.MemoryUsage()
+	if idx.CMSketch != nil {
+		sum += idx.CMSketch.MemoryUsage()
+	}
+	return
+}
+
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
 
 func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCount int64) (float64, error) {
@@ -891,7 +924,7 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCo
 	}
 	val := types.NewBytesDatum(b)
 	if idx.NDV > 0 && idx.outOfRange(val) {
-		return float64(modifyCount) / (float64(idx.NDV)), nil
+		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount(), nil
 	}
 	if idx.CMSketch != nil {
 		return float64(idx.CMSketch.QueryBytes(b)), nil
@@ -943,7 +976,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		totalCount += idx.BetweenRowCount(l, r)
 		lowIsNull := bytes.Equal(lb, nullKeyBytes)
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			totalCount += float64(modifyCount) / outOfRangeBetweenRate
+			totalCount += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 		}
 		if isSingleCol && lowIsNull {
 			totalCount += float64(idx.NullCount)
