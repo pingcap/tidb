@@ -773,7 +773,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	return ver, nil
 }
 
-func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var replicaInfo ast.TiFlashReplicaSpec
 	if err := job.DecodeArgs(&replicaInfo); err != nil {
 		job.State = model.JobStateCancelled
@@ -782,6 +782,12 @@ func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	err = w.checkTiFlashReplicaCount(replicaInfo.Count)
+	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -800,6 +806,16 @@ func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
+}
+
+func (w *worker) checkTiFlashReplicaCount(replicaCount uint64) error {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return checkTiFlashReplicaCount(ctx, replicaCount)
 }
 
 func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ error) {

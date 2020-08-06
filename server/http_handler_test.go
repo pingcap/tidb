@@ -563,6 +563,8 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(data), Equals, 0)
 
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
 	dbt.mustExec("use tidb")
 	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 

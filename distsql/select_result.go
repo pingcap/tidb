@@ -144,7 +144,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if ok {
 			copStats := hasStats.GetCopRuntimeStats()
 			if copStats != nil {
-				r.updateCopRuntimeStats(copStats, resultSubset.RespTime())
+				r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime())
 				copStats.CopTime = duration
 				sc.MergeExecDetails(&copStats.ExecDetails, nil)
 			}
@@ -244,13 +244,13 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
-func (r *selectResult) updateCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
+func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv.CopRuntimeStats, respTime time.Duration) {
 	callee := copStats.CalleeAddress
 	if r.rootPlanID == nil || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
 	}
 	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-		logutil.BgLogger().Error("invalid cop task execution summaries length",
+		logutil.Logger(ctx).Error("invalid cop task execution summaries length",
 			zap.Int("expected", len(r.copPlanIDs)),
 			zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
 
