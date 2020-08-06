@@ -624,7 +624,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 
 	connID := s.sessionVars.ConnectionID
 	s.sessionVars.RetryInfo.Retrying = true
-	if s.sessionVars.TxnCtx.ForUpdate {
+	if atomic.LoadUint32(&s.sessionVars.TxnCtx.ForUpdate) == 1 {
 		err = ErrForUpdateCantRetry.GenWithStackByArgs(connID)
 		return err
 	}
