@@ -266,6 +266,10 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 The parameter of nth_plan() is out of range."))
 
+	tk.MustExec("explain format='hint' select /*+ nth_plan(500) */ * from t where a=1 and b=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
+
 	// Test warning for multiply hints.
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
 		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(1), nth_plan(2)"))
