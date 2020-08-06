@@ -256,6 +256,7 @@ func (r *copRanges) split(key []byte) (*copRanges, *copRanges) {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
+// AsyncBuildCopTasks asynchronously builds coprocessor tasks and then sends them to coprocessor workers.
 func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request, receiver chan *copTask, orderReceiver chan *copTask, closed *uint32) error {
 	cmdType := tikvrpc.CmdCop
 	if req.Streaming {
@@ -285,33 +286,32 @@ func AsyncBuildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, re
 			}
 		}
 		return splitRangesDesc(bo, cache, ranges, appendTask, closed)
-	} else {
-		appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
-			// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
-			// to make sure the message can be sent successfully.
-			rLen := ranges.len()
-			for i := 0; i < rLen; {
-				nextI := mathutil.Min(i+rangesPerTask, rLen)
-				task := &copTask{
-					region: regionWithRangeInfo.Region,
-					ranges: ranges.slice(i, nextI),
-					// Channel buffer is 2 for handling region split.
-					// In a common case, two region split tasks will not be blocked.
-					respChan:  make(chan *copResponse, 2),
-					cmdType:   cmdType,
-					storeType: req.StoreType,
-				}
-				receiver <- task
-				if orderReceiver != nil {
-					orderReceiver <- task
-				}
-				i = nextI
-			}
-		}
-		return splitRanges(bo, cache, ranges, appendTask, closed)
 	}
-	return nil
+	appendTask := func(regionWithRangeInfo *KeyLocation, ranges *copRanges) {
+		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
+		// to make sure the message can be sent successfully.
+		rLen := ranges.len()
+		for i := 0; i < rLen; {
+			nextI := mathutil.Min(i+rangesPerTask, rLen)
+			task := &copTask{
+				region: regionWithRangeInfo.Region,
+				ranges: ranges.slice(i, nextI),
+				// Channel buffer is 2 for handling region split.
+				// In a common case, two region split tasks will not be blocked.
+				respChan:  make(chan *copResponse, 2),
+				cmdType:   cmdType,
+				storeType: req.StoreType,
+			}
+			receiver <- task
+			if orderReceiver != nil {
+				orderReceiver <- task
+			}
+			i = nextI
+		}
+	}
+	return splitRanges(bo, cache, ranges, appendTask, closed)
 }
+
 func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *copRanges, req *kv.Request) ([]*copTask, error) {
 	start := time.Now()
 	cmdType := tikvrpc.CmdCop
