@@ -626,33 +626,35 @@ type AnalyzeFastExec struct {
 	job             *statistics.AnalyzeJob
 }
 
-func (e *AnalyzeFastExec) getTableRowCount() (uint64, error) {
-	dom := domain.GetDomain(e.ctx)
-	sql := fmt.Sprintf("select count(1) from mysql.stats_histograms where table_id = %d;", e.tblInfo.ID)
+func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
+	sql := fmt.Sprintf("select flag from mysql.stats_histograms where table_id = %d;", e.tblInfo.ID)
 	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	hasBeenAnalyzed := len(rows) != 0
-	if !hasBeenAnalyzed {
-		dbInfo, ok := dom.InfoSchema().SchemaByTable(e.tblInfo)
+	var historyRowCount uint64
+	hasBeenAnalyzed := len(rows) != 0 && rows[0].GetInt64(0) == statistics.AnalyzeFlag
+	if hasBeenAnalyzed {
+		sql = fmt.Sprintf("select count from mysql.stats_meta where table_id = %d;", e.tblInfo.ID)
+		rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		historyRowCount = uint64(rows[0].GetInt64(0))
+	} else {
+		dbInfo, ok := domain.GetDomain(e.ctx).InfoSchema().SchemaByTable(e.tblInfo)
 		if !ok {
-			return 0, errors.Trace(errors.Errorf("database not found for table %s", e.tblInfo.Name))
+			return 0, errors.Trace(errors.Errorf("database not found for table '%s'", e.tblInfo.Name))
 		}
 		sql := fmt.Sprintf("select count(*) from %s.%s;", dbInfo.Name.L, e.tblInfo.Name.L)
 		rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		cnt := rows[0].GetInt64(0)
-		return uint64(cnt), nil
+		historyRowCount = uint64(rows[0].GetInt64(0))
 	}
-	sql = fmt.Sprintf("select count from mysql.stats_meta where table_id = %d;", e.tblInfo.ID)
-	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return uint64(rows[0].GetInt64(0)), nil
+	totalSampSize := e.opts[ast.AnalyzeOptNumSamples]
+	return uint32(historyRowCount / totalSampSize), nil
 }
 
 // getNextSampleKey gets the next sample key after last failed request. It only retries the needed region.
@@ -703,10 +705,6 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 // and need to rebuild.
 func (e *AnalyzeFastExec) buildSampTask() (err error) {
 	bo := tikv.NewBackofferWithVars(context.Background(), 500, nil)
-	e.rowCount, err = e.getTableRowCount()
-	if err != nil {
-		return err
-	}
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.physicalTableID)
@@ -731,7 +729,7 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 
 		// If the KV pairs in the region all belonging to the table, add it to the sample task.
 		if bytes.Compare(startKey, loc.StartKey) <= 0 && len(loc.EndKey) != 0 && bytes.Compare(loc.EndKey, endKey) <= 0 {
-			e.sampTasks = append(e.sampTasks)
+			e.sampTasks = append(e.sampTasks, loc)
 			continue
 		}
 
@@ -870,7 +868,7 @@ func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, er
 	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
 		scanKeysSize++
-		randNum := rander.Int63n(int64(e.rowCount))
+		randNum := rander.Int63n(int64(e.rowCount) + int64(scanKeysSize))
 		if randNum > sampleSize && e.sampCursor == int32(sampleSize) {
 			continue
 		}
@@ -911,7 +909,7 @@ func (e *AnalyzeFastExec) handleScanTasks(bo *tikv.Backoffer) (keysSize int, err
 	return keysSize, nil
 }
 
-func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *error) {
+func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	defer e.wg.Done()
 	var snapshot kv.Snapshot
 	snapshot, *err = e.ctx.GetStore().(tikv.Storage).GetSnapshot(kv.MaxVersion)
@@ -925,12 +923,10 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
 
-	rander := rand.New(rand.NewSource(e.randSeed + int64(e.rowCount)))
+	rander := rand.New(rand.NewSource(e.randSeed))
 	for i := workID; i < len(e.sampTasks); i += e.concurrency {
 		task := e.sampTasks[i]
 		// randomize the estimate step in range [step - 2 * sqrt(step), step]
-		var step uint32
-		step = e.estSampStep
 		if step > 4 { // 2*sqrt(x) < x
 			lower, upper := step-uint32(2*math.Sqrt(float64(step))), step
 			step = uint32(rander.Intn(int(upper-lower))) + lower
@@ -949,6 +945,7 @@ func (e *AnalyzeFastExec) handleSampTasks(bo *tikv.Backoffer, workID int, err *e
 				return
 			}
 		}
+		atomic.AddUint64(&e.rowCount, uint64(len(kvMap) * int(step+1)))
 		fastAnalyzeHistogramSample.Observe(float64(len(kvMap)))
 
 		*err = e.handleBatchSeekResponse(kvMap)
@@ -1027,9 +1024,13 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	e.wg.Add(e.concurrency)
+	estSampStep, err := e.calculateEstimateSampleStep()
+	if err != nil {
+		return nil, nil, err
+	}
 	bo := tikv.NewBackofferWithVars(context.Background(), 500, nil)
 	for i := 0; i < e.concurrency; i++ {
-		go e.handleSampTasks(bo, i, &errs[i])
+		go e.handleSampTasks(i, estSampStep, &errs[i])
 	}
 	e.wg.Wait()
 	for _, err := range errs {
@@ -1039,6 +1040,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	scanKeysSize, err := e.handleScanTasks(bo)
+	e.rowCount += uint64(scanKeysSize)
 	fastAnalyzeHistogramScanKeys.Observe(float64(scanKeysSize))
 	if err != nil {
 		return nil, nil, err
@@ -1091,8 +1093,6 @@ func (e *AnalyzeFastExec) buildStats() (hists []*statistics.Histogram, cms []*st
 		return nil, nil, err
 	}
 
-	totalSampSize := e.opts[ast.AnalyzeOptNumSamples]
-	e.estSampStep = uint32(e.rowCount / totalSampSize)
 	return e.runTasks()
 }
 
