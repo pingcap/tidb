@@ -679,6 +679,30 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 			},
 		},
 	}
+	ddlTime := &metricNode{
+		table: "tidb_ddl",
+		label: []string{"type"},
+		children: []*metricNode{
+			{
+				table: "tidb_ddl_worker",
+				label: []string{"type"},
+				children: []*metricNode{
+					{
+						table: "tidb_ddl_batch_add_index",
+					},
+					{
+						table: "tidb_load_schema",
+					},
+					{
+						table: "tidb_ddl_update_self_version",
+					},
+					{
+						table: "tidb_owner_handle_syncer",
+					},
+				},
+			},
+		},
+	}
 	tidbExecute := &metricNode{
 		table: "tidb_execute",
 		children: []*metricNode{
@@ -712,6 +736,7 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 					tidbKVRequest,
 				},
 			},
+			ddlTime,
 		},
 	}
 	queryTime := &metricNode{
