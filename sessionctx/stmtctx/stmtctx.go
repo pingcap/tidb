@@ -152,7 +152,8 @@ type StatementContext struct {
 	LockKeysDuration      time.Duration
 	LockKeysCount         int32
 	TblInfo2UnionScan     map[*model.TableInfo]bool
-	TaskID                uint64 // unique ID for an execution of a statement
+	TaskID                uint64              // unique ID for an execution of a statement
+	CheckKeyExists        map[string]struct{} // mark the keys needs to check for existence for pessimistic locks.
 }
 
 // StmtHints are SessionVars related sql hints.
