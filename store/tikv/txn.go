@@ -344,6 +344,8 @@ func (txn *tikvTxn) rollbackPessimisticLocks() error {
 
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
+	txn.mu.Lock()
+	defer txn.mu.Unlock()
 	// Exclude keys that are already locked.
 	var err error
 	keys := make([][]byte, 0, len(keysInput))
@@ -352,7 +354,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			if lockCtx.PessimisticLockWaited != nil {
 				if atomic.LoadInt32(lockCtx.PessimisticLockWaited) > 0 {
 					timeWaited := time.Since(lockCtx.WaitStartTime)
-					*lockCtx.LockKeysDuration = timeWaited
+					atomic.StoreInt64(lockCtx.LockKeysDuration, int64(timeWaited))
 					metrics.TiKVPessimisticLockKeysDuration.Observe(timeWaited.Seconds())
 				}
 			}
@@ -361,7 +363,6 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			*lockCtx.LockKeysCount += int32(len(keys))
 		}
 	}()
-	txn.mu.Lock()
 	for _, key := range keysInput {
 		// The value of lockedMap is only used by pessimistic transactions.
 		valueExist, locked := txn.lockedMap[string(key)]
@@ -385,7 +386,6 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			lockCtx.Values[string(key)] = kv.ReturnedValue{AlreadyLocked: true}
 		}
 	}
-	txn.mu.Unlock()
 	if len(keys) == 0 {
 		return nil
 	}
@@ -451,7 +451,6 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			txn.committer.ttlManager.run(txn.committer, lockCtx)
 		}
 	}
-	txn.mu.Lock()
 	txn.lockKeys = append(txn.lockKeys, keys...)
 	for _, key := range keys {
 		// PointGet and BatchPointGet will return value in pessimistic lock response, the value may not exists.
@@ -465,7 +464,6 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		}
 	}
 	txn.dirty = true
-	txn.mu.Unlock()
 	return nil
 }
 
