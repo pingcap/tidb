@@ -462,6 +462,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()
+	sc.CheckKeyExists = make(map[string]struct{})
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print
