@@ -908,15 +908,27 @@ func (ts *tidbTestSuite) TestSumAvg(c *C) {
 }
 
 func (ts *tidbTestSuite) TestNullFlag(c *C) {
-	// issue #9689
 	qctx, err := ts.tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil)
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	rs, err := Execute(ctx, qctx, "select 1")
-	c.Assert(err, IsNil)
-	cols := rs.Columns()
-	c.Assert(len(cols), Equals, 1)
-	expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
-	c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	{
+		// issue #9689
+		rs, err := Execute(ctx, qctx, "select 1")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.NotNullFlag | tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
+
+	{
+		// issue #19025
+		rs, err := Execute(ctx, qctx, "select convert('{}', JSON)")
+		c.Assert(err, IsNil)
+		cols := rs.Columns()
+		c.Assert(len(cols), Equals, 1)
+		expectFlag := uint16(tmysql.BinaryFlag)
+		c.Assert(dumpFlag(cols[0].Type, cols[0].Flag), Equals, expectFlag)
+	}
 }

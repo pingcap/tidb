@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -52,7 +53,9 @@ func NewNull() *Constant {
 
 // Constant stands for a constant value.
 type Constant struct {
-	Value   types.Datum
+	Value types.Datum
+	// once protects the changes of RetType
+	once    sync.Once
 	RetType *types.FieldType
 	// DeferredExpr holds deferred function in PlanCache cached plan.
 	// it's only used to represent non-deterministic functions(see expression.DeferredFunctions)
@@ -64,6 +67,20 @@ type Constant struct {
 	hashcode    []byte
 
 	collationInfo
+}
+
+// Clone implements Expression interface.
+func (c *Constant) Clone() Expression {
+	con := &Constant{
+		Value:         c.Value,
+		once:          sync.Once{},
+		RetType:       c.RetType,
+		DeferredExpr:  c.DeferredExpr,
+		ParamMarker:   c.ParamMarker,
+		hashcode:      c.hashcode,
+		collationInfo: c.collationInfo,
+	}
+	return con
 }
 
 // ParamMarker indicates param provided by COM_STMT_EXECUTE.
@@ -94,12 +111,6 @@ func (c *Constant) MarshalJSON() ([]byte, error) {
 	return []byte(fmt.Sprintf("\"%s\"", c)), nil
 }
 
-// Clone implements Expression interface.
-func (c *Constant) Clone() Expression {
-	con := *c
-	return &con
-}
-
 // GetType implements Expression interface.
 func (c *Constant) GetType() *types.FieldType {
 	if c.ParamMarker != nil {
@@ -109,6 +120,12 @@ func (c *Constant) GetType() *types.FieldType {
 		dt := c.ParamMarker.GetUserVar()
 		types.DefaultParamTypeForValue(dt.GetValue(), tp)
 		return tp
+	}
+	if !c.Value.IsNull() {
+		c.once.Do(func() {
+			c.RetType = c.RetType.Clone()
+			c.RetType.Flag |= mysql.NotNullFlag
+		})
 	}
 	return c.RetType
 }
