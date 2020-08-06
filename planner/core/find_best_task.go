@@ -990,6 +990,10 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			cop.doubleReadNeedProj = isNew
 		}
 		cop.keepOrder = true
+		// IndexScan on partition table can't keep order.
+		if ds.tableInfo.GetPartitionInfo() != nil {
+			return invalidTask, nil
+		}
 	}
 	// prop.IsEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
@@ -1368,6 +1372,10 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
+		// TableScan on partition table can't keep order.
+		if ds.tableInfo.GetPartitionInfo() != nil {
+			return invalidTask, nil
+		}
 	}
 	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	if prop.IsFlashOnlyProp() && len(copTask.rootTaskConds) != 0 {
