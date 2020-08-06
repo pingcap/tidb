@@ -717,6 +717,7 @@ type tableFlashReplicaInfo struct {
 	ReplicaCount   uint64   `json:"replica_count"`
 	LocationLabels []string `json:"location_labels"`
 	Available      bool     `json:"available"`
+	HighPriority   bool     `json:"high_priority"`
 }
 
 func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -757,6 +758,15 @@ func (h flashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, rep
 				ReplicaCount:   tblInfo.TiFlashReplica.Count,
 				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
 				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+			})
+		}
+		for _, p := range pi.AddingDefinitions {
+			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+				ID:             p.ID,
+				ReplicaCount:   tblInfo.TiFlashReplica.Count,
+				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+				HighPriority:   true,
 			})
 		}
 		return replicaInfos
@@ -1211,19 +1221,18 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
 	ctx := context.Background()
 	pdCli := h.RegionCache.PDClient()
-	regions, peers, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+	regions, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 	if err != nil {
 		return nil, err
 	}
 
-	recordRegions := make([]RegionMeta, 0, len(peers))
-	for idx, leader := range peers {
-		region := regions[idx]
+	recordRegions := make([]RegionMeta, 0, len(regions))
+	for _, region := range regions {
 		meta := RegionMeta{
-			ID:          region.Id,
-			Leader:      leader,
-			Peers:       region.Peers,
-			RegionEpoch: region.RegionEpoch,
+			ID:          region.Meta.Id,
+			Leader:      region.Leader,
+			Peers:       region.Meta.Peers,
+			RegionEpoch: region.Meta.RegionEpoch,
 		}
 		recordRegions = append(recordRegions, meta)
 	}
@@ -1235,18 +1244,17 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(id, indexID)
-		regions, peers, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+		regions, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 		if err != nil {
 			return nil, err
 		}
-		indexRegions := make([]RegionMeta, 0, len(peers))
-		for idx, leader := range peers {
-			region := regions[idx]
+		indexRegions := make([]RegionMeta, 0, len(regions))
+		for _, region := range regions {
 			meta := RegionMeta{
-				ID:          region.Id,
-				Leader:      leader,
-				Peers:       region.Peers,
-				RegionEpoch: region.RegionEpoch,
+				ID:          region.Meta.Id,
+				Leader:      region.Leader,
+				Peers:       region.Meta.Peers,
+				RegionEpoch: region.Meta.RegionEpoch,
 			}
 			indexRegions = append(indexRegions, meta)
 		}

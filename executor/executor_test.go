@@ -129,6 +129,7 @@ var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = Suite(&testSuiteWithData{baseTestSuite: &baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 var _ = SerialSuites(&testSlowQuery{&baseTestSuite{}})
+var _ = Suite(&partitionTableSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -139,6 +140,7 @@ type testSuiteWithData struct {
 	testData testutil.TestData
 }
 type testSlowQuery struct{ *baseTestSuite }
+type partitionTableSuite struct{ *baseTestSuite }
 
 type baseTestSuite struct {
 	cluster cluster.Cluster
@@ -573,8 +575,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		}
 		ld.SetMessage()
 		tk.CheckLastMessage(tt.expectedMsg)
-		err := ctx.StmtCommit(nil)
-		c.Assert(err, IsNil)
+		ctx.StmtCommit()
 		txn, err := ctx.Txn(true)
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
@@ -4395,6 +4396,7 @@ func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	tk.MustExec("set global tidb_scatter_region = 1")
 	tk.MustExec("drop database if exists cluster_index_regions;")
 	tk.MustExec("create database cluster_index_regions;")
 	tk.MustExec("use cluster_index_regions;")

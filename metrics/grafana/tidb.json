@@ -1912,6 +1912,12 @@
               "alias": "total",
               "fill": 0,
               "lines": false
+            },
+            {
+              "alias": "/limit/",
+              "fill": 0,
+              "nullPointMode": "null",
+              "color": "#C4162A"
             }
           ],
           "spaceLength": 10,
@@ -1926,6 +1932,11 @@
               "legendFormat": "{{instance}}",
               "refId": "A",
               "step": 40
+            },
+            {
+              "refId": "B",
+              "expr": "tidb_server_maxprocs{job=\"tidb\"}",
+              "legendFormat": "limit-{{instance}}"
             }
           ],
           "thresholds": [],
