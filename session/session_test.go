@@ -542,9 +542,9 @@ func testTxnLazyInitialize(s *testSessionSuite, c *C, isPessimistic bool) {
 	}
 
 	tk.MustExec("set @@autocommit = 0")
-	txn, err := tk.Se.Txn(true)
+	_, err := tk.Se.Txn(true)
 	c.Assert(kv.ErrInvalidTxn.Equal(err), IsTrue)
-	txn, err = tk.Se.Txn(false)
+	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsFalse)
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
@@ -3245,21 +3245,26 @@ func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 		tk.MustExec("insert into t1 values (1)")
 		tk.MustExec("insert into t1 values (2)")
 		tk.MustExec("insert into t1 values (3)")
-
 		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
+
+		tk.MustExec("create database if not exists br02")
+		tk.MustExec("use br02")
+		tk.MustExec("create table t1(v int)")
 
 		tmpDir := path.Join(os.TempDir(), "bk1")
 		os.RemoveAll(tmpDir)
 		// backup database to tmp dir
-		tk.MustQuery("backup database br to 'local://" + tmpDir + "'")
+		tk.MustQuery("backup database * to 'local://" + tmpDir + "'")
 
 		// remove database for recovery
 		tk.MustExec("drop database br")
+		tk.MustExec("drop database br02")
 
 		// restore database with backup data
-		tk.MustQuery("restore database br from 'local://" + tmpDir + "'")
+		tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
 		tk.MustExec("use br")
 		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
 		tk.MustExec("drop database br")
+		tk.MustExec("drop database br02")
 	}
 }

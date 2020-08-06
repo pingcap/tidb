@@ -699,6 +699,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	if setPresume {
 		err = memBuffer.SetWithFlags(key, value, kv.SetPresumeKeyNotExists)
+		sctx.GetSessionVars().StmtCtx.CheckKeyExists[string(key)] = struct{}{}
 	} else {
 		err = memBuffer.Set(key, value)
 	}
