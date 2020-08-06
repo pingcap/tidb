@@ -810,15 +810,10 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			continue
 		}
 		// The interval case.
-<<<<<<< HEAD
-		cnt := c.BetweenRowCount(rg.LowVal[0], rg.HighVal[0])
-		if (c.outOfRange(rg.LowVal[0]) && !rg.LowVal[0].IsNull()) || c.outOfRange(rg.HighVal[0]) {
-			cnt += float64(modifyCount) / outOfRangeBetweenRate
-=======
+		lowVal, highVal := rg.LowVal[0], rg.HighVal[0]
 		cnt := c.BetweenRowCount(lowVal, highVal)
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
 			cnt += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount()
->>>>>>> aeee152... planner: fix the inappropriate heuristic rule to estimate the EQ selectivity when out of range (#18543)
 		}
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boudaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
