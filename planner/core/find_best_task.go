@@ -767,7 +767,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		return invalidTask, nil
 	}
 	path := candidate.path
-	var totalCost, totalRowCount float64
+	var totalCost float64
 	scans := make([]PhysicalPlan, 0, len(path.PartialIndexPaths))
 	cop := &copTask{
 		indexPlanFinished: true,
@@ -781,17 +781,19 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	}
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
-		var partialCost, rowCount float64
+		var partialCost float64
 		if partPath.IsTablePath() {
-			scan, partialCost, rowCount = ds.convertToPartialTableScan(prop, partPath)
+			scan, partialCost, _ = ds.convertToPartialTableScan(prop, partPath)
 		} else {
-			scan, partialCost, rowCount = ds.convertToPartialIndexScan(prop, partPath)
+			scan, partialCost, _ = ds.convertToPartialIndexScan(prop, partPath)
 		}
 		scans = append(scans, scan)
 		totalCost += partialCost
-		totalRowCount += rowCount
 	}
-
+	totalRowCount := path.CountAfterAccess
+	if prop.ExpectedCnt < ds.stats.RowCount {
+		totalRowCount *= prop.ExpectedCnt / ds.stats.RowCount
+	}
 	ts, partialCost, err := ds.buildIndexMergeTableScan(prop, path.TableFilters, totalRowCount)
 	if err != nil {
 		return nil, err

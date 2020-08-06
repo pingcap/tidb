@@ -419,6 +419,12 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 		}
 		if len(partialPaths) > 1 {
 			possiblePath := ds.buildIndexMergeOrPath(partialPaths, i)
+			sel, _, err := ds.tableStats.HistColl.Selectivity(ds.ctx, []expression.Expression{sf}, nil)
+			if err != nil {
+				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+				sel = SelectionFactor
+			}
+			possiblePath.CountAfterAccess = sel * ds.tableStats.RowCount
 			if possiblePath != nil {
 				ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
 			}
