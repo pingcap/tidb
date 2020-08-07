@@ -67,3 +67,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/pd/v4 => github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200807025817-9263da2ef4d5
