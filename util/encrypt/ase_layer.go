@@ -20,23 +20,14 @@ import (
 	"sync"
 )
 
-const (
-	// the size of whole checksum block
-	blockSize = 16
-	nonceSize = 8
-)
+// The AES block size in bytes.
+const BlockSize = 16
 
 var blockBufPool = sync.Pool{
-	New: func() interface{} { return make([]byte, blockSize) },
+	New: func() interface{} { return make([]byte, BlockSize) },
 }
 
-// Writer implements an io.WriteCloser, it calculates and stores a CRC-32 checksum for the payload before
-// writing to the underlying object.
-//
-// For example, a layout of the checksum block which payload is 2100 bytes is as follow:
-//
-// | --    4B    -- | --  1020B  -- || --    4B    -- | --  1020B  -- || --    4B    -- | --   60B   -- |
-// | -- checksum -- | -- payload -- || -- checksum -- | -- payload -- || -- checksum -- | -- payload -- |
+// Writer implements an io.WriteCloser, it encrypt data using AES before writing to the underlying object.
 type Writer struct {
 	err     error
 	w       io.WriteCloser
@@ -47,8 +38,7 @@ type Writer struct {
 	key     []byte
 }
 
-// NewWriter returns a new Writer which calculates and stores a CRC-32 checksum for the payload before
-// writing to the underlying object.
+// NewWriter returns a new Writer which encrypt data using AES before writing to the underlying object.
 func NewWriter(w io.WriteCloser, key []byte, nonce uint64) (*Writer, error) {
 	k := len(key)
 	switch k {
@@ -56,15 +46,13 @@ func NewWriter(w io.WriteCloser, key []byte, nonce uint64) (*Writer, error) {
 		return nil, aes.KeySizeError(k)
 	case 16, 24, 32:
 	}
-	writer := &Writer{w: w}
-	writer.buf = make([]byte, blockSize)
-	writer.key = key
-	writer.nonce = nonce
+	writer := &Writer{w: w, key: key, nonce: nonce}
+	writer.buf = make([]byte, BlockSize)
 	return writer, nil
 }
 
 // AvailableSize returns how many bytes are unused in the buffer.
-func (w *Writer) AvailableSize() int { return blockSize - w.n }
+func (w *Writer) AvailableSize() int { return BlockSize - w.n }
 
 // Write implements the io.Writer interface.
 func (w *Writer) Write(p []byte) (n int, err error) {
@@ -110,9 +98,9 @@ func (w *Writer) Flush() error {
 		return err
 	}
 	blockMode := cipher.NewCTR(block, counter)
-	blockMode.XORKeyStream(encryptTextText, w.buf[:w.n])
+	blockMode.XORKeyStream(encryptTextText[:w.n], w.buf[:w.n])
 
-	n, err := w.w.Write(encryptTextText)
+	n, err := w.w.Write(encryptTextText[:w.n])
 	if n < w.n && err == nil {
 		err = io.ErrShortWrite
 	}
@@ -134,14 +122,14 @@ func (w *Writer) Close() (err error) {
 	return w.w.Close()
 }
 
-// Reader implements an io.ReadAt, reading from the input source after verifying the checksum.
+// Reader implements an io.ReadAt, reading from the input source after decrypting.
 type Reader struct {
 	r     io.ReaderAt
 	nonce uint64
 	key   []byte
 }
 
-// NewReader returns a new Reader which can read from the input source after verifying the checksum.
+// NewReader returns a new Reader which can read from the input source after decrypting.
 func NewReader(r io.ReaderAt, key []byte, nonce uint64) (*Reader, error) {
 	k := len(key)
 	switch k {
@@ -149,9 +137,7 @@ func NewReader(r io.ReaderAt, key []byte, nonce uint64) (*Reader, error) {
 		return nil, aes.KeySizeError(k)
 	case 16, 24, 32:
 	}
-	reader := &Reader{r: r}
-	reader.key = key
-	reader.nonce = nonce
+	reader := &Reader{r: r, key: key, nonce: nonce}
 	return reader, nil
 }
 
@@ -160,9 +146,9 @@ func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	offset := off % blockSize
-	startBlock := off / blockSize
-	cursor := startBlock * blockSize
+	offset := off % BlockSize
+	startBlock := off / BlockSize
+	cursor := startBlock * BlockSize
 
 	buf := blockBufPool.Get().([]byte)
 	defer blockBufPool.Put(buf)

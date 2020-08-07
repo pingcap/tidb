@@ -19,6 +19,7 @@ import (
 	"os"
 
 	"github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/checksum"
 )
 
 var _ = check.Suite(&testAesLayerSuite{})
@@ -62,6 +63,106 @@ func (s *testAesLayerSuite) TestReadAt(c *check.C) {
 		c.Assert(err, check.IsNil)
 		r := make([]byte, 10)
 		n, err := cs.ReadAt(r, off)
+		c.Assert(err, check.Equals, assertErr)
+		c.Assert(n, check.Equals, assertN)
+		c.Assert(string(r), check.Equals, assertString)
+	}
+
+	assertReadAt(0, nil, 10, "0123456789")
+	assertReadAt(5, nil, 10, "5678901234")
+	assertReadAt(int64(n1+n2)-5, io.EOF, 5, "56789\x00\x00\x00\x00\x00")
+}
+
+func (s *testAesLayerSuite) TestReadAtWithChecksum(c *check.C) {
+	path := "ase"
+	f, err := os.Create(path)
+	c.Assert(err, check.IsNil)
+	defer func() {
+		err = f.Close()
+		c.Assert(err, check.IsNil)
+		err = os.Remove(path)
+		c.Assert(err, check.IsNil)
+	}()
+
+	key := bytes.NewBufferString("0123456789123456").Bytes()
+	nonce := rand.Uint64()
+
+	writeString := "0123456789"
+	c.Assert(err, check.IsNil)
+	aesw, err := NewWriter(f, key, nonce)
+	c.Assert(err, check.IsNil)
+	w := bytes.NewBuffer(nil)
+	for i := 0; i < 510; i++ {
+		w.WriteString(writeString)
+	}
+	csw := checksum.NewWriter(aesw)
+	n1, err := csw.Write(w.Bytes())
+	c.Assert(err, check.IsNil)
+	n2, err := csw.Write(w.Bytes())
+	c.Assert(err, check.IsNil)
+	err = csw.Close()
+	c.Assert(err, check.IsNil)
+
+	f, err = os.Open(path)
+	c.Assert(err, check.IsNil)
+
+	assertReadAt := func(off int64, assertErr interface{}, assertN int, assertString string) {
+		aesr, err := NewReader(f, key, nonce)
+		c.Assert(err, check.IsNil)
+		csr := checksum.NewReader(aesr)
+		r := make([]byte, 10)
+		n, err := csr.ReadAt(r, off)
+		c.Assert(err, check.Equals, assertErr)
+		c.Assert(n, check.Equals, assertN)
+		c.Assert(string(r), check.Equals, assertString)
+	}
+
+	assertReadAt(0, nil, 10, "0123456789")
+	assertReadAt(5, nil, 10, "5678901234")
+	assertReadAt(int64(n1+n2)-5, io.EOF, 5, "56789\x00\x00\x00\x00\x00")
+}
+
+func (s *testAesLayerSuite) TestReadAtWith2Aes(c *check.C) {
+	path := "ase"
+	f, err := os.Create(path)
+	c.Assert(err, check.IsNil)
+	defer func() {
+		err = f.Close()
+		c.Assert(err, check.IsNil)
+		err = os.Remove(path)
+		c.Assert(err, check.IsNil)
+	}()
+
+	key := bytes.NewBufferString("0123456789123456").Bytes()
+	nonce := rand.Uint64()
+
+	writeString := "0123456789"
+	c.Assert(err, check.IsNil)
+	aesw, err := NewWriter(f, key, nonce)
+	c.Assert(err, check.IsNil)
+	aesw2, err := NewWriter(aesw, key, nonce)
+	c.Assert(err, check.IsNil)
+	w := bytes.NewBuffer(nil)
+	for i := 0; i < 510; i++ {
+		w.WriteString(writeString)
+	}
+	n1, err := aesw2.Write(w.Bytes())
+	c.Assert(err, check.IsNil)
+	n2, err := aesw2.Write(w.Bytes())
+	c.Assert(err, check.IsNil)
+	err = aesw2.Close()
+	c.Assert(err, check.IsNil)
+
+	f, err = os.Open(path)
+	c.Assert(err, check.IsNil)
+
+	assertReadAt := func(off int64, assertErr interface{}, assertN int, assertString string) {
+		aesr, err := NewReader(f, key, nonce)
+		c.Assert(err, check.IsNil)
+		aesr2, err := NewReader(aesr, key, nonce)
+		c.Assert(err, check.IsNil)
+		r := make([]byte, 10)
+		n, err := aesr2.ReadAt(r, off)
 		c.Assert(err, check.Equals, assertErr)
 		c.Assert(n, check.Equals, assertN)
 		c.Assert(string(r), check.Equals, assertString)

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"sync"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/checksum"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
@@ -43,6 +45,10 @@ type ListInDisk struct {
 	bufFlushMutex sync.RWMutex
 	diskTracker   *disk.Tracker // track disk usage.
 	numRowsInDisk int
+
+	// using by aes encrypt io layer
+	nonce uint64
+	key   []byte
 }
 
 var defaultChunkListInDiskLabel fmt.Stringer = stringutil.StringerStr("chunk.ListInDisk")
@@ -54,6 +60,10 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 		// TODO(fengliyuan): set the quota of disk usage.
 		diskTracker: disk.NewTracker(defaultChunkListInDiskLabel, -1),
 	}
+	l.nonce = rand.Uint64()
+	buf := make([]byte, encrypt.BlockSize)
+	rand.Read(buf)
+	l.key = buf
 	return l
 }
 
@@ -62,7 +72,11 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	l.w = checksum.NewWriter(l.disk)
+	w, err := encrypt.NewWriter(l.disk, l.key, l.nonce)
+	if err != nil {
+		return err
+	}
+	l.w = checksum.NewWriter(w)
 	l.bufFlushMutex = sync.RWMutex{}
 	return
 }
@@ -151,9 +165,14 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 		return
 	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
-	r := io.NewSectionReader(checksum.NewReader(l.disk), off, l.offWrite-off)
+
+	r, err := encrypt.NewReader(l.disk, l.key, l.nonce)
+	if err != nil {
+		return row, err
+	}
+	rr := io.NewSectionReader(checksum.NewReader(r), off, l.offWrite-off)
 	format := rowInDisk{numCol: len(l.fieldTypes)}
-	_, err = format.ReadFrom(r)
+	_, err = format.ReadFrom(rr)
 	if err != nil {
 		return row, err
 	}
