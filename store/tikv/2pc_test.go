@@ -639,7 +639,7 @@ func (s *testCommitterSuite) TestPessimisticLockedKeysDedup(c *C) {
 	lockCtx = &kv.LockCtx{ForUpdateTS: 100, WaitStartTime: time.Now()}
 	err = txn.LockKeys(context.Background(), lockCtx, kv.Key("abc"), kv.Key("def"))
 	c.Assert(err, IsNil)
-	c.Assert(txn.lockKeys, HasLen, 2)
+	c.Assert(txn.collectLockedKeys(), HasLen, 2)
 }
 
 func (s *testCommitterSuite) TestPessimisticTTL(c *C) {
