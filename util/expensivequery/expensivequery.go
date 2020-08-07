@@ -57,17 +57,6 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 // Run starts a expensive query checker goroutine at the start time of the server.
 func (eqh *Handle) Run() {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-	var oomAlert = true
-	var serverMemoryQuota = config.GetGlobalConfig().Performance.ServerMemoryQuota
-	var err error
-	if serverMemoryQuota == 0 {
-		serverMemoryQuota, err = memory.MemTotal()
-		if err != nil {
-			logutil.BgLogger().Warn("Get system memory fail.", zap.Error(err))
-			oomAlert = false
-		}
-	}
-	lastOOMtime := time.Time{}
 	// use 100ms as tickInterval temply, may use given interval or use defined variable later
 	tickInterval := time.Millisecond * time.Duration(100)
 	ticker := time.NewTicker(tickInterval)
@@ -92,18 +81,7 @@ func (eqh *Handle) Run() {
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-
-			instanceStats := &runtime.MemStats{}
-			runtime.ReadMemStats(instanceStats)
-			instanceMem := instanceStats.HeapAlloc
-			if oomAlert && instanceMem > serverMemoryQuota/10*8 {
-				// At least ten seconds between two recordings that memory usage is less than threshold (80% system memory).
-				// If the memory is still exceeded, only records once.
-				if time.Since(lastOOMtime) > 10*time.Second {
-					eqh.oomRecord(instanceMem, serverMemoryQuota)
-				}
-				lastOOMtime = time.Now()
-			}
+			eqh.oomKillerAlert()
 		case <-eqh.exitCh:
 			return
 		}
@@ -111,6 +89,11 @@ func (eqh *Handle) Run() {
 }
 
 var (
+	oomRecordErr      error
+	serverMemoryQuota uint64
+	oomRecordStatus   uint64 // 0 uninitialized, 1 instance memory usage, 2 system memory usage, 3 close the alert.
+	lastOOMtime       time.Time
+
 	tmpDir              string
 	lastLogFileName     []string
 	lastProfileFileName []string
@@ -118,7 +101,56 @@ var (
 	OOMRecordCount uint32
 )
 
-func (eqh *Handle) oomRecord(memUsage uint64, serverMemoryQuota uint64) {
+func (eqh *Handle) oomKillerAlert() {
+	if oomRecordErr != nil || oomRecordStatus == 3 {
+		return
+	}
+
+	if oomRecordStatus == 0 {
+		if alert := config.GetGlobalConfig().Performance.ServerMemoryAlert; alert == 0 || alert == 1 {
+			oomRecordStatus = 3
+			return
+		}
+		if serverMemoryQuota == 0 {
+			if config.GetGlobalConfig().Performance.ServerMemoryQuota != 0 {
+				serverMemoryQuota = config.GetGlobalConfig().Performance.ServerMemoryQuota
+				oomRecordStatus = 1
+			} else {
+				serverMemoryQuota, oomRecordErr = memory.MemTotal()
+				if oomRecordErr != nil {
+					logutil.BgLogger().Warn("Get system total memory fail.", zap.Error(oomRecordErr))
+					return
+				}
+				oomRecordStatus = 2
+			}
+		}
+		lastOOMtime = time.Time{}
+	}
+
+	var memoryUsage uint64
+	if oomRecordStatus == 1 {
+		instanceStats := &runtime.MemStats{}
+		runtime.ReadMemStats(instanceStats)
+		memoryUsage = instanceStats.HeapAlloc
+	} else {
+		memoryUsage, oomRecordErr = memory.MemUsed()
+		if oomRecordErr != nil {
+			logutil.BgLogger().Warn("Get system usage memory fail.", zap.Error(oomRecordErr))
+			return
+		}
+	}
+
+	if float64(memoryUsage) > float64(serverMemoryQuota)*config.GetGlobalConfig().Performance.ServerMemoryAlert {
+		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
+		// If the memory is still exceeded, only records once.
+		if time.Since(lastOOMtime) > 10*time.Second {
+			eqh.oomRecord(memoryUsage, serverMemoryQuota, oomRecordStatus == 2)
+		}
+		lastOOMtime = time.Now()
+	}
+}
+
+func (eqh *Handle) oomRecord(memUsage uint64, serverMemoryQuota uint64, useSystemMemory bool) {
 	var err error
 	if tmpDir == "" {
 		tmpDir, err = ioutil.TempDir("", "TiDBOOM")
@@ -138,10 +170,18 @@ func (eqh *Handle) oomRecord(memUsage uint64, serverMemoryQuota uint64) {
 	tryRemove(lastProfileFileName)
 
 	atomic.AddUint32(&OOMRecordCount, 1)
-	logutil.BgLogger().Warn("The TiDB instance now takes a lot of memory, has the risk of OOM",
-		zap.Any("memUsage", memUsage),
-		zap.Any("serverMemoryQuota", serverMemoryQuota),
-	)
+	if useSystemMemory {
+		logutil.BgLogger().Warn("The os system now takes a lot of memory, has the risk of OOM",
+			zap.Any("osMemUsage", memUsage),
+			zap.Any("osMemoryTotal", serverMemoryQuota),
+		)
+	} else {
+		logutil.BgLogger().Warn("The TiDB instance now takes a lot of memory, has the risk of OOM",
+			zap.Any("tidbMemUsage", memUsage),
+			zap.Any("serverMemoryQuota", serverMemoryQuota),
+		)
+	}
+
 	eqh.oomRecordSQL()
 	eqh.oomRecordProfile()
 }
