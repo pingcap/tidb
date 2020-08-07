@@ -22,19 +22,29 @@ package placement
 type PeerRoleType string
 
 const (
-	Voter    PeerRoleType = "voter"
-	Leader   PeerRoleType = "leader"
+	// Voter can either match a leader peer or follower peer
+	Voter PeerRoleType = "voter"
+	// Leader matches a leader.
+	Leader PeerRoleType = "leader"
+	// Follower matches a follower.
 	Follower PeerRoleType = "follower"
-	Learner  PeerRoleType = "learner"
+	// Learner matches a learner.
+	Learner PeerRoleType = "learner"
 )
 
 // LabelConstraintOp defines how a LabelConstraint matches a store.
 type LabelConstraintOp string
 
 const (
-	In        LabelConstraintOp = "in"
-	NotIn     LabelConstraintOp = "notIn"
-	Exists    LabelConstraintOp = "exists"
+	// In restricts the store label value should in the value list.
+	// If label does not exist, `in` is always false.
+	In LabelConstraintOp = "in"
+	// NotIn restricts the store label value should not in the value list.
+	// If label does not exist, `notIn` is always true.
+	NotIn LabelConstraintOp = "notIn"
+	// Exists restricts the store should have the label.
+	Exists LabelConstraintOp = "exists"
+	// NotExists restricts the store should not have the label.
 	NotExists LabelConstraintOp = "notExists"
 )
 
@@ -66,7 +76,9 @@ type Rule struct {
 type RuleOpType string
 
 const (
+	// RuleOpAdd a placement rule, only need to specify the field *Rule
 	RuleOpAdd RuleOpType = "add"
+	// RuleOpDel a placement rule, only need to specify the field `GroupID`, `ID`, `MatchID`
 	RuleOpDel RuleOpType = "del"
 )
 
