@@ -6396,6 +6396,58 @@ func (s *testIntegrationSuite) TestNegativeZeroForHashJoin(c *C) {
 	tk.MustExec("drop table t1;")
 }
 
+func (s *testIntegrationSuite) TestIssue1223(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists testjson")
+	tk.MustExec("CREATE TABLE testjson (j json DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8;")
+	tk.MustExec(`INSERT INTO testjson SET j='{"test":3}';`)
+	tk.MustExec(`INSERT INTO testjson SET j='{"test":0}';`)
+	tk.MustExec(`insert into testjson set j='{"test":"0"}';`)
+	tk.MustExec(`insert into testjson set j='{"test":0.0}';`)
+	tk.MustExec(`INSERT INTO testjson SET j='{"test":"aaabbb"}';`)
+	tk.MustExec(`INSERT INTO testjson SET j='{"test":3.1415}';`)
+	tk.MustExec(`INSERT INTO testjson SET j='{"test":[]}';`)
+	tk.MustExec(`INSERT INTO testjson SET j='{"test":[1,2]}';`)
+	tk.MustExec(`INSERT INTO testjson SET j='{"test":["b","c"]}';`)
+	tk.MustExec(`INSERT INTO testjson SET j='{"test":{"ke":"val"}}';`)
+	tk.MustExec(`insert into testjson set j='{"test":"2015-07-27 09:43:47"}';`)
+	tk.MustExec(`insert into testjson set j='{"test":"0000-00-00 00:00:00"}';`)
+	tk.MustExec(`insert into testjson set j='{"test":"0778"}';`)
+	tk.MustExec(`insert into testjson set j='{"test":"0000"}';`)
+	tk.MustExec(`insert into testjson set j='{"test":null}';`)
+	tk.MustExec(`insert into testjson set j=null;`)
+	tk.MustExec(`insert into testjson set j='{"test":[null]}';`)
+	tk.MustExec(`insert into testjson set j='{"test":true}';`)
+	tk.MustExec(`insert into testjson set j='{"test":false}';`)
+	tk.MustExec(`insert into testjson set j='""';`)
+	tk.MustExec(`insert into testjson set j='null';`)
+	tk.MustExec(`insert into testjson set j='0';`)
+	tk.MustExec(`insert into testjson set j='"0"';`)
+	tk.MustQuery("SELECT * FROM testjson WHERE JSON_EXTRACT(j,'$.test');").Check(testkit.Rows(`{"test": 3}`,
+		`{"test": "0"}`, `{"test": "aaabbb"}`, `{"test": 3.1415}`, `{"test": []}`, `{"test": [1, 2]}`,
+		`{"test": ["b", "c"]}`, `{"test": {"ke": "val"}}`, `{"test": "2015-07-27 09:43:47"}`,
+		`{"test": "0000-00-00 00:00:00"}`, `{"test": "0778"}`, `{"test": "0000"}`, `{"test": null}`,
+		`{"test": [null]}`, `{"test": true}`, `{"test": false}`))
+	tk.MustQuery("select * from testjson where j;").Check(testkit.Rows(`{"test": 3}`, `{"test": 0}`,
+		`{"test": "0"}`, `{"test": 0}`, `{"test": "aaabbb"}`, `{"test": 3.1415}`, `{"test": []}`, `{"test": [1, 2]}`,
+		`{"test": ["b", "c"]}`, `{"test": {"ke": "val"}}`, `{"test": "2015-07-27 09:43:47"}`,
+		`{"test": "0000-00-00 00:00:00"}`, `{"test": "0778"}`, `{"test": "0000"}`, `{"test": null}`,
+		`{"test": [null]}`, `{"test": true}`, `{"test": false}`, `""`, "null", `"0"`))
+	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('json_extract','tikv','');")
+	tk.MustExec("admin reload expr_pushdown_blacklist;")
+	tk.MustQuery("SELECT * FROM testjson WHERE JSON_EXTRACT(j,'$.test');").Check(testkit.Rows("{\"test\": 3}",
+		"{\"test\": \"0\"}", "{\"test\": \"aaabbb\"}", "{\"test\": 3.1415}", "{\"test\": []}", "{\"test\": [1, 2]}",
+		"{\"test\": [\"b\", \"c\"]}", "{\"test\": {\"ke\": \"val\"}}", "{\"test\": \"2015-07-27 09:43:47\"}",
+		"{\"test\": \"0000-00-00 00:00:00\"}", "{\"test\": \"0778\"}", "{\"test\": \"0000\"}", "{\"test\": null}",
+		"{\"test\": [null]}", "{\"test\": true}", "{\"test\": false}"))
+	tk.MustQuery("select * from testjson where j;").Check(testkit.Rows(`{"test": 3}`, `{"test": 0}`,
+		`{"test": "0"}`, `{"test": 0}`, `{"test": "aaabbb"}`, `{"test": 3.1415}`, `{"test": []}`, `{"test": [1, 2]}`,
+		`{"test": ["b", "c"]}`, `{"test": {"ke": "val"}}`, `{"test": "2015-07-27 09:43:47"}`,
+		`{"test": "0000-00-00 00:00:00"}`, `{"test": "0778"}`, `{"test": "0000"}`, `{"test": null}`,
+		`{"test": [null]}`, `{"test": true}`, `{"test": false}`, `""`, "null", `"0"`))
+}
+
 func (s *testIntegrationSuite) TestIssue15743(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
