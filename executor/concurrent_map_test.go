@@ -14,23 +14,13 @@
 package executor
 
 import (
-	"sync"
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/chunk"
+	"sync"
 )
 
-func TestT(t *testing.T) {
-	TestingT(t)
-}
-
-var _ = Suite(&testConcurrentMap{})
-
-type testConcurrentMap struct{}
-
 // TestConcurrentMap first inserts 1000 entries, then checks them
-func (cm *testConcurrentMap) TestConcurrentMap(c *C) {
+func (cm *pkgTestSuite) TestConcurrentMap(c *C) {
 	m := newConcurrentMap()
 	const iterations = 1000
 	const mod = 111
