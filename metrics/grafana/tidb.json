@@ -56,6 +56,7 @@
   "panels": [
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -1047,6 +1048,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -1623,6 +1625,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -3480,6 +3483,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -3675,6 +3679,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -3916,6 +3921,7 @@
             "show": false
           },
           "links": [],
+          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -3981,6 +3987,7 @@
             "show": false
           },
           "links": [],
+          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -4451,6 +4458,7 @@
             "show": false
           },
           "links": [],
+          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -4533,7 +4541,7 @@
           "renderer": "flot",
           "seriesOverrides": [
             {
-              "alias": "172.16.5.34:30080-sum",
+              "alias": "/-sum/",
               "yaxis": 2
             }
           ],
@@ -4628,6 +4636,7 @@
             "show": false
           },
           "links": [],
+          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -4652,8 +4661,8 @@
           "xBucketNumber": null,
           "xBucketSize": null,
           "yAxis": {
-            "decimals": null,
-            "format": "none",
+            "decimals": 0,
+            "format": "short",
               "logBase": 1,
               "max": null,
               "min": null,
@@ -4693,6 +4702,7 @@
             "show": false
           },
           "links": [],
+          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -4889,7 +4899,7 @@
           "renderer": "flot",
           "seriesOverrides": [
             {
-              "alias": "172.16.5.34:30080-sum",
+              "alias": "/-sum/",
               "yaxis": 2
             }
           ],
@@ -4984,6 +4994,7 @@
             "show": false
           },
           "links": [],
+          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -5358,6 +5369,7 @@
             "show": false
           },
           "links": [],
+          "options": {},
           "reverseYBuckets": false,
           "targets": [
             {
@@ -5402,6 +5414,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -5916,6 +5929,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -6633,6 +6647,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -7151,6 +7166,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -7449,6 +7465,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -8169,6 +8186,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -8573,6 +8591,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -9492,6 +9511,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -10312,6 +10332,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -10592,6 +10613,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -10965,6 +10987,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -11783,6 +11806,7 @@
     },
     {
       "collapsed": true,
+      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
