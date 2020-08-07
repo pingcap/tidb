@@ -1,22 +1,27 @@
 package export
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 )
 
-func NewConsistencyController(conf *Config, session *sql.DB) (ConsistencyController, error) {
+func NewConsistencyController(ctx context.Context, conf *Config, session *sql.DB) (ConsistencyController, error) {
 	resolveAutoConsistency(conf)
+	conn, err := session.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
 	switch conf.Consistency {
 	case "flush":
 		return &ConsistencyFlushTableWithReadLock{
 			serverType: conf.ServerInfo.ServerType,
-			db:         session,
+			conn:       conn,
 		}, nil
 	case "lock":
 		return &ConsistencyLockDumpingTables{
-			db:        session,
+			conn:      conn,
 			allTables: conf.Tables,
 		}, nil
 	case "snapshot":
@@ -32,49 +37,46 @@ func NewConsistencyController(conf *Config, session *sql.DB) (ConsistencyControl
 }
 
 type ConsistencyController interface {
-	Setup() error
-	TearDown() error
+	Setup(context.Context) error
+	TearDown(context.Context) error
 }
 
 type ConsistencyNone struct{}
 
-func (c *ConsistencyNone) Setup() error {
+func (c *ConsistencyNone) Setup(_ context.Context) error {
 	return nil
 }
 
-func (c *ConsistencyNone) TearDown() error {
+func (c *ConsistencyNone) TearDown(_ context.Context) error {
 	return nil
 }
 
 type ConsistencyFlushTableWithReadLock struct {
 	serverType ServerType
-	db         *sql.DB
+	conn       *sql.Conn
 }
 
-func (c *ConsistencyFlushTableWithReadLock) Setup() error {
+func (c *ConsistencyFlushTableWithReadLock) Setup(ctx context.Context) error {
 	if c.serverType == ServerTypeTiDB {
 		return withStack(errors.New("'flush table with read lock' cannot be used to ensure the consistency in TiDB"))
 	}
-	return FlushTableWithReadLock(c.db)
+	return FlushTableWithReadLock(ctx, c.conn)
 }
 
-func (c *ConsistencyFlushTableWithReadLock) TearDown() error {
-	err := c.db.Ping()
-	if err != nil {
-		return withStack(errors.New("ConsistencyFlushTableWithReadLock lost database connection"))
-	}
-	return UnlockTables(c.db)
+func (c *ConsistencyFlushTableWithReadLock) TearDown(ctx context.Context) error {
+	defer c.conn.Close()
+	return UnlockTables(ctx, c.conn)
 }
 
 type ConsistencyLockDumpingTables struct {
-	db        *sql.DB
+	conn      *sql.Conn
 	allTables DatabaseTables
 }
 
-func (c *ConsistencyLockDumpingTables) Setup() error {
+func (c *ConsistencyLockDumpingTables) Setup(ctx context.Context) error {
 	for dbName, tables := range c.allTables {
 		for _, table := range tables {
-			err := LockTables(c.db, dbName, table.Name)
+			err := LockTables(ctx, c.conn, dbName, table.Name)
 			if err != nil {
 				return err
 			}
@@ -83,12 +85,9 @@ func (c *ConsistencyLockDumpingTables) Setup() error {
 	return nil
 }
 
-func (c *ConsistencyLockDumpingTables) TearDown() error {
-	err := c.db.Ping()
-	if err != nil {
-		return withStack(errors.New("ConsistencyLockDumpingTables lost database connection"))
-	}
-	return UnlockTables(c.db)
+func (c *ConsistencyLockDumpingTables) TearDown(ctx context.Context) error {
+	defer c.conn.Close()
+	return UnlockTables(ctx, c.conn)
 }
 
 const showMasterStatusFieldNum = 5

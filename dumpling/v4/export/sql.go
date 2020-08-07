@@ -164,6 +164,7 @@ func SelectAllFromTable(conf *Config, db *sql.Conn, database, table string) (Tab
 }
 
 func SelectFromSql(conf *Config, db *sql.Conn) (TableDataIR, error) {
+	log.Info("dump data from sql", zap.String("sql", conf.Sql))
 	rows, err := db.QueryContext(context.Background(), conf.Sql)
 	if err != nil {
 		return nil, withStack(errors.WithMessage(err, conf.Sql))
@@ -295,18 +296,18 @@ func GetUniqueIndexName(db *sql.Conn, database, table string) (string, error) {
 	return colName, nil
 }
 
-func FlushTableWithReadLock(db *sql.DB) error {
-	_, err := db.Exec("FLUSH TABLES WITH READ LOCK")
+func FlushTableWithReadLock(ctx context.Context, db *sql.Conn) error {
+	_, err := db.ExecContext(ctx, "FLUSH TABLES WITH READ LOCK")
 	return withStack(err)
 }
 
-func LockTables(db *sql.DB, database, table string) error {
-	_, err := db.Exec(fmt.Sprintf("LOCK TABLES `%s`.`%s` READ", escapeString(database), escapeString(table)))
+func LockTables(ctx context.Context, db *sql.Conn, database, table string) error {
+	_, err := db.ExecContext(ctx, fmt.Sprintf("LOCK TABLES `%s`.`%s` READ", escapeString(database), escapeString(table)))
 	return withStack(err)
 }
 
-func UnlockTables(db *sql.DB) error {
-	_, err := db.Exec("UNLOCK TABLES")
+func UnlockTables(ctx context.Context, db *sql.Conn) error {
+	_, err := db.ExecContext(ctx, "UNLOCK TABLES")
 	return withStack(err)
 }
 
