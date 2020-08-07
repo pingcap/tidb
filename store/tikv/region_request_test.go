@@ -16,7 +16,6 @@ package tikv
 import (
 	"context"
 	"fmt"
-	goctx "golang.org/x/net/context"
 	"net"
 	"sync"
 	"time"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/storeutil"
+	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 

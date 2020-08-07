@@ -258,7 +258,6 @@ func (s *testRawKVSuite) TestReverseScan(c *C) {
 	s.mustPut(c, []byte("k5"), []byte("v5"))
 	s.mustPut(c, []byte("k7"), []byte("v7"))
 
-
 	s.checkReverseScan(c)
 
 	err := s.split(c, "k", "k2")
