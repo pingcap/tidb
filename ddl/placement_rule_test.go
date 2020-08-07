@@ -159,6 +159,20 @@ add placement policy
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*Unknown partition.*")
 
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='{"+   zone   =   sh, -zone =   bj ": -1}'
+	role=leader
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*count should be positive.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='["+   zone   =   sh"]'
+	role=leader
+	replicas=0`)
+	c.Assert(err, ErrorMatches, ".*count should be positive.*")
+
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c int)")
 

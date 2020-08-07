@@ -5249,7 +5249,7 @@ func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule,
 			newRule := &placement.Rule{}
 			*newRule = *rule
 			if cnt <= 0 {
-				err = errors.Errorf("count should be non-positive, but got %d", cnt)
+				err = errors.Errorf("count should be positive, but got %d", cnt)
 				break
 			}
 			// TODO: handle or remove rule.Count in later commits
@@ -5278,14 +5278,20 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 	for _, spec := range specs {
 		rule := &placement.Rule{
 			GroupID:  placementRuleDefaultGroupID,
-			Count:    int(spec.Replicas),
 			Override: true,
 		}
 
-		switch spec.Tp {
-		case ast.PlacementAdd:
-		default:
-			err = errors.Errorf("unknown action type: %d", spec.Tp)
+		if spec.Replicas <= 0 {
+			err = errors.Errorf("count should be positive, got: %d", spec.Replicas)
+		}
+		rule.Count = int(spec.Replicas)
+
+		if err == nil {
+			switch spec.Tp {
+			case ast.PlacementAdd:
+			default:
+				err = errors.Errorf("unknown action type: %d", spec.Tp)
+			}
 		}
 
 		if err == nil {
