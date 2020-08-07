@@ -18,23 +18,23 @@ This document proposes to support global index for partition table, which can re
 
 ### Partitioned table index in TiDB
 
-In TiDB, index entries are encoding to key-value pairs, like: (In practice, index encoding is more complex, see [this article](https://pingcap.com/blog/2017-07-11-tidbinternal2/#map) and two proposals about [full collations](https://github.com/pingcap/tidb/pull/14574) and [cluster index](https://github.com/pingcap/tidb/blob/master/docs/design/2020-05-08-cluster-index.md) for more information.)
+In TiDB, index entries are encoded to key-value pairs, like: (In practice, index encoding is more complex, see [this article](https://pingcap.com/blog/2017-07-11-tidbinternal2/#map) and two proposals about [full collations](https://github.com/pingcap/tidb/pull/14574) and [cluster index](https://github.com/pingcap/tidb/blob/master/docs/design/2020-05-08-cluster-index.md) for more information.)
 
 ```
 Key: tablePrefix{tableID}_indexPrefixSep{indexID}_indexedColumnsValue
 Value: rowID
 ```
 
-Each partition of the partitioned table is treated as a  independent physical table in the TiKV layer, with its own `partitionID` . Therefore, the index entries of the partitioned table are encoded as:
+Each partition of the partitioned table is treated as an independent physical table in the TiKV layer, with its own `partitionID` . Therefore, the index entries of the partitioned table are also encoded as:
 
 ```
 Key: tablePrefix{partitionID}_indexPrefixSep{indexID}_indexedColumnsValue
 Value: rowID
 ```
 
-So, in the current table partition implementation, a partition and its indexes are encoded to the same key-value range. Or we can  say, TiDB only has local index.
+So, in the current table partition implementation, a partition and its indexes are encoded to the same key-value range. Or we can say, TiDB only has local index.
 
-This design is compatible with the MySQL, but also makes TiDB have the same [constraint](https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html) as MySQL, which says:
+That design is compatible with the MySQL, but also makes TiDB have the same [constraint](https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html) as MySQL, which says:
 
 > Every unique key on the table must use every column in the table's partitioning expression.
 
@@ -67,19 +67,19 @@ p0_idxB_23
 p1_idxB_23
 ```
 
-Because index entries is built on different partition, uniqueness of index is broken. So, In MySQL and current TiDB, these indexes are not allowed.
+Because index entries are built on different partitions, the uniqueness of the index is broken. So, In MySQL and current TiDB, these indexes are not allowed.
 
 ## Proposal
 
 ### Overview
 
-This document proposes to support global index for partitioned tables. Global index use `tableID` instead of `partitionID`  as the prefix of  index entries. Since all entries in the partitioned table use same prefix, it can ensure index entries is unique in whole table, so that removing the constraint in partitioned tables indexes.
+This document proposes to support the global index for partitioned tables. Global index use `tableID` instead of `partitionID`  as the prefix of  index entries. Since all entries in a partitioned table use the same prefix, it can ensure index entry is unique in the whole table, thus removing the constraint in partitioned tables indexes.
 
 ### Encoding
 
 #### Index key-value Layout
 
-We want global index entry keys begin with `TableID`, so we have add `PartitionID` to another place. New index encoding layout:
+We want global index entry keys to begin with `TableID`, so we have to add `PartitionID` to another place. New index encoding layout:
 
 ```
 Key: tableID_indexID_ColumnValues
@@ -105,13 +105,13 @@ Key: tableID_indexID_partitionID_ColumnValues
 
 **Pros:** Easy to implement partition operators such as drop partition.
 
-**Cons:** Since `partitionID` is unknown when building query, it need scan all partitions of a table when handling point-get or index scan. Also, we need specific check when insert a row into table to keep index unique. It likes another implement of local index but not global index, So we reject it.
+**Cons:** Since `partitionID` is unknown when building a query, it needs to scan all partitions of a table when handling point-get or index scan. Also, we need special checks when inserting a row into a table to keep the index unique. It likes another implement of local index but not global index, So we reject it.
 
 #### Detail of value layout
 
-Now, in TiDB, we have 6 index value layouts, and use 3 different function to decode it. This not only makes it hard to add new features for index (we should add at least two layouts and one function), but also makes the code and comments less readable and confusing (`index.Create` has an extreme long comment, and is still getting longer). 
+Now, in TiDB, we have 6 kinds of index value layout and use 3 different functions to decode it. This not only makes it hard to add new features for index (we should add at least two layouts and one function), but also makes the code and comments less readable and confusing (`index.Create` has an extreme long comment, and is still getting longer). 
 
-Here is the new description of index value layout, which fully compatible with current version, but easy to understand and extent. (`PartitionID` has been added at `Global Index Segment` )
+Here is the new description of the index value layout, which is fully compatible with the current version, but easier to understand and extend. (`PartitionID` has been added at `Global Index Segment` )
 
 ```
 // Value layout:
@@ -166,7 +166,7 @@ In global index, all index entries in a partition is not continuous. It is impos
 
 #### Exchange Partition
 
-Also need a reorg state. It is not supported for the time being because of complexity.
+Also, this needs a reorg state. It is not supported for the time being because of complexity.
 
 #### Drop Table
 
@@ -174,7 +174,7 @@ Add extra one range deletion to clean global indexes.
 
 ### Read from global index
 
-In TiDB, operators in partitioned table will be translated to union in the logical plan phase. But a in-progress project plan to translate operators to new partitioned table executors (see issue: [#18016](https://github.com/pingcap/tidb/issues/18016)). we will follow this project and add global index support in new executors.
+In TiDB, operators in the partitioned table will be translated to UnionAll in the logical plan phase. But an in-progress project plan to translate operators to new partitioned table executors (see issue: [#18016](https://github.com/pingcap/tidb/issues/18016)). we will follow this project and add global index support in new executors.
 
 ## Rationale
 
@@ -183,9 +183,8 @@ In TiDB, operators in partitioned table will be translated to union in the logic
 
 ## Compatibility
 
-MySQL does not support global index, which means this feature may cause some compatibility issues. We add an option  `enable_global_index` in `config.Config`  to control it. The default value of this option is `false`, so TiDB will keep consistent with MySQL, unless user open global index feature manually.
+MySQL does not support global index, which means this feature may cause some compatibility issues. We add an option  `enable_global_index` in `config.Config`  to control it. The default value of this option is `false`, so TiDB will keep consistent with MySQL, unless the user open global index feature manually.
 
 ## Implementation
 
 DDL operations will be implemented first.  Plan and executor supports  will be implemented after [new PartitionTable executor](https://github.com/pingcap/tidb/issues/18016)  is completed.
-
