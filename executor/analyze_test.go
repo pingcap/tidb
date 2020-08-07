@@ -272,6 +272,7 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		TblInfo:         tblInfo,
 		Opts:            opts,
 	}
+	tk.MustExec("begin")
 	err = mockExec.TestFastSample()
 	c.Assert(err, IsNil)
 	c.Assert(len(mockExec.Collectors), Equals, 3)
@@ -316,10 +317,11 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 	var dom *domain.Domain
-	session.DisableStats4Test()
+	session.SetStatsLease(1 * time.Millisecond)
 	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	dom.SetStatsUpdating(true)
 	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
 	executor.RandSeed = 123
@@ -342,6 +344,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "char")`, i*3, i*3))
 	}
+	time.Sleep(30 * time.Millisecond) // Wait to DumpStatsDeltaToKV.
 	tk.MustExec("analyze table t with 5 buckets, 6 samples")
 
 	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))

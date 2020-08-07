@@ -586,6 +586,9 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 			if hists[i].Len() > 0 {
 				idxResult.Count += hists[i].Buckets[hists[i].Len()-1].Count
 			}
+			if exec.rowCount != 0 {
+				idxResult.Count = exec.rowCount
+			}
 			results = append(results, idxResult)
 		}
 	}
@@ -599,6 +602,9 @@ func analyzeFastExec(exec *AnalyzeFastExec) []analyzeResult {
 	}
 	if hist.Len() > 0 {
 		colResult.Count += hist.Buckets[hist.Len()-1].Count
+	}
+	if exec.rowCount != 0 {
+		colResult.Count = exec.rowCount
 	}
 	results = append(results, colResult)
 	return results
@@ -616,10 +622,9 @@ type AnalyzeFastExec struct {
 	tblInfo         *model.TableInfo
 	cache           *tikv.RegionCache
 	wg              *sync.WaitGroup
-	rowCount        uint64
+	rowCount        int64
 	sampCursor      int32
 	sampTasks       []*tikv.KeyLocation
-	estSampStep     uint32 // estimate sample step
 	scanTasks       []*tikv.KeyLocation
 	collectors      []*statistics.SampleCollector
 	randSeed        int64
@@ -635,23 +640,34 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
 	var historyRowCount uint64
 	hasBeenAnalyzed := len(rows) != 0 && rows[0].GetInt64(0) == statistics.AnalyzeFlag
 	if hasBeenAnalyzed {
-		sql = fmt.Sprintf("select count from mysql.stats_meta where table_id = %d;", e.tblInfo.ID)
-		rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		historyRowCount = uint64(rows[0].GetInt64(0))
+		historyRowCount = uint64(domain.GetDomain(e.ctx).StatsHandle().GetTableStats(e.tblInfo).Count)
 	} else {
 		dbInfo, ok := domain.GetDomain(e.ctx).InfoSchema().SchemaByTable(e.tblInfo)
 		if !ok {
 			return 0, errors.Trace(errors.Errorf("database not found for table '%s'", e.tblInfo.Name))
 		}
-		sql := fmt.Sprintf("select count(*) from %s.%s;", dbInfo.Name.L, e.tblInfo.Name.L)
-		rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+		txn, err := e.ctx.Txn(true)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		historyRowCount = uint64(rows[0].GetInt64(0))
+		txn.SetOption(kv.Priority, kv.PriorityLow)
+		txn.SetOption(kv.IsolationLevel, kv.RC)
+		txn.SetOption(kv.NotFillCache, true)
+		sql := fmt.Sprintf("select count(*) from %s.%s;", dbInfo.Name.L, e.tblInfo.Name.L)
+		recordSets, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+		if err != nil || len(recordSets) == 0 {
+			return 0, errors.Trace(err)
+		}
+		if len(recordSets) == 0 {
+			return 0, errors.Trace(errors.Errorf("empty record set"))
+		}
+		chk := recordSets[0].NewChunk()
+		err = recordSets[0].Next(context.TODO(), chk)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		e.rowCount = chk.GetRow(0).GetInt64(0)
+		historyRowCount = uint64(e.rowCount)
 	}
 	totalSampSize := e.opts[ast.AnalyzeOptNumSamples]
 	return uint32(historyRowCount / totalSampSize), nil
@@ -863,12 +879,12 @@ func (e *AnalyzeFastExec) handleBatchSeekResponse(kvMap map[string][]byte) (err 
 }
 
 func (e *AnalyzeFastExec) handleScanIter(iter kv.Iterator) (scanKeysSize int, err error) {
-	rander := rand.New(rand.NewSource(e.randSeed + int64(e.rowCount)))
+	rander := rand.New(rand.NewSource(e.randSeed))
 	sampleSize := int64(e.opts[ast.AnalyzeOptNumSamples])
 	for ; iter.Valid() && err == nil; err = iter.Next() {
 		// reservoir sampling
 		scanKeysSize++
-		randNum := rander.Int63n(int64(e.rowCount) + int64(scanKeysSize))
+		randNum := rander.Int63n(int64(e.sampCursor) + int64(scanKeysSize))
 		if randNum > sampleSize && e.sampCursor == int32(sampleSize) {
 			continue
 		}
@@ -945,7 +961,6 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 				return
 			}
 		}
-		atomic.AddUint64(&e.rowCount, uint64(len(kvMap) * int(step+1)))
 		fastAnalyzeHistogramSample.Observe(float64(len(kvMap)))
 
 		*err = e.handleBatchSeekResponse(kvMap)
@@ -1040,16 +1055,17 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	scanKeysSize, err := e.handleScanTasks(bo)
-	e.rowCount += uint64(scanKeysSize)
 	fastAnalyzeHistogramScanKeys.Observe(float64(scanKeysSize))
 	if err != nil {
 		return nil, nil, err
 	}
 
 	stats := domain.GetDomain(e.ctx).StatsHandle()
-	rowCount := int64(e.rowCount)
+	var rowCount int64 = 0
 	if stats.Lease() > 0 {
-		rowCount = mathutil.MinInt64(stats.GetTableStats(e.tblInfo).Count, rowCount)
+		if t := stats.GetTableStats(e.tblInfo); !t.Pseudo {
+			rowCount = stats.GetTableStats(e.tblInfo).Count
+		}
 	}
 	hists, cms := make([]*statistics.Histogram, length), make([]*statistics.CMSketch, length)
 	for i := 0; i < length; i++ {
