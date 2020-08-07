@@ -343,11 +343,11 @@ func (txn *tikvTxn) collectLockedKeys() [][]byte {
 
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
-	txn.mu.Lock()
-	defer txn.mu.Unlock()
 	// Exclude keys that are already locked.
 	var err error
 	keys := make([][]byte, 0, len(keysInput))
+	txn.mu.Lock()
+	defer txn.mu.Unlock()
 	defer func() {
 		if err == nil {
 			if lockCtx.PessimisticLockWaited != nil {
