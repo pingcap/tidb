@@ -93,7 +93,9 @@ func ExplainExpressionList(exprs []Expression, schema *Schema) string {
 		case *Column, *CorrelatedColumn:
 			builder.WriteString(expr.String())
 		default:
-			fmt.Fprintf(builder, "%v->%v", expr.String(), schema.Columns[i])
+			builder.WriteString(expr.String())
+			builder.WriteString("->")
+			builder.WriteString(schema.Columns[i].String())
 		}
 		if i+1 < len(exprs) {
 			builder.WriteString(", ")
