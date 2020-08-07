@@ -907,6 +907,21 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 	if b.err != nil {
 		return nil
 	}
+
+	// Adjust UnionScan->PartitionTable->Reader
+	// to PartitionTable->UnionScan->Reader
+	// The build of UnionScan executor is delay to the nextPartition() function
+	// because the Reader executor is available there.
+	if x, ok := reader.(*PartitionTableExecutor); ok {
+		nextPartitionForReader := x.nextPartition
+		x.nextPartition = nextPartitionForUnionScan{
+			b:     b,
+			us:    v,
+			child: nextPartitionForReader,
+		}
+		return x
+	}
+
 	return b.buildUnionScanFromReader(reader, v)
 }
 
@@ -2462,7 +2477,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	// TODO: Remove the following 3 lines code when the code is full implemented.
-	if !tryNewPartitionImplementation(b.ctx) {
+	if tryOldPartitionImplementation(b.ctx) {
 		return ret
 	}
 
@@ -2573,7 +2588,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 
 	// TODO: Remove the following 3 lines code when the code is full implemented.
-	if !tryNewPartitionImplementation(b.ctx) {
+	if tryOldPartitionImplementation(b.ctx) {
 		return ret
 	}
 
@@ -2709,7 +2724,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	// TODO: Remove the following 3 lines code when the code is full implemented.
-	if !tryNewPartitionImplementation(b.ctx) {
+	if tryOldPartitionImplementation(b.ctx) {
 		return ret
 	}
 
@@ -2819,7 +2834,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	executorCounterIndexMergeReaderExecutor.Inc()
 
 	// TODO: Remove the following 3 lines code when the code is full implemented.
-	if !tryNewPartitionImplementation(b.ctx) {
+	if tryOldPartitionImplementation(b.ctx) {
 		return ret
 	}
 
@@ -2988,7 +3003,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	tbInfo := e.table.Meta()
-	if tbInfo.GetPartitionInfo() == nil || !tryNewPartitionImplementation(builder.ctx) {
+	if tbInfo.GetPartitionInfo() == nil || tryOldPartitionImplementation(builder.ctx) {
 		kvRanges, err := buildKvRangesForIndexJoin(e.ctx, e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 		if err != nil {
 			return nil, err
@@ -3018,7 +3033,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	}
 
 	tbInfo := e.table.Meta()
-	if tbInfo.GetPartitionInfo() == nil || !tryNewPartitionImplementation(builder.ctx) {
+	if tbInfo.GetPartitionInfo() == nil || tryOldPartitionImplementation(builder.ctx) {
 		e.kvRanges, err = buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 		if err != nil {
 			return nil, err
@@ -3443,13 +3458,13 @@ func (b *executorBuilder) buildAdminResetTelemetryID(v *plannercore.AdminResetTe
 	return &AdminResetTelemetryIDExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())}
 }
 
-func tryNewPartitionImplementation(sctx sessionctx.Context) bool {
-	_, ok := sctx.GetSessionVars().Users["try_new_partition_implementation"]
+func tryOldPartitionImplementation(sctx sessionctx.Context) bool {
+	_, ok := sctx.GetSessionVars().Users["try_old_partition_implementation"]
 	return ok
 }
 
 func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr) ([]table.PhysicalTable, error) {
-	idxArr, err := plannercore.PartitionPruning(ctx, tbl, conds, nil)
+	idxArr, err := plannercore.PartitionPruning(ctx, tbl, conds, partitionNames)
 	if err != nil {
 		return nil, err
 	}

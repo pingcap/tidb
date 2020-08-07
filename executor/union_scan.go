@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/pingcap/parser/model"
@@ -146,6 +147,8 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
 	case *IndexLookUpExecutor:
 		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
+	default:
+		err = fmt.Errorf("unexpected union scan children:%T", reader)
 	}
 	if err != nil {
 		return err
@@ -201,6 +204,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 		return nil, err
 	}
 	addedRow := us.getAddedRow()
+
 	var row []types.Datum
 	var isSnapshotRow bool
 	if addedRow == nil {
