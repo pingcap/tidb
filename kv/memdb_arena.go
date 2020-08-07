@@ -288,8 +288,6 @@ func (l *memdbVlog) revertToCheckpoint(db *memdb, cp *memdbCheckpoint) {
 		db.size -= int(hdr.valueLen)
 		// oldValue.isNull() == true means this is a newly added value.
 		if hdr.oldValue.isNull() {
-			db.count--
-			db.size -= int(node.klen)
 			// If there are no flags associated with this key, we need to delete this node.
 			keptFlags := node.getKeyFlags() & persistentFlags
 			if keptFlags == 0 {
