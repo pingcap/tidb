@@ -231,9 +231,9 @@ type IndexHintType int
 
 // IndexHintUseType values.
 const (
-	HintUse    IndexHintType = 1
-	HintIgnore IndexHintType = 2
-	HintForce  IndexHintType = 3
+	HintUse IndexHintType = iota + 1
+	HintIgnore
+	HintForce
 )
 
 // IndexHintScope is the type for index hint for join, order by or group by.
@@ -241,10 +241,10 @@ type IndexHintScope int
 
 // Index hint scopes.
 const (
-	HintForScan    IndexHintScope = 1
-	HintForJoin    IndexHintScope = 2
-	HintForOrderBy IndexHintScope = 3
-	HintForGroupBy IndexHintScope = 4
+	HintForScan IndexHintScope = iota + 1
+	HintForJoin
+	HintForOrderBy
+	HintForGroupBy
 )
 
 // IndexHint represents a hint for optimizer to use/ignore/force for join/order by/group by.
@@ -258,11 +258,11 @@ type IndexHint struct {
 func (n *IndexHint) Restore(ctx *format.RestoreCtx) error {
 	indexHintType := ""
 	switch n.HintType {
-	case 1:
+	case HintUse:
 		indexHintType = "USE INDEX"
-	case 2:
+	case HintIgnore:
 		indexHintType = "IGNORE INDEX"
-	case 3:
+	case HintForce:
 		indexHintType = "FORCE INDEX"
 	default: // Prevent accidents
 		return errors.New("IndexHintType has an error while matching")
@@ -270,13 +270,13 @@ func (n *IndexHint) Restore(ctx *format.RestoreCtx) error {
 
 	indexHintScope := ""
 	switch n.HintScope {
-	case 1:
+	case HintForScan:
 		indexHintScope = ""
-	case 2:
+	case HintForJoin:
 		indexHintScope = " FOR JOIN"
-	case 3:
+	case HintForOrderBy:
 		indexHintScope = " FOR ORDER BY"
-	case 4:
+	case HintForGroupBy:
 		indexHintScope = " FOR GROUP BY"
 	default: // Prevent accidents
 		return errors.New("IndexHintScope has an error while matching")
