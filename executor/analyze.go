@@ -646,13 +646,10 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
 		if !ok {
 			return 0, errors.Trace(errors.Errorf("database not found for table '%s'", e.tblInfo.Name))
 		}
-		txn, err := e.ctx.Txn(true)
+		rollbackFn, err := e.activateTxnForRowCount()
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, err
 		}
-		txn.SetOption(kv.Priority, kv.PriorityLow)
-		txn.SetOption(kv.IsolationLevel, kv.RC)
-		txn.SetOption(kv.NotFillCache, true)
 		sql := fmt.Sprintf("select count(*) from %s.%s;", dbInfo.Name.L, e.tblInfo.Name.L)
 		recordSets, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
 		if err != nil || len(recordSets) == 0 {
@@ -668,9 +665,40 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
 		}
 		e.rowCount = chk.GetRow(0).GetInt64(0)
 		historyRowCount = uint64(e.rowCount)
+		if rollbackFn != nil {
+			err := rollbackFn()
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+		}
+		for _, r := range recordSets {
+			_ = r.Close()
+		}
 	}
 	totalSampSize := e.opts[ast.AnalyzeOptNumSamples]
 	return uint32(historyRowCount / totalSampSize), nil
+}
+
+func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err error) {
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		if kv.ErrInvalidTxn.Equal(err) {
+			_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "begin")
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			rollbackFn = func() error {
+				_, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), "rollback")
+				return err
+			}
+		} else {
+			return nil, errors.Trace(err)
+		}
+	}
+	txn.SetOption(kv.Priority, kv.PriorityLow)
+	txn.SetOption(kv.IsolationLevel, kv.RC)
+	txn.SetOption(kv.NotFillCache, true)
+	return nil, nil
 }
 
 // getNextSampleKey gets the next sample key after last failed request. It only retries the needed region.

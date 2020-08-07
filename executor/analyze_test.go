@@ -272,7 +272,6 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 		TblInfo:         tblInfo,
 		Opts:            opts,
 	}
-	tk.MustExec("begin")
 	err = mockExec.TestFastSample()
 	c.Assert(err, IsNil)
 	c.Assert(len(mockExec.Collectors), Equals, 3)
