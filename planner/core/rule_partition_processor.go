@@ -174,6 +174,10 @@ func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl tabl
 		}
 		return []int{int(idx)}, nil
 	}
+	if len(partitionNames) > 0 {
+		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
+		return s.convertToIntSlice(or, pi, partitionNames), nil
+	}
 	return []int{FullRange}, nil
 }
 

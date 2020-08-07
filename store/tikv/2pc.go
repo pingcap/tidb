@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"context"
 	"math"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -201,7 +200,13 @@ func (c *twoPhaseCommitter) extractKeyExistsErr(key kv.Key) error {
 
 	_, handle, err := tablecodec.DecodeRecordKey(key)
 	if err == nil {
-		return kv.ErrKeyExists.FastGenByArgs(handle.String(), "PRIMARY")
+		if handle.IsInt() {
+			return kv.ErrKeyExists.FastGenByArgs(handle.String(), "PRIMARY")
+		}
+		values, err := tablecodec.DecodeValuesBytesToStrings(handle.Encoded())
+		if err == nil {
+			return kv.ErrKeyExists.FastGenByArgs(strings.Join(values, "-"), "PRIMARY")
+		}
 	}
 
 	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
@@ -217,91 +222,67 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 
 	txn := c.txn
 	memBuf := txn.GetMemBuffer()
-	sizeHint := len(txn.lockKeys) + txn.us.GetMemBuffer().Len()
+	sizeHint := txn.us.GetMemBuffer().Len()
 	mutations := NewCommiterMutations(sizeHint)
 	c.isPessimistic = txn.IsPessimistic()
 
-	// Merge ordered lockKeys and pairs in the memBuffer into the mutations array
-	sort.Slice(txn.lockKeys, func(i, j int) bool {
-		return bytes.Compare(txn.lockKeys[i], txn.lockKeys[j]) < 0
-	})
-	lockIdx := 0
-	err := kv.WalkMemBuffer(txn.us.GetMemBuffer(), func(k kv.Key, v []byte) error {
-		var (
-			op                pb.Op
-			value             []byte
-			isPessimisticLock bool
-		)
-		if len(v) > 0 {
-			if tablecodec.IsUntouchedIndexKValue(k, v) {
-				return nil
+	var err error
+	for it := memBuf.IterWithFlags(nil, nil); it.Valid(); err = it.Next() {
+		_ = err
+		key := it.Key()
+		flags := it.Flags()
+		var value []byte
+		var op pb.Op
+
+		if !it.HasValue() {
+			if !flags.HasLocked() {
+				continue
 			}
-			op = pb.Op_Put
-			if txn.us.HasPresumeKeyNotExists(k) {
-				op = pb.Op_Insert
-			}
-			value = v
-			putCnt++
+			op = pb.Op_Lock
+			lockCnt++
 		} else {
-			if !txn.IsPessimistic() && txn.us.HasPresumeKeyNotExists(k) {
-				// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
-				// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
-				op = pb.Op_CheckNotExists
-				checkCnt++
-				memBuf.UpdateFlags(k, kv.SetNoNeedCommit)
+			value = it.Value()
+			if len(value) > 0 {
+				if tablecodec.IsUntouchedIndexKValue(key, value) {
+					continue
+				}
+				op = pb.Op_Put
+				if flags.HasPresumeKeyNotExists() {
+					op = pb.Op_Insert
+				}
+				putCnt++
 			} else {
-				// normal delete keys in optimistic txn can be delete without not exists checking
-				// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them
-				op = pb.Op_Del
-				delCnt++
+				if !txn.IsPessimistic() && flags.HasPresumeKeyNotExists() {
+					// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
+					// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
+					op = pb.Op_CheckNotExists
+					checkCnt++
+					memBuf.UpdateFlags(key, kv.SetNoNeedCommit)
+				} else {
+					// normal delete keys in optimistic txn can be delete without not exists checking
+					// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them
+					op = pb.Op_Del
+					delCnt++
+				}
 			}
 		}
-		for lockIdx < len(txn.lockKeys) {
-			lockKey := txn.lockKeys[lockIdx]
-			ord := bytes.Compare(lockKey, k)
-			if ord == 0 {
-				isPessimisticLock = c.isPessimistic
-				lockIdx++
-				break
-			} else if ord > 0 {
-				break
-			} else {
-				mutations.Push(pb.Op_Lock, lockKey, nil, c.isPessimistic)
-				lockCnt++
-				size += len(lockKey)
-				lockIdx++
-			}
+
+		var isPessimistic bool
+		if flags.HasLocked() {
+			isPessimistic = c.isPessimistic
 		}
-		mutations.Push(op, k, value, isPessimisticLock)
-		entrySize := len(k) + len(v)
-		if uint64(entrySize) > kv.TxnEntrySizeLimit {
-			return kv.ErrEntryTooLarge.GenWithStackByArgs(kv.TxnEntrySizeLimit, entrySize)
+		mutations.Push(op, key, value, isPessimistic)
+		size += len(key) + len(value)
+
+		if len(c.primaryKey) == 0 && op != pb.Op_CheckNotExists {
+			c.primaryKey = key
 		}
-		size += entrySize
-		return nil
-	})
-	if err != nil {
-		return errors.Trace(err)
 	}
-	// add the remaining locks to mutations and keys
-	for _, lockKey := range txn.lockKeys[lockIdx:] {
-		mutations.Push(pb.Op_Lock, lockKey, nil, c.isPessimistic)
-		lockCnt++
-		size += len(lockKey)
-	}
+
 	if mutations.len() == 0 {
 		return nil
 	}
 	c.txnSize = size
-
-	if len(c.primaryKey) == 0 {
-		for i, op := range mutations.ops {
-			if op != pb.Op_CheckNotExists {
-				c.primaryKey = mutations.keys[i]
-				break
-			}
-		}
-	}
 
 	if size > int(kv.TxnTotalSizeLimit) {
 		return kv.ErrTxnTooLarge.GenWithStackByArgs(size)
