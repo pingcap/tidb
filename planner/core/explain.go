@@ -272,7 +272,7 @@ func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
 func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || !tryNewPartitionImplementation(sctx) {
+	if pi == nil || tryOldPartitionImplementation(sctx) {
 		return ""
 	}
 
@@ -331,7 +331,7 @@ func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
 func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
 	ts := p.IndexPlans[0].(*PhysicalIndexScan)
 	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || !tryNewPartitionImplementation(sctx) {
+	if pi == nil || tryOldPartitionImplementation(sctx) {
 		return ""
 	}
 
@@ -359,7 +359,7 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || !tryNewPartitionImplementation(sctx) {
+	if pi == nil || tryOldPartitionImplementation(sctx) {
 		return ""
 	}
 
@@ -378,6 +378,23 @@ func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string
 // ExplainInfo implements Plan interface.
 func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 	return ""
+}
+
+func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) string {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	pi := ts.Table.GetPartitionInfo()
+	if pi == nil || tryOldPartitionImplementation(sctx) {
+		return ""
+	}
+
+	is := infoschema.GetInfoSchema(sctx)
+	tmp, ok := is.TableByID(ts.Table.ID)
+	if !ok {
+		return "partition table not found" + strconv.FormatInt(ts.Table.ID, 10)
+	}
+	tbl := tmp.(table.PartitionedTable)
+
+	return partitionAccessObject(sctx, tbl, pi, p.PartitionTable.PruningConds, p.PartitionTable.PartitionNames)
 }
 
 // ExplainInfo implements Plan interface.
@@ -583,6 +600,32 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
 	return p.explainInfo(true)
+}
+
+// ExplainInfo implements Plan interface.
+func (p *PhysicalBroadCastJoin) ExplainInfo() string {
+	return p.explainInfo()
+}
+
+// ExplainNormalizedInfo implements Plan interface.
+func (p *PhysicalBroadCastJoin) ExplainNormalizedInfo() string {
+	return p.explainInfo()
+}
+
+func (p *PhysicalBroadCastJoin) explainInfo() string {
+	buffer := new(bytes.Buffer)
+
+	buffer.WriteString(p.JoinType.String())
+
+	if len(p.LeftJoinKeys) > 0 {
+		fmt.Fprintf(buffer, ", left key:%s",
+			expression.ExplainColumnList(p.LeftJoinKeys))
+	}
+	if len(p.RightJoinKeys) > 0 {
+		fmt.Fprintf(buffer, ", right key:%s",
+			expression.ExplainColumnList(p.RightJoinKeys))
+	}
+	return buffer.String()
 }
 
 // ExplainInfo implements Plan interface.
@@ -897,7 +940,7 @@ func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
 	return ""
 }
 
-func tryNewPartitionImplementation(sctx sessionctx.Context) bool {
-	_, ok := sctx.GetSessionVars().Users["try_new_partition_implementation"]
+func tryOldPartitionImplementation(sctx sessionctx.Context) bool {
+	_, ok := sctx.GetSessionVars().Users["try_old_partition_implementation"]
 	return ok
 }

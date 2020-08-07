@@ -144,6 +144,8 @@ Non-unique index value is unchanged.
 ```
 The unique index key is unchanged.
 
+For more intuitive information, check [the docs](https://docs.google.com/document/d/1Co5iMiaxitv3okJmLYLJxZYCNChcjzswJMRr-_45Eqg/edit?usp=sharing)
+
 ### Planner
 
 #### Handle Primary Key Index differently
