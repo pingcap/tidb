@@ -91,7 +91,7 @@ func (eqh *Handle) Run() {
 var (
 	oomRecordErr      error
 	serverMemoryQuota uint64
-	oomRecordStatus   uint64 // 0 uninitialized, 1 instance memory usage, 2 system memory usage, 3 close the alert.
+	oomRecordStatus   status // 0 uninitialized, 1 instance memory usage, 2 system memory usage, 3 close the alert.
 	lastOOMtime       time.Time
 
 	tmpDir              string
@@ -101,12 +101,21 @@ var (
 	OOMRecordCount uint32
 )
 
+type status uint32
+
+const (
+	uninitialized status = iota
+	useInstanceMemory
+	useSystemMemory
+	closeAlert
+)
+
 func (eqh *Handle) oomKillerAlert() {
-	if oomRecordErr != nil || oomRecordStatus == 3 {
+	if oomRecordErr != nil || oomRecordStatus == closeAlert {
 		return
 	}
 
-	if oomRecordStatus == 0 {
+	if oomRecordStatus == uninitialized {
 		if alert := config.GetGlobalConfig().Performance.ServerMemoryAlert; alert == 0 || alert == 1 {
 			oomRecordStatus = 3
 			return
@@ -114,14 +123,14 @@ func (eqh *Handle) oomKillerAlert() {
 		if serverMemoryQuota == 0 {
 			if config.GetGlobalConfig().Performance.ServerMemoryQuota != 0 {
 				serverMemoryQuota = config.GetGlobalConfig().Performance.ServerMemoryQuota
-				oomRecordStatus = 1
+				oomRecordStatus = useInstanceMemory
 			} else {
 				serverMemoryQuota, oomRecordErr = memory.MemTotal()
 				if oomRecordErr != nil {
 					logutil.BgLogger().Warn("Get system total memory fail.", zap.Error(oomRecordErr))
 					return
 				}
-				oomRecordStatus = 2
+				oomRecordStatus = useSystemMemory
 			}
 		}
 		lastOOMtime = time.Time{}
@@ -141,11 +150,11 @@ func (eqh *Handle) oomKillerAlert() {
 	}
 
 	if float64(memoryUsage) > float64(serverMemoryQuota)*config.GetGlobalConfig().Performance.ServerMemoryAlert ||
-		(oomRecordStatus == 1 && instanceStats.NextGC > serverMemoryQuota) {
+		(oomRecordStatus == useInstanceMemory && instanceStats.NextGC > serverMemoryQuota) {
 		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
 		// If the memory is still exceeded, only records once.
 		if time.Since(lastOOMtime) > 10*time.Second {
-			eqh.oomRecord(memoryUsage, serverMemoryQuota, oomRecordStatus == 2)
+			eqh.oomRecord(memoryUsage, serverMemoryQuota, oomRecordStatus == useSystemMemory)
 		}
 		lastOOMtime = time.Now()
 	}
