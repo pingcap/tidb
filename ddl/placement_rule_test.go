@@ -69,6 +69,36 @@ add placement policy
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
 
+	_, err = tk.Exec(`alter table t1 alter partition p0
+alter placement policy
+	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
+	role=leader
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+
+	// multiple statements
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='["+   zone   =   sh  "]'
+	role=leader
+	replicas=3,
+add placement policy
+	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
+	role=leader
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
+	role=leader
+	replicas=3,
+alter placement policy
+	constraints='{"+   zone   =   sh, -zone =   bj ": 1}'
+	role=leader
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+
 	// list/dict detection
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
@@ -90,6 +120,13 @@ add placement policy
 	role=leader
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*invalid character.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
+	role=leader
+	replicas=2`)
+	c.Assert(err, ErrorMatches, ".*COUNT should be larger or equal to the number of total replicas.*")
 
 	// checkPlacementSpecConstraint
 	_, err = tk.Exec(`alter table t1 alter partition p0

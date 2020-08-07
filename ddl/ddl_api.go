@@ -5246,15 +5246,18 @@ func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 		}
 
 		rulesLen := len(rules)
+		ruleCnt := rule.Count
 		for labels, cnt := range constraints {
 			newRule := &placement.RuleOp{}
 			*newRule = *rule
+			newRule.Rule = &placement.Rule{}
+			*newRule.Rule = *rule.Rule
 			if cnt <= 0 {
 				err = errors.Errorf("count should be positive, but got %d", cnt)
 				break
 			}
-			rule.Count -= cnt
-			if rule.Count < 0 {
+			ruleCnt -= cnt
+			if ruleCnt < 0 {
 				rules = rules[:rulesLen]
 				err = errors.Errorf("COUNT should be larger or equal to the number of total replicas, but got %d", rule.Count)
 				break
@@ -5266,8 +5269,14 @@ func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 			}
 			rules = append(rules, newRule)
 		}
+		rule.Count = ruleCnt
 
 		if rule.Count > 0 {
+			// TODO: currently, PD has no API to update rules
+			// adding rules by a dict with a implicit default rule should increment the replicas number of the default rule.
+			// so TiDB needs to know how many default replicas there is, which requires an HTTP request
+			// for now, it acts like altering rules, i.e., override the default rule
+			// maybe unsupport this feature, or handle 'get rules from PD' smoothly in later PRs
 			rules = append(rules, rule)
 		}
 	} else {
