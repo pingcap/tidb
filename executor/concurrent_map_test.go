@@ -14,9 +14,10 @@
 package executor
 
 import (
+	"sync"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/chunk"
-	"sync"
 )
 
 // TestConcurrentMap first inserts 1000 entries, then checks them
