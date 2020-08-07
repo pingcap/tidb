@@ -179,17 +179,8 @@ func (txn *tikvTxn) Delete(k kv.Key) error {
 
 func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 	txn.us.SetOption(opt, val)
+	txn.snapshot.SetOption(opt, val)
 	switch opt {
-	case kv.Priority:
-		txn.snapshot.priority = kvPriorityToCommandPri(val.(int))
-	case kv.NotFillCache:
-		txn.snapshot.notFillCache = val.(bool)
-	case kv.SyncLog:
-		txn.snapshot.syncLog = val.(bool)
-	case kv.KeyOnly:
-		txn.snapshot.keyOnly = val.(bool)
-	case kv.SnapshotTS:
-		txn.snapshot.setSnapshotTS(val.(uint64))
 	case kv.InfoSchema:
 		txn.txnInfoSchema = val.(SchemaVer)
 	case kv.SchemaAmender:

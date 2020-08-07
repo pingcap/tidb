@@ -367,7 +367,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 	}
 	colMap := make(map[int64]*types.FieldType)
 	colMap[col.ID] = &col.FieldType
-	rowMap, err := tablecodec.DecodeRow(data, colMap, ctx.GetSessionVars().Location())
+	rowMap, err := tablecodec.DecodeRowToDatumMap(data, colMap, ctx.GetSessionVars().Location())
 	if err != nil {
 		return errors.Trace(err)
 	}

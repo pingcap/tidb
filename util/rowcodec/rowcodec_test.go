@@ -64,8 +64,8 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 			Ft:         colFt,
 			IsPKHandle: false,
 		},
-	}, []int64{-1}, nil)
-	m, err := bDecoder.DecodeToDatumMap(b, kv.IntHandle(-1), nil)
+	}, nil)
+	m, err := bDecoder.DecodeToDatumMap(b, nil)
 	c.Assert(err, IsNil)
 	v := m[largeColID]
 
@@ -80,8 +80,8 @@ func (s *testSuite) TestEncodeLargeSmallReuseBug(c *C) {
 			Ft:         colFt,
 			IsPKHandle: false,
 		},
-	}, []int64{-1}, nil)
-	m, err = bDecoder.DecodeToDatumMap(b, kv.IntHandle(-1), nil)
+	}, nil)
+	m, err = bDecoder.DecodeToDatumMap(b, nil)
 	c.Assert(err, IsNil)
 	v = m[smallColID]
 	c.Assert(v.GetInt64(), Equals, int64(2))
@@ -97,9 +97,12 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 		dts := make([]types.Datum, 0, len(testData))
 		fts := make([]*types.FieldType, 0, len(testData))
 		cols := make([]rowcodec.ColInfo, 0, len(testData))
+		handleColFtMap := make(map[int64]*types.FieldType)
 		for i := range testData {
 			t := testData[i]
-			if !t.handle {
+			if t.handle {
+				handleColFtMap[handleID] = t.ft
+			} else {
 				colIDs = append(colIDs, t.id)
 				dts = append(dts, t.dt)
 			}
@@ -119,8 +122,11 @@ func (s *testSuite) TestDecodeRowWithHandle(c *C) {
 		c.Assert(err, IsNil)
 
 		// decode to datum map.
-		mDecoder := rowcodec.NewDatumMapDecoder(cols, []int64{-1}, sc.TimeZone)
-		dm, err := mDecoder.DecodeToDatumMap(newRow, kv.IntHandle(handleValue), nil)
+		mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
+		dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
+		c.Assert(err, IsNil)
+		dm, err = tablecodec.DecodeHandleToDatumMap(kv.IntHandle(handleValue),
+			[]int64{handleID}, handleColFtMap, sc.TimeZone, dm)
 		c.Assert(err, IsNil)
 		for _, t := range testData {
 			d, exists := dm[t.id]
@@ -319,8 +325,8 @@ func (s *testSuite) TestTypesNewRowCodec(c *C) {
 		c.Assert(err, IsNil)
 
 		// decode to datum map.
-		mDecoder := rowcodec.NewDatumMapDecoder(cols, []int64{-1}, sc.TimeZone)
-		dm, err := mDecoder.DecodeToDatumMap(newRow, kv.IntHandle(-1), nil)
+		mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
+		dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
 		c.Assert(err, IsNil)
 		for _, t := range testData {
 			d, exists := dm[t.id]
@@ -569,8 +575,8 @@ func (s *testSuite) TestNilAndDefault(c *C) {
 		c.Assert(err, IsNil)
 
 		// decode to datum map.
-		mDecoder := rowcodec.NewDatumMapDecoder(cols, []int64{-1}, sc.TimeZone)
-		dm, err := mDecoder.DecodeToDatumMap(newRow, kv.IntHandle(-1), nil)
+		mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone)
+		dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
 		c.Assert(err, IsNil)
 		for _, t := range testData {
 			d, exists := dm[t.id]
@@ -812,8 +818,8 @@ func (s *testSuite) Test65535Bug(c *C) {
 		ID: 1,
 		Ft: tps[0],
 	}
-	dc := rowcodec.NewDatumMapDecoder(cols, []int64{-1}, nil)
-	result, err := dc.DecodeToDatumMap(bd, kv.IntHandle(-1), nil)
+	dc := rowcodec.NewDatumMapDecoder(cols, nil)
+	result, err := dc.DecodeToDatumMap(bd, nil)
 	c.Check(err, IsNil)
 	rs := result[1]
 	c.Check(rs.GetString(), Equals, text65535)
