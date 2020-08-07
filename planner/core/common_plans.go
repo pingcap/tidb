@@ -761,9 +761,9 @@ type analyzeInfo struct {
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	PKInfo   *model.ColumnInfo
-	ColsInfo []*model.ColumnInfo
-	TblInfo  *model.TableInfo
+	HandleCols HandleCols
+	ColsInfo   []*model.ColumnInfo
+	TblInfo    *model.TableInfo
 	analyzeInfo
 }
 
