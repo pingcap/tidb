@@ -590,14 +590,12 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return updateColumnDefaultValue(t, job, newCol, &newCol.Name)
 }
 
-func needChangeColumnData(newCol, oldCol *model.ColumnInfo) bool {
+func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
-		logutil.BgLogger().Warn(fmt.Sprintf("xxx -------------------- need change column data"))
 		return true
 	}
-	logutil.BgLogger().Warn(fmt.Sprintf("xxx -------------------- needn't change column data"))
 
 	return false
 }
@@ -627,7 +625,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		return ver, errors.Trace(err)
 	}
 	oldCol := model.FindColumnInfo(tblInfo.Columns, oldColName.L)
-	if job.IsRollingback() && !needChangeColumnData(newCol, oldCol) {
+	if job.IsRollingback() {
 		ver, err = rollbackModifyColumnJob(t, tblInfo, job, oldCol, modifyColumnTp)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -663,7 +661,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		}
 	}
 
-	if !needChangeColumnData(newCol, oldCol) {
+	if !needChangeColumnData(oldCol, newCol) {
 		return w.doModifyColumn(t, job, dbInfo, tblInfo, newCol, oldCol, pos)
 	}
 
@@ -697,7 +695,6 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			changingIdxs = append(changingIdxs, newIdxInfo)
 		}
 		tblInfo.Indices = append(tblInfo.Indices, changingIdxs...)
-		logutil.BgLogger().Warn(fmt.Sprintf("==========================             cols %v, idxes %v", changingCol, changingIdxs))
 	} else {
 		tblInfo.Columns[len(tblInfo.Columns)-1] = changingCol
 		copy(tblInfo.Indices[len(tblInfo.Indices)-len(changingIdxs):], changingIdxs)
@@ -720,8 +717,7 @@ func (w *worker) doModifyColumnType(
 			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, oldCol.Name, oldCol.Tp != changingCol.Tp)
 			if err != nil {
 				if ErrWarnDataTruncated.Equal(err) || errInvalidUseOfNull.Equal(err) {
-					// TODO: job.State = model.JobStateRollingback
-					job.State = model.JobStateCancelled
+					job.State = model.JobStateRollingback
 				}
 				return ver, err
 			}
@@ -739,13 +735,6 @@ func (w *worker) doModifyColumnType(
 		updateChangingInfo(job, changingCol, changingIdxs, model.StateWriteReorganization)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != changingCol.State)
 	case model.StateWriteReorganization:
-		colsStr := ""
-		for _, col := range tblInfo.Columns {
-			colsStr += fmt.Sprintf("col:%v, state:%s, defaultVal:%v ", col.Name, col.State, col.DefaultValue)
-		}
-		logutil.BgLogger().Warn(fmt.Sprintf("************** cols: %v\n", colsStr))
-		/////////////////////
-
 		tbl, err := getTable(d.store, dbInfo.ID, tblInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -818,11 +807,16 @@ func (w *worker) doModifyColumnType(
 	return ver, errors.Trace(err)
 }
 
+func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
+	logutil.BgLogger().Info("[ddl] start to update table row", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
+	return w.writePhysicalTableRecord(t.(table.PhysicalTable), typeUpdateColumnWroker, nil, oldColInfo, colInfo, reorgInfo)
+}
+
 // updateColumnAndIndexes handles the modify column reorganization state for a table.
 func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.ColumnInfo, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
-	// TODO: Consider rebuild ReorgInfo.
+	// TODO: Consider rebuild ReorgInfo key to mDDLJobReorgKey_jobID_elementID(colID/idxID).
 	// TODO: Support partition tables.
-	err := w.addPhysicalTableIndex(t.(table.PhysicalTable), typeUpdateColumnWroker, nil, oldCol, col, reorgInfo)
+	err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -919,12 +913,9 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 				return true, nil
 			}
 
-			logutil.BgLogger().Warn(fmt.Sprintf("before ------------------ vals %+v =========== col %v, val %v, fieldType %s",
-				w.rowMap, w.newColInfo.Name, w.rowMap[w.oldColInfo.ID], w.newColInfo.FieldType.String()))
 			newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
 			// TODO: Consider sql_mode and the error msg(encounter this error check whether to rollback).
 			if err != nil {
-				logutil.BgLogger().Warn(fmt.Sprintf("xxxxx ------------------ err %v", err))
 				return false, errors.Trace(err)
 			}
 			w.rowMap[w.newColInfo.ID] = newColVal
@@ -934,7 +925,6 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 				newColumnIDs = append(newColumnIDs, colID)
 				newRow = append(newRow, val)
 			}
-			logutil.BgLogger().Warn(fmt.Sprintf("after ------------------ vals %v, colIDs %v", newRow, newColumnIDs))
 			sctx, rd := w.sessCtx.GetSessionVars().StmtCtx, &w.sessCtx.GetSessionVars().RowEncoder
 			newRowVal, err := tablecodec.EncodeRow(sctx, newRow, newColumnIDs, nil, nil, rd)
 			if err != nil {

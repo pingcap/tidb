@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"go.uber.org/zap"
@@ -1085,7 +1084,6 @@ func (s *testStateChangeSuiteBase) prepareTestControlParallelExecSQL(c *C) (sess
 			if qLen == 2 {
 				break
 			}
-			logutil.BgLogger().Warn("-------------------- wait jobs")
 			time.Sleep(5 * time.Millisecond)
 		}
 		times++

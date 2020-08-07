@@ -68,4 +68,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/parser => ../../pingcap/parser
+replace github.com/pingcap/parser => github.com/zimulala/parser v0.0.0-20200806082316-2d7812e56b33

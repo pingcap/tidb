@@ -3240,7 +3240,6 @@ func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types
 	}
 
 	enableChangeColType := isIntType && ctx.GetSessionVars().EnableChangeColumnType
-	// TODO: Consider unsupport partition tables.
 	if mysql.HasPriKeyFlag(origin.Flag) && enableChangeColType {
 		msg := "enableChangeColType is true and this column has primary key flag"
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
@@ -3471,16 +3470,20 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-	if ctx.GetSessionVars().EnableChangeColumnType && (newCol.IsGenerated() || col.IsGenerated()) {
-		msg := fmt.Sprintf("enableChangeColType is ture, newCol IsGenerated %v, col IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
-		return nil, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-	}
 	if err = checkModifyTypes(ctx, &col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		if strings.Contains(err.Error(), "Unsupported modifying collation") {
 			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
 			err = errUnsupportedModifyCollation.GenWithStack(colErrMsg, col.Name.L, col.Collate, newCol.Collate)
 		}
 		return nil, errors.Trace(err)
+	}
+	if ctx.GetSessionVars().EnableChangeColumnType && needChangeColumnData(col.ColumnInfo, newCol.ColumnInfo) {
+		if newCol.IsGenerated() || col.IsGenerated() {
+			msg := fmt.Sprintf("enableChangeColType is true, newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
+			return nil, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		} else if t.Meta().Partition != nil {
+			return nil, errUnsupportedModifyColumn.GenWithStackByArgs("enableChangeColType is true, table is partition table")
+		}
 	}
 
 	// Copy index related options to the new spec.

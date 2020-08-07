@@ -1389,12 +1389,16 @@ func loadDDLReorgVars(w *worker) error {
 	return ddlutil.LoadDDLReorgVars(ctx)
 }
 
-// TODO: Update this function name and comments.
-// addPhysicalTableIndex handles the add index reorganization state for a non-partitioned table or a partition.
+func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
+	logutil.BgLogger().Info("[ddl] start to add table index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
+	return w.writePhysicalTableRecord(t.(table.PhysicalTable), typeAddIndexWroker, indexInfo, nil, nil, reorgInfo)
+}
+
+// writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
 // For a partitioned table, it should be handled partition by partition.
 //
-// How to add index in reorganization state?
-// Concurrently process the @@tidb_ddl_reorg_worker_cnt tasks. Each task deals with a handle range of the index record.
+// How to "add index" or "update column value" in reorganization state?
+// Concurrently process the @@tidb_ddl_reorg_worker_cnt tasks. Each task deals with a handle range of the index/row record.
 // The handle range is split from PD regions now. Each worker deal with a region table key range one time.
 // Each handle range by estimation, concurrent processing needs to perform after the handle range has been acquired.
 // The operation flow is as follows:
@@ -1404,9 +1408,8 @@ func loadDDLReorgVars(w *worker) error {
 //	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, bfWorkerType backfillWorkerType, indexInfo *model.IndexInfo, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
+func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType, indexInfo *model.IndexInfo, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
-	logutil.BgLogger().Info("[ddl] start to add table index", zap.String("job", job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	totalAddedCount := job.GetRowCount()
 
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
@@ -1518,7 +1521,7 @@ func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *r
 			if p == nil {
 				return errCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 			}
-			err = w.addPhysicalTableIndex(p, typeAddIndexWroker, idx, nil, nil, reorgInfo)
+			err = w.addPhysicalTableIndex(p, idx, reorgInfo)
 			if err != nil {
 				break
 			}
@@ -1528,7 +1531,7 @@ func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *r
 			}
 		}
 	} else {
-		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), typeAddIndexWroker, idx, nil, nil, reorgInfo)
+		err = w.addPhysicalTableIndex(t.(table.PhysicalTable), idx, reorgInfo)
 	}
 	return errors.Trace(err)
 }
