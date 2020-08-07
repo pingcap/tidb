@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	field_types "github.com/pingcap/parser/types"
-	"github.com/pingcap/pd/v4/server/schedule/placement"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -5210,7 +5210,7 @@ func checkPlacementLabelConstraint(label string) (placement.LabelConstraint, err
 	return r, nil
 }
 
-func checkPlacementLabelConstraints(rule *placement.Rule, labels []string) error {
+func checkPlacementLabelConstraints(rule *placement.RuleOp, labels []string) error {
 	for _, str := range labels {
 		label, err := checkPlacementLabelConstraint(strings.TrimSpace(str))
 		if err != nil {
@@ -5221,7 +5221,7 @@ func checkPlacementLabelConstraints(rule *placement.Rule, labels []string) error
 	return nil
 }
 
-func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule, cnstr string) ([]*placement.Rule, error) {
+func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.RuleOp, cnstr string) ([]*placement.RuleOp, error) {
 	cnstr = strings.TrimSpace(cnstr)
 	var err error
 	if len(cnstr) > 0 && cnstr[0] == '[' {
@@ -5246,7 +5246,7 @@ func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule,
 		}
 
 		for labels, cnt := range constraints {
-			newRule := &placement.Rule{}
+			newRule := &placement.RuleOp{}
 			*newRule = *rule
 			if cnt <= 0 {
 				err = errors.Errorf("count should be positive, but got %d", cnt)
@@ -5267,8 +5267,8 @@ func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule,
 	return rules, err
 }
 
-func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) {
-	rules := make([]*placement.Rule, 0, len(specs))
+func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error) {
+	rules := make([]*placement.RuleOp, 0, len(specs))
 
 	var err error
 	var sb strings.Builder
@@ -5276,7 +5276,7 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 	for _, spec := range specs {
-		rule := &placement.Rule{
+		rule := &placement.RuleOp{
 			GroupID:  placementRuleDefaultGroupID,
 			Override: true,
 		}
