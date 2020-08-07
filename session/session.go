@@ -596,9 +596,7 @@ func (s *session) isTxnRetryableError(err error) bool {
 
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
 	var err error
-	if s.txn.doNotCommit != nil {
-		err = errors.New("current transaction is aborted, commands ignored until end of transaction block:" + s.txn.doNotCommit.Error())
-	} else if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
+	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) > 0 {
 		err = tikv.ErrLockExpire
 	} else {
 		return nil
@@ -629,7 +627,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 
 	connID := s.sessionVars.ConnectionID
 	s.sessionVars.RetryInfo.Retrying = true
-	if s.sessionVars.TxnCtx.ForUpdate {
+	if atomic.LoadUint32(&s.sessionVars.TxnCtx.ForUpdate) == 1 {
 		err = ErrForUpdateCantRetry.GenWithStackByArgs(connID)
 		return err
 	}
@@ -671,13 +669,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				s.StmtRollback()
 				break
 			}
-			// We do not need to pass memTracker here, because that retry
-			// happened after commit, the memory usage was calculated during the
-			// first execution.
-			err = s.StmtCommit(nil)
-			if err != nil {
-				return err
-			}
+			s.StmtCommit()
 		}
 		logutil.Logger(ctx).Warn("transaction association",
 			zap.Uint64("retrying txnStartTS", s.GetSessionVars().TxnCtx.StartTS),
@@ -1214,7 +1206,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			if err != nil {
 				se.StmtRollback()
 			} else {
-				err = se.StmtCommit(sessVars.StmtCtx.MemTracker)
+				se.StmtCommit()
 			}
 		}
 	}
@@ -2148,7 +2140,7 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		CreateTime:    time.Now(),
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
 	}
-	if !s.sessionVars.IsAutocommit() {
+	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
 		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
 		if pessTxnConf.Enable {
 			if s.sessionVars.TxnMode == ast.Pessimistic {

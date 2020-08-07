@@ -45,12 +45,11 @@ type testMemDBSuite struct{}
 
 // DeleteKey is used in test to verify the `deleteNode` used in `vlog.revertToCheckpoint`.
 func (db *memdb) DeleteKey(key []byte) {
-	x := db.tranverse(key, false)
+	x := db.traverse(key, false)
 	if x.isNull() {
 		return
 	}
-	db.count--
-	db.size -= (len(db.vlog.getValue(x.vptr)) + int(x.klen))
+	db.size -= len(db.vlog.getValue(x.vptr))
 	db.deleteNode(x)
 }
 
@@ -68,7 +67,7 @@ func (s *testMemDBSuite) TestGetSet(c *C) {
 }
 
 func (s *testMemDBSuite) TestBigKV(c *C) {
-	db := newNewMemDB()
+	db := newMemDB()
 	db.entrySizeLimit = math.MaxUint64
 	db.bufferSizeLimit = math.MaxUint64
 	db.Set([]byte{1}, make([]byte, 80<<20))
@@ -109,7 +108,7 @@ func (s *testMemDBSuite) TestIterator(c *C) {
 
 func (s *testMemDBSuite) TestDiscard(c *C) {
 	const cnt = 10000
-	db := newNewMemDB()
+	db := newMemDB()
 	base := s.deriveAndFill(0, cnt, 0, db)
 	sz := db.Size()
 
@@ -162,7 +161,7 @@ func (s *testMemDBSuite) TestDiscard(c *C) {
 
 func (s *testMemDBSuite) TestFlushOverwrite(c *C) {
 	const cnt = 10000
-	db := newNewMemDB()
+	db := newMemDB()
 	db.Release(s.deriveAndFill(0, cnt, 0, db))
 	sz := db.Size()
 
@@ -209,7 +208,7 @@ func (s *testMemDBSuite) TestComplexUpdate(c *C) {
 		insert    = 9000
 	)
 
-	db := newNewMemDB()
+	db := newMemDB()
 	db.Release(s.deriveAndFill(0, overwrite, 0, db))
 	c.Assert(db.Len(), Equals, overwrite)
 	db.Release(s.deriveAndFill(keep, insert, 1, db))
@@ -230,7 +229,7 @@ func (s *testMemDBSuite) TestComplexUpdate(c *C) {
 }
 
 func (s *testMemDBSuite) TestNestedSandbox(c *C) {
-	db := newNewMemDB()
+	db := newMemDB()
 	h0 := s.deriveAndFill(0, 200, 0, db)
 	h1 := s.deriveAndFill(0, 100, 1, db)
 	h2 := s.deriveAndFill(50, 150, 2, db)
@@ -341,7 +340,7 @@ func (s *testMemDBSuite) TestOverwrite(c *C) {
 }
 
 func (s *testMemDBSuite) TestKVLargeThanBlock(c *C) {
-	db := newNewMemDB()
+	db := newMemDB()
 	db.Set([]byte{1}, make([]byte, 1))
 	db.Set([]byte{2}, make([]byte, 4096))
 	c.Assert(len(db.vlog.blocks), Equals, 2)
@@ -353,7 +352,7 @@ func (s *testMemDBSuite) TestKVLargeThanBlock(c *C) {
 }
 
 func (s *testMemDBSuite) TestEmptyDB(c *C) {
-	db := newNewMemDB()
+	db := newMemDB()
 	_, err := db.Get(context.TODO(), []byte{0})
 	c.Assert(err, NotNil)
 	it1, _ := db.Iter(nil, nil)
@@ -382,7 +381,7 @@ func (s *testMemDBSuite) TestReset(c *C) {
 }
 
 func (s *testMemDBSuite) TestInspectStage(c *C) {
-	db := newNewMemDB()
+	db := newMemDB()
 	h1 := s.deriveAndFill(0, 1000, 0, db)
 	h2 := s.deriveAndFill(500, 1000, 1, db)
 	for i := 500; i < 1500; i++ {
@@ -395,7 +394,7 @@ func (s *testMemDBSuite) TestInspectStage(c *C) {
 	}
 	h3 := s.deriveAndFill(1000, 2000, 3, db)
 
-	db.InspectStage(h3, func(key Key, _ NewKeyFlags, val []byte) {
+	db.InspectStage(h3, func(key Key, _ KeyFlags, val []byte) {
 		k := int(binary.BigEndian.Uint32(key))
 		v := int(binary.BigEndian.Uint32(val))
 
@@ -403,7 +402,7 @@ func (s *testMemDBSuite) TestInspectStage(c *C) {
 		c.Assert(v-k, DeepEquals, 3)
 	})
 
-	db.InspectStage(h2, func(key Key, _ NewKeyFlags, val []byte) {
+	db.InspectStage(h2, func(key Key, _ KeyFlags, val []byte) {
 		k := int(binary.BigEndian.Uint32(key))
 		v := int(binary.BigEndian.Uint32(val))
 
@@ -418,7 +417,7 @@ func (s *testMemDBSuite) TestInspectStage(c *C) {
 	db.Cleanup(h3)
 	db.Release(h2)
 
-	db.InspectStage(h1, func(key Key, _ NewKeyFlags, val []byte) {
+	db.InspectStage(h1, func(key Key, _ KeyFlags, val []byte) {
 		k := int(binary.BigEndian.Uint32(key))
 		v := int(binary.BigEndian.Uint32(val))
 
@@ -434,11 +433,11 @@ func (s *testMemDBSuite) TestInspectStage(c *C) {
 }
 
 func (s *testMemDBSuite) TestDirty(c *C) {
-	db := newNewMemDB()
+	db := newMemDB()
 	db.Set([]byte{1}, []byte{1})
 	c.Assert(db.Dirty(), IsTrue)
 
-	db = newNewMemDB()
+	db = newMemDB()
 	h := db.Staging()
 	db.Set([]byte{1}, []byte{1})
 	db.Cleanup(h)
@@ -450,14 +449,14 @@ func (s *testMemDBSuite) TestDirty(c *C) {
 	c.Assert(db.Dirty(), IsTrue)
 
 	// persistent flags will make memdb dirty.
-	db = newNewMemDB()
+	db = newMemDB()
 	h = db.Staging()
-	db.SetWithFlags([]byte{1}, []byte{1}, SetPessimisticLock)
+	db.SetWithFlags([]byte{1}, []byte{1}, SetKeyLocked)
 	db.Cleanup(h)
 	c.Assert(db.Dirty(), IsTrue)
 
 	// non-persistent flags will not make memdb dirty.
-	db = newNewMemDB()
+	db = newMemDB()
 	h = db.Staging()
 	db.SetWithFlags([]byte{1}, []byte{1}, SetPresumeKeyNotExists)
 	db.Cleanup(h)
@@ -466,13 +465,13 @@ func (s *testMemDBSuite) TestDirty(c *C) {
 
 func (s *testMemDBSuite) TestFlags(c *C) {
 	const cnt = 10000
-	db := newNewMemDB()
+	db := newMemDB()
 	h := db.Staging()
 	for i := uint32(0); i < cnt; i++ {
 		var buf [4]byte
 		binary.BigEndian.PutUint32(buf[:], i)
 		if i%2 == 0 {
-			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists, SetPessimisticLock)
+			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists, SetKeyLocked)
 		} else {
 			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists)
 		}
@@ -487,15 +486,15 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 		flags, err := db.GetFlags(buf[:])
 		if i%2 == 0 {
 			c.Assert(err, IsNil)
-			c.Assert(flags.HasPessimisticLock(), IsTrue)
+			c.Assert(flags.HasLocked(), IsTrue)
 			c.Assert(flags.HasPresumeKeyNotExists(), IsFalse)
 		} else {
 			c.Assert(err, NotNil)
 		}
 	}
 
-	c.Assert(db.Len(), Equals, 0)
-	c.Assert(db.Size(), Equals, 0)
+	c.Assert(db.Len(), Equals, 5000)
+	c.Assert(db.Size(), Equals, 20000)
 
 	it1, _ := db.Iter(nil, nil)
 	it := it1.(*memdbIterator)
@@ -512,7 +511,7 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 	for i := uint32(0); i < cnt; i++ {
 		var buf [4]byte
 		binary.BigEndian.PutUint32(buf[:], i)
-		db.UpdateFlags(buf[:], DelPessimisticLock)
+		db.UpdateFlags(buf[:], DelKeyLocked)
 	}
 	for i := uint32(0); i < cnt; i++ {
 		var buf [4]byte
@@ -523,7 +522,7 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 		// UpdateFlags will create missing node.
 		flags, err := db.GetFlags(buf[:])
 		c.Assert(err, IsNil)
-		c.Assert(flags.HasPessimisticLock(), IsFalse)
+		c.Assert(flags.HasLocked(), IsFalse)
 	}
 }
 
@@ -567,7 +566,7 @@ func (s *testMemDBSuite) checkConsist(c *C, p1 *memdb, p2 *leveldb.DB) {
 }
 
 func (s *testMemDBSuite) fillDB(cnt int) *memdb {
-	db := newNewMemDB()
+	db := newMemDB()
 	h := s.deriveAndFill(0, cnt, 0, db)
 	db.Release(h)
 	return db
@@ -764,7 +763,7 @@ func (s *testKVSuite) TestNewIteratorMin(c *C) {
 }
 
 func (s *testKVSuite) TestMemDBStaging(c *C) {
-	buffer := newNewMemDB()
+	buffer := newMemDB()
 	err := buffer.Set([]byte("x"), make([]byte, 2))
 	c.Assert(err, IsNil)
 
@@ -791,7 +790,7 @@ func (s *testKVSuite) TestMemDBStaging(c *C) {
 }
 
 func (s *testKVSuite) TestBufferLimit(c *C) {
-	buffer := newNewMemDB()
+	buffer := newMemDB()
 	buffer.bufferSizeLimit = 1000
 	buffer.entrySizeLimit = 500
 

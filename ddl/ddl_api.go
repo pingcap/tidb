@@ -19,6 +19,8 @@ package ddl
 
 import (
 	"bytes"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -34,6 +36,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	field_types "github.com/pingcap/parser/types"
+	"github.com/pingcap/pd/v4/server/schedule/placement"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -43,10 +46,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
@@ -56,6 +61,16 @@ import (
 )
 
 const expressionIndexPrefix = "_V$"
+
+const placementRuleDefaultGroupID = "TiDB_DDL"
+
+const (
+	placementRuleIndexDefault int = iota
+	placementRuleIndexDatabase
+	placementRuleIndexTable
+	placementRuleIndexPartition
+	placementRuleIndexIndex
+)
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
 	dbInfo := &model.DBInfo{Name: schema}
@@ -2265,6 +2280,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			isAlterTable := true
 			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
+		case ast.AlterTableAlterPartition:
+			err = d.AlterTablePartition(ctx, ident, spec)
 		case ast.AlterTablePartition:
 			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
 			err = errors.New("alter table partition is unsupported")
@@ -3452,6 +3469,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 			ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
 			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
 		)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, chs, coll); err != nil {
@@ -3997,6 +4017,9 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		ast.CharsetOpt{Chs: origCharset, Col: origCollate},
 		ast.CharsetOpt{Chs: dbInfo.Charset, Col: dbInfo.Collate},
 	)
+	if err != nil {
+		return doNothing, err
+	}
 
 	if err = checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origCollate, false); err != nil {
 		return doNothing, err
@@ -5145,6 +5168,199 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	}
 
 	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func checkPlacementLabelConstraint(label string) (placement.LabelConstraint, error) {
+	r := placement.LabelConstraint{}
+
+	if len(label) < 4 {
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
+	}
+
+	var op placement.LabelConstraintOp
+	switch label[0] {
+	case '+':
+		op = placement.In
+	case '-':
+		op = placement.NotIn
+	default:
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
+	}
+
+	kv := strings.Split(label[1:], "=")
+	if len(kv) != 2 {
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
+	}
+
+	key := strings.TrimSpace(kv[0])
+	if key == "" {
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
+	}
+
+	val := strings.TrimSpace(kv[1])
+	if val == "" {
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
+	}
+
+	r.Key = key
+	r.Op = op
+	r.Values = []string{val}
+	return r, nil
+}
+
+func checkPlacementLabelConstraints(rule *placement.Rule, labels []string) error {
+	for _, str := range labels {
+		label, err := checkPlacementLabelConstraint(strings.TrimSpace(str))
+		if err != nil {
+			return err
+		}
+		rule.LabelConstraints = append(rule.LabelConstraints, label)
+	}
+	return nil
+}
+
+func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule, cnstr string) ([]*placement.Rule, error) {
+	cnstr = strings.TrimSpace(cnstr)
+	var err error
+	if len(cnstr) > 0 && cnstr[0] == '[' {
+		constraints := []string{}
+
+		err = json.Unmarshal([]byte(cnstr), &constraints)
+		if err != nil {
+			return rules, err
+		}
+
+		err = checkPlacementLabelConstraints(rule, constraints)
+		if err != nil {
+			return rules, err
+		}
+
+		rules = append(rules, rule)
+	} else if len(cnstr) > 0 && cnstr[0] == '{' {
+		constraints := map[string]int{}
+		err = json.Unmarshal([]byte(cnstr), &constraints)
+		if err != nil {
+			return rules, err
+		}
+
+		for labels, cnt := range constraints {
+			newRule := &placement.Rule{}
+			*newRule = *rule
+			if cnt <= 0 {
+				err = errors.Errorf("count should be non-positive, but got %d", cnt)
+				break
+			}
+			// TODO: handle or remove rule.Count in later commits
+			rule.Count -= cnt
+			newRule.Count = cnt
+			err = checkPlacementLabelConstraints(newRule, strings.Split(strings.TrimSpace(labels), ","))
+			if err != nil {
+				break
+			}
+			rules = append(rules, newRule)
+		}
+	} else {
+		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
+	}
+	return rules, err
+}
+
+func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) {
+	rules := make([]*placement.Rule, 0, len(specs))
+
+	var err error
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+
+	for _, spec := range specs {
+		rule := &placement.Rule{
+			GroupID:  placementRuleDefaultGroupID,
+			Count:    int(spec.Replicas),
+			Override: true,
+		}
+
+		switch spec.Tp {
+		case ast.PlacementAdd:
+		default:
+			err = errors.Errorf("unknown action type: %d", spec.Tp)
+		}
+
+		if err == nil {
+			switch spec.Role {
+			case ast.PlacementRoleFollower:
+				rule.Role = placement.Follower
+			case ast.PlacementRoleLeader:
+				rule.Role = placement.Leader
+			case ast.PlacementRoleLearner:
+				rule.Role = placement.Learner
+			case ast.PlacementRoleVoter:
+				rule.Role = placement.Voter
+			default:
+				err = errors.Errorf("unknown role: %d", spec.Role)
+			}
+		}
+
+		if err == nil {
+			rules, err = checkPlacementSpecConstraint(rules, rule, spec.Constraints)
+		}
+
+		if err != nil {
+			sb.Reset()
+			if e := spec.Restore(restoreCtx); e != nil {
+				return rules, ErrInvalidPlacementSpec.GenWithStackByArgs("", err)
+			}
+			return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
+		}
+	}
+	return rules, nil
+}
+
+func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	meta := tb.Meta()
+	if meta.Partition == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	partitionID, err := tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	rules, err := checkPlacementSpecs(spec.PlacementSpecs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
+	for _, rule := range rules {
+		rule.Index = placementRuleIndexPartition
+		rule.StartKeyHex = startKey
+		rule.EndKeyHex = endKey
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterTableAlterPartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partitionID, rules},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

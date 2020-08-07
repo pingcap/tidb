@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/opentracing/opentracing-go"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -43,6 +44,7 @@ type nextPartitionForTableReader struct {
 
 func (n nextPartitionForTableReader) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
 	n.exec.table = tbl
+	n.exec.kvRanges = n.exec.kvRanges[:0]
 	return n.exec, nil
 }
 
@@ -66,6 +68,36 @@ func (n nextPartitionForIndexReader) nextPartition(ctx context.Context, tbl tabl
 	return exec, nil
 }
 
+type nextPartitionForIndexMerge struct {
+	exec *IndexMergeReaderExecutor
+}
+
+func (n nextPartitionForIndexMerge) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
+	exec := n.exec
+	exec.table = tbl
+	return exec, nil
+}
+
+type nextPartitionForUnionScan struct {
+	b     *executorBuilder
+	us    *plannercore.PhysicalUnionScan
+	child nextPartition
+}
+
+// nextPartition implements the nextPartition interface.
+// For union scan on partitioned table, the executor should be PartitionTable->UnionScan->TableReader rather than
+// UnionScan->PartitionTable->TableReader
+func (n nextPartitionForUnionScan) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
+	childExec, err := n.child.nextPartition(ctx, tbl)
+	if err != nil {
+		return nil, err
+	}
+
+	n.b.err = nil
+	ret := n.b.buildUnionScanFromReader(childExec, n.us)
+	return ret, n.b.err
+}
+
 func nextPartitionWithTrace(ctx context.Context, n nextPartition, tbl table.PhysicalTable) (Executor, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("nextPartition %d", tbl.GetPhysicalID()), opentracing.ChildOf(span.Context()))
@@ -73,6 +105,12 @@ func nextPartitionWithTrace(ctx context.Context, n nextPartition, tbl table.Phys
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	return n.nextPartition(ctx, tbl)
+}
+
+// Open implements the Executor interface.
+func (e *PartitionTableExecutor) Open(ctx context.Context) error {
+	// Open is actually done in the calling of Next()
+	return nil
 }
 
 // Next implements the Executor interface.

@@ -324,7 +324,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		txn, err := se.Txn(true)
 		c.Assert(err, IsNil)
 		txn.Set(kv.Key("AAA"), []byte("BBB"))
-		c.Assert(se.StmtCommit(nil), IsNil)
+		se.StmtCommit()
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
@@ -499,6 +499,9 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 	}
 	tk.MustExec("create table t (a int primary key, b int, index idx(a))")
 	tk.MustExec("create table tt (a int primary key) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
+
+	tk.MustExec("set @try_old_partition_implementation = 1")
+
 	s.testData.GetTestCases(c, &input, &output)
 	for i, ts := range input {
 		tk.MustExec("begin")
@@ -883,6 +886,7 @@ func (s *testPlanSuite) TestPushdownDistinctDisable(c *C) {
 			Result []string
 		}
 	)
+
 	s.testData.GetTestCases(c, &input, &output)
 	vars := []string{
 		fmt.Sprintf("set @@session.%s = 0", variable.TiDBOptDistinctAggPushDown),
@@ -942,6 +946,8 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 	tk.MustExec("set session sql_mode=''")
 	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggPartialConcurrency))
 	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggFinalConcurrency))
+
+	tk.MustExec("set @try_old_partition_implementation = 1")
 
 	for _, v := range vars {
 		tk.MustExec(v)
@@ -1510,6 +1516,8 @@ func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 
 	_, err = se.Execute(ctx, "insert into tt values (1, 1), (2, 2), (3, 4)")
 	c.Assert(err, IsNil)
+
+	tk.MustExec("set @try_old_partition_implementation = 1")
 
 	var input []string
 	var output []struct {

@@ -27,7 +27,7 @@ const (
 )
 
 func newMemDBForBench() *memdb {
-	db := newNewMemDB()
+	db := newMemDB()
 	db.bufferSizeLimit = math.MaxUint64
 	db.entrySizeLimit = math.MaxUint64
 	return db
@@ -139,7 +139,7 @@ func BenchmarkMemDbIter(b *testing.B) {
 
 func BenchmarkMemDbCreation(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		newNewMemDB()
+		newMemDB()
 	}
 	b.ReportAllocs()
 }
