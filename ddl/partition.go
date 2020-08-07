@@ -1470,7 +1470,7 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	}
 
 	for i, rule := range rules {
-		rule.ID = fmt.Sprintf("%d_%d_%d_%d_%d", job.SchemaID, tblInfo.ID, partitionID, job.ID, i)
+		rule.ID = fmt.Sprintf("%d_%d_%d_%d", tblInfo.ID, partitionID, job.ID, i)
 	}
 
 	ver, err := t.GetSchemaVersion()
