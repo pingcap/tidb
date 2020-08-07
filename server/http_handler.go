@@ -496,7 +496,7 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	m := make(map[int64]*types.FieldType, 1)
 	m[colID] = ft
 	loc := time.UTC
-	vals, err := tablecodec.DecodeRow(valData, m, loc)
+	vals, err := tablecodec.DecodeRowToDatumMap(valData, m, loc)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -1567,7 +1567,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 }
 
 func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) ([]map[string]string, error) {
-	rs, err := tablecodec.DecodeRow(bs, colMap, time.UTC)
+	rs, err := tablecodec.DecodeRowToDatumMap(bs, colMap, time.UTC)
 	var record []map[string]string
 	for _, col := range tb.Columns {
 		if c, ok := rs[col.ID]; ok {
@@ -1751,7 +1751,12 @@ func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	} else {
 		start = end.Add(-time.Minute * 10)
 	}
-	pb := executor.NewProfileBuilder(sctx, start, end)
+	valueTp := req.FormValue("type")
+	pb, err := executor.NewProfileBuilder(sctx, start, end, valueTp)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	err = pb.Collect()
 	if err != nil {
 		writeError(w, err)
