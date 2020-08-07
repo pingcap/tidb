@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/dumpling/v4/log"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/pingcap/failpoint"
 	pd "github.com/pingcap/pd/v4/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -133,20 +134,16 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 		conn.Close()
 	}
 
-	conCtrl, err := NewConsistencyController(conf, pool)
+	conCtrl, err := NewConsistencyController(ctx, conf, pool)
 	if err != nil {
 		return err
 	}
-	if err = conCtrl.Setup(); err != nil {
+	if err = conCtrl.Setup(ctx); err != nil {
 		return err
 	}
 
 	connectPool, err := newConnectionsPool(ctx, conf.Threads, pool)
 	if err != nil {
-		return err
-	}
-
-	if err = conCtrl.TearDown(); err != nil {
 		return err
 	}
 
@@ -164,6 +161,12 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 		}
 		connectPool.releaseConn(conn)
 	}
+
+	if err = conCtrl.TearDown(ctx); err != nil {
+		return err
+	}
+
+	failpoint.Inject("ConsistencyCheck", nil)
 
 	var writer Writer
 	switch strings.ToLower(conf.FileType) {
