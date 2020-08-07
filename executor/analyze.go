@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -672,7 +673,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
 			}
 		}
 		for _, r := range recordSets {
-			_ = r.Close()
+			terror.Call(r.Close)
 		}
 	}
 	totalSampSize := e.opts[ast.AnalyzeOptNumSamples]
