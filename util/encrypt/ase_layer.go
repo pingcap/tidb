@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package encrypt
 
 import (
@@ -20,7 +21,7 @@ import (
 	"sync"
 )
 
-// The AES block size in bytes.
+// BlockSize is the AES block size in bytes.
 const BlockSize = 16
 
 var blockBufPool = sync.Pool{
@@ -35,18 +36,16 @@ type Writer struct {
 	buf     []byte
 	counter uint64
 	nonce   uint64
-	key     []byte
+	block   cipher.Block
 }
 
 // NewWriter returns a new Writer which encrypt data using AES before writing to the underlying object.
 func NewWriter(w io.WriteCloser, key []byte, nonce uint64) (*Writer, error) {
-	k := len(key)
-	switch k {
-	default:
-		return nil, aes.KeySizeError(k)
-	case 16, 24, 32:
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
 	}
-	writer := &Writer{w: w, key: key, nonce: nonce}
+	writer := &Writer{w: w, nonce: nonce, block: block}
 	writer.buf = make([]byte, BlockSize)
 	return writer, nil
 }
@@ -86,18 +85,14 @@ func (w *Writer) Flush() error {
 	if w.n == 0 {
 		return nil
 	}
-	counter := blockBufPool.Get().([]byte)
-	defer blockBufPool.Put(counter)
+	counterBuf := blockBufPool.Get().([]byte)
+	defer blockBufPool.Put(counterBuf)
 	encryptTextText := blockBufPool.Get().([]byte)
 	defer blockBufPool.Put(encryptTextText)
 
-	binary.LittleEndian.PutUint64(counter, w.nonce)
-	binary.LittleEndian.PutUint64(counter[8:], w.counter)
-	block, err := aes.NewCipher(w.key)
-	if err != nil {
-		return err
-	}
-	blockMode := cipher.NewCTR(block, counter)
+	binary.LittleEndian.PutUint64(counterBuf, w.nonce)
+	binary.LittleEndian.PutUint64(counterBuf[8:], w.counter)
+	blockMode := cipher.NewCTR(w.block, counterBuf)
 	blockMode.XORKeyStream(encryptTextText[:w.n], w.buf[:w.n])
 
 	n, err := w.w.Write(encryptTextText[:w.n])
@@ -126,18 +121,16 @@ func (w *Writer) Close() (err error) {
 type Reader struct {
 	r     io.ReaderAt
 	nonce uint64
-	key   []byte
+	block cipher.Block
 }
 
 // NewReader returns a new Reader which can read from the input source after decrypting.
 func NewReader(r io.ReaderAt, key []byte, nonce uint64) (*Reader, error) {
-	k := len(key)
-	switch k {
-	default:
-		return nil, aes.KeySizeError(k)
-	case 16, 24, 32:
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
 	}
-	reader := &Reader{r: r, key: key, nonce: nonce}
+	reader := &Reader{r: r, nonce: nonce, block: block}
 	return reader, nil
 }
 
@@ -171,11 +164,7 @@ func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
 		cursor += int64(n)
 		binary.LittleEndian.PutUint64(counterBuf, r.nonce)
 		binary.LittleEndian.PutUint64(counterBuf[8:], counter)
-		block, err := aes.NewCipher(r.key)
-		if err != nil {
-			return nn, err
-		}
-		blockMode := cipher.NewCTR(block, counterBuf)
+		blockMode := cipher.NewCTR(r.block, counterBuf)
 		blockMode.XORKeyStream(decryptText, buf)
 
 		n1 := copy(p, decryptText[offset:n])
