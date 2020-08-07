@@ -352,7 +352,15 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(tbl.Count, Equals, int64(20))
+	var retryCount int
+	for retryCounts := 0; retryCounts < 5; retryCounts++ {
+		if tbl.Count > 0 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+		tbl = dom.StatsHandle().GetTableStats(tableInfo)
+	}
+	c.Assert(tbl.Count, Equals, int64(20), Commentf("Fetch count retry times: %d (max: 5)", retryCount))
 	for _, col := range tbl.Columns {
 		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &col.Histogram)
 		c.Assert(err, IsNil)
