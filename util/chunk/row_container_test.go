@@ -253,3 +253,38 @@ func (r *rowContainerTestSerialSuite) TestActionBlocked(c *check.C) {
 	ac.Action(tracker)
 	c.Assert(time.Since(starttime), check.GreaterEqual, 200*time.Millisecond)
 }
+
+func (r *rowContainerTestSuite) TestRowContainerResetAndAction(c *check.C) {
+	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	sz := 20
+	rc := NewRowContainer(fields, sz)
+
+	chk := NewChunkWithCapacity(fields, sz)
+	for i := 0; i < sz; i++ {
+		chk.AppendInt64(0, int64(i))
+	}
+	var tracker *memory.Tracker
+	var err error
+	tracker = rc.GetMemTracker()
+	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
+	tracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
+	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
+	err = rc.Add(chk)
+	c.Assert(err, check.IsNil)
+	c.Assert(rc.GetDiskTracker().BytesConsumed(), check.Equals, int64(0))
+	err = rc.Add(chk)
+	c.Assert(err, check.IsNil)
+	rc.actionSpill.WaitForTest()
+	c.Assert(rc.GetDiskTracker().BytesConsumed(), check.Greater, int64(0))
+	// Reset and Spill again.
+	err = rc.Reset()
+	c.Assert(err, check.IsNil)
+	c.Assert(rc.GetDiskTracker().BytesConsumed(), check.Equals, int64(0))
+	err = rc.Add(chk)
+	c.Assert(err, check.IsNil)
+	c.Assert(rc.GetDiskTracker().BytesConsumed(), check.Equals, int64(0))
+	err = rc.Add(chk)
+	c.Assert(err, check.IsNil)
+	rc.actionSpill.WaitForTest()
+	c.Assert(rc.GetDiskTracker().BytesConsumed(), check.Greater, int64(0))
+}
