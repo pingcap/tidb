@@ -84,16 +84,14 @@ func (a *PanicOnExceed) SetLogHook(hook func(uint64)) {
 // Action panics when memory usage exceeds memory quota.
 func (a *PanicOnExceed) Action(t *Tracker) {
 	a.mutex.Lock()
-	if a.acted {
-		a.mutex.Unlock()
-		return
+	defer a.mutex.Unlock()
+	if !a.acted {
+		a.acted = true
+		if a.logHook != nil {
+			a.logHook(a.ConnID)
+		}
+		panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
 	}
-	a.acted = true
-	a.mutex.Unlock()
-	if a.logHook != nil {
-		a.logHook(a.ConnID)
-	}
-	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
 }
 
 // SetFallback sets a fallback action.
