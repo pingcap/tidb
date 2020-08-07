@@ -239,7 +239,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 					_ = append(append(append(tmpArgs, refExprArr.Result()[0:idx]...), refExprArr.Result()[idx+1:]...), newFuncExpr)
 					_, newColl := DeriveCollationFromExprs(v.GetCtx(), append(v.GetArgs(), newFuncExpr)...)
 					if coll == newColl {
-						changed = canSubstituted(coll, newFuncExpr.GetType().Collate)
+						changed = checkCollationStrictness(coll, newFuncExpr.GetType().Collate)
 					}
 				}
 			}
@@ -255,7 +255,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 	return false, expr
 }
 
-func canSubstituted(coll, newFuncColl string) bool {
+func checkCollationStrictness(coll, newFuncColl string) bool {
 	collGroupID, ok1 := CollationStrictnessGroup[coll]
 	newFuncCollGroupID, ok2 := CollationStrictnessGroup[newFuncColl]
 
