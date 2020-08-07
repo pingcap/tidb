@@ -23,6 +23,12 @@
       "version": ""
     },
     {
+      "type": "panel",
+      "id": "heatmap",
+      "name": "Heatmap",
+      "version": ""
+    },
+    {
       "type": "datasource",
       "id": "prometheus",
       "name": "Prometheus",
@@ -50,7 +56,6 @@
   "panels": [
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -1042,7 +1047,6 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -1619,7 +1623,6 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
@@ -1915,9 +1918,9 @@
             },
             {
               "alias": "/limit/",
+              "color": "#C4162A",
               "fill": 0,
-              "nullPointMode": "null",
-              "color": "#C4162A"
+              "nullPointMode": "null"
             }
           ],
           "spaceLength": 10,
@@ -1934,9 +1937,9 @@
               "step": 40
             },
             {
-              "refId": "B",
               "expr": "tidb_server_maxprocs{job=\"tidb\"}",
-              "legendFormat": "limit-{{instance}}"
+              "legendFormat": "limit-{{instance}}",
+              "refId": "B"
             }
           ],
           "thresholds": [],
@@ -3530,6 +3533,13 @@
           "renderer": "flot",
           "repeat": "instance",
           "repeatDirection": "h",
+          "scopedVars": {
+            "instance": {
+              "selected": false,
+              "text": "172.16.5.34:30080",
+              "value": "172.16.5.34:30080"
+            }
+          },
           "seriesOverrides": [
             {
               "alias": "alloc-from-os",
@@ -3665,12 +3675,11 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 3
+        "y": 4
       },
       "id": 141,
       "panels": [
@@ -3690,7 +3699,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 4
+            "y": 5
           },
           "id": 69,
           "legend": {
@@ -3784,7 +3793,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 4
+            "y": 5
           },
           "id": 72,
           "legend": {
@@ -3878,214 +3887,135 @@
           }
         },
         {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
+          "cards": {
+            "cardPadding": null,
+            "cardRound": null
+          },
+          "color": {
+            "cardColor": "#b4ff00",
+            "colorScale": "sqrt",
+            "colorScheme": "interpolateSpectral",
+            "exponent": 0.5,
+            "mode": "spectrum"
+          },
+          "dataFormat": "timeseries",
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB statements numbers within one transaction.",
-          "fill": 1,
-          "fillGradient": 0,
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 4
+            "y": 5
           },
+          "heatmap": {},
+          "hideZeroBuckets": true,
+          "highlightCards": true,
           "id": 74,
           "legend": {
-            "alignAsTable": true,
-            "avg": false,
-            "current": false,
-            "max": false,
-            "min": false,
-            "rightSide": true,
-            "show": true,
-            "total": false,
-            "values": false
+            "show": false
           },
-          "lines": true,
-          "linewidth": 1,
           "links": [],
-          "nullPointMode": "null",
-          "options": {
-            "dataLinks": []
-          },
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
+          "reverseYBuckets": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_transaction_statement_num_bucket[30s])) by (le, txn_mode))",
+              "expr": "rate(tidb_session_transaction_statement_num_bucket[30s])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "99-{{txn_mode}}",
+              "legendFormat": "",
               "refId": "A"
-            },
-            {
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_session_transaction_statement_num_bucket[30s])) by (le, txn_mode))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "80-{{txn_mode}}",
-              "refId": "B"
             }
           ],
-          "thresholds": [],
           "timeFrom": null,
-          "timeRegions": [],
           "timeShift": null,
           "title": "Transaction Statement Num",
           "tooltip": {
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
             "show": true,
-            "values": []
+            "showHistogram": false
           },
-          "yaxes": [
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
+          "type": "heatmap",
+          "xAxis": {
               "show": true
             },
-            {
+          "xBucketNumber": null,
+          "xBucketSize": null,
+          "yAxis": {
+            "decimals": null,
               "format": "short",
-              "label": null,
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
+            "show": true,
+            "splitFactor": null
+        },
+          "yBucketBound": "auto",
+          "yBucketNumber": null,
+          "yBucketSize": null
         },
         {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
+          "cards": {
+            "cardPadding": null,
+            "cardRound": null
+          },
+          "color": {
+            "cardColor": "#b4ff00",
+            "colorScale": "sqrt",
+            "colorScheme": "interpolateSpectral",
+            "exponent": 0.5,
+            "mode": "spectrum"
+          },
+          "dataFormat": "timeseries",
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB transaction retry histogram bucket statistics",
-          "editable": true,
-          "error": false,
-          "fill": 1,
-          "fillGradient": 0,
-          "grid": {},
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 11
+            "y": 12
           },
+          "heatmap": {},
+          "hideZeroBuckets": true,
+          "highlightCards": true,
           "id": 67,
           "legend": {
-            "alignAsTable": true,
-            "avg": false,
-            "current": false,
-            "max": false,
-            "min": false,
-            "rightSide": true,
-            "show": true,
-            "total": false,
-            "values": false
+            "show": false
           },
-          "lines": true,
-          "linewidth": 1,
           "links": [],
-          "nullPointMode": "null as zero",
-          "options": {
-            "dataLinks": []
-          },
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
+          "reverseYBuckets": false,
           "targets": [
             {
-              "expr": "histogram_quantile(1.0, sum(rate(tidb_session_retry_num_bucket[30s])) by (le))",
+              "expr": "rate(tidb_session_retry_num_bucket[30s])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "100",
+              "legendFormat": "",
               "refId": "A",
               "step": 10
-            },
-            {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_retry_num_bucket[30s])) by (le))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "99",
-              "refId": "B"
-            },
-            {
-              "expr": "histogram_quantile(0.90, sum(rate(tidb_session_retry_num_bucket[30s])) by (le))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "90",
-              "refId": "C"
             }
           ],
-          "thresholds": [],
           "timeFrom": null,
-          "timeRegions": [],
           "timeShift": null,
           "title": "Transaction Retry Num",
           "tooltip": {
-            "msResolution": false,
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
             "show": true,
-            "values": []
+            "showHistogram": false
           },
-          "yaxes": [
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": "0",
+          "type": "heatmap",
+          "xAxis": {
               "show": true
             },
-            {
+          "xBucketNumber": null,
+          "xBucketSize": null,
+          "yAxis": {
+            "decimals": null,
               "format": "short",
-              "label": null,
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
+            "show": true,
+            "splitFactor": null
+        },
+          "yBucketBound": "auto",
+          "yBucketNumber": null,
+          "yBucketSize": null
         },
         {
           "aliasColors": {},
@@ -4103,7 +4033,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 11
+            "y": 12
           },
           "id": 36,
           "legend": {
@@ -4195,7 +4125,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 11
+            "y": 12
           },
           "id": 196,
           "legend": {
@@ -4304,7 +4234,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 18
+            "y": 19
           },
           "id": 4,
           "legend": {
@@ -4398,7 +4328,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 18
+            "y": 19
           },
           "id": 193,
           "legend": {
@@ -4492,101 +4422,70 @@
           }
         },
         {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
+          "cards": {
+            "cardPadding": null,
+            "cardRound": null
+          },
+          "color": {
+            "cardColor": "#b4ff00",
+            "colorScale": "sqrt",
+            "colorScheme": "interpolateSpectral",
+            "exponent": 0.5,
+            "mode": "spectrum"
+          },
+          "dataFormat": "timeseries",
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "regions transaction operates on count",
-          "editable": true,
-          "error": false,
-          "fill": 1,
-          "fillGradient": 0,
-          "grid": {},
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 18
+            "y": 19
           },
+          "heatmap": {},
+          "hideZeroBuckets": true,
+          "highlightCards": true,
           "id": 44,
           "legend": {
-            "alignAsTable": true,
-            "avg": false,
-            "current": false,
-            "max": true,
-            "min": false,
-            "rightSide": true,
-            "show": true,
-            "total": false,
-            "values": true
+            "show": false
           },
-          "lines": true,
-          "linewidth": 2,
           "links": [],
-          "nullPointMode": "null as zero",
-          "options": {
-            "dataLinks": []
-          },
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
+          "reverseYBuckets": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.90, sum(rate(tidb_tikvclient_txn_regions_num_bucket[1m])) by (le, instance))",
+              "expr": "rate(tidb_tikvclient_txn_regions_num_sum[1m])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{instance}}",
+              "legendFormat": "",
               "refId": "A",
               "step": 40
             }
           ],
-          "thresholds": [],
           "timeFrom": null,
-          "timeRegions": [],
           "timeShift": null,
           "title": "Transaction Regions Num 90",
           "tooltip": {
-            "msResolution": true,
-            "shared": true,
-            "sort": 0,
-            "value_type": "cumulative"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
             "show": true,
-            "values": []
+            "showHistogram": false
           },
-          "yaxes": [
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": "0",
+          "type": "heatmap",
+          "xAxis": {
               "show": true
             },
-            {
+          "xBucketNumber": null,
+          "xBucketSize": null,
+          "yAxis": {
+            "decimals": null,
               "format": "short",
-              "label": null,
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
+            "show": true,
+            "splitFactor": null
+        },
+          "yBucketBound": "auto",
+          "yBucketNumber": null,
+          "yBucketSize": null
         },
         {
           "aliasColors": {},
@@ -4604,7 +4503,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 25
+            "y": 26
           },
           "id": 33,
           "legend": {
@@ -4631,16 +4530,28 @@
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
-          "seriesOverrides": [],
+          "seriesOverrides": [
+            {
+              "alias": "172.16.5.34:30080-total",
+              "yaxis": 2
+            }
+          ],
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(1, sum(rate(tidb_tikvclient_txn_write_kv_num_bucket[1m])) by (le, instance))",
+              "expr": "rate(tidb_tikvclient_txn_write_kv_num_sum[30s])",
               "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "100 {{instance}}",
+              "intervalFactor": 1,
+              "legendFormat": "{{instance}}-rate",
+              "refId": "A"
+            },
+            {
+              "expr": "tidb_tikvclient_txn_write_kv_num_sum",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "{{instance}}-total",
               "refId": "B",
               "step": 40
             }
@@ -4649,7 +4560,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Transaction Max Write KV Num",
+          "title": "Transaction Write KV Num",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -4703,7 +4614,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 25
+            "y": 26
           },
           "id": 34,
           "legend": {
@@ -4730,25 +4641,37 @@
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
-          "seriesOverrides": [],
+          "seriesOverrides": [
+            {
+              "alias": "172.16.5.34:30080-total",
+              "yaxis": 2
+            }
+          ],
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(1, sum(rate(tidb_tikvclient_txn_write_size_bytes_bucket[1m])) by (le, instance))",
+              "expr": "rate(tidb_tikvclient_txn_write_size_bytes_sum[30s])",
               "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{instance}}",
+              "intervalFactor": 1,
+              "legendFormat": "{{instance}}-rate",
               "refId": "A",
               "step": 40
+            },
+            {
+              "expr": "tidb_tikvclient_txn_write_size_bytes_sum",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "{{instance}}-total",
+              "refId": "B"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Transaction Max Write Size Bytes",
+          "title": "Transaction Write Size Bytes",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -4765,20 +4688,20 @@
           },
           "yaxes": [
             {
-              "format": "bytes",
+              "format": "Bps",
               "label": null,
-              "logBase": 2,
+              "logBase": 1,
               "max": null,
               "min": null,
               "show": true
             },
             {
-              "format": "short",
+              "format": "Bps",
               "label": null,
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": false
+              "show": true
             }
           ],
           "yaxis": {
@@ -4787,115 +4710,70 @@
           }
         },
         {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
+          "cards": {
+            "cardPadding": null,
+            "cardRound": null
+          },
+          "color": {
+            "cardColor": "#b4ff00",
+            "colorScale": "sqrt",
+            "colorScheme": "interpolateSpectral",
+            "exponent": 0.5,
+            "mode": "spectrum"
+          },
+          "dataFormat": "timeseries",
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "The number of statement acquires locks.",
-          "editable": true,
-          "error": false,
-          "fill": 1,
-          "fillGradient": 0,
-          "grid": {},
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 25
+            "y": 26
           },
+          "heatmap": {},
+          "hideZeroBuckets": true,
+          "highlightCards": true,
           "id": 201,
           "legend": {
-            "alignAsTable": true,
-            "avg": false,
-            "current": false,
-            "max": false,
-            "min": false,
-            "rightSide": true,
-            "show": true,
-            "total": false,
-            "values": false
+            "show": false
           },
-          "lines": true,
-          "linewidth": 1,
           "links": [],
-          "nullPointMode": "null as zero",
-          "options": {
-            "dataLinks": []
-          },
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
+          "reverseYBuckets": false,
           "targets": [
             {
-              "expr": "histogram_quantile(1.0, sum(rate(tidb_session_statement_lock_keys_count_bucket[30s])) by (le))",
+              "expr": "rate(tidb_session_statement_lock_keys_count_bucket[30s])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "100",
+              "legendFormat": "",
               "refId": "A",
               "step": 10
-            },
-            {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_statement_lock_keys_count_bucket[30s])) by (le))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "99",
-              "refId": "B"
-            },
-            {
-              "expr": "histogram_quantile(0.90, sum(rate(tidb_session_statement_lock_keys_count_bucket[30s])) by (le))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "90",
-              "refId": "C"
             }
           ],
-          "thresholds": [],
           "timeFrom": null,
-          "timeRegions": [],
           "timeShift": null,
           "title": "Statement Lock Keys",
           "tooltip": {
-            "msResolution": false,
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
             "show": true,
-            "values": []
+            "showHistogram": false
           },
-          "yaxes": [
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": "0",
+          "type": "heatmap",
+          "xAxis": {
               "show": true
             },
-            {
+          "xBucketNumber": null,
+          "xBucketSize": null,
+          "yAxis": {
+            "decimals": null,
               "format": "short",
-              "label": null,
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
+            "show": true,
+            "splitFactor": null
+        },
+          "yBucketBound": "auto",
+          "yBucketNumber": null,
+          "yBucketSize": null
         },
         {
           "aliasColors": {},
@@ -4913,7 +4791,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 32
+            "y": 33
           },
           "id": 194,
           "legend": {
@@ -4989,7 +4867,7 @@
           },
           "yaxes": [
             {
-              "format": "short",
+              "format": "s",
               "label": null,
               "logBase": 1,
               "max": null,
@@ -5026,7 +4904,7 @@
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 32
+            "y": 33
           },
           "id": 195,
           "legend": {
@@ -5122,7 +5000,7 @@
             "h": 7,
             "w": 8,
             "x": 16,
-            "y": 32
+            "y": 33
           },
           "id": 83,
           "legend": {
@@ -5221,7 +5099,7 @@
             "h": 7,
             "w": 8,
             "x": 0,
-            "y": 39
+            "y": 40
           },
           "id": 197,
           "legend": {
@@ -5254,25 +5132,25 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_tikvclient_pessimistic_lock_keys_duration_bucket[1m])) by (le, type))",
+              "expr": "histogram_quantile(0.80, sum(rate(tidb_tikvclient_pessimistic_lock_keys_duration_bucket[1m])) by (le))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "80-{{type}}",
+              "legendFormat": "80",
               "refId": "B",
               "step": 40
             },
             {
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_tikvclient_pessimistic_lock_keys_duration_bucket[1m])) by (le, type))",
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_tikvclient_pessimistic_lock_keys_duration_bucket[1m])) by (le))",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "95-{{type}}",
+              "legendFormat": "95",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_pessimistic_lock_keys_duration_bucket[1m])) by (le, type))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_tikvclient_pessimistic_lock_keys_duration_bucket[1m])) by (le))",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "99-{{type}}",
+              "legendFormat": "99",
               "refId": "C"
             }
           ],
@@ -5297,7 +5175,7 @@
           },
           "yaxes": [
             {
-              "format": "short",
+              "format": "s",
               "label": null,
               "logBase": 1,
               "max": null,
@@ -5310,7 +5188,7 @@
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": true
+              "show": false
             }
           ],
           "yaxis": {
@@ -5319,115 +5197,70 @@
           }
         },
         {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
+          "cards": {
+            "cardPadding": null,
+            "cardRound": null
+          },
+          "color": {
+            "cardColor": "#b4ff00",
+            "colorScale": "sqrt",
+            "colorScheme": "interpolateSpectral",
+            "exponent": 0.5,
+            "mode": "spectrum"
+          },
+          "dataFormat": "timeseries",
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "When the pessimistic statement is executed, the lock fails and it can retry automatically. The number of times the statement is retried is recorded.",
-          "editable": true,
-          "error": false,
-          "fill": 1,
-          "fillGradient": 0,
-          "grid": {},
           "gridPos": {
             "h": 7,
             "w": 8,
             "x": 8,
-            "y": 39
+            "y": 40
           },
+          "heatmap": {},
+          "hideZeroBuckets": true,
+          "highlightCards": true,
           "id": 199,
           "legend": {
-            "alignAsTable": true,
-            "avg": false,
-            "current": false,
-            "max": false,
-            "min": false,
-            "rightSide": true,
-            "show": true,
-            "total": false,
-            "values": false
+            "show": false
           },
-          "lines": true,
-          "linewidth": 1,
           "links": [],
-          "nullPointMode": "null as zero",
-          "options": {
-            "dataLinks": []
-          },
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
+          "reverseYBuckets": false,
           "targets": [
             {
-              "expr": "histogram_quantile(1.0, sum(rate(tidb_session_statement_pessimistic_retry_count_bucket[30s])) by (le))",
+              "expr": "rate(tidb_session_statement_pessimistic_retry_count_bucket[30s])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "100",
+              "legendFormat": "",
               "refId": "A",
               "step": 10
-            },
-            {
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_session_statement_pessimistic_retry_count_bucket[30s])) by (le))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "99",
-              "refId": "B"
-            },
-            {
-              "expr": "histogram_quantile(0.90, sum(rate(tidb_session_statement_pessimistic_retry_count_bucket[30s])) by (le))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "90",
-              "refId": "C"
             }
           ],
-          "thresholds": [],
           "timeFrom": null,
-          "timeRegions": [],
           "timeShift": null,
           "title": "Pessimistic Statement Retry OPS",
           "tooltip": {
-            "msResolution": false,
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
             "show": true,
-            "values": []
+            "showHistogram": false
           },
-          "yaxes": [
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": "0",
+          "type": "heatmap",
+          "xAxis": {
               "show": true
             },
-            {
+          "xBucketNumber": null,
+          "xBucketSize": null,
+          "yAxis": {
+            "decimals": null,
               "format": "short",
-              "label": null,
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
+            "show": true,
+            "splitFactor": null
+          },
+          "yBucketBound": "auto",
+          "yBucketNumber": null,
+          "yBucketSize": null
         }
       ],
       "repeat": null,
@@ -5436,12 +5269,11 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 4
+        "y": 5
       },
       "id": 142,
       "panels": [
@@ -5951,12 +5783,11 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 6
       },
       "id": 143,
       "panels": [
@@ -6669,12 +6500,11 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 6
+        "y": 7
       },
       "id": 144,
       "panels": [
@@ -7188,12 +7018,11 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 7
+        "y": 8
       },
       "id": 145,
       "panels": [
@@ -7487,12 +7316,11 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 8
+        "y": 9
       },
       "id": 147,
       "panels": [
@@ -8208,12 +8036,11 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 10
       },
       "id": 148,
       "panels": [
@@ -8613,12 +8440,11 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 11
       },
       "id": 149,
       "panels": [
@@ -9533,12 +9359,11 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 11
+        "y": 12
       },
       "id": 150,
       "panels": [
@@ -10354,12 +10179,11 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 13
       },
       "id": 161,
       "panels": [
@@ -10635,12 +10459,11 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 13
+        "y": 14
       },
       "id": 151,
       "panels": [
@@ -11009,12 +10832,11 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 15
       },
       "id": 152,
       "panels": [
@@ -11828,12 +11650,11 @@
     },
     {
       "collapsed": true,
-      "datasource": null,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 16
       },
       "id": 178,
       "panels": [
@@ -12315,10 +12136,7 @@
     "list": [
       {
         "allValue": null,
-        "current": {
-          "text": "All",
-          "value": "$__all"
-        },
+        "current": {},
         "datasource": "${DS_TEST-CLUSTER}",
         "definition": "label_values(process_start_time_seconds{job=\"tidb\"}, instance)",
         "hide": 2,
