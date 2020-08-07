@@ -5287,14 +5287,6 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 		rule.Count = int(spec.Replicas)
 
 		if err == nil {
-			switch spec.Tp {
-			case ast.PlacementAdd:
-			default:
-				err = errors.Errorf("unknown action type: %d", spec.Tp)
-			}
-		}
-
-		if err == nil {
 			switch spec.Role {
 			case ast.PlacementRoleFollower:
 				rule.Role = placement.Follower
@@ -5306,6 +5298,26 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 				rule.Role = placement.Voter
 			default:
 				err = errors.Errorf("unknown role: %d", spec.Role)
+			}
+		}
+
+		if err == nil {
+			switch spec.Tp {
+			case ast.PlacementAdd:
+			case ast.PlacementAlter:
+				// alter will overwrite all things
+				// drop all rules that will be overrided
+				newRules := rules[0:]
+
+				for _, r := range rules {
+					if r.Role != rule.Role {
+						newRules = append(newRules, r)
+					}
+				}
+
+				rules = newRules
+			default:
+				err = errors.Errorf("unknown action type: %d", spec.Tp)
 			}
 		}
 
