@@ -1383,22 +1383,12 @@ PlacementRole:
 PlacementCount:
 	"REPLICAS" "=" LengthNum
 	{
-		cnt := $3.(uint64)
-		if cnt <= 0 {
-			yylex.AppendError(yylex.Errorf("Get a non-positive count for placement rules: %s", cnt))
-			return 1
-		}
-		$$ = cnt
+		$$ = $3
 	}
 
 PlacementLabelConstraints:
 	"CONSTRAINTS" "=" stringLit
 	{
-		// [+|-]x=
-		if len($3) < 3 {
-			yylex.AppendError(yylex.Errorf("Get empty/invalid label constraints: %s", $3))
-			return 1
-		}
 		$$ = $3
 	}
 
@@ -1453,7 +1443,7 @@ PlacementOptions:
 |	PlacementOptions PlacementRole
 	{
 		spec := $1.(*ast.PlacementSpec)
-		if spec.Role != 0 {
+		if spec.Role != ast.PlacementRoleNone {
 			yylex.AppendError(yylex.Errorf("Duplicate placement option ROLE"))
 			return 1
 		}
