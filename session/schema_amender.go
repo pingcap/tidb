@@ -475,9 +475,7 @@ func (s *SchemaAmender) getAmendableKeys(commitMutations tikv.CommitterMutations
 			addKeys = append(addKeys, byteKey)
 		} else if pb.Op_Del == keyOp {
 			removeKeys = append(removeKeys, byteKey)
-		} else {
-			// Do nothing.
-		}
+		} // else Do nothing.
 	}
 	return addKeys, removeKeys
 }
