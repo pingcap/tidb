@@ -99,17 +99,6 @@ type hashRowContainer struct {
 
 func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext) *hashRowContainer {
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
-	// The estCount from cost model is not quite accurate and we need
-	// to avoid that it's too large to consume redundant memory.
-	// So I invent a rough protection, firstly divide it by estCountDivisor
-	// then set a maximum threshold and a minimum threshold.
-	estCount /= estCountDivisor
-	if estCount > maxChunkSize*estCountMaxFactor {
-		estCount = maxChunkSize * estCountMaxFactor
-	}
-	if estCount < maxChunkSize*estCountMinFactor {
-		estCount = 0
-	}
 	rc := chunk.NewRowContainer(hCtx.allTypes, maxChunkSize)
 	c := &hashRowContainer{
 		sc:           sCtx.GetSessionVars().StmtCtx,
@@ -117,7 +106,6 @@ func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContex
 		hashTable:    newConcurrentMapHashTable(),
 		rowContainer: rc,
 	}
-
 	return c
 }
 
