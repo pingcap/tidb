@@ -727,7 +727,12 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		cst: t.cst,
 	}
 	if t.idxMergePartPlans != nil {
-		p := PhysicalIndexMergeReader{partialPlans: t.idxMergePartPlans, tablePlan: t.tablePlan}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
+		p := PhysicalIndexMergeReader{
+			partialPlans: t.idxMergePartPlans,
+			tablePlan:    t.tablePlan,
+		}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
+		p.PartitionTable.PruningConds = t.partitionTable.pruningConds
+		p.PartitionTable.PartitionNames = t.partitionTable.partitionNames
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
 		return newTask

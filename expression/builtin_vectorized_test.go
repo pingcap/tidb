@@ -784,8 +784,6 @@ func (s *testEvaluatorSuite) TestFloat32ColVec(c *C) {
 		i++
 	}
 
-	// set an empty Sel
-	sel = sel[:0]
 	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
 }
 
