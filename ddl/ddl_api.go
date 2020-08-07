@@ -5245,6 +5245,7 @@ func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 			return rules, err
 		}
 
+		rulesLen := len(rules)
 		for labels, cnt := range constraints {
 			newRule := &placement.RuleOp{}
 			*newRule = *rule
@@ -5252,8 +5253,12 @@ func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 				err = errors.Errorf("count should be positive, but got %d", cnt)
 				break
 			}
-			// TODO: handle or remove rule.Count in later commits
 			rule.Count -= cnt
+			if rule.Count < 0 {
+				rules = rules[:rulesLen]
+				err = errors.Errorf("COUNT should be larger or equal to the number of total replicas, but got %d", rule.Count)
+				break
+			}
 			newRule.Count = cnt
 			err = checkPlacementLabelConstraints(newRule, strings.Split(strings.TrimSpace(labels), ","))
 			if err != nil {
@@ -5261,13 +5266,17 @@ func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 			}
 			rules = append(rules, newRule)
 		}
+
+		if rule.Count > 0 {
+			rules = append(rules, rule)
+		}
 	} else {
 		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
 	}
 	return rules, err
 }
 
-func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error) {
+func checkPlacementSpecs(specs []*ast.PlacementSpec, tableID, partitionID int64) ([]*placement.RuleOp, error) {
 	rules := make([]*placement.RuleOp, 0, len(specs))
 
 	var err error
@@ -5277,8 +5286,10 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error
 
 	for _, spec := range specs {
 		rule := &placement.RuleOp{
-			GroupID:  placementRuleDefaultGroupID,
-			Override: true,
+			Rule: &placement.Rule{
+				GroupID:  placementRuleDefaultGroupID,
+				Override: true,
+			},
 		}
 
 		if spec.Replicas <= 0 {
@@ -5304,7 +5315,10 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error
 		if err == nil {
 			switch spec.Tp {
 			case ast.PlacementAdd:
+				rule.Action = placement.RuleOpAdd
 			case ast.PlacementAlter:
+				rule.Action = placement.RuleOpAdd
+
 				// alter will overwrite all things
 				// drop all rules that will be overrided
 				newRules := rules[0:]
@@ -5316,6 +5330,17 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error
 				}
 
 				rules = newRules
+
+				// delete previous definitions
+				rules = append(rules, &placement.RuleOp{
+					Action:           placement.RuleOpDel,
+					DeleteByIDPrefix: true,
+					Rule: &placement.Rule{
+						GroupID: placementRuleDefaultGroupID,
+						// ROLE is useless for PD, prevent two alter statements from overriding each other
+						Role: rule.Role,
+					},
+				})
 			default:
 				err = errors.Errorf("unknown action type: %d", spec.Tp)
 			}
@@ -5352,7 +5377,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	rules, err := checkPlacementSpecs(spec.PlacementSpecs)
+	rules, err := checkPlacementSpecs(spec.PlacementSpecs, meta.ID, partitionID)
 	if err != nil {
 		return errors.Trace(err)
 	}
