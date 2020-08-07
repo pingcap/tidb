@@ -128,8 +128,8 @@ func (eqh *Handle) oomKillerAlert() {
 	}
 
 	var memoryUsage uint64
+	instanceStats := &runtime.MemStats{}
 	if oomRecordStatus == 1 {
-		instanceStats := &runtime.MemStats{}
 		runtime.ReadMemStats(instanceStats)
 		memoryUsage = instanceStats.HeapAlloc
 	} else {
@@ -140,7 +140,8 @@ func (eqh *Handle) oomKillerAlert() {
 		}
 	}
 
-	if float64(memoryUsage) > float64(serverMemoryQuota)*config.GetGlobalConfig().Performance.ServerMemoryAlert {
+	if float64(memoryUsage) > float64(serverMemoryQuota)*config.GetGlobalConfig().Performance.ServerMemoryAlert ||
+		(oomRecordStatus == 1 && instanceStats.NextGC > serverMemoryQuota) {
 		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
 		// If the memory is still exceeded, only records once.
 		if time.Since(lastOOMtime) > 10*time.Second {
