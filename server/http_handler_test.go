@@ -1137,11 +1137,7 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 
 	cfg := config.GetGlobalConfig()
 	c.Assert(info.IsOwner, IsTrue)
-	if len(cfg.AdvertiseAddress) == 0 || cfg.AdvertiseAddress == "0.0.0.0" {
-		c.Assert(info.IP, Equals, util.GetLocalIP())
-	} else {
-		c.Assert(info.IP, Equals, cfg.AdvertiseAddress)
-	}
+	c.Assert(info.IP, Equals, util.GetLocalIP())
 	c.Assert(info.StatusPort, Equals, cfg.Status.StatusPort)
 	c.Assert(info.Lease, Equals, cfg.Lease)
 	c.Assert(info.Version, Equals, mysql.ServerVersion)
@@ -1179,11 +1175,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestAllServerInfo(c *C) {
 	c.Assert(ok, Equals, true)
 
 	cfg := config.GetGlobalConfig()
-	if len(cfg.AdvertiseAddress) == 0 || cfg.AdvertiseAddress == "0.0.0.0" {
-		c.Assert(serverInfo.IP, Equals, util.GetLocalIP())
-	} else {
-		c.Assert(serverInfo.IP, Equals, cfg.AdvertiseAddress)
-	}
+	c.Assert(serverInfo.IP, Equals, util.GetLocalIP())
 	c.Assert(serverInfo.StatusPort, Equals, cfg.Status.StatusPort)
 	c.Assert(serverInfo.Lease, Equals, cfg.Lease)
 	c.Assert(serverInfo.Version, Equals, mysql.ServerVersion)
