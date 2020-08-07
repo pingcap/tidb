@@ -308,11 +308,6 @@ func keyNeedToLock(k, v []byte) bool {
 		// meta key always need to lock.
 		return true
 	}
-	isDelete := len(v) == 0
-	if isDelete {
-		// only need to delete row key.
-		return k[10] == 'r'
-	}
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
 	}
