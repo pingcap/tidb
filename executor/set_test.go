@@ -428,6 +428,13 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 	_, err = tk.Exec(`select @@session.tidb_slow_log_masking;`)
 	c.Assert(err, NotNil)
+
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
+	c.Assert(tk.ExecToErr("set @@session.tidb_dml_batch_size = -120"), NotNil)
+	c.Assert(tk.ExecToErr("set @@global.tidb_dml_batch_size = 120"), NotNil)
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
