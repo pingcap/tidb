@@ -89,6 +89,7 @@ type RuleOp struct {
 	DeleteByIDPrefix bool       `json:"delete_by_id_prefix"`
 }
 
+// Clone is used to clone a RuleOp that is safe to modify, without affecting the old RuleOp
 func (op *RuleOp) Clone() *RuleOp {
 	newOp := &RuleOp{}
 	*newOp = *op

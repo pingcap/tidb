@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/errors"
 )
 
-func CheckPlacementLabelConstraint(label string) (LabelConstraint, error) {
+func checkLabelConstraint(label string) (LabelConstraint, error) {
 	r := LabelConstraint{}
 
 	if len(label) < 4 {
@@ -57,9 +57,10 @@ func CheckPlacementLabelConstraint(label string) (LabelConstraint, error) {
 	return r, nil
 }
 
-func CheckPlacementLabelConstraints(rule *RuleOp, labels []string) error {
+// CheckLabelConstraints will check labels, and build LabelConstraints for rule
+func CheckLabelConstraints(rule *RuleOp, labels []string) error {
 	for _, str := range labels {
-		label, err := CheckPlacementLabelConstraint(strings.TrimSpace(str))
+		label, err := checkLabelConstraint(strings.TrimSpace(str))
 		if err != nil {
 			return err
 		}
