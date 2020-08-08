@@ -5221,7 +5221,7 @@ func checkPlacementLabelConstraints(rule *placement.RuleOp, labels []string) err
 	return nil
 }
 
-func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.RuleOp, replicas uint64, cnstr string) ([]*placement.RuleOp, error) {
+func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.RuleOp, replicas uint64, cnstr string) ([]*placement.RuleOp, error) {
 	cnstr = strings.TrimSpace(cnstr)
 	var err error
 	if len(cnstr) > 0 && cnstr[0] == '[' {
@@ -5294,7 +5294,7 @@ func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 	return rules, err
 }
 
-func checkPlacementSpecs(specs []*ast.PlacementSpec, tableID, partitionID int64) ([]*placement.RuleOp, error) {
+func buildPlacementSpecs(specs []*ast.PlacementSpec, tableID, partitionID int64) ([]*placement.RuleOp, error) {
 	rules := make([]*placement.RuleOp, 0, len(specs))
 
 	var err error
@@ -5360,7 +5360,7 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec, tableID, partitionID int64)
 		}
 
 		if err == nil {
-			rules, err = checkPlacementSpecConstraint(rules, rule, spec.Replicas, spec.Constraints)
+			rules, err = buildPlacementSpecConstraint(rules, rule, spec.Replicas, spec.Constraints)
 		}
 
 		if err != nil {
@@ -5390,7 +5390,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	rules, err := checkPlacementSpecs(spec.PlacementSpecs, meta.ID, partitionID)
+	rules, err := buildPlacementSpecs(spec.PlacementSpecs, meta.ID, partitionID)
 	if err != nil {
 		return errors.Trace(err)
 	}
