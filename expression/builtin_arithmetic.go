@@ -116,14 +116,14 @@ func setFlenDecimal4RealOrDecimal(retTp, a, b *types.FieldType, isReal bool, isM
 			return
 		}
 		retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxDecimalWidth)
-		logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.Error(ErrUnknown.GenWithStackByArgs()))
+		logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.Stack("stack"))
 		return
 	}
 	if isReal {
 		retTp.Flen, retTp.Decimal = types.UnspecifiedLength, types.UnspecifiedLength
 	} else {
 		retTp.Flen, retTp.Decimal = mysql.MaxDecimalWidth, mysql.MaxDecimalScale
-		logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.Error(ErrUnknown.GenWithStackByArgs()))
+		logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.Stack("stack"))
 	}
 }
 
@@ -141,13 +141,13 @@ func (c *arithmeticDivideFunctionClass) setType4DivDecimal(retTp, a, b *types.Fi
 	}
 	if a.Flen == types.UnspecifiedLength {
 		retTp.Flen = mysql.MaxDecimalWidth
-		logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.Error(ErrUnknown.GenWithStackByArgs()))
+		logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.Stack("stack"))
 		return
 	}
 	retTp.Flen = a.Flen + decb + precIncrement
 	if retTp.Flen > mysql.MaxDecimalWidth {
 		retTp.Flen = mysql.MaxDecimalWidth
-		logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.Error(ErrUnknown.GenWithStackByArgs()))
+		logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.Stack("stack"))
 	}
 }
 
@@ -617,7 +617,9 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx sessionctx.Context, args
 	}
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETDecimal, types.ETDecimal, types.ETDecimal)
 	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp)
-	logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.String("sql", ctx.GetSessionVars().StmtCtx.OriginalSQL), zap.Stack("stack"))
+	if bf.tp.Flen == mysql.MaxDecimalWidth {
+		logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.String("sql", ctx.GetSessionVars().StmtCtx.OriginalSQL), zap.Stack("stack"))
+	}
 	sig := &builtinArithmeticDivideDecimalSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DivideDecimal)
 	return sig, nil
@@ -847,7 +849,9 @@ func (c *arithmeticModFunctionClass) setType4ModRealOrDecimal(retTp, a, b *types
 		retTp.Flen = mathutil.Max(a.Flen, b.Flen)
 		if isDecimal {
 			retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxDecimalWidth)
-			logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.Error(ErrUnknown.GenWithStackByArgs()))
+			if retTp.Flen == mysql.MaxDecimalWidth {
+				logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.Stack("stack"))
+			}
 			return
 		}
 		retTp.Flen = mathutil.Min(retTp.Flen, mysql.MaxRealWidth)
