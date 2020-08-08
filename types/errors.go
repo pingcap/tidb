@@ -75,4 +75,7 @@ var (
 	ErrInvalidWeekModeFormat = terror.ClassTypes.New(mysql.ErrInvalidWeekModeFormat, mysql.MySQLErrName[mysql.ErrInvalidWeekModeFormat])
 	// ErrWrongValue is returned when the input value is in wrong format.
 	ErrWrongValue = terror.ClassTypes.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrWrongValue])
+	// ErrTooLongValueInType is returned when enum column M <= 255 and (M x w) <= 1020.
+	// See https://dev.mysql.com/doc/refman/8.0/en/string-type-syntax.html for details
+	ErrTooLongValueInType = terror.ClassTypes.New(mysql.ErrTooLongValueInType, mysql.MySQLErrName[mysql.ErrTooLongValueInType])
 )

@@ -905,6 +905,9 @@ func checkColumnValueConstraint(col *table.Column, collation string) error {
 	ctor := collate.GetCollator(collation)
 	for i := range col.Elems {
 		val := string(ctor.Key(col.Elems[i]))
+		if len(val) > 255 || len(val)*4 > 1020 {
+			return types.ErrTooLongValueInType.GenWithStack("Too long enumeration/set value for column %s", col.Name)
+		}
 		if _, ok := valueMap[val]; ok {
 			tpStr := "ENUM"
 			if col.Tp == mysql.TypeSet {

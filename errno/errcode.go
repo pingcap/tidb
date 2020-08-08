@@ -907,6 +907,7 @@ const (
 	ErrUserAlreadyExists                                            = 3163
 	ErrInvalidJSONPathArrayCell                                     = 3165
 	ErrInvalidEncryptionOption                                      = 3184
+	ErrTooLongValueInType                                           = 3505
 	ErrPKIndexCantBeInvisible                                       = 3522
 	ErrRoleNotGranted                                               = 3530
 	ErrLockAcquireFailAndNoWaitSet                                  = 3572
