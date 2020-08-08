@@ -5168,6 +5168,9 @@ func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 	if len(cnstr) > 0 && cnstr[0] == '[' {
 		if replicas <= 0 {
 			err = errors.Errorf("count should be positive, got: %d", replicas)
+			if err != nil {
+				return rules, err
+			}
 		}
 		rule.Count = int(replicas)
 
@@ -5187,6 +5190,9 @@ func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 	} else if len(cnstr) > 0 && cnstr[0] == '{' {
 		if replicas < 0 {
 			err = errors.Errorf("count should be positive, got: %d", replicas)
+			if err != nil {
+				return rules, err
+			}
 		}
 		rule.Count = int(replicas)
 
@@ -5246,19 +5252,17 @@ func buildPlacementSpecs(specs []*ast.PlacementSpec, tableID, partitionID int64)
 			},
 		}
 
-		if err == nil {
-			switch spec.Role {
-			case ast.PlacementRoleFollower:
-				rule.Role = placement.Follower
-			case ast.PlacementRoleLeader:
-				rule.Role = placement.Leader
-			case ast.PlacementRoleLearner:
-				rule.Role = placement.Learner
-			case ast.PlacementRoleVoter:
-				rule.Role = placement.Voter
-			default:
-				err = errors.Errorf("unknown role: %d", spec.Role)
-			}
+		switch spec.Role {
+		case ast.PlacementRoleFollower:
+			rule.Role = placement.Follower
+		case ast.PlacementRoleLeader:
+			rule.Role = placement.Leader
+		case ast.PlacementRoleLearner:
+			rule.Role = placement.Learner
+		case ast.PlacementRoleVoter:
+			rule.Role = placement.Voter
+		default:
+			err = errors.Errorf("unknown role: %d", spec.Role)
 		}
 
 		if err == nil {
