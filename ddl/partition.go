@@ -1471,9 +1471,9 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 
 	for i, rule := range rules {
 		if rule.Action == placement.RuleOpDel {
-			rule.ID = fmt.Sprintf("%d_%d_%s", tblInfo.ID, partitionID, rule.Role)
+			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s", job.SchemaID, tblInfo.ID, partitionID, rule.Role)
 		} else {
-			rule.ID = fmt.Sprintf("%d_%d_%s_%d_%d", tblInfo.ID, partitionID, rule.Role, job.ID, i)
+			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s_%d_%d", job.SchemaID, tblInfo.ID, partitionID, rule.Role, job.ID, i)
 		}
 	}
 
