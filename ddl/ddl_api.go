@@ -5281,11 +5281,6 @@ func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 		rule.Count = ruleCnt
 
 		if rule.Count > 0 {
-			// TODO: currently, PD has no API to update rules
-			// adding rules by a dict with a implicit default rule should increment the replicas number of the default rule.
-			// so TiDB needs to know how many default replicas there is, which requires an HTTP request
-			// for now, it acts like altering rules, i.e., override the default rule
-			// maybe unsupport this feature, or handle 'get rules from PD' smoothly in later PRs
 			rules = append(rules, rule)
 		}
 	} else {
