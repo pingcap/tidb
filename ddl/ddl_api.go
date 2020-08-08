@@ -5221,10 +5221,15 @@ func checkPlacementLabelConstraints(rule *placement.RuleOp, labels []string) err
 	return nil
 }
 
-func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.RuleOp, cnstr string) ([]*placement.RuleOp, error) {
+func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.RuleOp, replicas uint64, cnstr string) ([]*placement.RuleOp, error) {
 	cnstr = strings.TrimSpace(cnstr)
 	var err error
 	if len(cnstr) > 0 && cnstr[0] == '[' {
+		if replicas <= 0 {
+			err = errors.Errorf("count should be positive, got: %d", replicas)
+		}
+		rule.Count = int(replicas)
+
 		constraints := []string{}
 
 		err = json.Unmarshal([]byte(cnstr), &constraints)
@@ -5239,6 +5244,11 @@ func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 
 		rules = append(rules, rule)
 	} else if len(cnstr) > 0 && cnstr[0] == '{' {
+		if replicas < 0 {
+			err = errors.Errorf("count should be positive, got: %d", replicas)
+		}
+		rule.Count = int(replicas)
+
 		constraints := map[string]int{}
 		err = json.Unmarshal([]byte(cnstr), &constraints)
 		if err != nil {
@@ -5256,11 +5266,13 @@ func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 				err = errors.Errorf("count should be positive, but got %d", cnt)
 				break
 			}
-			ruleCnt -= cnt
-			if ruleCnt < 0 {
-				rules = rules[:rulesLen]
-				err = errors.Errorf("COUNT should be larger or equal to the number of total replicas, but got %d", rule.Count)
-				break
+			if ruleCnt != 0 {
+				ruleCnt -= cnt
+				if ruleCnt < 0 {
+					rules = rules[:rulesLen]
+					err = errors.Errorf("COUNT should be larger or equal to the number of total replicas, but got %d", rule.Count)
+					break
+				}
 			}
 			newRule.Count = cnt
 			err = checkPlacementLabelConstraints(newRule, strings.Split(strings.TrimSpace(labels), ","))
@@ -5300,11 +5312,6 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec, tableID, partitionID int64)
 				Override: true,
 			},
 		}
-
-		if spec.Replicas <= 0 {
-			err = errors.Errorf("count should be positive, got: %d", spec.Replicas)
-		}
-		rule.Count = int(spec.Replicas)
 
 		if err == nil {
 			switch spec.Role {
@@ -5356,7 +5363,7 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec, tableID, partitionID int64)
 		}
 
 		if err == nil {
-			rules, err = checkPlacementSpecConstraint(rules, rule, spec.Constraints)
+			rules, err = checkPlacementSpecConstraint(rules, rule, spec.Replicas, spec.Constraints)
 		}
 
 		if err != nil {
