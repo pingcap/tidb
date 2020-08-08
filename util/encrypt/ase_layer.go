@@ -21,22 +21,28 @@ import (
 	"sync"
 )
 
-// BlockSize is the AES block size in bytes.
-const BlockSize = 16
+const (
+	// blockSize is the AES block size in bytes.
+	blockSize = 1024
+)
 
 var blockBufPool = sync.Pool{
-	New: func() interface{} { return make([]byte, BlockSize) },
+	New: func() interface{} { return make([]byte, blockSize) },
+}
+
+var aesBlockBufPool = sync.Pool{
+	New: func() interface{} { return make([]byte, aes.BlockSize) },
 }
 
 // Writer implements an io.WriteCloser, it encrypt data using AES before writing to the underlying object.
 type Writer struct {
-	err     error
-	w       io.WriteCloser
-	n       int
-	buf     []byte
-	counter uint64
-	nonce   uint64
-	block   cipher.Block
+	err        error
+	w          io.WriteCloser
+	n          int
+	buf        []byte
+	counterBuf []byte
+	counter    uint64
+	block      cipher.Block
 }
 
 // NewWriter returns a new Writer which encrypt data using AES before writing to the underlying object.
@@ -45,13 +51,15 @@ func NewWriter(w io.WriteCloser, key []byte, nonce uint64) (*Writer, error) {
 	if err != nil {
 		return nil, err
 	}
-	writer := &Writer{w: w, nonce: nonce, block: block}
-	writer.buf = make([]byte, BlockSize)
+	writer := &Writer{w: w, block: block}
+	writer.buf = make([]byte, blockSize)
+	writer.counterBuf = make([]byte, aes.BlockSize)
+	binary.LittleEndian.PutUint64(writer.counterBuf, nonce)
 	return writer, nil
 }
 
 // AvailableSize returns how many bytes are unused in the buffer.
-func (w *Writer) AvailableSize() int { return BlockSize - w.n }
+func (w *Writer) AvailableSize() int { return blockSize - w.n }
 
 // Write implements the io.Writer interface.
 func (w *Writer) Write(p []byte) (n int, err error) {
@@ -85,14 +93,11 @@ func (w *Writer) Flush() error {
 	if w.n == 0 {
 		return nil
 	}
-	counterBuf := blockBufPool.Get().([]byte)
-	defer blockBufPool.Put(counterBuf)
 	encryptTextText := blockBufPool.Get().([]byte)
 	defer blockBufPool.Put(encryptTextText)
 
-	binary.LittleEndian.PutUint64(counterBuf, w.nonce)
-	binary.LittleEndian.PutUint64(counterBuf[8:], w.counter)
-	blockMode := cipher.NewCTR(w.block, counterBuf)
+	binary.LittleEndian.PutUint64(w.counterBuf[8:], w.counter)
+	blockMode := cipher.NewCTR(w.block, w.counterBuf)
 	blockMode.XORKeyStream(encryptTextText[:w.n], w.buf[:w.n])
 
 	n, err := w.w.Write(encryptTextText[:w.n])
@@ -139,17 +144,19 @@ func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	offset := off % BlockSize
-	startBlock := off / BlockSize
-	cursor := startBlock * BlockSize
+	offset := off % blockSize
+	startBlock := off / blockSize
+	cursor := startBlock * blockSize
 
 	buf := blockBufPool.Get().([]byte)
 	defer blockBufPool.Put(buf)
-	counterBuf := blockBufPool.Get().([]byte)
-	defer blockBufPool.Put(counterBuf)
 	decryptText := blockBufPool.Get().([]byte)
 	defer blockBufPool.Put(decryptText)
 
+	counterBuf := aesBlockBufPool.Get().([]byte)
+	defer aesBlockBufPool.Put(counterBuf)
+
+	binary.LittleEndian.PutUint64(counterBuf, r.nonce)
 	var n int
 	counter := uint64(startBlock)
 	for len(p) > 0 && err == nil {
@@ -162,7 +169,6 @@ func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
 			// continue if n > 0 and r.err is io.EOF
 		}
 		cursor += int64(n)
-		binary.LittleEndian.PutUint64(counterBuf, r.nonce)
 		binary.LittleEndian.PutUint64(counterBuf[8:], counter)
 		blockMode := cipher.NewCTR(r.block, counterBuf)
 		blockMode.XORKeyStream(decryptText, buf)

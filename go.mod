@@ -14,11 +14,12 @@ require (
 	github.com/golang/protobuf v1.3.4
 	github.com/golang/snappy v0.0.1
 	github.com/google/btree v1.0.0
-	github.com/google/pprof v0.0.0-20200407044318-7d83b28da2e9
+	github.com/google/pprof v0.0.0-20200708004538-1a94d8640e99
 	github.com/google/uuid v1.1.1
 	github.com/gorilla/mux v1.7.3
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
+	github.com/ianlancetaylor/demangle v0.0.0-20200715173712-053cf528c12f // indirect
 	github.com/juju/errors v0.0.0-20181118221551-089d3ea4e4d5
 	github.com/klauspost/cpuid v1.2.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
@@ -57,7 +58,7 @@ require (
 	go.uber.org/zap v1.15.0
 	golang.org/x/net v0.0.0-20200520182314-0ba52f642ac2
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
-	golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd
+	golang.org/x/sys v0.0.0-20200806125547-5acd03effb82
 	golang.org/x/text v0.3.3
 	golang.org/x/tools v0.0.0-20200527183253-8e7acdbce89d
 	google.golang.org/grpc v1.26.0

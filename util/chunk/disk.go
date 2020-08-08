@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"crypto/aes"
 	"errors"
 	"fmt"
 	"io"
@@ -61,9 +62,9 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 		diskTracker: disk.NewTracker(defaultChunkListInDiskLabel, -1),
 	}
 	l.nonce = rand.Uint64()
-	buf := make([]byte, encrypt.BlockSize)
-	rand.Read(buf)
-	l.key = buf
+	keyBuf := make([]byte, aes.BlockSize)
+	rand.Read(keyBuf)
+	l.key = keyBuf
 	return l
 }
 
