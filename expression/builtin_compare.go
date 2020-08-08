@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"context"
 	"math"
 
 	"github.com/pingcap/parser/ast"
@@ -24,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 var (
@@ -176,6 +179,7 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		// Set the field length to maxFlen for other types.
 		if bf.tp.Flen > mysql.MaxDecimalWidth {
 			bf.tp.Flen = mysql.MaxDecimalWidth
+			logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.String("sql", ctx.GetSessionVars().StmtCtx.OriginalSQL), zap.Stack("stack"))
 		}
 	}
 

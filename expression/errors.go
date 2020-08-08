@@ -42,6 +42,7 @@ var (
 	errWarnOptionIgnored             = terror.ClassExpression.New(mysql.WarnOptionIgnored, mysql.MySQLErrName[mysql.WarnOptionIgnored])
 	errTruncatedWrongValue           = terror.ClassExpression.New(mysql.ErrTruncatedWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValue])
 	errUnknownLocale                 = terror.ClassExpression.New(mysql.ErrUnknownLocale, mysql.MySQLErrName[mysql.ErrUnknownLocale])
+	ErrUnknown                       = terror.ClassExpression.New(mysql.ErrUnknown, mysql.MySQLErrName[mysql.ErrUnknown])
 )
 
 func init() {

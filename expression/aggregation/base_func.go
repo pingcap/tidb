@@ -15,6 +15,7 @@ package aggregation
 
 import (
 	"bytes"
+	"context"
 	"math"
 	"strings"
 
@@ -26,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // baseFuncDesc describes an function signature, only used in planner.
@@ -126,10 +129,12 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
+		logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.String("sql", ctx.GetSessionVars().StmtCtx.OriginalSQL), zap.Stack("stack"))
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxDecimalWidth, 0
 	case mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxDecimalWidth, a.Args[0].GetType().Decimal
+		logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.String("sql", ctx.GetSessionVars().StmtCtx.OriginalSQL), zap.Stack("stack"))
 		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
 		}
@@ -155,6 +160,7 @@ func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 			a.RetTp.Decimal = mathutil.Min(a.Args[0].GetType().Decimal+types.DivFracIncr, mysql.MaxDecimalScale)
 		}
 		a.RetTp.Flen = mysql.MaxDecimalWidth
+		logutil.Logger(context.Background()).Warn("set field type Flen to MaxDecimalWidth", zap.String("sql", ctx.GetSessionVars().StmtCtx.OriginalSQL), zap.Stack("stack"))
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, a.Args[0].GetType().Decimal
