@@ -5258,10 +5258,7 @@ func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 		rulesLen := len(rules)
 		ruleCnt := rule.Count
 		for labels, cnt := range constraints {
-			newRule := &placement.RuleOp{}
-			*newRule = *rule
-			newRule.Rule = &placement.Rule{}
-			*newRule.Rule = *rule.Rule
+			newRule := rule.Clone()
 			if cnt <= 0 {
 				err = errors.Errorf("count should be positive, but got %d", cnt)
 				break

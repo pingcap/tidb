@@ -88,3 +88,11 @@ type RuleOp struct {
 	Action           RuleOpType `json:"action"`
 	DeleteByIDPrefix bool       `json:"delete_by_id_prefix"`
 }
+
+func (op *RuleOp) Clone() *RuleOp {
+	newOp := &RuleOp{}
+	*newOp = *op
+	newOp.Rule = &Rule{}
+	*newOp.Rule = *op.Rule
+	return newOp
+}
