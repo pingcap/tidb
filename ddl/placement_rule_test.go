@@ -126,7 +126,7 @@ add placement policy
 	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
 	role=leader
 	replicas=2`)
-	c.Assert(err, ErrorMatches, ".*COUNT should be larger or equal to the number of total replicas.*")
+	c.Assert(err, ErrorMatches, ".*should be larger or equal to the number of total replicas.*")
 
 	// checkPlacementSpecConstraint
 	_, err = tk.Exec(`alter table t1 alter partition p0
