@@ -5270,7 +5270,7 @@ func checkPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 				ruleCnt -= cnt
 				if ruleCnt < 0 {
 					rules = rules[:rulesLen]
-					err = errors.Errorf("COUNT should be larger or equal to the number of total replicas, but got %d", rule.Count)
+					err = errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", rule.Count)
 					break
 				}
 			}
