@@ -62,16 +62,6 @@ import (
 
 const expressionIndexPrefix = "_V$"
 
-const placementRuleDefaultGroupID = "TiDB_DDL"
-
-const (
-	placementRuleIndexDefault int = iota
-	placementRuleIndexDatabase
-	placementRuleIndexTable
-	placementRuleIndexPartition
-	placementRuleIndexIndex
-)
-
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
 	dbInfo := &model.DBInfo{Name: schema}
 	if charsetInfo != nil {
@@ -5172,55 +5162,6 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	return errors.Trace(err)
 }
 
-func checkPlacementLabelConstraint(label string) (placement.LabelConstraint, error) {
-	r := placement.LabelConstraint{}
-
-	if len(label) < 4 {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	var op placement.LabelConstraintOp
-	switch label[0] {
-	case '+':
-		op = placement.In
-	case '-':
-		op = placement.NotIn
-	default:
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	kv := strings.Split(label[1:], "=")
-	if len(kv) != 2 {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	key := strings.TrimSpace(kv[0])
-	if key == "" {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	val := strings.TrimSpace(kv[1])
-	if val == "" {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	r.Key = key
-	r.Op = op
-	r.Values = []string{val}
-	return r, nil
-}
-
-func checkPlacementLabelConstraints(rule *placement.RuleOp, labels []string) error {
-	for _, str := range labels {
-		label, err := checkPlacementLabelConstraint(strings.TrimSpace(str))
-		if err != nil {
-			return err
-		}
-		rule.LabelConstraints = append(rule.LabelConstraints, label)
-	}
-	return nil
-}
-
 func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.RuleOp, replicas uint64, cnstr string) ([]*placement.RuleOp, error) {
 	cnstr = strings.TrimSpace(cnstr)
 	var err error
@@ -5237,7 +5178,7 @@ func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 			return rules, err
 		}
 
-		err = checkPlacementLabelConstraints(rule, constraints)
+		err = placement.CheckPlacementLabelConstraints(rule, constraints)
 		if err != nil {
 			return rules, err
 		}
@@ -5272,7 +5213,7 @@ func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 				}
 			}
 			newRule.Count = cnt
-			err = checkPlacementLabelConstraints(newRule, strings.Split(strings.TrimSpace(labels), ","))
+			err = placement.CheckPlacementLabelConstraints(newRule, strings.Split(strings.TrimSpace(labels), ","))
 			if err != nil {
 				break
 			}
@@ -5300,7 +5241,7 @@ func buildPlacementSpecs(specs []*ast.PlacementSpec, tableID, partitionID int64)
 	for _, spec := range specs {
 		rule := &placement.RuleOp{
 			Rule: &placement.Rule{
-				GroupID:  placementRuleDefaultGroupID,
+				GroupID:  placement.RuleDefaultGroupID,
 				Override: true,
 			},
 		}
@@ -5344,7 +5285,7 @@ func buildPlacementSpecs(specs []*ast.PlacementSpec, tableID, partitionID int64)
 					Action:           placement.RuleOpDel,
 					DeleteByIDPrefix: true,
 					Rule: &placement.Rule{
-						GroupID: placementRuleDefaultGroupID,
+						GroupID: placement.RuleDefaultGroupID,
 						// ROLE is useless for PD, prevent two alter statements from overriding each other
 						Role: rule.Role,
 					},
@@ -5393,7 +5334,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
 	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
 	for _, rule := range rules {
-		rule.Index = placementRuleIndexPartition
+		rule.Index = placement.RuleIndexPartition
 		rule.StartKeyHex = startKey
 		rule.EndKeyHex = endKey
 	}
