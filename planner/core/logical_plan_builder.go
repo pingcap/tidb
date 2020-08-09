@@ -2367,7 +2367,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 			OrigTblName: tableInfo.Name,
 			OrigColName: col.Name,
 			ID:          col.ID,
-			RetType:     &col.FieldType,
+			RetType:     col.FieldType.Clone(),
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
