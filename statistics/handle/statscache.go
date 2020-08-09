@@ -73,6 +73,9 @@ func (sc *statsCache) Lookup(id int64) (*statistics.Table, bool) {
 // Insert insert a new table to tables and update the cache.
 // if bytesconsumed is more than capacity, remove oldest cache and add metadata of it
 func (sc *statsCache) Insert(table *statistics.Table) {
+	if table == nil{
+		return
+	}
 	var key = statsCacheKey(table.PhysicalID)
 	mem := table.MemoryUsage()
 	if mem > sc.memCapacity { // ignore this kv pair if its size is too large
@@ -100,7 +103,7 @@ func (sc *statsCache) Erase(deletedID int64) bool {
 	}
 	sc.memTracker.Consume(-table.MemoryUsage())
 
-	var key statsCacheKey = statsCacheKey(deletedID)
+	key := statsCacheKey(deletedID)
 	sc.cache.Delete(key)
 	return true
 }
