@@ -46,14 +46,16 @@ func (s *testSuiteP2) TestFormatSQL(c *C) {
 	preparedParams := variable.PreparedParams{
 		types.NewIntDatum(1),
 		types.NewFloat64Datum(2),
+		types.NewDatum(nil),
+		types.NewStringDatum("abc"),
 		types.NewStringDatum("\"hello, 世界\""),
 		types.NewStringDatum("[1, 2, 3]"),
 		types.NewStringDatum("{}"),
 		types.NewStringDatum(`{"a": "9223372036854775809"}`),
 		mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6),
 	}
-	preparedSQL := executor.FormatSQL("select ?, ?, ?, ?, ?, ?, ?;", preparedParams)()
-	c.Check(preparedSQL, Equals, "select 1, 2, \"hello, 世界\", [1, 2, 3], {}, {\"a\": \"9223372036854775809\"}, 2011-11-10 11:11:11.111111;")
+	preparedSQL := executor.FormatSQL("select ?, ?, ?, ?, ?, ?, ?, ?, ?;", preparedParams)()
+	c.Check(preparedSQL, Equals, "select 1, 2, NULL, 'abc', '\"hello, 世界\"', '[1, 2, 3]', '{}', '{\"a\": \"9223372036854775809\"}', 2011-11-10 11:11:11.111111;")
 
 	preparedSQL = executor.FormatSQL("select count(*), ?;", variable.PreparedParams{types.NewIntDatum(1)})()
 	c.Check(preparedSQL, Equals, "select count(*), 1;")

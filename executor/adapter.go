@@ -784,7 +784,12 @@ func formatPreparedSQL(sql string, pps variable.PreparedParams) string {
 			sqlBuffer.WriteByte(c)
 			continue
 		}
-		sqlBuffer.WriteString(fmt.Sprintf("%v", pps[paramsIndex].GetValue()))
+		datum := pps[paramsIndex]
+		str := types.DatumsToStrNoErr([]types.Datum{datum})
+		if datum.Kind() == types.KindString {
+			str = "'" + str + "'"
+		}
+		sqlBuffer.WriteString(str)
 		paramsIndex++
 	}
 	return sqlBuffer.String()
