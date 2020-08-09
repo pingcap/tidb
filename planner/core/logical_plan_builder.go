@@ -2371,7 +2371,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	for _, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
-		retType := col.FieldType
 		newCol := &expression.Column{
 			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
 			DBName:      dbName,
@@ -2380,7 +2379,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 			OrigTblName: tableInfo.Name,
 			OrigColName: col.Name,
 			ID:          col.ID,
-			RetType:     &retType,
+			RetType:     col.FieldType.Clone(),
 		}
 
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
