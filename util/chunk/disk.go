@@ -73,11 +73,11 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	w, err := encrypt.NewWriter(l.disk, l.key, l.nonce)
+	encryptWriter, err := encrypt.NewWriter(l.disk, l.key, l.nonce)
 	if err != nil {
 		return err
 	}
-	l.w = checksum.NewWriter(w)
+	l.w = checksum.NewWriter(encryptWriter)
 	l.bufFlushMutex = sync.RWMutex{}
 	return
 }
@@ -167,13 +167,13 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
 
-	r, err := encrypt.NewReader(l.disk, l.key, l.nonce)
+	encryptReader, err := encrypt.NewReader(l.disk, l.key, l.nonce)
 	if err != nil {
 		return row, err
 	}
-	rr := io.NewSectionReader(checksum.NewReader(r), off, l.offWrite-off)
+	r := io.NewSectionReader(checksum.NewReader(encryptReader), off, l.offWrite-off)
 	format := rowInDisk{numCol: len(l.fieldTypes)}
-	_, err = format.ReadFrom(rr)
+	_, err = format.ReadFrom(r)
 	if err != nil {
 		return row, err
 	}
