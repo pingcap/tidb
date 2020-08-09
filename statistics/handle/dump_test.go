@@ -16,6 +16,7 @@ package handle_test
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
@@ -58,6 +59,7 @@ func (s *testStatsSuite) TestConversion(c *C) {
 	}()
 	err = h.LoadStatsFromJSON(is, jsonTbl)
 	wg.Wait()
+	time.Sleep(10 * time.Millisecond)
 	c.Assert(err, IsNil)
 	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
 	assertTableEqual(c, loadTblInStorage, tbl)
@@ -101,6 +103,8 @@ PARTITION BY RANGE ( a ) (
 	h.Clear()
 
 	err = h.LoadStatsFromJSON(s.do.InfoSchema(), jsonTbl)
+	time.Sleep(10 * time.Millisecond)
+
 	c.Assert(err, IsNil)
 	for i, def := range pi.Definitions {
 		t := h.GetPartitionStats(tableInfo, def.ID)

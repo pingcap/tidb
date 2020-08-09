@@ -262,9 +262,9 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 //SetBytesLimit sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
 func (h *Handle) SetBytesLimit(bytesLimit int64) {
 	h.statsCache.mu.Lock()
-	h.statsCache.memTracker.SetBytesLimit(bytesLimit)
-	h.statsCache.memCapacity = bytesLimit
-	h.statsCache.mu.Unlock()
+	mu := &h.statsCache.mu
+	h.statsCache = newstatsCache(bytesLimit)
+	mu.Unlock()
 }
 
 // LoadNeededHistograms will load histograms for those needed columns.

@@ -14,11 +14,10 @@
 package handle
 
 import (
-	"encoding/binary"
 	"sync"
 
+	"github.com/pingcap/badger/cache"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 )
@@ -26,37 +25,51 @@ import (
 // statsCache caches Regions loaded from PD.
 type statsCache struct {
 	mu          sync.Mutex
-	cache       *kvcache.SimpleLRUCache
+	cache       *cache.Cache
 	memCapacity int64
 	version     uint64
 	memTracker  *memory.Tracker // track memory usage.
-}
-type statsCacheKey int64
-
-func (key statsCacheKey) Hash() []byte {
-	var buf = make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(key))
-	return buf
 }
 
 // newstatsCache returns a new statsCahce with capacity maxMemoryLimit(initial 1G)
 func newstatsCache(maxMemoryLimit int64) *statsCache {
 	// since newstatsCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
-	cache := kvcache.NewSimpleLRUCache(uint(maxMemoryLimit), 0.1, 0)
-	c := statsCache{
-		cache:       cache,
+	c := &statsCache{
 		memCapacity: maxMemoryLimit,
 		memTracker:  memory.NewTracker(stringutil.StringerStr("statsCache"), -1),
 	}
-	return &c
+	cache, err := cache.NewCache(&cache.Config{
+		NumCounters: 1e7,            // number of keys to track frequency of (10M).
+		MaxCost:     maxMemoryLimit, // maximum cost of cache (1GB).
+		BufferItems: 64,             // number of keys per Get buffer.
+		Cost: func(value interface{}) int64 {
+			return (value.(*statistics.Table).MemoryUsage())
+		},
+		OnEvict: func(key uint64, value interface{}) {
+			if t, ok := value.(*statistics.Table); ok {
+				c.memTracker.Consume(-t.MemoryUsage())
+				if value != nil && t.PhysicalID == int64(key) {
+					c.cache.Set(key, t.CopyMeta(), 0)
+				}
+			}
+		},
+		OnInsert: func(key uint64, cost int64) {
+			c.memTracker.Consume(cost)
+		},
+	})
+	if err != nil {
+
+	}
+	c.cache = cache
+	return c
 }
 
 // lookupUnsafe get table with id without Lock.
 func (sc *statsCache) lookupUnsafe(id int64) (*statistics.Table, bool) {
-	var key = statsCacheKey(id)
+	key := uint64(id)
 	value, hit := sc.cache.Get(key)
-	if !hit {
+	if !hit || value.(*statistics.Table).PhysicalID != id {
 		return nil, false
 	}
 	table := value.(*statistics.Table)
@@ -73,22 +86,10 @@ func (sc *statsCache) Lookup(id int64) (*statistics.Table, bool) {
 // Insert insert a new table to tables and update the cache.
 // if bytesconsumed is more than capacity, remove oldest cache and add metadata of it
 func (sc *statsCache) Insert(table *statistics.Table) {
-	var key = statsCacheKey(table.PhysicalID)
+
+	key := table.PhysicalID
 	mem := table.MemoryUsage()
-	if mem > sc.memCapacity { // ignore this kv pair if its size is too large
-		return
-	}
-	for mem+sc.memTracker.BytesConsumed() > sc.memCapacity {
-		evictedKey, evictedValue, evicted := sc.cache.RemoveOldest()
-		if !evicted {
-			return
-		}
-		sc.memTracker.Consume(-evictedValue.(*statistics.Table).MemoryUsage())
-		sc.cache.Put(evictedKey, evictedValue.(*statistics.Table).CopyMeta())
-	}
-	sc.Erase(table.PhysicalID)
-	sc.memTracker.Consume(mem)
-	sc.cache.Put(key, table)
+	sc.cache.Set(uint64(key), table, mem)
 	return
 }
 
@@ -100,8 +101,8 @@ func (sc *statsCache) Erase(deletedID int64) bool {
 	}
 	sc.memTracker.Consume(-table.MemoryUsage())
 
-	var key statsCacheKey = statsCacheKey(deletedID)
-	sc.cache.Delete(key)
+	key := deletedID
+	sc.cache.Del(uint64(key))
 	return true
 }
 

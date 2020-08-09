@@ -98,6 +98,8 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 := h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
@@ -114,6 +116,8 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	}
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
 
@@ -129,6 +133,8 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	testKit.MustExec("commit")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*3))
 
@@ -145,6 +151,8 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	testKit.MustExec("commit")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*3))
 	stats2 = h.GetTableStats(tableInfo2)
@@ -155,6 +163,8 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	testKit.MustExec("commit")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(0))
 
@@ -176,6 +186,8 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	}
 	h.DumpStatsDeltaToKV(handle.DumpDelta)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
@@ -183,11 +195,15 @@ func (s *testStatsSuite) TestSingleSessionInsert(c *C) {
 	testKit.MustExec("insert into t1 values (1,2)")
 	h.DumpStatsDeltaToKV(handle.DumpDelta)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
 	h.FlushStats()
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
 }
@@ -209,6 +225,7 @@ func (s *testStatsSuite) TestRollback(c *C) {
 	h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
 
 	stats := h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(0))
@@ -244,6 +261,8 @@ func (s *testStatsSuite) TestMultiSession(c *C) {
 
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 := h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
@@ -264,6 +283,8 @@ func (s *testStatsSuite) TestMultiSession(c *C) {
 
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1*2))
 	// The session in testKit is already Closed, set it to nil will create a new session.
@@ -293,6 +314,8 @@ func (s *testStatsSuite) TestTxnWithFailure(c *C) {
 	}
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 := h.GetTableStats(tableInfo1)
 	// have not commit
 	c.Assert(stats1.Count, Equals, int64(0))
@@ -300,6 +323,8 @@ func (s *testStatsSuite) TestTxnWithFailure(c *C) {
 
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
@@ -308,12 +333,16 @@ func (s *testStatsSuite) TestTxnWithFailure(c *C) {
 
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1))
 
 	testKit.MustExec("insert into t1 values(-1, 2)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats1 = h.GetTableStats(tableInfo1)
 	c.Assert(stats1.Count, Equals, int64(rowCount1+1))
 }
@@ -340,6 +369,8 @@ func (s *testStatsSuite) TestUpdatePartition(c *C) {
 	testKit.MustExec(`insert into t values (1, "a"), (7, "a")`)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	for _, def := range pi.Definitions {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		c.Assert(statsTbl.ModifyCount, Equals, int64(1))
@@ -350,6 +381,8 @@ func (s *testStatsSuite) TestUpdatePartition(c *C) {
 	testKit.MustExec(`update t set a = a + 1, b = "aa"`)
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	for _, def := range pi.Definitions {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		c.Assert(statsTbl.ModifyCount, Equals, int64(2))
@@ -360,6 +393,8 @@ func (s *testStatsSuite) TestUpdatePartition(c *C) {
 	testKit.MustExec("delete from t")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	for _, def := range pi.Definitions {
 		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 		c.Assert(statsTbl.ModifyCount, Equals, int64(3))
@@ -390,6 +425,8 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 
 	h.HandleDDLEvent(<-h.DDLEventCh())
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats := h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(0))
 
@@ -399,6 +436,8 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	h.HandleAutoAnalyze(is)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(5))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
@@ -417,6 +456,8 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	h.HandleAutoAnalyze(is)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(6))
 	c.Assert(stats.ModifyCount, Equals, int64(1))
@@ -427,6 +468,8 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	h.HandleAutoAnalyze(is)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(7))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
@@ -437,6 +480,8 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	h.HandleAutoAnalyze(is)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(8))
 	// Modify count is non-zero means that we do not analyze the table.
@@ -456,6 +501,7 @@ func (s *testStatsSuite) TestAutoUpdate(c *C) {
 	tableInfo = tbl.Meta()
 	h.HandleAutoAnalyze(is)
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
 	stats = h.GetTableStats(tableInfo)
 	c.Assert(stats.Count, Equals, int64(8))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
@@ -489,6 +535,8 @@ func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	h := do.StatsHandle()
 
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	stats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	c.Assert(stats.Count, Equals, int64(0))
 
@@ -496,6 +544,8 @@ func (s *testStatsSuite) TestAutoUpdatePartition(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.Update(is), IsNil)
 	h.HandleAutoAnalyze(is)
+	time.Sleep(10 * time.Millisecond)
+
 	stats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 	c.Assert(stats.Count, Equals, int64(1))
 	c.Assert(stats.ModifyCount, Equals, int64(0))
@@ -531,6 +581,8 @@ func (s *testStatsSuite) TestTableAnalyzed(c *C) {
 		h.SetLease(oriLease)
 	}()
 	c.Assert(h.Update(is), IsNil)
+	time.Sleep(10 * time.Millisecond)
+
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(handle.TableAnalyzed(statsTbl), IsTrue)
 }
@@ -1171,6 +1223,7 @@ func (s *testStatsSuite) TestLogDetailedInfo(c *C) {
 	for _, t := range tests {
 		s.hook.results = ""
 		testKit.MustQuery(t.sql)
+		time.Sleep(10 * time.Millisecond)
 		c.Assert(s.hook.results, Equals, t.result)
 	}
 }
@@ -1496,6 +1549,8 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 	testKit.MustExec("analyze table t with 3 buckets")
 	testKit.MustExec("delete from t where a = 1")
 	testKit.MustExec("delete from t where b > 10")
+	time.Sleep(10 * time.Millisecond)
+
 	is := s.do.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -1537,6 +1592,7 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 		c.Assert(h.DumpStatsFeedbackToKV(), IsNil)
 		c.Assert(h.HandleUpdateStats(s.do.InfoSchema()), IsNil)
 		c.Assert(h.Update(is), IsNil)
+		time.Sleep(10 * time.Millisecond)
 		tbl := h.GetTableStats(tblInfo)
 		c.Assert(tbl.Columns[t.rangeID].ToString(0), Equals, tests[i].hist)
 		val, err := codec.EncodeKey(testKit.Se.GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
