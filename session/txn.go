@@ -294,7 +294,7 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 	keys := make([]kv.Key, 0, st.countHint())
 	buf := st.Transaction.GetMemBuffer()
 	buf.InspectStage(st.stagingHandle, func(k kv.Key, flags kv.KeyFlags, v []byte) {
-		if !keyNeedToLock(k, v) {
+		if !keyNeedToLock(k, v, flags) {
 			return
 		}
 		keys = append(keys, k)
@@ -302,10 +302,13 @@ func (st *TxnState) KeysNeedToLock() ([]kv.Key, error) {
 	return keys, nil
 }
 
-func keyNeedToLock(k, v []byte) bool {
+func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	isTableKey := bytes.HasPrefix(k, tablecodec.TablePrefix())
 	if !isTableKey {
 		// meta key always need to lock.
+		return true
+	}
+	if flags.HasPresumeKeyNotExists() {
 		return true
 	}
 	isDelete := len(v) == 0
