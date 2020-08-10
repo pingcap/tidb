@@ -90,7 +90,18 @@ add placement policy
 
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
-	constraints='{"+   zone   =   sh  ": 1, "- zone = bj": 2}'
+	constraints='["+   zone   =   sh  "]'
+	role=leader
+	replicas=3,
+add placement policy
+	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
+	role=leader
+	replicas=3`)
+	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='{"+   zone   =   sh  ": 1, "- zone = bj,+zone=sh": 2}'
 	role=leader
 	replicas=3,
 alter placement policy
