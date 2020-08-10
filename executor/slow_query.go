@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -64,7 +65,6 @@ func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 		}
 		e.initializeAsyncParsing(ctx, sctx)
 	}
-
 	rows, retrieved, err := e.dataForSlowLog(ctx)
 	if err != nil {
 		return nil, err
@@ -126,10 +126,9 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 		close(e.parsedSlowLogCh)
 		return
 	}
-
 	reader := bufio.NewReader(e.files[0].file)
 	for e.fileIdx < len(e.files) {
-		rows, err := e.parseSlowLog(sctx, reader, 1024)
+		rows, err := e.parseSlowLog(sctx, reader, 1024*1024*1024)
 		select {
 		case <-ctx.Done():
 			break
@@ -150,7 +149,6 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datu
 		return nil, false, ctx.Err()
 	}
 	if !ok {
-		// When e.parsedSlowLogCh is closed, the slow log data is retrieved.
 		return nil, true, nil
 	}
 
@@ -187,7 +185,8 @@ func (sc *slowLogChecker) isTimeValid(t types.Time) bool {
 }
 
 // TODO: optimize for parse huge log-file.
-func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader, maxRow int) ([][]types.Datum, error) {
+func (e *slowQueryRetriever) parseSlowLogOld(ctx sessionctx.Context, reader *bufio.Reader, maxRow int) ([][]types.Datum, error) {
+	//log-file parse
 	var rows [][]types.Datum
 	var st *slowQueryTuple
 	startFlag := false
@@ -199,6 +198,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 		e.fileLine++
 		lineByte, err := getOneLine(reader)
 		if err != nil {
+			//Read the next file
 			if err == io.EOF {
 				e.fileIdx++
 				e.fileLine = 0
@@ -226,7 +226,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 		}
 
 		if startFlag {
-			// Parse slow log field.
+			// Parse slow log field.wo
 			if strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
 				line = line[len(variable.SlowLogRowPrefixStr):]
 				if strings.HasPrefix(line, variable.SlowLogPrevStmtPrefix) {
@@ -275,6 +275,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 				}
 				if e.checker.hasPrivilege(st.user) {
 					rows = append(rows, st.convertToDatumRow())
+					//rows = append(rows, st.convertToDatumRow())
 				}
 				startFlag = false
 			} else {
@@ -282,6 +283,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 			}
 		}
 	}
+	//return rows, nil
 }
 
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
@@ -313,6 +315,156 @@ func getOneLine(reader *bufio.Reader) ([]byte, error) {
 		}
 	}
 	return resByte, err
+}
+
+func (e *slowQueryRetriever) getLog(reader *bufio.Reader) ([]string, error) {
+	var line string
+	var log []string
+	var err error
+	for i := 0; i < 100; i++ {
+		for {
+			e.fileLine++
+			lineByte, err := getOneLine(reader)
+			if err != nil {
+				if err == io.EOF {
+					e.fileIdx++
+					e.fileLine = 0
+					if e.fileIdx >= len(e.files) {
+						return log, nil
+					}
+					reader.Reset(e.files[e.fileIdx].file)
+					continue
+				}
+				return log, err
+			}
+			line = string(hack.String(lineByte))
+			log = append(log, line)
+			if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
+				if strings.HasPrefix(line, "use") {
+					continue
+				}
+				//return log, err
+				break
+			}
+		}
+	}
+	return log, err
+}
+
+func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader, maxRow int) ([][]types.Datum, error) {
+	var (
+		rows   [][]types.Datum
+		ReadWG sync.WaitGroup
+		wg     sync.WaitGroup
+	)
+	SlowLogch := make(chan [][]types.Datum, 1024)
+	//to limit the num of go routine
+	ch := make(chan int, 10)
+	SlowLogch <- rows
+	defer close(ch)
+	ReadWG.Add(1)
+	// Reader
+	go func() {
+		defer ReadWG.Done()
+		for v := range SlowLogch {
+			rows = append(rows, v...)
+		}
+	}()
+	for {
+		log, _ := e.getLog(reader)
+		wg.Add(1)
+		ch <- 1
+		// Writer
+		go func() {
+			defer wg.Done()
+			data := e.parsedLog(ctx, log)
+			SlowLogch <- data
+			<-ch
+		}()
+		if e.fileIdx >= len(e.files) {
+			break
+		}
+	}
+	wg.Wait()
+	close(SlowLogch)
+	ReadWG.Wait()
+	return rows, nil
+}
+
+func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string) [][]types.Datum {
+	var st *slowQueryTuple
+	tz := ctx.GetSessionVars().Location()
+	var data [][]types.Datum
+	startFlag := false
+	for _, line := range log {
+		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
+			st = &slowQueryTuple{}
+			valid, err := st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], e.fileLine, e.checker)
+			if err != nil {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				continue
+			}
+			if valid {
+				startFlag = true
+			}
+			continue
+		}
+		if startFlag {
+			if strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
+				line = line[len(variable.SlowLogRowPrefixStr):]
+				if strings.HasPrefix(line, variable.SlowLogPrevStmtPrefix) {
+					st.prevStmt = line[len(variable.SlowLogPrevStmtPrefix):]
+				} else if strings.HasPrefix(line, variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr) {
+					value := line[len(variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr):]
+					valid, err := st.setFieldValue(tz, variable.SlowLogUserAndHostStr, value, e.fileLine, e.checker)
+					if err != nil {
+						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						continue
+					}
+					if !valid {
+						startFlag = false
+					}
+				} else {
+					fieldValues := strings.Split(line, " ")
+					for i := 0; i < len(fieldValues)-1; i += 2 {
+						field := fieldValues[i]
+						if strings.HasSuffix(field, ":") {
+							field = field[:len(field)-1]
+						}
+						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], e.fileLine, e.checker)
+						if err != nil {
+							ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+							continue
+						}
+						if !valid {
+							startFlag = false
+						}
+					}
+				}
+			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
+				if strings.HasPrefix(line, "use") {
+					// `use DB` statements in the slow log is used to keep it be compatible with MySQL,
+					// since we already get the current DB from the `# DB` field, we can ignore it here,
+					// please see https://github.com/pingcap/tidb/issues/17846 for more details.
+					continue
+				}
+				// Get the sql string, and mark the start flag to false.
+				_, err := st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), e.fileLine, e.checker)
+				if err != nil {
+					ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					continue
+				}
+				if e.checker.hasPrivilege(st.user) {
+					data = append(data, st.convertToDatumRow())
+					//return data
+				}
+				startFlag = false
+			} else {
+				startFlag = false
+			}
+		}
+	}
+	return data
 }
 
 type slowQueryTuple struct {
@@ -523,6 +675,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 }
 
 func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
+	// Build the slow query result
 	record := make([]types.Datum, 0, 64)
 	record = append(record, types.NewTimeDatum(st.time))
 	record = append(record, types.NewUintDatum(st.txnStartTs))
