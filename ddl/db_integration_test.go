@@ -2335,3 +2335,17 @@ func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 	tk.MustExec("alter table t3 alter index idx invisible")
 	tk.MustQuery(query).Check(testkit.Rows("idx NO"))
 }
+
+func (s *testIntegrationSuite7) TestAutoIncrementAllocator(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+	tk.MustExec("drop database if exists test_create_table_option_auto_inc;")
+	tk.MustExec("create database test_create_table_option_auto_inc;")
+	tk.MustExec("use test_create_table_option_auto_inc;")
+
+	tk.MustExec("create table t (a bigint primary key) auto_increment = 10;")
+	tk.MustExec("alter table t auto_increment = 10;")
+}
