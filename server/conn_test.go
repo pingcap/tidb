@@ -19,6 +19,8 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
@@ -32,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
-	"io"
 )
 
 type ConnTestSuite struct {
