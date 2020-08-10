@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/store/tikv"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
@@ -39,6 +40,9 @@ type DeleteExec struct {
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
 	tblColPosInfos plannercore.TblColPosInfoSlice
 	memTracker     *memory.Tracker
+
+	stats    *pointGetRuntimeStats
+	snapshot kv.Snapshot
 }
 
 // Next implements the Executor Next interface.
@@ -214,7 +218,36 @@ func (e *DeleteExec) Close() error {
 func (e *DeleteExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
 
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
+		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
+		// The snapshot may contains cache that can reduce RPC call.
+		e.snapshot = txn.GetSnapshot()
+	} else {
+		var err error
+		e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: txnCtx.StartTS})
+		if err != nil {
+			return err
+		}
+	}
+	if e.runtimeStats != nil {
+		snapshotStats := &tikv.SnapshotRuntimeStats{}
+		e.stats = &pointGetRuntimeStats{
+			BasicRuntimeStats:    e.runtimeStats,
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
+	}
+	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
+	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	return e.children[0].Open(ctx)
 }
 

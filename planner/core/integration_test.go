@@ -1444,6 +1444,12 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
 	checkExplain("Get")
 	res = tk.MustQuery("explain analyze select * from t where a in (1,2,3);")
 	checkExplain("BatchGet")
+	res = tk.MustQuery("explain analyze insert ignore into t values (1,1),(2,2),(3,3),(4,4);")
+	checkExplain("BatchGet")
+	res = tk.MustQuery("explain analyze update t set a=a+10 where a>0;")
+	checkExplain("BatchGet")
+	res = tk.MustQuery("explain analyze delete from t where a<24;")
+	checkExplain("BatchGet")
 }
 
 func (s *testIntegrationSuite) TestPartitionExplain(c *C) {

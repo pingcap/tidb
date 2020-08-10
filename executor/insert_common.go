@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/store/tikv"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -72,6 +73,9 @@ type InsertValues struct {
 	// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 	lazyFillAutoID bool
 	memTracker     *memory.Tracker
+
+	stats    *pointGetRuntimeStats
+	snapshot kv.Snapshot
 }
 
 type defaultVal struct {
@@ -464,6 +468,38 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
+
+	txn, err := e.ctx.Txn(false)
+	if err != nil {
+		return err
+	}
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	var snapshot kv.Snapshot
+	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
+		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
+		// The snapshot may contains cache that can reduce RPC call.
+		snapshot = txn.GetSnapshot()
+	} else {
+		var err error
+		snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: txnCtx.StartTS})
+		if err != nil {
+			return err
+		}
+	}
+	if e.runtimeStats != nil {
+		snapshotStats := &tikv.SnapshotRuntimeStats{}
+		e.stats = &pointGetRuntimeStats{
+			BasicRuntimeStats:    e.runtimeStats,
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
+	}
+	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
+	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
+	e.snapshot = snapshot
 	return nil
 }
 
@@ -944,13 +980,39 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		return err
 	}
 
+	txnCtx := e.ctx.GetSessionVars().TxnCtx
+	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
+		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
+		// The snapshot may contains cache that can reduce RPC call.
+		e.snapshot = txn.GetSnapshot()
+	} else {
+		var err error
+		e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: txnCtx.StartTS})
+		if err != nil {
+			return err
+		}
+	}
+	if e.runtimeStats != nil {
+		snapshotStats := &tikv.SnapshotRuntimeStats{}
+		e.stats = &pointGetRuntimeStats{
+			BasicRuntimeStats:    e.runtimeStats,
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
+	}
+	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
+		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
+	}
+	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
 
-	// append warnings and get no duplicated error rows
+	// append warnings and get  no duplicated error rows
 	for i, r := range toBeCheckedRows {
+
 		skip := false
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKV.key)
@@ -983,6 +1045,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			if err != nil {
 				return err
 			}
+
 		}
 	}
 	return nil
