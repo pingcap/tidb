@@ -200,7 +200,7 @@ task FormatCode {
 task Check FormatCode, RunErrCheck, RunUnconvert, RunRevive, GoModTidy, CheckTestSuite, RunLinter, RunGoVet, RunStaticCheck
 
 # Synopsis: Build TiDB server.
-task Build -Inputs $sources -Outputs $Target {
+task Build -Inputs ($sources + 'go.mod', 'go.sum') -Outputs $Target {
     $build = @('build', '-tags', 'codes', $BuildFlags)
     if ($Race) {
         $build += '-race'
