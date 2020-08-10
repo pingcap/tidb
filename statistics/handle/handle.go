@@ -60,7 +60,8 @@ type Handle struct {
 
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
-	statsCache *statsCache
+	statsCache StatsCache
+	sType      statsCacheType
 
 	restrictedExec sqlexec.RestrictedSQLExecutor
 
@@ -81,9 +82,9 @@ type Handle struct {
 func (h *Handle) Clear() {
 	h.mu.Lock()
 	//lock statsCache for race test
-	h.statsCache.mu.Lock()
-	mu := &h.statsCache.mu
-	h.statsCache = newstatsCache(maxMemoryLimit)
+	h.statsCache.GetMutex().Lock()
+	mu := h.statsCache.GetMutex()
+	h.statsCache, _ = NewStatsCache(maxMemoryLimit, h.sType)
 	mu.Unlock()
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
@@ -106,13 +107,14 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:  make(tableDeltaMap),
 		feedback:   statistics.NewQueryFeedbackMap(),
+		sType:      RistrettoStatsCacheType,
 	}
 	handle.lease.Store(lease)
 	// It is safe to use it concurrently because the exec won't touch the ctx.
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
-	handle.statsCache = newstatsCache(maxMemoryLimit)
+	handle.statsCache, _ = NewStatsCache(maxMemoryLimit, handle.sType)
 
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
@@ -229,9 +231,9 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 
 // GetMemConsumed returns the mem size of statscache consumed
 func (h *Handle) GetMemConsumed() (size int64) {
-	h.statsCache.mu.Lock()
-	size = h.statsCache.memTracker.BytesConsumed()
-	h.statsCache.mu.Unlock()
+	h.statsCache.GetMutex().Lock()
+	size = h.statsCache.BytesConsumed()
+	h.statsCache.GetMutex().Unlock()
 	return
 }
 
@@ -259,11 +261,24 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	return tbl
 }
 
+//SetStatsCacheType sets new statsCache type
+func (h *Handle) SetStatsCacheType(tp statsCacheType) {
+	h.statsCache.GetMutex().Lock()
+	mu := h.statsCache.GetMutex()
+	if tp == h.sType {
+		return
+	}
+	defer mu.Unlock()
+	h.sType = tp
+	h.statsCache, _ = NewStatsCache(h.statsCache.GetBytesLimit(), h.sType)
+	mu.Unlock()
+}
+
 //SetBytesLimit sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
 func (h *Handle) SetBytesLimit(bytesLimit int64) {
-	h.statsCache.mu.Lock()
-	mu := &h.statsCache.mu
-	h.statsCache = newstatsCache(bytesLimit)
+	h.statsCache.GetMutex().Lock()
+	mu := h.statsCache.GetMutex()
+	h.statsCache, _ = NewStatsCache(bytesLimit, h.sType)
 	mu.Unlock()
 }
 
