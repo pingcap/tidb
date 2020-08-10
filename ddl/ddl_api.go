@@ -20,6 +20,7 @@ package ddl
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -3461,6 +3462,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 			ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
 			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
 		)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, chs, coll); err != nil {
@@ -4006,6 +4010,9 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		ast.CharsetOpt{Chs: origCharset, Col: origCollate},
 		ast.CharsetOpt{Chs: dbInfo.Charset, Col: dbInfo.Collate},
 	)
+	if err != nil {
+		return doNothing, err
+	}
 
 	if err = checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origCollate, false); err != nil {
 		return doNothing, err
@@ -5158,9 +5165,110 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	return errors.Trace(err)
 }
 
+func checkPlacementLabelConstraint(label string) (placement.LabelConstraint, error) {
+	r := placement.LabelConstraint{}
+
+	if len(label) < 4 {
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
+	}
+
+	var op placement.LabelConstraintOp
+	switch label[0] {
+	case '+':
+		op = placement.In
+	case '-':
+		op = placement.NotIn
+	default:
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
+	}
+
+	kv := strings.Split(label[1:], "=")
+	if len(kv) != 2 {
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
+	}
+
+	key := strings.TrimSpace(kv[0])
+	if key == "" {
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
+	}
+
+	val := strings.TrimSpace(kv[1])
+	if val == "" {
+		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
+	}
+
+	r.Key = key
+	r.Op = op
+	r.Values = []string{val}
+	return r, nil
+}
+
+func checkPlacementLabelConstraints(rule *placement.Rule, labels []string) error {
+	for _, str := range labels {
+		label, err := checkPlacementLabelConstraint(strings.TrimSpace(str))
+		if err != nil {
+			return err
+		}
+		rule.LabelConstraints = append(rule.LabelConstraints, label)
+	}
+	return nil
+}
+
+func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule, cnstr string) ([]*placement.Rule, error) {
+	cnstr = strings.TrimSpace(cnstr)
+	var err error
+	if len(cnstr) > 0 && cnstr[0] == '[' {
+		constraints := []string{}
+
+		err = json.Unmarshal([]byte(cnstr), &constraints)
+		if err != nil {
+			return rules, err
+		}
+
+		err = checkPlacementLabelConstraints(rule, constraints)
+		if err != nil {
+			return rules, err
+		}
+
+		rules = append(rules, rule)
+	} else if len(cnstr) > 0 && cnstr[0] == '{' {
+		constraints := map[string]int{}
+		err = json.Unmarshal([]byte(cnstr), &constraints)
+		if err != nil {
+			return rules, err
+		}
+
+		for labels, cnt := range constraints {
+			newRule := &placement.Rule{}
+			*newRule = *rule
+			if cnt <= 0 {
+				err = errors.Errorf("count should be non-positive, but got %d", cnt)
+				break
+			}
+			// TODO: handle or remove rule.Count in later commits
+			rule.Count -= cnt
+			newRule.Count = cnt
+			err = checkPlacementLabelConstraints(newRule, strings.Split(strings.TrimSpace(labels), ","))
+			if err != nil {
+				break
+			}
+			rules = append(rules, newRule)
+		}
+	} else {
+		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
+	}
+	return rules, err
+}
+
 func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) {
 	rules := make([]*placement.Rule, 0, len(specs))
-	for k, spec := range specs {
+
+	var err error
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+
+	for _, spec := range specs {
 		rule := &placement.Rule{
 			GroupID:  placementRuleDefaultGroupID,
 			Count:    int(spec.Replicas),
@@ -5170,62 +5278,35 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 		switch spec.Tp {
 		case ast.PlacementAdd:
 		default:
-			return rules, errors.Errorf("invalid placement spec[%d], unknown action type: %d", k, spec.Tp)
+			err = errors.Errorf("unknown action type: %d", spec.Tp)
 		}
 
-		switch spec.Role {
-		case ast.PlacementRoleFollower:
-			rule.Role = placement.Follower
-		case ast.PlacementRoleLeader:
-			rule.Role = placement.Leader
-		case ast.PlacementRoleLearner:
-			rule.Role = placement.Learner
-		case ast.PlacementRoleVoter:
-			rule.Role = placement.Voter
-		default:
-			return rules, errors.Errorf("invalid placement spec[%d], unknown role: %d", k, spec.Role)
-		}
-
-		for _, label := range strings.Split(spec.Constraints, ",") {
-			label = strings.TrimSpace(label)
-
-			if len(label) < 4 {
-				return rules, errors.Errorf("invalid placement spec[%d], constraint too short to be valid: %s", k, label)
-			}
-
-			var op placement.LabelConstraintOp
-			switch label[0] {
-			case '+':
-				op = placement.In
-			case '-':
-				op = placement.NotIn
+		if err == nil {
+			switch spec.Role {
+			case ast.PlacementRoleFollower:
+				rule.Role = placement.Follower
+			case ast.PlacementRoleLeader:
+				rule.Role = placement.Leader
+			case ast.PlacementRoleLearner:
+				rule.Role = placement.Learner
+			case ast.PlacementRoleVoter:
+				rule.Role = placement.Voter
 			default:
-				return rules, errors.Errorf("invalid placement spec[%d], unknown operation: %c", k, label[0])
+				err = errors.Errorf("unknown role: %d", spec.Role)
 			}
-
-			kv := strings.Split(label[1:], "=")
-			if len(kv) != 2 {
-				return rules, errors.Errorf("invalid placement spec[%d], invalid constraint format: %s", k, label)
-			}
-
-			key := strings.TrimSpace(kv[0])
-			if key == "" {
-				return rules, errors.Errorf("invalid placement spec[%d], empty constraint key: %s", k, label)
-			}
-
-			val := strings.TrimSpace(kv[1])
-			if val == "" {
-				return rules, errors.Errorf("invalid placement spec[%d], empty constraint val: %s", k, label)
-			}
-
-			rule.LabelConstraints = append(rule.LabelConstraints, placement.LabelConstraint{
-				Key:    key,
-				Op:     op,
-				Values: []string{val},
-			})
 		}
 
-		rules = append(rules, rule)
+		if err == nil {
+			rules, err = checkPlacementSpecConstraint(rules, rule, spec.Constraints)
+		}
+
+		if err != nil {
+			sb.Reset()
+			if e := spec.Restore(restoreCtx); e != nil {
+				return rules, ErrInvalidPlacementSpec.GenWithStackByArgs("", err)
+			}
+			return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
+		}
 	}
 	return rules, nil
 }
