@@ -1193,7 +1193,7 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) && tbl.PKIsHandle {
+			if mysql.HasPriKeyFlag(col.Flag) {
 				return &IntHandleCols{col: schema.Columns[i]}
 			}
 		}
