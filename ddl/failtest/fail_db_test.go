@@ -490,5 +490,24 @@ func (s *testFailDBSuite) TestModifyColumns(c *C) {
 	_, err = tk.Exec("alter table t2 modify column a mediumint generated always as(id+1) stored")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: enableChangeColType is true, newCol IsGenerated true, oldCol IsGenerated false")
 
-	tk.MustExec("drop table t, t1, t2")
+	// Test multiple rows of data.
+	tk.MustExec("create table t3(a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")
+	// Add some discrete rows.
+	maxBatch := 20
+	batchCnt := 100
+	// Make sure there are no duplicate keys.
+	defaultBatchSize := variable.DefTiDBDDLReorgBatchSize * variable.DefTiDBDDLReorgWorkerCount
+	base := defaultBatchSize * 20
+	for i := 1; i < batchCnt; i++ {
+		n := base + i*defaultBatchSize + i
+		for j := 0; j < rand.Intn(maxBatch); j++ {
+			n += j
+			sql := fmt.Sprintf("insert into t3 values (%d, %d, %d)", n, n, n)
+			tk.MustExec(sql)
+		}
+	}
+	tk.MustExec("alter table t3 modify column a mediumint")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table t, t1, t2, t3")
 }
