@@ -285,7 +285,6 @@ func setColumnsState(columnInfos []*model.ColumnInfo, state model.SchemaState) {
 func setIndicesState(tableInfo *model.TableInfo, indexInfos []*model.IndexInfo, state model.SchemaState) {
 	for _, indexInfo := range indexInfos {
 		indexInfo.State = state
-		updateHiddenColumns(tableInfo, indexInfo, state)
 	}
 }
 
@@ -404,9 +403,7 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.SchemaState = model.StateWriteOnly
 		setColumnsState(colInfos, model.StateWriteOnly)
 		if len(idxInfos) > 0 {
-			for _, indexInfo := range idxInfos {
-				indexInfo.State = model.StateWriteOnly
-			}
+			setIndicesState(tblInfo, idxInfos, model.StateWriteOnly)
 		}
 		for _, colInfo := range colInfos {
 			err = checkDropColumnForStatePublic(tblInfo, colInfo)
@@ -547,9 +544,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		job.SchemaState = model.StateWriteOnly
 		colInfo.State = model.StateWriteOnly
 		if len(idxInfos) > 0 {
-			for _, indexInfo := range idxInfos {
-				indexInfo.State = model.StateWriteOnly
-			}
+			setIndicesState(tblInfo, idxInfos, model.StateWriteOnly)
 		}
 		err = checkDropColumnForStatePublic(tblInfo, colInfo)
 		if err != nil {
