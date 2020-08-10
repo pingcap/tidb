@@ -58,13 +58,14 @@ func checkLabelConstraint(label string) (LabelConstraint, error) {
 }
 
 // CheckLabelConstraints will check labels, and build LabelConstraints for rule
-func CheckLabelConstraints(rule *RuleOp, labels []string) error {
+func CheckLabelConstraints(labels []string) ([]LabelConstraint, error) {
+	constraints := make([]LabelConstraint, 0, len(labels))
 	for _, str := range labels {
 		label, err := checkLabelConstraint(strings.TrimSpace(str))
 		if err != nil {
-			return err
+			return constraints, err
 		}
-		rule.LabelConstraints = append(rule.LabelConstraints, label)
+		constraints = append(constraints, label)
 	}
-	return nil
+	return constraints, nil
 }

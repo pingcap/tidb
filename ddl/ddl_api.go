@@ -5180,7 +5180,7 @@ func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas ui
 			return rules, err
 		}
 
-		err = placement.CheckLabelConstraints(rule, constraints)
+		rule.LabelConstraints, err = placement.CheckLabelConstraints(constraints)
 		if err != nil {
 			return rules, err
 		}
@@ -5210,7 +5210,8 @@ func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas ui
 				}
 			}
 			newRule.Count = cnt
-			err = placement.CheckLabelConstraints(newRule, strings.Split(strings.TrimSpace(labels), ","))
+
+			newRule.LabelConstraints, err = placement.CheckLabelConstraints(strings.Split(strings.TrimSpace(labels), ","))
 			if err != nil {
 				break
 			}
