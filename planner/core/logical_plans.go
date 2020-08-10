@@ -657,6 +657,11 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 	}
 	sc := ds.ctx.GetSessionVars().StmtCtx
 	if len(path.IdxCols) != 0 {
+		for i := range path.IdxColLens {
+			// The primary keys with prefix index are stored without truncation,
+			// so the scanning range should not be truncated.
+			path.IdxColLens[i] = types.UnspecifiedLength
+		}
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
 		if err != nil {
 			return false, err

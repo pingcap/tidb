@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -125,4 +126,19 @@ func (s *testClusteredSuite) TestClusteredInsertIgnoreBatchGetKeyCount(c *C) {
 	snapSize := tikv.SnapCacheSize(txn.GetSnapshot())
 	c.Assert(snapSize, Equals, 1)
 	tk.MustExec("rollback")
+}
+
+func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(name varchar(255), b int, c int, primary key(name(2)), index idx(b));")
+	tk.MustExec("insert into t(name, b) values('aaaaa', 1), ('bbbbb', 2);")
+	tk.MustExec("admin check table t;")
+
+	tk.MustGetErrCode("insert into t(name, b) values('aaa', 3);", errno.ErrDupEntry)
+	sql := "select * from t use index(primary) where name = 'aaaaa';"
+	tk.HasPlan(sql, "TableReader")
+	tk.HasPlan(sql, "TableRangeScan")
+	tk.MustQuery(sql).Check(testkit.Rows("aaaaa 1 <nil>"))
+	tk.MustExec("admin check table t;")
 }

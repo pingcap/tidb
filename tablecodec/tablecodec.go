@@ -1014,7 +1014,7 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	}
 	// For string columns, indexes can be created using only the leading part of column values,
 	// using col_name(length) syntax to specify an index prefix length.
-	indexedValues = TruncateIndexValuesIfNeeded(tblInfo, idxInfo, indexedValues)
+	indexedValues, _ = TruncateIndexValuesIfNeeded(tblInfo, idxInfo, indexedValues)
 	key = GetIndexKeyBuf(buf, RecordRowKeyLen+len(indexedValues)*9+9)
 	key = appendTableIndexPrefix(key, phyTblID)
 	key = codec.EncodeInt(key, idxInfo.ID)
@@ -1091,7 +1091,9 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 }
 
 // TruncateIndexValuesIfNeeded truncates the index values created using only the leading part of column values.
-func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) []types.Datum {
+func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+	indexedValues []types.Datum) ([]types.Datum, bool) {
+	truncated := false
 	for i := 0; i < len(indexedValues); i++ {
 		v := &indexedValues[i]
 		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
@@ -1109,6 +1111,7 @@ func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexI
 					if origKind == types.KindBytes {
 						v.SetBytes(v.GetBytes())
 					}
+					truncated = true
 				}
 			} else if ic.Length != types.UnspecifiedLength && len(colValue) > ic.Length {
 				// truncate value and limit its length
@@ -1119,8 +1122,7 @@ func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexI
 			}
 		}
 	}
-
-	return indexedValues
+	return indexedValues, truncated
 }
 
 // EncodeHandleInUniqueIndexValue encodes handle in data.

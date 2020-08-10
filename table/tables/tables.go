@@ -584,6 +584,10 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			for _, idxCol := range pkIdx.Columns {
 				pkDts = append(pkDts, r[tblInfo.Columns[idxCol.Offset].Offset])
 			}
+			err = t.checkTruncatedClusteredPrimaryKeyDuplication(sctx, pkDts, cols, pkIdx)
+			if err != nil {
+				return
+			}
 			var handleBytes []byte
 			handleBytes, err = codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, pkDts...)
 			if err != nil {
@@ -747,6 +751,56 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 	sessVars.TxnCtx.UpdateDeltaForTable(t.physicalTableID, 1, 1, colSize)
 	return recordID, nil
+}
+
+func (t *TableCommon) checkTruncatedClusteredPrimaryKeyDuplication(sctx sessionctx.Context, pkDts []types.Datum,
+	tableCols[]*table.Column, pkIdx *model.IndexInfo) error {
+	truncatedDts := make([]types.Datum, len(pkDts))
+	copy(truncatedDts, pkDts)
+	_, ok := tablecodec.TruncateIndexValuesIfNeeded(t.meta, pkIdx, truncatedDts)
+	if !ok {
+		return nil
+	}
+	// construct the start_key to scan.
+	prefixKey, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, truncatedDts...)
+	if err != nil {
+		return err
+	}
+	truncatedHandle, err := kv.NewCommonHandle(prefixKey)
+	if err != nil {
+		return err
+	}
+	startKey := t.RecordKey(truncatedHandle)
+
+	// check if the prefix part of key is duplicate.
+	err = t.IterRecords(sctx, startKey, tableCols,
+		func(h kv.Handle, rec []types.Datum, _ []*table.Column) (more bool, err error) {
+			pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
+			for _, idxCol := range pkIdx.Columns {
+				pkDts = append(pkDts, rec[t.meta.Columns[idxCol.Offset].Offset])
+			}
+			_, ok := tablecodec.TruncateIndexValuesIfNeeded(t.meta, pkIdx, pkDts)
+			if !ok {
+				return false, nil
+			}
+			for i := 0; i < len(pkDts); i++ {
+				cmp, err := truncatedDts[i].CompareDatum(sctx.GetSessionVars().StmtCtx, &pkDts[i])
+				if err != nil {
+					return false, err
+				}
+
+				foundKeyDuplicate := cmp == 0
+				if foundKeyDuplicate {
+					str, err := pkDts[i].ToString()
+					if err != nil {
+						return false, err
+					}
+					return false, kv.ErrKeyExists.FastGenByArgs(str, "PRIMARY")
+				}
+			}
+			return false, nil
+		})
+	return errors.Trace(err)
 }
 
 // genIndexKeyStr generates index content string representation.
