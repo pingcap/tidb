@@ -178,11 +178,6 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 			default:
 				return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 			}
-			job.SchemaState = indexInfo.State
-			ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
 		}
 	}
 
@@ -219,11 +214,6 @@ func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error)
 				indexInfo.State = model.StatePublic
 			default:
 				return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
-			}
-			job.SchemaState = indexInfo.State
-			ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
-			if err != nil {
-				return ver, errors.Trace(err)
 			}
 		}
 	}
