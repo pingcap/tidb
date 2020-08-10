@@ -107,7 +107,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts)
 	r.partialCount++
 
-	hasStats, ok := resultSubset.(HasCopRuntimeStats)
+	hasStats, ok := resultSubset.(CopRuntimeStats)
 	if ok {
 		copStats := hasStats.GetCopRuntimeStats()
 		if copStats != nil {

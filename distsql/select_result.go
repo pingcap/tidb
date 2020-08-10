@@ -142,7 +142,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 
-		hasStats, ok := resultSubset.(HasCopRuntimeStats)
+		hasStats, ok := resultSubset.(CopRuntimeStats)
 		if ok {
 			copStats := hasStats.GetCopRuntimeStats()
 			if copStats != nil {
@@ -321,8 +321,8 @@ func (r *selectResult) Close() error {
 	return r.resp.Close()
 }
 
-// HasCopRuntimeStats is a interface uses to check whether the result has cop runtime stats.
-type HasCopRuntimeStats interface {
+// CopRuntimeStats is a interface uses to check whether the result has cop runtime stats.
+type CopRuntimeStats interface {
 	// GetCopRuntimeStats gets the cop runtime stats information.
 	GetCopRuntimeStats() *tikv.CopRuntimeStats
 }
