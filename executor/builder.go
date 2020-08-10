@@ -906,6 +906,21 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 	if b.err != nil {
 		return nil
 	}
+
+	// Adjust UnionScan->PartitionTable->Reader
+	// to PartitionTable->UnionScan->Reader
+	// The build of UnionScan executor is delay to the nextPartition() function
+	// because the Reader executor is available there.
+	if x, ok := reader.(*PartitionTableExecutor); ok {
+		nextPartitionForReader := x.nextPartition
+		x.nextPartition = nextPartitionForUnionScan{
+			b:     b,
+			us:    v,
+			child: nextPartitionForReader,
+		}
+		return x
+	}
+
 	return b.buildUnionScanFromReader(reader, v)
 }
 
@@ -1678,7 +1693,7 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 	return e
 }
 
-func buildHandleCols(sc *stmtctx.StatementContext, tbInfo *model.TableInfo) plannercore.HandleCols {
+func buildHandleColsForSplit(sc *stmtctx.StatementContext, tbInfo *model.TableInfo) plannercore.HandleCols {
 	if tbInfo.IsCommonHandle {
 		primaryIdx := tables.FindPrimaryIndex(tbInfo)
 		tableCols := make([]*expression.Column, len(tbInfo.Columns))
@@ -1715,7 +1730,7 @@ func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) Executor 
 			valueLists:     v.ValueLists,
 		}
 	}
-	handleCols := buildHandleCols(b.ctx.GetSessionVars().StmtCtx, v.TableInfo)
+	handleCols := buildHandleColsForSplit(b.ctx.GetSessionVars().StmtCtx, v.TableInfo)
 	if len(v.ValueLists) > 0 {
 		return &SplitTableRegionExec{
 			baseExecutor:   base,
@@ -1916,8 +1931,16 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 
 func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string) *analyzeTask {
 	cols := task.ColsInfo
-	if task.PKInfo != nil {
-		cols = append([]*model.ColumnInfo{task.PKInfo}, cols...)
+	if hasPkHist(task.HandleCols) {
+		colInfo := task.TblInfo.Columns[task.HandleCols.GetCol(0).Index]
+		cols = append([]*model.ColumnInfo{colInfo}, cols...)
+	} else if task.HandleCols != nil && !task.HandleCols.IsInt() {
+		cols = make([]*model.ColumnInfo, 0, len(task.ColsInfo)+task.HandleCols.NumCols())
+		for i := 0; i < task.HandleCols.NumCols(); i++ {
+			cols = append(cols, task.TblInfo.Columns[task.HandleCols.GetCol(i).Index])
+		}
+		cols = append(cols, task.ColsInfo...)
+		task.ColsInfo = cols
 	}
 
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
@@ -1926,7 +1949,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		ctx:             b.ctx,
 		physicalTableID: task.PhysicalTableID,
 		colsInfo:        task.ColsInfo,
-		pkInfo:          task.PKInfo,
+		handleCols:      task.HandleCols,
 		concurrency:     b.ctx.GetSessionVars().DistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
@@ -1941,7 +1964,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 		BucketSize:    int64(opts[ast.AnalyzeOptNumBuckets]),
 		SampleSize:    maxRegionSampleSize,
 		SketchSize:    maxSketchSize,
-		ColumnsInfo:   util.ColumnsToProto(cols, task.PKInfo != nil),
+		ColumnsInfo:   util.ColumnsToProto(cols, task.HandleCols != nil && task.HandleCols.IsInt()),
 		CmsketchDepth: &depth,
 		CmsketchWidth: &width,
 	}
@@ -1960,7 +1983,10 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 	if statsTbl.Pseudo {
 		return analyzeTask
 	}
-	col, ok := statsTbl.Columns[task.PKInfo.ID]
+	if task.HandleCols == nil || !task.HandleCols.IsInt() {
+		return analyzeTask
+	}
+	col, ok := statsTbl.Columns[task.HandleCols.GetCol(0).ID]
 	if !ok || col.Len() == 0 || col.LastAnalyzePos.IsNull() {
 		return analyzeTask
 	}
@@ -2008,7 +2034,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 				ctx:             b.ctx,
 				physicalTableID: task.PhysicalTableID,
 				colsInfo:        task.ColsInfo,
-				pkInfo:          task.PKInfo,
+				handleCols:      task.HandleCols,
 				opts:            opts,
 				tblInfo:         task.TblInfo,
 				concurrency:     concurrency,
@@ -2461,7 +2487,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	// TODO: Remove the following 3 lines code when the code is full implemented.
-	if !tryNewPartitionImplementation(b.ctx) {
+	if tryOldPartitionImplementation(b.ctx) {
 		return ret
 	}
 
@@ -2572,7 +2598,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 	sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
 
 	// TODO: Remove the following 3 lines code when the code is full implemented.
-	if !tryNewPartitionImplementation(b.ctx) {
+	if tryOldPartitionImplementation(b.ctx) {
 		return ret
 	}
 
@@ -2708,7 +2734,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	// TODO: Remove the following 3 lines code when the code is full implemented.
-	if !tryNewPartitionImplementation(b.ctx) {
+	if tryOldPartitionImplementation(b.ctx) {
 		return ret
 	}
 
@@ -2818,7 +2844,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	executorCounterIndexMergeReaderExecutor.Inc()
 
 	// TODO: Remove the following 3 lines code when the code is full implemented.
-	if !tryNewPartitionImplementation(b.ctx) {
+	if tryOldPartitionImplementation(b.ctx) {
 		return ret
 	}
 
@@ -2987,7 +3013,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return nil, err
 	}
 	tbInfo := e.table.Meta()
-	if tbInfo.GetPartitionInfo() == nil || !tryNewPartitionImplementation(builder.ctx) {
+	if tbInfo.GetPartitionInfo() == nil || tryOldPartitionImplementation(builder.ctx) {
 		kvRanges, err := buildKvRangesForIndexJoin(e.ctx, e.physicalTableID, e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 		if err != nil {
 			return nil, err
@@ -3017,7 +3043,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	}
 
 	tbInfo := e.table.Meta()
-	if tbInfo.GetPartitionInfo() == nil || !tryNewPartitionImplementation(builder.ctx) {
+	if tbInfo.GetPartitionInfo() == nil || tryOldPartitionImplementation(builder.ctx) {
 		e.kvRanges, err = buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), e.index.ID, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 		if err != nil {
 			return nil, err
@@ -3442,13 +3468,13 @@ func (b *executorBuilder) buildAdminResetTelemetryID(v *plannercore.AdminResetTe
 	return &AdminResetTelemetryIDExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())}
 }
 
-func tryNewPartitionImplementation(sctx sessionctx.Context) bool {
-	_, ok := sctx.GetSessionVars().Users["try_new_partition_implementation"]
+func tryOldPartitionImplementation(sctx sessionctx.Context) bool {
+	_, ok := sctx.GetSessionVars().Users["try_old_partition_implementation"]
 	return ok
 }
 
 func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr) ([]table.PhysicalTable, error) {
-	idxArr, err := plannercore.PartitionPruning(ctx, tbl, conds, nil)
+	idxArr, err := plannercore.PartitionPruning(ctx, tbl, conds, partitionNames)
 	if err != nil {
 		return nil, err
 	}

@@ -45,12 +45,11 @@ type testMemDBSuite struct{}
 
 // DeleteKey is used in test to verify the `deleteNode` used in `vlog.revertToCheckpoint`.
 func (db *memdb) DeleteKey(key []byte) {
-	x := db.tranverse(key, false)
+	x := db.traverse(key, false)
 	if x.isNull() {
 		return
 	}
-	db.count--
-	db.size -= (len(db.vlog.getValue(x.vptr)) + int(x.klen))
+	db.size -= len(db.vlog.getValue(x.vptr))
 	db.deleteNode(x)
 }
 
@@ -452,7 +451,7 @@ func (s *testMemDBSuite) TestDirty(c *C) {
 	// persistent flags will make memdb dirty.
 	db = newMemDB()
 	h = db.Staging()
-	db.SetWithFlags([]byte{1}, []byte{1}, SetPessimisticLock)
+	db.SetWithFlags([]byte{1}, []byte{1}, SetKeyLocked)
 	db.Cleanup(h)
 	c.Assert(db.Dirty(), IsTrue)
 
@@ -472,7 +471,7 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 		var buf [4]byte
 		binary.BigEndian.PutUint32(buf[:], i)
 		if i%2 == 0 {
-			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists, SetPessimisticLock)
+			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists, SetKeyLocked)
 		} else {
 			db.SetWithFlags(buf[:], buf[:], SetPresumeKeyNotExists)
 		}
@@ -487,15 +486,15 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 		flags, err := db.GetFlags(buf[:])
 		if i%2 == 0 {
 			c.Assert(err, IsNil)
-			c.Assert(flags.HasPessimisticLock(), IsTrue)
+			c.Assert(flags.HasLocked(), IsTrue)
 			c.Assert(flags.HasPresumeKeyNotExists(), IsFalse)
 		} else {
 			c.Assert(err, NotNil)
 		}
 	}
 
-	c.Assert(db.Len(), Equals, 0)
-	c.Assert(db.Size(), Equals, 0)
+	c.Assert(db.Len(), Equals, 5000)
+	c.Assert(db.Size(), Equals, 20000)
 
 	it1, _ := db.Iter(nil, nil)
 	it := it1.(*memdbIterator)
@@ -512,7 +511,7 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 	for i := uint32(0); i < cnt; i++ {
 		var buf [4]byte
 		binary.BigEndian.PutUint32(buf[:], i)
-		db.UpdateFlags(buf[:], DelPessimisticLock)
+		db.UpdateFlags(buf[:], DelKeyLocked)
 	}
 	for i := uint32(0); i < cnt; i++ {
 		var buf [4]byte
@@ -523,7 +522,7 @@ func (s *testMemDBSuite) TestFlags(c *C) {
 		// UpdateFlags will create missing node.
 		flags, err := db.GetFlags(buf[:])
 		c.Assert(err, IsNil)
-		c.Assert(flags.HasPessimisticLock(), IsFalse)
+		c.Assert(flags.HasLocked(), IsFalse)
 	}
 }
 

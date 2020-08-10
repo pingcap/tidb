@@ -1080,6 +1080,7 @@ const (
 	ErrUnsupportedConstraintCheck         = 8231
 	ErrTableOptionUnionUnsupported        = 8232
 	ErrTableOptionInsertMethodUnsupported = 8233
+	ErrInvalidPlacementSpec               = 8234
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout        = 9001
