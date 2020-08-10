@@ -188,6 +188,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.Kind == ast.BRIEKindRestore {
 			p.flag |= inCreateOrDropTable
 		}
+	case *ast.TableSource:
+		if _, ok := node.Source.(*ast.SelectStmt); ok && len(node.AsName.L) == 0 {
+			p.err = ddl.ErrDerivedMustHaveAlias.GenWithStackByArgs()
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}

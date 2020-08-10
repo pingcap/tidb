@@ -3896,6 +3896,14 @@ func (s *testSuite3) TestDoSubquery(c *C) {
 	c.Assert(r, IsNil, Commentf("result of Do not empty"))
 }
 
+func (s *testSuite3) TestSubqueryTableAlias(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a int, b int);`)
+	tk.MustGetErrCode(`select min(b) b from (select min(t.b) b from t where t.a = '');`, mysql.ErrDerivedMustHaveAlias)
+}
+
 func (s *testSuite3) TestTSOFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
