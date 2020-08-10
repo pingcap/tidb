@@ -16,12 +16,12 @@ package executor
 import (
 	"context"
 	"fmt"
+
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -47,9 +47,6 @@ type UpdateExec struct {
 	allAssignmentsAreConstant bool
 	drained                   bool
 	memTracker                *memory.Tracker
-
-	stats    *pointGetRuntimeStats
-	snapshot kv.Snapshot
 }
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, newData []types.Datum) error {
@@ -57,40 +54,9 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 	if err != nil {
 		return err
 	}
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
-		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
-		// The snapshot may contains cache that can reduce RPC call.
-		e.snapshot = txn.GetSnapshot()
-	} else {
-		var err error
-		e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: txnCtx.StartTS})
-		if err != nil {
-			return err
-		}
-	}
-	if e.runtimeStats != nil {
-		snapshotStats := &tikv.SnapshotRuntimeStats{}
-		e.stats = &pointGetRuntimeStats{
-			BasicRuntimeStats:    e.runtimeStats,
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
-	}
-	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
-	}
-	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	if e.updatedRowKeys == nil {
 		e.updatedRowKeys = make(map[int64]*kv.HandleMap)
 	}
-
 	for _, content := range e.tblColPosInfos {
 		tbl := e.tblID2table[content.TblID]
 		if e.updatedRowKeys[content.TblID] == nil {

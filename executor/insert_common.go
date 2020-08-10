@@ -15,8 +15,6 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/store/tikv"
-	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -27,13 +25,16 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
+	"math"
 )
 
 // InsertValues is the data to insert.
@@ -74,8 +75,13 @@ type InsertValues struct {
 	lazyFillAutoID bool
 	memTracker     *memory.Tracker
 
-	stats    *pointGetRuntimeStats
+	stats    *RuntimeStatsWithRpcStats
 	snapshot kv.Snapshot
+}
+
+type RuntimeStatsWithRpcStats struct {
+	*execdetails.BasicRuntimeStats
+	*tikv.SnapshotRuntimeStats
 }
 
 type defaultVal struct {
@@ -488,7 +494,7 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
-		e.stats = &pointGetRuntimeStats{
+		e.stats = &RuntimeStatsWithRpcStats{
 			BasicRuntimeStats:    e.runtimeStats,
 			SnapshotRuntimeStats: snapshotStats,
 		}

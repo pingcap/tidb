@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/store/tikv"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
@@ -40,9 +39,6 @@ type DeleteExec struct {
 	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
 	tblColPosInfos plannercore.TblColPosInfoSlice
 	memTracker     *memory.Tracker
-
-	stats    *pointGetRuntimeStats
-	snapshot kv.Snapshot
 }
 
 // Next implements the Executor Next interface.
@@ -85,9 +81,10 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		}
 	}
 
-	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
-	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn() && config.GetGlobalConfig().EnableBatchDML
 	batchDMLSize := e.ctx.GetSessionVars().DMLBatchSize
+	// If tidb_batch_delete is ON and not in a transaction, we could use BatchDelete mode.
+	batchDelete := e.ctx.GetSessionVars().BatchDelete && !e.ctx.GetSessionVars().InTxn() &&
+		config.GetGlobalConfig().EnableBatchDML && batchDMLSize > 0
 	fields := retTypes(e.children[0])
 	chk := newFirstChunk(e.children[0])
 	memUsageOfChk := int64(0)
@@ -105,9 +102,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		e.memTracker.Consume(memUsageOfChk)
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				if err = e.ctx.StmtCommit(e.memTracker); err != nil {
-					return err
-				}
+				e.ctx.StmtCommit()
 				if err = e.ctx.NewTxn(ctx); err != nil {
 					// We should return a special error for batch insert.
 					return ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
@@ -218,36 +213,7 @@ func (e *DeleteExec) Close() error {
 func (e *DeleteExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
 
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
-		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
-		// The snapshot may contains cache that can reduce RPC call.
-		e.snapshot = txn.GetSnapshot()
-	} else {
-		var err error
-		e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: txnCtx.StartTS})
-		if err != nil {
-			return err
-		}
-	}
-	if e.runtimeStats != nil {
-		snapshotStats := &tikv.SnapshotRuntimeStats{}
-		e.stats = &pointGetRuntimeStats{
-			BasicRuntimeStats:    e.runtimeStats,
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
-	}
-	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
-	}
-	e.snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
 	return e.children[0].Open(ctx)
 }
 
