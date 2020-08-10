@@ -798,6 +798,8 @@ func checkListPartitionValue(tblInfo *model.TableInfo) error {
 		return nil
 	}
 
+	cols := tblInfo.Columns
+	isUnsignedBigint := isRangePartitionColUnsignedBigint(cols, pi)
 	partitionsValuesMap := make(map[string]map[string]struct{})
 	checkMultipleValue := func(v string) error {
 		for _, otherValueMap := range partitionsValuesMap {
@@ -808,12 +810,22 @@ func checkListPartitionValue(tblInfo *model.TableInfo) error {
 		return nil
 	}
 
-	for _, def := range pi.Definitions {
+	for i, def := range pi.Definitions {
 		valuesMap := make(map[string]struct{}, len(def.Values))
-		for _, v := range def.Values {
+		for j, v := range def.Values {
+			if isUnsignedBigint {
+				if value, err := strconv.ParseUint(v, 10, 64); err == nil {
+					v = strconv.FormatUint(value, 10)
+				}
+			} else {
+				if value, err := strconv.ParseInt(v, 10, 64); err == nil {
+					v = strconv.FormatInt(value, 10)
+				}
+			}
 			if err := checkMultipleValue(v); err != nil {
 				return err
 			}
+			pi.Definitions[i].Values[j] = v
 			valuesMap[v] = struct{}{}
 		}
 		partitionsValuesMap[def.Name.O] = valuesMap
