@@ -186,8 +186,6 @@ func (e *TableReaderExecutor) Close() error {
 	return err
 }
 
-const estimatedRegionRowCount = 100000
-
 // buildResp first builds request and sends it to tikv using distsql.Select. It uses SelectResut returned by the callee
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
@@ -211,13 +209,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		Build()
 	if err != nil {
 		return nil, err
-	}
-	if len(e.dagPB.Executors) == 2 {
-		// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
-		limit := e.dagPB.Executors[1].GetLimit()
-		if limit != nil && limit.Limit < estimatedRegionRowCount {
-			kvReq.Concurrency = 1
-		}
 	}
 	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
 
