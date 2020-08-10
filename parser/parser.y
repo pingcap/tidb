@@ -1383,7 +1383,12 @@ PlacementRole:
 PlacementCount:
 	"REPLICAS" "=" LengthNum
 	{
-		$$ = $3
+		cnt := $3.(uint64)
+		if cnt == 0 {
+			yylex.AppendError(yylex.Errorf("Invalid placement option REPLICAS, it is not allowed to be 0"))
+			return 1
+		}
+		$$ = cnt
 	}
 
 PlacementLabelConstraints:
@@ -1423,7 +1428,7 @@ PlacementOptions:
 |	PlacementOptions PlacementCount
 	{
 		spec := $1.(*ast.PlacementSpec)
-		if spec.Replicas > 0 {
+		if spec.Replicas != 0 {
 			yylex.AppendError(yylex.Errorf("Duplicate placement option REPLICAS"))
 			return 1
 		}
