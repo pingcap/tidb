@@ -219,7 +219,7 @@ add placement policy
 	constraints='["+   zone   =   sh"]'
 	role=leader
 	replicas=0`)
-	c.Assert(err, ErrorMatches, ".*count should be positive.*")
+	c.Assert(err, ErrorMatches, ".*Invalid placement option REPLICAS, it is not allowed to be 0.*")
 
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c int)")
