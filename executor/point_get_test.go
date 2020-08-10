@@ -584,7 +584,7 @@ func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(res.Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(res.Sort().Rows())
 		})
 		plan.Check(testkit.Rows(output[i].Plan...))
 		res.Check(testkit.Rows(output[i].Res...))

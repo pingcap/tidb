@@ -65,10 +65,10 @@
           "  └─Batch_Point_Get_14 2.00 root table:t1, index:PRIMARY(a, b) keep order:false, desc:false"
         ],
         "Res": [
-          "111 1",
-          "222 2",
           "1 1",
-          "2 2"
+          "111 1",
+          "2 2",
+          "222 2"
         ]
       }
     ]
