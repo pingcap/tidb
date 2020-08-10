@@ -73,13 +73,6 @@ func (ts *tidbTestSuite) SetUpSuite(c *C) {
 	ts.tidbTestSuiteBase.SetUpSuite(c)
 }
 
-func newTestConfig() *config.Config {
-	cfg := config.NewConfig()
-	cfg.Host = "127.0.0.1"
-	cfg.Status.StatusHost = "127.0.0.1"
-	return cfg
-}
-
 func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 	var err error
 	ts.store, err = mockstore.NewMockStore()
