@@ -878,9 +878,9 @@ func (e *InspectionSummaryTableExtractor) Extract(
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `rule` columns
-	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
+	_, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
 	// Extract the `metric_name` columns
-	remained, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metrics_name", true)
+	_, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	// Extract the `quantile` columns
 	remained, quantileSkip, quantileSet := e.extractCol(schema, names, predicates, "quantile", false)
 	e.SkipInspection = ruleSkip || quantileSkip || metricNameSkip
