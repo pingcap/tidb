@@ -646,7 +646,13 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
 }
 
-func (ts *ConnTestSuite) TestOOMRecord(c *C) {
+type OOMRecordTestSuite struct {
+	*ConnTestSuite
+}
+
+var _ = Suite(&OOMRecordTestSuite{&ConnTestSuite{}})
+
+func (ts *OOMRecordTestSuite) TestOOMRecord(c *C) {
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 
@@ -676,7 +682,7 @@ func (ts *ConnTestSuite) TestOOMRecord(c *C) {
 	c.Assert(atomic.LoadUint32(&expensivequery.OOMRecordCount), Equals, uint32(0))
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.ServerMemoryAlert = 0.0001 // Make the quota smaller to action oom record.
+		conf.Performance.ServerMemoryAlert = 0.000001 // Make the quota smaller to action oom record.
 	})
 	time.Sleep(500 * time.Millisecond)
 	c.Assert(atomic.LoadUint32(&expensivequery.OOMRecordCount), Equals, uint32(1))
