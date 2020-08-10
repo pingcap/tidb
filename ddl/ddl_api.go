@@ -5193,7 +5193,6 @@ func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas ui
 			return rules, err
 		}
 
-		rulesLen := len(rules)
 		ruleCnt := int(replicas)
 		for labels, cnt := range constraints {
 			newRule := rule.Clone()
@@ -5204,7 +5203,6 @@ func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas ui
 			if replicas != 0 {
 				ruleCnt -= cnt
 				if ruleCnt < 0 {
-					rules = rules[:rulesLen]
 					err = errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", replicas)
 					break
 				}
