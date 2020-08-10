@@ -414,8 +414,8 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	statistics.RatioOfPseudoEstimate.Store(10.0)
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableReader_7 35.91 root  data:Selection_6",
-		"└─Selection_6 35.91 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+		"TableReader_7 29.77 root  data:Selection_6",
+		"└─Selection_6 29.77 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
 		"  └─TableFullScan_5 80.00 cop[tikv] table:t keep order:false",
 	))
 	statistics.RatioOfPseudoEstimate.Store(0.7)
