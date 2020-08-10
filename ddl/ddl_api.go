@@ -5186,8 +5186,6 @@ func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 
 		rules = append(rules, rule)
 	} else if len(cnstr) > 0 && cnstr[0] == '{' {
-		rule.Count = int(replicas)
-
 		constraints := map[string]int{}
 		err = json.Unmarshal([]byte(cnstr), &constraints)
 		if err != nil {
@@ -5195,7 +5193,7 @@ func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 		}
 
 		rulesLen := len(rules)
-		ruleCnt := rule.Count
+		ruleCnt := int(replicas)
 		for labels, cnt := range constraints {
 			newRule := rule.Clone()
 			if cnt <= 0 {
@@ -5206,7 +5204,7 @@ func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 				ruleCnt -= cnt
 				if ruleCnt < 0 {
 					rules = rules[:rulesLen]
-					err = errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", rule.Count)
+					err = errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", replicas)
 					break
 				}
 			}
