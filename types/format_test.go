@@ -89,9 +89,11 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`a09:30:17`, `a%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
 		{`09:30:17a`, `%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
 		{`abc`, `abc`, types.ZeroTime},
+		{`12:43:24`, `%h:%i:%s`, types.FromDate(0, 0, 0, 0, 43, 24, 0)},
 		{`09`, `%m`, types.FromDate(0, 9, 0, 0, 0, 0, 0)},
 		{`09`, `%s`, types.FromDate(0, 0, 0, 0, 0, 9, 0)},
-		{`12:43:24 AM`, `%r`, types.FromDate(0, 0, 0, 12, 43, 24, 0)},
+		{`12:43:24 AM`, `%r`, types.FromDate(0, 0, 0, 0, 43, 24, 0)},
+		{`12:43:24 PM`, `%r`, types.FromDate(0, 0, 0, 12, 43, 24, 0)},
 		{`11:43:24 PM`, `%r`, types.FromDate(0, 0, 0, 23, 43, 24, 0)},
 		{`00:12:13`, `%T`, types.FromDate(0, 0, 0, 0, 12, 13, 0)},
 		{`23:59:59`, `%T`, types.FromDate(0, 0, 0, 23, 59, 59, 0)},
@@ -127,15 +129,14 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	}{
 		{`04/31/2004`, `%m/%d/%Y`},
 		{`a09:30:17`, `%h:%i:%s`}, // format mismatch
-		{`12:43:24 PM`, `%r`},
-		{`12:43:24`, `%r`}, // no PM or AM followed
-		{`23:60:12`, `%T`}, // invalid minute
+		{`12:43:24`, `%r`},        // no PM or AM followed
+		{`23:60:12`, `%T`},        // invalid minute
 		{`18`, `%l`},
 		{`00:21:22 AM`, `%h:%i:%s %p`},
 		{`100/10/22`, `%y/%m/%d`},
 	}
-	for _, tt := range errTests {
+	for i, tt := range errTests {
 		var t types.Time
-		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsFalse)
+		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsFalse, Commentf("no.%d failed", i))
 	}
 }

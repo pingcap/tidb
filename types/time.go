@@ -2173,6 +2173,10 @@ func mysqlTimeFix(t *MysqlTime, ctx map[string]int) error {
 		if valueAMorPm == constForPM {
 			t.hour += 12
 		}
+	} else {
+		if _, ok := ctx["%h"]; ok && t.Hour() == 12 {
+			t.hour = 0
+		}
 	}
 	return nil
 }
@@ -2271,7 +2275,7 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%d": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%e": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%f": microSeconds,          // Microseconds (000000..999999)
-	"%h": hour24TwoDigits,       // Hour (01..12)
+	"%h": hour12Numeric,         // Hour (01..12)
 	"%H": hour24Numeric,         // Hour (00..23)
 	"%I": hour12Numeric,         // Hour (01..12)
 	"%i": minutesNumeric,        // Minutes, numeric (00..59)
@@ -2396,6 +2400,10 @@ func time12Hour(t *MysqlTime, input string, ctx map[string]int) (string, bool) {
 	hour, succ := parseDigits(input, 2)
 	if !succ || hour > 12 || hour == 0 || input[2] != ':' {
 		return input, false
+	}
+	// 12:34:56 AM -> 00:34:56
+	if hour == 12 {
+		hour = 0
 	}
 
 	minute, succ := parseDigits(input[3:], 2)
@@ -2542,6 +2550,7 @@ func hour12Numeric(t *MysqlTime, input string, ctx map[string]int) (string, bool
 		return input, false
 	}
 	t.hour = v
+	ctx["%h"] = v
 	return input[length:], true
 }
 
