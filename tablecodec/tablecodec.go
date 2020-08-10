@@ -365,7 +365,8 @@ func DecodeColumnValue(data []byte, ft *types.FieldType, loc *time.Location) (ty
 }
 
 // DecodeRowWithMapNew decode a row to datum map.
-func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType,
+	loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if row == nil {
 		row = make(map[int64]types.Datum, len(cols))
 	}
@@ -385,11 +386,8 @@ func DecodeRowWithMapNew(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 		}
 		idx++
 	}
-	// for decodeToMap:
-	// - no need handle
-	// - no need get default value
-	rd := rowcodec.NewDatumMapDecoder(reqCols, nil, loc)
-	return rd.DecodeToDatumMap(b, nil, row)
+	rd := rowcodec.NewDatumMapDecoder(reqCols, loc)
+	return rd.DecodeToDatumMap(b, row)
 }
 
 // DecodeRowWithMap decodes a byte slice into datums with a existing row map.
@@ -446,13 +444,59 @@ func DecodeRowWithMap(b []byte, cols map[int64]*types.FieldType, loc *time.Locat
 	return row, nil
 }
 
-// DecodeRow decodes a byte slice into datums.
+// DecodeRowToDatumMap decodes a byte slice into datums.
 // Row layout: colID1, value1, colID2, value2, .....
-func DecodeRow(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
+// Default value columns, generated columns and handle columns are unprocessed.
+func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Location) (map[int64]types.Datum, error) {
 	if !rowcodec.IsNewFormat(b) {
 		return DecodeRowWithMap(b, cols, loc, nil)
 	}
 	return DecodeRowWithMapNew(b, cols, loc, nil)
+}
+
+// DecodeHandleToDatumMap decodes a handle into datums.
+func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
+	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
+	if handle == nil || len(handleColIDs) == 0 {
+		return row, nil
+	}
+	if row == nil {
+		row = make(map[int64]types.Datum, len(cols))
+	}
+	for id, ft := range cols {
+		for idx, hid := range handleColIDs {
+			if id != hid {
+				continue
+			}
+			d, err := decodeHandleToDatum(handle, ft, idx)
+			if err != nil {
+				return row, err
+			}
+			d, err = Unflatten(d, ft, loc)
+			if err != nil {
+				return row, err
+			}
+			row[id] = d
+			break
+		}
+	}
+	return row, nil
+}
+
+func decodeHandleToDatum(handle kv.Handle, ft *types.FieldType, idx int) (types.Datum, error) {
+	var d types.Datum
+	var err error
+	if handle.IsInt() {
+		if mysql.HasUnsignedFlag(ft.Flag) {
+			d = types.NewUintDatum(uint64(handle.IntValue()))
+		} else {
+			d = types.NewIntDatum(handle.IntValue())
+		}
+		return d, nil
+	}
+	// Decode common handle to Datum.
+	_, d, err = codec.DecodeOne(handle.EncodedCol(idx))
+	return d, err
 }
 
 // CutRowNew cuts encoded row into byte slices and return columns' byte slice.
@@ -538,7 +582,7 @@ func Unflatten(datum types.Datum, ft *types.FieldType, loc *time.Location) (type
 		datum.SetUint64(0)
 		datum.SetMysqlTime(t)
 		return datum, nil
-	case mysql.TypeDuration: //duration should read fsp from column meta data
+	case mysql.TypeDuration: // duration should read fsp from column meta data
 		dur := types.Duration{Duration: time.Duration(datum.GetInt64()), Fsp: int8(ft.Decimal)}
 		datum.SetMysqlDuration(dur)
 		return datum, nil
