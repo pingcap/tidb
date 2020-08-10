@@ -24,6 +24,8 @@ import (
 const (
 	// blockSize is the AES block size in bytes.
 	blockSize = 1024
+	// counterPerBlock represents a encrypt block has 64 aes blocks
+	counterPerBlock = 64
 )
 
 var blockBufPool = sync.Pool{
@@ -47,19 +49,18 @@ func newCtrCipher(block cipher.Block, nonce uint64) *ctrCipher {
 // stream returns a cipher.Stream be use to encrypts/decrypts
 func (ctr *ctrCipher) stream(counter uint64) cipher.Stream {
 	counterBuf := make([]byte, aes.BlockSize)
-	binary.LittleEndian.PutUint64(counterBuf, ctr.nonce)
-	binary.LittleEndian.PutUint64(counterBuf[8:], counter)
+	binary.BigEndian.PutUint64(counterBuf, ctr.nonce)
+	binary.BigEndian.PutUint64(counterBuf[8:], counter)
 	return cipher.NewCTR(ctr.block, counterBuf)
 }
 
 // Writer implements an io.WriteCloser, it encrypt data using AES before writing to the underlying object.
 type Writer struct {
-	err     error
-	w       io.WriteCloser
-	n       int
-	buf     []byte
-	counter uint64
-	cipher  *ctrCipher
+	err          error
+	w            io.WriteCloser
+	n            int
+	buf          []byte
+	cipherStream cipher.Stream
 }
 
 // NewWriter returns a new Writer which encrypt data using AES before writing to the underlying object.
@@ -70,7 +71,7 @@ func NewWriter(w io.WriteCloser, key []byte, nonce uint64) (*Writer, error) {
 	}
 	writer := &Writer{w: w}
 	writer.buf = make([]byte, blockSize)
-	writer.cipher = newCtrCipher(block, nonce)
+	writer.cipherStream = newCtrCipher(block, nonce).stream(0)
 	return writer, nil
 }
 
@@ -109,11 +110,8 @@ func (w *Writer) Flush() error {
 	if w.n == 0 {
 		return nil
 	}
-	encryptTextText := blockBufPool.Get().([]byte)
-	defer blockBufPool.Put(encryptTextText)
-
-	w.cipher.stream(w.counter).XORKeyStream(encryptTextText[:w.n], w.buf[:w.n])
-	n, err := w.w.Write(encryptTextText[:w.n])
+	w.cipherStream.XORKeyStream(w.buf[:w.n], w.buf[:w.n])
+	n, err := w.w.Write(w.buf[:w.n])
 	if n < w.n && err == nil {
 		err = io.ErrShortWrite
 	}
@@ -122,7 +120,6 @@ func (w *Writer) Flush() error {
 		return err
 	}
 	w.n = 0
-	w.counter++
 	return nil
 }
 
@@ -158,16 +155,14 @@ func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
 		return 0, nil
 	}
 	offset := off % blockSize
-	startBlock := off / blockSize
-	cursor := startBlock * blockSize
+	counter := (off / blockSize) * counterPerBlock
+	cursor := off - offset
 
 	buf := blockBufPool.Get().([]byte)
 	defer blockBufPool.Put(buf)
-	decryptText := blockBufPool.Get().([]byte)
-	defer blockBufPool.Put(decryptText)
 
 	var n int
-	counter := uint64(startBlock)
+	cipherStream := r.cipher.stream(uint64(counter))
 	for len(p) > 0 && err == nil {
 		n, err = r.r.ReadAt(buf, cursor)
 		if err != nil {
@@ -178,13 +173,11 @@ func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
 			// continue if n > 0 and r.err is io.EOF
 		}
 		cursor += int64(n)
-		r.cipher.stream(counter).XORKeyStream(decryptText, buf)
-
-		n1 := copy(p, decryptText[offset:n])
+		cipherStream.XORKeyStream(buf[:n], buf[:n])
+		n1 := copy(p, buf[offset:n])
 		nn += n1
 		p = p[n1:]
 		offset = 0
-		counter++
 	}
 	return nn, err
 }
