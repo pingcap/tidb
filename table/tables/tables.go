@@ -393,9 +393,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	if err = memBuffer.Set(key, value); err != nil {
 		return err
 	}
-	if _, err := memBuffer.Release(sh); err != nil {
-		return err
-	}
+	memBuffer.Release(sh)
 	sctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
 	sctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, h)
 	if shouldWriteBinlog(sctx) {
@@ -671,7 +669,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 	value := writeBufs.RowValBuf
 
-	var keyFlags kv.KeyFlags
+	var setPresume bool
 	var ctx context.Context
 	if opt.Ctx != nil {
 		ctx = opt.Ctx
@@ -680,11 +678,11 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 	skipCheck := sctx.GetSessionVars().StmtCtx.BatchCheck
 	if (t.meta.IsCommonHandle || t.meta.PKIsHandle) && !skipCheck && !opt.SkipHandleCheck {
-		if sctx.GetSessionVars().PresumeKeyNotExists {
+		if sctx.GetSessionVars().LazyCheckKeyNotExists() {
 			var v []byte
 			v, err = txn.GetMemBuffer().Get(ctx, key)
 			if err != nil {
-				keyFlags = keyFlags.MarkPresumeKeyNotExists()
+				setPresume = true
 			}
 			if err == nil && len(v) == 0 {
 				err = kv.ErrNotExist
@@ -699,7 +697,12 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		}
 	}
 
-	if err = memBuffer.SetWithFlags(key, keyFlags, value); err != nil {
+	if setPresume {
+		err = memBuffer.SetWithFlags(key, value, kv.SetPresumeKeyNotExists)
+	} else {
+		err = memBuffer.Set(key, value)
+	}
+	if err != nil {
 		return nil, err
 	}
 
@@ -718,9 +721,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		return h, err
 	}
 
-	if _, err := memBuffer.Release(sh); err != nil {
-		return nil, err
-	}
+	memBuffer.Release(sh)
 	sctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
 
 	if shouldWriteBinlog(sctx) {
@@ -786,7 +787,6 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 				return nil, err
 			}
 			idxMeta := v.Meta()
-			txn.GetUnionStore().CacheIndexName(t.physicalTableID, idxMeta.ID, idxMeta.Name.String())
 			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
 		}
 		if dupHandle, err := v.Create(sctx, txn.GetUnionStore(), indexVals, recordID, opts...); err != nil {
@@ -860,7 +860,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().Location())
+	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetSessionVars().Location())
 	if err != nil {
 		return nil, rowMap, err
 	}
@@ -1103,7 +1103,7 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		if err != nil {
 			return err
 		}
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, ctx.GetSessionVars().Location())
+		rowMap, err := tablecodec.DecodeRowToDatumMap(it.Value(), colMap, ctx.GetSessionVars().Location())
 		if err != nil {
 			return err
 		}

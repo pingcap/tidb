@@ -679,6 +679,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				!candidate.path.Index.HasPrefixIndex() &&
 				len(candidate.path.Ranges[0].LowVal) == len(candidate.path.Index.Columns)
 		}
+		if ds.table.Meta().GetPartitionInfo() != nil && !tryOldPartitionImplementation(ds.ctx) {
+			canConvertPointGet = false
+		}
 		if canConvertPointGet {
 			allRangeIsPoint := true
 			for _, ran := range path.Ranges {
@@ -764,6 +767,8 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 	}
+	cop.partitionTable.pruningConds = ds.allConds
+	cop.partitionTable.partitionNames = ds.partitionNames
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
 		var partialCost, rowCount float64
@@ -958,6 +963,8 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
 	}
+	cop.partitionTable.pruningConds = ds.allConds
+	cop.partitionTable.partitionNames = ds.partitionNames
 	if !candidate.isSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
@@ -983,6 +990,10 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			cop.doubleReadNeedProj = isNew
 		}
 		cop.keepOrder = true
+		// IndexScan on partition table can't keep order.
+		if ds.tableInfo.GetPartitionInfo() != nil {
+			return invalidTask, nil
+		}
 	}
 	// prop.IsEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
@@ -1356,9 +1367,15 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		tblColHists:       ds.TblColHists,
 		cst:               cost,
 	}
+	copTask.partitionTable.pruningConds = ds.allConds
+	copTask.partitionTable.partitionNames = ds.partitionNames
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
+		// TableScan on partition table can't keep order.
+		if ds.tableInfo.GetPartitionInfo() != nil {
+			return invalidTask, nil
+		}
 	}
 	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	if prop.IsFlashOnlyProp() && len(copTask.rootTaskConds) != 0 {
@@ -1470,7 +1487,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	}
 	rTsk := &rootTask{p: batchPointGetPlan}
 	var cost float64
-	if candidate.path.IsTablePath() {
+	if candidate.path.IsIntHandlePath {
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
