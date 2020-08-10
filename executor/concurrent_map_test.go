@@ -32,7 +32,7 @@ func (cm *pkgTestSuite) TestConcurrentMap(c *C) {
 		defer wg.Done()
 		for i := 0; i < iterations/2; i++ {
 			// Add entry to map.
-			m.Insert(uint64(i%mod), &entry{chunk.RowPtr{uint32(i), uint32(i)}, nil})
+			m.Insert(uint64(i%mod), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
 		}
 	}()
 
@@ -40,7 +40,7 @@ func (cm *pkgTestSuite) TestConcurrentMap(c *C) {
 		defer wg.Done()
 		for i := iterations / 2; i < iterations; i++ {
 			// Add entry to map.
-			m.Insert(uint64(i%mod), &entry{chunk.RowPtr{uint32(i), uint32(i)}, nil})
+			m.Insert(uint64(i%mod), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
 		}
 	}()
 	wg.Wait()
