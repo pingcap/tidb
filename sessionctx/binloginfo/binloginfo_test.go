@@ -136,7 +136,7 @@ func (s *testBinlogSuite) TestBinlog(c *C) {
 	pump := s.pump
 	tk.MustExec("drop table if exists local_binlog")
 	ddlQuery := "create table local_binlog (id int unique key, name varchar(10)) shard_row_id_bits=1"
-	binlogDDLQuery := "create table local_binlog (id int unique key, name varchar(10)) /*!90000 shard_row_id_bits=1 */"
+	binlogDDLQuery := "create table local_binlog (id int unique key, name varchar(10)) /*T! shard_row_id_bits=1 */"
 	tk.MustExec(ddlQuery)
 	var matched bool // got matched pre DDL and commit DDL
 	for i := 0; i < 10; i++ {
@@ -524,28 +524,28 @@ func (s *testBinlogSuite) TestAddSpecialComment(c *C) {
 	}{
 		{
 			"create table t1 (id int ) shard_row_id_bits=2;",
-			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 */ ;",
+			"create table t1 (id int ) /*T! shard_row_id_bits=2 */ ;",
 		},
 		{
 			"create table t1 (id int ) shard_row_id_bits=2 pre_split_regions=2;",
-			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ ;",
+			"create table t1 (id int ) /*T! shard_row_id_bits=2 pre_split_regions=2 */ ;",
 		},
 		{
 			"create table t1 (id int ) shard_row_id_bits=2     pre_split_regions=2;",
-			"create table t1 (id int ) /*!90000 shard_row_id_bits=2     pre_split_regions=2 */ ;",
+			"create table t1 (id int ) /*T! shard_row_id_bits=2     pre_split_regions=2 */ ;",
 		},
 
 		{
 			"create table t1 (id int ) shard_row_id_bits=2 engine=innodb pre_split_regions=2;",
-			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ engine=innodb ;",
+			"create table t1 (id int ) /*T! shard_row_id_bits=2 pre_split_regions=2 */ engine=innodb ;",
 		},
 		{
 			"create table t1 (id int ) pre_split_regions=2 shard_row_id_bits=2;",
-			"create table t1 (id int ) /*!90000 shard_row_id_bits=2 pre_split_regions=2 */ ;",
+			"create table t1 (id int ) /*T! shard_row_id_bits=2 pre_split_regions=2 */ ;",
 		},
 		{
 			"create table t6 (id int ) shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2;",
-			"create table t6 (id int ) /*!90000 shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2 */ ;",
+			"create table t6 (id int ) /*T! shard_row_id_bits=2 shard_row_id_bits=3 pre_split_regions=2 */ ;",
 		},
 		{
 			"create table t1 (id int primary key auto_random(2));",

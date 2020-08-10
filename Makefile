@@ -33,6 +33,13 @@ OVERALLS        := GO111MODULE=on overalls
 STATICCHECK     := GO111MODULE=on staticcheck
 TIDB_EDITION    ?= Community
 
+# Ensure TIDB_EDITION is set to Community or Enterprise before running build process.
+ifneq "$(TIDB_EDITION)" "Community"
+ifneq "$(TIDB_EDITION)" "Enterprise"
+  $(error Please set the correct environment variable TIDB_EDITION before running `make`)
+endif
+endif
+
 ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
@@ -45,10 +52,10 @@ FAILPOINT_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs t
 FAILPOINT_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl disable)
 
 LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty --always)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitHash=$(shell git rev-parse HEAD)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/printer.TiDBEdition=$(TIDB_EDITION)"
+LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
+LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitHash=$(shell git rev-parse HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
+LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
 
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
 COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/tidb-server.isCoverageServer=1"
@@ -298,7 +305,7 @@ tools/bin/failpoint-ctl: go.mod
 	$(GO) build -o $@ github.com/pingcap/failpoint/failpoint-ctl
 
 tools/bin/golangci-lint:
-	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.21.0
+	curl -sfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh| sh -s -- -b ./tools/bin v1.29.0
 
 # Usage:
 #

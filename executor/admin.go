@@ -433,7 +433,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			return result, err
 		}
 
-		_, err = e.index.Create(e.ctx, txn, row.idxVals, row.handle)
+		_, err = e.index.Create(e.ctx, txn.GetUnionStore(), row.idxVals, row.handle)
 		if err != nil {
 			return result, err
 		}

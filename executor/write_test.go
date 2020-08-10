@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 type testBypassSuite struct{}
@@ -836,6 +837,16 @@ func (s *testSuite4) TestInsertOnDupUpdateDefault(c *C) {
 	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
 	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
+
+	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("create table t ( c_int int, c_string varchar(40) collate utf8mb4_bin , primary key (c_string), unique key (c_int));")
+	tk.MustExec("insert into t values (22, 'gold witch'), (24, 'gray singer'), (21, 'silver sight');")
+	tk.MustExec("begin;")
+	err := tk.ExecToErr("insert into t values (21,'black warlock'), (22, 'dark sloth'), (21,  'cyan song') on duplicate key update c_int = c_int + 1, c_string = concat(c_int, ':', c_string);")
+	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	tk.MustExec("commit;")
+	tk.MustQuery("select * from t order by c_int;").Check(testutil.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))
+	tk.MustExec("drop table t;")
 }
 
 func (s *testSuite4) TestReplace(c *C) {
@@ -2274,8 +2285,7 @@ func (s *testSuite4) TestLoadDataIntoPartitionedTable(c *C) {
 	c.Assert(err, IsNil)
 	ld.SetMaxRowsInBatch(20000)
 	ld.SetMessage()
-	err = ctx.StmtCommit(nil)
-	c.Assert(err, IsNil)
+	ctx.StmtCommit()
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
@@ -2573,7 +2583,7 @@ func (s *testSuite7) TestReplaceLog(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), kv.IntHandle(1))
+	_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)

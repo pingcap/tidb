@@ -203,7 +203,7 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 			return mysql.DefaultLengthOfMysqlTypes[mysql.TypeFloat], nil
 		}
 		return mysql.DefaultLengthOfMysqlTypes[mysql.TypeDouble], nil
-	case mysql.TypeDecimal, mysql.TypeNewDecimal:
+	case mysql.TypeNewDecimal:
 		return calcBytesLengthForDecimal(length), nil
 	case mysql.TypeYear, mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return mysql.DefaultLengthOfMysqlTypes[col.Tp], nil
@@ -768,11 +768,6 @@ func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, 
 	return tblInfo, indexName, invisible, nil
 }
 
-const (
-	// DefaultTaskHandleCnt is default batch size of adding indices.
-	DefaultTaskHandleCnt = 128
-)
-
 // indexRecord is the record information of an index.
 type indexRecord struct {
 	handle kv.Handle
@@ -1088,7 +1083,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgIndexTask) (taskCtx 
 			}
 
 			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn, idxRecord.vals, idxRecord.handle)
+			handle, err := w.index.Create(w.sessCtx, txn.GetUnionStore(), idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
 					// Index already exists, skip it.
@@ -1191,30 +1186,16 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller) {
 	logutil.BgLogger().Info("[ddl] add index worker exit", zap.Int("workerID", w.id))
 }
 
-func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]decoder.Column, error) {
-	cols := t.Cols()
-	indexedCols := make([]*table.Column, len(indexInfo.Columns))
-	for i, v := range indexInfo.Columns {
-		indexedCols[i] = cols[v.Offset]
-	}
-
-	return buildDecodeColMap(sessCtx, t, indexedCols)
-}
-
-func buildDecodeColMap(sessCtx sessionctx.Context, t table.Table, cols []*table.Column) (map[int64]decoder.Column, error) {
-	var containsVirtualCol bool
-	decodeColMap, err := decoder.BuildFullDecodeColMap(cols, t, func(genCol *table.Column) (expression.Expression, error) {
-		containsVirtualCol = true
-		return expression.ParseSimpleExprCastWithTableInfo(sessCtx, genCol.GeneratedExprString, t.Meta(), &genCol.FieldType)
-	})
+func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
+	dbName := model.NewCIStr(sessCtx.GetSessionVars().CurrentDB)
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
 	if err != nil {
 		return nil, err
 	}
+	mockSchema := expression.NewSchema(exprCols...)
 
-	if containsVirtualCol {
-		decoder.SubstituteGenColsInDecodeColMap(decodeColMap)
-		decoder.RemoveUnusedVirtualCols(decodeColMap, cols)
-	}
+	decodeColMap := decoder.BuildFullDecodeColMap(t, mockSchema)
+
 	return decodeColMap, nil
 }
 
@@ -1414,13 +1395,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
 	sessCtx := newContext(reorgInfo.d.store)
-	var err error
-	var decodeColMap map[int64]decoder.Column
-	if bfWorkerType == typeAddIndexWroker {
-		decodeColMap, err = makeupDecodeColMap(sessCtx, t, indexInfo)
-	} else {
-		decodeColMap, err = buildDecodeColMap(sessCtx, t, t.Cols())
-	}
+	decodeColMap, err := makeupDecodeColMap(sessCtx, t)
 	if err != nil {
 		return errors.Trace(err)
 	}

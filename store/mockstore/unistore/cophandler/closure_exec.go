@@ -401,24 +401,10 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 }
 
 func (e *closureExecutor) isPointGetRange(ran kv.KeyRange) bool {
-	if e.idxScanCtx != nil || len(e.primaryCols) == 0 {
-		return e.unique && ran.IsPoint()
-	}
-	// For common handle table scan, we also need to check if the column count of the start key equals.
-	if len(ran.StartKey) < tablecodec.RecordRowKeyLen {
+	if len(e.primaryCols) > 0 {
 		return false
 	}
-	keyColValues := tablecodec.CutRowKeyPrefix(ran.StartKey)
-	var colCnt int
-	for len(keyColValues) > 0 {
-		var err error
-		_, keyColValues, err = codec.CutOne(keyColValues)
-		if err != nil {
-			return false
-		}
-		colCnt++
-	}
-	return colCnt == len(e.primaryCols) && ran.IsPoint()
+	return e.unique && ran.IsPoint()
 }
 
 func (e *closureExecutor) checkRangeLock() error {

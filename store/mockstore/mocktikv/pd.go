@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 )
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
@@ -49,10 +49,6 @@ func NewPDClient(cluster *Cluster) pd.Client {
 		cluster:           cluster,
 		serviceSafePoints: make(map[string]uint64),
 	}
-}
-
-func (c *pdClient) ConfigClient() pd.ConfigClient {
-	return nil
 }
 
 func (c *pdClient) GetClusterID(ctx context.Context) uint64 {
@@ -106,9 +102,9 @@ func (c *pdClient) GetRegionByID(ctx context.Context, regionID uint64) (*pd.Regi
 	return &pd.Region{Meta: region, Leader: peer}, nil
 }
 
-func (c *pdClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
-	regions, peers := c.cluster.ScanRegions(startKey, endKey, limit)
-	return regions, peers, nil
+func (c *pdClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*pd.Region, error) {
+	regions := c.cluster.ScanRegions(startKey, endKey, limit)
+	return regions, nil
 }
 
 func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {

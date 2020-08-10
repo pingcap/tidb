@@ -158,20 +158,22 @@ func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 		probeRow, probeHCtx.allTypes, probeHCtx.keyColIdx)
 }
 
-// alreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
-func (c *hashRowContainer) alreadySpilledSafe() bool { return c.rowContainer.AlreadySpilledSafe() }
+// alreadySpilledSafeForTest indicates that records have spilled out into disk. It's thread-safe.
+func (c *hashRowContainer) alreadySpilledSafeForTest() bool {
+	return c.rowContainer.AlreadySpilledSafeForTest()
+}
 
 // PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
-	return c.PutChunkSelected(chk, nil)
+func (c *hashRowContainer) PutChunk(chk *chunk.Chunk, ignoreNulls []bool) error {
+	return c.PutChunkSelected(chk, nil, ignoreNulls)
 }
 
 // PutChunkSelected selectively puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) error {
+func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNulls []bool) error {
 	start := time.Now()
 	defer func() { c.stat.buildTableElapse += time.Since(start) }()
 
@@ -184,8 +186,9 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) e
 	c.hCtx.initHash(numRows)
 
 	hCtx := c.hCtx
-	for _, colIdx := range c.hCtx.keyColIdx {
-		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull, selected)
+	for keyIdx, colIdx := range c.hCtx.keyColIdx {
+		ignoreNull := len(ignoreNulls) > keyIdx && ignoreNulls[keyIdx]
+		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -116,16 +116,19 @@ func TestSyncerSimple(t *testing.T) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	currentVer := int64(123)
+	var checkErr string
 	go func() {
 		defer wg.Done()
 		select {
 		case resp := <-d.SchemaSyncer().GlobalVersionCh():
 			if len(resp.Events) < 1 {
-				t.Fatalf("get chan events count less than 1")
+				checkErr = "get chan events count less than 1"
+				return
 			}
 			checkRespKV(t, 1, DDLGlobalSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
 		case <-time.After(3 * time.Second):
-			t.Fatalf("get udpate version failed")
+			checkErr = "get udpate version failed"
+			return
 		}
 	}()
 
@@ -136,6 +139,10 @@ func TestSyncerSimple(t *testing.T) {
 	}
 
 	wg.Wait()
+
+	if checkErr != "" {
+		t.Fatalf(checkErr)
+	}
 
 	// for CheckAllVersions
 	childCtx, cancel := goctx.WithTimeout(ctx, 200*time.Millisecond)
@@ -176,7 +183,6 @@ func TestSyncerSimple(t *testing.T) {
 	}
 
 	// for StartCleanWork
-	go d.SchemaSyncer().StartCleanWork()
 	ttl := 10
 	// Make sure NeededCleanTTL > ttl, then we definitely clean the ttl.
 	NeededCleanTTL = int64(11)

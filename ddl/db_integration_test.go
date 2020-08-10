@@ -231,17 +231,19 @@ func (s *testIntegrationSuite1) TestUniqueKeyNullValue(c *C) {
 	tk.MustExec("admin check index t b")
 }
 
-func (s *testIntegrationSuite3) TestEndIncluded(c *C) {
+func (s *testIntegrationSuite2) TestUniqueKeyNullValueClusterIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
-	tk.MustExec("USE test")
-	tk.MustExec("create table t(a int, b int)")
-	for i := 0; i < ddl.DefaultTaskHandleCnt+1; i++ {
-		tk.MustExec("insert into t values(1, 1)")
-	}
-	tk.MustExec("alter table t add index b(b);")
-	tk.MustExec("admin check index t b")
-	tk.MustExec("admin check table t")
+	tk.MustExec("drop database if exists unique_null_val;")
+	tk.MustExec("create database unique_null_val;")
+	tk.MustExec("use unique_null_val;")
+	tk.MustExec("create table t (a varchar(10), b float, c varchar(255), primary key (a, b));")
+	tk.MustExec("insert into t values ('1', 1, NULL);")
+	tk.MustExec("insert into t values ('2', 2, NULL);")
+	tk.MustExec("alter table t add unique index c(c);")
+	tk.MustQuery("select count(*) from t use index(c);").Check(testkit.Rows("2"))
+	tk.MustExec("admin check table t;")
+	tk.MustExec("admin check index t c;")
 }
 
 // TestModifyColumnAfterAddIndex Issue 5134
@@ -921,7 +923,7 @@ func (s *testIntegrationSuite5) TestModifyColumnOption(c *C) {
 	_, err = tk.Exec("alter table t1 change a a datetime")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type datetime not match origin int(11)")
 	_, err = tk.Exec("alter table t1 change a a int(11) unsigned")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change unsigned integer to signed or vice versa, enableColType false")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change unsigned integer to signed or vice versa, and enableChangeColType is false")
 	_, err = tk.Exec("alter table t2 change b b int(11) unsigned")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin char(1)")
 }
@@ -2205,7 +2207,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(a int) auto_id_cache 100")
-	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	_, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
 	tk.MustExec("insert into t values()")
@@ -2221,7 +2223,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(a int null, b int auto_increment unique) auto_id_cache 100")
-	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	_, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
 	tk.MustExec("insert into t(b) values(NULL)")
@@ -2325,4 +2327,18 @@ func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 
 	tk.MustExec("alter table t3 alter index idx invisible")
 	tk.MustQuery(query).Check(testkit.Rows("idx NO"))
+}
+
+func (s *testIntegrationSuite7) TestAutoIncrementAllocator(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+	tk.MustExec("drop database if exists test_create_table_option_auto_inc;")
+	tk.MustExec("create database test_create_table_option_auto_inc;")
+	tk.MustExec("use test_create_table_option_auto_inc;")
+
+	tk.MustExec("create table t (a bigint primary key) auto_increment = 10;")
+	tk.MustExec("alter table t auto_increment = 10;")
 }

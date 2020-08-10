@@ -53,6 +53,14 @@ var (
 			Help:      "Number of connections.",
 		})
 
+	DisconnectionCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "disconnection_total",
+			Help:      "Counter of connections disconnected.",
+		}, []string{LblResult})
+
 	PreparedStmtGauge = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "server",
@@ -154,6 +162,14 @@ var (
 			Name:      "slow_query_wait_duration_seconds",
 			Help:      "Bucketed histogram of all cop waiting time (s) of of slow queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
+		})
+
+	MaxProcs = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "maxprocs",
+			Help:      "The value of GOMAXPROCS.",
 		})
 )
 

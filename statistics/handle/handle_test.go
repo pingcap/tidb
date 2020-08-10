@@ -99,6 +99,63 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	c.Assert(statsTbl.Pseudo, IsFalse)
 }
 
+func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int,c3 int)")
+	testKit.MustExec("insert into t values(1, 2, 3)")
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
+	c.Assert(statsTbl.MemoryUsage(), Equals, do.StatsHandle().GetMemConsumed())
+
+	c.Assert(statsTbl.Pseudo, IsTrue)
+
+	testKit.MustExec("analyze table t")
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+
+	c.Assert(statsTbl.Pseudo, IsFalse)
+	testKit.MustExec("create index idx_t on t(c1)")
+	do.InfoSchema()
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+
+	// If index is build, but stats is not updated. statsTbl can also work.
+	c.Assert(statsTbl.Pseudo, IsFalse)
+	// But the added index will not work.
+	c.Assert(statsTbl.Indices[int64(1)], IsNil)
+
+	testKit.MustExec("analyze table t")
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+
+	c.Assert(statsTbl.Pseudo, IsFalse)
+
+	// If the new schema drop a column, the table stats can still work.
+	testKit.MustExec("alter table t drop column c2")
+	is = do.InfoSchema()
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(is)
+
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
+	c.Assert(statsTbl.MemoryUsage(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(statsTbl.Pseudo, IsFalse)
+
+	// If the new schema add a column, the table stats can still work.
+	testKit.MustExec("alter table t add column c10 int")
+	is = do.InfoSchema()
+
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(is)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsFalse)
+	c.Assert(statsTbl.MemoryUsage(), Equals, do.StatsHandle().GetMemConsumed())
+}
+
 func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 	c.Assert(a.Count, Equals, b.Count)
 	c.Assert(a.ModifyCount, Equals, b.ModifyCount)

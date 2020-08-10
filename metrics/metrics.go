@@ -68,6 +68,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(BindMemoryUsage)
 	prometheus.MustRegister(CampaignOwnerCounter)
 	prometheus.MustRegister(ConnGauge)
+	prometheus.MustRegister(DisconnectionCounter)
 	prometheus.MustRegister(PreparedStmtGauge)
 	prometheus.MustRegister(CriticalErrorCounter)
 	prometheus.MustRegister(DDLCounter)
@@ -163,4 +164,5 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GRPCConnTransientFailureCounter)
 	prometheus.MustRegister(TiKVTTLLifeTimeReachCounter)
 	prometheus.MustRegister(TiKVNoAvailableConnectionCounter)
+	prometheus.MustRegister(MaxProcs)
 }

@@ -682,7 +682,9 @@ func (e *IndexLookUpJoin) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)
-		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
 	}
 	return e.baseExecutor.Close()
 }
