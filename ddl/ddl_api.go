@@ -5194,6 +5194,7 @@ func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 				return rules, err
 			}
 		}
+		ignoreREPLICAS := replicas == 0
 		rule.Count = int(replicas)
 
 		constraints := map[string]int{}
@@ -5210,7 +5211,7 @@ func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 				err = errors.Errorf("count should be positive, but got %d", cnt)
 				break
 			}
-			if ruleCnt != 0 {
+			if !ignoreREPLICAS {
 				ruleCnt -= cnt
 				if ruleCnt < 0 {
 					rules = rules[:rulesLen]
