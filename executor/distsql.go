@@ -905,7 +905,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			for i, col := range w.idxTblCols {
 				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
-			vals, _ = tablecodec.TruncateIndexValuesIfNeeded(tblInfo, w.idxLookup.index, vals)
+			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
 			for i, val := range vals {
 				col := w.idxTblCols[i]
 				tp := &col.FieldType

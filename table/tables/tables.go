@@ -755,13 +755,13 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 func (t *TableCommon) checkTruncatedClusteredPrimaryKeyDuplication(sctx sessionctx.Context, pkDts []types.Datum,
 	tableCols []*table.Column, pkIdx *model.IndexInfo) error {
-	truncatedDts := make([]types.Datum, len(pkDts))
-	copy(truncatedDts, pkDts)
-	_, ok := tablecodec.TruncateIndexValuesIfNeeded(t.meta, pkIdx, truncatedDts)
-	if !ok {
+	if !tablecodec.NeedsTruncateIndexValues(t.meta, pkIdx, pkDts) {
 		return nil
 	}
 	// construct the start_key to scan.
+	truncatedDts := make([]types.Datum, len(pkDts))
+	copy(truncatedDts, pkDts)
+	tablecodec.TruncateIndexValues(t.meta, pkIdx, truncatedDts)
 	prefixKey, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, truncatedDts...)
 	if err != nil {
 		return err
@@ -779,10 +779,7 @@ func (t *TableCommon) checkTruncatedClusteredPrimaryKeyDuplication(sctx sessionc
 			for _, idxCol := range pkIdx.Columns {
 				pkDts = append(pkDts, rec[t.meta.Columns[idxCol.Offset].Offset])
 			}
-			_, ok := tablecodec.TruncateIndexValuesIfNeeded(t.meta, pkIdx, pkDts)
-			if !ok {
-				return false, nil
-			}
+			tablecodec.TruncateIndexValues(t.meta, pkIdx, pkDts)
 			for i := 0; i < len(pkDts); i++ {
 				cmp, err := truncatedDts[i].CompareDatum(sctx.GetSessionVars().StmtCtx, &pkDts[i])
 				if err != nil {

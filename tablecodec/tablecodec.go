@@ -1014,7 +1014,7 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	}
 	// For string columns, indexes can be created using only the leading part of column values,
 	// using col_name(length) syntax to specify an index prefix length.
-	indexedValues, _ = TruncateIndexValuesIfNeeded(tblInfo, idxInfo, indexedValues)
+	TruncateIndexValues(tblInfo, idxInfo, indexedValues)
 	key = GetIndexKeyBuf(buf, RecordRowKeyLen+len(indexedValues)*9+9)
 	key = appendTableIndexPrefix(key, phyTblID)
 	key = codec.EncodeInt(key, idxInfo.ID)
@@ -1090,39 +1090,60 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 	return idxVal, nil
 }
 
-// TruncateIndexValuesIfNeeded truncates the index values created using only the leading part of column values.
-func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
-	indexedValues []types.Datum) ([]types.Datum, bool) {
-	truncated := false
+// NeedsTruncateIndexValues check if the data need to be truncated.
+func NeedsTruncateIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) bool {
+	var needTruncate bool
+	forEachDatumNeedTruncate(tblInfo, idxInfo, indexedValues,
+		func(column *model.IndexColumn, info *model.ColumnInfo, datum *types.Datum) {
+			needTruncate = true
+		})
+	return needTruncate
+}
+
+// TruncateIndexValues truncates the index values created using only the leading part of column values.
+func TruncateIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) {
+	forEachDatumNeedTruncate(tblInfo, idxInfo, indexedValues, truncateIndexValueDatum)
+}
+
+func forEachDatumNeedTruncate(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum,
+	truncateFn func(*model.IndexColumn, *model.ColumnInfo, *types.Datum)) {
 	for i := 0; i < len(indexedValues); i++ {
 		v := &indexedValues[i]
 		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
-			ic := idxInfo.Columns[i]
-			colCharset := tblInfo.Columns[ic.Offset].Charset
-			colValue := v.GetBytes()
-			isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
-			origKind := v.Kind()
-			if isUTF8Charset {
-				if ic.Length != types.UnspecifiedLength && utf8.RuneCount(colValue) > ic.Length {
-					rs := bytes.Runes(colValue)
-					truncateStr := string(rs[:ic.Length])
-					// truncate value and limit its length
-					v.SetString(truncateStr, tblInfo.Columns[ic.Offset].Collate)
-					if origKind == types.KindBytes {
-						v.SetBytes(v.GetBytes())
-					}
-					truncated = true
-				}
-			} else if ic.Length != types.UnspecifiedLength && len(colValue) > ic.Length {
-				// truncate value and limit its length
-				v.SetBytes(colValue[:ic.Length])
-				if origKind == types.KindString {
-					v.SetString(v.GetString(), tblInfo.Columns[ic.Offset].Collate)
-				}
+			idxCol := idxInfo.Columns[i]
+			colInfo := tblInfo.Columns[idxCol.Offset]
+			chs := colInfo.Charset
+			needTruncates := idxCol.Length != types.UnspecifiedLength
+			if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
+				needTruncates = needTruncates && utf8.RuneCount(v.GetBytes()) > idxCol.Length
+			} else {
+				needTruncates = needTruncates && len(v.GetBytes()) > idxCol.Length
+			}
+			if needTruncates {
+				truncateFn(idxCol, colInfo, v)
 			}
 		}
 	}
-	return indexedValues, truncated
+}
+
+// truncateIndexValueDatum truncates the datum to a leading part according to index column prefix length.
+func truncateIndexValueDatum(idxCol *model.IndexColumn, colInfo *model.ColumnInfo, datum *types.Datum) {
+	colCharset := colInfo.Charset
+	isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+	if isUTF8Charset {
+		rs := bytes.Runes(datum.GetBytes())
+		truncateStr := string(rs[:idxCol.Length])
+		// truncate value and limit its length
+		datum.SetString(truncateStr, colInfo.Collate)
+		if datum.Kind() == types.KindBytes {
+			datum.SetBytes(datum.GetBytes())
+		}
+	} else {
+		datum.SetBytes(datum.GetBytes()[:idxCol.Length])
+		if datum.Kind() == types.KindString {
+			datum.SetString(datum.GetString(), colInfo.Collate)
+		}
+	}
 }
 
 // EncodeHandleInUniqueIndexValue encodes handle in data.
