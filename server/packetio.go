@@ -48,7 +48,7 @@ import (
 const defaultWriterSize = 16 * 1024
 
 var (
-	readPacketBytes = metrics.PacketIOHistogram.WithLabelValues("read")
+	readPacketBytes  = metrics.PacketIOHistogram.WithLabelValues("read")
 	writePacketBytes = metrics.PacketIOHistogram.WithLabelValues("write")
 )
 
