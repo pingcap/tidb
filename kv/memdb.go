@@ -1,6 +1,4 @@
-// Copyright 2015 PingCAP, Inc.
-//
-// Copyright 2015 Wenbin Xiao
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,444 +16,779 @@ package kv
 import (
 	"bytes"
 	"context"
+	"reflect"
 	"sync/atomic"
-
-	"github.com/pingcap/errors"
+	"unsafe"
 )
 
-var (
-	_ MemBuffer     = new(memDB)
-	_ StagingBuffer = sandboxWrapper{}
+const (
+	flagPresumeKNE KeyFlags = 1 << iota
+	flagKeyLocked
+	flagKeyLockedValExist
+	flagNeedCheckExists
+	flagNoNeedCommit
+
+	persistentFlags = flagKeyLocked | flagKeyLockedValExist
+	// bit 1 => red, bit 0 => black
+	nodeColorBit  uint8 = 0x80
+	nodeFlagsMask       = ^nodeColorBit
 )
 
 // KeyFlags are metadata associated with key
 type KeyFlags uint8
 
-const (
-	flagPresumeKeyNotExists KeyFlags = 1 << iota
+// HasPresumeKeyNotExists returns whether the associated key use lazy check.
+func (f KeyFlags) HasPresumeKeyNotExists() bool {
+	return f&flagPresumeKNE != 0
+}
 
-	// flagTouched is a internal flag to help `Mark` operation.
-	// The default value of `KeyFlags` is 0 and the flags returned by any operation will set `flagTouched`.
-	// When merge two flags, if the newer one haven't set the `flagTouched`, the newer value will be ignored.
-	flagTouched KeyFlags = 0x80
+// HasLocked returns whether the associated key has acquired pessimistic lock.
+func (f KeyFlags) HasLocked() bool {
+	return f&flagKeyLocked != 0
+}
+
+// HasLockedValueExists returns whether the value exists when key locked.
+func (f KeyFlags) HasLockedValueExists() bool {
+	return f&flagKeyLockedValExist != 0
+}
+
+// HasNeedCheckExists returns whether the key need to check existence when it has been locked.
+func (f KeyFlags) HasNeedCheckExists() bool {
+	return f&flagNeedCheckExists != 0
+}
+
+// HasNoNeedCommit returns whether the key should be used in 2pc commit phase.
+func (f KeyFlags) HasNoNeedCommit() bool {
+	return f&flagNoNeedCommit != 0
+}
+
+// FlagsOp describes KeyFlags modify operation.
+type FlagsOp uint16
+
+const (
+	// SetPresumeKeyNotExists marks the existence of the associated key is checked lazily.
+	// Implies KeyFlags.HasNeedCheckExists() == true.
+	SetPresumeKeyNotExists FlagsOp = 1 << iota
+	// DelPresumeKeyNotExists reverts SetPresumeKeyNotExists.
+	DelPresumeKeyNotExists
+	// SetKeyLocked marks the associated key has acquired lock.
+	SetKeyLocked
+	// DelKeyLocked reverts SetKeyLocked.
+	DelKeyLocked
+	// SetKeyLockedValueExists marks the value exists when key has been locked in Transaction.LockKeys.
+	SetKeyLockedValueExists
+	// SetKeyLockedValueNotExists marks the value doesn't exists when key has been locked in Transaction.LockKeys.
+	SetKeyLockedValueNotExists
+	// DelNeedCheckExists marks the key no need to be checked in Transaction.LockKeys.
+	DelNeedCheckExists
+	// SetNoNeedCommit marks the key shouldn't be used in 2pc commit phase.
+	SetNoNeedCommit
 )
 
-// MarkPresumeKeyNotExists marks the existence of the associated key is checked lazily.
-func (m KeyFlags) MarkPresumeKeyNotExists() KeyFlags {
-	return (m | flagPresumeKeyNotExists) | flagTouched
-}
-
-// UnmarkPresumeKeyNotExists reverts MarkPresumeKeyNotExists.
-func (m KeyFlags) UnmarkPresumeKeyNotExists() KeyFlags {
-	return (m & ^flagPresumeKeyNotExists) | flagTouched
-}
-
-// HasPresumeKeyNotExists retruns whether the associated key use lazy check.
-func (m KeyFlags) HasPresumeKeyNotExists() bool {
-	return m&flagPresumeKeyNotExists != 0
-}
-
-func (m KeyFlags) isTouched() bool {
-	return m&flagTouched != 0
-}
-
-// Merge used to merge two KeyFlags.
-func (m KeyFlags) Merge(old KeyFlags) KeyFlags {
-	// Only consider flagPresumeKeyNotExists in merge operation for now.
-	// We should always respect to the older setting,
-	// the delete operation will overwrite flags in root tree instead of invoke merge.
-	if old.isTouched() {
-		return old
+func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
+	for _, op := range ops {
+		switch op {
+		case SetPresumeKeyNotExists:
+			origin |= flagPresumeKNE | flagNeedCheckExists
+		case DelPresumeKeyNotExists:
+			origin &= ^(flagPresumeKNE | flagNeedCheckExists)
+		case SetKeyLocked:
+			origin |= flagKeyLocked
+		case DelKeyLocked:
+			origin &= ^flagKeyLocked
+		case SetKeyLockedValueExists:
+			origin |= flagKeyLockedValExist
+		case DelNeedCheckExists:
+			origin &= ^flagNeedCheckExists
+		case SetKeyLockedValueNotExists:
+			origin &= ^flagKeyLockedValExist
+		case SetNoNeedCommit:
+			origin |= flagNoNeedCommit
+		}
 	}
-	return m
+	return origin
 }
 
-type memDB struct {
+var tombstone = []byte{}
+
+// memdb is rollbackable Red-Black Tree optimized for TiDB's transaction states buffer use scenario.
+// You can think memdb is a combination of two separate tree map, one for key => value and another for key => keyFlags.
+//
+// The value map is rollbackable, that means you can use the `Staging`, `Release` and `Cleanup` API to safely modify KVs.
+//
+// The flags map is not rollbackable. There are two types of flag, persistent and non-persistent.
+// When discarding a newly added KV in `Cleanup`, the non-persistent flags will be cleared.
+// If there are persistent flags associated with key, we will keep this key in node without value.
+type memdb struct {
+	root      memdbArenaAddr
+	allocator nodeAllocator
+	vlog      memdbVlog
+
 	entrySizeLimit  uint64
 	bufferSizeLimit uint64
-	buffers         []*sandbox
-	dirty           bool
+	count           int
+	size            int
+
+	vlogInvalid bool
+	dirty       bool
+	stages      []memdbCheckpoint
 }
 
-func newMemDB() *memDB {
-	return &memDB{
-		buffers:         append(make([]*sandbox, 0, 3), NewSandbox()),
-		entrySizeLimit:  atomic.LoadUint64(&TxnEntrySizeLimit),
-		bufferSizeLimit: atomic.LoadUint64(&TxnTotalSizeLimit),
-	}
+func newMemDB() *memdb {
+	db := new(memdb)
+	db.allocator.init()
+	db.root = nullAddr
+	db.stages = make([]memdbCheckpoint, 0, 2)
+	db.entrySizeLimit = atomic.LoadUint64(&TxnEntrySizeLimit)
+	db.bufferSizeLimit = atomic.LoadUint64(&TxnTotalSizeLimit)
+	return db
 }
 
-func (m *memDB) Reset() {
-	for i := len(m.buffers) - 1; i > 0; i-- {
-		m.buffers[i].Discard()
-		m.buffers[i] = nil
-	}
-	m.buffers[0].Discard()
-	m.buffers = m.buffers[:1]
+func (db *memdb) Staging() StagingHandle {
+	db.stages = append(db.stages, db.vlog.checkpoint())
+	return StagingHandle(len(db.stages))
 }
 
-func (m *memDB) GetStagingBuffer(h StagingHandle) StagingBuffer {
-	if h == InvalidStagingHandle {
-		return nil
-	}
-	idx := int(h) - 1
-	if h == LastActiveStagingHandle {
-		idx = len(m.buffers) - 1
-	}
-	return sandboxWrapper{m.buffers[idx]}
-}
-
-func (m *memDB) GetFlags(k Key) (KeyFlags, error) {
-	var exists bool
-	for i := len(m.buffers) - 1; i >= 0; i-- {
-		flags, ok := m.buffers[i].GetFlags(k)
-		if !ok {
-			continue
-		}
-		exists = true
-		if flags.isTouched() {
-			return flags, nil
-		}
-	}
-	if !exists {
-		return 0, ErrNotExist
-	}
-	return 0, nil
-}
-
-func (m *memDB) Get(ctx context.Context, k Key) ([]byte, error) {
-	for i := len(m.buffers) - 1; i >= 0; i-- {
-		v, ok := m.buffers[i].Get(k)
-		if !ok {
-			continue
-		}
-		return v, nil
-	}
-
-	return nil, ErrNotExist
-}
-
-func (m *memDB) SetWithFlags(k Key, flags KeyFlags, v []byte) error {
-	if len(v) == 0 {
-		return errors.Trace(ErrCannotSetNilValue)
-	}
-	if uint64(len(k)+len(v)) > m.entrySizeLimit {
-		return ErrEntryTooLarge.GenWithStackByArgs(m.entrySizeLimit, len(k)+len(v))
-	}
-
-	if len(m.buffers) == 1 {
-		m.dirty = true
-	}
-	m.getStagingBuffer().PutWithFlags(k, flags, v)
-	if m.Size() > int(m.bufferSizeLimit) {
-		return ErrTxnTooLarge.GenWithStackByArgs(atomic.LoadUint64(&TxnTotalSizeLimit))
-	}
-	return nil
-}
-
-func (m *memDB) Set(k Key, v []byte) error {
-	return m.SetWithFlags(k, 0, v)
-}
-
-func (m *memDB) SetFlags(k Key, flags KeyFlags) {
-	m.getStagingBuffer().UpdateFlags(k, flags)
-}
-
-func (m *memDB) Delete(k Key) error {
-	if len(m.buffers) == 1 {
-		m.dirty = true
-	}
-	m.getStagingBuffer().Put(k, nil)
-	if m.Size() > int(m.bufferSizeLimit) {
-		return ErrTxnTooLarge.GenWithStackByArgs(atomic.LoadUint64(&TxnTotalSizeLimit))
-	}
-	return nil
-}
-
-func (m *memDB) Size() int {
-	var sum int
-	for _, buf := range m.buffers {
-		sum += buf.Size()
-	}
-	return sum
-}
-
-func (m *memDB) Len() int {
-	var sum int
-	for _, buf := range m.buffers {
-		sum += buf.Len()
-	}
-	return sum
-}
-
-func (m *memDB) Dirty() bool {
-	return m.dirty
-}
-
-// Iter creates an Iterator.
-func (m *memDB) Iter(k Key, upperBound Key) (Iterator, error) {
-	if len(m.buffers) == 1 {
-		return m.iter(0, k, upperBound, false), nil
-	}
-
-	idx := len(m.buffers) - 1
-	i1 := m.iter(idx, k, upperBound, false)
-	i2 := m.iter(idx-1, k, upperBound, false)
-	it, err := NewUnionIter(i1, i2, false)
-	if err != nil {
-		return nil, err
-	}
-	idx -= 2
-
-	// This is unlikely in current codebase.
-	for ; idx >= 0; idx-- {
-		it, err = NewUnionIter(m.iter(idx, k, upperBound, false), it, false)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return it, nil
-}
-
-func (m *memDB) IterReverse(k Key) (Iterator, error) {
-	if len(m.buffers) == 1 {
-		return m.iter(0, nil, k, true), nil
-	}
-
-	idx := len(m.buffers) - 1
-	i1 := m.iter(idx, nil, k, true)
-	i2 := m.iter(idx-1, nil, k, true)
-	it, err := NewUnionIter(i1, i2, true)
-	if err != nil {
-		return nil, err
-	}
-	idx -= 2
-
-	// This is unlikely in current codebase.
-	for ; idx >= 0; idx-- {
-		it, err = NewUnionIter(m.iter(idx, nil, k, true), it, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return it, nil
-}
-
-func (m *memDB) Staging() StagingHandle {
-	m.buffers = append(m.buffers, m.getStagingBuffer().Derive())
-	return StagingHandle(len(m.buffers))
-}
-
-func (m *memDB) Release(h StagingHandle) (int, error) {
-	if int(h) != len(m.buffers) {
+func (db *memdb) Release(h StagingHandle) {
+	if int(h) != len(db.stages) {
 		// This should never happens in production environment.
 		// Use panic to make debug easier.
 		panic("cannot release staging buffer")
 	}
-	idx := int(h) - 1
-	count := m.buffers[idx].Flush()
-	if len(m.buffers) == 2 && count > 0 {
-		m.dirty = true
+	if int(h) == 1 {
+		tail := db.vlog.checkpoint()
+		if !db.stages[0].isSamePosition(&tail) {
+			db.dirty = true
+		}
 	}
-	m.buffers[idx] = nil
-	m.buffers = m.buffers[:idx]
-	return count, nil
+	db.stages = db.stages[:int(h)-1]
 }
 
-func (m *memDB) Cleanup(h StagingHandle) {
-	if int(h) > len(m.buffers) {
+func (db *memdb) Cleanup(h StagingHandle) {
+	if int(h) > len(db.stages) {
 		return
 	}
-	if int(h) < len(m.buffers) {
+	if int(h) < len(db.stages) {
 		// This should never happens in production environment.
 		// Use panic to make debug easier.
 		panic("cannot cleanup staging buffer")
 	}
-	idx := int(h) - 1
-	m.buffers[idx].Discard()
-	m.buffers[idx] = nil
-	m.buffers = m.buffers[:idx]
-}
 
-func (m *memDB) getStagingBuffer() *sandbox {
-	return m.buffers[len(m.buffers)-1]
-}
-
-func (m *memDB) iter(idx int, start Key, end Key, reverse bool) *simpleIter {
-	i := &simpleIter{
-		iter:    m.buffers[idx].NewIterator(),
-		start:   start,
-		end:     end,
-		reverse: reverse,
+	cp := &db.stages[int(h)-1]
+	if !db.vlogInvalid {
+		db.vlog.revertToCheckpoint(db, cp)
+		db.vlog.truncate(cp)
 	}
-	i.init()
-	return i
+	db.stages = db.stages[:int(h)-1]
 }
 
-type simpleIter struct {
-	iter    *sandboxIterator
-	start   []byte
-	end     []byte
-	reverse bool
+func (db *memdb) Reset() {
+	db.root = nullAddr
+	db.stages = db.stages[:0]
+	db.dirty = false
+	db.vlogInvalid = false
+	db.size = 0
+	db.count = 0
+	db.vlog.reset()
+	db.allocator.reset()
 }
 
-// Next implements the Iterator Next.
-func (i *simpleIter) Next() error {
-	if i.reverse {
-		i.iter.Prev()
-	} else {
-		i.iter.Next()
-	}
-	return nil
+func (db *memdb) DiscardValues() {
+	db.vlogInvalid = true
+	db.vlog.reset()
 }
 
-// Valid implements the Iterator Valid.
-func (i *simpleIter) Valid() bool {
-	if !i.reverse {
-		return i.iter.Valid() && (i.end == nil || bytes.Compare(i.Key(), i.end) < 0)
-	}
-	return i.iter.Valid()
+func (db *memdb) InspectStage(handle StagingHandle, f func(Key, KeyFlags, []byte)) {
+	idx := int(handle) - 1
+	tail := db.vlog.checkpoint()
+	head := db.stages[idx]
+	db.vlog.inspectKVInLog(db, &head, &tail, f)
 }
 
-// Key implements the Iterator Key.
-func (i *simpleIter) Key() Key {
-	return i.iter.Key()
-}
-
-// Value implements the Iterator Value.
-func (i *simpleIter) Value() []byte {
-	return i.iter.Value()
-}
-
-// Close Implements the Iterator Close.
-func (i *simpleIter) Close() {}
-
-func (i *simpleIter) init() {
-	if i.reverse {
-		if i.end == nil {
-			i.iter.SeekToLast()
-			return
-		}
-		i.iter.SeekForExclusivePrev(i.end)
-		return
-	}
-	if i.start == nil {
-		i.iter.SeekToFirst()
-		return
-	}
-	i.iter.Seek(i.start)
-}
-
-// WalkMemBuffer iterates all buffered kv pairs in memBuf
-func WalkMemBuffer(memBuf Retriever, f func(k Key, v []byte) error) error {
-	iter, err := memBuf.Iter(nil, nil)
-	if err != nil {
-		return errors.Trace(err)
+func (db *memdb) Get(_ context.Context, key Key) ([]byte, error) {
+	if db.vlogInvalid {
+		// panic for easier debugging.
+		panic("vlog is resetted")
 	}
 
-	defer iter.Close()
-	for iter.Valid() {
-		if err = f(iter.Key(), iter.Value()); err != nil {
-			return errors.Trace(err)
-		}
-		err = iter.Next()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	return nil
-}
-
-// BufferBatchGetter is the type for BatchGet with MemBuffer.
-type BufferBatchGetter struct {
-	buffer   MemBuffer
-	middle   Getter
-	snapshot Snapshot
-}
-
-// NewBufferBatchGetter creates a new BufferBatchGetter.
-func NewBufferBatchGetter(buffer MemBuffer, middleCache Getter, snapshot Snapshot) *BufferBatchGetter {
-	return &BufferBatchGetter{buffer: buffer, middle: middleCache, snapshot: snapshot}
-}
-
-// BatchGet implements the BatchGetter interface.
-func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error) {
-	if b.buffer.Len() == 0 {
-		return b.snapshot.BatchGet(ctx, keys)
-	}
-	bufferValues := make([][]byte, len(keys))
-	shrinkKeys := make([]Key, 0, len(keys))
-	for i, key := range keys {
-		val, err := b.buffer.Get(ctx, key)
-		if err == nil {
-			bufferValues[i] = val
-			continue
-		}
-		if !IsErrNotFound(err) {
-			return nil, errors.Trace(err)
-		}
-		if b.middle != nil {
-			val, err = b.middle.Get(ctx, key)
-			if err == nil {
-				bufferValues[i] = val
-				continue
-			}
-		}
-		shrinkKeys = append(shrinkKeys, key)
-	}
-	storageValues, err := b.snapshot.BatchGet(ctx, shrinkKeys)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for i, key := range keys {
-		if len(bufferValues[i]) == 0 {
-			continue
-		}
-		storageValues[string(key)] = bufferValues[i]
-	}
-	return storageValues, nil
-}
-
-type sandboxWrapper struct {
-	box *sandbox
-}
-
-func (w sandboxWrapper) Get(ctx context.Context, k Key) ([]byte, error) {
-	v, ok := w.box.Get(k)
-	if !ok {
+	x := db.traverse(key, false)
+	if x.isNull() {
 		return nil, ErrNotExist
 	}
-	return v, nil
-}
-
-func (w sandboxWrapper) Iter(k Key, upperBound Key) (Iterator, error) {
-	i := &simpleIter{
-		iter:    w.box.NewIterator(),
-		start:   k,
-		end:     upperBound,
-		reverse: false,
+	if x.vptr.isNull() {
+		// A flag only key, act as value not exists
+		return nil, ErrNotExist
 	}
-	i.init()
-	return i, nil
+	return db.vlog.getValue(x.vptr), nil
 }
 
-func (w sandboxWrapper) IterReverse(k Key) (Iterator, error) {
-	i := &simpleIter{
-		iter:    w.box.NewIterator(),
-		end:     k,
-		reverse: true,
+func (db *memdb) GetFlags(key Key) (KeyFlags, error) {
+	x := db.traverse(key, false)
+	if x.isNull() {
+		return 0, ErrNotExist
 	}
-	i.init()
-	return i, nil
+	return x.getKeyFlags(), nil
 }
 
-func (w sandboxWrapper) Size() int {
-	return w.box.Size()
+func (db *memdb) UpdateFlags(key Key, ops ...FlagsOp) {
+	err := db.set(key, nil, ops...)
+	_ = err // set without value will never fail
 }
 
-func (w sandboxWrapper) Len() int {
-	return w.box.Len()
+func (db *memdb) Set(key Key, value []byte) error {
+	if len(value) == 0 {
+		return ErrCannotSetNilValue
+	}
+	return db.set(key, value)
+}
+
+func (db *memdb) SetWithFlags(key Key, value []byte, ops ...FlagsOp) error {
+	if len(value) == 0 {
+		return ErrCannotSetNilValue
+	}
+	return db.set(key, value, ops...)
+}
+
+func (db *memdb) Delete(key Key) error {
+	return db.set(key, tombstone)
+}
+
+func (db *memdb) Len() int {
+	return db.count
+}
+
+func (db *memdb) Size() int {
+	return db.size
+}
+
+func (db *memdb) Dirty() bool {
+	return db.dirty
+}
+
+func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
+	if db.vlogInvalid {
+		// panic for easier debugging.
+		panic("vlog is resetted")
+	}
+
+	if value != nil {
+		if size := uint64(len(key) + len(value)); size > db.entrySizeLimit {
+			return ErrEntryTooLarge.GenWithStackByArgs(db.entrySizeLimit, size)
+		}
+	}
+	if len(db.stages) == 0 {
+		db.dirty = true
+	}
+	x := db.traverse(key, true)
+
+	if len(ops) != 0 {
+		flags := applyFlagsOps(x.getKeyFlags(), ops...)
+		if flags&persistentFlags != 0 {
+			db.dirty = true
+		}
+		x.setKeyFlags(flags)
+	}
+
+	if value == nil {
+		return nil
+	}
+
+	db.setValue(x, value)
+	if uint64(db.Size()) > db.bufferSizeLimit {
+		return ErrTxnTooLarge.GenWithStackByArgs(db.Size())
+	}
+	return nil
+}
+
+func (db *memdb) setValue(x memdbNodeAddr, value []byte) {
+	var activeCp *memdbCheckpoint
+	if len(db.stages) > 0 {
+		activeCp = &db.stages[len(db.stages)-1]
+	}
+
+	var oldVal []byte
+	if !x.vptr.isNull() {
+		oldVal = db.vlog.getValue(x.vptr)
+	}
+
+	if len(oldVal) > 0 && db.vlog.canModify(activeCp, x.vptr) {
+		// For easier to implement, we only consider this case.
+		// It is the most common usage in TiDB's transaction buffers.
+		if len(oldVal) == len(value) {
+			copy(oldVal, value)
+			return
+		}
+	}
+	x.vptr = db.vlog.appendValue(x.addr, x.vptr, value)
+	db.size = db.size - len(oldVal) + len(value)
+}
+
+// traverse search for and if not found and insert is true, will add a new node in.
+// Returns a pointer to the new node, or the node found.
+func (db *memdb) traverse(key Key, insert bool) memdbNodeAddr {
+	x := db.getRoot()
+	y := memdbNodeAddr{nil, nullAddr}
+	found := false
+
+	// walk x down the tree
+	for !x.isNull() && !found {
+		y = x
+		cmp := bytes.Compare(key, x.getKey())
+		if cmp < 0 {
+			x = x.getLeft(db)
+		} else if cmp > 0 {
+			x = x.getRight(db)
+		} else {
+			found = true
+		}
+	}
+
+	if found || !insert {
+		return x
+	}
+
+	z := db.allocNode(key)
+	z.up = y.addr
+
+	if y.isNull() {
+		db.root = z.addr
+	} else {
+		cmp := bytes.Compare(z.getKey(), y.getKey())
+		if cmp < 0 {
+			y.left = z.addr
+		} else {
+			y.right = z.addr
+		}
+	}
+
+	z.left = nullAddr
+	z.right = nullAddr
+
+	// colour this new node red
+	z.setRed()
+
+	// Having added a red node, we must now walk back up the tree balancing it,
+	// by a series of rotations and changing of colours
+	x = z
+
+	// While we are not at the top and our parent node is red
+	// NOTE: Since the root node is guaranteed black, then we
+	// are also going to stop if we are the child of the root
+
+	for x.addr != db.root {
+		xUp := x.getUp(db)
+		if xUp.isBlack() {
+			break
+		}
+
+		xUpUp := xUp.getUp(db)
+		// if our parent is on the left side of our grandparent
+		if x.up == xUpUp.left {
+			// get the right side of our grandparent (uncle?)
+			y = xUpUp.getRight(db)
+			if y.isRed() {
+				// make our parent black
+				xUp.setBlack()
+				// make our uncle black
+				y.setBlack()
+				// make our grandparent red
+				xUpUp.setRed()
+				// now consider our grandparent
+				x = xUp.getUp(db)
+			} else {
+				// if we are on the right side of our parent
+				if x.addr == xUp.right {
+					// Move up to our parent
+					x = x.getUp(db)
+					db.leftRotate(x)
+					xUp = x.getUp(db)
+					xUpUp = xUp.getUp(db)
+				}
+
+				xUp.setBlack()
+				xUpUp.setRed()
+				db.rightRotate(xUpUp)
+			}
+		} else {
+			// everything here is the same as above, but exchanging left for right
+			y = xUpUp.getLeft(db)
+			if y.isRed() {
+				xUp.setBlack()
+				y.setBlack()
+				xUpUp.setRed()
+
+				x = xUp.getUp(db)
+			} else {
+				if x.addr == xUp.left {
+					x = x.getUp(db)
+					db.rightRotate(x)
+					xUp = x.getUp(db)
+					xUpUp = xUp.getUp(db)
+				}
+
+				xUp.setBlack()
+				xUpUp.setRed()
+				db.leftRotate(xUpUp)
+			}
+		}
+	}
+
+	// Set the root node black
+	db.getRoot().setBlack()
+
+	return z
+}
+
+//
+// Rotate our tree thus:-
+//
+//             X        leftRotate(X)--->           Y
+//           /   \                                /   \
+//          A     Y     <---rightRotate(Y)       X     C
+//              /   \                          /   \
+//             B     C                        A     B
+//
+// NOTE: This does not change the ordering.
+//
+// We assume that neither X nor Y is NULL
+//
+
+func (db *memdb) leftRotate(x memdbNodeAddr) {
+	y := x.getRight(db)
+
+	// Turn Y's left subtree into X's right subtree (move B)
+	x.right = y.left
+
+	// If B is not null, set it's parent to be X
+	if !y.left.isNull() {
+		left := y.getLeft(db)
+		left.up = x.addr
+	}
+
+	// Set Y's parent to be what X's parent was
+	y.up = x.up
+
+	// if X was the root
+	if x.up.isNull() {
+		db.root = y.addr
+	} else {
+		xUp := x.getUp(db)
+		// Set X's parent's left or right pointer to be Y
+		if x.addr == xUp.left {
+			xUp.left = y.addr
+		} else {
+			xUp.right = y.addr
+		}
+	}
+
+	// Put X on Y's left
+	y.left = x.addr
+	// Set X's parent to be Y
+	x.up = y.addr
+}
+
+func (db *memdb) rightRotate(y memdbNodeAddr) {
+	x := y.getLeft(db)
+
+	// Turn X's right subtree into Y's left subtree (move B)
+	y.left = x.right
+
+	// If B is not null, set it's parent to be Y
+	if !x.right.isNull() {
+		right := x.getRight(db)
+		right.up = y.addr
+	}
+
+	// Set X's parent to be what Y's parent was
+	x.up = y.up
+
+	// if Y was the root
+	if y.up.isNull() {
+		db.root = x.addr
+	} else {
+		yUp := y.getUp(db)
+		// Set Y's parent's left or right pointer to be X
+		if y.addr == yUp.left {
+			yUp.left = x.addr
+		} else {
+			yUp.right = x.addr
+		}
+	}
+
+	// Put Y on X's right
+	x.right = y.addr
+	// Set Y's parent to be X
+	y.up = x.addr
+}
+
+func (db *memdb) deleteNode(z memdbNodeAddr) {
+	var x, y memdbNodeAddr
+
+	db.count--
+	db.size -= int(z.klen)
+
+	if z.left.isNull() || z.right.isNull() {
+		y = z
+	} else {
+		y = db.successor(z)
+	}
+
+	if !y.left.isNull() {
+		x = y.getLeft(db)
+	} else {
+		x = y.getRight(db)
+	}
+	x.up = y.up
+
+	if y.up.isNull() {
+		db.root = x.addr
+	} else {
+		yUp := y.getUp(db)
+		if y.addr == yUp.left {
+			yUp.left = x.addr
+		} else {
+			yUp.right = x.addr
+		}
+	}
+
+	needFix := y.isBlack()
+
+	// NOTE: traditional red-black tree will copy key from Y to Z and free Y.
+	// We cannot do the same thing here, due to Y's pointer is stored in vlog and the space in Z may not suitable for Y.
+	// So we need to copy states from Z to Y, and relink all nodes formerly connected to Z.
+	if y != z {
+		db.replaceNode(z, y)
+	}
+
+	if needFix {
+		db.deleteNodeFix(x)
+	}
+
+	db.allocator.freeNode(z.addr)
+}
+
+func (db *memdb) replaceNode(old memdbNodeAddr, new memdbNodeAddr) {
+	if !old.up.isNull() {
+		oldUp := old.getUp(db)
+		if old.addr == oldUp.left {
+			oldUp.left = new.addr
+		} else {
+			oldUp.right = new.addr
+		}
+	} else {
+		db.root = new.addr
+	}
+	new.up = old.up
+
+	left := old.getLeft(db)
+	left.up = new.addr
+	new.left = old.left
+
+	right := old.getRight(db)
+	right.up = new.addr
+	new.right = old.right
+
+	if old.isBlack() {
+		new.setBlack()
+	} else {
+		new.setRed()
+	}
+}
+
+func (db *memdb) deleteNodeFix(x memdbNodeAddr) {
+	for x.addr != db.root && x.isBlack() {
+		xUp := x.getUp(db)
+		if x.addr == xUp.left {
+			w := xUp.getRight(db)
+			if w.isRed() {
+				w.setBlack()
+				xUp.setRed()
+				db.leftRotate(xUp)
+				w = x.getUp(db).getRight(db)
+			}
+
+			if w.getLeft(db).isBlack() && w.getRight(db).isBlack() {
+				w.setRed()
+				x = x.getUp(db)
+			} else {
+				if w.getRight(db).isBlack() {
+					w.getLeft(db).setBlack()
+					w.setRed()
+					db.rightRotate(w)
+					w = x.getUp(db).getRight(db)
+				}
+
+				xUp := x.getUp(db)
+				if xUp.isBlack() {
+					w.setBlack()
+				} else {
+					w.setRed()
+				}
+				xUp.setBlack()
+				w.getRight(db).setBlack()
+				db.leftRotate(xUp)
+				x = db.getRoot()
+			}
+		} else {
+			w := xUp.getLeft(db)
+			if w.isRed() {
+				w.setBlack()
+				xUp.setRed()
+				db.rightRotate(xUp)
+				w = x.getUp(db).getLeft(db)
+			}
+
+			if w.getRight(db).isBlack() && w.getLeft(db).isBlack() {
+				w.setRed()
+				x = x.getUp(db)
+			} else {
+				if w.getLeft(db).isBlack() {
+					w.getRight(db).setBlack()
+					w.setRed()
+					db.leftRotate(w)
+					w = x.getUp(db).getLeft(db)
+				}
+
+				xUp := x.getUp(db)
+				if xUp.isBlack() {
+					w.setBlack()
+				} else {
+					w.setRed()
+				}
+				xUp.setBlack()
+				w.getLeft(db).setBlack()
+				db.rightRotate(xUp)
+				x = db.getRoot()
+			}
+		}
+	}
+	x.setBlack()
+}
+
+func (db *memdb) successor(x memdbNodeAddr) (y memdbNodeAddr) {
+	if !x.right.isNull() {
+		// If right is not NULL then go right one and
+		// then keep going left until we find a node with
+		// no left pointer.
+
+		y = x.getRight(db)
+		for !y.left.isNull() {
+			y = y.getLeft(db)
+		}
+		return
+	}
+
+	// Go up the tree until we get to a node that is on the
+	// left of its parent (or the root) and then return the
+	// parent.
+
+	y = x.getUp(db)
+	for !y.isNull() && x.addr == y.right {
+		x = y
+		y = y.getUp(db)
+	}
+	return y
+}
+
+func (db *memdb) predecessor(x memdbNodeAddr) (y memdbNodeAddr) {
+	if !x.left.isNull() {
+		// If left is not NULL then go left one and
+		// then keep going right until we find a node with
+		// no right pointer.
+
+		y = x.getLeft(db)
+		for !y.right.isNull() {
+			y = y.getRight(db)
+		}
+		return
+	}
+
+	// Go up the tree until we get to a node that is on the
+	// right of its parent (or the root) and then return the
+	// parent.
+
+	y = x.getUp(db)
+	for !y.isNull() && x.addr == y.left {
+		x = y
+		y = y.getUp(db)
+	}
+	return y
+}
+
+func (db *memdb) getNode(x memdbArenaAddr) memdbNodeAddr {
+	return memdbNodeAddr{db.allocator.getNode(x), x}
+}
+
+func (db *memdb) getRoot() memdbNodeAddr {
+	return db.getNode(db.root)
+}
+
+func (db *memdb) allocNode(key Key) memdbNodeAddr {
+	db.size += len(key)
+	db.count++
+	x, xn := db.allocator.allocNode(key)
+	return memdbNodeAddr{xn, x}
+}
+
+type memdbNodeAddr struct {
+	*memdbNode
+	addr memdbArenaAddr
+}
+
+func (a *memdbNodeAddr) isNull() bool {
+	return a.addr.isNull()
+}
+
+func (a memdbNodeAddr) getUp(db *memdb) memdbNodeAddr {
+	return db.getNode(a.up)
+}
+
+func (a memdbNodeAddr) getLeft(db *memdb) memdbNodeAddr {
+	return db.getNode(a.left)
+}
+
+func (a memdbNodeAddr) getRight(db *memdb) memdbNodeAddr {
+	return db.getNode(a.right)
+}
+
+type memdbNode struct {
+	up    memdbArenaAddr
+	left  memdbArenaAddr
+	right memdbArenaAddr
+	vptr  memdbArenaAddr
+	klen  uint16
+	flags uint8
+}
+
+func (n *memdbNode) isRed() bool {
+	return n.flags&nodeColorBit != 0
+}
+
+func (n *memdbNode) isBlack() bool {
+	return !n.isRed()
+}
+
+func (n *memdbNode) setRed() {
+	n.flags |= nodeColorBit
+}
+
+func (n *memdbNode) setBlack() {
+	n.flags &= ^nodeColorBit
+}
+
+func (n *memdbNode) getKey() Key {
+	var ret []byte
+	hdr := (*reflect.SliceHeader)(unsafe.Pointer(&ret))
+	hdr.Data = uintptr(unsafe.Pointer(&n.flags)) + 1
+	hdr.Len = int(n.klen)
+	hdr.Cap = int(n.klen)
+	return ret
+}
+
+func (n *memdbNode) getKeyFlags() KeyFlags {
+	return KeyFlags(n.flags & nodeFlagsMask)
+}
+
+func (n *memdbNode) setKeyFlags(f KeyFlags) {
+	n.flags = (^nodeFlagsMask & n.flags) | uint8(f)
 }

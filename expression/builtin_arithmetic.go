@@ -420,12 +420,12 @@ func (s *builtinArithmeticMinusIntSig) evalInt(row chunk.Row) (val int64, isNull
 	isRHSUnsigned := !forceToSigned && mysql.HasUnsignedFlag(s.args[1].GetType().Flag)
 
 	if forceToSigned && mysql.HasUnsignedFlag(s.args[0].GetType().Flag) {
-		if a < 0 || (a > math.MaxInt64) {
+		if a < 0 {
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 		}
 	}
 	if forceToSigned && mysql.HasUnsignedFlag(s.args[1].GetType().Flag) {
-		if b < 0 || (b > math.MaxInt64) {
+		if b < 0 {
 			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
 		}
 	}
@@ -793,14 +793,6 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (ret int64
 	var num [2]*types.MyDecimal
 	for i, arg := range s.args {
 		num[i], isNull, err = arg.EvalDecimal(s.ctx, row)
-		// Its behavior is consistent with MySQL.
-		if terror.ErrorEqual(err, types.ErrTruncated) {
-			err = nil
-		}
-		if terror.ErrorEqual(err, types.ErrOverflow) {
-			newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", arg)
-			err = sc.HandleOverflow(newErr, newErr)
-		}
 		if isNull || err != nil {
 			return 0, isNull, err
 		}
