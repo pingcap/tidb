@@ -1782,6 +1782,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 }
 
 func (cc *clientConn) handleResetConnection(ctx context.Context) error {
+	user := cc.ctx.GetSessionVars().User
 	err := cc.ctx.Close()
 	if err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
@@ -1795,6 +1796,17 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if !cc.ctx.AuthWithoutVerification(user) {
+		return errors.New("Could not reset connection")
+	}
+	if cc.dbname != "" { // Restore the current DB
+		err = cc.useDB(context.Background(), cc.dbname)
+		if err != nil {
+			return err
+		}
+	}
+	cc.ctx.SetSessionManager(cc.server)
+
 	return cc.handleCommonConnectionReset()
 }
 

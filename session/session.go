@@ -118,6 +118,7 @@ type Session interface {
 	SetSessionManager(util.SessionManager)
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
+	AuthWithoutVerification(user *auth.UserIdentity) bool
 	ShowProcess() *util.ProcessInfo
 	// PrepareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
@@ -1603,6 +1604,38 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 	// Check Hostname.
 	for _, addr := range getHostByIP(user.Hostname) {
 		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt, s.sessionVars.TLSConnectionState)
+		if success {
+			s.sessionVars.User = &auth.UserIdentity{
+				Username:     user.Username,
+				Hostname:     addr,
+				AuthUsername: u,
+				AuthHostname: h,
+			}
+			s.sessionVars.ActiveRoles = pm.GetDefaultRoles(u, h)
+			return true
+		}
+	}
+	return false
+}
+
+// AuthWithoutVerification is required by the ResetConnection RPC
+func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
+	pm := privilege.GetPrivilegeManager(s)
+
+	// Check IP or localhost.
+	var success bool
+	user.AuthUsername, user.AuthHostname, success = pm.GetAuthWithoutVerification(user.Username, user.Hostname)
+	if success {
+		s.sessionVars.User = user
+		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+		return true
+	} else if user.Hostname == variable.DefHostname {
+		return false
+	}
+
+	// Check Hostname.
+	for _, addr := range getHostByIP(user.Hostname) {
+		u, h, success := pm.GetAuthWithoutVerification(user.Username, addr)
 		if success {
 			s.sessionVars.User = &auth.UserIdentity{
 				Username:     user.Username,
