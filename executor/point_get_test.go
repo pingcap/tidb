@@ -580,11 +580,11 @@ func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
 	s.testData.GetTestCases(c, &input, &output)
 	for i, tt := range input {
 		plan := tk.MustQuery("explain " + tt)
-		res := tk.MustQuery(tt)
+		res := tk.MustQuery(tt).Sort()
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
-			output[i].Res = s.testData.ConvertRowsToStrings(res.Sort().Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(res.Rows())
 		})
 		plan.Check(testkit.Rows(output[i].Plan...))
 		res.Check(testkit.Rows(output[i].Res...))
