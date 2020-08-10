@@ -472,8 +472,6 @@ github.com/pingcap/parser v0.0.0-20200623082809-b74301ac298b/go.mod h1:vQdbJqobJ
 github.com/pingcap/parser v0.0.0-20200730092557-34a468e9b774/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/pingcap/parser v0.0.0-20200731033026-84f62115187c h1:UG7JwE9UbEpiTOJeUXHQBJFfMrU+yAtdpzEbLRiAnkI=
 github.com/pingcap/parser v0.0.0-20200731033026-84f62115187c/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
-github.com/pingcap/parser v0.0.0-20200807022321-6df2fd4b22c3 h1:+yHyawav8kmuo1GZYdRAqx9ymKkChZkGgfbrr8RjYic=
-github.com/pingcap/parser v0.0.0-20200807022321-6df2fd4b22c3/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/pingcap/parser v0.0.0-20200810083003-f0edf4170630 h1:65ZVh0OO2/y7QeocVX+6bfOxVYzTkmQWyj7zazUpwBg=
 github.com/pingcap/parser v0.0.0-20200810083003-f0edf4170630/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/pingcap/pd/v4 v4.0.0-rc.1.0.20200422143320-428acd53eba2/go.mod h1:s+utZtXDznOiL24VK0qGmtoHjjXNsscJx3m1n8cC56s=
