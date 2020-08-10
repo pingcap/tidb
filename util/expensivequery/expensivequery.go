@@ -110,6 +110,8 @@ const (
 	closeAlert
 )
 
+// If Performance.ServerMemoryQuota is set, use instance memory usage and ServerMemoryQuota * 80% to check oom risk.
+// If Performance.ServerMemoryQuota is not set, use system memory usage and total memory * 80% to check oom risk.
 func (eqh *Handle) oomKillerAlert() {
 	if oomRecordErr != nil || oomRecordStatus == closeAlert {
 		return

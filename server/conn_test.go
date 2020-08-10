@@ -647,10 +647,6 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 }
 
 func (ts *ConnTestSuite) TestOOMRecord(c *C) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.ServerMemoryQuota = 600 << 20 // 600 MB
-	})
 	se, err := session.CreateSession4Test(ts.store)
 	c.Assert(err, IsNil)
 
@@ -678,9 +674,10 @@ func (ts *ConnTestSuite) TestOOMRecord(c *C) {
 
 	time.Sleep(500 * time.Millisecond)
 	c.Assert(atomic.LoadUint32(&expensivequery.OOMRecordCount), Equals, uint32(0))
-	t := bytes.Repeat([]byte{1}, 600<<20)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ServerMemoryAlert = 0.0001 // Make the quota smaller to action oom record.
+	})
 	time.Sleep(500 * time.Millisecond)
 	c.Assert(atomic.LoadUint32(&expensivequery.OOMRecordCount), Equals, uint32(1))
-	// Avoid GC
-	c.Assert(t[200<<20-1], Equals, uint8(1))
 }
