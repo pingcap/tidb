@@ -301,6 +301,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 		}
 	}
 
+	if s.Partition.Tp == model.PartitionTypeList {
+		enable = true
+	}
+
 	if !enable {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
 		return nil, nil
@@ -338,6 +342,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 		if err := buildHashPartitionDefinitions(ctx, s, pi); err != nil {
 			return nil, errors.Trace(err)
 		}
+	} else if s.Partition.Tp == model.PartitionTypeList {
+		if err := buildListPartitionDefinitions(s, pi); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 	return pi, nil
 }
@@ -358,6 +366,32 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStm
 		}
 	}
 	pi.Definitions = defs
+	return nil
+}
+
+func buildListPartitionDefinitions(s *ast.CreateTableStmt, pi *model.PartitionInfo) (err error) {
+	for _, def := range s.Partition.Definitions {
+		comment, _ := def.Comment()
+		err = checkTooLongTable(def.Name)
+		if err != nil {
+			return err
+		}
+		piDef := model.PartitionDefinition{
+			Name:    def.Name,
+			Comment: comment,
+		}
+
+		buf := new(bytes.Buffer)
+		for _, vs := range def.Clause.(*ast.PartitionDefinitionClauseIn).Values {
+			if len(vs) != 1 {
+				return fmt.Errorf("not support muli-column list partition")
+			}
+			vs[0].Format(buf)
+			piDef.Values = append(piDef.Values, buf.String())
+			buf.Reset()
+		}
+		pi.Definitions = append(pi.Definitions, piDef)
+	}
 	return nil
 }
 
@@ -753,6 +787,36 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo)
 			}
 		}
 		prevRangeValue = currentRangeValue
+	}
+	return nil
+}
+
+func checkListPartitionValue(tblInfo *model.TableInfo) error {
+	pi := tblInfo.Partition
+	defs := pi.Definitions
+	if len(defs) == 0 {
+		return nil
+	}
+
+	partitionsValuesMap := make(map[string]map[string]struct{})
+	checkMultipleValue := func(v string) error {
+		for _, otherValueMap := range partitionsValuesMap {
+			if _, ok := otherValueMap[v]; ok {
+				return errors.Trace(ErrMultipleDefConstInListPart)
+			}
+		}
+		return nil
+	}
+
+	for _, def := range pi.Definitions {
+		valuesMap := make(map[string]struct{}, len(def.Values))
+		for _, v := range def.Values {
+			if err := checkMultipleValue(v); err != nil {
+				return err
+			}
+			valuesMap[v] = struct{}{}
+		}
+		partitionsValuesMap[def.Name.O] = valuesMap
 	}
 	return nil
 }

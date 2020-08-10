@@ -1411,6 +1411,8 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 				err = checkPartitionByRange(ctx, tbInfo, s)
 			case model.PartitionTypeHash:
 				err = checkPartitionByHash(ctx, tbInfo, s)
+			case model.PartitionTypeList:
+				err = checkPartitionByList(ctx, tbInfo, s)
 			}
 			if err != nil {
 				return errors.Trace(err)
@@ -1873,6 +1875,39 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *a
 	}
 
 	return checkRangeColumnsPartitionValue(ctx, tbInfo)
+}
+
+// checkPartitionByRange checks validity of a "BY RANGE" partition.
+func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
+	pi := tbInfo.Partition
+	if err := checkPartitionNameUnique(pi); err != nil {
+		return err
+	}
+
+	if err := checkAddPartitionTooManyPartitions(uint64(len(pi.Definitions))); err != nil {
+		return err
+	}
+
+	if len(pi.Definitions) == 0 {
+		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("LIST")
+	}
+
+	if len(pi.Columns) != 0 {
+		return nil
+	}
+	if err := checkListPartitionValue(tbInfo); err != nil {
+		return err
+	}
+
+	// s maybe nil when add partition.
+	if s == nil {
+		return nil
+	}
+
+	if err := checkPartitionFuncValid(ctx, tbInfo, s.Partition.Expr); err != nil {
+		return err
+	}
+	return checkPartitionFuncType(ctx, s, tbInfo)
 }
 
 func checkRangeColumnsPartitionType(tbInfo *model.TableInfo) error {
