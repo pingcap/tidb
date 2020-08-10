@@ -5162,9 +5162,10 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	return errors.Trace(err)
 }
 
-func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.RuleOp, replicas uint64, cnstr string) ([]*placement.RuleOp, error) {
+func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas uint64, cnstr string) ([]*placement.RuleOp, error) {
 	var err error
 	cnstr = strings.TrimSpace(cnstr)
+	rules := make([]*placement.RuleOp, 0, 1)
 	if len(cnstr) > 0 && cnstr[0] == '[' {
 		// can not emit REPLICAS with an array label
 		if replicas == 0 {
@@ -5290,7 +5291,9 @@ func buildPlacementSpecs(specs []*ast.PlacementSpec, tableID, partitionID int64)
 		}
 
 		if err == nil {
-			rules, err = buildPlacementSpecConstraint(rules, rule, spec.Replicas, spec.Constraints)
+			var newRules []*placement.RuleOp
+			newRules, err = buildPlacementSpecReplicasAndConstraint(rule, spec.Replicas, spec.Constraints)
+			rules = append(rules, newRules...)
 		}
 
 		if err != nil {
