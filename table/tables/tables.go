@@ -754,7 +754,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 }
 
 func (t *TableCommon) checkTruncatedClusteredPrimaryKeyDuplication(sctx sessionctx.Context, pkDts []types.Datum,
-	tableCols[]*table.Column, pkIdx *model.IndexInfo) error {
+	tableCols []*table.Column, pkIdx *model.IndexInfo) error {
 	truncatedDts := make([]types.Datum, len(pkDts))
 	copy(truncatedDts, pkDts)
 	_, ok := tablecodec.TruncateIndexValuesIfNeeded(t.meta, pkIdx, truncatedDts)
