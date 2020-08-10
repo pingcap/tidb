@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -64,26 +65,44 @@ func (s *testUtilSuite) TearDownSuite(c *C) {
 }
 
 func (s *testUtilSuite) TestDumpBinaryTime(c *C) {
-	t, err := types.ParseTimestamp(nil, "0000-00-00 00:00:00.0000000")
+	t, err := types.ParseTimestamp(nil, "0000-00-00 00:00:00.000000")
 	c.Assert(err, IsNil)
 	d := dumpBinaryDateTime(nil, t)
-	c.Assert(d, DeepEquals, []byte{11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
-	t, err = types.ParseDatetime(nil, "0000-00-00 00:00:00.0000000")
+	c.Assert(d, DeepEquals, []byte{0})
+
+	t, err = types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.Local}, "1991-05-01 01:01:01.100001")
 	c.Assert(err, IsNil)
 	d = dumpBinaryDateTime(nil, t)
-	c.Assert(d, DeepEquals, []byte{11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+	// 199 & 7 composed to uint16 1991 (litter-endian)
+	// 160 & 134 & 1 & 0 composed to uint32 1000001 (litter-endian)
+	c.Assert(d, DeepEquals, []byte{11, 199, 7, 5, 1, 1, 1, 1, 161, 134, 1, 0})
+
+	t, err = types.ParseDatetime(nil, "0000-00-00 00:00:00.000000")
+	c.Assert(err, IsNil)
+	d = dumpBinaryDateTime(nil, t)
+	c.Assert(d, DeepEquals, []byte{0})
+	t, err = types.ParseDatetime(nil, "1993-07-13 01:01:01.000000")
+	c.Assert(err, IsNil)
+	d = dumpBinaryDateTime(nil, t)
+	// 201 & 7 composed to uint16 1993 (litter-endian)
+	c.Assert(d, DeepEquals, []byte{11, 201, 7, 7, 13, 1, 1, 1, 0, 0, 0, 0})
 
 	t, err = types.ParseDate(nil, "0000-00-00")
 	c.Assert(err, IsNil)
 	d = dumpBinaryDateTime(nil, t)
-	c.Assert(d, DeepEquals, []byte{4, 0, 0, 0, 0})
+	c.Assert(d, DeepEquals, []byte{0})
+	t, err = types.ParseDate(nil, "1992-06-01")
+	c.Assert(err, IsNil)
+	d = dumpBinaryDateTime(nil, t)
+	// 200 & 7 composed to uint16 1992 (litter-endian)
+	c.Assert(d, DeepEquals, []byte{4, 200, 7, 6, 1})
 
 	t, err = types.ParseDate(nil, "0000-00-00")
 	c.Assert(err, IsNil)
 	d = dumpBinaryDateTime(nil, t)
-	c.Assert(d, DeepEquals, []byte{4, 0, 0, 0, 0})
+	c.Assert(d, DeepEquals, []byte{0})
 
-	myDuration, err := types.ParseDuration(nil, "0000-00-00 00:00:00.0000000", 6)
+	myDuration, err := types.ParseDuration(nil, "0000-00-00 00:00:00.000000", 6)
 	c.Assert(err, IsNil)
 	d = dumpBinaryTime(myDuration.Duration)
 	c.Assert(d, DeepEquals, []byte{0})
