@@ -205,4 +205,24 @@ func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
 	tk.MustExec(`prepare stmt2 from "select * from ta, tb where ta.c = tb.b and (ta.a, ta.b) in ((?, ?), (?, ?))"`)
 	tk.MustQuery(`execute stmt2 using @v1, @v1, @v2, @v2`).Check(testkit.Rows("a a 1 1 1", "b b 2 2 2"))
 	tk.MustQuery(`execute stmt2 using @v2, @v2, @v3, @v3`).Check(testkit.Rows("b b 2 2 2", "c c 3 3 3"))
+
+	// For issue 19002
+	tk.MustExec(`set @@tidb_enable_clustered_index = 1`)
+	tk.MustExec(`drop table if exists t1`)
+	tk.MustExec(`create table t1(a int, b int, c int, primary key(a, b))`)
+	tk.MustExec(`insert into t1 values(1,1,111),(2,2,222),(3,3,333)`)
+	// Point Get:
+	tk.MustExec(`prepare stmt1 from "select * from t1 where t1.a = ? and t1.b = ?"`)
+	tk.MustExec(`set @v1=1, @v2=1`)
+	tk.MustQuery(`execute stmt1 using @v1,@v2`).Check(testkit.Rows("1 1 111"))
+	tk.MustExec(`set @v1=2, @v2=2`)
+	tk.MustQuery(`execute stmt1 using @v1,@v2`).Check(testkit.Rows("2 2 222"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	// Batch Point Get:
+	tk.MustExec(`prepare stmt2 from "select * from t1 where (t1.a,t1.b) in ((?,?),(?,?))"`)
+	tk.MustExec(`set @v1=1, @v2=1, @v3=2, @v4=2`)
+	tk.MustQuery(`execute stmt2 using @v1,@v2,@v3,@v4`).Check(testkit.Rows("1 1 111", "2 2 222"))
+	tk.MustExec(`set @v1=2, @v2=2, @v3=3, @v4=3`)
+	tk.MustQuery(`execute stmt2 using @v1,@v2,@v3,@v4`).Check(testkit.Rows("2 2 222", "3 3 333"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
