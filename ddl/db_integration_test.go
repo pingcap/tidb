@@ -2207,7 +2207,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(a int) auto_id_cache 100")
-	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	_, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
 	tk.MustExec("insert into t values()")
@@ -2223,7 +2223,7 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(a int null, b int auto_increment unique) auto_id_cache 100")
-	tblInfo, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	_, err = s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 
 	tk.MustExec("insert into t(b) values(NULL)")
@@ -2381,4 +2381,18 @@ func (s *testIntegrationSuite5) TestDropColumnsWithMultiIndex(c *C) {
 	tk.MustExec("alter table t_drop_columns_with_idx drop column b, drop column c")
 	query := queryIndexOnTable("test_db", "t_drop_columns_with_idx")
 	tk.MustQuery(query).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite7) TestAutoIncrementAllocator(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+	tk.MustExec("drop database if exists test_create_table_option_auto_inc;")
+	tk.MustExec("create database test_create_table_option_auto_inc;")
+	tk.MustExec("use test_create_table_option_auto_inc;")
+
+	tk.MustExec("create table t (a bigint primary key) auto_increment = 10;")
+	tk.MustExec("alter table t auto_increment = 10;")
 }
