@@ -5163,14 +5163,12 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 }
 
 func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.RuleOp, replicas uint64, cnstr string) ([]*placement.RuleOp, error) {
-	cnstr = strings.TrimSpace(cnstr)
 	var err error
+	cnstr = strings.TrimSpace(cnstr)
 	if len(cnstr) > 0 && cnstr[0] == '[' {
-		if replicas <= 0 {
-			err = errors.Errorf("count should be positive, got: %d", replicas)
-			if err != nil {
-				return rules, err
-			}
+		// can not emit REPLICAS with an array label
+		if replicas == 0 {
+			return rules, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
 		}
 		rule.Count = int(replicas)
 
@@ -5188,13 +5186,6 @@ func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 
 		rules = append(rules, rule)
 	} else if len(cnstr) > 0 && cnstr[0] == '{' {
-		if replicas < 0 {
-			err = errors.Errorf("count should be positive, got: %d", replicas)
-			if err != nil {
-				return rules, err
-			}
-		}
-		ignoreREPLICAS := replicas == 0
 		rule.Count = int(replicas)
 
 		constraints := map[string]int{}
@@ -5211,7 +5202,7 @@ func buildPlacementSpecConstraint(rules []*placement.RuleOp, rule *placement.Rul
 				err = errors.Errorf("count should be positive, but got %d", cnt)
 				break
 			}
-			if !ignoreREPLICAS {
+			if replicas != 0 {
 				ruleCnt -= cnt
 				if ruleCnt < 0 {
 					rules = rules[:rulesLen]
