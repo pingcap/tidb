@@ -164,7 +164,6 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 
 	if len(idxInfos) > 0 {
 		for _, indexInfo := range idxInfos {
-			originalState := indexInfo.State
 			switch indexInfo.State {
 			case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
 				// We can not rollback now, so just continue to drop index.
@@ -201,7 +200,6 @@ func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error)
 
 	if len(idxInfos) > 0 {
 		for _, indexInfo := range idxInfos {
-			originalState := indexInfo.State
 			switch indexInfo.State {
 			case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
 				// We can not rollback now, so just continue to drop index.
