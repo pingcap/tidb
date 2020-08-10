@@ -435,6 +435,20 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(tk.ExecToErr("set @@session.tidb_dml_batch_size = -120"), NotNil)
 	c.Assert(tk.ExecToErr("set @@global.tidb_dml_batch_size = 120"), NotNil)
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
+
+	// test for tidb_log_desensitization
+	tk.MustQuery("select @@global.tidb_log_desensitization;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@global.tidb_log_desensitization = 0")
+	tk.MustExec("set @@global.tidb_log_desensitization = 1")
+	cfg := config.GetGlobalConfig()
+	newCfg := *cfg
+	newCfg.Log.Level = "debug"
+	config.StoreGlobalConfig(&newCfg)
+	_, err = tk.Exec("set @@global.tidb_log_desensitization = 1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "to enable log desensitization, the log level need to be at least info level")
+	config.StoreGlobalConfig(cfg)
+	tk.MustExec("set @@global.tidb_log_desensitization = 1")
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {

@@ -805,6 +805,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		}
 	case TiDBShardAllocateStep:
 		return checkInt64SystemVar(name, value, 1, math.MaxInt64, vars)
+	case TiDBLogDesensitization:
+		if !TiDBOptOn(value) {
+			return value, nil
+		}
+		// Check log level, see more in issue: https://github.com/pingcap/tidb/issues/18566
+		if config.GetGlobalConfig().Log.Level == "debug" {
+			return value, errors.Errorf("to enable log desensitization, the log level need to be at least info level")
+		}
 	}
 	return value, nil
 }
