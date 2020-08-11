@@ -726,6 +726,27 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
+	// Test show list partition table
+	tk.MustExec(`DROP TABLE IF EXISTS t`)
+	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16,null)
+	);`)
+	tk.MustQuery(`show create table t`).Check(testutil.RowsWithSep("|",
+		"t CREATE TABLE `t` (\n"+
+			"  `id` int(11) DEFAULT NULL,\n"+
+			"  `name` varchar(10) DEFAULT NULL,\n"+
+			"  UNIQUE KEY `idx` (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n"+
+			"PARTITION BY LIST ( `id` ) (\n"+
+			"  PARTITION `p0` VALUES IN (3,5,6,9,17),\n"+
+			"  PARTITION `p1` VALUES IN (1,2,10,11,19,20),\n"+
+			"  PARTITION `p2` VALUES IN (4,12,13,14,18),\n"+
+			"  PARTITION `p3` VALUES IN (7,8,15,16,NULL)\n"+
+			")"))
+
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {
