@@ -119,6 +119,9 @@ skip-register-to-dashboard = false
 # See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
 enable-telemetry = true
 
+# enable-enum-length-limit is used to deal with compatibility issues.when true,the enum element length should be shorter than 255.
+enable-enum-length-limit = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
