@@ -442,7 +442,6 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			tblInfo.Indices = newIndices
 			for _, indexInfo := range idxInfos {
 				indexIDs = append(indexIDs, indexInfo.ID)
-				dropIndexColumnFlag(tblInfo, indexInfo)
 			}
 		}
 
@@ -581,7 +580,6 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			tblInfo.Indices = newIndices
 			for _, indexInfo := range idxInfos {
 				indexIDs = append(indexIDs, indexInfo.ID)
-				dropIndexColumnFlag(tblInfo, indexInfo)
 			}
 		}
 
