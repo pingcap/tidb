@@ -75,6 +75,9 @@ type HashJoinExec struct {
 	joinChkResourceCh  []chan *chunk.Chunk
 	joinResultCh       chan *hashjoinWorkerResult
 
+	probeInputChk      chan *chunk.Chunk
+	probeInputEmptyChk chan *chunk.Chunk
+
 	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker   // track disk usage.
 
@@ -128,6 +131,8 @@ func (e *HashJoinExec) Close() error {
 		for i := range e.probeResultChs {
 			for range e.probeResultChs[i] {
 			}
+		}
+		for range e.probeInputChk {
 		}
 		for i := range e.joinChkResourceCh {
 			close(e.joinChkResourceCh[i])
@@ -187,17 +192,19 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			return
 		}
 
-		var probeSideResource *probeChkResource
+		//var probeSideResource *probeChkResource
 		var ok bool
+		var probeSideResult *chunk.Chunk
 		select {
 		case <-e.closeCh:
 			return
-		case probeSideResource, ok = <-e.probeChkResourceCh:
+		//case probeSideResource, ok = <-e.probeChkResourceCh:
+		case probeSideResult, ok = <-e.probeInputEmptyChk:
 			if !ok {
 				return
 			}
 		}
-		probeSideResult := probeSideResource.chk
+		//probeSideResult := probeSideResource.chk
 		if e.isOuterJoin {
 			required := int(atomic.LoadInt64(&e.requiredRows))
 			probeSideResult.SetRequiredRows(required, e.maxChunkSize)
@@ -230,7 +237,8 @@ func (e *HashJoinExec) fetchProbeSideChunks(ctx context.Context) {
 			return
 		}
 
-		probeSideResource.dest <- probeSideResult
+		//probeSideResource.dest <- probeSideResult
+		e.probeInputChk <- probeSideResult
 	}
 }
 
@@ -288,6 +296,11 @@ func (e *HashJoinExec) initializeForProbe() {
 	for i := uint(0); i < e.concurrency; i++ {
 		e.probeResultChs[i] = make(chan *chunk.Chunk, 1)
 	}
+	e.probeInputChk = make(chan *chunk.Chunk, e.concurrency*3)
+	e.probeInputEmptyChk = make(chan *chunk.Chunk, e.concurrency*3)
+	for i := uint(0); i < e.concurrency*3; i++ {
+		e.probeInputEmptyChk <- newFirstChunk(e.probeSideExec)
+	}
 
 	// e.probeChkResourceCh is for transmitting the used probeSideExec chunks from
 	// join workers to probeSideExec worker.
@@ -336,6 +349,7 @@ func (e *HashJoinExec) handleProbeSideFetcherPanic(r interface{}) {
 	for i := range e.probeResultChs {
 		close(e.probeResultChs[i])
 	}
+	close(e.probeInputChk)
 	if r != nil {
 		e.joinResultCh <- &hashjoinWorkerResult{err: errors.Errorf("%v", r)}
 	}
@@ -410,9 +424,9 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 	}
 
 	// Read and filter probeSideResult, and join the probeSideResult with the build side rows.
-	emptyProbeSideResult := &probeChkResource{
-		dest: e.probeResultChs[workerID],
-	}
+	//emptyProbeSideResult := &probeChkResource{
+	//	dest: e.probeResultChs[workerID],
+	//}
 	hCtx := &hashContext{
 		allTypes:  e.probeTypes,
 		keyColIdx: probeKeyColIdx,
@@ -424,7 +438,8 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 		select {
 		case <-e.closeCh:
 			return
-		case probeSideResult, ok = <-e.probeResultChs[workerID]:
+		//case probeSideResult, ok = <-e.probeResultChs[workerID]:
+		case probeSideResult, ok = <-e.probeInputChk:
 		}
 		if !ok {
 			break
@@ -438,8 +453,9 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 			break
 		}
 		probeSideResult.Reset()
-		emptyProbeSideResult.chk = probeSideResult
-		e.probeChkResourceCh <- emptyProbeSideResult
+		//emptyProbeSideResult.chk = probeSideResult
+		//e.probeChkResourceCh <- emptyProbeSideResult
+		e.probeInputEmptyChk <- probeSideResult
 	}
 	// note joinResult.chk may be nil when getNewJoinResult fails in loops
 	if joinResult == nil {
