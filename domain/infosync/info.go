@@ -32,8 +32,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/v4/server/schedule/placement"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -305,7 +305,11 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 }
 
 // UpdatePlacementRules is used to notify PD changes of placement rules.
-func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) error {
+func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error {
+	if len(rules) == 0 {
+		return nil
+	}
+
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
@@ -325,7 +329,7 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) error {
 		return err
 	}
 
-	err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules"), http.MethodPost, bytes.NewReader(b))
+	err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
