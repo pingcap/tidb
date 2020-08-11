@@ -62,17 +62,17 @@ var aggFuncFactor = map[string]float64{
 }
 
 // PlanCounterTp is used in hint nth_plan() to indicate which plan to use.
-type PlanCounterTp int8
+type PlanCounterTp int64
 
 // PlanCounterDisabled is the default value of PlanCounterTp, indicating that optimizer needn't force a plan.
 var PlanCounterDisabled PlanCounterTp = -1
 
 // Dec minus PlanCounterTp value by x.
-func (c *PlanCounterTp) Dec(x int8) {
+func (c *PlanCounterTp) Dec(x int64) {
 	if *c <= 0 {
 		return
 	}
-	*c = PlanCounterTp(int8(*c) - x)
+	*c = PlanCounterTp(int64(*c) - x)
 	if *c < 0 {
 		*c = 0
 	}
@@ -260,7 +260,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 
 		cntPlan += curCntPlan
-		planCounter.Dec(int8(curCntPlan))
+		planCounter.Dec(curCntPlan)
 
 		if planCounter.Empty() {
 			bestTask = curTask
@@ -1487,7 +1487,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	}
 	rTsk := &rootTask{p: batchPointGetPlan}
 	var cost float64
-	if candidate.path.IsTablePath() {
+	if candidate.path.IsIntHandlePath {
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
