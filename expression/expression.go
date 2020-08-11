@@ -430,7 +430,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				iVal, err := types.StrToFloat(sc, buf.GetString(i))
+				iVal, err := types.StrToFloat(sc, buf.GetString(i), false)
 				if err != nil {
 					return err
 				}

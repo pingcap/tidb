@@ -376,10 +376,11 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 	if isNull {
 		return 0, nil
 	}
+	ret = ret % int64(t.meta.Partition.Num)
 	if ret < 0 {
-		ret = 0 - ret
+		ret = -ret
 	}
-	return int(ret % int64(t.meta.Partition.Num)), nil
+	return int(ret), nil
 }
 
 // GetPartition returns a Table, which is actually a partition.

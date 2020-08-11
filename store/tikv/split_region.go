@@ -194,7 +194,7 @@ func (s *tikvStore) batchSendSingleRegion(bo *Backoffer, batch batch, scatter bo
 
 // SplitRegions splits regions by splitKeys.
 func (s *tikvStore) SplitRegions(ctx context.Context, splitKeys [][]byte, scatter bool) (regionIDs []uint64, err error) {
-	bo := NewBackoffer(ctx, int(math.Min(float64(len(splitKeys))*splitRegionBackoff, maxSplitRegionsBackoff)))
+	bo := NewBackofferWithVars(ctx, int(math.Min(float64(len(splitKeys))*splitRegionBackoff, maxSplitRegionsBackoff)), nil)
 	resp, err := s.splitBatchRegionsReq(bo, splitKeys, scatter)
 	regionIDs = make([]uint64, 0, len(splitKeys))
 	if resp != nil && resp.Resp != nil {
@@ -243,7 +243,7 @@ func (s *tikvStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64
 	logutil.BgLogger().Info("wait scatter region",
 		zap.Uint64("regionID", regionID), zap.Int("backoff(ms)", backOff))
 
-	bo := NewBackoffer(ctx, backOff)
+	bo := NewBackofferWithVars(ctx, backOff, nil)
 	logFreq := 0
 	for {
 		resp, err := s.pdClient.GetOperator(ctx, regionID)
@@ -274,7 +274,7 @@ func (s *tikvStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64
 
 // CheckRegionInScattering uses to check whether scatter region finished.
 func (s *tikvStore) CheckRegionInScattering(regionID uint64) (bool, error) {
-	bo := NewBackoffer(context.Background(), locateRegionMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), locateRegionMaxBackoff, nil)
 	for {
 		resp, err := s.pdClient.GetOperator(context.Background(), regionID)
 		if err == nil && resp != nil {

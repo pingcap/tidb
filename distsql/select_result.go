@@ -123,7 +123,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			return terror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
 		}
 		sessVars := r.ctx.GetSessionVars()
-		if atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0) {
+		if atomic.LoadUint32(&sessVars.Killed) == 1 {
 			return errors.Trace(errQueryInterrupted)
 		}
 		sc := sessVars.StmtCtx
@@ -131,7 +131,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			sc.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		resultDetail := resultSubset.GetExecDetails()
-		r.updateCopRuntimeStats(resultDetail, resultSubset.RespTime())
+		r.updateCopRuntimeStats(ctx, resultDetail, resultSubset.RespTime())
 		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		if resultDetail != nil {
@@ -233,13 +233,13 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
-func (r *selectResult) updateCopRuntimeStats(detail *execdetails.ExecDetails, respTime time.Duration) {
+func (r *selectResult) updateCopRuntimeStats(ctx context.Context, detail *execdetails.ExecDetails, respTime time.Duration) {
 	callee := detail.CalleeAddress
-	if r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
+	if r.rootPlanID == nil || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
 	}
 	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-		logutil.BgLogger().Error("invalid cop task execution summaries length",
+		logutil.Logger(ctx).Error("invalid cop task execution summaries length",
 			zap.Int("expected", len(r.copPlanIDs)),
 			zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
 

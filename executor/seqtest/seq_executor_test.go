@@ -797,39 +797,74 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	tk.MustExec("create table t(id int, c int)")
 	// Start handle is 1.
 	r := tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 1"))
+	r.Check(testkit.Rows("test t _tidb_rowid 1 AUTO_INCREMENT"))
 	// Row ID is step + 1.
 	tk.MustExec("insert into t values(1, 1)")
 	r = tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 11"))
+	r.Check(testkit.Rows("test t _tidb_rowid 11 AUTO_INCREMENT"))
 	// Row ID is original + step.
 	for i := 0; i < int(step); i++ {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
 	r = tk.MustQuery(str + " t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 21"))
+	r.Check(testkit.Rows("test t _tidb_rowid 21 AUTO_INCREMENT"))
 	tk.MustExec("drop table t")
 
 	// test for a table with the primary key
 	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 1"))
+	r.Check(testkit.Rows("test tt id 1 AUTO_INCREMENT"))
 	// After rebasing auto ID, row ID is 20 + step + 1.
 	tk.MustExec("insert into tt values(20, 1)")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 31"))
+	r.Check(testkit.Rows("test tt id 31 AUTO_INCREMENT"))
 	// test for renaming the table
 	tk.MustExec("drop database if exists test1")
 	tk.MustExec("create database test1")
 	tk.MustExec("rename table test.tt to test1.tt")
 	tk.MustExec("use test1")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31"))
+	r.Check(testkit.Rows("test1 tt id 31 AUTO_INCREMENT"))
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 41"))
+	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+
+	// Test for a table with auto_random primary key.
+	tk.MustExec("create table t3(id bigint primary key auto_random(5), c int)")
+	// Start handle is 1.
+	r = tk.MustQuery(str + " t3 next_row_id")
+	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 1 AUTO_RANDOM"))
+	// Insert some rows.
+	tk.MustExec("insert into t3 (c) values (1), (2);")
+	r = tk.MustQuery(str + " t3 next_row_id")
+	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 11 AUTO_RANDOM"))
+	// Rebase.
+	tk.MustExec("insert into t3 (id, c) values (103, 3);")
+	r = tk.MustQuery(str + " t3 next_row_id")
+	r.Check(testkit.Rows("test1 t3 _tidb_rowid 1 AUTO_INCREMENT", "test1 t3 id 114 AUTO_RANDOM"))
+
+	// Test for a sequence.
+	tk.MustExec("create sequence seq1 start 15 cache 57")
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  15 SEQUENCE"))
+	r = tk.MustQuery("select nextval(seq1)")
+	r.Check(testkit.Rows("15"))
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r = tk.MustQuery("select nextval(seq1)")
+	r.Check(testkit.Rows("16"))
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r = tk.MustQuery("select setval(seq1, 96)")
+	r.Check(testkit.Rows("96"))
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  97 SEQUENCE"))
 }
 
 func (s *seqTestSuite) TestNoHistoryWhenDisableRetry(c *C) {
@@ -1255,7 +1290,7 @@ func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk.MustExec("create database if not exists auto_random_retry")
 	tk.MustExec("use auto_random_retry")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int auto_random(3) primary key)")
+	tk.MustExec("create table t (id bigint auto_random(3) primary key)")
 
 	extractMaskedOrderedHandles := func() []int64 {
 		handles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "auto_random_retry", "t")
@@ -1331,7 +1366,7 @@ func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
 	defer autoid.SetStep(stp)
 
 	// Check rebase auto_random id.
-	tk.MustExec("create table t_recover_auto_rand (a int auto_random(5) primary key);")
+	tk.MustExec("create table t_recover_auto_rand (a bigint auto_random(5) primary key);")
 	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
 	tk.MustExec("drop table t_recover_auto_rand")
 	tk.MustExec("recover table t_recover_auto_rand")
@@ -1384,4 +1419,50 @@ func (s *seqTestSuite) TestOOMPanicInHashJoinWhenFetchBuildRows(c *C) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
 	c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+}
+
+func (s *seqTestSuite) TestIssue18744(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t, t1;`)
+	tk.MustExec(`CREATE TABLE t (
+  id int(11) NOT NULL,
+  a bigint(20) DEFAULT NULL,
+  b char(20) DEFAULT NULL,
+  c datetime DEFAULT NULL,
+  d double DEFAULT NULL,
+  e json DEFAULT NULL,
+  f decimal(40,6) DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY a (a),
+  KEY b (b),
+  KEY c (c),
+  KEY d (d),
+  KEY f (f)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`CREATE TABLE t1 (
+  id int(11) NOT NULL,
+  a bigint(20) DEFAULT NULL,
+  b char(20) DEFAULT NULL,
+  c datetime DEFAULT NULL,
+  d double DEFAULT NULL,
+  e json DEFAULT NULL,
+  f decimal(40,6) DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY a (a),
+  KEY b (b),
+  KEY c (c),
+  KEY d (d),
+  KEY f (f)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`insert into t1(id) values(0),(1),(2);`)
+	tk.MustExec(`insert into t values(0, 2010,  "2010-01-01 01:01:00" , "2010-01-01 01:01:00" , 2010 , 2010 , 2010.000000);`)
+	tk.MustExec(`insert into t values(1 , NULL , NULL                , NULL                , NULL , NULL ,        NULL);`)
+	tk.MustExec(`insert into t values(2 , 2012 , "2012-01-01 01:01:00" , "2012-01-01 01:01:00" , 2012 , 2012 , 2012.000000);`)
+	tk.MustExec(`set tidb_mem_quota_query=400;`)
+	tk.MustExec(`set tidb_index_lookup_join_concurrency=1`)
+	config.GetGlobalConfig().OOMAction = config.OOMActionCancel
+	defer func() { config.GetGlobalConfig().OOMAction = config.OOMActionLog }()
+	err := tk.QueryToErr(`select /*+ inl_hash_join(t2) */ t1.id, t2.id from t1 join t t2 on t1.a = t2.a order by t1.a ASC limit 1;`)
+	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
 }

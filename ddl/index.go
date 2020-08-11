@@ -1185,7 +1185,7 @@ func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endH
 	}
 
 	maxSleep := 10000 // ms
-	bo := tikv.NewBackoffer(context.Background(), maxSleep)
+	bo := tikv.NewBackofferWithVars(context.Background(), maxSleep, nil)
 	ranges, err := tikv.SplitRegionRanges(bo, s.GetRegionCache(), []kv.KeyRange{kvRange})
 	if err != nil {
 		return nil, errors.Trace(err)

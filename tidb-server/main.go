@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
 	kvstore "github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
@@ -407,7 +406,7 @@ func reloadConfig(nc, c *config.Config) {
 		statistics.FeedbackProbability.Store(nc.Performance.FeedbackProbability)
 	}
 	if nc.Performance.QueryFeedbackLimit != c.Performance.QueryFeedbackLimit {
-		handle.MaxQueryFeedbackCount.Store(int64(nc.Performance.QueryFeedbackLimit))
+		statistics.MaxQueryFeedbackCount.Store(int64(nc.Performance.QueryFeedbackLimit))
 	}
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
@@ -546,7 +545,7 @@ func setGlobalVars() {
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
-	handle.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
+	statistics.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
 	ddl.RunWorker = cfg.RunDDL
 	if cfg.SplitTable {
@@ -592,6 +591,13 @@ func setGlobalVars() {
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
 	executor.GlobalDiskUsageTracker.SetBytesLimit(config.GetGlobalConfig().TempStorageQuota)
+
+	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
+	if err != nil {
+		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
+			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
+	}
+	tikv.StoreLivenessTimeout = t
 }
 
 func setupLog() {

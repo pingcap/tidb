@@ -337,7 +337,7 @@ func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan str
 		task := w.buildTableTask(handles, retChunk)
 		select {
 		case <-ctx.Done():
-			return count, nil
+			return count, ctx.Err()
 		case <-exitCh:
 			return count, nil
 		case <-finished:
@@ -586,7 +586,7 @@ func (w *partialIndexWorker) fetchHandles(ctx context.Context, result distsql.Se
 		task := w.buildTableTask(handles, retChunk)
 		select {
 		case <-ctx.Done():
-			return count, nil
+			return count, ctx.Err()
 		case <-exitCh:
 			return count, nil
 		case <-finished:

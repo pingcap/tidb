@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pd "github.com/pingcap/pd/v4/client"
-	"github.com/pingcap/tidb-tools/pkg/filter"
+	filter "github.com/pingcap/tidb-tools/pkg/table-filter"
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -191,15 +191,11 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 			Cert: tidbCfg.Security.ClusterSSLCert,
 			Key:  tidbCfg.Security.ClusterSSLKey,
 		},
-		PD:            strings.Split(tidbCfg.Path, ","),
-		Concurrency:   4,
-		Checksum:      true,
-		SendCreds:     true,
-		LogProgress:   true,
-		CaseSensitive: tidbCfg.LowerCaseTableNames == 0,
-		Filter: filter.Rules{
-			DoDBs: s.Schemas,
-		},
+		PD:          strings.Split(tidbCfg.Path, ","),
+		Concurrency: 4,
+		Checksum:    true,
+		SendCreds:   true,
+		LogProgress: true,
 	}
 
 	storageURL, err := url.Parse(s.Storage)
@@ -233,16 +229,21 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 		}
 	}
 
-	if len(s.Tables) != 0 {
-		cfg.Filter.DoTables = make([]*filter.Table, 0, len(s.Tables))
+	switch {
+	case len(s.Tables) != 0:
+		tables := make([]filter.Table, 0, len(s.Tables))
 		for _, tbl := range s.Tables {
-			// the `tbl.Schema` is always not empty if a database is used.
-			// this is handled by (*preprocessor).handleTableName().
-			cfg.Filter.DoTables = append(cfg.Filter.DoTables, &filter.Table{
-				Name:   tbl.Name.O,
-				Schema: tbl.Schema.O,
-			})
+			tables = append(tables, filter.Table{Name: tbl.Name.O, Schema: tbl.Schema.O})
 		}
+		cfg.TableFilter = filter.NewTablesFilter(tables...)
+	case len(s.Schemas) != 0:
+		cfg.TableFilter = filter.NewSchemasFilter(s.Schemas...)
+	default:
+		cfg.TableFilter = filter.All()
+	}
+
+	if tidbCfg.LowerCaseTableNames != 0 {
+		cfg.TableFilter = filter.CaseInsensitive(cfg.TableFilter)
 	}
 
 	switch s.Kind {

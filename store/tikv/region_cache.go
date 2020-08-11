@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	pd "github.com/pingcap/pd/v4/client"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
@@ -468,7 +467,8 @@ func (c *RegionCache) GetTiFlashRPCContext(bo *Backoffer, id RegionVerID) (*RPCC
 			logutil.BgLogger().Info("invalidate current region, because others failed on same store",
 				zap.Uint64("region", id.GetID()),
 				zap.String("store", store.addr))
-			return nil, nil
+			// TiFlash will always try to find out a valid peer, avoiding to retry too many times.
+			continue
 		}
 		return &RPCContext{
 			Region:     id,
@@ -1565,8 +1565,9 @@ retry:
 type livenessState uint32
 
 var (
-	livenessSf           singleflight.Group
-	storeLivenessTimeout time.Duration
+	livenessSf singleflight.Group
+	// StoreLivenessTimeout is the max duration of resolving liveness of a TiKV instance.
+	StoreLivenessTimeout time.Duration
 )
 
 const (
@@ -1576,23 +1577,18 @@ const (
 	offline
 )
 
-func init() {
-	t, err := time.ParseDuration(config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout)
-	if err != nil {
-		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
-			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
-	}
-	storeLivenessTimeout = t
-}
-
 func (s *Store) requestLiveness(bo *Backoffer) (l livenessState) {
+	if StoreLivenessTimeout == 0 {
+		return unreachable
+	}
+
 	saddr := s.saddr
 	if len(saddr) == 0 {
 		l = unknown
 		return
 	}
 	rsCh := livenessSf.DoChan(saddr, func() (interface{}, error) {
-		return invokeKVStatusAPI(saddr, storeLivenessTimeout), nil
+		return invokeKVStatusAPI(saddr, StoreLivenessTimeout), nil
 	})
 	var ctx context.Context
 	if bo != nil {

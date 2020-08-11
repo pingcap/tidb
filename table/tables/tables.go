@@ -664,6 +664,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 			}
 			existErrInfo := kv.NewExistErrInfo(v.Meta().Name.String(), entryKey)
 			txn.SetOption(kv.PresumeKeyNotExistsError, existErrInfo)
+			txn.SetOption(kv.CheckExists, sctx.GetSessionVars().StmtCtx.CheckKeyExists)
 			dupErr = existErrInfo.Err()
 		}
 		if dupHandle, err := v.Create(sctx, rm, indexVals, recordID, opts...); err != nil {
@@ -732,6 +733,9 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h int64, co
 		ri, ok := rowMap[col.ID]
 		if ok {
 			v[i] = ri
+			continue
+		}
+		if col.IsGenerated() && !col.GeneratedStored {
 			continue
 		}
 		v[i], err = GetColDefaultValue(ctx, col, defaultVals)
@@ -1042,7 +1046,7 @@ func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int
 	}
 	if meta.ShardRowIDBits > 0 {
 		// Use max record ShardRowIDBits to check overflow.
-		if OverflowShardBits(maxID, meta.MaxShardRowIDBits, autoid.RowIDBitLength) {
+		if OverflowShardBits(maxID, meta.MaxShardRowIDBits, autoid.RowIDBitLength, true) {
 			// If overflow, the rowID may be duplicated. For examples,
 			// t.meta.ShardRowIDBits = 4
 			// rowID = 0010111111111111111111111111111111111111111111111111111111111111
@@ -1054,7 +1058,7 @@ func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int
 		}
 		txnCtx := ctx.GetSessionVars().TxnCtx
 		if txnCtx.Shard == nil {
-			shard := CalcShard(meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength)
+			shard := CalcShard(meta.ShardRowIDBits, txnCtx.StartTS, autoid.RowIDBitLength, true)
 			txnCtx.Shard = &shard
 		}
 		base |= *txnCtx.Shard
@@ -1064,17 +1068,25 @@ func allocHandleIDs(ctx sessionctx.Context, t table.Table, n uint64) (int64, int
 }
 
 // OverflowShardBits checks whether the recordID overflow `1<<(typeBitsLength-shardRowIDBits-1) -1`.
-func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uint64) bool {
-	mask := (1<<shardRowIDBits - 1) << (typeBitsLength - shardRowIDBits - 1)
+func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uint64, reservedSignBit bool) bool {
+	var signBit uint64
+	if reservedSignBit {
+		signBit = 1
+	}
+	mask := (1<<shardRowIDBits - 1) << (typeBitsLength - shardRowIDBits - signBit)
 	return recordID&int64(mask) > 0
 }
 
 // CalcShard calculates the shard prefix by hashing the startTS. Make sure OverflowShardBits is false before calling it.
-func CalcShard(shardRowIDBits uint64, startTS uint64, typeBitsLength uint64) int64 {
+func CalcShard(shardRowIDBits uint64, startTS uint64, typeBitsLength uint64, reserveSignBit bool) int64 {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], startTS)
 	hashVal := int64(murmur3.Sum32(buf[:]))
-	return (hashVal & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - 1)
+	var signBitLength uint64
+	if reserveSignBit {
+		signBitLength = 1
+	}
+	return (hashVal & (1<<shardRowIDBits - 1)) << (typeBitsLength - shardRowIDBits - signBitLength)
 }
 
 // Allocators implements table.Table Allocators interface.
@@ -1209,6 +1221,7 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 	recordKey := t.RecordKey(recordID)
 	existErrInfo := kv.NewExistErrInfo("PRIMARY", strconv.Itoa(int(recordID)))
 	txn.SetOption(kv.PresumeKeyNotExistsError, existErrInfo)
+	txn.SetOption(kv.CheckExists, sctx.GetSessionVars().StmtCtx.CheckKeyExists)
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	_, err = txn.Get(ctx, recordKey)
 	if err == nil {

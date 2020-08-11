@@ -37,7 +37,7 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 
-	bo := NewBackoffer(context.Background(), 3000)
+	bo := NewBackofferWithVars(context.Background(), 3000, nil)
 
 	req := &kv.Request{}
 	flashReq := &kv.Request{}
@@ -154,7 +154,7 @@ func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 
-	bo := NewBackoffer(context.Background(), 3000)
+	bo := NewBackofferWithVars(context.Background(), 3000, nil)
 
 	ranges, err := SplitRegionRanges(bo, cache, buildKeyRanges("a", "c"))
 	c.Assert(err, IsNil)
@@ -206,7 +206,7 @@ func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
-	bo := NewBackoffer(context.Background(), 3000)
+	bo := NewBackofferWithVars(context.Background(), 3000, nil)
 
 	req := &kv.Request{}
 	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "z"), req)

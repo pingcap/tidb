@@ -354,7 +354,6 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if req.Type == tikvrpc.CmdCopStream {
 		return c.getCopStreamResponse(ctx, client, req, timeout, connArray)
 	}
-
 	ctx1, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return tikvrpc.CallRPC(ctx1, client, req)
