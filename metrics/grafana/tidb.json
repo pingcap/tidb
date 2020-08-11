@@ -3537,13 +3537,6 @@
           "renderer": "flot",
           "repeat": "instance",
           "repeatDirection": "h",
-          "scopedVars": {
-            "instance": {
-              "selected": false,
-              "text": "172.16.5.34:30080",
-              "value": "172.16.5.34:30080"
-            }
-          },
           "seriesOverrides": [
             {
               "alias": "alloc-from-os",
