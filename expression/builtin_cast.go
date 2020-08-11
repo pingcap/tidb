@@ -804,6 +804,13 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 	res = new(types.MyDecimal)
 	if !b.inUnion || val >= 0 {
 		err = res.FromFloat64(val)
+		if types.ErrOverflow.Equal(err) {
+			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
+			err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
+		} else if types.ErrTruncated.Equal(err) {
+			// This behavior is consistent with MySQL.
+			err = nil
+		}
 		if err != nil {
 			return res, false, err
 		}
