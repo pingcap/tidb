@@ -306,6 +306,10 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 
 // UpdatePlacementRules is used to notify PD changes of placement rules.
 func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error {
+	if len(rules) == 0 {
+		return nil
+	}
+
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
