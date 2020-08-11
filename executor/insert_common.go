@@ -79,6 +79,7 @@ type InsertValues struct {
 	snapshot kv.Snapshot
 }
 
+//keep executor runtime info like rpcstats
 type RuntimeStatsWithRpcStats struct {
 	*execdetails.BasicRuntimeStats
 	*tikv.SnapshotRuntimeStats
@@ -981,9 +982,8 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		return err
 	}
 
-	// append warnings and get  no duplicated error rows
+	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
-
 		skip := false
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKV.key)
@@ -1016,7 +1016,6 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			if err != nil {
 				return err
 			}
-
 		}
 	}
 	return nil
@@ -1046,6 +1045,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	return nil
 }
 
+//fetch executor runtime info like rpcstats
 func (e *RuntimeStatsWithRpcStats) String() string {
 	var basic, rpcStatsStr string
 	if e.BasicRuntimeStats != nil {

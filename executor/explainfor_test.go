@@ -336,13 +336,3 @@ func (s *testSuite) TestExplainTiFlashSystemTables(c *C) {
 	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", tiflashInstance, database, table)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
 }
-
-func (s *testSuite) TestExplainMetricSummaryTable(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.metrics_summary where type in ('tikv', 'tidb')")).Check(testkit.Rows(
-		`MemTableScan_5 10000.00 root table:METRICS_SUMMARY node_types:["tidb","tikv"]`))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.metrics_summary where instance='192.168.1.7:2379'")).Check(testkit.Rows(
-		`MemTableScan_5 10000.00 root table:METRICS_SUMMARY instances:["192.168.1.7:2379"]`))
-	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.metrics_summary where type='tidb' and instance='192.168.1.7:2379'")).Check(testkit.Rows(
-		`MemTableScan_5 10000.00 root table:METRICS_SUMMARY node_types:["tidb"], instances:["192.168.1.7:2379"]`))
-}
