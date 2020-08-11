@@ -363,12 +363,17 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 	for {
 		//batch
 		log, err := e.getLog(reader, 64)
+		wg.Add(1)
+		ch <- 1
 		if err != nil {
+			go func() {
+				defer wg.Done()
+				e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(ctx, log), err}
+				<-ch
+			}()
 			break
 		} else {
-			wg.Add(1)
-			ch <- 1
-			//rowNum += 64
+
 			go func() {
 				defer wg.Done()
 				//SlowLogch <- e.parsedLog(ctx, log)
