@@ -257,7 +257,6 @@ var buildSideResultLabel fmt.Stringer = stringutil.StringerStr("hashJoin.buildSi
 // to e.buildSideResult.
 func (e *HashJoinExec) fetchBuildSideRows(ctx context.Context) {
 	defer close(e.buildSideResultCh)
-	defer close(e.buildFinished)
 	var err error
 	for {
 		if e.finished.Load().(bool) {
