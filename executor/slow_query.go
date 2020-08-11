@@ -128,11 +128,13 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 	}
 	reader := bufio.NewReader(e.files[0].file)
 	for e.fileIdx < len(e.files) {
-		rows, err := e.parseSlowLog(sctx, reader, 1024)
+		//rows, err := e.parseSlowLog(sctx, reader, 1024)
+		e.parseSlowLog(sctx, reader, 1024)
 		select {
 		case <-ctx.Done():
 			break
-		case e.parsedSlowLogCh <- parsedSlowLog{rows, err}:
+			//case e.parsedSlowLogCh <- parsedSlowLog{rows, err}:
+		default:
 		}
 	}
 	close(e.parsedSlowLogCh)
@@ -317,11 +319,11 @@ func getOneLine(reader *bufio.Reader) ([]byte, error) {
 	return resByte, err
 }
 
-func (e *slowQueryRetriever) getLog(reader *bufio.Reader) ([]string, error) {
+func (e *slowQueryRetriever) getLog(reader *bufio.Reader, num int) ([]string, error) {
 	var line string
-	var log []string
+	log := make([]string, 0, num)
 	var err error
-	for i := 0; i < 16; i++ {
+	for i := 0; i < num; i++ {
 		for {
 			e.fileLine++
 			lineByte, err := getOneLine(reader)
@@ -350,38 +352,27 @@ func (e *slowQueryRetriever) getLog(reader *bufio.Reader) ([]string, error) {
 	return log, err
 }
 
-func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader, maxRow int) ([][]types.Datum, error) {
-	var (
-		ReadWG sync.WaitGroup
-		wg     sync.WaitGroup
-		err    error
-	)
-	rows := make([][]types.Datum, 0, maxRow)
-	SlowLogch := make(chan [][]types.Datum, 64)
+func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader, maxRow int) {
+	var wg sync.WaitGroup
+	//var ReadWG sync.WaitGroup
+	//SlowLogch := make(chan [][]types.Datum, 64)
 	//to limit the num of go routine
 	ch := make(chan int, 10)
 	defer close(ch)
-	ReadWG.Add(1)
-	// Reader
-	go func() {
-		defer ReadWG.Done()
-		for v := range SlowLogch {
-			rows = append(rows, v...)
-		}
-	}()
 	rowNum := 0
 	for {
-		log, err := e.getLog(reader)
+		//batch
+		log, err := e.getLog(reader, 64)
 		if err != nil {
 			break
 		} else {
 			wg.Add(1)
 			ch <- 1
-			rowNum += 16
-			// Writer
+			rowNum += 64
 			go func() {
 				defer wg.Done()
-				SlowLogch <- e.parsedLog(ctx, log)
+				//SlowLogch <- e.parsedLog(ctx, log)
+				e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(ctx, log), err}
 				<-ch
 			}()
 			if e.fileIdx >= len(e.files) || rowNum == maxRow {
@@ -390,9 +381,8 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 		}
 	}
 	wg.Wait()
-	close(SlowLogch)
-	ReadWG.Wait()
-	return rows, err
+	//close(SlowLogch)
+	//e.parsedSlowLogCh <- parsedSlowLog{rows, err}
 }
 
 func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string) [][]types.Datum {
@@ -933,6 +923,6 @@ func (e *slowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 }
 
 func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
-	e.parsedSlowLogCh = make(chan parsedSlowLog, 1)
+	e.parsedSlowLogCh = make(chan parsedSlowLog, 100)
 	go e.parseDataForSlowLog(ctx, sctx)
 }
