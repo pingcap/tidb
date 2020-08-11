@@ -533,6 +533,15 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 			"create table t (a int) partition by list (a) (partition p0 values in (null), partition p1 values in (NULL));",
 			ddl.ErrMultipleDefConstInListPart,
 		},
+		{
+			`create table t1 (id int key, name varchar(10), unique index idx(name)) partition by list  (id) (
+				    partition p0 values in (3,5,6,9,17),
+				    partition p1 values in (1,2,10,11,19,20),
+				    partition p2 values in (4,12,13,14,18),
+				    partition p3 values in (7,8,15,16)
+				);`,
+			ddl.ErrUniqueKeyNeedAllFieldsInPf,
+		},
 	}
 	for i, t := range cases {
 		_, err := tk.Exec(t.sql)

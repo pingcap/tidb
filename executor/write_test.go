@@ -2824,3 +2824,34 @@ func (s *testSuite7) TestSetWithCurrentTimestampAndNow(c *C) {
 	tk.MustExec(`insert into t1 set c1 = current_timestamp, c2 = sleep(1);`)
 	tk.MustQuery("select c1 = c3 from t1").Check(testkit.Rows("1", "1"))
 }
+
+func (s *testSuite4) TestWriteListPartitionTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int, name varchar(10), unique index idx (id)) partition by list  (id) (
+    	partition p0 values in (3,5,6,9,17),
+    	partition p1 values in (1,2,10,11,19,20),
+    	partition p2 values in (4,12,13,14,18),
+    	partition p3 values in (7,8,15,16)
+	);`)
+	tk.MustExec("insert into t values  (1, 'a')")
+	tk.MustExec("update t set name='b' where id=2;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 a"))
+	tk.MustExec("update t set name='b' where id=1;")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 b"))
+	tk.MustExec("replace into t values  (1, 'c')")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 c"))
+	tk.MustExec("insert into t values (1, 'd') on duplicate key update name='e'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 e"))
+
+	_, err := tk.Exec("insert into t values (1, 'd')")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'idx'")
+	tk.MustExec("delete from t where id=1")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("insert into t values  (2, 'f')")
+	tk.MustExec("delete from t where name='f'")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
+	tk.MustExec("admin check table t;")
+}
