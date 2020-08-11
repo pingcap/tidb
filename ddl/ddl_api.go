@@ -5264,7 +5264,7 @@ func buildPlacementSpecs(specs []*ast.PlacementSpec, tableID, partitionID int64)
 
 				// alter will overwrite all things
 				// drop all rules that will be overrided
-				newRules := rules[0:]
+				newRules := rules[:0]
 
 				for _, r := range rules {
 					if r.Role != rule.Role {
