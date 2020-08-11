@@ -292,8 +292,23 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	schema := expression.NewSchema(columns...)
 	partStr := pi.Expr
 	p := parser.New()
-	for i := 0; i < len(pi.Definitions); i++ {
-		fmt.Fprintf(&buf, "((%s) in (%s))", partStr, strings.Join(pi.Definitions[i].Values, ","))
+	for _, def := range pi.Definitions {
+		fmt.Fprintf(&buf, "((%s) in (%s))", partStr, strings.Join(def.Values, ","))
+		for _, value := range def.Values {
+			expr, err := parseSimpleExprWithNames(p, ctx, value, schema, names)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			v, err := expr.Eval(chunk.Row{})
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if v.IsNull() {
+				fmt.Fprintf(&buf, " or (%s) is null", partStr)
+			}
+		}
+
+		fmt.Printf("expr: %v ---\n", buf.String())
 		expr, err := parseSimpleExprWithNames(p, ctx, buf.String(), schema, names)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
@@ -350,6 +365,8 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 		idx, err = t.locateRangePartition(ctx, pi, r)
 	case model.PartitionTypeHash:
 		idx, err = t.locateHashPartition(ctx, pi, r)
+	case model.PartitionTypeList:
+		idx, err = t.locateListPartition(ctx, pi, r)
 	}
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -398,6 +415,33 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 	}
 	return idx, nil
+}
+
+func (t *partitionedTable) locateListPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
+	for i, expr := range t.partitionExpr.InValues {
+		ret, _, err := expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if ret > 0 {
+			return i, nil
+		}
+	}
+	// The data does not belong to any of the partition returns `table has no partition for value %s`.
+	var valueMsg string
+	if pi.Expr != "" {
+		e, err := expression.ParseSimpleExprWithTableInfo(ctx, pi.Expr, t.meta)
+		if err == nil {
+			val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+			if err == nil {
+				valueMsg = fmt.Sprintf("%d", val)
+			}
+		}
+	} else {
+		// When the table is partitioned by list columns.
+		valueMsg = "from column_list"
+	}
+	return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
 }
 
 // TODO: supports linear hashing
