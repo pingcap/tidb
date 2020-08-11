@@ -29,7 +29,7 @@ import (
 func (s *pkgTestSuite) testHashTables(c *C) {
 	var ht baseHashTable
 	test := func() {
-		ht.Put(1, chunk.RowPtr{ChkIdx: 1, RowIdx: 1})
+		ht.Put(1, chunk.RowPtr{ChkIdx: 1, RowIdx: 1}, 0)
 		c.Check(ht.Get(1), DeepEquals, []chunk.RowPtr{{ChkIdx: 1, RowIdx: 1}})
 
 		rawData := map[uint64][]chunk.RowPtr{}
@@ -45,7 +45,7 @@ func (s *pkgTestSuite) testHashTables(c *C) {
 				if !(j < initialEntrySliceLen*i) {
 					break
 				}
-				ht.Put(i, rawData[i][j])
+				ht.Put(i, rawData[i][j], 0)
 			}
 		}
 		// check
@@ -60,7 +60,7 @@ func (s *pkgTestSuite) testHashTables(c *C) {
 	ht = newUnsafeHashTable(0)
 	test()
 	// test ConcurrentMapHashTable
-	ht = newConcurrentMapHashTable()
+	ht = newConcurrentMapHashTable(4)
 	test()
 }
 
@@ -157,16 +157,18 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	for i := 0; i < numRows; i++ {
 		hCtx.hashVals = append(hCtx.hashVals, hashFunc())
 	}
-	rowContainer := newHashRowContainer(sctx, 0, hCtx)
+	var hCtxArray []*hashContext
+	hCtxArray = append(hCtxArray, hCtx)
+	rowContainer := newHashRowContainer(sctx, 0, hCtxArray)
 	tracker := rowContainer.GetMemTracker()
 	tracker.SetLabel(buildSideResultLabel)
 	if spill {
 		tracker.SetBytesLimit(1)
 		rowContainer.rowContainer.ActionSpillForTest().Action(tracker)
 	}
-	err = rowContainer.PutChunk(chk0, nil)
+	err = rowContainer.PutChunk(chk0, nil, 0, false)
 	c.Assert(err, IsNil)
-	err = rowContainer.PutChunk(chk1, nil)
+	err = rowContainer.PutChunk(chk1, nil, 0, false)
 	c.Assert(err, IsNil)
 	rowContainer.ActionSpill().(*chunk.SpillDiskAction).WaitForTest()
 	c.Assert(rowContainer.alreadySpilledSafeForTest(), Equals, spill)

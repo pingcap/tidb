@@ -532,7 +532,7 @@ func (iw *indexHashJoinInnerWorker) buildHashTableForOuterResult(ctx context.Con
 				panic(err.Error())
 			}
 			rowPtr := chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)}
-			task.lookupMap.Put(h.Sum64(), rowPtr)
+			task.lookupMap.Put(h.Sum64(), rowPtr, 0)
 		}
 	}
 }

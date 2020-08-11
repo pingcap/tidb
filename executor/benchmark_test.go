@@ -927,20 +927,33 @@ func BenchmarkHashJoinExec(b *testing.B) {
 
 	b.ReportAllocs()
 	cas := defaultHashJoinTestCase(cols, 0, false)
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkHashJoinExecWithCase(b, cas)
-	})
+	buildConcurrency := []int{1, 2, 4}
+	for _, con := range buildConcurrency {
+		cas.concurrency = con
+		cas.disk = false
+		cas.keyIdx = []int{0, 1}
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkHashJoinExecWithCase(b, cas)
+		})
+	}
 
-	cas.keyIdx = []int{0}
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkHashJoinExecWithCase(b, cas)
-	})
+	for _, con := range buildConcurrency {
+		cas.concurrency = con
+		cas.disk = false
+		cas.keyIdx = []int{0}
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkHashJoinExecWithCase(b, cas)
+		})
+	}
 
-	cas.keyIdx = []int{0}
-	cas.disk = true
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkHashJoinExecWithCase(b, cas)
-	})
+	for _, con := range buildConcurrency {
+		cas.concurrency = con
+		cas.disk = true
+		cas.keyIdx = []int{0}
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkHashJoinExecWithCase(b, cas)
+		})
+	}
 
 	// Replace the wide string column with double column
 	cols = []*types.FieldType{
@@ -949,21 +962,33 @@ func BenchmarkHashJoinExec(b *testing.B) {
 	}
 
 	cas = defaultHashJoinTestCase(cols, 0, false)
-	cas.keyIdx = []int{0}
-	cas.rows = 5
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkHashJoinExecWithCase(b, cas)
-	})
+	for _, con := range buildConcurrency {
+		cas.rows = 5
+		cas.concurrency = con
+		cas.disk = false
+		cas.keyIdx = []int{0}
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkHashJoinExecWithCase(b, cas)
+		})
+	}
 
 	cas = defaultHashJoinTestCase(cols, 0, false)
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkHashJoinExecWithCase(b, cas)
-	})
+	for _, con := range buildConcurrency {
+		cas.concurrency = con
+		cas.disk = false
+		cas.keyIdx = []int{0, 1}
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkHashJoinExecWithCase(b, cas)
+		})
+	}
 
-	cas.keyIdx = []int{0}
-	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-		benchmarkHashJoinExecWithCase(b, cas)
-	})
+	for _, con := range buildConcurrency {
+		cas.concurrency = con
+		cas.keyIdx = []int{0}
+		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+			benchmarkHashJoinExecWithCase(b, cas)
+		})
+	}
 }
 
 func BenchmarkOuterHashJoinExec(b *testing.B) {
@@ -1051,18 +1076,17 @@ func benchmarkBuildHashTable(b *testing.B, casTest *hashJoinTestCase, dataSource
 	if err := exec.Open(tmpCtx); err != nil {
 		b.Fatal(err)
 	}
+	exec.prepareForBuild()
 	exec.prepared = true
 
-	innerResultCh := make(chan *chunk.Chunk, len(dataSource1.chunks))
+	exec.buildSideResultCh = make(chan *chunk.Chunk, len(dataSource1.chunks))
 	for _, chk := range dataSource1.chunks {
-		innerResultCh <- chk
+		exec.buildSideResultCh <- chk
 	}
-	close(innerResultCh)
-
+	close(exec.buildSideResultCh)
 	b.StartTimer()
-	if err := exec.buildHashTableForList(innerResultCh); err != nil {
-		b.Fatal(err)
-	}
+	exec.buildHashTableForList(0)
+	b.StopTimer()
 
 	if testResult {
 		time.Sleep(200 * time.Millisecond)
@@ -1070,11 +1094,15 @@ func benchmarkBuildHashTable(b *testing.B, casTest *hashJoinTestCase, dataSource
 			b.Fatal("wrong usage with disk")
 		}
 	}
-
+	close(exec.buildFinished)
+	for err := range exec.buildFinished {
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 	if err := exec.Close(); err != nil {
 		b.Fatal(err)
 	}
-	b.StopTimer()
 }
 
 func BenchmarkBuildHashTableForList(b *testing.B) {

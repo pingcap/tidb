@@ -15,8 +15,10 @@ package executor
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/bitmap"
 	"hash"
 	"hash/fnv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -88,22 +90,24 @@ func (s *hashStatistic) String() string {
 // hashRowContainer handles the rows and the hash map of a table.
 type hashRowContainer struct {
 	sc   *stmtctx.StatementContext
-	hCtx *hashContext
+	hCtx []*hashContext
 	stat hashStatistic
 
 	// hashTable stores the map of hashKey and RowPtr
 	hashTable baseHashTable
 
-	rowContainer *chunk.RowContainer
+	rowContainer       *chunk.RowContainer
+	outerMatchedStatus []*bitmap.ConcurrentBitmap
+	lock               sync.Mutex
 }
 
-func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext) *hashRowContainer {
+func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx []*hashContext) *hashRowContainer {
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
-	rc := chunk.NewRowContainer(hCtx.allTypes, maxChunkSize)
+	rc := chunk.NewRowContainer(hCtx[0].allTypes, maxChunkSize)
 	c := &hashRowContainer{
 		sc:           sCtx.GetSessionVars().StmtCtx,
 		hCtx:         hCtx,
-		hashTable:    newConcurrentMapHashTable(),
+		hashTable:    newConcurrentMapHashTable(len(hCtx)),
 		rowContainer: rc,
 	}
 	return c
@@ -143,7 +147,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 // matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
 func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx *hashContext) (ok bool, err error) {
 	return codec.EqualChunkRow(c.sc,
-		buildRow, c.hCtx.allTypes, c.hCtx.keyColIdx,
+		buildRow, c.hCtx[0].allTypes, c.hCtx[0].keyColIdx,
 		probeRow, probeHCtx.allTypes, probeHCtx.keyColIdx)
 }
 
@@ -155,27 +159,33 @@ func (c *hashRowContainer) alreadySpilledSafeForTest() bool {
 // PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunk(chk *chunk.Chunk, ignoreNulls []bool) error {
-	return c.PutChunkSelected(chk, nil, ignoreNulls)
+func (c *hashRowContainer) PutChunk(chk *chunk.Chunk, ignoreNulls []bool, workID uint, useOuterToBuild bool) error {
+	return c.PutChunkSelected(chk, nil, ignoreNulls, workID, useOuterToBuild)
 }
 
 // PutChunkSelected selectively puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNulls []bool) error {
-	start := time.Now()
-	defer func() { c.stat.buildTableElapse += time.Since(start) }()
-
+func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNulls []bool, workID uint, useOuterToBuild bool) error {
+	// safely add chunks using locks
+	c.lock.Lock()
+	if useOuterToBuild {
+		var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
+		c.outerMatchedStatus = append(c.outerMatchedStatus, bitMap)
+		c.GetMemTracker().Consume(bitMap.BytesConsumed())
+	}
 	chkIdx := uint32(c.rowContainer.NumChunks())
 	err := c.rowContainer.Add(chk)
+	c.lock.Unlock()
 	if err != nil {
 		return err
 	}
-	numRows := chk.NumRows()
-	c.hCtx.initHash(numRows)
 
-	hCtx := c.hCtx
-	for keyIdx, colIdx := range c.hCtx.keyColIdx {
+	// concurrently insert tuples into the concurrent hash table
+	numRows := chk.NumRows()
+	hCtx := c.hCtx[workID]
+	hCtx.initHash(numRows)
+	for keyIdx, colIdx := range hCtx.keyColIdx {
 		ignoreNull := len(ignoreNulls) > keyIdx && ignoreNulls[keyIdx]
 		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
@@ -183,12 +193,12 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 		}
 	}
 	for i := 0; i < numRows; i++ {
-		if (selected != nil && !selected[i]) || c.hCtx.hasNull[i] {
+		if (selected != nil && !selected[i]) || hCtx.hasNull[i] {
 			continue
 		}
-		key := c.hCtx.hashVals[i].Sum64()
+		key := hCtx.hashVals[i].Sum64()
 		rowPtr := chunk.RowPtr{ChkIdx: chkIdx, RowIdx: uint32(i)}
-		c.hashTable.Put(key, rowPtr)
+		c.hashTable.Put(key, rowPtr, int(workID))
 	}
 	return nil
 }
@@ -286,7 +296,7 @@ func (es *entryStore) GetStore() (e *entry) {
 }
 
 type baseHashTable interface {
-	Put(hashKey uint64, rowPtr chunk.RowPtr)
+	Put(hashKey uint64, rowPtr chunk.RowPtr, workID int)
 	Get(hashKey uint64) (rowPtrs []chunk.RowPtr)
 	Len() uint64
 }
@@ -311,7 +321,7 @@ func newUnsafeHashTable(estCount int) *unsafeHashTable {
 }
 
 // Put puts the key/rowPtr pairs to the unsafeHashTable, multiple rowPtrs are stored in a list.
-func (ht *unsafeHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
+func (ht *unsafeHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr, workID int) {
 	oldEntry := ht.hashMap[hashKey]
 	newEntry := ht.entryStore.GetStore()
 	newEntry.ptr = rowPtr
@@ -337,15 +347,18 @@ func (ht *unsafeHashTable) Len() uint64 { return ht.length }
 // concurrentMapHashTable is a concurrent hash table built on concurrentMap
 type concurrentMapHashTable struct {
 	hashMap    concurrentMap
-	entryStore *entryStore
+	entryStore []*entryStore
 	length     uint64
 }
 
 // newConcurrentMapHashTable creates a concurrentMapHashTable
-func newConcurrentMapHashTable() *concurrentMapHashTable {
+func newConcurrentMapHashTable(concurrency int) *concurrentMapHashTable {
 	ht := new(concurrentMapHashTable)
 	ht.hashMap = newConcurrentMap()
-	ht.entryStore = newEntryStore()
+	for i := 0; i < concurrency; i++ {
+		newES := newEntryStore()
+		ht.entryStore = append(ht.entryStore, newES)
+	}
 	ht.length = 0
 	return ht
 }
@@ -356,8 +369,8 @@ func (ht *concurrentMapHashTable) Len() uint64 {
 }
 
 // Put puts the key/rowPtr pairs to the concurrentMapHashTable, multiple rowPtrs are stored in a list.
-func (ht *concurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
-	newEntry := ht.entryStore.GetStore()
+func (ht *concurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr, workID int) {
+	newEntry := ht.entryStore[workID].GetStore()
 	newEntry.ptr = rowPtr
 	newEntry.next = nil
 	ht.hashMap.Insert(hashKey, newEntry)
