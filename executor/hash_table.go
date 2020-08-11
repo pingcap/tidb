@@ -15,7 +15,6 @@ package executor
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/bitmap"
 	"hash"
 	"hash/fnv"
 	"sync"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/bitmap"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
