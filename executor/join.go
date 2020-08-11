@@ -77,6 +77,7 @@ type HashJoinExec struct {
 
 	probeInputChk      chan *chunk.Chunk
 	probeInputEmptyChk chan *chunk.Chunk
+	joinResultEmptyChk chan *chunk.Chunk
 
 	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker   // track disk usage.
@@ -139,6 +140,8 @@ func (e *HashJoinExec) Close() error {
 			for range e.joinChkResourceCh[i] {
 			}
 		}
+		close(e.joinResultEmptyChk)
+		e.joinResultEmptyChk = nil
 		e.probeChkResourceCh = nil
 		e.joinChkResourceCh = nil
 		terror.Call(e.rowContainer.Close)
@@ -296,12 +299,14 @@ func (e *HashJoinExec) initializeForProbe() {
 	for i := uint(0); i < e.concurrency; i++ {
 		e.probeResultChs[i] = make(chan *chunk.Chunk, 1)
 	}
-	e.probeInputChk = make(chan *chunk.Chunk, e.concurrency*3)
-	e.probeInputEmptyChk = make(chan *chunk.Chunk, e.concurrency*3)
-	for i := uint(0); i < e.concurrency*3; i++ {
+	conFactor := uint(10)
+	e.probeInputChk = make(chan *chunk.Chunk, e.concurrency*conFactor)
+	e.probeInputEmptyChk = make(chan *chunk.Chunk, e.concurrency*conFactor)
+	e.joinResultEmptyChk = make(chan *chunk.Chunk, e.concurrency*conFactor)
+	for i := uint(0); i < e.concurrency*conFactor; i++ {
 		e.probeInputEmptyChk <- newFirstChunk(e.probeSideExec)
+		e.joinResultEmptyChk <- newFirstChunk(e)
 	}
-
 	// e.probeChkResourceCh is for transmitting the used probeSideExec chunks from
 	// join workers to probeSideExec worker.
 	e.probeChkResourceCh = make(chan *probeChkResource, e.concurrency)
@@ -322,7 +327,7 @@ func (e *HashJoinExec) initializeForProbe() {
 
 	// e.joinResultCh is for transmitting the join result chunks to the main
 	// thread.
-	e.joinResultCh = make(chan *hashjoinWorkerResult, e.concurrency+1)
+	e.joinResultCh = make(chan *hashjoinWorkerResult, e.concurrency*conFactor)
 }
 
 func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
@@ -463,7 +468,8 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
 		e.joinResultCh <- joinResult
 	} else if joinResult.chk != nil && joinResult.chk.NumRows() == 0 {
-		e.joinChkResourceCh[workerID] <- joinResult.chk
+		//e.joinChkResourceCh[workerID] <- joinResult.chk
+		e.joinResultEmptyChk <- joinResult.chk
 	}
 }
 
@@ -481,6 +487,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 	iter := chunk.NewIterator4Slice(buildSideRows)
 	var outerMatchStatus []outerRowStatusFlag
 	rowIdx := 0
+	ok := false
 	for iter.Begin(); iter.Current() != iter.End(); {
 		outerMatchStatus, err = e.joiners[workerID].tryToMatchOuters(iter, probeSideRow, joinResult.chk, outerMatchStatus)
 		if err != nil {
@@ -495,7 +502,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2ChunkForOuterHashJoin(workerID ui
 		rowIdx += len(outerMatchStatus)
 		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
-			ok, joinResult := e.getNewJoinResult(workerID)
+			ok, joinResult = e.getNewJoinResult(workerID)
 			if !ok {
 				return false, joinResult
 			}
@@ -516,6 +523,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 	}
 	iter := chunk.NewIterator4Slice(buildSideRows)
 	hasMatch, hasNull := false, false
+	ok := false
 	for iter.Begin(); iter.Current() != iter.End(); {
 		matched, isNull, err := e.joiners[workerID].tryToMatchInners(probeSideRow, iter, joinResult.chk)
 		if err != nil {
@@ -527,7 +535,7 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 
 		if joinResult.chk.IsFull() {
 			e.joinResultCh <- joinResult
-			ok, joinResult := e.getNewJoinResult(workerID)
+			ok, joinResult = e.getNewJoinResult(workerID)
 			if !ok {
 				return false, joinResult
 			}
@@ -541,13 +549,16 @@ func (e *HashJoinExec) joinMatchedProbeSideRow2Chunk(workerID uint, probeKey uin
 
 func (e *HashJoinExec) getNewJoinResult(workerID uint) (bool, *hashjoinWorkerResult) {
 	joinResult := &hashjoinWorkerResult{
-		src: e.joinChkResourceCh[workerID],
+		//src: e.joinChkResourceCh[workerID],
+		src: e.joinResultEmptyChk,
 	}
 	ok := true
 	select {
 	case <-e.closeCh:
 		ok = false
-	case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
+	//case joinResult.chk, ok = <-e.joinChkResourceCh[workerID]:
+	case joinResult.chk, ok = <-e.joinResultEmptyChk:
+		joinResult.chk.Reset()
 	}
 	return ok, joinResult
 }
@@ -644,7 +655,7 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		return result.err
 	}
 	req.SwapColumns(result.chk)
-	result.src <- result.chk
+	e.joinResultEmptyChk <- result.chk
 	return nil
 }
 
