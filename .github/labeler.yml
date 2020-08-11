@@ -1,4 +1,4 @@
-component/executor:
+sig/executor:
   - distsql/*
   - executor/*
   - util/chunk/*
@@ -13,7 +13,7 @@ component/expression:
   - expression/*
   - types/*
 
-component/planner:
+sig/planner:
   - planner/*
   - bindinfo/*
   - util/ranger/*
@@ -22,7 +22,7 @@ component/planner:
 component/statistics:
   - statistics/*
 
-component/DDL:
+sig/DDL:
   - ddl/*
   - domain/*
   - infoschema/*
