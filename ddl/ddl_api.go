@@ -5200,6 +5200,7 @@ func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas ui
 				err = errors.Errorf("count should be positive, but got %d", cnt)
 				break
 			}
+
 			if replicas != 0 {
 				ruleCnt -= cnt
 				if ruleCnt < 0 {
