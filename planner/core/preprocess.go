@@ -64,15 +64,15 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
 		}
 		return &newSel
-	} else if union, ok := node.(*ast.UnionStmt); ok {
-		if union.Limit != nil {
+	} else if setOprStmt, ok := node.(*ast.SetOprStmt); ok {
+		if setOprStmt.Limit != nil {
 			return node
 		}
-		newUnion := *union
-		newUnion.Limit = &ast.Limit{
+		newSetOpr := *setOprStmt
+		newSetOpr.Limit = &ast.Limit{
 			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
 		}
-		return &newUnion
+		return &newSetOpr
 	}
 	return node
 }
@@ -147,8 +147,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
-	case *ast.UnionSelectList:
-		p.checkUnionSelectList(node)
+	case *ast.SetOprSelectList:
+		p.checkSetOprSelectList(node)
 	case *ast.DeleteTableList:
 		return in, true
 	case *ast.Join:
@@ -397,10 +397,12 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 
 }
 
-// checkUnionSelectList checks union's selectList.
+// checkSetOprSelectList checks union's selectList.
 // refer: https://dev.mysql.com/doc/refman/5.7/en/union.html
+//        https://mariadb.com/kb/en/intersect/
+//        https://mariadb.com/kb/en/except/
 // "To apply ORDER BY or LIMIT to an individual SELECT, place the clause inside the parentheses that enclose the SELECT."
-func (p *preprocessor) checkUnionSelectList(stmt *ast.UnionSelectList) {
+func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
 		if sel.IsInBraces {
 			continue
@@ -479,6 +481,9 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 			}
 		}
 	}
+	if p.err = checkUnsupportedTableOptions(stmt.Options); p.err != nil {
+		return
+	}
 	if stmt.Select != nil {
 		// FIXME: a temp error noticing 'not implemented' (issue 4754)
 		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
@@ -518,7 +523,7 @@ func (p *preprocessor) checkCreateViewWithSelectGrammar(stmt *ast.CreateViewStmt
 	switch stmt := stmt.Select.(type) {
 	case *ast.SelectStmt:
 		p.checkCreateViewWithSelect(stmt)
-	case *ast.UnionStmt:
+	case *ast.SetOprStmt:
 		for _, selectStmt := range stmt.SelectList.Selects {
 			p.checkCreateViewWithSelect(selectStmt)
 			if p.err != nil {
@@ -667,6 +672,9 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				return
 			}
 		}
+		if p.err = checkUnsupportedTableOptions(spec.Options); p.err != nil {
+			return
+		}
 		switch spec.Tp {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
@@ -709,6 +717,19 @@ func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSp
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
 	}
 	return checkDuplicateColumnName(IndexPartSpecifications)
+}
+
+// checkUnsupportedTableOptions checks if there exists unsupported table options
+func checkUnsupportedTableOptions(options []*ast.TableOption) error {
+	for _, option := range options {
+		switch option.Tp {
+		case ast.TableOptionUnion:
+			return ddl.ErrTableOptionUnionUnsupported
+		case ast.TableOptionInsertMethod:
+			return ddl.ErrTableOptionInsertMethodUnsupported
+		}
+	}
+	return nil
 }
 
 // checkColumn checks if the column definition is valid.

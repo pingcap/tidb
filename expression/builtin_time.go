@@ -4867,7 +4867,7 @@ func (c *timestampFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	isFloat := false
 	switch args[0].GetType().Tp {
-	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDecimal:
+	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
 		isFloat = true
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, evalTps...)

@@ -253,7 +253,6 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 		testkit.Rows("<nil>"))
 
 	tk.MustExec("create user xxx")
-	tk.MustExec("flush privileges")
 
 	// Test for length of enum and set
 	tk.MustExec("drop table if exists t")
@@ -1143,6 +1142,18 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		AuthUsername: "root",
 		AuthHostname: "%",
 	}, nil, nil)
+}
+
+func (s *testTableSuite) TestIssue18845(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`CREATE USER 'user18845'@'localhost';`)
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "user18845",
+		Hostname:     "localhost",
+		AuthUsername: "user18845",
+		AuthHostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery(`select count(*) from information_schema.columns;`)
 }
 
 // Test statements_summary_history.

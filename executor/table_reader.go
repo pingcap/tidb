@@ -19,7 +19,6 @@ import (
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -140,14 +139,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
-
-	actionExceed := e.memTracker.GetActionOnExceed()
-	if actionExceed != nil {
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
-	} else {
-		return errors.Trace(fmt.Errorf("failed to find actionExceed in TableReaderExecutor Open phase"))
-	}
-
 	if len(secondPartRanges) == 0 {
 		e.resultHandler.open(nil, firstResult)
 		return nil
@@ -205,7 +196,6 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 	} else {
 		reqBuilder = builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback)
 	}
-
 	kvReq, err := reqBuilder.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
@@ -221,6 +211,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		return nil, err
 	}
 	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
 	if err != nil {
 		return nil, err

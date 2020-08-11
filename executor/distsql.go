@@ -367,7 +367,6 @@ type IndexLookUpExecutor struct {
 type checkIndexValue struct {
 	idxColTps  []*types.FieldType
 	idxTblCols []*table.Column
-	genExprs   map[model.TableColumnID]expression.Expression
 }
 
 // Open implements the Executor Open interface.
@@ -379,7 +378,13 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return err
 		}
 	}
-	e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	physicalID := getPhysicalTableID(e.table)
+	if e.index.ID == -1 {
+		e.kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, physicalID, e.ranges)
+	} else {
+		e.kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
+	}
 	if err != nil {
 		e.feedback.Invalidate()
 		return err
@@ -883,7 +888,6 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			break
 		}
 
-		tblReaderExec := tableReader.(*TableReaderExecutor)
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle())
@@ -899,21 +903,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			idxRow := task.idxRows.GetRow(offset)
 			vals = vals[:0]
 			for i, col := range w.idxTblCols {
-				if col.IsGenerated() && !col.GeneratedStored {
-					expr := w.genExprs[model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}]
-					// Eval the column value
-					val, err := expr.Eval(row)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					val, err = table.CastValue(tblReaderExec.ctx, val, col.ColumnInfo, false, false)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					vals = append(vals, val)
-				} else {
-					vals = append(vals, row.GetDatum(i, &col.FieldType))
-				}
+				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
 			vals = tablecodec.TruncateIndexValuesIfNeeded(tblInfo, w.idxLookup.index, vals)
 			for i, val := range vals {

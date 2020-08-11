@@ -17,7 +17,6 @@ import (
 	"errors"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -40,9 +39,6 @@ type RowContainer struct {
 		recordsInDisk *ListInDisk
 		// spillError stores the error when spilling.
 		spillError error
-		// spilled indicates that records have spilled out into disk.
-		// It's for concurrency usage, e.g. AlreadySpilledSafe() maybe access it without lock, so access it with atomic.
-		spilled uint32
 	}
 
 	fieldType []*types.FieldType
@@ -71,6 +67,12 @@ func (c *RowContainer) SpillToDisk() {
 	if c.alreadySpilled() {
 		return
 	}
+	// c.actionSpill may be nil when testing SpillToDisk directly.
+	if c.actionSpill != nil {
+		c.actionSpill.setStatus(spilling)
+		defer c.actionSpill.cond.Broadcast()
+		defer c.actionSpill.setStatus(spilledYet)
+	}
 	var err error
 	N := c.m.records.NumChunks()
 	c.m.recordsInDisk = NewListInDisk(c.m.records.FieldTypes())
@@ -84,7 +86,6 @@ func (c *RowContainer) SpillToDisk() {
 		}
 	}
 	c.m.records.Clear()
-	atomic.StoreUint32(&c.m.spilled, 1)
 	return
 }
 
@@ -93,7 +94,6 @@ func (c *RowContainer) Reset() error {
 	c.m.Lock()
 	defer c.m.Unlock()
 	if c.alreadySpilled() {
-		atomic.StoreUint32(&c.m.spilled, 0)
 		err := c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil
 		if err != nil {
@@ -110,11 +110,12 @@ func (c *RowContainer) alreadySpilled() bool {
 	return c.m.recordsInDisk != nil
 }
 
-// AlreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
-// TODO: Use a Rlock to wait spill result when executing spilling in parallel.
-// Now using atomic value to avoid potential deadlock.
-func (c *RowContainer) AlreadySpilledSafe() bool {
-	return atomic.LoadUint32(&c.m.spilled) == 1
+// AlreadySpilledSafeForTest indicates that records have spilled out into disk. It's thread-safe.
+// The function is only used for test.
+func (c *RowContainer) AlreadySpilledSafeForTest() bool {
+	c.m.RLock()
+	defer c.m.RUnlock()
+	return c.m.recordsInDisk != nil
 }
 
 // NumRow returns the number of rows in the container
@@ -213,7 +214,6 @@ func (c *RowContainer) Close() (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
 	if c.alreadySpilled() {
-		atomic.StoreUint32(&c.m.spilled, 0)
 		err = c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil
 	}
@@ -224,7 +224,9 @@ func (c *RowContainer) Close() (err error) {
 // ActionSpill returns a SpillDiskAction for spilling over to disk.
 func (c *RowContainer) ActionSpill() *SpillDiskAction {
 	if c.actionSpill == nil {
-		c.actionSpill = &SpillDiskAction{c: c}
+		c.actionSpill = &SpillDiskAction{
+			c:    c,
+			cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled}}
 	}
 	return c.actionSpill
 }
@@ -239,6 +241,7 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 		testSyncOutputFunc: func() {
 			c.actionSpill.testWg.Done()
 		},
+		cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled},
 	}
 	return c.actionSpill
 }
@@ -251,6 +254,7 @@ type SpillDiskAction struct {
 	fallbackAction memory.ActionOnExceed
 	m              sync.Mutex
 	once           sync.Once
+	cond           spillStatusCond
 
 	// test function only used for test sync.
 	testSyncInputFunc  func()
@@ -258,19 +262,42 @@ type SpillDiskAction struct {
 	testWg             sync.WaitGroup
 }
 
+type spillStatusCond struct {
+	*sync.Cond
+	// status indicates different stages for the Action
+	// notSpilled indicates the rowContainer is not spilled.
+	// spilling indicates the rowContainer is spilling.
+	// spilledYet indicates thr rowContainer is spilled.
+	status spillStatus
+}
+
+type spillStatus uint32
+
+const (
+	notSpilled spillStatus = iota
+	spilling
+	spilledYet
+)
+
+func (a *SpillDiskAction) setStatus(status spillStatus) {
+	a.cond.L.Lock()
+	defer a.cond.L.Unlock()
+	a.cond.status = status
+}
+
+func (a *SpillDiskAction) getStatus() spillStatus {
+	a.cond.L.Lock()
+	defer a.cond.L.Unlock()
+	return a.cond.status
+}
+
 // Action sends a signal to trigger spillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
 func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
-	if a.c.AlreadySpilledSafe() {
-		if !t.CheckExceed() {
-			return
-		}
-		if a.fallbackAction != nil {
-			a.fallbackAction.Action(t)
-		}
-	} else {
+
+	if a.getStatus() == notSpilled {
 		a.once.Do(func() {
 			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
@@ -285,6 +312,20 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 			}
 			go a.c.SpillToDisk()
 		})
+		return
+	}
+
+	a.cond.L.Lock()
+	for a.cond.status == spilling {
+		a.cond.Wait()
+	}
+	a.cond.L.Unlock()
+
+	if !t.CheckExceed() {
+		return
+	}
+	if a.fallbackAction != nil {
+		a.fallbackAction.Action(t)
 	}
 }
 
@@ -295,14 +336,6 @@ func (a *SpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
 
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
 func (a *SpillDiskAction) SetLogHook(hook func(uint64)) {}
-
-// ResetRowContainer resets the spill action and sets the RowContainer for the SpillDiskAction.
-func (a *SpillDiskAction) ResetRowContainer(c *RowContainer) {
-	a.m.Lock()
-	defer a.m.Unlock()
-	a.c = c
-	a.once = sync.Once{}
-}
 
 // WaitForTest waits all goroutine have gone.
 func (a *SpillDiskAction) WaitForTest() {
@@ -420,7 +453,10 @@ func (c *SortedRowContainer) GetSortedRow(idx int) (Row, error) {
 // ActionSpill returns a SortAndSpillDiskAction for sorting and spilling over to disk.
 func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
 	if c.actionSpill == nil {
-		c.actionSpill = &SortAndSpillDiskAction{c: c}
+		c.actionSpill = &SortAndSpillDiskAction{
+			c:               c,
+			SpillDiskAction: c.RowContainer.ActionSpill(),
+		}
 	}
 	return c.actionSpill
 }
@@ -428,13 +464,8 @@ func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
 // ActionSpillForTest returns a SortAndSpillDiskAction for sorting and spilling over to disk for test.
 func (c *SortedRowContainer) ActionSpillForTest() *SortAndSpillDiskAction {
 	c.actionSpill = &SortAndSpillDiskAction{
-		c: c,
-		testSyncInputFunc: func() {
-			c.actionSpill.testWg.Add(1)
-		},
-		testSyncOutputFunc: func() {
-			c.actionSpill.testWg.Done()
-		},
+		c:               c,
+		SpillDiskAction: c.RowContainer.ActionSpillForTest(),
 	}
 	return c.actionSpill
 }
@@ -443,15 +474,8 @@ func (c *SortedRowContainer) ActionSpillForTest() *SortAndSpillDiskAction {
 // the memory quota of a query is exceeded, SortAndSpillDiskAction.Action is
 // triggered.
 type SortAndSpillDiskAction struct {
-	c              *SortedRowContainer
-	fallbackAction memory.ActionOnExceed
-	m              sync.Mutex
-	once           sync.Once
-
-	// test function only used for test sync.
-	testSyncInputFunc  func()
-	testSyncOutputFunc func()
-	testWg             sync.WaitGroup
+	c *SortedRowContainer
+	*SpillDiskAction
 }
 
 // Action sends a signal to trigger sortAndSpillToDisk method of RowContainer
@@ -460,14 +484,7 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
-	if a.c.AlreadySpilledSafe() || a.c.GetMemTracker().BytesConsumed() <= t.GetBytesLimit()/10 {
-		if !t.CheckExceed() {
-			return
-		}
-		if a.fallbackAction != nil {
-			a.fallbackAction.Action(t)
-		}
-	} else {
+	if a.getStatus() == notSpilled && a.c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10 {
 		a.once.Do(func() {
 			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
@@ -482,6 +499,20 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 			}
 			go a.c.sortAndSpillToDisk()
 		})
+		return
+	}
+
+	a.cond.L.Lock()
+	for a.cond.status == spilling {
+		a.cond.Wait()
+	}
+	a.cond.L.Unlock()
+
+	if !t.CheckExceed() {
+		return
+	}
+	if a.fallbackAction != nil {
+		a.fallbackAction.Action(t)
 	}
 }
 
@@ -492,14 +523,6 @@ func (a *SortAndSpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
 
 // SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
 func (a *SortAndSpillDiskAction) SetLogHook(hook func(uint64)) {}
-
-// ResetRowContainer resets the spill action and sets the SortedRowContainer for the SortAndSpillDiskAction.
-func (a *SortAndSpillDiskAction) ResetRowContainer(c *SortedRowContainer) {
-	a.m.Lock()
-	defer a.m.Unlock()
-	a.c = c
-	a.once = sync.Once{}
-}
 
 // WaitForTest waits all goroutine have gone.
 func (a *SortAndSpillDiskAction) WaitForTest() {
