@@ -208,6 +208,8 @@ func (s *testMyDecimalSuite) TestToHashKey(c *C) {
 			var dec MyDecimal
 			c.Check(dec.FromString([]byte(num)), IsNil)
 			key, err := dec.ToHashKey()
+			// remove prec and digit len
+			key = key[:len(key)-8]
 			c.Check(err, IsNil)
 			keys = append(keys, string(key))
 		}

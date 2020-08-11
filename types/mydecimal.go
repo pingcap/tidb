@@ -14,6 +14,7 @@
 package types
 
 import (
+	"encoding/binary"
 	"math"
 	"strconv"
 
@@ -1301,6 +1302,12 @@ func (d *MyDecimal) ToHashKey() ([]byte, error) {
 		// thus ErrTruncated may be raised, we can ignore it here.
 		err = nil
 	}
+	precBuff := make([]byte, 4)
+	digitBuff := make([]byte, 4)
+	binary.LittleEndian.PutUint32(precBuff, uint32(prec))
+	binary.LittleEndian.PutUint32(digitBuff, uint32(digitsFrac))
+	buf = append(buf, precBuff...)
+	buf = append(buf, digitBuff...)
 	return buf, err
 }
 
