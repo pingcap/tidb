@@ -68,14 +68,18 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	nonce := rand.Uint64()
-	key := make([]byte, aes.BlockSize)
-	rand.Read(key)
-	l.ctrCipher, err = encrypt.NewCtrCipher(key, nonce)
-	if err != nil {
-		return err
+	var underlying io.WriteCloser = l.disk
+	if config.GetGlobalConfig().Security.RequireSecureTransport {
+		nonce := rand.Uint64()
+		key := make([]byte, aes.BlockSize)
+		rand.Read(key)
+		l.ctrCipher, err = encrypt.NewCtrCipher(key, nonce)
+		if err != nil {
+			return err
+		}
+		underlying = encrypt.NewWriter(l.disk, l.ctrCipher)
 	}
-	l.w = checksum.NewWriter(encrypt.NewWriter(l.disk, l.ctrCipher))
+	l.w = checksum.NewWriter(underlying)
 	l.bufFlushMutex = sync.RWMutex{}
 	return
 }
@@ -164,7 +168,11 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 		return
 	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
-	r := io.NewSectionReader(checksum.NewReader(encrypt.NewReader(l.disk, l.ctrCipher)), off, l.offWrite-off)
+	var underlying io.ReaderAt = l.disk
+	if config.GetGlobalConfig().Security.RequireSecureTransport {
+		underlying = encrypt.NewReader(l.disk, l.ctrCipher)
+	}
+	r := io.NewSectionReader(checksum.NewReader(underlying), off, l.offWrite-off)
 	format := rowInDisk{numCol: len(l.fieldTypes)}
 	_, err = format.ReadFrom(r)
 	if err != nil {

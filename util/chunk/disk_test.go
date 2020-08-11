@@ -177,7 +177,7 @@ func checkRow(c *check.C, row1, row2 Row) {
 	}
 }
 
-func (s *testChunkSuite) TestListInDiskWithChecksum(c *check.C) {
+func testListInDisk(c *check.C) {
 	numChk, numRow := 10, 1000
 	chks, fields := initChunks(numChk, numRow)
 	lChecksum := NewListInDisk(fields)
@@ -209,4 +209,18 @@ func (s *testChunkSuite) TestListInDiskWithChecksum(c *check.C) {
 		c.Assert(err, check.IsNil)
 		checkRow(c, row1, row2)
 	}
+}
+
+func (s *testChunkSuite) TestListInDiskWithChecksum(c *check.C) {
+	conf := config.GetGlobalConfig()
+	conf.Security.RequireSecureTransport = false
+	config.StoreGlobalConfig(conf)
+	testListInDisk(c)
+}
+
+func (s *testChunkSuite) TestListInDiskWithChecksumAndEncrypt(c *check.C) {
+	conf := config.GetGlobalConfig()
+	conf.Security.RequireSecureTransport = true
+	config.StoreGlobalConfig(conf)
+	testListInDisk(c)
 }
