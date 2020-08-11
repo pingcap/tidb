@@ -5263,7 +5263,7 @@ func buildPlacementSpecs(specs []*ast.PlacementSpec, tableID, partitionID int64)
 				rule.Action = placement.RuleOpAdd
 
 				// alter will overwrite all things
-				// drop all rules that will be overrided
+				// drop all rules that will be overridden
 				newRules := rules[:0]
 
 				for _, r := range rules {
