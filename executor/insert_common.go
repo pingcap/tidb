@@ -952,18 +952,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		return err
 	}
 
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
-		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
-		// The snapshot may contains cache that can reduce RPC call.
-		e.snapshot = txn.GetSnapshot()
-	} else {
-		var err error
-		e.snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: txnCtx.StartTS})
-		if err != nil {
-			return err
-		}
-	}
+	e.snapshot = txn.GetSnapshot()
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
 		e.stats = &RuntimeStatsWithRpcStats{
