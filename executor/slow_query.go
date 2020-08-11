@@ -126,10 +126,10 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 		close(e.parsedSlowLogCh)
 		return
 	}
-	reader := bufio.NewReader(e.files[0].file)
+	reader := bufio.NewReaderSize(e.files[0].file, 1024*1024*1024)
 	for e.fileIdx < len(e.files) {
 		//rows, err := e.parseSlowLog(sctx, reader, 1024)
-		e.parseSlowLog(sctx, reader, 1024)
+		e.parseSlowLog(sctx, reader, 64)
 		select {
 		case <-ctx.Done():
 			break
@@ -354,26 +354,23 @@ func (e *slowQueryRetriever) getLog(reader *bufio.Reader, num int) ([]string, er
 
 func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.Reader, maxRow int) {
 	var wg sync.WaitGroup
-	//var ReadWG sync.WaitGroup
-	//SlowLogch := make(chan [][]types.Datum, 64)
 	//to limit the num of go routine
 	ch := make(chan int, 10)
 	defer close(ch)
 	//rowNum := 0
 	for {
 		//batch
-		log, err := e.getLog(reader, 64)
+		log, err := e.getLog(reader, maxRow)
 		wg.Add(1)
 		ch <- 1
 		if err != nil {
 			go func() {
 				defer wg.Done()
-				e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(ctx, log), err}
+				e.parsedSlowLogCh <- parsedSlowLog{nil, err}
 				<-ch
 			}()
 			break
 		} else {
-
 			go func() {
 				defer wg.Done()
 				//SlowLogch <- e.parsedLog(ctx, log)
