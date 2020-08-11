@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
-	"math"
 )
 
 // InsertValues is the data to insert.
@@ -471,38 +471,6 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 		// We should return a special error for batch insert.
 		return ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
 	}
-
-	txn, err := e.ctx.Txn(false)
-	if err != nil {
-		return err
-	}
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	var snapshot kv.Snapshot
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
-		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
-		// The snapshot may contains cache that can reduce RPC call.
-		snapshot = txn.GetSnapshot()
-	} else {
-		var err error
-		snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: txnCtx.StartTS})
-		if err != nil {
-			return err
-		}
-	}
-	if e.runtimeStats != nil {
-		snapshotStats := &tikv.SnapshotRuntimeStats{}
-		e.stats = &RuntimeStatsWithRpcStats{
-			BasicRuntimeStats:    e.runtimeStats,
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
-	}
-	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
-	}
-	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
-	e.snapshot = snapshot
 	return nil
 }
 
@@ -997,7 +965,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
-		e.stats = &pointGetRuntimeStats{
+		e.stats = &RuntimeStatsWithRpcStats{
 			BasicRuntimeStats:    e.runtimeStats,
 			SnapshotRuntimeStats: snapshotStats,
 		}
@@ -1076,4 +1044,21 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 		vars.SetLastInsertID(e.lastInsertID)
 	}
 	return nil
+}
+
+func (e *RuntimeStatsWithRpcStats) String() string {
+	var basic, rpcStatsStr string
+	if e.BasicRuntimeStats != nil {
+		basic = e.BasicRuntimeStats.String()
+	}
+	if e.SnapshotRuntimeStats != nil {
+		rpcStatsStr = e.SnapshotRuntimeStats.String()
+	}
+	if rpcStatsStr == "" {
+		return basic
+	}
+	if basic == "" {
+		return rpcStatsStr
+	}
+	return basic + ", " + rpcStatsStr
 }
