@@ -177,7 +177,7 @@ func (l *ListInDisk) Close() error {
 	if l.disk != nil {
 		l.diskTracker.Consume(-l.diskTracker.BytesConsumed())
 		terror.Call(l.disk.Close)
-		return os.Remove(l.disk.Name())
+		terror.Log(os.Remove(l.disk.Name()))
 	}
 	return nil
 }
