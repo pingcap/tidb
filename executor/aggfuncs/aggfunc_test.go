@@ -30,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/set"
 )
 
 var _ = Suite(&testSuite{})
@@ -124,6 +126,120 @@ func (p *multiArgsAggTest) messUpChunk(c *chunk.Chunk) {
 			}
 		}
 	}
+}
+
+type memDeltaGens func(*chunk.Chunk) []int64
+
+func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
+	memDeltas := make([]int64, 0)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		memDeltas = append(memDeltas, int64(0))
+	}
+	return memDeltas
+}
+
+func int64UpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
+	valSet := set.NewInt64Set()
+	memDeltas := make([]int64, 0)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		val := row.GetInt64(0)
+		if valSet.Exist(val) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		valSet.Insert(val)
+		memDeltas = append(memDeltas, aggfuncs.DefInt64Size)
+	}
+	return memDeltas
+}
+
+func float64UpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
+	valSet := set.NewFloat64Set()
+	memDeltas := make([]int64, 0)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		val := row.GetFloat64(0)
+		if valSet.Exist(val) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		valSet.Insert(val)
+		memDeltas = append(memDeltas, aggfuncs.DefFloat64Size)
+	}
+	return memDeltas
+}
+
+func stringUpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
+	valSet := set.NewStringSet()
+	memDeltas := make([]int64, 0)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		val := row.GetString(0)
+		if valSet.Exist(val) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		valSet.Insert(val)
+		memDeltas = append(memDeltas, int64(len(val)))
+	}
+	return memDeltas
+}
+
+func decimalUpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
+	valSet := set.NewStringSet()
+	memDeltas := make([]int64, 0)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		val := row.GetMyDecimal(0)
+		hash, err := val.ToHashKey()
+		if err != nil {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		decStr := string(hack.String(hash))
+		if valSet.Exist(decStr) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		valSet.Insert(decStr)
+		memDeltas = append(memDeltas, int64(len(decStr)))
+	}
+	return memDeltas
+}
+
+type aggMemTest struct {
+	aggTest      aggTest
+	memDelta     int64
+	memDeltaGens memDeltaGens
+	isDistinct   bool
+}
+
+func buildAggMemTester(funcName string, tp byte, numRows int, memDelta int64, memDeltaGens memDeltaGens, isDistinct bool, results ...interface{}) aggMemTest {
+	aggTest := buildAggTester(funcName, tp, numRows, results)
+	pt := aggMemTest{
+		aggTest:      aggTest,
+		memDelta:     memDelta,
+		memDeltaGens: memDeltaGens,
+		isDistinct:   isDistinct,
+	}
+	return pt
 }
 
 func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
@@ -432,6 +548,34 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0, Commentf("%v != %v", dt.String(), p.results[0]))
+}
+
+func (s *testSuite) testAggMemFunc(c *C, p aggMemTest) {
+	srcChk := p.aggTest.genSrcChk()
+
+	args := []expression.Expression{&expression.Column{RetType: p.aggTest.dataType, Index: 0}}
+	if p.aggTest.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+	}
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.aggTest.funcName, args, p.isDistinct)
+	c.Assert(err, IsNil)
+	if p.aggTest.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
+	finalPr, memDelta := finalFunc.AllocPartialResult()
+	c.Assert(memDelta, Equals, p.memDelta)
+
+	updateMemDeltas := p.memDeltaGens(srcChk)
+	iter := chunk.NewIterator4Chunk(srcChk)
+	i := 0
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(memDelta, Equals, updateMemDeltas[i])
+		i++
+	}
 }
 
 func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
