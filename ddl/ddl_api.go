@@ -5226,7 +5226,7 @@ func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas ui
 	return rules, err
 }
 
-func buildPlacementSpecs(specs []*ast.PlacementSpec, tableID, partitionID int64) ([]*placement.RuleOp, error) {
+func buildPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error) {
 	rules := make([]*placement.RuleOp, 0, len(specs))
 
 	var err error
@@ -5322,7 +5322,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	rules, err := buildPlacementSpecs(spec.PlacementSpecs, meta.ID, partitionID)
+	rules, err := buildPlacementSpecs(spec.PlacementSpecs)
 	if err != nil {
 		return errors.Trace(err)
 	}
