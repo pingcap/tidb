@@ -9,7 +9,7 @@ sig/executor:
   - util/memory/*
   - util/sqlexec/*
 
-sig/expression:
+component/expression:
   - expression/*
   - types/*
 
