@@ -908,6 +908,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return nil
 	case mysql.ComQuit:
 		return io.EOF
+	case mysql.ComInitDB:
+		if err := cc.useDB(ctx, dataStr); err != nil {
+			return err
+		}
+		return cc.writeOK()
 	case mysql.ComQuery: // Most frequently used command.
 		// For issue 1989
 		// Input payload may end with byte '\0', we didn't find related mysql document about it, but mysql
@@ -918,31 +923,41 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			dataStr = string(hack.String(data))
 		}
 		return cc.handleQuery(ctx, dataStr)
-	case mysql.ComPing:
-		return cc.writeOK()
-	case mysql.ComInitDB:
-		if err := cc.useDB(ctx, dataStr); err != nil {
+	case mysql.ComFieldList:
+		return cc.handleFieldList(dataStr)
+	// ComCreateDB, ComDropDB
+	case mysql.ComRefresh:
+		return cc.handleRefresh(ctx, data[0])
+	case mysql.ComShutdown: // redirect to SQL
+		if err := cc.handleQuery(ctx, "SHUTDOWN"); err != nil {
 			return err
 		}
 		return cc.writeOK()
-	case mysql.ComFieldList:
-		return cc.handleFieldList(dataStr)
+	// ComStatistics, ComProcessInfo, ComConnect, ComProcessKill, ComDebug
+	case mysql.ComPing:
+		return cc.writeOK()
+	// ComTime, ComDelayedInsert
+	case mysql.ComChangeUser:
+		return cc.handleChangeUser(ctx, data)
+	// ComBinlogDump, ComTableDump, ComConnectOut, ComRegisterSlave
 	case mysql.ComStmtPrepare:
 		return cc.handleStmtPrepare(dataStr)
 	case mysql.ComStmtExecute:
 		return cc.handleStmtExecute(ctx, data)
-	case mysql.ComStmtFetch:
-		return cc.handleStmtFetch(ctx, data)
-	case mysql.ComStmtClose:
-		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
 		return cc.handleStmtSendLongData(data)
+	case mysql.ComStmtClose:
+		return cc.handleStmtClose(data)
 	case mysql.ComStmtReset:
 		return cc.handleStmtReset(data)
 	case mysql.ComSetOption:
 		return cc.handleSetOption(data)
-	case mysql.ComChangeUser:
-		return cc.handleChangeUser(ctx, data)
+	case mysql.ComStmtFetch:
+		return cc.handleStmtFetch(ctx, data)
+	// ComDaemon, ComBinlogDumpGtid
+	case mysql.ComResetConnection:
+		return cc.handleResetConnection(ctx)
+	// ComEnd
 	default:
 		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", cmd)
 	}
@@ -1754,6 +1769,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	data = data[passLen:]
 	dbName, _ := parseNullTermString(data)
 	cc.dbname = string(hack.String(dbName))
+
 	err := cc.ctx.Close()
 	if err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
@@ -1762,16 +1778,48 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		return err
 	}
+	return cc.handleCommonConnectionReset()
+}
 
+func (cc *clientConn) handleResetConnection(ctx context.Context) error {
+	user := cc.ctx.GetSessionVars().User
+	err := cc.ctx.Close()
+	if err != nil {
+		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
+	}
+	var tlsStatePtr *tls.ConnectionState
+	if cc.tlsConn != nil {
+		tlsState := cc.tlsConn.ConnectionState()
+		tlsStatePtr = &tlsState
+	}
+	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	if err != nil {
+		return err
+	}
+	if !cc.ctx.AuthWithoutVerification(user) {
+		return errors.New("Could not reset connection")
+	}
+	if cc.dbname != "" { // Restore the current DB
+		err = cc.useDB(context.Background(), cc.dbname)
+		if err != nil {
+			return err
+		}
+	}
+	cc.ctx.SetSessionManager(cc.server)
+
+	return cc.handleCommonConnectionReset()
+}
+
+func (cc *clientConn) handleCommonConnectionReset() error {
 	if plugin.IsEnable(plugin.Audit) {
 		cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
 	}
 
-	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			connInfo := cc.ctx.GetSessionVars().ConnectionInfo
-			err = authPlugin.OnConnectionEvent(context.Background(), plugin.ChangeUser, connInfo)
+			err := authPlugin.OnConnectionEvent(context.Background(), plugin.ChangeUser, connInfo)
 			if err != nil {
 				return err
 			}
@@ -1781,7 +1829,16 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		return err
 	}
+	return cc.writeOK()
+}
 
+// safe to noop except 0x01 "FLUSH PRIVILEGES"
+func (cc *clientConn) handleRefresh(ctx context.Context, subCommand byte) error {
+	if subCommand == 0x01 {
+		if err := cc.handleQuery(ctx, "FLUSH PRIVILEGES"); err != nil {
+			return err
+		}
+	}
 	return cc.writeOK()
 }
 
