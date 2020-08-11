@@ -3431,14 +3431,14 @@
               "expr": "rate(tidb_server_packet_io_bytes_sum[1m])",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "{{instance}}-{{sql_type}}-rate",
+              "legendFormat": "{{instance}}-{{type}}-rate",
               "refId": "A"
             },
             {
               "expr": "tidb_server_packet_io_bytes_sum",
               "format": "time_series",
               "intervalFactor": 1,
-              "legendFormat": "{{instance}}-{{sql_type}}-total",
+              "legendFormat": "{{instance}}-{{type}}-total",
               "refId": "B"
             }
           ],
