@@ -57,7 +57,7 @@ func checkLabelConstraint(label string) (LabelConstraint, error) {
 	return r, nil
 }
 
-// CheckLabelConstraints will check labels, and build LabelConstraints for rule
+// CheckLabelConstraints will check labels, and build LabelConstraints for rule.
 func CheckLabelConstraints(labels []string) ([]LabelConstraint, error) {
 	constraints := make([]LabelConstraint, 0, len(labels))
 	for _, str := range labels {

@@ -22,7 +22,7 @@ package placement
 type PeerRoleType string
 
 const (
-	// Voter can either match a leader peer or follower peer
+	// Voter can either match a leader peer or follower peer.
 	Voter PeerRoleType = "voter"
 	// Leader matches a leader.
 	Leader PeerRoleType = "leader"
@@ -72,13 +72,13 @@ type Rule struct {
 	IsolationLevel   string            `json:"isolation_level,omitempty"`
 }
 
-// RuleOpType indicates the operation type
+// RuleOpType indicates the operation type.
 type RuleOpType string
 
 const (
-	// RuleOpAdd a placement rule, only need to specify the field *Rule
+	// RuleOpAdd a placement rule, only need to specify the field *Rule.
 	RuleOpAdd RuleOpType = "add"
-	// RuleOpDel a placement rule, only need to specify the field `GroupID`, `ID`, `MatchID`
+	// RuleOpDel a placement rule, only need to specify the field `GroupID`, `ID`, `MatchID`.
 	RuleOpDel RuleOpType = "del"
 )
 
@@ -89,7 +89,7 @@ type RuleOp struct {
 	DeleteByIDPrefix bool       `json:"delete_by_id_prefix"`
 }
 
-// Clone is used to clone a RuleOp that is safe to modify, without affecting the old RuleOp
+// Clone is used to clone a RuleOp that is safe to modify, without affecting the old RuleOp.
 func (op *RuleOp) Clone() *RuleOp {
 	newOp := &RuleOp{}
 	*newOp = *op
