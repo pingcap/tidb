@@ -145,7 +145,7 @@ func NewReader(r io.ReaderAt, ctrCipher CtrCipher) *Reader {
 }
 
 // ReadAt implements the io.ReadAt interface.
-func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
+func (r *Reader) ReadAt(p []byte, off int64) (n int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -156,23 +156,23 @@ func (r *Reader) ReadAt(p []byte, off int64) (nn int, err error) {
 	buf := blockBufPool.Get().([]byte)
 	defer blockBufPool.Put(buf)
 
-	var n int
+	var readNum int
 	cipherStream := r.cipher.stream(uint64(counter))
 	for len(p) > 0 && err == nil {
-		n, err = r.r.ReadAt(buf, cursor)
+		readNum, err = r.r.ReadAt(buf, cursor)
 		if err != nil {
-			if n == 0 || err != io.EOF {
-				return nn, err
+			if readNum == 0 || err != io.EOF {
+				return n, err
 			}
 			err = nil
 			// continue if n > 0 and r.err is io.EOF
 		}
-		cursor += int64(n)
-		cipherStream.XORKeyStream(buf[:n], buf[:n])
-		n1 := copy(p, buf[offset:n])
-		nn += n1
-		p = p[n1:]
+		cursor += int64(readNum)
+		cipherStream.XORKeyStream(buf[:readNum], buf[:readNum])
+		copiedNum := copy(p, buf[offset:readNum])
+		n += copiedNum
+		p = p[copiedNum:]
 		offset = 0
 	}
-	return nn, err
+	return n, err
 }
