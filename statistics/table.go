@@ -59,8 +59,34 @@ const (
 // Table represents statistics for a table.
 type Table struct {
 	HistColl
-	Version uint64
-	Name    string
+	Version       uint64
+	Name          string
+	ExtendedStats *ExtendedStatsColl
+}
+
+// ExtendedStatsKey is the key for cached item of a mysql.stats_extended record.
+type ExtendedStatsKey struct {
+	StatsName string
+	DB        string
+}
+
+// ExtendedStatsItem is the cached item of a mysql.stats_extended record.
+type ExtendedStatsItem struct {
+	ColIDs     []int64
+	Tp         uint8
+	ScalarVals float64
+	StringVals string
+}
+
+// ExtendedStatsColl is a collection of cached items for mysql.stats_extended records.
+type ExtendedStatsColl struct {
+	Stats             map[ExtendedStatsKey]*ExtendedStatsItem
+	LastUpdateVersion uint64
+}
+
+// NewExtendedStatsColl allocate an ExtendedStatsColl struct.
+func NewExtendedStatsColl() *ExtendedStatsColl {
+	return &ExtendedStatsColl{Stats: make(map[ExtendedStatsKey]*ExtendedStatsItem)}
 }
 
 // HistColl is a collection of histogram. It collects enough information for plan to calculate the selectivity.
@@ -120,6 +146,16 @@ func (t *Table) Copy() *Table {
 		Version:  t.Version,
 		Name:     t.Name,
 	}
+	if t.ExtendedStats != nil {
+		newExtStatsColl := &ExtendedStatsColl{
+			Stats:             make(map[ExtendedStatsKey]*ExtendedStatsItem),
+			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
+		}
+		for key, item := range t.ExtendedStats.Stats {
+			newExtStatsColl.Stats[key] = item
+		}
+		nt.ExtendedStats = newExtStatsColl
+	}
 	return nt
 }
 
@@ -143,6 +179,7 @@ func (t *Table) String() string {
 	for _, idx := range idxs {
 		strs = append(strs, idx.String())
 	}
+	// TODO: concat content of ExtendedStatsColl
 	return strings.Join(strs, "\n")
 }
 
