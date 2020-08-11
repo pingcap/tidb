@@ -18,8 +18,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -378,31 +376,18 @@ func (s *selectResultRuntimeStats) String() string {
 			sort.Slice(s.procKeys, func(i, j int) bool {
 				return s.procKeys[i] < s.procKeys[j]
 			})
-			totalKeys := int64(0)
-			for _, v := range s.procKeys {
-				totalKeys += v
-			}
 			keyMax := s.procKeys[size-1]
 			keyP95 := s.procKeys[size*19/20]
-			buf.WriteString("cop_task: {")
+			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p80: %v, p95: %v, max_proc_keys: %v, p95_proc_keys: %v", size, vMax, vMin, vAvg, vP80, vP95, keyMax, keyP95))
 			if s.totalProcessTime > 0 {
-				buf.WriteString("total_process_time: ")
+				buf.WriteString(", tot_proc: ")
 				buf.WriteString(s.totalProcessTime.String())
 				if s.totalWaitTime > 0 {
-					buf.WriteString(", ")
-					buf.WriteString("total_wait_time: ")
+					buf.WriteString(", tot_wait: ")
 					buf.WriteString(s.totalWaitTime.String())
 				}
-				if totalKeys > 0 {
-					buf.WriteString(", ")
-					buf.WriteString("total_process_keys: ")
-					buf.WriteString(strconv.Itoa(int(totalKeys)))
-				}
 			}
-			if !strings.HasSuffix(buf.String(), "{") {
-				buf.WriteString(", ")
-			}
-			buf.WriteString(fmt.Sprintf("num: %v, max: %v, min: %v, avg: %v, p80: %v, p95: %v, max_process_keys: %v, p95_process_keys: %v}", size, vMax, vMin, vAvg, vP80, vP95, keyMax, keyP95))
+			buf.WriteString("}")
 		}
 	}
 
