@@ -359,7 +359,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 	//to limit the num of go routine
 	ch := make(chan int, 10)
 	defer close(ch)
-	rowNum := 0
+	//rowNum := 0
 	for {
 		//batch
 		log, err := e.getLog(reader, 64)
@@ -368,14 +368,14 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 		} else {
 			wg.Add(1)
 			ch <- 1
-			rowNum += 64
+			//rowNum += 64
 			go func() {
 				defer wg.Done()
 				//SlowLogch <- e.parsedLog(ctx, log)
 				e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(ctx, log), err}
 				<-ch
 			}()
-			if e.fileIdx >= len(e.files) || rowNum == maxRow {
+			if e.fileIdx >= len(e.files) {
 				break
 			}
 		}
