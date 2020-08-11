@@ -285,6 +285,22 @@ const (
 	CreateOptRuleBlacklist = `CREATE TABLE IF NOT EXISTS mysql.opt_rule_blacklist (
 		name char(100) NOT NULL
 	);`
+
+	// CreateStatsExtended stores the registered extended statistics.
+	CreateStatsExtended = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
+		stats_name varchar(32) NOT NULL,
+		db varchar(32) NOT NULL,
+		type tinyint(4) NOT NULL,
+		table_id bigint(64) NOT NULL,
+		column_ids varchar(32) NOT NULL,
+		scalar_stats double DEFAULT NULL,
+		blob_stats blob DEFAULT NULL,
+		version bigint(64) unsigned NOT NULL,
+		status tinyint(4) NOT NULL,
+		PRIMARY KEY(stats_name, db),
+		KEY idx_1 (table_id, status, version),
+		KEY idx_2 (status, version)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -391,6 +407,8 @@ const (
 	version47 = 47
 	// version48 reset all deprecated concurrency related system-variables if they were all default value.
 	version48 = 48
+	// version49 introduces mysql.stats_extended table.
+	version49 = 49
 )
 
 var (
@@ -442,6 +460,7 @@ var (
 		upgradeToVer46,
 		upgradeToVer47,
 		upgradeToVer48,
+		upgradeToVer49,
 	}
 )
 
@@ -1122,6 +1141,13 @@ func upgradeToVer48(s Session, ver int64) {
 	mustExecute(s, "COMMIT")
 }
 
+func upgradeToVer49(s Session, ver int64) {
+	if ver >= version49 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -1185,6 +1211,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateExprPushdownBlacklist)
 	// Create opt_rule_blacklist table.
 	mustExecute(s, CreateOptRuleBlacklist)
+	// Create stats_extended table.
+	mustExecute(s, CreateStatsExtended)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
