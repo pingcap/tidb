@@ -309,9 +309,13 @@ func (t *tikvHandlerTool) getTable(dbName, tableName string) (table.PhysicalTabl
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	return t.getPartition(tableVal, partitionName)
+}
+
+func (t *tikvHandlerTool) getPartition(tableVal table.Table, partitionName string) (table.PhysicalTable, error) {
 	if pt, ok := tableVal.(table.PartitionedTable); ok {
 		if partitionName == "" {
-			return nil, errors.New("work on partitioned table, please specify the table name like this: table(partition)")
+			return tableVal.(table.PhysicalTable), errors.New("work on partitioned table, please specify the table name like this: table(partition)")
 		}
 		tblInfo := pt.Meta()
 		pid, err := tables.FindPartitionByName(tblInfo, partitionName)
@@ -321,7 +325,7 @@ func (t *tikvHandlerTool) getTable(dbName, tableName string) (table.PhysicalTabl
 		return pt.GetPartition(pid), nil
 	}
 	if partitionName != "" {
-		return nil, fmt.Errorf("%s is not a partitionted table", tableName)
+		return nil, fmt.Errorf("%s is not a partitionted table", tableVal.Meta().Name)
 	}
 	return tableVal.(table.PhysicalTable), nil
 }
@@ -492,7 +496,7 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	m := make(map[int64]*types.FieldType, 1)
 	m[colID] = ft
 	loc := time.UTC
-	vals, err := tablecodec.DecodeRow(valData, m, loc)
+	vals, err := tablecodec.DecodeRowToDatumMap(valData, m, loc)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -713,6 +717,7 @@ type tableFlashReplicaInfo struct {
 	ReplicaCount   uint64   `json:"replica_count"`
 	LocationLabels []string `json:"location_labels"`
 	Available      bool     `json:"available"`
+	HighPriority   bool     `json:"high_priority"`
 }
 
 func (h flashReplicaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -753,6 +758,15 @@ func (h flashReplicaHandler) getTiFlashReplicaInfo(tblInfo *model.TableInfo, rep
 				ReplicaCount:   tblInfo.TiFlashReplica.Count,
 				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
 				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+			})
+		}
+		for _, p := range pi.AddingDefinitions {
+			replicaInfos = append(replicaInfos, &tableFlashReplicaInfo{
+				ID:             p.ID,
+				ReplicaCount:   tblInfo.TiFlashReplica.Count,
+				LocationLabels: tblInfo.TiFlashReplica.LocationLabels,
+				Available:      tblInfo.TiFlashReplica.IsPartitionAvailable(p.ID),
+				HighPriority:   true,
 			})
 		}
 		return replicaInfos
@@ -939,22 +953,33 @@ func (h tableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	// get table's schema.
+
+	tableName, partitionName := extractTableAndPartitionName(tableName)
 	tableVal, err := schema.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-
 	switch h.op {
 	case opTableRegions:
 		h.handleRegionRequest(schema, tableVal, w, req)
 	case opTableDiskUsage:
 		h.handleDiskUsageRequest(tableVal, w)
 	case opTableScatter:
-		h.handleScatterTableRequest(schema, tableVal, w, req)
+		// supports partition table, only get one physical table, prevent too many scatter schedulers.
+		ptbl, err := h.getPartition(tableVal, partitionName)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		h.handleScatterTableRequest(schema, ptbl, w, req)
 	case opStopTableScatter:
-		h.handleStopScatterTableRequest(schema, tableVal, w, req)
+		ptbl, err := h.getPartition(tableVal, partitionName)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		h.handleStopScatterTableRequest(schema, ptbl, w, req)
 	default:
 		writeError(w, errors.New("method not found"))
 	}
@@ -1113,13 +1138,13 @@ func (h tableHandler) deleteScatterSchedule(name string) error {
 	return nil
 }
 
-func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tbl table.PhysicalTable, w http.ResponseWriter, req *http.Request) {
 	// for record
-	tableID := tbl.Meta().ID
+	tableID := tbl.GetPhysicalID()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(tableID)
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
-	tableName := tbl.Meta().Name.String()
+	tableName := fmt.Sprintf("%s-%d", tbl.Meta().Name.String(), tableID)
 	err := h.addScatterSchedule(startKey, endKey, tableName)
 	if err != nil {
 		writeError(w, errors.Annotate(err, "scatter record error"))
@@ -1142,9 +1167,9 @@ func (h tableHandler) handleScatterTableRequest(schema infoschema.InfoSchema, tb
 	writeData(w, "success!")
 }
 
-func (h tableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchema, tbl table.Table, w http.ResponseWriter, req *http.Request) {
+func (h tableHandler) handleStopScatterTableRequest(schema infoschema.InfoSchema, tbl table.PhysicalTable, w http.ResponseWriter, req *http.Request) {
 	// for record
-	tableName := tbl.Meta().Name.String()
+	tableName := fmt.Sprintf("%s-%d", tbl.Meta().Name.String(), tbl.GetPhysicalID())
 	err := h.deleteScatterSchedule(tableName)
 	if err != nil {
 		writeError(w, errors.Annotate(err, "stop scatter record error"))
@@ -1196,19 +1221,18 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
 	ctx := context.Background()
 	pdCli := h.RegionCache.PDClient()
-	regions, peers, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+	regions, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 	if err != nil {
 		return nil, err
 	}
 
-	recordRegions := make([]RegionMeta, 0, len(peers))
-	for idx, leader := range peers {
-		region := regions[idx]
+	recordRegions := make([]RegionMeta, 0, len(regions))
+	for _, region := range regions {
 		meta := RegionMeta{
-			ID:          region.Id,
-			Leader:      leader,
-			Peers:       region.Peers,
-			RegionEpoch: region.RegionEpoch,
+			ID:          region.Meta.Id,
+			Leader:      region.Leader,
+			Peers:       region.Meta.Peers,
+			RegionEpoch: region.Meta.RegionEpoch,
 		}
 		recordRegions = append(recordRegions, meta)
 	}
@@ -1220,18 +1244,17 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(id, indexID)
-		regions, peers, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+		regions, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 		if err != nil {
 			return nil, err
 		}
-		indexRegions := make([]RegionMeta, 0, len(peers))
-		for idx, leader := range peers {
-			region := regions[idx]
+		indexRegions := make([]RegionMeta, 0, len(regions))
+		for _, region := range regions {
 			meta := RegionMeta{
-				ID:          region.Id,
-				Leader:      leader,
-				Peers:       region.Peers,
-				RegionEpoch: region.RegionEpoch,
+				ID:          region.Meta.Id,
+				Leader:      region.Leader,
+				Peers:       region.Meta.Peers,
+				RegionEpoch: region.Meta.RegionEpoch,
 			}
 			indexRegions = append(indexRegions, meta)
 		}
@@ -1544,7 +1567,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 }
 
 func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) ([]map[string]string, error) {
-	rs, err := tablecodec.DecodeRow(bs, colMap, time.UTC)
+	rs, err := tablecodec.DecodeRowToDatumMap(bs, colMap, time.UTC)
 	var record []map[string]string
 	for _, col := range tb.Columns {
 		if c, ok := rs[col.ID]; ok {
@@ -1728,7 +1751,12 @@ func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	} else {
 		start = end.Add(-time.Minute * 10)
 	}
-	pb := executor.NewProfileBuilder(sctx, start, end)
+	valueTp := req.FormValue("type")
+	pb, err := executor.NewProfileBuilder(sctx, start, end, valueTp)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	err = pb.Collect()
 	if err != nil {
 		writeError(w, err)

@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -91,32 +92,20 @@ type hashRowContainer struct {
 	stat hashStatistic
 
 	// hashTable stores the map of hashKey and RowPtr
-	hashTable *rowHashMap
+	hashTable baseHashTable
 
 	rowContainer *chunk.RowContainer
 }
 
 func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext) *hashRowContainer {
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
-	// The estCount from cost model is not quite accurate and we need
-	// to avoid that it's too large to consume redundant memory.
-	// So I invent a rough protection, firstly divide it by estCountDivisor
-	// then set a maximum threshold and a minimum threshold.
-	estCount /= estCountDivisor
-	if estCount > maxChunkSize*estCountMaxFactor {
-		estCount = maxChunkSize * estCountMaxFactor
-	}
-	if estCount < maxChunkSize*estCountMinFactor {
-		estCount = 0
-	}
 	rc := chunk.NewRowContainer(hCtx.allTypes, maxChunkSize)
 	c := &hashRowContainer{
 		sc:           sCtx.GetSessionVars().StmtCtx,
 		hCtx:         hCtx,
-		hashTable:    newRowHashMap(estCount),
+		hashTable:    newConcurrentMapHashTable(),
 		rowContainer: rc,
 	}
-
 	return c
 }
 
@@ -166,14 +155,14 @@ func (c *hashRowContainer) alreadySpilledSafeForTest() bool {
 // PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
-	return c.PutChunkSelected(chk, nil)
+func (c *hashRowContainer) PutChunk(chk *chunk.Chunk, ignoreNulls []bool) error {
+	return c.PutChunkSelected(chk, nil, ignoreNulls)
 }
 
 // PutChunkSelected selectively puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) error {
+func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNulls []bool) error {
 	start := time.Now()
 	defer func() { c.stat.buildTableElapse += time.Since(start) }()
 
@@ -186,8 +175,9 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected []bool) e
 	c.hCtx.initHash(numRows)
 
 	hCtx := c.hCtx
-	for _, colIdx := range c.hCtx.keyColIdx {
-		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull, selected)
+	for keyIdx, colIdx := range c.hCtx.keyColIdx {
+		ignoreNull := len(ignoreNulls) > keyIdx && ignoreNulls[keyIdx]
+		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -236,7 +226,7 @@ func (c *hashRowContainer) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
 }
 
 // Len returns number of records in the hash table.
-func (c *hashRowContainer) Len() int {
+func (c *hashRowContainer) Len() uint64 {
 	return c.hashTable.Len()
 }
 
@@ -257,101 +247,129 @@ func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {
 
 const (
 	initialEntrySliceLen = 64
-	maxEntrySliceLen     = 8 * 1024
+	maxEntrySliceLen     = 8192
 )
 
 type entry struct {
 	ptr  chunk.RowPtr
-	next entryAddr
+	next *entry
 }
 
 type entryStore struct {
 	slices [][]entry
+	cursor int
 }
 
-func (es *entryStore) init() {
-	es.slices = [][]entry{make([]entry, 0, initialEntrySliceLen)}
-	// Reserve the first empty entry, so entryAddr{} can represent nullEntryAddr.
-	reserved := es.put(entry{})
-	if reserved != nullEntryAddr {
-		panic("entryStore: first entry is not nullEntryAddr")
-	}
+func newEntryStore() *entryStore {
+	es := new(entryStore)
+	es.slices = [][]entry{make([]entry, initialEntrySliceLen)}
+	es.cursor = 0
+	return es
 }
 
-func (es *entryStore) put(e entry) entryAddr {
+func (es *entryStore) GetStore() (e *entry) {
 	sliceIdx := uint32(len(es.slices) - 1)
 	slice := es.slices[sliceIdx]
-	if len(slice) == cap(slice) {
+	if es.cursor >= cap(slice) {
 		size := cap(slice) * 2
 		if size >= maxEntrySliceLen {
 			size = maxEntrySliceLen
 		}
-		slice = make([]entry, 0, size)
+		slice = make([]entry, size)
 		es.slices = append(es.slices, slice)
 		sliceIdx++
+		es.cursor = 0
 	}
-	addr := entryAddr{sliceIdx: sliceIdx, offset: uint32(len(slice))}
-	es.slices[sliceIdx] = append(slice, e)
-	return addr
+	e = &es.slices[sliceIdx][es.cursor]
+	es.cursor++
+	return
 }
 
-func (es *entryStore) get(addr entryAddr) entry {
-	return es.slices[addr.sliceIdx][addr.offset]
+type baseHashTable interface {
+	Put(hashKey uint64, rowPtr chunk.RowPtr)
+	Get(hashKey uint64) (rowPtrs []chunk.RowPtr)
+	Len() uint64
 }
 
-type entryAddr struct {
-	sliceIdx uint32
-	offset   uint32
-}
-
-var nullEntryAddr = entryAddr{}
-
-// rowHashMap stores multiple rowPtr of rows for a given key with minimum GC overhead.
+// TODO (fangzhuhe) remove unsafeHashTable later if it not used anymore
+// unsafeHashTable stores multiple rowPtr of rows for a given key with minimum GC overhead.
 // A given key can store multiple values.
 // It is not thread-safe, should only be used in one goroutine.
-type rowHashMap struct {
-	entryStore entryStore
-	hashTable  map[uint64]entryAddr
-	length     int
+type unsafeHashTable struct {
+	hashMap    map[uint64]*entry
+	entryStore *entryStore
+	length     uint64
 }
 
-// newRowHashMap creates a new rowHashMap. estCount means the estimated size of the hashMap.
+// newUnsafeHashTable creates a new unsafeHashTable. estCount means the estimated size of the hashMap.
 // If unknown, set it to 0.
-func newRowHashMap(estCount int) *rowHashMap {
-	m := new(rowHashMap)
-	m.hashTable = make(map[uint64]entryAddr, estCount)
-	m.entryStore.init()
-	return m
+func newUnsafeHashTable(estCount int) *unsafeHashTable {
+	ht := new(unsafeHashTable)
+	ht.hashMap = make(map[uint64]*entry, estCount)
+	ht.entryStore = newEntryStore()
+	return ht
 }
 
-// Put puts the key/rowPtr pairs to the rowHashMap, multiple rowPtrs are stored in a list.
-func (m *rowHashMap) Put(hashKey uint64, rowPtr chunk.RowPtr) {
-	oldEntryAddr := m.hashTable[hashKey]
-	e := entry{
-		ptr:  rowPtr,
-		next: oldEntryAddr,
-	}
-	newEntryAddr := m.entryStore.put(e)
-	m.hashTable[hashKey] = newEntryAddr
-	m.length++
+// Put puts the key/rowPtr pairs to the unsafeHashTable, multiple rowPtrs are stored in a list.
+func (ht *unsafeHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
+	oldEntry := ht.hashMap[hashKey]
+	newEntry := ht.entryStore.GetStore()
+	newEntry.ptr = rowPtr
+	newEntry.next = oldEntry
+	ht.hashMap[hashKey] = newEntry
+	ht.length++
 }
 
 // Get gets the values of the "key" and appends them to "values".
-func (m *rowHashMap) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
-	entryAddr := m.hashTable[hashKey]
-	for entryAddr != nullEntryAddr {
-		e := m.entryStore.get(entryAddr)
-		entryAddr = e.next
-		rowPtrs = append(rowPtrs, e.ptr)
-	}
-	// Keep the order of input.
-	for i := 0; i < len(rowPtrs)/2; i++ {
-		j := len(rowPtrs) - 1 - i
-		rowPtrs[i], rowPtrs[j] = rowPtrs[j], rowPtrs[i]
+func (ht *unsafeHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
+	entryAddr := ht.hashMap[hashKey]
+	for entryAddr != nil {
+		rowPtrs = append(rowPtrs, entryAddr.ptr)
+		entryAddr = entryAddr.next
 	}
 	return
 }
 
-// Len returns the number of rowPtrs in the rowHashMap, the number of keys may be less than Len
+// Len returns the number of rowPtrs in the unsafeHashTable, the number of keys may be less than Len
 // if the same key is put more than once.
-func (m *rowHashMap) Len() int { return m.length }
+func (ht *unsafeHashTable) Len() uint64 { return ht.length }
+
+// concurrentMapHashTable is a concurrent hash table built on concurrentMap
+type concurrentMapHashTable struct {
+	hashMap    concurrentMap
+	entryStore *entryStore
+	length     uint64
+}
+
+// newConcurrentMapHashTable creates a concurrentMapHashTable
+func newConcurrentMapHashTable() *concurrentMapHashTable {
+	ht := new(concurrentMapHashTable)
+	ht.hashMap = newConcurrentMap()
+	ht.entryStore = newEntryStore()
+	ht.length = 0
+	return ht
+}
+
+// Len return the number of rowPtrs in the concurrentMapHashTable
+func (ht *concurrentMapHashTable) Len() uint64 {
+	return ht.length
+}
+
+// Put puts the key/rowPtr pairs to the concurrentMapHashTable, multiple rowPtrs are stored in a list.
+func (ht *concurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
+	newEntry := ht.entryStore.GetStore()
+	newEntry.ptr = rowPtr
+	newEntry.next = nil
+	ht.hashMap.Insert(hashKey, newEntry)
+	atomic.AddUint64(&ht.length, 1)
+}
+
+// Get gets the values of the "key" and appends them to "values".
+func (ht *concurrentMapHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
+	entryAddr, _ := ht.hashMap.Get(hashKey)
+	for entryAddr != nil {
+		rowPtrs = append(rowPtrs, entryAddr.ptr)
+		entryAddr = entryAddr.next
+	}
+	return
+}

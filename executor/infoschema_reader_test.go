@@ -530,6 +530,9 @@ func (s *testInfoschemaTableSuite) TestForServersInfo(c *C) {
 }
 
 func (s *testInfoschemaTableSuite) TestForTableTiFlashReplica(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk := testkit.NewTestKit(c, s.store)
 	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")

@@ -59,7 +59,7 @@ var (
 )
 
 func (s *testSuite) TestFailNewSession(c *C) {
-	ln, err := net.Listen("unix", "new_session:12379")
+	ln, err := net.Listen("unix", "new_session:0")
 	c.Assert(err, IsNil)
 	srv := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
 	var stop sync.WaitGroup

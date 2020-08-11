@@ -52,6 +52,7 @@ type HashJoinExec struct {
 	outerFilter       expression.CNFExprs
 	probeKeys         []*expression.Column
 	buildKeys         []*expression.Column
+	isNullEQ          []bool
 	probeTypes        []*types.FieldType
 	buildTypes        []*types.FieldType
 
@@ -242,7 +243,7 @@ func (e *HashJoinExec) wait4BuildSide() (emptyBuild bool, err error) {
 			return false, err
 		}
 	}
-	if e.rowContainer.Len() == 0 && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
+	if e.rowContainer.Len() == uint64(0) && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
 		return true, nil
 	}
 	return false, nil
@@ -545,8 +546,9 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 	}
 
 	hCtx.initHash(probeSideChk.NumRows())
-	for _, i := range hCtx.keyColIdx {
-		err = codec.HashChunkSelected(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull, selected)
+	for keyIdx, i := range hCtx.keyColIdx {
+		ignoreNull := len(e.isNullEQ) > keyIdx && e.isNullEQ[keyIdx]
+		err = codec.HashChunkSelected(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -652,7 +654,7 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 		},
 	)
 
-	// TODO: Parallel build hash table. Currently not support because `rowHashMap` is not thread-safe.
+	// TODO: Parallel build hash table. Currently not support because `unsafeHashTable` is not thread-safe.
 	err := e.buildHashTableForList(buildSideResultCh)
 	if err != nil {
 		e.buildFinished <- errors.Trace(err)
@@ -703,19 +705,19 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 			return nil
 		}
 		if !e.useOuterToBuild {
-			err = e.rowContainer.PutChunk(chk)
+			err = e.rowContainer.PutChunk(chk, e.isNullEQ)
 		} else {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
 			e.memTracker.Consume(bitMap.BytesConsumed())
 			if len(e.outerFilter) == 0 {
-				err = e.rowContainer.PutChunk(chk)
+				err = e.rowContainer.PutChunk(chk, e.isNullEQ)
 			} else {
 				selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(chk), selected)
 				if err != nil {
 					return err
 				}
-				err = e.rowContainer.PutChunkSelected(chk, selected)
+				err = e.rowContainer.PutChunkSelected(chk, selected, e.isNullEQ)
 			}
 		}
 		if err != nil {

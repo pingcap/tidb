@@ -491,6 +491,10 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 
 		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 53}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 54}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 54)}, cancelState: model.StatePublic},
+
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 59}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 60}, cancelRetErrs: noErrs, cancelState: model.StateReplicaOnly},
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 61}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -1014,6 +1018,33 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	changedPtTable = testGetTable(c, d, dbInfo.ID, pt.ID)
 	c.Assert(changedNtTable.Meta().ID == nt.ID, IsFalse)
 	c.Assert(changedPtTable.Meta().Partition.Definitions[0].ID == nt.ID, IsTrue)
+
+	// Cancel add table partition.
+	baseTableInfo := testTableInfoWithPartitionLessThan(c, d, "empty_table", 5, "1000")
+	testCreateTable(c, ctx, d, dbInfo, baseTableInfo)
+
+	cancelState = model.StateNone
+	updateTest(&tests[45])
+	addedPartInfo := testAddedNewTablePartitionInfo(c, d, baseTableInfo, "p1", "maxvalue")
+	addPartitionArgs := []interface{}{addedPartInfo}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs, &cancelState)
+	c.Check(checkErr, IsNil)
+	baseTable := testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(len(baseTable.Meta().Partition.Definitions), Equals, 1)
+
+	updateTest(&tests[46])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs, &cancelState)
+	c.Check(checkErr, IsNil)
+	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(len(baseTable.Meta().Partition.Definitions), Equals, 1)
+
+	updateTest(&tests[47])
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs)
+	c.Check(checkErr, IsNil)
+	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(len(baseTable.Meta().Partition.Definitions), Equals, 2)
+	c.Assert(baseTable.Meta().Partition.Definitions[1].ID, Equals, addedPartInfo.Definitions[0].ID)
+	c.Assert(baseTable.Meta().Partition.Definitions[1].LessThan[0], Equals, addedPartInfo.Definitions[0].LessThan[0])
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
