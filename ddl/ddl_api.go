@@ -1879,7 +1879,7 @@ func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *a
 	return checkRangeColumnsPartitionValue(ctx, tbInfo)
 }
 
-// checkPartitionByRange checks validity of a "BY RANGE" partition.
+// checkPartitionByList checks validity of a "BY LIST" partition.
 func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
 	pi := tbInfo.Partition
 	if err := checkPartitionNameUnique(pi); err != nil {
@@ -1894,9 +1894,6 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo, s *as
 		return ast.ErrPartitionsMustBeDefined.GenWithStackByArgs("LIST")
 	}
 
-	if len(pi.Columns) != 0 {
-		return fmt.Errorf("not support list columns partition")
-	}
 	if err := checkListPartitionValue(tbInfo); err != nil {
 		return err
 	}

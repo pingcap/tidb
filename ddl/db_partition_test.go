@@ -522,6 +522,10 @@ func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
 			ddl.ErrSameNamePartition,
 		},
 		{
+			"create table t (a int) partition by list (a) (partition p0 values in (1), partition P0 values in (2));",
+			ddl.ErrSameNamePartition,
+		},
+		{
 			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (1));",
 			ddl.ErrMultipleDefConstInListPart,
 		},

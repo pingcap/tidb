@@ -2862,13 +2862,17 @@ func (s *testSuite4) TestWriteListPartitionTable(c *C) {
 	tk.MustExec("admin check table t;")
 
 	// Test select partition
-	tk.MustExec("insert into t values  (2,'b'),(3,'c'),(4,'d'),(7,'f'), (null,null)")
 	for i := 0; i < 2; i++ {
 		tk.MustExec(fmt.Sprintf("set @try_old_partition_implementation=%v;", i))
+		tk.MustExec("delete from t")
+		tk.MustExec("insert into t values (1,'a'), (2,'b'),(3,'c'),(4,'d'),(7,'f'), (null,null)")
 		tk.MustQuery("select * from t partition (p0) order by id").Check(testkit.Rows("3 c"))
 		tk.MustQuery("select * from t partition (p1,p3) order by id").Check(testkit.Rows("<nil> <nil>", "1 a", "2 b", "7 f"))
 		tk.MustQuery("select * from t partition (p1,p3,p0,p2) order by id").Check(testkit.Rows("<nil> <nil>", "1 a", "2 b", "3 c", "4 d", "7 f"))
 		tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil> <nil>", "1 a", "2 b", "3 c", "4 d", "7 f"))
+		tk.MustExec("delete from t partition (p0)")
+		tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil> <nil>", "1 a", "2 b", "4 d", "7 f"))
+		tk.MustExec("delete from t partition (p3,p2)")
+		tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 a", "2 b"))
 	}
-
 }
