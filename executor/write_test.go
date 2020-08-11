@@ -2834,8 +2834,10 @@ func (s *testSuite4) TestWriteListPartitionTable(c *C) {
     	partition p0 values in (3,5,6,9,17),
     	partition p1 values in (1,2,10,11,19,20),
     	partition p2 values in (4,12,13,14,18),
-    	partition p3 values in (7,8,15,16)
+    	partition p3 values in (7,8,15,16,null)
 	);`)
+
+	// Test insert,update,delete
 	tk.MustExec("insert into t values  (1, 'a')")
 	tk.MustExec("update t set name='b' where id=2;")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 a"))
@@ -2845,13 +2847,28 @@ func (s *testSuite4) TestWriteListPartitionTable(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 c"))
 	tk.MustExec("insert into t values (1, 'd') on duplicate key update name='e'")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 e"))
-
-	_, err := tk.Exec("insert into t values (1, 'd')")
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'idx'")
 	tk.MustExec("delete from t where id=1")
 	tk.MustQuery("select * from t").Check(testkit.Rows())
 	tk.MustExec("insert into t values  (2, 'f')")
 	tk.MustExec("delete from t where name='f'")
 	tk.MustQuery("select * from t").Check(testkit.Rows())
+
+	// Test insert error
+	tk.MustExec("insert into t values  (1, 'a')")
+	_, err := tk.Exec("insert into t values (1, 'd')")
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'idx'")
+	_, err = tk.Exec("insert into t values (100, 'd')")
+	c.Assert(err.Error(), Equals, "[table:1526]Table has no partition for value 100")
 	tk.MustExec("admin check table t;")
+
+	// Test select partition
+	tk.MustExec("insert into t values  (2,'b'),(3,'c'),(4,'d'),(7,'f'), (null,null)")
+	for i := 0; i < 2; i++ {
+		tk.MustExec(fmt.Sprintf("set @try_old_partition_implementation=%v;", i))
+		tk.MustQuery("select * from t partition (p0) order by id").Check(testkit.Rows("3 c"))
+		tk.MustQuery("select * from t partition (p1,p3) order by id").Check(testkit.Rows("<nil> <nil>", "1 a", "2 b", "7 f"))
+		tk.MustQuery("select * from t partition (p1,p3,p0,p2) order by id").Check(testkit.Rows("<nil> <nil>", "1 a", "2 b", "3 c", "4 d", "7 f"))
+		tk.MustQuery("select * from t order by id").Check(testkit.Rows("<nil> <nil>", "1 a", "2 b", "3 c", "4 d", "7 f"))
+	}
+
 }

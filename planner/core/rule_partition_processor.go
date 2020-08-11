@@ -181,6 +181,23 @@ func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl tabl
 	return []int{FullRange}, nil
 }
 
+func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
+	used := []int{FullRange}
+	if len(ds.partitionNames) > 0 {
+		used = s.pruneListPartition(ds.table, ds.partitionNames)
+	}
+	return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi))
+}
+
+func (s *partitionProcessor) pruneListPartition(tbl table.Table, partitionNames []model.CIStr) []int {
+	if len(partitionNames) > 0 {
+		pi := tbl.Meta().Partition
+		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
+		return s.convertToIntSlice(or, pi, partitionNames)
+	}
+	return []int{FullRange}
+}
+
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	pi := ds.tableInfo.GetPartitionInfo()
 	if pi == nil {
@@ -193,6 +210,9 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	}
 	if pi.Type == model.PartitionTypeRange {
 		return s.processRangePartition(ds, pi)
+	}
+	if pi.Type == model.PartitionTypeList {
+		return s.processListPartition(ds, pi)
 	}
 
 	// We haven't implement partition by list and so on.

@@ -41,6 +41,8 @@ func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 		}
 		ret := s.convertToIntSlice(rangeOr, pi, partitionNames)
 		return ret, nil
+	case model.PartitionTypeList:
+		return s.pruneListPartition(tbl, partitionNames), nil
 	}
 	return []int{FullRange}, nil
 }
