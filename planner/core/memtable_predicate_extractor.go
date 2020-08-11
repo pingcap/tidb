@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -537,19 +538,10 @@ func (e *ClusterTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
-	r := new(bytes.Buffer)
-	if len(e.NodeTypes) > 0 {
-		r.WriteString(fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e.NodeTypes)))
-	}
-	if len(e.Instances) > 0 {
-		r.WriteString(fmt.Sprintf("instances:[%s], ", extractStringFromStringSet(e.Instances)))
-	}
-	// remove the last ", " in the message info
-	s := r.String()
-	if len(s) > 2 {
-		return s[:len(s)-2]
-	}
-	return s
+	m := make(map[string]interface{})
+	m["node_types"] = e.NodeTypes
+	m["instances"] = e.Instances
+	return writeStringWithBuffer(m, true)
 }
 
 // ClusterLogTableExtractor is used to extract some predicates of `cluster_config`
@@ -795,28 +787,10 @@ func (e *MetricSummaryTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
-
-	r := new(bytes.Buffer)
-	if len(e.MetricsNames) > 0 {
-		r.WriteString(fmt.Sprintf("metric_names:[%s], ", extractStringFromStringSet(e.MetricsNames)))
-	}
-	if len(e.Quantiles) > 0 {
-		r.WriteString("quantiles:[")
-		for i, quantile := range e.Quantiles {
-			if i > 0 {
-				r.WriteByte(',')
-			}
-			r.WriteString(fmt.Sprintf("%f", quantile))
-		}
-		r.WriteString("], ")
-	}
-
-	// remove the last ", " in the message info
-	s := r.String()
-	if len(s) > 2 {
-		return s[:len(s)-2]
-	}
-	return s
+	m := make(map[string]interface{})
+	m["metric_names"] = e.MetricsNames
+	m["quantiles"] = e.Quantiles
+	return writeStringWithBuffer(m, true)
 }
 
 // InspectionResultTableExtractor is used to extract some predicates of `inspection_result`
@@ -894,31 +868,11 @@ func (e *InspectionSummaryTableExtractor) explainInfo(p *PhysicalMemTable) strin
 	if e.SkipInspection {
 		return "skip_inspection: true"
 	}
-
-	r := new(bytes.Buffer)
-	if len(e.Rules) > 0 {
-		r.WriteString(fmt.Sprintf("rules:[%s], ", extractStringFromStringSet(e.Rules)))
-	}
-	if len(e.MetricNames) > 0 {
-		r.WriteString(fmt.Sprintf("metric_names:[%s], ", extractStringFromStringSet(e.MetricNames)))
-	}
-	if len(e.Quantiles) > 0 {
-		r.WriteString("quantiles:[")
-		for i, quantile := range e.Quantiles {
-			if i > 0 {
-				r.WriteByte(',')
-			}
-			r.WriteString(fmt.Sprintf("%f", quantile))
-		}
-		r.WriteString("], ")
-	}
-
-	// remove the last ", " in the message info
-	s := r.String()
-	if len(s) > 2 {
-		return s[:len(s)-2]
-	}
-	return s
+	m := make(map[string]interface{})
+	m["rules"] = e.Rules
+	m["metric_names"] = e.MetricNames
+	m["quantiles"] = e.Quantiles
+	return writeStringWithBuffer(m, true)
 }
 
 // InspectionRuleTableExtractor is used to extract some predicates of `inspection_rules`
@@ -947,12 +901,9 @@ func (e *InspectionRuleTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
-
-	r := new(bytes.Buffer)
-	if len(e.Types) > 0 {
-		r.WriteString(fmt.Sprintf("node_types:[%s]", extractStringFromStringSet(e.Types)))
-	}
-	return r.String()
+	m := make(map[string]interface{})
+	m["node_types"] = e.Types
+	return writeStringWithBuffer(m, false)
 }
 
 // SlowQueryExtractor is used to extract some predicates of `slow_query`
@@ -1043,18 +994,11 @@ func (e *TableStorageStatsExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
-
-	r := new(bytes.Buffer)
-	if len(e.TableSchema) > 0 {
-		r.WriteString(fmt.Sprintf("schema:[%s]", extractStringFromStringSet(e.TableSchema)))
-	}
-	if r.Len() > 0 && len(e.TableName) > 0 {
-		r.WriteString(", ")
-	}
-	if len(e.TableName) > 0 {
-		r.WriteString(fmt.Sprintf("table:[%s]", extractStringFromStringSet(e.TableName)))
-	}
-	return r.String()
+	m := make(map[string]interface{})
+	m["schema"] = e.TableSchema
+	m["addcomma"] = e.TableName
+	m["table"] = e.TableName
+	return writeStringWithBuffer(m, false)
 }
 
 func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
@@ -1116,20 +1060,47 @@ func (e *TiFlashSystemTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
-	r := new(bytes.Buffer)
-	if len(e.TiFlashInstances) > 0 {
-		r.WriteString(fmt.Sprintf("tiflash_instances:[%s], ", extractStringFromStringSet(e.TiFlashInstances)))
-	}
-	if len(e.TiDBDatabases) > 0 {
-		r.WriteString(fmt.Sprintf("tidb_databases:[%s], ", e.TiDBDatabases))
-	}
-	if len(e.TiDBTables) > 0 {
-		r.WriteString(fmt.Sprintf("tidb_tables:[%s], ", e.TiDBTables))
+	m := make(map[string]interface{})
+	m["tiflash_instances"] = e.TiFlashInstances
+	m["tidb_databases"] = e.TiDBDatabases
+	m["tidb_tables"] = e.TiDBTables
+	return writeStringWithBuffer(m, true)
+}
+
+func writeStringWithBuffer(m map[string]interface{}, truncateFlag bool) string {
+	buffer := new(bytes.Buffer)
+	for name, content := range m {
+		if reflect.ValueOf(content).Len() > 0 {
+			if name == "addcomma" && buffer.Len() > 0 {
+				buffer.WriteString(", ")
+				continue
+			}
+			switch content.(type) {
+			case []float64:
+				vals := content.([]float64)
+				buffer.WriteString(name + ":[")
+				for i, val := range vals {
+					if i > 0 {
+						buffer.WriteByte(',')
+					}
+					buffer.WriteString(fmt.Sprintf("%f", val))
+				}
+				buffer.WriteString("], ")
+			case set.StringSet:
+				val := content.(set.StringSet)
+				buffer.WriteString(fmt.Sprintf(name+":[%s], ", extractStringFromStringSet(val)))
+			case string:
+				val := content.(string)
+				buffer.WriteString(fmt.Sprintf(name+":[%s], ", val))
+			}
+		}
 	}
 	// remove the last ", " in the message info
-	s := r.String()
-	if len(s) > 2 {
-		return s[:len(s)-2]
+	s := buffer.String()
+	if truncateFlag == true {
+		if len(s) > 2 {
+			return s[:len(s)-2]
+		}
 	}
 	return s
 }
