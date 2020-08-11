@@ -433,7 +433,7 @@ func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {
 	tk.MustExec("alter table partition_add_idx add index idx (id, hired)")
 }
 
-func (s *testFailDBSuite) TestModifyColumns(c *C) {
+func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -490,7 +490,7 @@ func (s *testFailDBSuite) TestModifyColumns(c *C) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("2 3 1", "22 33 11", "111 333 222"))
 	tk.MustExec("admin check table t")
 
-	// Test unspport statements.
+	// Test unsupport statements.
 	tk.MustExec("create table t1(a int) partition by hash (a) partitions 2")
 	_, err = tk.Exec("alter table t1 modify column a mediumint")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: enableChangeColType is true, table is partition table")

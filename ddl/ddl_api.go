@@ -3508,6 +3508,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 	if ctx.GetSessionVars().EnableChangeColumnType && needChangeColumnData(col.ColumnInfo, newCol.ColumnInfo) {
 		if newCol.IsGenerated() || col.IsGenerated() {
+			// TODO: Make it compatible with MySQL error.
 			msg := fmt.Sprintf("enableChangeColType is true, newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
 			return nil, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		} else if t.Meta().Partition != nil {

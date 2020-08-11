@@ -677,7 +677,6 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		changingCol = newCol.Clone()
 		changingCol.Name = newColName
 		changingCol.ChangeStateInfo = &model.ChangeStateInfo{DependencyColumnOffset: oldCol.Offset}
-		changingCol.ID = allocateColumnID(tblInfo)
 		_, _, _, err := createColumnInfo(tblInfo, changingCol, changingColPos)
 		if err != nil {
 			job.State = model.JobStateCancelled
@@ -759,7 +758,7 @@ func (w *worker) doModifyColumnType(
 				return ver, nil
 			}
 			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeIndex.Equal(err) {
-				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
+				logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				// TODO: Do rollback.
 			}
 			if types.ErrOverflow.Equal(err) {

@@ -23,7 +23,7 @@ import (
 type backfillWorkerType byte
 
 const (
-	typeAddIndexWroker     backfillWorkerType = 0
+	typeAddIndexWorker     backfillWorkerType = 0
 	typeUpdateColumnWroker backfillWorkerType = 1
 )
 

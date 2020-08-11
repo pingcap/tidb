@@ -648,11 +648,12 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			// TODO: Check overflow or ignoreTruncate.
 			value, err = table.CastValue(sctx, r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 			if err != nil {
-				return recordID, err
+				return nil, err
 			}
+		} else if col.State != model.StatePublic &&
 			// Update call `AddRecord` will already handle the write only column default value.
 			// Only insert should add default value for write only column.
-		} else if col.State != model.StatePublic && !opt.IsUpdate {
+			!opt.IsUpdate {
 			// If col is in write only or write reorganization state, we must add it with its default value.
 			value, err = table.GetColOriginDefaultValue(sctx, col.ToInfo())
 			if err != nil {

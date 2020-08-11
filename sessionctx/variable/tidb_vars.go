@@ -325,7 +325,7 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
-	// TiDBMaxDeltaSchemaCount
+	// TiDBEnableChangeColumnType is used to control whether to enable the change column type.
 	TiDBEnableChangeColumnType = "tidb_enable_change_column_type"
 
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
