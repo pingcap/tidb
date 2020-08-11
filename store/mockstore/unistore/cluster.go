@@ -21,6 +21,7 @@ import (
 	us "github.com/ngaut/unistore/tikv"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
+	"github.com/pingcap/tidb/util/codec"
 )
 
 type delayKey struct {
@@ -73,6 +74,12 @@ func (c *Cluster) handleDelay(startTS, regionID uint64) {
 	if ok {
 		time.Sleep(dur)
 	}
+}
+
+// SplitRaw splits region for raw KV.
+func (c *Cluster) SplitRaw(regionID, newRegionID uint64, rawKey []byte, peerIDs []uint64, leaderPeerID uint64) *metapb.Region {
+	encodedKey := codec.EncodeBytes(nil, rawKey)
+	return c.MockRegionManager.SplitRaw(regionID, newRegionID, encodedKey, peerIDs, leaderPeerID)
 }
 
 // BootstrapWithSingleStore initializes a Cluster with 1 Region and 1 Store.

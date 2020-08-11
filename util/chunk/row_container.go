@@ -99,6 +99,7 @@ func (c *RowContainer) Reset() error {
 		if err != nil {
 			return err
 		}
+		c.actionSpill.Reset()
 	} else {
 		c.m.records.Reset()
 	}
@@ -327,6 +328,14 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	if a.fallbackAction != nil {
 		a.fallbackAction.Action(t)
 	}
+}
+
+// Reset resets the status for SpillDiskAction.
+func (a *SpillDiskAction) Reset() {
+	a.m.Lock()
+	defer a.m.Unlock()
+	a.setStatus(notSpilled)
+	a.once = sync.Once{}
 }
 
 // SetFallback sets the fallback action.

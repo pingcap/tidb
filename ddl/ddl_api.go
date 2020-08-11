@@ -1678,14 +1678,16 @@ func (d *ddl) CreateTableWithInfo(
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
-			if err = d.handleAutoIncID(tbInfo, schema.ID, autoid.RowIDAllocType); err != nil {
+			newEnd := tbInfo.AutoIncID - 1
+			if err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.RowIDAllocType); err != nil {
 				return errors.Trace(err)
 			}
 		}
 		if tbInfo.AutoRandID > 1 {
 			// Default tableAutoRandID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
-			err = d.handleAutoIncID(tbInfo, schema.ID, autoid.AutoRandomType)
+			newEnd := tbInfo.AutoRandID - 1
+			err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.AutoRandomType)
 		}
 	}
 
@@ -1975,22 +1977,11 @@ func checkCharsetAndCollation(cs string, co string) error {
 
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
-func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, tp autoid.AllocatorType) error {
+func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd int64, tp autoid.AllocatorType) error {
 	allocs := autoid.NewAllocatorsFromTblInfo(d.store, schemaID, tbInfo)
-	tbInfo.State = model.StatePublic
-	tb, err := table.TableFromMeta(allocs, tbInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// The operation of the minus 1 to make sure that the current value doesn't be used,
-	// the next Alloc operation will get this value.
-	// Its behavior is consistent with MySQL.
-	if tp == autoid.RowIDAllocType {
-		if err = tb.RebaseAutoID(nil, tbInfo.AutoIncID-1, false, tp); err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		if err = tb.RebaseAutoID(nil, tbInfo.AutoRandID-1, false, tp); err != nil {
+	if alloc := allocs.Get(tp); alloc != nil {
+		err := alloc.Rebase(tbInfo.ID, newEnd, false)
+		if err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -2371,16 +2362,18 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		actionType = model.ActionRebaseAutoID
 	}
 
-	autoID, err := t.Allocators(ctx).Get(tp).NextGlobalAutoID(t.Meta().ID)
-	if err != nil {
-		return errors.Trace(err)
+	if alloc := t.Allocators(ctx).Get(tp); alloc != nil {
+		autoID, err := alloc.NextGlobalAutoID(t.Meta().ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// If newBase < autoID, we need to do a rebase before returning.
+		// Assume there are 2 TiDB servers: TiDB-A with allocator range of 0 ~ 30000; TiDB-B with allocator range of 30001 ~ 60000.
+		// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
+		// and TiDB-B finds 100 < 30001 but returns without any handling,
+		// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
+		newBase = mathutil.MaxInt64(newBase, autoID)
 	}
-	// If newBase < autoID, we need to do a rebase before returning.
-	// Assume there are 2 TiDB servers: TiDB-A with allocator range of 0 ~ 30000; TiDB-B with allocator range of 30001 ~ 60000.
-	// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
-	// and TiDB-B finds 100 < 30001 but returns without any handling,
-	// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
-	newBase = mathutil.MaxInt64(newBase, autoID)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
