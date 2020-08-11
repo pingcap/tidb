@@ -81,7 +81,8 @@ func (s *testSuite1) TestIndexJoinUnionScan(c *C) {
 		"2 2 2 2 2",
 		"2 2 4 2 4",
 	))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.a").Check(testkit.Rows(
+	// INL_MERGE_JOIN is invalid
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.a").Sort().Check(testkit.Rows(
 		"2 2 2 2 2",
 		"2 2 4 2 4",
 	))

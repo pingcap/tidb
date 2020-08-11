@@ -53,6 +53,7 @@ var (
 type tikvSnapshot struct {
 	store           *tikvStore
 	version         kv.Version
+	isolationLevel  kv.IsoLevel
 	priority        pb.CommandPri
 	notFillCache    bool
 	syncLog         bool
@@ -76,6 +77,7 @@ type tikvSnapshot struct {
 		cached map[string][]byte
 		stats  *SnapshotRuntimeStats
 	}
+	sampleStep uint32
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -445,16 +447,28 @@ func (s *tikvSnapshot) IterReverse(k kv.Key) (kv.Iterator, error) {
 // value of this option. Only ReplicaRead is supported for snapshot
 func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	switch opt {
-	case kv.ReplicaRead:
-		s.replicaRead = val.(kv.ReplicaReadType)
+	case kv.IsolationLevel:
+		s.isolationLevel = val.(kv.IsoLevel)
 	case kv.Priority:
 		s.priority = kvPriorityToCommandPri(val.(int))
+	case kv.NotFillCache:
+		s.notFillCache = val.(bool)
+	case kv.SyncLog:
+		s.syncLog = val.(bool)
+	case kv.KeyOnly:
+		s.keyOnly = val.(bool)
+	case kv.SnapshotTS:
+		s.setSnapshotTS(val.(uint64))
+	case kv.ReplicaRead:
+		s.replicaRead = val.(kv.ReplicaReadType)
 	case kv.TaskID:
 		s.taskID = val.(uint64)
 	case kv.CollectRuntimeStats:
 		s.mu.Lock()
 		s.mu.stats = val.(*SnapshotRuntimeStats)
 		s.mu.Unlock()
+	case kv.SampleStep:
+		s.sampleStep = val.(uint32)
 	}
 }
 
@@ -477,6 +491,17 @@ func SnapCacheHitCount(snap kv.Snapshot) int {
 		return 0
 	}
 	return int(atomic.LoadInt64(&tikvSnap.mu.hitCnt))
+}
+
+// SnapCacheSize gets the snapshot cache size.
+func SnapCacheSize(snap kv.Snapshot) int {
+	tikvSnap, ok := snap.(*tikvSnapshot)
+	if !ok {
+		return 0
+	}
+	tikvSnap.mu.RLock()
+	defer tikvSnap.mu.RLock()
+	return len(tikvSnap.mu.cached)
 }
 
 func extractLockFromKeyErr(keyErr *pb.KeyError) (*Lock, error) {
