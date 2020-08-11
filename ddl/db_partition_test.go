@@ -491,6 +491,90 @@ create table log_message_1 (
 		"partition p1 values less than (maxvalue))")
 }
 
+func (s *testIntegrationSuite1) TestCreateTableWithListPartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
+	tk.MustExec("drop table if exists t")
+	type errorCase struct {
+		sql string
+		err *terror.Error
+	}
+	cases := []errorCase{
+		{
+			"create table t (id int) partition by list (id);",
+			ast.ErrPartitionsMustBeDefined,
+		},
+		{
+			"create table t (a int) partition by list (b) (partition p0 values in (1));",
+			ddl.ErrBadField,
+		},
+		{
+			"create table t (id timestamp) partition by list (id) (partition p0 values in ('2019-01-09 11:23:34'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (id decimal) partition by list (id) (partition p0 values in ('2019-01-09 11:23:34'));",
+			ddl.ErrNotAllowedTypeInPartition,
+		},
+		{
+			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p0 values in (2));",
+			ddl.ErrSameNamePartition,
+		},
+		{
+			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (1));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (+1));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+		{
+			"create table t (a int) partition by list (a) (partition p0 values in (null), partition p1 values in (NULL));",
+			ddl.ErrMultipleDefConstInListPart,
+		},
+	}
+	for i, t := range cases {
+		_, err := tk.Exec(t.sql)
+		c.Assert(t.err.Equal(err), IsTrue, Commentf(
+			"case %d fail, sql = `%s`\nexpected error = `%v`\n  actual error = `%v`",
+			i, t.sql, t.err, err,
+		))
+	}
+
+	validCases := []string{
+		"create table t (a int) partition by list (a) (partition p0 values in (1));",
+		"create table t (a int) partition by list (a) (partition p0 values in (1), partition p1 values in (2));",
+		`create table t (id int, name varchar(10), age int) partition by list (id) (
+			partition p0 values in (3,5,6,9,17),
+			partition p1 values in (1,2,10,11,19,20),
+			partition p2 values in (4,12,13,-14,18),
+			partition p3 values in (7,8,15,+16)
+		);`,
+	}
+
+	for _, sql := range validCases {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(sql)
+		tbl := testGetTableByName(c, s.ctx, "test", "t")
+		tblInfo := tbl.Meta()
+		c.Assert(tblInfo.Partition, NotNil)
+		c.Assert(tblInfo.Partition.Enable, Equals, true)
+		c.Assert(tblInfo.Partition.Type == model.PartitionTypeList, IsTrue)
+	}
+
+	invalidCases := []string{
+		"create table t (a int) partition by list columns (a) (partition p0 values in (1));",
+	}
+	for _, sql := range invalidCases {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec(sql)
+		tbl := testGetTableByName(c, s.ctx, "test", "t")
+		tblInfo := tbl.Meta()
+		c.Assert(tblInfo.Partition, IsNil)
+	}
+}
+
 func (s *testIntegrationSuite3) TestCreateTableWithKeyPartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")

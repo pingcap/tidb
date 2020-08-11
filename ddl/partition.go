@@ -717,7 +717,9 @@ func checkPartitionFuncType(ctx sessionctx.Context, s *ast.CreateTableStmt, tblI
 		return errors.Trace(err)
 	}
 	exprStr := buf.String()
-	if s.Partition.Tp == model.PartitionTypeRange || s.Partition.Tp == model.PartitionTypeHash {
+	if s.Partition.Tp == model.PartitionTypeRange ||
+		s.Partition.Tp == model.PartitionTypeHash ||
+		s.Partition.Tp == model.PartitionTypeList {
 		// if partition by columnExpr, check the column type
 		if _, ok := s.Partition.Expr.(*ast.ColumnNameExpr); ok {
 			for _, col := range tblInfo.Columns {
