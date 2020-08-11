@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package encrypt
 
 import (
@@ -40,33 +41,33 @@ func (s *testAesLayerSuite) TestReadAt(c *check.C) {
 
 	key := bytes.NewBufferString("0123456789123456").Bytes()
 	nonce := rand.Uint64()
+	ctrCipher, err := NewCtrCipher(key, nonce)
+	c.Assert(err, check.IsNil)
 
 	writeString := "0123456789"
-	c.Assert(err, check.IsNil)
-	csw, err := NewWriter(f, key, nonce)
-	c.Assert(err, check.IsNil)
-	w := bytes.NewBuffer(nil)
+	buf := bytes.NewBuffer(nil)
 	for i := 0; i < 510; i++ {
-		w.WriteString(writeString)
+		buf.WriteString(writeString)
 	}
-	n1, err := csw.Write(w.Bytes())
+
+	w := NewWriter(f, ctrCipher)
+	n1, err := w.Write(buf.Bytes())
 	c.Assert(err, check.IsNil)
-	n2, err := csw.Write(w.Bytes())
+	n2, err := w.Write(buf.Bytes())
 	c.Assert(err, check.IsNil)
-	err = csw.Close()
+	err = w.Close()
 	c.Assert(err, check.IsNil)
 
 	f, err = os.Open(path)
 	c.Assert(err, check.IsNil)
 
 	assertReadAt := func(off int64, assertErr interface{}, assertN int, assertString string) {
-		cs, err := NewReader(f, key, nonce)
-		c.Assert(err, check.IsNil)
-		r := make([]byte, 10)
-		n, err := cs.ReadAt(r, off)
+		r := NewReader(f, ctrCipher)
+		buf := make([]byte, 10)
+		n, err := r.ReadAt(buf, off)
 		c.Assert(err, check.Equals, assertErr)
 		c.Assert(n, check.Equals, assertN)
-		c.Assert(string(r), check.Equals, assertString)
+		c.Assert(string(buf), check.Equals, assertString)
 	}
 
 	assertReadAt(0, nil, 10, "0123456789")
@@ -87,35 +88,33 @@ func (s *testAesLayerSuite) TestReadAtWithChecksum(c *check.C) {
 
 	key := bytes.NewBufferString("0123456789123456").Bytes()
 	nonce := rand.Uint64()
+	ctrCipher, err := NewCtrCipher(key, nonce)
+	c.Assert(err, check.IsNil)
 
 	writeString := "0123456789"
-	c.Assert(err, check.IsNil)
-	aesw, err := NewWriter(f, key, nonce)
-	c.Assert(err, check.IsNil)
-	w := bytes.NewBuffer(nil)
+	buf := bytes.NewBuffer(nil)
 	for i := 0; i < 510; i++ {
-		w.WriteString(writeString)
+		buf.WriteString(writeString)
 	}
-	csw := checksum.NewWriter(aesw)
-	n1, err := csw.Write(w.Bytes())
+
+	w := checksum.NewWriter(NewWriter(f, ctrCipher))
+	n1, err := w.Write(buf.Bytes())
 	c.Assert(err, check.IsNil)
-	n2, err := csw.Write(w.Bytes())
+	n2, err := w.Write(buf.Bytes())
 	c.Assert(err, check.IsNil)
-	err = csw.Close()
+	err = w.Close()
 	c.Assert(err, check.IsNil)
 
 	f, err = os.Open(path)
 	c.Assert(err, check.IsNil)
 
 	assertReadAt := func(off int64, assertErr interface{}, assertN int, assertString string) {
-		aesr, err := NewReader(f, key, nonce)
-		c.Assert(err, check.IsNil)
-		csr := checksum.NewReader(aesr)
-		r := make([]byte, 10)
-		n, err := csr.ReadAt(r, off)
+		r := checksum.NewReader(NewReader(f, ctrCipher))
+		buf := make([]byte, 10)
+		n, err := r.ReadAt(buf, off)
 		c.Assert(err, check.Equals, assertErr)
 		c.Assert(n, check.Equals, assertN)
-		c.Assert(string(r), check.Equals, assertString)
+		c.Assert(string(buf), check.Equals, assertString)
 	}
 
 	assertReadAt(0, nil, 10, "0123456789")
@@ -136,37 +135,38 @@ func (s *testAesLayerSuite) TestReadAtWith2Aes(c *check.C) {
 
 	key := bytes.NewBufferString("0123456789123456").Bytes()
 	nonce := rand.Uint64()
+	ctrCipher1, err := NewCtrCipher(key, nonce)
+	c.Assert(err, check.IsNil)
+
+	key = bytes.NewBufferString("9876543210123456").Bytes()
+	nonce = rand.Uint64()
+	ctrCipher2, err := NewCtrCipher(key, nonce)
+	c.Assert(err, check.IsNil)
 
 	writeString := "0123456789"
-	c.Assert(err, check.IsNil)
-	aesw, err := NewWriter(f, key, nonce)
-	c.Assert(err, check.IsNil)
-	aesw2, err := NewWriter(aesw, key, nonce)
-	c.Assert(err, check.IsNil)
-	w := bytes.NewBuffer(nil)
+	buf := bytes.NewBuffer(nil)
 	for i := 0; i < 510; i++ {
-		w.WriteString(writeString)
+		buf.WriteString(writeString)
 	}
-	n1, err := aesw2.Write(w.Bytes())
+
+	w := NewWriter(NewWriter(f, ctrCipher1), ctrCipher2)
+	n1, err := w.Write(buf.Bytes())
 	c.Assert(err, check.IsNil)
-	n2, err := aesw2.Write(w.Bytes())
+	n2, err := w.Write(buf.Bytes())
 	c.Assert(err, check.IsNil)
-	err = aesw2.Close()
+	err = w.Close()
 	c.Assert(err, check.IsNil)
 
 	f, err = os.Open(path)
 	c.Assert(err, check.IsNil)
 
 	assertReadAt := func(off int64, assertErr interface{}, assertN int, assertString string) {
-		aesr, err := NewReader(f, key, nonce)
-		c.Assert(err, check.IsNil)
-		aesr2, err := NewReader(aesr, key, nonce)
-		c.Assert(err, check.IsNil)
-		r := make([]byte, 10)
-		n, err := aesr2.ReadAt(r, off)
+		r := NewReader(NewReader(f, ctrCipher1), ctrCipher2)
+		buf := make([]byte, 10)
+		n, err := r.ReadAt(buf, off)
 		c.Assert(err, check.Equals, assertErr)
 		c.Assert(n, check.Equals, assertN)
-		c.Assert(string(r), check.Equals, assertString)
+		c.Assert(string(buf), check.Equals, assertString)
 	}
 
 	assertReadAt(0, nil, 10, "0123456789")
@@ -176,8 +176,8 @@ func (s *testAesLayerSuite) TestReadAtWith2Aes(c *check.C) {
 
 type readAtTestCase struct {
 	name      string
-	newWriter func(f *os.File) (io.WriteCloser, error)
-	newReader func(f *os.File) (io.ReaderAt, error)
+	newWriter func(f *os.File) io.WriteCloser
+	newReader func(f *os.File) io.ReaderAt
 }
 
 func benchmarkReadAtWithCase(b *testing.B, testCase readAtTestCase) {
@@ -196,15 +196,14 @@ func benchmarkReadAtWithCase(b *testing.B, testCase readAtTestCase) {
 			b.Fatal(err)
 		}
 	}()
+
 	writeString := "0123456789"
 	buf := bytes.NewBuffer(nil)
 	for i := 0; i < 510; i++ {
 		buf.WriteString(writeString)
 	}
-	w, err := testCase.newWriter(f)
-	if err != nil {
-		b.Fatal(err)
-	}
+
+	w := testCase.newWriter(f)
 	n1, err := w.Write(buf.Bytes())
 	if err != nil {
 		b.Fatal(err)
@@ -222,10 +221,7 @@ func benchmarkReadAtWithCase(b *testing.B, testCase readAtTestCase) {
 		b.Fatal(err)
 	}
 
-	r, err := testCase.newReader(f)
-	if err != nil {
-		b.Fatal(err)
-	}
+	r := testCase.newReader(f)
 	rBuf := make([]byte, 10)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -236,33 +232,29 @@ func benchmarkReadAtWithCase(b *testing.B, testCase readAtTestCase) {
 func BenchmarkReadAt(b *testing.B) {
 	key := bytes.NewBufferString("0123456789123456").Bytes()
 	nonce := rand.Uint64()
+	ctrCipher, err := NewCtrCipher(key, nonce)
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	readAtTestCases := []readAtTestCase{
 		{
 			name:      "data->file",
-			newWriter: func(f *os.File) (io.WriteCloser, error) { return f, nil },
-			newReader: func(f *os.File) (io.ReaderAt, error) { return f, nil },
+			newWriter: func(f *os.File) io.WriteCloser { return f },
+			newReader: func(f *os.File) io.ReaderAt { return f },
 		},
 		{
 			name:      "data->checksum->file",
-			newWriter: func(f *os.File) (io.WriteCloser, error) { return checksum.NewWriter(f), nil },
-			newReader: func(f *os.File) (io.ReaderAt, error) { return checksum.NewReader(f), nil },
+			newWriter: func(f *os.File) io.WriteCloser { return checksum.NewWriter(f) },
+			newReader: func(f *os.File) io.ReaderAt { return checksum.NewReader(f) },
 		},
 		{
 			name: "data->checksum->encrypt->file",
-			newWriter: func(f *os.File) (io.WriteCloser, error) {
-				encryptWriter, err := NewWriter(f, key, nonce)
-				if err != nil {
-					return nil, err
-				}
-				return checksum.NewWriter(encryptWriter), nil
+			newWriter: func(f *os.File) io.WriteCloser {
+				return checksum.NewWriter(NewWriter(f, ctrCipher))
 			},
-			newReader: func(f *os.File) (io.ReaderAt, error) {
-				encryptReader, err := NewReader(f, key, nonce)
-				if err != nil {
-					return nil, err
-				}
-				return checksum.NewReader(encryptReader), nil
+			newReader: func(f *os.File) io.ReaderAt {
+				return checksum.NewReader(NewReader(f, ctrCipher))
 			},
 		},
 	}

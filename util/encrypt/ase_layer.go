@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	// blockSize is the AES block size in bytes.
+	// blockSize is the encrypt block size in bytes.
 	blockSize = 1024
 	// counterPerBlock represents a encrypt block has 64 aes blocks
 	counterPerBlock = 64
@@ -32,22 +32,26 @@ var blockBufPool = sync.Pool{
 	New: func() interface{} { return make([]byte, blockSize) },
 }
 
-// ctrCipher encrypting data using AES in counter mode
-type ctrCipher struct {
+// CtrCipher encrypting data using AES in counter mode
+type CtrCipher struct {
 	nonce uint64
 	block cipher.Block
 }
 
-// newCtrCipher return a ctrCipher
-func newCtrCipher(block cipher.Block, nonce uint64) *ctrCipher {
-	ctr := new(ctrCipher)
+// NewCtrCipher return a CtrCipher
+func NewCtrCipher(key []byte, nonce uint64) (ctr CtrCipher, err error) {
+	var block cipher.Block
+	block, err = aes.NewCipher(key)
+	if err != nil {
+		return
+	}
 	ctr.block = block
 	ctr.nonce = nonce
-	return ctr
+	return
 }
 
 // stream returns a cipher.Stream be use to encrypts/decrypts
-func (ctr *ctrCipher) stream(counter uint64) cipher.Stream {
+func (ctr *CtrCipher) stream(counter uint64) cipher.Stream {
 	counterBuf := make([]byte, aes.BlockSize)
 	binary.BigEndian.PutUint64(counterBuf, ctr.nonce)
 	binary.BigEndian.PutUint64(counterBuf[8:], counter)
@@ -64,15 +68,11 @@ type Writer struct {
 }
 
 // NewWriter returns a new Writer which encrypt data using AES before writing to the underlying object.
-func NewWriter(w io.WriteCloser, key []byte, nonce uint64) (*Writer, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
+func NewWriter(w io.WriteCloser, ctrCipher CtrCipher) *Writer {
 	writer := &Writer{w: w}
 	writer.buf = make([]byte, blockSize)
-	writer.cipherStream = newCtrCipher(block, nonce).stream(0)
-	return writer, nil
+	writer.cipherStream = ctrCipher.stream(0)
+	return writer
 }
 
 // AvailableSize returns how many bytes are unused in the buffer.
@@ -135,18 +135,13 @@ func (w *Writer) Close() (err error) {
 // Reader implements an io.ReadAt, reading from the input source after decrypting.
 type Reader struct {
 	r      io.ReaderAt
-	cipher *ctrCipher
+	cipher CtrCipher
 }
 
 // NewReader returns a new Reader which can read from the input source after decrypting.
-func NewReader(r io.ReaderAt, key []byte, nonce uint64) (*Reader, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	reader := &Reader{r: r}
-	reader.cipher = newCtrCipher(block, nonce)
-	return reader, nil
+func NewReader(r io.ReaderAt, ctrCipher CtrCipher) *Reader {
+	reader := &Reader{r: r, cipher: ctrCipher}
+	return reader
 }
 
 // ReadAt implements the io.ReadAt interface.

@@ -48,8 +48,7 @@ type ListInDisk struct {
 	numRowsInDisk int
 
 	// using by aes encrypt io layer
-	nonce uint64
-	key   []byte
+	ctrCipher encrypt.CtrCipher
 }
 
 var defaultChunkListInDiskLabel fmt.Stringer = stringutil.StringerStr("chunk.ListInDisk")
@@ -61,10 +60,6 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 		// TODO(fengliyuan): set the quota of disk usage.
 		diskTracker: disk.NewTracker(defaultChunkListInDiskLabel, -1),
 	}
-	l.nonce = rand.Uint64()
-	keyBuf := make([]byte, aes.BlockSize)
-	rand.Read(keyBuf)
-	l.key = keyBuf
 	return l
 }
 
@@ -73,11 +68,14 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	encryptWriter, err := encrypt.NewWriter(l.disk, l.key, l.nonce)
+	nonce := rand.Uint64()
+	key := make([]byte, aes.BlockSize)
+	rand.Read(key)
+	l.ctrCipher, err = encrypt.NewCtrCipher(key, nonce)
 	if err != nil {
 		return err
 	}
-	l.w = checksum.NewWriter(encryptWriter)
+	l.w = checksum.NewWriter(encrypt.NewWriter(l.disk, l.ctrCipher))
 	l.bufFlushMutex = sync.RWMutex{}
 	return
 }
@@ -166,12 +164,7 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 		return
 	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
-
-	encryptReader, err := encrypt.NewReader(l.disk, l.key, l.nonce)
-	if err != nil {
-		return row, err
-	}
-	r := io.NewSectionReader(checksum.NewReader(encryptReader), off, l.offWrite-off)
+	r := io.NewSectionReader(checksum.NewReader(encrypt.NewReader(l.disk, l.ctrCipher)), off, l.offWrite-off)
 	format := rowInDisk{numCol: len(l.fieldTypes)}
 	_, err = format.ReadFrom(r)
 	if err != nil {
