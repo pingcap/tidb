@@ -302,7 +302,10 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 	}
 
 	if s.Partition.Tp == model.PartitionTypeList {
-		enable = true
+		// TODO: support list columns partition
+		if len(s.Partition.ColumnNames) == 0 {
+			enable = true
+		}
 	}
 
 	if !enable {
@@ -384,10 +387,10 @@ func buildListPartitionDefinitions(s *ast.CreateTableStmt, pi *model.PartitionIn
 		buf := new(bytes.Buffer)
 		for _, vs := range def.Clause.(*ast.PartitionDefinitionClauseIn).Values {
 			if len(vs) != 1 {
-				return fmt.Errorf("not support muli-column list partition")
+				return fmt.Errorf("not support list columns partition")
 			}
 			vs[0].Format(buf)
-			piDef.Values = append(piDef.Values, buf.String())
+			piDef.InValues = append(piDef.InValues, buf.String())
 			buf.Reset()
 		}
 		pi.Definitions = append(pi.Definitions, piDef)
@@ -811,8 +814,8 @@ func checkListPartitionValue(tblInfo *model.TableInfo) error {
 	}
 
 	for i, def := range pi.Definitions {
-		valuesMap := make(map[string]struct{}, len(def.Values))
-		for j, v := range def.Values {
+		valuesMap := make(map[string]struct{}, len(def.InValues))
+		for j, v := range def.InValues {
 			if isUnsignedBigint {
 				if value, err := strconv.ParseUint(v, 10, 64); err == nil {
 					v = strconv.FormatUint(value, 10)
@@ -825,7 +828,7 @@ func checkListPartitionValue(tblInfo *model.TableInfo) error {
 			if err := checkMultipleValue(v); err != nil {
 				return err
 			}
-			pi.Definitions[i].Values[j] = v
+			pi.Definitions[i].InValues[j] = v
 			valuesMap[v] = struct{}{}
 		}
 		partitionsValuesMap[def.Name.O] = valuesMap

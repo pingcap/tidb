@@ -293,8 +293,8 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	partStr := pi.Expr
 	p := parser.New()
 	for _, def := range pi.Definitions {
-		fmt.Fprintf(&buf, "((%s) in (%s))", partStr, strings.Join(def.Values, ","))
-		for _, value := range def.Values {
+		fmt.Fprintf(&buf, "((%s) in (%s))", partStr, strings.Join(def.InValues, ","))
+		for _, value := range def.InValues {
 			expr, err := parseSimpleExprWithNames(p, ctx, value, schema, names)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -308,7 +308,6 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 			}
 		}
 
-		fmt.Printf("expr: %v ---\n", buf.String())
 		expr, err := parseSimpleExprWithNames(p, ctx, buf.String(), schema, names)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.

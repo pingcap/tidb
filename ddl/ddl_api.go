@@ -1895,7 +1895,7 @@ func checkPartitionByList(ctx sessionctx.Context, tbInfo *model.TableInfo, s *as
 	}
 
 	if len(pi.Columns) != 0 {
-		return nil
+		return fmt.Errorf("not support list columns partition")
 	}
 	if err := checkListPartitionValue(tbInfo); err != nil {
 		return err

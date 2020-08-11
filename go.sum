@@ -97,6 +97,8 @@ github.com/cpuguy83/go-md2man/v2 v2.0.0-20190314233015-f79a8a8ca69d/go.mod h1:ma
 github.com/cpuguy83/go-md2man/v2 v2.0.0/go.mod h1:maD7wRr/U5Z6m/iR4s+kqSMx2CaBsrgA7czyZG/E6dU=
 github.com/crazycs520/parser v0.0.0-20200810153035-45122c34bd1f h1:akWoFwSENIGLin7u6PyDUYjjRYq8mAGBLzJ94Q/Rf/I=
 github.com/crazycs520/parser v0.0.0-20200810153035-45122c34bd1f/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
+github.com/crazycs520/parser v0.0.0-20200811060021-881b269d0715 h1:70P2hR2IjQDBivDLvKRBuGAQ3URVPCikzGYj/yoz4tE=
+github.com/crazycs520/parser v0.0.0-20200811060021-881b269d0715/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/creack/pty v1.1.7/go.mod h1:lj5s0c3V2DBrqTV7llrYr5NG6My20zk30Fl46Y7DoTY=
 github.com/cznic/golex v0.0.0-20181122101858-9c343928389c/go.mod h1:+bmmJDNmKlhWNG+gwWCkaBoTy39Fs+bzRxVBzoTQbIc=
 github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548 h1:iwZdTE0PVqJCos1vaoKsclOGD3ADKpshg3SRtYBbwso=
