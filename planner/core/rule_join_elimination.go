@@ -126,7 +126,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 		return false, nil
 	}
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath() || !path.Index.Unique || len(path.IdxCols) == 0 {
+		if path.IsIntHandlePath || !path.Index.Unique || len(path.IdxCols) == 0 {
 			continue
 		}
 		joinKeysContainIndex := true

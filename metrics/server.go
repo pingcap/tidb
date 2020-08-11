@@ -28,6 +28,15 @@ var (
 
 // Metrics
 var (
+	PacketIOHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "packet_io_bytes",
+			Help:      "Bucketed histogram of packet IO bytes.",
+			Buckets:   prometheus.ExponentialBuckets(4, 4, 21), // 4Bytes ~ 4TB
+		}, []string{LblType})
+
 	QueryDurationHistogram = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
@@ -162,6 +171,14 @@ var (
 			Name:      "slow_query_wait_duration_seconds",
 			Help:      "Bucketed histogram of all cop waiting time (s) of of slow queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
+		})
+
+	MaxProcs = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "maxprocs",
+			Help:      "The value of GOMAXPROCS.",
 		})
 )
 

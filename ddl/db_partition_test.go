@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -815,7 +816,7 @@ func (s *testIntegrationSuite5) TestMultiPartitionDropAndTruncate(c *C) {
 	result.Check(testkit.Rows(`2010`))
 }
 
-func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
+func (s *testIntegrationSuite7) TestAlterTableExchangePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists e")
@@ -961,6 +962,9 @@ func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	tk.MustGetErrCode("alter table e12 exchange partition p0 with table e14", tmysql.ErrPartitionExchangeDifferentOption)
 
 	// test for tiflash replica
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk.MustExec("create table e15 (a int) partition by hash(a) partitions 1;")
 	tk.MustExec("create table e16 (a int)")
 	tk.MustExec("alter table e15 set tiflash replica 1;")

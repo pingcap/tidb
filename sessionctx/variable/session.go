@@ -163,11 +163,11 @@ type TransactionContext struct {
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
-	ForUpdate      bool
 	CouldRetry     bool
 	IsPessimistic  bool
 	Isolation      string
 	LockExpire     uint32
+	ForUpdate      uint32
 }
 
 // GetShard returns the shard prefix for the next `count` rowids.
@@ -353,6 +353,9 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
+	// DMLBatchSize indicates the number of rows batch-committed for a statement.
+	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
+	DMLBatchSize        int
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
 	// UsersLock is a lock for user defined variables.
@@ -832,8 +835,8 @@ func NewSessionVars() *SessionVars {
 		IndexLookupSize:    DefIndexLookupSize,
 		InitChunkSize:      DefInitChunkSize,
 		MaxChunkSize:       DefMaxChunkSize,
-		DMLBatchSize:       DefDMLBatchSize,
 	}
+	vars.DMLBatchSize = DefDMLBatchSize
 	var enableStreaming string
 	if config.GetGlobalConfig().EnableStreaming {
 		enableStreaming = "1"
@@ -1250,7 +1253,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBBatchCommit:
 		s.BatchCommit = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
-		s.DMLBatchSize = tidbOptPositiveInt32(val, DefDMLBatchSize)
+		s.DMLBatchSize = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
 	case TiDBCurrentTS, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
@@ -1459,7 +1462,7 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	return s.PresumeKeyNotExists || s.TxnCtx.IsPessimistic
+	return s.PresumeKeyNotExists || (s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
 }
 
 // SetLocalSystemVar sets values of the local variables which in "server" scope.
@@ -1696,10 +1699,6 @@ type MemQuota struct {
 
 // BatchSize defines batch size values.
 type BatchSize struct {
-	// DMLBatchSize indicates the size of batches for DML.
-	// It will be used when BatchInsert or BatchDelete is on.
-	DMLBatchSize int
-
 	// IndexJoinBatchSize is the batch size of a index lookup join.
 	IndexJoinBatchSize int
 

@@ -165,12 +165,12 @@ func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*pd.
 	return c.client.GetRegionByID(ctx, regionID)
 }
 
-func (c *mockPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+func (c *mockPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*pd.Region, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, errors.Trace(errStopped)
 	}
 	return c.client.ScanRegions(ctx, startKey, endKey, limit)
 }
