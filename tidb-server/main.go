@@ -18,7 +18,6 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	_ "net/http/pprof"
 	"os"
 	"path/filepath"
 	"runtime"
