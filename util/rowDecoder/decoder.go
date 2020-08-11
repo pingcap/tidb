@@ -36,11 +36,11 @@ type Column struct {
 
 // RowDecoder decodes a byte slice into datums and eval the generated column value.
 type RowDecoder struct {
-	tbl           table.Table
-	mutRow        chunk.MutRow
-	columns       map[int64]Column
-	colTypes      map[int64]*types.FieldType
-	defaultVals   []types.Datum
+	tbl         table.Table
+	mutRow      chunk.MutRow
+	columns     map[int64]Column
+	colTypes    map[int64]*types.FieldType
+	defaultVals []types.Datum
 }
 
 // NewRowDecoder returns a new RowDecoder.
@@ -56,11 +56,11 @@ func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
 		tps[col.Offset] = &col.FieldType
 	}
 	return &RowDecoder{
-		tbl:           tbl,
-		mutRow:        chunk.MutRowFromTypes(tps),
-		columns:       decodeColMap,
-		colTypes:      colFieldMap,
-		defaultVals:   make([]types.Datum, len(cols)),
+		tbl:         tbl,
+		mutRow:      chunk.MutRowFromTypes(tps),
+		columns:     decodeColMap,
+		colTypes:    colFieldMap,
+		defaultVals: make([]types.Datum, len(cols)),
 	}
 }
 
