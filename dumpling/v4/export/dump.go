@@ -69,13 +69,14 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 	if conf.Snapshot == "" && (doPdGC || conf.Consistency == "snapshot") {
 		conn, err := pool.Conn(ctx)
 		if err != nil {
+			conn.Close()
 			return withStack(err)
 		}
 		conf.Snapshot, err = getSnapshot(conn)
+		conn.Close()
 		if err != nil {
 			return err
 		}
-		conn.Close()
 	}
 
 	if conf.Snapshot != "" {
@@ -129,6 +130,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 			log.Info("get global metadata failed", zap.Error(err))
 		}
 		if err = prepareTableListToDump(conf, conn); err != nil {
+			conn.Close()
 			return err
 		}
 		conn.Close()
@@ -147,6 +149,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 		return err
 	}
 
+	defer connectPool.Close()
 	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
 	// for other consistencies, record snapshot after whole tables are locked. The recorded meta info is exactly the locked snapshot.
 	if conf.Consistency != "lock" {
@@ -157,6 +160,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 			log.Info("get global metadata failed", zap.Error(err))
 		}
 		if err = prepareTableListToDump(conf, conn); err != nil {
+			connectPool.releaseConn(conn)
 			return err
 		}
 		connectPool.releaseConn(conn)
@@ -214,10 +218,10 @@ func dumpDatabases(ctx context.Context, conf *Config, connectPool *connectionsPo
 			table := table
 			conn := connectPool.getConn()
 			tableDataIRArray, err := dumpTable(ctx, conf, conn, dbName, table, writer)
+			connectPool.releaseConn(conn)
 			if err != nil {
 				return err
 			}
-			connectPool.releaseConn(conn)
 			for _, tableIR := range tableDataIRArray {
 				tableIR := tableIR
 				g.Go(func() error {
