@@ -323,10 +323,10 @@ type IndexLookUpExecutor struct {
 	dagPB   *tipb.DAGRequest
 	startTS uint64
 	// handleIdx is the index of handle, which is only used for case of keeping order.
-	handleIdx    []int
-	handleCols   []*expression.Column
+	handleIdx       []int
+	handleCols      []*expression.Column
 	primaryKeyIndex *model.IndexInfo
-	tableRequest *tipb.DAGRequest
+	tableRequest    *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 	*dataReaderBuilder

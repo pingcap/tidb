@@ -1117,7 +1117,7 @@ func TruncateIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, ind
 			if v.Kind() == types.KindBytes {
 				v.SetBytes(v.GetBytes())
 			}
-		} else if len(v.GetBytes()) > idxCol.Length {
+		} else if !isUTF8Charset && len(v.GetBytes()) > idxCol.Length {
 			v.SetBytes(v.GetBytes()[:idxCol.Length])
 			if v.Kind() == types.KindString {
 				v.SetString(v.GetString(), colInfo.Collate)
