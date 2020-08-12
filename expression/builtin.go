@@ -108,8 +108,22 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	return bf, nil
 }
 
+var (
+	// allowDeriveNoneFunction is the functions allow two incompatible collations which has same charset derive to CoercibilityNone
+	allowDeriveNoneFunction = map[string]struct{}{
+		"concat": {}, "concat_ws": {}, "reverse": {}, "replace": {}, "insert": {}, "lower": {},
+		"upper": {}, "left": {}, "right": {}, "sub_str": {}, "substr_index": {}, "trim": {},
+		"current_user": {}, "elt": {}, "make_set": {}, "repeat": {}, "rpad": {}, "lpad": {},
+		"export_set": {},
+	}
+)
+
 func checkIllegalMixCollation(funcName string, args []Expression) error {
 	firstExplicitCollation := ""
+	curCollation := ""
+	curCoercibility := CoercibilityIgnorable
+	conflictCollation := make([]string, 2) // record conflict collation for better error message if needed
+	noConflict := true
 	for _, arg := range args {
 		if arg.GetType().EvalType() != types.ETString {
 			continue
@@ -120,8 +134,28 @@ func checkIllegalMixCollation(funcName string, args []Expression) error {
 			} else if firstExplicitCollation != arg.GetType().Collate {
 				return collate.ErrIllegalMixCollation.GenWithStackByArgs(firstExplicitCollation, "EXPLICIT", arg.GetType().Collate, "EXPLICIT", funcName)
 			}
+		} else if arg.Coercibility() < curCoercibility {
+			curCoercibility, curCollation = arg.Coercibility(), arg.GetType().Collate
+		} else if arg.Coercibility() == curCoercibility && curCollation != arg.GetType().Collate {
+			p1 := collationPriority[curCollation]
+			p2 := collationPriority[arg.GetType().Collate]
+
+			// same priority means this two collation is incompatible
+			// it might derive coercibility to CoercibilityNone
+			if p1 == p2 {
+				_, noConflict = allowDeriveNoneFunction[funcName]
+				conflictCollation[0], conflictCollation[1] = curCollation, arg.GetType().Collate
+			} else if p1 < p2 {
+				noConflict = true
+				curCollation = arg.GetType().Collate
+			}
 		}
 	}
+
+	if !noConflict {
+		return collate.ErrIllegalMixCollation.GenWithStackByArgs(conflictCollation[0], "IMPLICIT", conflictCollation[1], "IMPLICIT", funcName)
+	}
+
 	return nil
 }
 

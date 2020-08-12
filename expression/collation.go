@@ -117,8 +117,10 @@ var (
 		charset.CollationASCII:   1,
 		charset.CollationLatin1:  2,
 		"utf8_general_ci":        3,
+		"utf8_unicode_ci":        3,
 		charset.CollationUTF8:    4,
 		"utf8mb4_general_ci":     5,
+		"utf8mb4_unicode_ci":     5,
 		charset.CollationUTF8MB4: 6,
 		charset.CollationBin:     7,
 	}
@@ -144,9 +146,21 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 		return CoercibilityNumeric
 	}
 	coer := CoercibilityIgnorable
+	collation := ""
 	for _, arg := range sf.GetArgs() {
 		if arg.Coercibility() < coer {
-			coer = arg.Coercibility()
+			coer, collation = arg.Coercibility(), arg.GetType().Collate
+		} else if arg.Coercibility() == coer && collation != arg.GetType().Collate {
+			p1, ok1 := collationPriority[collation]
+			p2, ok2 := collationPriority[arg.GetType().Collate]
+			if ok1 && ok2 {
+				if p1 == p2 {
+					coer = CoercibilityNone
+					collation = getBinCollation(arg.GetType().Charset)
+				} else if p1 < p2 {
+					collation = arg.GetType().Collate
+				}
+			}
 		}
 	}
 	return coer
@@ -197,6 +211,11 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 			continue
 		}
 		if priority <= curCollationPriority {
+			if priority == curCollationPriority && dstCollation != ft.Collate {
+				dstCollation = getBinCollation(dstCharset)
+				curCoer = CoercibilityNone
+				curCollationPriority = collationPriority[dstCollation]
+			}
 			continue
 		}
 		curCollationPriority, dstCharset, dstCollation = priority, ft.Charset, ft.Collate
@@ -205,4 +224,15 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 		dstCharset, dstCollation = charset.CharsetBin, charset.CollationBin
 	}
 	return
+}
+
+func getBinCollation(cs string) string {
+	switch cs {
+	case charset.CharsetUTF8:
+		return charset.CollationUTF8
+	case charset.CharsetUTF8MB4:
+		return charset.CollationUTF8MB4
+	}
+
+	panic("never reachable")
 }
