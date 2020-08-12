@@ -282,7 +282,7 @@ func setColumnsState(columnInfos []*model.ColumnInfo, state model.SchemaState) {
 	}
 }
 
-func setIndicesState(tableInfo *model.TableInfo, indexInfos []*model.IndexInfo, state model.SchemaState) {
+func setIndicesState(indexInfos []*model.IndexInfo, state model.SchemaState) {
 	for _, indexInfo := range indexInfos {
 		indexInfo.State = state
 	}
@@ -402,9 +402,7 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
 		setColumnsState(colInfos, model.StateWriteOnly)
-		if len(idxInfos) > 0 {
-			setIndicesState(tblInfo, idxInfos, model.StateWriteOnly)
-		}
+		setIndicesState(idxInfos, model.StateWriteOnly)
 		for _, colInfo := range colInfos {
 			err = checkDropColumnForStatePublic(tblInfo, colInfo)
 			if err != nil {
@@ -416,22 +414,17 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		setColumnsState(colInfos, model.StateDeleteOnly)
-		if len(idxInfos) > 0 {
-			setIndicesState(tblInfo, idxInfos, model.StateDeleteOnly)
-		}
+		setIndicesState(idxInfos, model.StateDeleteOnly)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
 		setColumnsState(colInfos, model.StateDeleteReorganization)
-		if len(idxInfos) > 0 {
-			setIndicesState(tblInfo, idxInfos, model.StateDeleteReorganization)
-		}
+		setIndicesState(idxInfos, model.StateDeleteReorganization)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
-		indexIDs := make([]int64, 0, len(idxInfos))
 		if len(idxInfos) > 0 {
 			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 			for _, idx := range tblInfo.Indices {
@@ -440,11 +433,9 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 				}
 			}
 			tblInfo.Indices = newIndices
-			for _, indexInfo := range idxInfos {
-				indexIDs = append(indexIDs, indexInfo.ID)
-			}
 		}
 
+		indexIDs := indexInfosToIDList(idxInfos)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-delCount]
 		setColumnsState(colInfos, model.StateNone)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
@@ -542,9 +533,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
 		colInfo.State = model.StateWriteOnly
-		if len(idxInfos) > 0 {
-			setIndicesState(tblInfo, idxInfos, model.StateWriteOnly)
-		}
+		setIndicesState(idxInfos, model.StateWriteOnly)
 		err = checkDropColumnForStatePublic(tblInfo, colInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -554,22 +543,17 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		colInfo.State = model.StateDeleteOnly
-		if len(idxInfos) > 0 {
-			setIndicesState(tblInfo, idxInfos, model.StateDeleteOnly)
-		}
+		setIndicesState(idxInfos, model.StateDeleteOnly)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
 		colInfo.State = model.StateDeleteReorganization
-		if len(idxInfos) > 0 {
-			setIndicesState(tblInfo, idxInfos, model.StateDeleteReorganization)
-		}
+		setIndicesState(idxInfos, model.StateDeleteReorganization)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
-		indexIDs := make([]int64, 0, len(idxInfos))
 		if len(idxInfos) > 0 {
 			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 			for _, idx := range tblInfo.Indices {
@@ -578,11 +562,9 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 				}
 			}
 			tblInfo.Indices = newIndices
-			for _, indexInfo := range idxInfos {
-				indexIDs = append(indexIDs, indexInfo.ID)
-			}
 		}
 
+		indexIDs := indexInfosToIDList(idxInfos)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
@@ -1038,4 +1020,12 @@ func indexInfoContains(idxID int64, idxInfos []*model.IndexInfo) bool {
 		}
 	}
 	return false
+}
+
+func indexInfosToIDList(idxInfos []*model.IndexInfo) []int64 {
+	ids := make([]int64, 0, len(idxInfos))
+	for _, idxInfo := range idxInfos {
+		ids = append(ids, idxInfo.ID)
+	}
+	return ids
 }
