@@ -1,8 +1,11 @@
 package executor_test
 
 import (
+	"strings"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -45,4 +48,19 @@ func (s *testSuite9) TestIssue18068(c *C) {
 	// Do not hang in index merge join when the second and third execute.
 	tk.MustExec("select  /*+ inl_merge_join(s)*/ 1 from t join s on t.a = s.a limit 1")
 	tk.MustExec("select  /*+ inl_merge_join(s)*/ 1 from t join s on t.a = s.a limit 1")
+}
+
+func (s *testSuite9) TestIssue18631(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, c int, d int, primary key(a,b,c))")
+	tk.MustExec("create table t2(a int, b int, c int, d int, primary key(a,b,c))")
+	tk.MustExec("insert into t1 values(1,1,1,1),(2,2,2,2),(3,3,3,3)")
+	tk.MustExec("insert into t2 values(1,1,1,1),(2,2,2,2)")
+	firstOperator := tk.MustQuery("explain select /*+ inl_merge_join(t1,t2) */ * from t1 left join t2 on t1.a = t2.a and t1.c = t2.c and t1.b = t2.b order by t1.a desc").Rows()[0][0].(string)
+	c.Assert(strings.Index(firstOperator, plancodec.TypeIndexMergeJoin), Equals, 0)
+	tk.MustQuery("select /*+ inl_merge_join(t1,t2) */ * from t1 left join t2 on t1.a = t2.a and t1.c = t2.c and t1.b = t2.b order by t1.a desc").Check(testkit.Rows(
+		"3 3 3 3 <nil> <nil> <nil> <nil>",
+		"2 2 2 2 2 2 2 2",
+		"1 1 1 1 1 1 1 1"))
 }

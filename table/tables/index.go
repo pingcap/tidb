@@ -87,14 +87,20 @@ type index struct {
 	phyTblID               int64
 }
 
-func (c *index) checkContainNonBinaryString() bool {
-	for _, idxCol := range c.idxInfo.Columns {
-		col := c.tblInfo.Columns[idxCol.Offset]
+// ContainsNonBinaryString checks whether the index columns contains non binary string column, the input
+// colInfos should be column info correspond to the table contains the index.
+func ContainsNonBinaryString(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+	for _, idxCol := range idxCols {
+		col := colInfos[idxCol.Offset]
 		if col.EvalType() == types.ETString && !mysql.HasBinaryFlag(col.Flag) {
 			return true
 		}
 	}
 	return false
+}
+
+func (c *index) checkContainNonBinaryString() bool {
+	return ContainsNonBinaryString(c.idxInfo.Columns, c.tblInfo.Columns)
 }
 
 // NewIndex builds a new Index object.
@@ -201,17 +207,21 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 //		|     Length: 1    | 1            | 2           | size(CHandle) | 1
 //		|
 //		+--Unique Integer Handle
+//		|  |
+//		|  +--Without Untouched Flag:
+//		|  |
+//		|  |  Layout: Handle
+//		|  |  Length:   8
+//		|  |
+//		|  +--With Untouched Flag:
 //		|
-//		+--Without Untouched Flag:
-//		|
-//		|  Layout: Handle
-//		|  Length:   8
-//		|
-//		+--With Untouched Flag:
-//
-//		Layout: Handle | Flag
-//		Length:   8    |  1
-func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
+//		|     Layout: Handle | Flag
+//		|     Length:   8    |  1
+//		+
+func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
+	if c.Meta().Unique {
+		us.CacheIndexName(c.phyTblID, c.Meta().ID, c.Meta().Name.String())
+	}
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {
 		fn(&opt)
@@ -233,8 +243,8 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		// If the index kv was untouched(unchanged), and the key/value already exists in mem-buffer,
 		// should not overwrite the key with un-commit flag.
 		// So if the key exists, just do nothing and return.
-		_, err = txn.GetMemBuffer().Get(ctx, key)
-		if err == nil {
+		v, err := txn.GetMemBuffer().Get(ctx, key)
+		if err == nil && len(v) != 0 {
 			return nil, nil
 		}
 	}
@@ -248,7 +258,7 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 	}
 
 	if !distinct || skipCheck || opt.Untouched {
-		err = rm.Set(key, idxVal)
+		err = us.GetMemBuffer().Set(key, idxVal)
 		return nil, err
 	}
 
@@ -262,11 +272,20 @@ func (c *index) Create(sctx sessionctx.Context, rm kv.RetrieverMutator, indexedV
 		ctx = context.TODO()
 	}
 
-	value, err := rm.Get(ctx, key)
-	if err != nil {
-		if kv.IsErrNotFound(err) {
-			err = rm.Set(key, idxVal)
-			return nil, err
+	var value []byte
+	if sctx.GetSessionVars().LazyCheckKeyNotExists() {
+		value, err = us.GetMemBuffer().Get(ctx, key)
+	} else {
+		value, err = us.Get(ctx, key)
+	}
+	if err != nil && !kv.IsErrNotFound(err) {
+		return nil, err
+	}
+	if err != nil || len(value) == 0 {
+		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
+			err = us.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
+		} else {
+			err = us.GetMemBuffer().Set(key, idxVal)
 		}
 		return nil, err
 	}
@@ -289,8 +308,8 @@ func (c *index) Delete(sc *stmtctx.StatementContext, m kv.Mutator, indexedValues
 }
 
 // Drop removes the KV index from store.
-func (c *index) Drop(rm kv.RetrieverMutator) error {
-	it, err := rm.Iter(c.prefix, c.prefix.PrefixNext())
+func (c *index) Drop(us kv.UnionStore) error {
+	it, err := us.Iter(c.prefix, c.prefix.PrefixNext())
 	if err != nil {
 		return err
 	}
@@ -301,7 +320,7 @@ func (c *index) Drop(rm kv.RetrieverMutator) error {
 		if !it.Key().HasPrefix(c.prefix) {
 			break
 		}
-		err := rm.Delete(it.Key())
+		err := us.GetMemBuffer().Delete(it.Key())
 		if err != nil {
 			return err
 		}
@@ -343,13 +362,13 @@ func (c *index) SeekFirst(r kv.Retriever) (iter table.IndexIterator, err error) 
 	return &indexIter{it: it, idx: c, prefix: c.prefix}, nil
 }
 
-func (c *index) Exist(sc *stmtctx.StatementContext, rm kv.RetrieverMutator, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
+func (c *index) Exist(sc *stmtctx.StatementContext, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
 	key, distinct, err := c.GenIndexKey(sc, indexedValues, h, nil)
 	if err != nil {
 		return false, nil, err
 	}
 
-	value, err := rm.Get(context.TODO(), key)
+	value, err := us.Get(context.TODO(), key)
 	if kv.IsErrNotFound(err) {
 		return false, nil, nil
 	}

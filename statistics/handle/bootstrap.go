@@ -326,6 +326,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	cache.initMemoryUsage()
 	h.updateStatsCache(cache)
 	return nil
 }

@@ -89,6 +89,8 @@ func CompatibleCollate(collate1, collate2 string) bool {
 		return true
 	} else if (collate1 == "utf8mb4_bin" || collate1 == "utf8_bin") && (collate2 == "utf8mb4_bin" || collate2 == "utf8_bin") {
 		return true
+	} else if (collate1 == "utf8mb4_unicode_ci" || collate1 == "utf8_unicode_ci") && (collate2 == "utf8mb4_unicode_ci" || collate2 == "utf8_unicode_ci") {
+		return true
 	} else {
 		return collate1 == collate2
 	}
@@ -216,7 +218,8 @@ func truncateTailingSpace(str string) string {
 
 // IsCICollation returns if the collation is case-sensitive
 func IsCICollation(collate string) bool {
-	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci"
+	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
+		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci"
 }
 
 func init() {
@@ -237,4 +240,8 @@ func init() {
 	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_general_ci"])] = &generalCICollator{}
 	newCollatorMap["utf8_general_ci"] = &generalCICollator{}
 	newCollatorIDMap[int(mysql.CollationNames["utf8_general_ci"])] = &generalCICollator{}
+	newCollatorMap["utf8mb4_unicode_ci"] = &unicodeCICollator{}
+	newCollatorIDMap[int(mysql.CollationNames["utf8mb4_unicode_ci"])] = &unicodeCICollator{}
+	newCollatorMap["utf8_unicode_ci"] = &unicodeCICollator{}
+	newCollatorIDMap[int(mysql.CollationNames["utf8_unicode_ci"])] = &unicodeCICollator{}
 }
