@@ -113,6 +113,7 @@ var (
 	}
 
 	// collationPriority is the priority when infer the result collation, the priority of collation a > b iff collationPriority[a] > collationPriority[b]
+	// collation a and b are incompatible if collationPriority[a] = collationPriority[b]
 	collationPriority = map[string]int{
 		charset.CollationASCII:   1,
 		charset.CollationLatin1:  2,
