@@ -59,8 +59,6 @@ func interestingGoroutines() (gs []string) {
 		"github.com/pingcap/goleveldb/leveldb.(*DB).compactionError",
 		"github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain",
 		"go.etcd.io/etcd/v3/pkg/logutil.(*MergeLogger).outputLoop",
-		// import PD will introduce another MergeLogger
-		"go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop",
 		"oracles.(*pdOracle).updateTS",
 		"tikv.(*tikvStore).runSafePointChecker",
 		"tikv.(*RegionCache).asyncCheckAndResolveLoop",
