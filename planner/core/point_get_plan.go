@@ -711,7 +711,6 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		// Take partition selection into consideration.
 		if len(tblName.PartitionNames) > 0 {
 			if !partitionNameInSet(partitionInfo.Name, tblName.PartitionNames) {
-				isTableDual = true
 				p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 				p.IsTableDual = true
 				return p
