@@ -5076,3 +5076,38 @@ func (s *testIntegrationSuite) TestGenerateColumnIndexCase(c *C) {
 	tk.MustExec("CREATE TABLE t0(c0 int, c1 int as (case when c0 > 0 then 0 else -1 end))")
 	tk.MustExec("alter table t0 add index idx(c1);")
 }
+
+func (s *testIntegrationSuite) TestIssue19012(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`id` int(11) NOT NULL AUTO_INCREMENT," +
+		"	`province` varchar(20) COLLATE utf8mb4_bin DEFAULT NULL," +
+		"	`city` varchar(20) COLLATE utf8mb4_bin DEFAULT NULL," +
+		"	`s1should_count` int(11) DEFAULT NULL," +
+		"	`s1complete_count` int(11) DEFAULT NULL," +
+		"	PRIMARY KEY (`id`)" +
+		");")
+	for i := 0; i < 5; i++ {
+		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "徐州市", -1, 8);`)
+		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "无锡市", 1, 6);`)
+		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "盐城市", 1, 6);`)
+		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "南京市", 1, 9);`)
+		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "南通市", 1, 9);`)
+		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "泰州市", 1, 9);`)
+		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "连云港市", 1, 9);`)
+		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "宿迁市", 1, 9);`)
+		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "淮安市", 1, 9);`)
+		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "扬州市", 1, 9);`)
+		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "苏州市", 1, 9);`)
+		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "常州市", 1, 9);`)
+		tk.MustExec(`insert into t(province, city, s1should_count, s1complete_count) values("江苏省", "镇江市", 1, 9);`)
+	}
+	tk.Se.GetSessionVars().MaxChunkSize = 1
+	tk.Se.GetSessionVars().InitChunkSize = 1
+	rs := tk.MustQuery(`select a.province, a.city, case when sum(s1should_count) = 0 then 0 else sum(s1complete_count)/sum(s1should_count) end as aa from t a where a.province = "江苏省" group by a.province, a.city
+union all 
+select a.province, a.province city, case when sum(s1should_count) = 0 then 0 else sum(s1complete_count)/sum(s1should_count) end as aa from t a where a.province = "江苏省" group by a.province, a.province;`)
+	rs.Sort().Check(testkit.Rows("江苏省 南京市 9.0000", "江苏省 南通市 9.0000", "江苏省 宿迁市 9.0000", "江苏省 常州市 9.0000", "江苏省 徐州市 -8.0000", "江苏省 扬州市 9.0000", "江苏省 无锡市 6.0000", "江苏省 江苏省 10.0000", "江苏省 泰州市 9.0000", "江苏省 淮安市 9.0000", "江苏省 盐城市 6.0000", "江苏省 苏州市 9.0000", "江苏省 连云港市 9.0000", "江苏省 镇江市 9.0000"))
+}
