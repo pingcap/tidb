@@ -45,15 +45,15 @@ const numShards = 1 << byteShards
 
 // statsCache caches Regions loaded from PD.
 type ristrettoStatsCache struct {
-	mu          sync.Mutex
-	cache       *cache.Cache
-	memCapacity int64
-	version     atomic.Value
-	memTracker  *memory.Tracker // track memory usage.
-	tablesShard [numShards]tableShard
+	mu           sync.Mutex
+	cache        *cache.Cache
+	memCapacity  int64
+	version      atomic.Value
+	memTracker   *memory.Tracker // track memory usage.
+	tablesShards [numShards]tableShard
 }
 
-//
+// tableShard is a shard of table
 type tableShard struct {
 	data map[int64]*statistics.Table
 	sync.Mutex
@@ -61,7 +61,7 @@ type tableShard struct {
 
 // Set set key with value
 func (sc *ristrettoStatsCache) Set(key int64, value *statistics.Table) {
-	shard := &sc.tablesShard[key&(numShards-1)]
+	shard := &sc.tablesShards[key&(numShards-1)]
 	shard.Lock()
 	defer shard.Unlock()
 	shard.data[key>>byteShards] = value
@@ -69,7 +69,7 @@ func (sc *ristrettoStatsCache) Set(key int64, value *statistics.Table) {
 
 // Get get key with value table
 func (sc *ristrettoStatsCache) Get(key int64) (*statistics.Table, bool) {
-	shard := &sc.tablesShard[key&(numShards-1)]
+	shard := &sc.tablesShards[key&(numShards-1)]
 	shard.Lock()
 	defer shard.Unlock()
 	data, ok := shard.data[key>>byteShards]
@@ -78,7 +78,7 @@ func (sc *ristrettoStatsCache) Get(key int64) (*statistics.Table, bool) {
 
 // Del delete key
 func (sc *ristrettoStatsCache) Del(key int64) {
-	shard := &sc.tablesShard[key&(numShards-1)]
+	shard := &sc.tablesShards[key&(numShards-1)]
 	shard.Lock()
 	defer shard.Unlock()
 	delete(shard.data, key>>byteShards)
@@ -112,8 +112,8 @@ func newRistrettoStatsCache(memoryLimit int64) *ristrettoStatsCache {
 		memCapacity: memoryLimit,
 		memTracker:  memory.NewTracker(stringutil.StringerStr("statsCache"), -1),
 	}
-	for i := range sc.tablesShard {
-		sc.tablesShard[i].data = make(map[int64]*statistics.Table)
+	for i := range sc.tablesShards {
+		sc.tablesShards[i].data = make(map[int64]*statistics.Table)
 	}
 	sc.version.Store(uint64(0))
 	cache, err := cache.NewCache(&cache.Config{
@@ -174,10 +174,10 @@ func (sc *ristrettoStatsCache) SetBytesLimit(bytesLimit int64) {
 func (sc *ristrettoStatsCache) Clear() {
 	sc.cache.Clear()
 	sc.version.Store(uint64(0))
-	for i := range sc.tablesShard {
-		sc.tablesShard[i].Lock()
-		sc.tablesShard[i].data = make(map[int64]*statistics.Table)
-		sc.tablesShard[i].Unlock()
+	for i := range sc.tablesShards {
+		sc.tablesShards[i].Lock()
+		sc.tablesShards[i].data = make(map[int64]*statistics.Table)
+		sc.tablesShards[i].Unlock()
 	}
 	sc.memTracker = memory.NewTracker(stringutil.StringerStr("statsCache"), -1)
 

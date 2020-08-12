@@ -208,6 +208,7 @@ func (s *testStatsSuite) TestManyTableChange(c *C) {
 		c.Assert(h.LoadNeededHistograms(), IsNil)
 		time.Sleep(10 * time.Millisecond)
 		var statsTblnew *statistics.Table
+		//lookup more time to guarantee table in the cache
 		for j := 0; j < 10; j++ {
 			statsTblnew = h.GetTableStats(tableInfo)
 		}
