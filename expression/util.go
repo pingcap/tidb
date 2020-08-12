@@ -255,6 +255,8 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 	return false, expr
 }
 
+// checkCollationStrictness check collation strictness-ship between `coll` and `newFuncColl`
+// return true iff `newFuncColl` is not weaker than `coll`
 func checkCollationStrictness(coll, newFuncColl string) bool {
 	collGroupID, ok1 := CollationStrictnessGroup[coll]
 	newFuncCollGroupID, ok2 := CollationStrictnessGroup[newFuncColl]
