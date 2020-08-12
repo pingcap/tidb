@@ -244,13 +244,13 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, num int) ([]strin
 	return log, err
 }
 
-func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, maxRow int) {
+func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
 	//to limit the num of go routine
 	var wg sync.WaitGroup
 	ch := make(chan int, sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency())
 	defer close(ch)
 	for {
-		log, err := e.getBatchLog(reader, maxRow)
+		log, err := e.getBatchLog(reader, logNum)
 		wg.Add(1)
 		ch <- 1
 		if err != nil {
@@ -260,15 +260,14 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 				<-ch
 			}()
 			break
-		} else {
-			go func() {
-				defer wg.Done()
-				e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(sctx, log), err}
-				<-ch
-			}()
-			if e.fileIdx >= len(e.files) {
-				break
-			}
+		}
+		go func() {
+			defer wg.Done()
+			e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(sctx, log), err}
+			<-ch
+		}()
+		if e.fileIdx >= len(e.files) {
+			break
 		}
 		select {
 		case <-ctx.Done():
