@@ -75,12 +75,12 @@ type InsertValues struct {
 	lazyFillAutoID bool
 	memTracker     *memory.Tracker
 
-	stats    *RuntimeStatsWithRpcStats
+	stats    *RuntimeStatsWithRPCStats
 	snapshot kv.Snapshot
 }
 
-//keep executor runtime info like rpcstats
-type RuntimeStatsWithRpcStats struct {
+//RuntimeStatsWithRPCStats keeps executor runtime info like rpcstats
+type RuntimeStatsWithRPCStats struct {
 	*execdetails.BasicRuntimeStats
 	*tikv.SnapshotRuntimeStats
 }
@@ -955,7 +955,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	e.snapshot = txn.GetSnapshot()
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
-		e.stats = &RuntimeStatsWithRpcStats{
+		e.stats = &RuntimeStatsWithRPCStats{
 			BasicRuntimeStats:    e.runtimeStats,
 			SnapshotRuntimeStats: snapshotStats,
 		}
@@ -1034,8 +1034,8 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 	return nil
 }
 
-//fetch executor runtime info like rpcstats
-func (e *RuntimeStatsWithRpcStats) String() string {
+//fetches executor runtime info like rpcstats
+func (e *RuntimeStatsWithRPCStats) String() string {
 	var basic, rpcStatsStr string
 	if e.BasicRuntimeStats != nil {
 		basic = e.BasicRuntimeStats.String()
