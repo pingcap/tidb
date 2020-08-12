@@ -76,16 +76,16 @@ func (s *testSuiteWithData) TestIndexJoinOnSinglePartitionTable(c *C) {
 	tk.MustExec("insert into t2 values (1, 'Bob')")
 	sql := "select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 	tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
-	rows :=	s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-	c.Assert(strings.Index(rows[0],"IndexMergeJoin"), Equals, 0)
+	rows := s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+	c.Assert(strings.Index(rows[0], "IndexMergeJoin"), Equals, 0)
 
 	sql = "select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 	tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
 	rows = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-	c.Assert(strings.Index(rows[0],"IndexHashJoin"), Equals, 0)
+	c.Assert(strings.Index(rows[0], "IndexHashJoin"), Equals, 0)
 
 	sql = "select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 	tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
 	rows = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-	c.Assert(strings.Index(rows[0],"IndexJoin"), Equals, 0)
+	c.Assert(strings.Index(rows[0], "IndexJoin"), Equals, 0)
 }
