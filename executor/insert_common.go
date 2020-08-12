@@ -1004,9 +1004,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 	}
-	if e.runtimeStats != nil {
-		e.snapshot.DelOption(kv.CollectRuntimeStats)
-	}
+	defer e.snapshot.DelOption(kv.CollectRuntimeStats)
 	return nil
 }
 
