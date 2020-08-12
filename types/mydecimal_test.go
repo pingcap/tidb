@@ -573,6 +573,13 @@ func (s *testMyDecimalSuite) TestToBinFromBin(c *C) {
 		{"000000000.01", 7, 3, "0.010", nil},
 		{"123.4", 10, 2, "123.40", nil},
 		{"1000", 3, 0, "0", ErrOverflow},
+		{"0.1", 1, 1, "0.1", nil},
+		{"0.100", 1, 1, "0.1", ErrTruncated},
+		{"0.1000", 1, 1, "0.1", ErrTruncated},
+		{"0.10000", 1, 1, "0.1", ErrTruncated},
+		{"0.100000", 1, 1, "0.1", ErrTruncated},
+		{"0.1000000", 1, 1, "0.1", ErrTruncated},
+		{"0.10", 1, 1, "0.1", ErrTruncated},
 	}
 	for _, ca := range tests {
 		var dec MyDecimal

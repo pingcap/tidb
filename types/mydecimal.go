@@ -1228,7 +1228,7 @@ func (d *MyDecimal) WriteBin(precision, frac int, buf []byte) ([]byte, error) {
 		}
 	}
 
-	if fracSize < fracSizeFrom {
+	if fracSize < fracSizeFrom || (fracSize == fracSizeFrom && (trailingDigits < trailingDigitsFrom || wordsFrac < wordsFrac)) {
 		wordsFracFrom = wordsFrac
 		trailingDigitsFrom = trailingDigits
 		err = ErrTruncated
