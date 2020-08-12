@@ -25,7 +25,9 @@ import (
 	planutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/zap"
 )
 
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
@@ -284,17 +286,9 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 		}
 	}
 
-	// Now we try to cover those still not covered DNF conditions using independence assumption.
+	// Now we try to cover those still not covered DNF conditions using independence assumption,
+	// i.e., sel(condA or condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
 	if mask > 0 {
-		// Firstly collect single column index information.
-		colID2SingleColIdxID := make(map[int64]int64)
-		colID2SingleColIdxLen := make(map[int64]int)
-		for idxID, cols := range coll.Idx2ColumnIDs {
-			if len(cols) == 1 {
-				colID2SingleColIdxID[cols[0]] = idxID
-				colID2SingleColIdxLen[cols[0]] = coll.Indices[idxID].Info.Columns[0].Length
-			}
-		}
 		for i := range remainedExprs {
 			if mask&(1<<uint64(i)) == 0 {
 				continue
@@ -305,38 +299,32 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 				continue
 			}
 			dnfItems := expression.FlattenDNFConditions(scalarCond)
-			ranges, cols, err := ranger.DetachSimpleDNFCondAndBuildRangeForCols(ctx, dnfItems, colID2SingleColIdxLen)
-			if err != nil {
-				return 0, nil, errors.Trace(err)
-			}
+			dnfItems = ranger.MergeDNFItems4Col(ctx, dnfItems)
+
 			selectivity := 0.0
-			for j := range ranges {
-				cnt := 0.0
-				colID := cols[j].UniqueID
-				singleColIdxID, ok := colID2SingleColIdxID[colID]
-				if ok {
-					cnt, err = coll.GetRowCountByIndexRanges(sc, singleColIdxID, ranges[j])
-					if err != nil {
-						return 0, nil, errors.Trace(err)
-					}
-				} else if coll.Columns[colID].IsHandle {
-					cnt, err = coll.GetRowCountByIntColumnRanges(sc, colID, ranges[j])
-					if err != nil {
-						return 0, nil, errors.Trace(err)
-					}
-				} else {
-					cnt, err = coll.GetRowCountByColumnRanges(sc, colID, ranges[j])
-					if err != nil {
-						return 0, nil, errors.Trace(err)
-					}
+			for _, cond := range dnfItems {
+				scalar, ok := cond.(*expression.ScalarFunction)
+				if !ok {
+					selectivity = 0.0
+					break
 				}
 
-				curSelectivity := cnt / float64(coll.Count)
+				var cnfItems []expression.Expression
+				if scalar.FuncName.L == ast.LogicAnd {
+					cnfItems = expression.FlattenCNFConditions(scalar)
+				} else {
+					cnfItems = append(cnfItems, scalar)
+				}
 
-				// Assuming col A and col B are independent,
-				// we can calculate the selectivity by sel(condA OR condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
+				curSelectivity, _, err := coll.Selectivity(ctx, cnfItems, nil)
+				if err != nil {
+					logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+					selectivity = selectionFactor
+				}
+
 				selectivity = selectivity + curSelectivity - selectivity*curSelectivity
 			}
+
 			if selectivity != 0 {
 				ret *= selectivity
 				mask &^= 1 << uint64(i)

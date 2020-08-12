@@ -426,53 +426,34 @@ func DetachCondsForColumn(sctx sessionctx.Context, conds []expression.Expression
 	return detachColumnCNFConditions(sctx, conds, checker)
 }
 
-// DetachSimpleDNFCondAndBuildRangeForCols detaches access conditions and build range for every single column.
-// Please make sure top level is DNF form.
-// Currently it's only used by selectivity computing to handle uncovered DNF conditions.
-func DetachSimpleDNFCondAndBuildRangeForCols(sctx sessionctx.Context, conds []expression.Expression,
-	colID2SingleColIdxLen map[int64]int) (ranges [][]*Range, cols []*expression.Column, err error) {
-	col2range := make(map[*expression.Column][]point)
-	sc := sctx.GetSessionVars().StmtCtx
-	rb := builder{sc: sc}
-	for i := range conds {
-		scalar, ok := conds[i].(*expression.ScalarFunction)
-		if !ok {
-			return nil, nil, nil
-		}
-		col, ok := scalar.GetArgs()[0].(*expression.Column)
-		if !ok {
-			col, ok = scalar.GetArgs()[1].(*expression.Column)
-		}
-		if !ok {
-			return nil, nil, nil
+// MergeDNFItems4Col receives a slice of DNF conditions, merges some of them which can be built into ranges on a single column, then returns.
+// For example, [a > 5, b > 6, c > 7, a = 1, b > 3] will become [a > 5 or a = 1, b > 6 or b > 3, c > 7].
+func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression) []expression.Expression {
+	mergedDNFItems := make([]expression.Expression, 0, len(dnfItems))
+	col2DNFItems := make(map[int64][]expression.Expression)
+	for _, dnfItem := range dnfItems {
+		cols := expression.ExtractColumns(dnfItem)
+		// If this condition contains multiple columns, we can't merge it.
+		if len(cols) != 1 {
+			mergedDNFItems = append(mergedDNFItems, dnfItem)
+			continue
 		}
 
-		length, ok := colID2SingleColIdxLen[col.UniqueID]
-		if !ok {
-			// If this column doesn't have single column index on it, we switch to stats on this column.
-			length = types.UnspecifiedLength
-		}
+		uniqueID := cols[0].UniqueID
 		checker := &conditionChecker{
-			// Each DNF item should only contain a single column.
-			colUniqueID: col.UniqueID,
-			length:      length,
+			colUniqueID: uniqueID,
+			length:      types.UnspecifiedLength,
 		}
-		if !checker.check(scalar) {
-			return nil, nil, nil
+		// If we can't use this condition to build range, we can't merge it.
+		if !checker.check(dnfItem) {
+			mergedDNFItems = append(mergedDNFItems, dnfItem)
+			continue
 		}
-		if _, ok := col2range[col]; !ok {
-			col2range[col] = rb.build(conds[i])
-		} else {
-			col2range[col] = rb.union(col2range[col], rb.build(conds[i]))
-		}
+
+		col2DNFItems[uniqueID] = append(col2DNFItems[uniqueID], dnfItem)
 	}
-	for col, points := range col2range {
-		cols = append(cols, col)
-		curRange, err := points2Ranges(sc, points, newFieldType(col.RetType))
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		ranges = append(ranges, curRange)
+	for _, items := range col2DNFItems {
+		mergedDNFItems = append(mergedDNFItems, expression.ComposeDNFCondition(ctx, items...))
 	}
-	return
+	return mergedDNFItems
 }
