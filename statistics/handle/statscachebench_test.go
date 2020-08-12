@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,58 +22,40 @@ import (
 	"testing"
 
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
 )
 
-type benchHelper struct {
-	ctx sessionctx.Context
-}
-
-func (h *benchHelper) init() {
-}
-
-func writeTable() {
-
-}
-
 type queryType int8
 
+type statsCacheTestCase struct {
+	queryType      [][]queryType
+	queryTables    [][]int64
+	tables         []*statistics.Table
+	memoryLimit    int64
+	concurrency    int
+	numClient      int
+	tableSize      int
+	queryPerClient uint64
+}
+
 const (
-	//typeInsert type
 	typeInsert queryType = iota
-	//typeLookUp simple type
 	typeLookUp
 )
 
-func BenchmarkStatisticCache(b *testing.B) {
-	numClients := []int{2, 8, 32, 64}
-	tableSizes := []int{20, 100, 1000}
-	for _, numClient := range numClients {
-		for _, tableSize := range tableSizes {
-			benchmarkStatisticCache(b, numClient, tableSize)
-		}
+func defaultstatsCacheTestCase(numClient int, tableSize int, memoryLimit int64, queryPerClient uint64) *statsCacheTestCase {
+	cas := &statsCacheTestCase{
+		numClient:      numClient,
+		tableSize:      tableSize,
+		memoryLimit:    memoryLimit,
+		queryPerClient: queryPerClient,
 	}
-
-}
-func getType() queryType {
-	rnd := rand.Int() % 100
-	if rnd < 25 {
-		return typeInsert
-	} else {
-		return typeLookUp
-	}
-}
-
-func benchmarkStatisticCache(b *testing.B, numClient int, tableSize int) {
-	BaseTestName := "statsCacheTest" + "-numClient" + fmt.Sprintf("%d", numClient) + "-tableSize" + fmt.Sprintf("%d", tableSize)
 
 	colPerTable := 5
 	idxPerTable := 5
 	maxBucket := 256
-	BytesLimit := int64(300000)
 	pesudoTables := make([]*statistics.Table, 0)
 	for i := 0; i < tableSize; i++ {
 		newHistColl := statistics.HistColl{
@@ -119,54 +101,84 @@ func benchmarkStatisticCache(b *testing.B, numClient int, tableSize int) {
 			table.Indices[hist.ID] = col
 		}
 		pesudoTables = append(pesudoTables, table)
-
+	}
+	cas.tables = pesudoTables
+	for j := 0; j < int(cas.numClient); j++ {
+		tps := make([]queryType, 0)
+		tbls := make([]int64, 0)
+		for i := 0; i < int(cas.queryPerClient); i++ {
+			tp := getType()
+			tblID := rand.Int63() % int64(tableSize)
+			tps = append(tps, tp)
+			tbls = append(tbls, tblID)
+		}
+		cas.queryType = append(cas.queryType, tps)
+		cas.queryTables = append(cas.queryTables, tbls)
+	}
+	return cas
+}
+func BenchmarkStatisticCache(b *testing.B) {
+	numClients := []int{2, 8, 32, 64}
+	tableSizes := []int{10, 20, 100}
+	memoryLimits := []int64{300000, 3000000}
+	for _, numClient := range numClients {
+		for _, tableSize := range tableSizes {
+			for _, memoryLimit := range memoryLimits {
+				data := defaultstatsCacheTestCase(numClient, tableSize, memoryLimit, 100)
+				benchmarkStatisticCache(b, data)
+			}
+		}
 	}
 
-	RistrettostatsCache, _ := handle.NewStatsCache(BytesLimit, handle.RistrettoStatsCacheType)
-	SimplestatsCache, _ := handle.NewStatsCache(BytesLimit, handle.SimpleStatsCacheType)
-	queryPerClient := 1000
-	//	var wg sync.WaitGroup
-	b.Run(BaseTestName+"-Ristretto", func(b *testing.B) {
-		var wg sync.WaitGroup
-
-		for i := 0; i < numClient; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Add(-1)
-				for j := 0; j < queryPerClient; j++ {
-					tp := getType()
-					switch tp {
-					case typeInsert:
-						newTable := pesudoTables[rand.Int()%tableSize].Copy()
-						RistrettostatsCache.Update([]*statistics.Table{newTable}, nil, 0)
-					case typeLookUp:
-						RistrettostatsCache.Lookup(rand.Int63() % int64(tableSize))
-					}
+}
+func getType() queryType {
+	rnd := rand.Int() % 100
+	if rnd < 15 {
+		return typeInsert
+	} else {
+		return typeLookUp
+	}
+}
+func benchmarkStatisticCacheExc(b *testing.B, data *statsCacheTestCase, statsCache handle.StatsCache) {
+	var wg sync.WaitGroup
+	for i := 0; i < data.numClient; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < int(data.queryPerClient); j++ {
+				tp := data.queryType[id][j]
+				tblID := data.queryTables[id][j]
+				switch tp {
+				case typeInsert:
+					newTable := data.tables[tblID].Copy()
+					statsCache.Update([]*statistics.Table{newTable}, nil, 0)
+				case typeLookUp:
+					statsCache.Lookup(tblID)
 				}
-			}()
-		}
+			}
+		}(i)
 		wg.Wait()
-	})
+	}
+}
+func benchmarkStatisticCache(b *testing.B, data *statsCacheTestCase) {
+	BaseTestName := "scTest" + "-Client" + fmt.Sprintf("%d", data.numClient) + "-tblSize" + fmt.Sprintf("%d", data.tableSize) + "-mem" + fmt.Sprintf("%d", data.memoryLimit)
+
+	RistrettostatsCache, _ := handle.NewStatsCache(data.memoryLimit, handle.RistrettoStatsCacheType)
+	SimplestatsCache, _ := handle.NewStatsCache(data.memoryLimit, handle.SimpleStatsCacheType)
+	//	var wg sync.WaitGroup
 
 	b.Run(BaseTestName+"-Simple", func(b *testing.B) {
-		var wg sync.WaitGroup
-
-		for i := 0; i < numClient; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Add(-1)
-				for j := 0; j < queryPerClient; j++ {
-					tp := getType()
-					switch tp {
-					case typeInsert:
-						newTable := pesudoTables[rand.Int()%tableSize].Copy()
-						SimplestatsCache.Update([]*statistics.Table{newTable}, nil, 0)
-					case typeLookUp:
-						SimplestatsCache.Lookup(rand.Int63() % int64(tableSize))
-					}
-				}
-			}()
-			wg.Wait()
+		b.ResetTimer()
+		benchmarkStatisticCacheExc(b, data, SimplestatsCache)
+		for i := 0; i < b.N; i++ {
+			benchmarkStatisticCacheExc(b, data, SimplestatsCache)
+		}
+	})
+	b.Run(BaseTestName+"-Ristretto", func(b *testing.B) {
+		b.ResetTimer()
+		benchmarkStatisticCacheExc(b, data, RistrettostatsCache)
+		for i := 0; i < b.N; i++ {
+			benchmarkStatisticCacheExc(b, data, RistrettostatsCache)
 		}
 
 	})

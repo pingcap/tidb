@@ -81,11 +81,7 @@ type Handle struct {
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
 	h.mu.Lock()
-	//lock statsCache for race test
-	h.statsCache.GetMutex().Lock()
-	mu := h.statsCache.GetMutex()
-	h.statsCache, _ = NewStatsCache(maxMemoryLimit, h.sType)
-	mu.Unlock()
+	h.statsCache.Clear()
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
@@ -231,16 +227,13 @@ func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
 
 // GetMemConsumed returns the mem size of statscache consumed
 func (h *Handle) GetMemConsumed() (size int64) {
-	h.statsCache.GetMutex().Lock()
-	size = h.statsCache.BytesConsumed()
-	h.statsCache.GetMutex().Unlock()
-	return
+	return h.statsCache.BytesConsumed()
 }
 
 // EraseTable erease a table by ID and add new empty (with Meta) table, only used in test.
 func (h *Handle) EraseTable(ID int64) {
 	table, _ := h.statsCache.Lookup(ID)
-	h.statsCache.Insert(table.CopyMeta())
+	h.statsCache.Update([]*statistics.Table{table.CopyMeta()}, nil, h.statsCache.GetVersion())
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
@@ -250,7 +243,6 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 
 // GetPartitionStats retrieves the partition stats from cache.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
-
 	tbl, ok := h.statsCache.Lookup(pid)
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
@@ -261,25 +253,9 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	return tbl
 }
 
-//SetStatsCacheType sets new statsCache type
-func (h *Handle) SetStatsCacheType(tp statsCacheType) {
-	h.statsCache.GetMutex().Lock()
-	mu := h.statsCache.GetMutex()
-	if tp == h.sType {
-		return
-	}
-	defer mu.Unlock()
-	h.sType = tp
-	h.statsCache, _ = NewStatsCache(h.statsCache.GetBytesLimit(), h.sType)
-	mu.Unlock()
-}
-
-//SetBytesLimit sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
+// SetBytesLimit sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
 func (h *Handle) SetBytesLimit(bytesLimit int64) {
-	h.statsCache.GetMutex().Lock()
-	mu := h.statsCache.GetMutex()
-	h.statsCache, _ = NewStatsCache(bytesLimit, h.sType)
-	mu.Unlock()
+	h.statsCache.SetBytesLimit(bytesLimit)
 }
 
 // LoadNeededHistograms will load histograms for those needed columns.

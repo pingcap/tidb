@@ -79,6 +79,8 @@ type HistColl struct {
 	// The physical id is used when try to load column stats from storage.
 	HavePhysicalID bool
 	Pseudo         bool
+	// MemUsage is only used for cache memory calculation
+	MemUsage int64
 }
 
 // MemoryUsage returns the total memory usage of this Table.

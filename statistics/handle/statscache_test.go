@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -70,7 +71,6 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 	statsTbl2 = do.StatsHandle().GetTableStats(tableInfo2)
 	time.Sleep(10 * time.Millisecond)
 	c.Assert(statsTbl2.Pseudo, IsFalse)
-	fmt.Println("do.StatsHandle().GetMemConsumed()", do.StatsHandle().GetMemConsumed(), statsTbl1.PhysicalID, statsTbl2.PhysicalID, statsTbl2.MemoryUsage())
 	c.Assert(BytesLimit >= do.StatsHandle().GetMemConsumed(), IsTrue)
 }
 
@@ -207,9 +207,10 @@ func (s *testStatsSuite) TestManyTableChange(c *C) {
 		}
 		c.Assert(h.LoadNeededHistograms(), IsNil)
 		time.Sleep(10 * time.Millisecond)
-
-		c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
-		statsTblnew := h.GetTableStats(tableInfo)
+		var statsTblnew *statistics.Table
+		for j := 0; j < 10; j++ {
+			statsTblnew = h.GetTableStats(tableInfo)
+		}
 		c.Assert(statsTblnew.MemoryUsage() >= 0, IsTrue)
 		for _, v := range statsTblnew.Columns {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
@@ -217,6 +218,7 @@ func (s *testStatsSuite) TestManyTableChange(c *C) {
 		for _, v := range statsTblnew.Indices {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
+		c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
 
 	}
 }
@@ -253,8 +255,10 @@ func (s *testStatsSuite) TestManyTableChangeWithQuery(c *C) {
 		testKit.MustQuery(fmt.Sprintf("select * from t%d use index(idx) where b = 5", i))
 		c.Assert(h.LoadNeededHistograms(), IsNil)
 		time.Sleep(10 * time.Millisecond)
-		c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
-		statsTblnew := h.GetTableStats(tableInfo)
+		var statsTblnew *statistics.Table
+		for j := 0; j < 10; j++ {
+			statsTblnew = h.GetTableStats(tableInfo)
+		}
 		c.Assert(statsTblnew.MemoryUsage() > 0, IsTrue)
 		for _, v := range statsTblnew.Columns {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
@@ -262,6 +266,7 @@ func (s *testStatsSuite) TestManyTableChangeWithQuery(c *C) {
 		for _, v := range statsTblnew.Indices {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
+		c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
 
 	}
 }
