@@ -136,24 +136,28 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datu
 		slowLog parsedSlowLog
 		ok      bool
 	)
-	select {
-	case slowLog, ok = <-e.parsedSlowLogCh:
-	case <-ctx.Done():
-		return nil, false, ctx.Err()
+	for {
+		select {
+		case slowLog, ok = <-e.parsedSlowLogCh:
+		case <-ctx.Done():
+			return nil, false, ctx.Err()
+		}
+		if !ok {
+			return nil, true, nil
+		}
+		rows, err := slowLog.rows, slowLog.err
+		if len(rows) == 0 {
+			continue
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		if e.table.Name.L == strings.ToLower(infoschema.ClusterTableSlowLog) {
+			rows, err := infoschema.AppendHostInfoToRows(rows)
+			return rows, false, err
+		}
+		return rows, false, nil
 	}
-	if !ok {
-		return nil, true, nil
-	}
-
-	rows, err := slowLog.rows, slowLog.err
-	if err != nil {
-		return nil, false, err
-	}
-	if e.table.Name.L == strings.ToLower(infoschema.ClusterTableSlowLog) {
-		rows, err := infoschema.AppendHostInfoToRows(rows)
-		return rows, false, err
-	}
-	return rows, false, nil
 }
 
 type slowLogChecker struct {
