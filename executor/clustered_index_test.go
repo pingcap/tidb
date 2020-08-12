@@ -141,4 +141,13 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 	tk.HasPlan(sql, "TableRangeScan")
 	tk.MustQuery(sql).Check(testkit.Rows("aaaaa 1 <nil>"))
 	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(name varchar(255), b int, c char(10), primary key(c(2), name(2)), index idx(b));")
+	tk.MustExec("insert into t values ('aaa', 1, 'aaa'), ('bbb', 1, 'bbb');")
+	tk.MustExec("insert into t values ('aa', 1, 'bbb'), ('bbb', 1, 'ccc');")
+	tk.MustGetErrCode("insert into t values ('aa', 1, 'aa');", errno.ErrDupEntry)
+	tk.MustGetErrCode("insert into t values ('aac', 1, 'aac');", errno.ErrDupEntry)
+	tk.MustGetErrCode("insert into t values ('bb', 1, 'bb');", errno.ErrDupEntry)
+	tk.MustGetErrCode("insert into t values ('bbc', 1, 'bbc');", errno.ErrDupEntry)
 }

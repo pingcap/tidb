@@ -3024,8 +3024,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	// Init commonHandleCols and commonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
 		ds.commonHandleCols, ds.commonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, tables.FindPrimaryIndex(tableInfo))
-		// The primary keys with prefix index are stored without truncation,
-		// this should be set to `UnspecifiedLength` to enable index covering.
+		// For the primary keys with prefix index, their origin value are stored in the 'value' part of record.
+		// To avoid double read, this should be set to `UnspecifiedLength` to enable index covering.
 		for i := range ds.commonHandleLens {
 			ds.commonHandleLens[i] = types.UnspecifiedLength
 		}

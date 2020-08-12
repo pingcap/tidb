@@ -454,7 +454,7 @@ func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 	return DecodeRowWithMapNew(b, cols, loc, nil)
 }
 
-// DecodeHandleToDatumMap decodes a handle into datums.
+// DecodeHandleToDatumMap decodes a handle into datum map.
 func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if handle == nil || len(handleColIDs) == 0 {
@@ -468,7 +468,7 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 			if id != hid {
 				continue
 			}
-			d, err := decodeHandleToDatum(handle, ft, idx)
+			d, err := DecodeHandleToDatum(handle, ft, idx)
 			if err != nil {
 				return row, err
 			}
@@ -476,14 +476,17 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 			if err != nil {
 				return row, err
 			}
-			row[id] = d
+			if _, exists := row[id]; !exists {
+				row[id] = d
+			}
 			break
 		}
 	}
 	return row, nil
 }
 
-func decodeHandleToDatum(handle kv.Handle, ft *types.FieldType, idx int) (types.Datum, error) {
+// DecodeHandleToDatum decodes a handle to a specific column datum.
+func DecodeHandleToDatum(handle kv.Handle, ft *types.FieldType, idx int) (types.Datum, error) {
 	var d types.Datum
 	var err error
 	if handle.IsInt() {
@@ -1090,58 +1093,35 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 	return idxVal, nil
 }
 
-// NeedsTruncateIndexValues check if the data need to be truncated.
-func NeedsTruncateIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) bool {
-	var needTruncate bool
-	forEachDatumNeedTruncate(tblInfo, idxInfo, indexedValues,
-		func(column *model.IndexColumn, info *model.ColumnInfo, datum *types.Datum) {
-			needTruncate = true
-		})
-	return needTruncate
-}
-
 // TruncateIndexValues truncates the index values created using only the leading part of column values.
 func TruncateIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) {
-	forEachDatumNeedTruncate(tblInfo, idxInfo, indexedValues, truncateIndexValueDatum)
-}
-
-func forEachDatumNeedTruncate(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum,
-	truncateFn func(*model.IndexColumn, *model.ColumnInfo, *types.Datum)) {
-	for i := 0; i < len(indexedValues); i++ {
+	for i := 0; i < len(idxInfo.Columns); i++ {
 		v := &indexedValues[i]
-		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
-			idxCol := idxInfo.Columns[i]
-			colInfo := tblInfo.Columns[idxCol.Offset]
-			chs := colInfo.Charset
-			needTruncates := idxCol.Length != types.UnspecifiedLength
-			if chs == charset.CharsetUTF8 || chs == charset.CharsetUTF8MB4 {
-				needTruncates = needTruncates && utf8.RuneCount(v.GetBytes()) > idxCol.Length
-			} else {
-				needTruncates = needTruncates && len(v.GetBytes()) > idxCol.Length
-			}
-			if needTruncates {
-				truncateFn(idxCol, colInfo, v)
-			}
+		idxCol := idxInfo.Columns[i]
+		noPrefixIndex := idxCol.Length == types.UnspecifiedLength
+		if noPrefixIndex {
+			continue
 		}
-	}
-}
+		notStringType := v.Kind() != types.KindString && v.Kind() != types.KindBytes
+		if notStringType {
+			continue
+		}
 
-// truncateIndexValueDatum truncates the datum to a leading part according to index column prefix length.
-func truncateIndexValueDatum(idxCol *model.IndexColumn, colInfo *model.ColumnInfo, datum *types.Datum) {
-	colCharset := colInfo.Charset
-	isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
-	if isUTF8Charset {
-		rs := bytes.Runes(datum.GetBytes())
-		truncateStr := string(rs[:idxCol.Length])
-		// truncate value and limit its length
-		datum.SetString(truncateStr, colInfo.Collate)
-		if datum.Kind() == types.KindBytes {
-			datum.SetBytes(datum.GetBytes())
-		}
-	} else {
-		datum.SetBytes(datum.GetBytes()[:idxCol.Length])
-		if datum.Kind() == types.KindString {
-			datum.SetString(datum.GetString(), colInfo.Collate)
+		colInfo := tblInfo.Columns[idxCol.Offset]
+		isUTF8Charset := colInfo.Charset == charset.CharsetUTF8 || colInfo.Charset == charset.CharsetUTF8MB4
+		if isUTF8Charset && utf8.RuneCount(v.GetBytes()) > idxCol.Length {
+			rs := bytes.Runes(v.GetBytes())
+			truncateStr := string(rs[:idxCol.Length])
+			// truncate value and limit its length
+			v.SetString(truncateStr, colInfo.Collate)
+			if v.Kind() == types.KindBytes {
+				v.SetBytes(v.GetBytes())
+			}
+		} else if len(v.GetBytes()) > idxCol.Length {
+			v.SetBytes(v.GetBytes()[:idxCol.Length])
+			if v.Kind() == types.KindString {
+				v.SetString(v.GetString(), colInfo.Collate)
+			}
 		}
 	}
 }
