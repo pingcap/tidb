@@ -158,6 +158,7 @@ func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.DelOption(kv.CollectRuntimeStats)
 	}
+	e.done = false
 	return nil
 }
 
