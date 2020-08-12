@@ -328,11 +328,6 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	job = testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, false, "c5_idx", "c5")
 	testCheckJobDone(c, d, job, true)
 
-	testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c5", true)
-
-	testDropIndex(c, ctx, d, s.dbInfo, tblInfo, "c5_idx")
-	testCheckJobDone(c, d, job, true)
-
 	job = testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c5", false)
 	testCheckJobDone(c, d, job, false)
 
