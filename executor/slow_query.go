@@ -178,108 +178,6 @@ func (sc *slowLogChecker) isTimeValid(t types.Time) bool {
 	return true
 }
 
-// TODO: optimize for parse huge log-file.
-func (e *slowQueryRetriever) parseSlowLogOld(ctx sessionctx.Context, reader *bufio.Reader, maxRow int) ([][]types.Datum, error) {
-	//log-file parse
-	var rows [][]types.Datum
-	var st *slowQueryTuple
-	startFlag := false
-	tz := ctx.GetSessionVars().Location()
-	for {
-		if len(rows) >= maxRow {
-			return rows, nil
-		}
-		e.fileLine++
-		lineByte, err := getOneLine(reader)
-		if err != nil {
-			//Read the next file
-			if err == io.EOF {
-				e.fileIdx++
-				e.fileLine = 0
-				if e.fileIdx >= len(e.files) {
-					return rows, nil
-				}
-				reader.Reset(e.files[e.fileIdx].file)
-				continue
-			}
-			return rows, err
-		}
-		line := string(hack.String(lineByte))
-		// Check slow log entry start flag.
-		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
-			st = &slowQueryTuple{}
-			valid, err := st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], e.fileLine, e.checker)
-			if err != nil {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-				continue
-			}
-			if valid {
-				startFlag = true
-			}
-			continue
-		}
-
-		if startFlag {
-			// Parse slow log field.wo
-			if strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
-				line = line[len(variable.SlowLogRowPrefixStr):]
-				if strings.HasPrefix(line, variable.SlowLogPrevStmtPrefix) {
-					st.prevStmt = line[len(variable.SlowLogPrevStmtPrefix):]
-				} else if strings.HasPrefix(line, variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr) {
-					// the user and hostname field has a special format, for example, # User@Host: root[root] @ localhost [127.0.0.1]
-					value := line[len(variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr):]
-					valid, err := st.setFieldValue(tz, variable.SlowLogUserAndHostStr, value, e.fileLine, e.checker)
-					if err != nil {
-						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-						continue
-					}
-					if !valid {
-						startFlag = false
-					}
-				} else {
-					fieldValues := strings.Split(line, " ")
-					for i := 0; i < len(fieldValues)-1; i += 2 {
-						field := fieldValues[i]
-						if strings.HasSuffix(field, ":") {
-							field = field[:len(field)-1]
-						}
-						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], e.fileLine, e.checker)
-						if err != nil {
-							ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-							continue
-						}
-						if !valid {
-							startFlag = false
-						}
-					}
-				}
-			} else if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
-				if strings.HasPrefix(line, "use") {
-					// `use DB` statements in the slow log is used to keep it be compatible with MySQL,
-					// since we already get the current DB from the `# DB` field, we can ignore it here,
-					// please see https://github.com/pingcap/tidb/issues/17846 for more details.
-					continue
-				}
-
-				// Get the sql string, and mark the start flag to false.
-				_, err = st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), e.fileLine, e.checker)
-				if err != nil {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-					continue
-				}
-				if e.checker.hasPrivilege(st.user) {
-					rows = append(rows, st.convertToDatumRow())
-					//rows = append(rows, st.convertToDatumRow())
-				}
-				startFlag = false
-			} else {
-				startFlag = false
-			}
-		}
-	}
-	//return rows, nil
-}
-
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
 	var resByte []byte
 	lineByte, isPrefix, err := reader.ReadLine()
@@ -299,7 +197,6 @@ func getOneLine(reader *bufio.Reader) ([]byte, error) {
 	for isPrefix {
 		tempLine, isPrefix, err = reader.ReadLine()
 		resByte = append(resByte, tempLine...)
-
 		// Use the max value of max_allowed_packet to check the single line length.
 		if len(resByte) > int(variable.MaxOfMaxAllowedPacket) {
 			return resByte, errors.Errorf("single line length exceeds limit: %v", variable.MaxOfMaxAllowedPacket)
@@ -347,9 +244,8 @@ func (e *slowQueryRetriever) getLog(reader *bufio.Reader, num int) ([]string, er
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, maxRow int) {
 	var wg sync.WaitGroup
 	//to limit the num of go routine
-	ch := make(chan int, 10)
+	ch := make(chan int, sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency())
 	defer close(ch)
-	//rowNum := 0
 	for {
 		//batch
 		log, err := e.getLog(reader, maxRow)
@@ -365,7 +261,6 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		} else {
 			go func() {
 				defer wg.Done()
-				//SlowLogch <- e.parsedLog(ctx, log)
 				e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(sctx, log), err}
 				<-ch
 			}()
