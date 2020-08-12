@@ -468,7 +468,7 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 			if id != hid {
 				continue
 			}
-			d, err := DecodeHandleToDatum(handle, ft, idx)
+			d, err := decodeHandleToDatum(handle, ft, idx)
 			if err != nil {
 				return row, err
 			}
@@ -485,8 +485,8 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	return row, nil
 }
 
-// DecodeHandleToDatum decodes a handle to a specific column datum.
-func DecodeHandleToDatum(handle kv.Handle, ft *types.FieldType, idx int) (types.Datum, error) {
+// decodeHandleToDatum decodes a handle to a specific column datum.
+func decodeHandleToDatum(handle kv.Handle, ft *types.FieldType, idx int) (types.Datum, error) {
 	var d types.Datum
 	var err error
 	if handle.IsInt() {
