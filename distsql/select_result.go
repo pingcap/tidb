@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -360,13 +362,13 @@ func (s *selectResultRuntimeStats) String() string {
 		size := len(s.copRespTime)
 		buf.WriteString(", ")
 		if size == 1 {
-			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max:%v, proc_keys: %v}", s.copRespTime[0], s.procKeys[0]))
+			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max:%v, proc_keys: %v", s.copRespTime[0], s.procKeys[0]))
 		} else {
 			sort.Slice(s.copRespTime, func(i, j int) bool {
 				return s.copRespTime[i] < s.copRespTime[j]
 			})
 			vMax, vMin := s.copRespTime[size-1], s.copRespTime[0]
-			vP80, vP95 := s.copRespTime[size*4/5], s.copRespTime[size*19/20]
+			vP95 := s.copRespTime[size*19/20]
 			sum := 0.0
 			for _, t := range s.copRespTime {
 				sum += float64(t)
@@ -378,7 +380,13 @@ func (s *selectResultRuntimeStats) String() string {
 			})
 			keyMax := s.procKeys[size-1]
 			keyP95 := s.procKeys[size*19/20]
-			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p80: %v, p95: %v, max_proc_keys: %v, p95_proc_keys: %v", size, vMax, vMin, vAvg, vP80, vP95, keyMax, keyP95))
+			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size, vMax, vMin, vAvg, vP95))
+			if keyMax > 0 {
+				buf.WriteString(", max_proc_keys: ")
+				buf.WriteString(strconv.FormatInt(keyMax, 10))
+				buf.WriteString(", p95_proc_keys: ")
+				buf.WriteString(strconv.FormatInt(keyP95, 10))
+			}
 			if s.totalProcessTime > 0 {
 				buf.WriteString(", tot_proc: ")
 				buf.WriteString(s.totalProcessTime.String())
@@ -387,9 +395,17 @@ func (s *selectResultRuntimeStats) String() string {
 					buf.WriteString(s.totalWaitTime.String())
 				}
 			}
-			buf.WriteString("}")
 		}
 	}
+	copRPC := s.rpcStat.Stats[tikvrpc.CmdCop]
+	delete(s.rpcStat.Stats, tikvrpc.CmdCop)
+	if copRPC.Count > 0 {
+		buf.WriteString(", rpc_num: ")
+		buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
+		buf.WriteString(", rpc_time: ")
+		buf.WriteString(time.Duration(copRPC.Consume).String())
+	}
+	buf.WriteString("}")
 
 	rpcStatsStr := s.rpcStat.String()
 	if len(rpcStatsStr) > 0 {

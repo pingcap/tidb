@@ -241,9 +241,9 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		Client:            s.store.client,
 	}
 	if s.mu.stats != nil {
-		cli.stats = make(map[tikvrpc.CmdType]*rpcRuntimeStats)
+		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
 		defer func() {
-			s.mergeRegionRequestStats(cli.stats)
+			s.mergeRegionRequestStats(cli.Stats)
 		}()
 	}
 
@@ -370,9 +370,9 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		resolveLite:       true,
 	}
 	if s.mu.stats != nil {
-		cli.stats = make(map[tikvrpc.CmdType]*rpcRuntimeStats)
+		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
 		defer func() {
-			s.mergeRegionRequestStats(cli.stats)
+			s.mergeRegionRequestStats(cli.Stats)
 		}()
 	}
 
@@ -629,24 +629,24 @@ func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
 	}
 }
 
-func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*rpcRuntimeStats) {
+func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.mu.stats == nil {
 		return
 	}
-	if s.mu.stats.rpcStats.stats == nil {
-		s.mu.stats.rpcStats.stats = stats
+	if s.mu.stats.rpcStats.Stats == nil {
+		s.mu.stats.rpcStats.Stats = stats
 		return
 	}
 	for k, v := range stats {
-		stat, ok := s.mu.stats.rpcStats.stats[k]
+		stat, ok := s.mu.stats.rpcStats.Stats[k]
 		if !ok {
-			s.mu.stats.rpcStats.stats[k] = v
+			s.mu.stats.rpcStats.Stats[k] = v
 			continue
 		}
-		stat.count += v.count
-		stat.consume += v.consume
+		stat.Count += v.Count
+		stat.Consume += v.Consume
 	}
 }
 

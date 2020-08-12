@@ -69,47 +69,47 @@ type RegionRequestSender struct {
 
 // RegionRequestRuntimeStats records the runtime stats of send region requests.
 type RegionRequestRuntimeStats struct {
-	stats map[tikvrpc.CmdType]*rpcRuntimeStats
+	Stats map[tikvrpc.CmdType]*RPCRuntimeStats
 }
 
 // NewRegionRequestRuntimeStats returns a new RegionRequestRuntimeStats.
 func NewRegionRequestRuntimeStats() RegionRequestRuntimeStats {
 	return RegionRequestRuntimeStats{
-		stats: make(map[tikvrpc.CmdType]*rpcRuntimeStats),
+		Stats: make(map[tikvrpc.CmdType]*RPCRuntimeStats),
 	}
 }
 
-type rpcRuntimeStats struct {
-	count int64
+type RPCRuntimeStats struct {
+	Count int64
 	// Send region request consume time.
-	consume int64
+	Consume int64
 }
 
 // String implements fmt.Stringer interface.
 func (r *RegionRequestRuntimeStats) String() string {
 	var buf bytes.Buffer
-	for k, v := range r.stats {
+	for k, v := range r.Stats {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf("%s:{num_rpc:%d, total_time:%s}", k.String(), v.count, time.Duration(v.consume)))
+		buf.WriteString(fmt.Sprintf("%s:{num_rpc:%d, total_time:%s}", k.String(), v.Count, time.Duration(v.Consume)))
 	}
 	return buf.String()
 }
 
 // Merge merges other RegionRequestRuntimeStats.
 func (r *RegionRequestRuntimeStats) Merge(rs RegionRequestRuntimeStats) {
-	for cmd, v := range rs.stats {
-		stat, ok := r.stats[cmd]
+	for cmd, v := range rs.Stats {
+		stat, ok := r.Stats[cmd]
 		if !ok {
-			r.stats[cmd] = &rpcRuntimeStats{
-				count:   v.count,
-				consume: v.consume,
+			r.Stats[cmd] = &RPCRuntimeStats{
+				Count:   v.Count,
+				Consume: v.Consume,
 			}
 			continue
 		}
-		stat.count += v.count
-		stat.consume += v.consume
+		stat.Count += v.Count
+		stat.Consume += v.Consume
 	}
 }
 
@@ -134,9 +134,9 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
 	}
-	if ss.stats != nil {
+	if ss.Stats != nil {
 		defer func(start time.Time) {
-			recordRegionRequestRuntimeStats(ss.stats, req.Type, time.Since(start))
+			recordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
 		}(time.Now())
 	}
 	resp, err = ss.client.SendRequest(ctx, rpcCtx.Addr, req, timout)
@@ -153,17 +153,17 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	return
 }
 
-func recordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*rpcRuntimeStats, cmd tikvrpc.CmdType, d time.Duration) {
+func recordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats, cmd tikvrpc.CmdType, d time.Duration) {
 	stat, ok := stats[cmd]
 	if !ok {
-		stats[cmd] = &rpcRuntimeStats{
-			count:   1,
-			consume: int64(d),
+		stats[cmd] = &RPCRuntimeStats{
+			Count:   1,
+			Consume: int64(d),
 		}
 		return
 	}
-	stat.count++
-	stat.consume += int64(d)
+	stat.Count++
+	stat.Consume += int64(d)
 }
 
 func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctxs []copTaskAndRPCContext, err error) error {
@@ -397,9 +397,9 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		defer s.releaseStoreToken(rpcCtx.Store)
 	}
 
-	if s.stats != nil {
+	if s.Stats != nil {
 		defer func(start time.Time) {
-			recordRegionRequestRuntimeStats(s.stats, req.Type, time.Since(start))
+			recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
 		}(time.Now())
 	}
 
