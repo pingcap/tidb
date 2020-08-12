@@ -79,6 +79,7 @@ func NewRegionRequestRuntimeStats() RegionRequestRuntimeStats {
 	}
 }
 
+// RPCRuntimeStats indicates the RPC request count and consume time.
 type RPCRuntimeStats struct {
 	Count int64
 	// Send region request consume time.
