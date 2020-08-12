@@ -378,7 +378,13 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return err
 		}
 	}
-	e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	physicalID := getPhysicalTableID(e.table)
+	if e.index.ID == -1 {
+		e.kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, physicalID, e.ranges)
+	} else {
+		e.kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
+	}
 	if err != nil {
 		e.feedback.Invalidate()
 		return err
