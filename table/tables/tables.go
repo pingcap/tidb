@@ -20,7 +20,6 @@ package tables
 import (
 	"context"
 	"encoding/binary"
-	"github.com/pingcap/tidb/util/generate_expr"
 	"math"
 	"strings"
 
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/generate_expr"
 	"github.com/pingcap/tidb/util/logutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"github.com/spaolacci/murmur3"
