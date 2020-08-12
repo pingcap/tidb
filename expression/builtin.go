@@ -135,6 +135,7 @@ func checkIllegalMixCollation(funcName string, args []Expression) error {
 				return collate.ErrIllegalMixCollation.GenWithStackByArgs(firstExplicitCollation, "EXPLICIT", arg.GetType().Collate, "EXPLICIT", funcName)
 			}
 		} else if arg.Coercibility() < curCoercibility {
+			noConflict = true
 			curCoercibility, curCollation = arg.Coercibility(), arg.GetType().Collate
 		} else if arg.Coercibility() == curCoercibility && curCollation != arg.GetType().Collate {
 			p1 := collationPriority[curCollation]
@@ -145,6 +146,7 @@ func checkIllegalMixCollation(funcName string, args []Expression) error {
 			if p1 == p2 {
 				_, noConflict = allowDeriveNoneFunction[funcName]
 				conflictCollation[0], conflictCollation[1] = curCollation, arg.GetType().Collate
+				curCoercibility = CoercibilityNone
 			} else if p1 < p2 {
 				noConflict = true
 				curCollation = arg.GetType().Collate
