@@ -326,6 +326,9 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 
 func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) bool {
 	for _, c := range constraints {
+		if c.Keys[0].Expr != nil {
+			continue
+		}
 		// If the constraint as follows: primary key(c1, c2)
 		// we only support c1 column can be auto_increment.
 		if colDef.Name.Name.L != c.Keys[0].Column.Name.L {

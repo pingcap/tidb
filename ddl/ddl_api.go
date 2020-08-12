@@ -892,7 +892,7 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 	// Such as: create table t1 (id int , age int, primary key(id))
 	if !mysql.HasPriKeyFlag(col.Flag) && outPriKeyConstraint != nil {
 		for _, key := range outPriKeyConstraint.Keys {
-			if key.Column.Name.L != col.Name.L {
+			if key.Expr == nil && key.Column.Name.L != col.Name.L {
 				continue
 			}
 			col.Flag |= mysql.PriKeyFlag
@@ -1280,6 +1280,18 @@ func buildTableInfo(
 		tblColumns = append(tblColumns, table.ToColumn(v.ToInfo()))
 	}
 	for _, constr := range constraints {
+		// Build hidden columns if necessary.
+		hiddenCols, err := buildHiddenColumnInfo(ctx, constr.Keys, model.NewCIStr(constr.Name), tbInfo, tblColumns)
+		if err != nil {
+			return nil, err
+		}
+		for _, hiddenCol := range hiddenCols {
+			hiddenCol.State = model.StatePublic
+			hiddenCol.ID = allocateColumnID(tbInfo)
+			hiddenCol.Offset = len(tbInfo.Columns)
+			tbInfo.Columns = append(tbInfo.Columns, hiddenCol)
+			tblColumns = append(tblColumns, table.ToColumn(hiddenCol))
+		}
 		if constr.Tp == ast.ConstraintForeignKey {
 			for _, fk := range tbInfo.ForeignKeys {
 				if fk.Name.L == strings.ToLower(constr.Name) {
@@ -1324,18 +1336,6 @@ func buildTableInfo(
 			sc := ctx.GetSessionVars().StmtCtx
 			sc.AppendWarning(ErrTableCantHandleFt)
 			continue
-		}
-		// Build hidden columns if necessary.
-		hiddenCols, err := buildHiddenColumnInfo(ctx, constr.Keys, model.NewCIStr(constr.Name), tbInfo, tblColumns)
-		if err != nil {
-			return nil, err
-		}
-		for _, hiddenCol := range hiddenCols {
-			hiddenCol.State = model.StatePublic
-			hiddenCol.ID = allocateColumnID(tbInfo)
-			hiddenCol.Offset = len(tbInfo.Columns)
-			tbInfo.Columns = append(tbInfo.Columns, hiddenCol)
-			tblColumns = append(tblColumns, table.ToColumn(hiddenCol))
 		}
 		// build index info.
 		idxInfo, err := buildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
