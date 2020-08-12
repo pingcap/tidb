@@ -1413,7 +1413,6 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 
 func (s *testSerialSuite) TestCheckEnumLength(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	defer config.RestoreFunc()()
 	_, err := tk.Exec("create table t1 (a enum('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')) charset utf8mb4")
 	c.Assert(err, IsNil)
 	config.UpdateGlobal(func(conf *config.Config) {
