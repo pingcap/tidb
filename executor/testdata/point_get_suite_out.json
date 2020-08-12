@@ -38,9 +38,8 @@
       {
         "SQL": "select * from t1 where (a,b) in ((1,1),(2,2)) and c = 2",
         "Plan": [
-          "TableReader_7 8.00 root  data:Selection_6",
-          "└─Selection_6 8.00 cop[tikv]  eq(test.t1.c, 2), or(and(eq(test.t1.a, 1), eq(test.t1.b, 1)), and(eq(test.t1.a, 2), eq(test.t1.b, 2)))",
-          "  └─TableRangeScan_5 20.00 cop[tikv] table:t1 range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "Selection_6 8.00 root  or(and(eq(test.t1.c, 2), and(eq(test.t1.a, 1), eq(test.t1.b, 1))), and(eq(test.t1.c, 2), and(eq(test.t1.a, 2), eq(test.t1.b, 2))))",
+          "└─Batch_Point_Get_5 2.00 root table:t1, index:PRIMARY(a, b) keep order:false, desc:false"
         ],
         "Res": [
           "2 2 2"
