@@ -265,7 +265,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 		r.stats = &selectResultRuntimeStats{
 			RuntimeStats: originRuntimeStats,
 			backoffSleep: make(map[string]time.Duration),
-			backoffTimes: make(map[string]int),
 			rpcStat:      tikv.NewRegionRequestRuntimeStats(),
 		}
 		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, r.stats)
@@ -345,9 +344,6 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntim
 	for k, v := range copStats.BackoffSleep {
 		s.backoffSleep[k] += v
 	}
-	for k, v := range copStats.BackoffTimes {
-		s.backoffTimes[k] += v
-	}
 	s.totalProcessTime += copStats.ProcessTime
 	s.totalWaitTime += copStats.WaitTime
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
@@ -414,13 +410,16 @@ func (s *selectResultRuntimeStats) String() string {
 	}
 
 	if len(s.backoffSleep) > 0 {
-		for k, v := range s.backoffTimes {
-			if buf.Len() > 0 {
+		buf.WriteString(", backoff{")
+		idx := 0
+		for k, d := range s.backoffSleep {
+			if idx > 0 {
 				buf.WriteString(", ")
 			}
-			d := s.backoffSleep[k]
-			buf.WriteString(fmt.Sprintf("%s_backoff:{num:%d, total_time:%s}", k, v, d.String()))
+			idx++
+			buf.WriteString(fmt.Sprintf("%s: %s", k, d.String()))
 		}
+		buf.WriteString("}")
 	}
 	return buf.String()
 }
