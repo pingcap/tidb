@@ -14,7 +14,9 @@
 package core_test
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -349,6 +351,73 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestBroadcastJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists d1_t")
+	tk.MustExec("create table d1_t(d1_k int, value int)")
+	tk.MustExec("insert into d1_t values(1,2),(2,3)")
+	tk.MustExec("analyze table d1_t")
+	tk.MustExec("drop table if exists d2_t")
+	tk.MustExec("create table d2_t(d2_k decimal(10,2), value int)")
+	tk.MustExec("insert into d2_t values(10.11,2),(10.12,3)")
+	tk.MustExec("analyze table d2_t")
+	tk.MustExec("drop table if exists d3_t")
+	tk.MustExec("create table d3_t(d3_k date, value int)")
+	tk.MustExec("insert into d3_t values(date'2010-01-01',2),(date'2010-01-02',3)")
+	tk.MustExec("analyze table d3_t")
+	tk.MustExec("drop table if exists fact_t")
+	tk.MustExec("create table fact_t(d1_k int, d2_k decimal(10,2), d3_k date, col1 int, col2 int, col3 int)")
+	tk.MustExec("insert into fact_t values(1,10.11,date'2010-01-01',1,2,3),(1,10.11,date'2010-01-02',1,2,3),(1,10.12,date'2010-01-01',1,2,3),(1,10.12,date'2010-01-02',1,2,3)")
+	tk.MustExec("insert into fact_t values(2,10.11,date'2010-01-01',1,2,3),(2,10.11,date'2010-01-02',1,2,3),(2,10.12,date'2010-01-01',1,2,3),(2,10.12,date'2010-01-02',1,2,3)")
+	tk.MustExec("analyze table fact_t")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "fact_t" || tblInfo.Name.L == "d1_t" || tblInfo.Name.L == "d2_t" || tblInfo.Name.L == "d3_t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_batch_cop = 1")
+	tk.MustExec("set @@session.tidb_opt_broadcast_join = 1")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+
+	// out join not supported
+	_, err := tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	// join with non-equal condition not supported
+	_, err = tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > d1_t.value")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	// cartsian join not supported
+	_, err = tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t join d1_t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+}
+
 func (s *testIntegrationSerialSuite) TestAggPushDownEngine(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -626,6 +695,7 @@ func (s *testIntegrationSuite) TestPartitionPruningForInExpr(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(11), b int) partition by range (a) (partition p0 values less than (4), partition p1 values less than(10), partition p2 values less than maxvalue);")
 	tk.MustExec("insert into t values (1, 1),(10, 10),(11, 11)")
+	tk.MustExec("set @try_new_partition_implementation = 1")
 
 	var input []string
 	var output []struct {
@@ -658,6 +728,8 @@ func (s *testIntegrationSuite) TestMaxMinEliminate(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key)")
+	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+	tk.MustExec("create table cluster_index_t(a int, b int, c int, primary key (a, b));")
 
 	var input []string
 	var output []struct {
@@ -1154,6 +1226,41 @@ func (s *testIntegrationSuite) TestOptimizeHintOnPartitionTable(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestNotReadOnlySQLOnTiFlash(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b varchar(20))")
+	tk.MustExec(`set @@tidb_isolation_read_engines = "tiflash"`)
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	err := tk.ExecToErr("select * from t for update")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+
+	err = tk.ExecToErr("insert into t select * from t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+
+	tk.MustExec("prepare stmt_insert from 'insert into t select * from t where t.a = ?'")
+	tk.MustExec("set @a=1")
+	err = tk.ExecToErr("execute stmt_insert using @a")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+}
+
 func (s *testIntegrationSuite) TestSelectLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -1270,9 +1377,99 @@ func (s *testIntegrationSuite) TestAccessPathOnClusterIndex(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+	}
+}
+
+func (s *testIntegrationSuite) TestClusterIndexUniqueDoubleRead(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database cluster_idx_unique_double_read;")
+	tk.MustExec("use cluster_idx_unique_double_read;")
+	defer tk.MustExec("drop database cluster_idx_unique_double_read;")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t (a varchar(64), b varchar(64), uk int, v int, primary key(a, b), unique key uuk(uk));")
+	tk.MustExec("insert t values ('a', 'a1', 1, 11), ('b', 'b1', 2, 22), ('c', 'c1', 3, 33);")
+	tk.MustQuery("select * from t use index (uuk);").Check(testkit.Rows("a a1 1 11", "b b1 2 22", "c c1 3 33"))
+}
+
+func (s *testIntegrationSuite) TestIndexJoinOnClusteredIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t (a int, b varchar(20), c decimal(40,10), d int, primary key(a,b), key(c))")
+	tk.MustExec(`insert into t values (1,"111",1.1,11), (2,"222",2.2,12), (3,"333",3.3,13)`)
+	tk.MustExec("analyze table t")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
 			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 		})
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
 	}
+}
+
+func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b varchar(20))")
+	tk.MustExec("insert into t values (1,1)")
+
+	res := tk.MustQuery("explain analyze select * from t where a=1;")
+	checkExplain := func(rpc string) {
+		resBuff := bytes.NewBufferString("")
+		for _, row := range res.Rows() {
+			fmt.Fprintf(resBuff, "%s\n", row)
+		}
+		explain := resBuff.String()
+		c.Assert(strings.Contains(explain, rpc+":{num_rpc:"), IsTrue, Commentf("%s", explain))
+		c.Assert(strings.Contains(explain, "total_time:"), IsTrue, Commentf("%s", explain))
+	}
+	checkExplain("Get")
+	res = tk.MustQuery("explain analyze select * from t where a in (1,2,3);")
+	checkExplain("BatchGet")
+}
+
+func (s *testIntegrationSuite) TestPartitionExplain(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table pt (id int, c int, key i_id(id), key i_c(c)) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10))`)
+
+	tk.MustExec("set @try_new_partition_implementation = 1;")
+	tk.MustExec("set @@tidb_enable_index_merge = 1;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+	}
+
+	tk.MustExec("set @try_new_partition_implementation = null;")
 }

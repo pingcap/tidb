@@ -65,6 +65,9 @@ type LockResolver struct {
 		resolved       map[uint64]TxnStatus
 		recentResolved *list.List
 	}
+	testingKnobs struct {
+		meetLock func(locks []*Lock)
+	}
 }
 
 func newLockResolver(store Storage) *LockResolver {
@@ -298,6 +301,9 @@ func (lr *LockResolver) resolveLocksLite(bo *Backoffer, callerStartTS uint64, lo
 }
 
 func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock, forWrite bool, lite bool) (int64, []uint64 /*pushed*/, error) {
+	if lr.testingKnobs.meetLock != nil {
+		lr.testingKnobs.meetLock(locks)
+	}
 	var msBeforeTxnExpired txnExpireTime
 	if len(locks) == 0 {
 		return msBeforeTxnExpired.value(), nil, nil
@@ -419,7 +425,7 @@ func (t *txnExpireTime) value() int64 {
 // seconds before calling it after Prewrite.
 func (lr *LockResolver) GetTxnStatus(txnID uint64, callerStartTS uint64, primary []byte) (TxnStatus, error) {
 	var status TxnStatus
-	bo := NewBackoffer(context.Background(), cleanupMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), cleanupMaxBackoff, nil)
 	currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
 	if err != nil {
 		return status, err
@@ -592,6 +598,8 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 		}
 		if status.IsCommitted() {
 			lreq.CommitVersion = status.CommitTS()
+		} else {
+			logutil.BgLogger().Info("resolveLock rollback", zap.String("lock", l.String()))
 		}
 
 		if resolveLite {
@@ -599,9 +607,6 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 			// prevent from scanning the whole region in this case.
 			tikvLockResolverCountWithResolveLockLite.Inc()
 			lreq.Keys = [][]byte{l.Key}
-			if !status.IsCommitted() {
-				logutil.BgLogger().Info("resolveLock rollback", zap.String("lock", l.String()))
-			}
 		}
 		req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, lreq)
 		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)

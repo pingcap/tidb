@@ -59,7 +59,7 @@ func (e *DDLExec) toErr(err error) error {
 		logutil.BgLogger().Error("active txn failed", zap.Error(err))
 		return err1
 	}
-	schemaInfoErr := checker.Check(txn.StartTS())
+	_, schemaInfoErr := checker.Check(txn.StartTS())
 	if schemaInfoErr != nil {
 		return errors.Trace(schemaInfoErr)
 	}
@@ -463,13 +463,13 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 // it will use the `start_ts` of DDL job as snapshot to get the dropped/truncated table information.
 func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
 	for _, job := range jobs {
-		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
-			continue
-		}
 		// Check GC safe point for getting snapshot infoSchema.
 		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
 		if err != nil {
 			return false, err
+		}
+		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
+			continue
 		}
 
 		snapMeta, err := dom.GetSnapshotMeta(job.StartTS)

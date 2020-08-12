@@ -56,8 +56,12 @@ func (ds *DataSource) PreparePossibleProperties(schema *expression.Schema, child
 
 // PreparePossibleProperties implements LogicalPlan PreparePossibleProperties interface.
 func (ts *LogicalTableScan) PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
-	if ts.Handle != nil {
-		return [][]*expression.Column{{ts.Handle}}
+	if ts.HandleCols != nil {
+		cols := make([]*expression.Column, ts.HandleCols.NumCols())
+		for i := 0; i < ts.HandleCols.NumCols(); i++ {
+			cols[i] = ts.HandleCols.GetCol(i)
+		}
+		return [][]*expression.Column{cols}
 	}
 	return nil
 }

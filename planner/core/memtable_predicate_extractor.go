@@ -825,7 +825,13 @@ func (e *InspectionResultTableExtractor) Extract(
 }
 
 func (e *InspectionResultTableExtractor) explainInfo(p *PhysicalMemTable) string {
-	return ""
+	if e.SkipInspection {
+		return "skip_inspection:true"
+	}
+	s := make([]string, 0, 2)
+	s = append(s, fmt.Sprintf("rules:[%s]", extractStringFromStringSet(e.Rules)))
+	s = append(s, fmt.Sprintf("items:[%s]", extractStringFromStringSet(e.Items)))
+	return strings.Join(s, ", ")
 }
 
 // InspectionSummaryTableExtractor is used to extract some predicates of `inspection_summary`
@@ -1039,4 +1045,67 @@ func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
 	return fmt.Sprintf("start_time:%v, end_time:%v",
 		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
 		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())
+}
+
+// TiFlashSystemTableExtractor is used to extract some predicates of tiflash system table.
+type TiFlashSystemTableExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+	// TiFlashInstances represents all tiflash instances we should send request to.
+	// e.g:
+	// 1. SELECT * FROM information_schema.<table_name> WHERE tiflash_instance='192.168.1.7:3930'
+	// 2. SELECT * FROM information_schema.<table_name> WHERE tiflash_instance in ('192.168.1.7:3930', '192.168.1.9:3930')
+	TiFlashInstances set.StringSet
+	// TidbDatabases represents tidbDatabases applied to, and we should apply all tidb database if there is no database specified.
+	// e.g: SELECT * FROM information_schema.<table_name> WHERE tidb_database in ('test', 'test2').
+	TiDBDatabases string
+	// TidbTables represents tidbTables applied to, and we should apply all tidb table if there is no table specified.
+	// e.g: SELECT * FROM information_schema.<table_name> WHERE tidb_table in ('t', 't2').
+	TiDBTables string
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TiFlashSystemTableExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	// Extract the `tiflash_instance` columns.
+	remained, instanceSkip, tiflashInstances := e.extractCol(schema, names, predicates, "tiflash_instance", false)
+	// Extract the `tidb_database` columns.
+	remained, databaseSkip, tidbDatabases := e.extractCol(schema, names, remained, "tidb_database", true)
+	// Extract the `tidb_table` columns.
+	remained, tableSkip, tidbTables := e.extractCol(schema, names, remained, "tidb_table", true)
+	e.SkipRequest = instanceSkip || databaseSkip || tableSkip
+	if e.SkipRequest {
+		return nil
+	}
+	e.TiFlashInstances = tiflashInstances
+	e.TiDBDatabases = extractStringFromStringSet(tidbDatabases)
+	e.TiDBTables = extractStringFromStringSet(tidbTables)
+	return remained
+}
+
+func (e *TiFlashSystemTableExtractor) explainInfo(p *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.TiFlashInstances) > 0 {
+		r.WriteString(fmt.Sprintf("tiflash_instances:[%s], ", extractStringFromStringSet(e.TiFlashInstances)))
+	}
+	if len(e.TiDBDatabases) > 0 {
+		r.WriteString(fmt.Sprintf("tidb_databases:[%s], ", e.TiDBDatabases))
+	}
+	if len(e.TiDBTables) > 0 {
+		r.WriteString(fmt.Sprintf("tidb_tables:[%s], ", e.TiDBTables))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
 }

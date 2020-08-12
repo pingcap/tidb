@@ -2075,5 +2075,54 @@
         "Plan": "IndexHashJoin{IndexReader(Index(t2.idx_a)[[-inf,+inf]])->IndexReader(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]))}(test.t2.a,test.t1.a)"
       }
     ]
+  },
+  {
+    "Name": "TestNthPlanHintWithExplain",
+    "Cases": [
+      {
+        "SQL": "select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1",
+        "Plan": [
+          "TableReader_7 0.01 root  data:Selection_6",
+          "└─Selection_6 0.01 cop[tikv]  eq(test.tt.a, 1), eq(test.tt.b, 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+        "Plan": [
+          "IndexLookUp_11 0.01 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;",
+        "Plan": [
+          "IndexLookUp_15 0.01 root  ",
+          "├─IndexRangeScan_12(Build) 10.00 cop[tikv] table:tt, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_14(Probe) 0.01 cop[tikv]  eq(test.tt.a, 1)",
+          "  └─TableRowIDScan_13 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+        "Plan": [
+          "IndexLookUp_11 0.01 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from test.tt where a=1 and b=1",
+        "Plan": [
+          "IndexLookUp_11 0.01 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -64,26 +63,9 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 			e.updatedRowKeys[content.TblID] = kv.NewHandleMap()
 		}
 		var handle kv.Handle
-		if !content.IsCommonHandle {
-			handleDatum := row[content.HandleOrdinal[0]]
-			if e.canNotUpdate(handleDatum) {
-				continue
-			}
-			handle = kv.IntHandle(row[content.HandleOrdinal[0]].GetInt64())
-		} else {
-			// TODO: Redesign update join for cluster index table.
-			pkDts := make([]types.Datum, 0, len(content.HandleOrdinal))
-			for _, ordinal := range content.HandleOrdinal {
-				pkDts = append(pkDts, row[ordinal])
-			}
-			handleBytes, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, pkDts...)
-			if err != nil {
-				return err
-			}
-			handle, err = kv.NewCommonHandle(handleBytes)
-			if err != nil {
-				return err
-			}
+		handle, err = content.HandleCols.BuildHandleByDatums(row)
+		if err != nil {
+			return err
 		}
 
 		oldData := row[content.Start:content.End]

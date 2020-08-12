@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
@@ -151,6 +152,8 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 	router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 
+	// HTTP path for generate metric profile.
+	router.Handle("/metrics/profile", profileHandler{tikvHandlerTool})
 	// HTTP path for web UI.
 	if host, port, err := net.SplitHostPort(s.statusAddr); err == nil {
 		if host == "" {
@@ -362,7 +365,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, req *http.Request) {
 	st := status{
 		Connections: s.ConnectionCount(),
 		Version:     mysql.ServerVersion,
-		GitHash:     printer.TiDBGitHash,
+		GitHash:     versioninfo.TiDBGitHash,
 	}
 	js, err := json.Marshal(st)
 	if err != nil {

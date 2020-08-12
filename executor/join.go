@@ -52,6 +52,7 @@ type HashJoinExec struct {
 	outerFilter       expression.CNFExprs
 	probeKeys         []*expression.Column
 	buildKeys         []*expression.Column
+	isNullEQ          []bool
 	probeTypes        []*types.FieldType
 	buildTypes        []*types.FieldType
 
@@ -140,9 +141,11 @@ func (e *HashJoinExec) Close() error {
 
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
-		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
 		if e.rowContainer != nil {
-			e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
+			runtimeStats.setHashStat(e.rowContainer.stat)
 		}
 	}
 	err := e.baseExecutor.Close()
@@ -347,14 +350,20 @@ func (e *HashJoinExec) handleJoinWorkerPanic(r interface{}) {
 }
 
 // Concurrently handling unmatched rows from the hash table
-func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInMemory(workerID uint) {
+func (e *HashJoinExec) handleUnmatchedRowsFromHashTable(workerID uint) {
 	ok, joinResult := e.getNewJoinResult(workerID)
 	if !ok {
 		return
 	}
 	numChks := e.rowContainer.NumChunks()
 	for i := int(workerID); i < numChks; i += int(e.concurrency) {
-		chk := e.rowContainer.GetChunk(i)
+		chk, err := e.rowContainer.GetChunk(i)
+		if err != nil {
+			// Catching the error and send it
+			joinResult.err = err
+			e.joinResultCh <- joinResult
+			return
+		}
 		for j := 0; j < chk.NumRows(); j++ {
 			if !e.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
 				e.joiners[workerID].onMissMatch(false, chk.GetRow(j), joinResult.chk)
@@ -376,57 +385,16 @@ func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInMemory(workerID uint) {
 	}
 }
 
-// Sequentially handling unmatched rows from the hash table
-func (e *HashJoinExec) handleUnmatchedRowsFromHashTableInDisk(workerID uint) {
-	ok, joinResult := e.getNewJoinResult(workerID)
-	if !ok {
-		return
-	}
-	numChks := e.rowContainer.NumChunks()
-	for i := 0; i < numChks; i++ {
-		numOfRows := e.rowContainer.NumRowsOfChunk(i)
-		for j := 0; j < numOfRows; j++ {
-			row, err := e.rowContainer.GetRow(chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
-			if err != nil {
-				// Catching the error and send it
-				joinResult.err = err
-				e.joinResultCh <- joinResult
-				return
-			}
-			if !e.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched outer rows
-				e.joiners[workerID].onMissMatch(false, row, joinResult.chk)
-			}
-			if joinResult.chk.IsFull() {
-				e.joinResultCh <- joinResult
-				ok, joinResult = e.getNewJoinResult(workerID)
-				if !ok {
-					return
-				}
-			}
-		}
-	}
-	if joinResult == nil {
-		return
-	} else if joinResult.err != nil || (joinResult.chk != nil && joinResult.chk.NumRows() > 0) {
-		e.joinResultCh <- joinResult
-	}
-}
-
 func (e *HashJoinExec) waitJoinWorkersAndCloseResultChan() {
 	e.joinWorkerWaitGroup.Wait()
 	if e.useOuterToBuild {
-		if e.rowContainer.alreadySpilled() {
-			// Sequentially handling unmatched rows from the hash table to avoid random accessing IO
-			e.handleUnmatchedRowsFromHashTableInDisk(0)
-		} else {
-			// Concurrently handling unmatched rows from the hash table at the tail
-			for i := uint(0); i < e.concurrency; i++ {
-				var workerID = i
-				e.joinWorkerWaitGroup.Add(1)
-				go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTableInMemory(workerID) }, e.handleJoinWorkerPanic)
-			}
-			e.joinWorkerWaitGroup.Wait()
+		// Concurrently handling unmatched rows from the hash table at the tail
+		for i := uint(0); i < e.concurrency; i++ {
+			var workerID = i
+			e.joinWorkerWaitGroup.Add(1)
+			go util.WithRecovery(func() { e.handleUnmatchedRowsFromHashTable(workerID) }, e.handleJoinWorkerPanic)
 		}
+		e.joinWorkerWaitGroup.Wait()
 	}
 	close(e.joinResultCh)
 }
@@ -578,8 +546,9 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 	}
 
 	hCtx.initHash(probeSideChk.NumRows())
-	for _, i := range hCtx.keyColIdx {
-		err = codec.HashChunkSelected(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull, selected)
+	for keyIdx, i := range hCtx.keyColIdx {
+		ignoreNull := len(e.isNullEQ) > keyIdx && e.isNullEQ[keyIdx]
+		err = codec.HashChunkSelected(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -723,6 +692,12 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	e.rowContainer.GetDiskTracker().SetLabel(buildSideResultLabel)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
+		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
+			if val.(bool) {
+				actionSpill = e.rowContainer.rowContainer.ActionSpillForTest()
+				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
+			}
+		})
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	for chk := range buildSideResultCh {
@@ -730,19 +705,19 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 			return nil
 		}
 		if !e.useOuterToBuild {
-			err = e.rowContainer.PutChunk(chk)
+			err = e.rowContainer.PutChunk(chk, e.isNullEQ)
 		} else {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
 			e.memTracker.Consume(bitMap.BytesConsumed())
 			if len(e.outerFilter) == 0 {
-				err = e.rowContainer.PutChunk(chk)
+				err = e.rowContainer.PutChunk(chk, e.isNullEQ)
 			} else {
 				selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(chk), selected)
 				if err != nil {
 					return err
 				}
-				err = e.rowContainer.PutChunkSelected(chk, selected)
+				err = e.rowContainer.PutChunkSelected(chk, selected, e.isNullEQ)
 			}
 		}
 		if err != nil {
@@ -794,14 +769,16 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.innerRows = nil
 	e.memTracker = nil
 	if e.runtimeStats != nil {
+		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
 		if e.canUseCache {
 			var hitRatio float64
 			if e.cacheAccessCounter > 0 {
 				hitRatio = float64(e.cacheHitCounter) / float64(e.cacheAccessCounter)
 			}
-			e.runtimeStats.SetCacheInfo(true, hitRatio)
+			runtimeStats.setCacheInfo(true, hitRatio)
 		} else {
-			e.runtimeStats.SetCacheInfo(false, 0)
+			runtimeStats.setCacheInfo(false, 0)
 		}
 	}
 	return e.outerExec.Close()
@@ -968,4 +945,59 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 			return err
 		}
 	}
+}
+
+// cacheInfo is used to save the concurrency information of the executor operator
+type cacheInfo struct {
+	hitRatio float64
+	useCache bool
+}
+
+type joinRuntimeStats struct {
+	*execdetails.RuntimeStatsWithConcurrencyInfo
+
+	applyCache  bool
+	cache       cacheInfo
+	hasHashStat bool
+	hashStat    hashStatistic
+}
+
+func newJoinRuntimeStats(basic *execdetails.BasicRuntimeStats) *joinRuntimeStats {
+	stats := &joinRuntimeStats{
+		RuntimeStatsWithConcurrencyInfo: &execdetails.RuntimeStatsWithConcurrencyInfo{
+			BasicRuntimeStats: basic,
+		},
+	}
+	return stats
+}
+
+// setCacheInfo sets the cache information. Only used for apply executor.
+func (e *joinRuntimeStats) setCacheInfo(useCache bool, hitRatio float64) {
+	e.Lock()
+	e.applyCache = true
+	e.cache.useCache = useCache
+	e.cache.hitRatio = hitRatio
+	e.Unlock()
+}
+
+func (e *joinRuntimeStats) setHashStat(hashStat hashStatistic) {
+	e.Lock()
+	e.hasHashStat = true
+	e.hashStat = hashStat
+	e.Unlock()
+}
+
+func (e *joinRuntimeStats) String() string {
+	result := e.RuntimeStatsWithConcurrencyInfo.String()
+	if e.applyCache {
+		if e.cache.useCache {
+			result += fmt.Sprintf(", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100)
+		} else {
+			result += fmt.Sprintf(", cache:OFF")
+		}
+	}
+	if e.hasHashStat {
+		result += ", " + e.hashStat.String()
+	}
+	return result
 }

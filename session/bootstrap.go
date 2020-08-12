@@ -1085,6 +1085,7 @@ func upgradeToVer48(s Session, ver int64) {
 		variable.TiDBHashAggPartialConcurrency:  "4",
 		variable.TiDBWindowConcurrency:          "4",
 		variable.TiDBProjectionConcurrency:      "4",
+		variable.TiDBHashJoinConcurrency:        "5",
 	}
 	names := make([]string, 0, len(defValues))
 	for n := range defValues {

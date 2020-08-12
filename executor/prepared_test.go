@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
@@ -23,6 +24,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testSuite1) TestPreparedNameResolver(c *C) {
@@ -101,4 +103,108 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	c.Assert(len(tk.Se.GetSessionVars().PreparedStmts), Equals, 1)
 	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedSQL, Equals, "select * from t")
 	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedPlan, Equals, "")
+}
+
+func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	orgEnable := plannercore.PreparedPlanCacheEnabled()
+	defer func() {
+		plannercore.SetPreparedPlanCache(orgEnable)
+	}()
+	plannercore.SetPreparedPlanCache(true)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("create table t1(a varchar(20), b varchar(20), c varchar(20), primary key(a, b))")
+	tk.MustExec("insert into t1 values('1','1','111'),('2','2','222'),('3','3','333')")
+
+	// For table scan
+	tk.MustExec(`prepare stmt1 from "select * from t1 where t1.a = ? and t1.b > ?"`)
+	tk.MustExec("set @v1 = 1")
+	tk.MustExec("set @v2 = 0")
+	tk.MustQuery("execute stmt1 using @v1,@v2").Check(testkit.Rows("1 1 111"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set @v1 = 2")
+	tk.MustExec("set @v2 = 1")
+	tk.MustQuery("execute stmt1 using @v1,@v2").Check(testkit.Rows("2 2 222"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @v1 = 3")
+	tk.MustExec("set @v2 = 2")
+	tk.MustQuery("execute stmt1 using @v1,@v2").Check(testkit.Rows("3 3 333"))
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	c.Assert(strings.Index(rows[len(rows)-1][4].(string), `range:("3" "2","3" +inf]`), Equals, 0)
+
+	// For point get
+	tk.MustExec(`prepare stmt2 from "select * from t1 where t1.a = ? and t1.b = ?"`)
+	tk.MustExec("set @v1 = 1")
+	tk.MustExec("set @v2 = 1")
+	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("1 1 111"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set @v1 = 2")
+	tk.MustExec("set @v2 = 2")
+	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("2 2 222"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @v1 = 3")
+	tk.MustExec("set @v2 = 3")
+	tk.MustQuery("execute stmt2 using @v1,@v2").Check(testkit.Rows("3 3 333"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	c.Assert(strings.Index(rows[len(rows)-1][0].(string), `Point_Get`), Equals, 0)
+
+	// For CBO point get and batch point get
+	// case 1:
+	tk.MustExec(`drop table if exists ta, tb`)
+	tk.MustExec(`create table ta (a varchar(8) primary key, b int)`)
+	tk.MustExec(`insert ta values ('a', 1), ('b', 2)`)
+	tk.MustExec(`create table tb (a varchar(8) primary key, b int)`)
+	tk.MustExec(`insert tb values ('a', 1), ('b', 2)`)
+	tk.MustExec(`prepare stmt1 from "select * from ta, tb where ta.a = tb.a and ta.a = ?"`)
+	tk.MustExec(`set @v1 = 'a', @v2 = 'b'`)
+	tk.MustQuery(`execute stmt1 using @v1`).Check(testkit.Rows("a 1 a 1"))
+	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 b 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// case 2:
+	tk.MustExec(`drop table if exists ta, tb`)
+	tk.MustExec(`create table ta (a varchar(10) primary key, b int not null)`)
+	tk.MustExec(`insert ta values ('a', 1), ('b', 2)`)
+	tk.MustExec(`create table tb (b int primary key, c int)`)
+	tk.MustExec(`insert tb values (1, 1), (2, 2)`)
+	tk.MustExec(`prepare stmt1 from "select * from ta, tb where ta.b = tb.b and ta.a = ?"`)
+	tk.MustExec(`set @v1 = 'a', @v2 = 'b'`)
+	tk.MustQuery(`execute stmt1 using @v1`).Check(testkit.Rows("a 1 1 1"))
+	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 2 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery(`execute stmt1 using @v2`).Check(testkit.Rows("b 2 2 2"))
+	tkProcess = tk.Se.ShowProcess()
+	ps = []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+	rows = tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+	c.Assert(strings.Index(rows[1][0].(string), `Point_Get`), Equals, 6)
+
+	// case 3:
+	tk.MustExec(`drop table if exists ta, tb`)
+	tk.MustExec(`create table ta (a varchar(10), b varchar(10), c int, primary key (a, b))`)
+	tk.MustExec(`insert ta values ('a', 'a', 1), ('b', 'b', 2), ('c', 'c', 3)`)
+	tk.MustExec(`create table tb (b int primary key, c int)`)
+	tk.MustExec(`insert tb values (1, 1), (2, 2), (3,3)`)
+	tk.MustExec(`prepare stmt1 from "select * from ta, tb where ta.c = tb.b and ta.a = ? and ta.b = ?"`)
+	tk.MustExec(`set @v1 = 'a', @v2 = 'b', @v3 = 'c'`)
+	tk.MustQuery(`execute stmt1 using @v1, @v1`).Check(testkit.Rows("a a 1 1 1"))
+	tk.MustQuery(`execute stmt1 using @v2, @v2`).Check(testkit.Rows("b b 2 2 2"))
+	tk.MustExec(`prepare stmt2 from "select * from ta, tb where ta.c = tb.b and (ta.a, ta.b) in ((?, ?), (?, ?))"`)
+	tk.MustQuery(`execute stmt2 using @v1, @v1, @v2, @v2`).Check(testkit.Rows("a a 1 1 1", "b b 2 2 2"))
+	tk.MustQuery(`execute stmt2 using @v2, @v2, @v3, @v3`).Check(testkit.Rows("b b 2 2 2", "c c 3 3 3"))
 }

@@ -44,7 +44,7 @@ func (s *testRawKVSuite) SetUpTest(c *C) {
 		pdClient:    pdClient,
 		rpcClient:   mocktikv.NewRPCClient(cluster, mvccStore),
 	}
-	s.bo = NewBackoffer(context.Background(), 5000)
+	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
 func (s *testRawKVSuite) TearDownTest(c *C) {

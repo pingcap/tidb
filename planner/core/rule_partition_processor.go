@@ -33,6 +33,9 @@ import (
 	"github.com/pingcap/tidb/util/set"
 )
 
+// FullRange represent used all partitions.
+const FullRange = -1
+
 // partitionProcessor rewrites the ast for table partition.
 //
 // create table t (id int) partition by range (id)
@@ -71,7 +74,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 			for _, child := range ua.Children() {
 				us := LogicalUnionScan{
 					conditions: p.conditions,
-					handleCol:  p.handleCol,
+					handleCols: p.handleCols,
 				}.Init(ua.ctx, ua.blockOffset)
 				us.SetChildren(child)
 				children = append(children, us)
@@ -101,9 +104,7 @@ type partitionTable interface {
 	PartitionExpr() (*tables.PartitionExpr, error)
 }
 
-func generateHashPartitionExpr(t table.Table, ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (expression.Expression, error) {
-	tblInfo := t.Meta()
-	pi := tblInfo.Partition
+func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) (expression.Expression, error) {
 	schema := expression.NewSchema(columns...)
 	exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
 	if err != nil {
@@ -113,41 +114,67 @@ func generateHashPartitionExpr(t table.Table, ctx sessionctx.Context, columns []
 	return exprs[0], nil
 }
 
-func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
-	pe, err := generateHashPartitionExpr(ds.table, ds.ctx, ds.TblCols, ds.names)
+func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
+	if len(used) == 1 && used[0] == FullRange {
+		return fullRange(len(pi.Definitions))
+	}
+	ret := make(partitionRangeOR, len(used))
+	for _, i := range used {
+		ret = append(ret, partitionRange{i, i + 1})
+	}
+	return ret
+}
+
+func (s *partitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.PartitionInfo, partitionNames []model.CIStr) []int {
+	if len(or) == 1 && or[0].start == 0 && or[0].end == len(pi.Definitions) {
+		if len(partitionNames) == 0 {
+			return []int{FullRange}
+		}
+	}
+	ret := make([]int, 0, len(or))
+	for i := 0; i < len(or); i++ {
+		for pos := or[i].start; pos < or[i].end; pos++ {
+			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[pos].Name.L) {
+				continue
+			}
+			ret = append(ret, pos)
+		}
+	}
+	return ret
+}
+
+func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
+	used, err := s.pruneHashPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, ds.names)
 	if err != nil {
 		return nil, err
 	}
-	filterConds := ds.allConds
-	val, ok, hasConflict := expression.FastLocateHashPartition(ds.SCtx(), filterConds, pe)
+	if used != nil {
+		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi))
+	}
+	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
+	tableDual.schema = ds.Schema()
+	return tableDual, nil
+}
+
+func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
+	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
+	pi := tbl.Meta().Partition
+	pe, err := generateHashPartitionExpr(ctx, pi, columns, names)
+	if err != nil {
+		return nil, err
+	}
+	val, ok, hasConflict := expression.FastLocateHashPartition(ctx, conds, pe)
 	if hasConflict {
-		// For condition like `a = 1 and a = 5`, return TableDual directly.
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
-		tableDual.schema = ds.Schema()
-		return tableDual, nil
+		return nil, nil
 	}
 	if ok {
 		idx := math.Abs(val % int64(pi.Num))
-		if len(ds.partitionNames) > 0 && !s.findByName(ds.partitionNames, pi.Definitions[idx].Name.L) {
-			// For condition like `from t partition (p1) where a = 5`, but they are conflict, return TableDual directly.
-			tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
-			tableDual.schema = ds.Schema()
-			return tableDual, nil
+		if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+			return nil, nil
 		}
-		newDataSource := *ds
-		newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
-		newDataSource.isPartition = true
-		newDataSource.physicalTableID = pi.Definitions[idx].ID
-		// There are many expression nodes in the plan tree use the original datasource
-		// id as FromID. So we set the id of the newDataSource with the original one to
-		// avoid traversing the whole plan tree to update the references.
-		newDataSource.id = ds.id
-		newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[idx].ID)
-		pl := &newDataSource
-		return pl, nil
+		return []int{int(idx)}, nil
 	}
-
-	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)))
+	return []int{FullRange}, nil
 }
 
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
@@ -158,10 +185,10 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 
 	// Try to locate partition directly for hash partition.
 	if pi.Type == model.PartitionTypeHash {
-		return s.pruneHashPartition(ds, pi)
+		return s.processHashPartition(ds, pi)
 	}
 	if pi.Type == model.PartitionTypeRange {
-		return s.pruneRangePartition(ds, pi)
+		return s.processRangePartition(ds, pi)
 	}
 
 	// We haven't implement partition by list and so on.
@@ -332,23 +359,23 @@ func intersectionRange(start, end, newStart, newEnd int) (int, int) {
 	return s, e
 }
 
-func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
-	partExpr, err := ds.table.(partitionTable).PartitionExpr()
+func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, tbl table.PartitionedTable, conds []expression.Expression,
+	columns []*expression.Column, names types.NameSlice) (partitionRangeOR, error) {
+	partExpr, err := tbl.(partitionTable).PartitionExpr()
 	if err != nil {
 		return nil, err
 	}
 
 	// Partition by range columns.
 	if len(pi.Columns) > 0 {
-		return s.pruneRangeColumnsPartition(ds, pi, partExpr)
+		return s.pruneRangeColumnsPartition(ctx, conds, pi, partExpr, columns, names)
 	}
 
 	// Partition by range.
-	col, fn, err := makePartitionByFnCol(ds.ctx, ds.TblCols, ds.names, pi.Expr)
+	col, fn, err := makePartitionByFnCol(ctx, columns, names, pi.Expr)
 	if err != nil {
 		return nil, err
 	}
-
 	result := fullRange(len(pi.Definitions))
 	// Extract the partition column, if the column is not null, it's possible to prune.
 	if col != nil {
@@ -360,10 +387,17 @@ func (s *partitionProcessor) pruneRangePartition(ds *DataSource, pi *model.Parti
 			col:    col,
 			partFn: fn,
 		}
-		result = partitionRangeForCNFExpr(ds.ctx, ds.allConds, &pruner, result)
+		result = partitionRangeForCNFExpr(ctx, conds, &pruner, result)
 	}
+	return result, nil
+}
 
-	return s.makeUnionAllChildren(ds, pi, result)
+func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
+	used, err := s.pruneRangePartition(ds.ctx, pi, ds.table.(table.PartitionedTable), ds.allConds, ds.TblCols, ds.names)
+	if err != nil {
+		return nil, err
+	}
+	return s.makeUnionAllChildren(ds, pi, used)
 }
 
 // makePartitionByFnCol extracts the column and function information in 'partition by ... fn(col)'.
@@ -860,19 +894,18 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 	return unionAll, nil
 }
 
-func (s *partitionProcessor) pruneRangeColumnsPartition(ds *DataSource, pi *model.PartitionInfo, pe *tables.PartitionExpr) (LogicalPlan, error) {
+func (s *partitionProcessor) pruneRangeColumnsPartition(ctx sessionctx.Context, conds []expression.Expression, pi *model.PartitionInfo, pe *tables.PartitionExpr, columns []*expression.Column, names types.NameSlice) (partitionRangeOR, error) {
 	result := fullRange(len(pi.Definitions))
 
 	if len(pi.Columns) != 1 {
-		// We only support single column.
-		return s.makeUnionAllChildren(ds, pi, result)
+		return result, nil
 	}
 
-	pruner, err := makeRangeColumnPruner(ds, pi, pe.ForRangeColumnsPruning)
+	pruner, err := makeRangeColumnPruner(columns, names, pi, pe.ForRangeColumnsPruning)
 	if err == nil {
-		result = partitionRangeForCNFExpr(ds.ctx, ds.allConds, pruner, result)
+		result = partitionRangeForCNFExpr(ctx, conds, pruner, result)
 	}
-	return s.makeUnionAllChildren(ds, pi, result)
+	return result, nil
 }
 
 var _ partitionRangePruner = &rangeColumnsPruner{}
@@ -884,9 +917,9 @@ type rangeColumnsPruner struct {
 	maxvalue bool
 }
 
-func makeRangeColumnPruner(ds *DataSource, pi *model.PartitionInfo, from *tables.ForRangeColumnsPruning) (*rangeColumnsPruner, error) {
-	schema := expression.NewSchema(ds.TblCols...)
-	idx := expression.FindFieldNameIdxByColName(ds.names, pi.Columns[0].L)
+func makeRangeColumnPruner(columns []*expression.Column, names types.NameSlice, pi *model.PartitionInfo, from *tables.ForRangeColumnsPruning) (*rangeColumnsPruner, error) {
+	schema := expression.NewSchema(columns...)
+	idx := expression.FindFieldNameIdxByColName(names, pi.Columns[0].L)
 	partCol := schema.Columns[idx]
 	data := make([]expression.Expression, len(from.LessThan))
 	for i := 0; i < len(from.LessThan); i++ {

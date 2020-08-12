@@ -31,38 +31,59 @@ import (
 func interestingGoroutines() (gs []string) {
 	buf := make([]byte, 2<<20)
 	buf = buf[:runtime.Stack(buf, true)]
+	ignoreList := []string{
+		"created by github.com/pingcap/tidb.init",
+		"testing.RunTests",
+		"check.(*resultTracker).start",
+		"check.(*suiteRunner).runFunc",
+		"check.(*suiteRunner).parallelRun",
+		"localstore.(*dbStore).scheduler",
+		"tikv.(*noGCHandler).Start",
+		"ddl.(*ddl).start",
+		"ddl.(*delRange).startEmulator",
+		"domain.NewDomain",
+		"testing.(*T).Run",
+		"domain.(*Domain).LoadPrivilegeLoop",
+		"domain.(*Domain).UpdateTableStatsLoop",
+		"testing.Main(",
+		"runtime.goexit",
+		"created by runtime.gc",
+		"interestingGoroutines",
+		"runtime.MHeap_Scavenger",
+		"created by os/signal.init",
+		// these go routines are async terminated, so they may still alive after test end, thus cause
+		// false positive leak failures
+		"google.golang.org/grpc.(*addrConn).resetTransport",
+		"google.golang.org/grpc.(*ccBalancerWrapper).watcher",
+		"github.com/pingcap/goleveldb/leveldb/util.(*BufferPool).drain",
+		"github.com/pingcap/goleveldb/leveldb.(*DB).compactionError",
+		"github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain",
+		"go.etcd.io/etcd/v3/pkg/logutil.(*MergeLogger).outputLoop",
+		// import PD will introduce another MergeLogger
+		"go.etcd.io/etcd/pkg/logutil.(*MergeLogger).outputLoop",
+		"oracles.(*pdOracle).updateTS",
+		"tikv.(*tikvStore).runSafePointChecker",
+		"tikv.(*RegionCache).asyncCheckAndResolveLoop",
+		"github.com/pingcap/badger.(*writeWorker).runMergeLSM",
+	}
+	shouldIgnore := func(stack string) bool {
+		if stack == "" {
+			return true
+		}
+		for _, ident := range ignoreList {
+			if strings.Contains(stack, ident) {
+				return true
+			}
+		}
+		return false
+	}
 	for _, g := range strings.Split(string(buf), "\n\n") {
 		sl := strings.SplitN(g, "\n", 2)
 		if len(sl) != 2 {
 			continue
 		}
 		stack := strings.TrimSpace(sl[1])
-		if stack == "" ||
-			strings.Contains(stack, "created by github.com/pingcap/tidb.init") ||
-			strings.Contains(stack, "testing.RunTests") ||
-			strings.Contains(stack, "check.(*resultTracker).start") ||
-			strings.Contains(stack, "check.(*suiteRunner).runFunc") ||
-			strings.Contains(stack, "check.(*suiteRunner).parallelRun") ||
-			strings.Contains(stack, "localstore.(*dbStore).scheduler") ||
-			strings.Contains(stack, "tikv.(*noGCHandler).Start") ||
-			strings.Contains(stack, "ddl.(*ddl).start") ||
-			strings.Contains(stack, "ddl.(*delRange).startEmulator") ||
-			strings.Contains(stack, "domain.NewDomain") ||
-			strings.Contains(stack, "testing.(*T).Run") ||
-			strings.Contains(stack, "domain.(*Domain).LoadPrivilegeLoop") ||
-			strings.Contains(stack, "domain.(*Domain).UpdateTableStatsLoop") ||
-			strings.Contains(stack, "testing.Main(") ||
-			strings.Contains(stack, "runtime.goexit") ||
-			strings.Contains(stack, "created by runtime.gc") ||
-			strings.Contains(stack, "interestingGoroutines") ||
-			strings.Contains(stack, "runtime.MHeap_Scavenger") ||
-			// these go routines are async terminated, so they may still alive after test end, thus cause
-			// false positive leak failures
-			strings.Contains(stack, "google.golang.org/grpc.(*addrConn).resetTransport") ||
-			strings.Contains(stack, "google.golang.org/grpc.(*ccBalancerWrapper).watcher") ||
-			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb/util.(*BufferPool).drain") ||
-			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb.(*DB).compactionError") ||
-			strings.Contains(stack, "github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain") {
+		if shouldIgnore(stack) {
 			continue
 		}
 		gs = append(gs, stack)

@@ -153,6 +153,7 @@ type StatementContext struct {
 	LockKeysCount         int32
 	TblInfo2UnionScan     map[*model.TableInfo]bool
 	TaskID                uint64 // unique ID for an execution of a statement
+	TaskMapBakTS          uint64 // counter for
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -166,6 +167,9 @@ type StmtHints struct {
 	NoIndexMergeHint        bool
 	// EnableCascadesPlanner is use cascades planner for a single query only.
 	EnableCascadesPlanner bool
+	// ForceNthPlan indicates the PlanCounterTp number for finding physical plan.
+	// -1 for disable.
+	ForceNthPlan int64
 
 	// Hint flags
 	HasAllowInSubqToJoinAndAggHint bool
@@ -173,6 +177,11 @@ type StmtHints struct {
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
 	HasEnableCascadesPlannerHint   bool
+}
+
+// TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.
+func (sh *StmtHints) TaskMapNeedBackUp() bool {
+	return sh.ForceNthPlan != -1
 }
 
 // GetNowTsCached getter for nowTs, if not set get now time and cache it

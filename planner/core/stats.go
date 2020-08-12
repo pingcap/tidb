@@ -274,8 +274,9 @@ func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 	ts.stats = ts.Source.deriveStatsByFilter(ts.AccessConds, nil)
 	sc := ts.SCtx().GetSessionVars().StmtCtx
 	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
-	if ts.Handle != nil {
-		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.Handle.RetType)
+	// TODO: support clustered index.
+	if ts.HandleCols != nil {
+		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.HandleCols.GetCol(0).RetType)
 	} else {
 		isUnsigned := false
 		if ts.Source.tableInfo.PKIsHandle {
@@ -374,6 +375,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			}
 			if ds.tableInfo.IsCommonHandle {
 				path.IsCommonHandlePath = true
+				path.Index = ds.possibleAccessPaths[i].Index
 			} else {
 				path.IsIntHandlePath = true
 			}
@@ -570,7 +572,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 // every matched bucket.
 func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	leftProfile, rightProfile := childStats[0], childStats[1]
-	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
+	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
 	helper := &fullJoinRowCountHelper{
 		cartesian:     0 == len(p.EqualConditions),
 		leftProfile:   leftProfile,

@@ -400,6 +400,9 @@ func (s *Server) onConn(conn *clientConn) {
 	if plugin.IsEnable(plugin.Audit) {
 		sessionVars.ConnectionInfo = conn.connectInfo()
 	}
+	type vars struct {
+		killed *uint32
+	}
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
@@ -532,7 +535,7 @@ func (s *Server) getTLSConfig() *tls.Config {
 
 func killConn(conn *clientConn) {
 	sessVars := conn.ctx.GetSessionVars()
-	atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+	atomic.StoreUint32(&sessVars.Killed, 1)
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.
