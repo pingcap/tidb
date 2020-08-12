@@ -16,10 +16,7 @@ Please answer these questions before submitting your issue. Thanks!
 
 ### 3. What did you see instead (Required)
 
-### 4. Affected version (Required)
+### 4. What is your TiDB version? (Required)
 
-<!-- v3.0.0, v4.0.0, etc -->
+<!-- Paste the output of SELECT tidb_version() -->
 
-### 5. Root Cause Analysis
-
-<!-- should be filled by the investigator before it's closed -->
