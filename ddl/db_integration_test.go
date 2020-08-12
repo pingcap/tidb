@@ -2295,10 +2295,7 @@ func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 	tk.MustExec("drop table if exists t, t1, t2, t3;")
 
 	tk.MustExec("create table t(a int NOT NULL, b int, key(a), unique(b) invisible)")
-	queryIndexOnTable := func(tableName string) string {
-		return fmt.Sprintf("select index_name, is_visible from information_schema.statistics where table_schema = 'alter_index_test' and table_name = '%s' order by index_name", tableName)
-	}
-	query := queryIndexOnTable("t")
+	query := queryIndexOnTable("alter_index_test", "t")
 	tk.MustQuery(query).Check(testkit.Rows("a YES", "b NO"))
 
 	tk.MustExec("alter table t alter index a invisible")
@@ -2323,11 +2320,68 @@ func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
 	// Alter expression index
 	tk.MustExec("create table t3(a int NOT NULL, b int)")
 	tk.MustExec("alter table t3 add index idx((a+b));")
-	query = queryIndexOnTable("t3")
+	query = queryIndexOnTable("alter_index_test", "t3")
 	tk.MustQuery(query).Check(testkit.Rows("idx YES"))
 
 	tk.MustExec("alter table t3 alter index idx invisible")
 	tk.MustQuery(query).Check(testkit.Rows("idx NO"))
+}
+
+func queryIndexOnTable(dbName, tableName string) string {
+	return fmt.Sprintf("select distinct index_name, is_visible from information_schema.statistics where table_schema = '%s' and table_name = '%s' order by index_name", dbName, tableName)
+}
+
+func (s *testIntegrationSuite5) TestDropColumnWithCompositeIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	query := queryIndexOnTable("drop_composite_index_test", "t_drop_column_with_comp_idx")
+	tk.MustExec("create database if not exists drop_composite_index_test")
+	tk.MustExec("use drop_composite_index_test")
+	tk.MustExec("create table t_drop_column_with_comp_idx(a int, b int, c int)")
+	defer tk.MustExec("drop table if exists t_drop_column_with_comp_idx")
+	tk.MustExec("create index idx_bc on t_drop_column_with_comp_idx(b, c)")
+	tk.MustExec("create index idx_b on t_drop_column_with_comp_idx(b)")
+	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
+	tk.MustQuery(query).Check(testkit.Rows("idx_b YES", "idx_bc YES"))
+	tk.MustExec("alter table t_drop_column_with_comp_idx alter index idx_bc invisible")
+	tk.MustExec("alter table t_drop_column_with_comp_idx alter index idx_b invisible")
+	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
+	tk.MustQuery(query).Check(testkit.Rows("idx_b NO", "idx_bc NO"))
+}
+
+func (s *testIntegrationSuite5) TestDropColumnWithIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")
+	defer tk.MustExec("drop table if exists t_drop_column_with_idx")
+	tk.MustExec("create index idx on t_drop_column_with_idx(b)")
+	tk.MustExec("alter table t_drop_column_with_idx drop column b")
+	query := queryIndexOnTable("test_db", "t_drop_column_with_idx")
+	tk.MustQuery(query).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite5) TestDropColumnWithMultiIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")
+	defer tk.MustExec("drop table if exists t_drop_column_with_idx")
+	tk.MustExec("create index idx_1 on t_drop_column_with_idx(b)")
+	tk.MustExec("create index idx_2 on t_drop_column_with_idx(b)")
+	tk.MustExec("alter table t_drop_column_with_idx drop column b")
+	query := queryIndexOnTable("test_db", "t_drop_column_with_idx")
+	tk.MustQuery(query).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite5) TestDropColumnsWithMultiIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_columns_with_idx(a int, b int, c int)")
+	defer tk.MustExec("drop table if exists t_drop_columns_with_idx")
+	tk.MustExec("create index idx_1 on t_drop_columns_with_idx(b)")
+	tk.MustExec("create index idx_2 on t_drop_columns_with_idx(b)")
+	tk.MustExec("create index idx_3 on t_drop_columns_with_idx(c)")
+	tk.MustExec("alter table t_drop_columns_with_idx drop column b, drop column c")
+	query := queryIndexOnTable("test_db", "t_drop_columns_with_idx")
+	tk.MustQuery(query).Check(testkit.Rows())
 }
 
 func (s *testIntegrationSuite7) TestAutoIncrementAllocator(c *C) {
