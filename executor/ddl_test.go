@@ -180,10 +180,6 @@ func (s *testSuite6) TestCreateTable(c *C) {
 	tk.MustExec("create table if not exists t1_if_exists(c int)")
 	tk.MustExec("drop table if exists t1_if_exists,t2_if_exists,t3_if_exists")
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Note|1051|Unknown table 'test.t2_if_exists'", "Note|1051|Unknown table 'test.t3_if_exists'"))
-
-	// Test for individual enum element length is too long.
-	_, err = tk.Exec("create table t (a enum('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))")
-	c.Assert(err, NotNil)
 }
 
 func (s *testSuite6) TestCreateView(c *C) {
