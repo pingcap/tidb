@@ -127,7 +127,6 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 		return
 	}
 	reader := bufio.NewReader(e.files[0].file)
-	//rows, err := e.parseSlowLog(sctx, reader, 1024)
 	e.parseSlowLog(ctx, sctx, reader, 64)
 	close(e.parsedSlowLogCh)
 }
@@ -208,7 +207,7 @@ func getOneLine(reader *bufio.Reader) ([]byte, error) {
 	return resByte, err
 }
 
-func (e *slowQueryRetriever) getLog(reader *bufio.Reader, num int) ([]string, error) {
+func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, num int) ([]string, error) {
 	var line string
 	log := make([]string, 0, num)
 	var err error
@@ -242,13 +241,12 @@ func (e *slowQueryRetriever) getLog(reader *bufio.Reader, num int) ([]string, er
 }
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, maxRow int) {
-	var wg sync.WaitGroup
 	//to limit the num of go routine
+	var wg sync.WaitGroup
 	ch := make(chan int, sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency())
 	defer close(ch)
 	for {
-		//batch
-		log, err := e.getLog(reader, maxRow)
+		log, err := e.getBatchLog(reader, maxRow)
 		wg.Add(1)
 		ch <- 1
 		if err != nil {
