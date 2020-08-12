@@ -161,6 +161,23 @@ func (s *Schema) ColumnsByIndices(offsets []int) []*Column {
 	return cols
 }
 
+// ExtractColGroups checks if column groups are from current schema, and returns
+// offsets of those satisfied column groups.
+func (s *Schema) ExtractColGroups(colGroups [][]*Column) ([][]int, []int) {
+	if len(colGroups) == 0 {
+		return nil, nil
+	}
+	extracted := make([][]int, 0, len(colGroups))
+	offsets := make([]int, 0, len(colGroups))
+	for i, g := range colGroups {
+		if j := s.ColumnsIndices(g); j != nil {
+			extracted = append(extracted, j)
+			offsets = append(offsets, i)
+		}
+	}
+	return extracted, offsets
+}
+
 // MergeSchema will merge two schema into one schema. We shouldn't need to consider unique keys.
 // That will be processed in build_key_info.go.
 func MergeSchema(lSchema, rSchema *Schema) *Schema {
