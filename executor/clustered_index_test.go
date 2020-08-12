@@ -150,4 +150,9 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 	tk.MustGetErrCode("insert into t values ('aac', 1, 'aac');", errno.ErrDupEntry)
 	tk.MustGetErrCode("insert into t values ('bb', 1, 'bb');", errno.ErrDupEntry)
 	tk.MustGetErrCode("insert into t values ('bbc', 1, 'bbc');", errno.ErrDupEntry)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(name varchar(255), b int, primary key(name(2)), index idx(b));")
+	tk.MustExec("insert into t values ('aaa', 1), ('bbb', 1);")
+	tk.MustQuery("select group_concat(name separator '.') from t use index(idx);").Check(testkit.Rows("aaa.bbb"))
 }
