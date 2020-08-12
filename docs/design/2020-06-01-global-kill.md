@@ -1,7 +1,7 @@
 # Global Kill
 
 - Author(s):     [pingyu](https://github.com/pingyu) (Ping Yu)
-- Last updated:  2020-07-31
+- Last updated:  2020-08-12
 - Discussion at: https://github.com/pingcap/tidb/issues/8854
 
 ## Abstract
@@ -49,23 +49,20 @@ To support "Global Kill", we need:
 #### 3. serverId
 `serverId` is selected RANDOMLY by each TiDB instance on startup, and the uniqueness is guaranteed by PD(etcd). `serverId` should be larger or equal to 1, to insure that high 32 bits of `connId` should always be non-zero, and make it possible to detect truncation.
 
-On single TiDB instance without PD, a `serverId` of `0` is assigned.
+On failure (e.g. fail to connect to PD, or all `serverId` are unavailable), we set `serverId` to `0`. And when `serverId == 0`, we deal with `KILL x` as in [early versions](https://pingcap.com/docs/stable/sql-statements/sql-statement-kill/).
 
-When `serverId == 0`, we deal with `KILL x` as in [early versions](https://pingcap.com/docs/stable/sql-statements/sql-statement-kill/).
+`serverId` is kept by PD with a lease default to 1 hour. If TiDB is disconnected to PD longer than half of the lease, all connections are killed. On connection to PD restored, a new `serverId` is acquired.
 
-`serverId` is kept by PD with a lease default to 1 hour. If TiDB is disconnected to PD longer to half of the lease, all connections are killed. On connection to PD restored, a new `serverId` is acquired.
+On single TiDB instance without PD, a `serverId` of `1` is assigned.
 
 #### 4. local connId
 `local connId` is allocated by each TiDB instance on establishing connections incrementally.
 
-Integer overflow is ignored at this stage, as `local connId` should be long enouth.
+Integer overflow is ignored at this stage, as `local connId` should be long enough.
 
 #### 5. global kill
-On processing `KILL x` command, first extract `serverId` from `x`. Then if `serverId` aims to a remote TiDB instance, get address from cluster info, and redirect the command to it by "MySQL API", along with the original user authentication.
+On processing `KILL x` command, first extract `serverId` from `x`. Then if `serverId` aims to a remote TiDB instance, get the address from cluster info, and redirect the command to it by "Coprocessor API" provided by the remote TiDB, along with the original user authentication.
 
 ## Compatibility
 
-- Incompatible with legacy 32 bits clients. (According to some quick tests by now, MySQL client v8.0.19 supports `KILL` a connection with 64 bits `connId`, while `CTRL-C` does not, because it truncates the `connId` to 32 bits.)
-
-- TiDB is able to probe the happening of 32 bits truncation, and deal with a truncated `connId` as [what we do](https://pingcap.com/docs/stable/sql-statements/sql-statement-kill/) in early versions, i.e, run on current instance with `local connId` if `compatible-kill-query = true`, otherwise reject it to prevent killing a wrong connection.
-
+- Incompatible with legacy 32 bits clients. (According to some quick tests by now, MySQL client v8.0.19 supports `KILL` a connection with 64 bits `connId`, while `CTRL-C` does not, because it truncates the `connId` to 32 bits). A warning is set prompting that truncation happened, but user cannot see it, because `CTRL-C` is sent by a new connection in an instant.

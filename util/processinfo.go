@@ -170,8 +170,8 @@ type GlobalConnID struct {
 	ServerIDGetter func() uint64
 }
 
-var (
-	// MaxServerID is maximum serverID
+const (
+	// MaxServerID is maximum serverID.
 	MaxServerID = 1<<23 - 1
 )
 
@@ -188,7 +188,7 @@ func (g *GlobalConnID) makeID(localConnID uint64) uint64 {
 	if g.Is64bits {
 		id |= 0x1
 		id |= localConnID & 0xff_ffff_ffff << 1 // 40 bits local connID.
-		id |= serverID & 0x7f_ffff << 41        // 23 bits serverID.
+		id |= serverID & MaxServerID << 41      // 23 bits serverID.
 	} else {
 		// TODO: update after new design for 32 bits version.
 		id |= localConnID & 0x7fff_ffff << 1 // 31 bits local connID.
@@ -208,6 +208,7 @@ func (g *GlobalConnID) NextID() uint64 {
 }
 
 // ParseGlobalConnID parses an uint64 to GlobalConnID.
+//   `isTruncated` indicates whether a 64 bits GlobalConnID is truncated to 32 bits.
 func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool) {
 	if id&0x1 > 0 {
 		if id&0xffffffff_00000000 == 0 {
@@ -216,7 +217,7 @@ func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool) {
 		return GlobalConnID{
 			Is64bits:    true,
 			LocalConnID: (id >> 1) & 0xff_ffff_ffff,
-			ServerID:    (id >> 41) & 0x7f_ffff,
+			ServerID:    (id >> 41) & MaxServerID,
 		}, false
 	}
 	// TODO: update after new design for 32 bits version.

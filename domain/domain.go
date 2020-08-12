@@ -83,9 +83,8 @@ type Domain struct {
 	statsUpdating        sync2.AtomicInt32
 	cancel               context.CancelFunc
 
-	serverID             uint64
-	serverIDSession      atomic.Value // with type *concurrency.Session
-	isLostConnectionToPD int32
+	serverID        uint64
+	serverIDSession atomic.Value // with type *concurrency.Session
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -1291,7 +1290,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 		}
 		if !resp.Succeeded {
 			logutil.BgLogger().Info("random serverID exists, try again", zap.Int64("randServerID", randServerID))
-			time.Sleep(acquireServerIDRetryCnt)
+			time.Sleep(acquireServerIDRetryInterval)
 			continue
 		}
 
@@ -1308,7 +1307,11 @@ func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, do.ServerID())
 	value := "0"
 	err := ddlutil.PutKVToEtcd(ctx, do.etcdClient, acquireServerIDRetryCnt, key, value, clientv3.WithLease(do.getServerIDSession().Lease()))
-	logutil.BgLogger().Info("refreshServerIDTTL", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
+	if err != nil {
+		logutil.BgLogger().Error("refreshServerIDTTL fail", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("refreshServerIDTTL succeed", zap.Uint64("serverID", do.ServerID()))
+	}
 	return err
 }
 
@@ -1325,19 +1328,19 @@ func (do *Domain) serverIDKeeper() {
 		logutil.BgLogger().Info("serverIDKeeper exited.")
 	}()
 
-	lastSucceedTimestamp := time.Now().Unix()
+	isLostConnectionToPD := false
+	lastSucceedTimestamp := time.Now()
 	for {
 		select {
 		case <-ticker.C:
-			if !do.IsLostConnectionToPD() {
+			if !isLostConnectionToPD {
 				if err := do.refreshServerIDTTL(context.Background()); err == nil {
-					lastSucceedTimestamp = time.Now().Unix()
+					lastSucceedTimestamp = time.Now()
 				} else {
-					logutil.BgLogger().Error("refresh serverID ttl in loop failed", zap.Error(err))
-
-					elapse := time.Now().Unix() - lastSucceedTimestamp
-					if lostConnectionTimeout > 0 && elapse > int64(lostConnectionTimeout.Seconds()) {
-						do.onLostConnectionToPD()
+					if lostConnectionTimeout > 0 && time.Since(lastSucceedTimestamp) > lostConnectionTimeout {
+						logutil.BgLogger().Warn("lost connection to PD")
+						isLostConnectionToPD = true
+						do.InfoSyncer().GetSessionManager().KillAllConnections()
 					}
 				}
 			}
@@ -1345,8 +1348,9 @@ func (do *Domain) serverIDKeeper() {
 			logutil.BgLogger().Info("serverIDSession need restart")
 			ctx := context.Background()
 			if err := do.acquireServerID(ctx); err == nil {
-				do.onConnectionToPDRestored()
-				lastSucceedTimestamp = time.Now().Unix()
+				logutil.BgLogger().Info("restored connection to PD")
+				isLostConnectionToPD = false
+				lastSucceedTimestamp = time.Now()
 
 				if err1 := do.info.StoreServerInfo(ctx); err1 != nil {
 					logutil.BgLogger().Error("StoreServerInfo failed", zap.Error(err1))
@@ -1355,27 +1359,12 @@ func (do *Domain) serverIDKeeper() {
 				logutil.BgLogger().Info("serverIDSession restarted")
 			} else {
 				logutil.BgLogger().Error("acquireServerID in restart failed", zap.Error(err))
+				time.Sleep(acquireServerIDRetryInterval)
 			}
 		case <-do.exit:
 			return
 		}
 	}
-}
-
-func (do *Domain) onLostConnectionToPD() {
-	logutil.BgLogger().Warn("lost connection to PD")
-	atomic.StoreInt32(&do.isLostConnectionToPD, 1)
-	do.InfoSyncer().GetSessionManager().KillAllConnections()
-}
-
-func (do *Domain) onConnectionToPDRestored() {
-	logutil.BgLogger().Info("restored connection to PD")
-	atomic.StoreInt32(&do.isLostConnectionToPD, 0)
-}
-
-// IsLostConnectionToPD returns lost connection to PD or not.
-func (do *Domain) IsLostConnectionToPD() bool {
-	return atomic.LoadInt32(&do.isLostConnectionToPD) > 0
 }
 
 var (

@@ -1081,40 +1081,48 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	}
 
 	if e.InCoprocessor {
-		logutil.BgLogger().Info("Kill in coprocessor", zap.Uint64("connID", s.ConnectionID), zap.Bool("query", s.Query))
+		logutil.BgLogger().Info("KILL in coprocessor", zap.Uint64("connID", s.ConnectionID), zap.Bool("query", s.Query))
 		sm.Kill(s.ConnectionID, s.Query)
 		return nil
 	}
 
 	if sm.ServerID() == 0 {
-		// `sm.ServerID() == 0` indicates serverID allocation by PD would be not working.
+		// `sm.ServerID() == 0` indicates serverID allocation would be not working.
 		// Degrade to behavior as early versions.
-		conf := config.GetGlobalConfig()
-		if s.TiDBExtension || conf.CompatibleKillQuery {
-			sm.Kill(s.ConnectionID, s.Query)
-		} else {
-			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
-			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		}
-		return nil
+		return e.executeCompatibleKill(ctx, s)
 	}
 
 	connID, isTruncated := util.ParseGlobalConnID(s.ConnectionID)
 	if isTruncated {
-		err := errors.New("Invalid operation. ConnectionID is truncated to 32 bits. Please use 'KILL [CONNECTION | QUERY] connectionID' instead")
+		logutil.BgLogger().Warn("Invalid KILL operation. ConnectionID is truncated to 32 bits", zap.Uint64("connID", s.ConnectionID))
+		// Notice that this warning cannot be seen if KILL is triggered by "CTRL-C" of mysql client,
+		//   as the KILL is sent by a new connection.
+		err := errors.New("Invalid KILL operation. ConnectionID is truncated to 32 bits. Please use 'KILL [CONNECTION | QUERY] connectionID' instead")
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
 	}
 
 	if connID.ServerID != sm.ServerID() {
 		if err := killRemoteConn(ctx, e.ctx, &connID, s.Query); err != nil {
-			err1 := errors.New("Kill remote connection failed: " + err.Error())
+			err1 := errors.New("KILL remote connection failed: " + err.Error())
 			e.ctx.GetSessionVars().StmtCtx.AppendWarning(err1)
 		}
 	} else {
 		sm.Kill(s.ConnectionID, s.Query)
 	}
 
+	return nil
+}
+
+func (e *SimpleExec) executeCompatibleKill(ctx context.Context, s *ast.KillStmt) error {
+	conf := config.GetGlobalConfig()
+	if s.TiDBExtension || conf.CompatibleKillQuery {
+		sm := e.ctx.GetSessionManager()
+		sm.Kill(s.ConnectionID, s.Query)
+	} else {
+		err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
+		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	}
 	return nil
 }
 
