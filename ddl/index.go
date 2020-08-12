@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/generate_expr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -1099,10 +1100,24 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 		indexedCols[i] = cols[v.Offset]
 	}
 
+	mockSchema := expression.TableInfo2Schema(sessCtx, t.Meta())
 	var containsVirtualCol bool
 	decodeColMap, err := decoder.BuildFullDecodeColMap(indexedCols, t, func(genCol *table.Column) (expression.Expression, error) {
 		containsVirtualCol = true
-		return expression.ParseSimpleExprCastWithTableInfo(sessCtx, genCol.GeneratedExprString, t.Meta(), &genCol.FieldType)
+		expr, err := generate_expr.ParseExpression(genCol.GeneratedExprString)
+		if err != nil {
+			return nil, err
+		}
+		expr, err = generate_expr.SimpleResolveName(expr, t.Meta())
+		if err != nil {
+			return nil, err
+		}
+		e, err := expression.RewriteAstExpr(sessCtx, expr, mockSchema)
+		if err != nil {
+			return nil, err
+		}
+		e = expression.BuildCastFunction(sessCtx, e, &genCol.FieldType)
+		return e, nil
 	})
 	if err != nil {
 		return nil, err

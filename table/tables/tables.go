@@ -20,6 +20,7 @@ package tables
 import (
 	"context"
 	"encoding/binary"
+	"github.com/pingcap/tidb/util/generate_expr"
 	"math"
 	"strings"
 
@@ -111,11 +112,11 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
-			expr, err := parseExpression(colInfo.GeneratedExprString)
+			expr, err := generate_expr.ParseExpression(colInfo.GeneratedExprString)
 			if err != nil {
 				return nil, err
 			}
-			expr, err = simpleResolveName(expr, tblInfo)
+			expr, err = generate_expr.SimpleResolveName(expr, tblInfo)
 			if err != nil {
 				return nil, err
 			}
