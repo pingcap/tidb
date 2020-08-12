@@ -619,32 +619,17 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
-	r := new(bytes.Buffer)
-	st, et := e.StartTime, e.EndTime
-	if st > 0 {
-		st := time.Unix(0, st*1e6)
-		r.WriteString(fmt.Sprintf("start_time:%v, ", st.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
+	m := make(map[string]interface{})
+	if e.StartTime > 0 {
+		m["start_time"] = time.Unix(0, e.StartTime*1e6).In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)
 	}
-	if et > 0 {
-		et := time.Unix(0, et*1e6)
-		r.WriteString(fmt.Sprintf("end_time:%v, ", et.In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)))
+	if e.EndTime > 0 {
+		m["end_time"] = time.Unix(0, e.EndTime*1e6).In(p.ctx.GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat)
 	}
-	if len(e.NodeTypes) > 0 {
-		r.WriteString(fmt.Sprintf("node_types:[%s], ", extractStringFromStringSet(e.NodeTypes)))
-	}
-	if len(e.Instances) > 0 {
-		r.WriteString(fmt.Sprintf("instances:[%s], ", extractStringFromStringSet(e.Instances)))
-	}
-	if len(e.LogLevels) > 0 {
-		r.WriteString(fmt.Sprintf("log_levels:[%s], ", extractStringFromStringSet(e.LogLevels)))
-	}
-
-	// remove the last ", " in the message info
-	s := r.String()
-	if len(s) > 2 {
-		return s[:len(s)-2]
-	}
-	return s
+	m["node_types"] = e.NodeTypes
+	m["instances"] = e.Instances
+	m["log_levels"] = e.LogLevels
+	return writeStringWithBuffer(m, true)
 }
 
 // MetricTableExtractor is used to extract some predicates of metrics_schema tables.
@@ -1095,9 +1080,9 @@ func writeStringWithBuffer(m map[string]interface{}, truncateFlag bool) string {
 			}
 		}
 	}
-	// remove the last ", " in the message info
 	s := buffer.String()
-	if truncateFlag == true {
+	// if truncateFlag is true then the last ", " in the message info need to be removed
+	if truncateFlag {
 		if len(s) > 2 {
 			return s[:len(s)-2]
 		}
