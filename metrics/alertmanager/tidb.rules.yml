@@ -144,3 +144,15 @@ groups:
       description: 'cluster: ENV_LABELS_ENV, instance: {{ $labels.instance }}, values:{{ $value }}'
       value: '{{ $value }}'
       summary: TiDB ddl waiting_jobs too much
+
+  - alert: TiDB_node_restart
+    expr: changes(process_start_time_seconds{job="tidb"}[5m]) > 0
+    for: 1m
+    labels:
+      env: ENV_LABELS_ENV
+      level: warning
+      expr:  changes(process_start_time_seconds{job="tidb"}[5m]) > 0
+    annotations:
+      description: 'cluster: ENV_LABELS_ENV, instance: {{ $labels.instance }}, values:{{ $value }}'
+      value: '{{ $value }}'
+      summary: TiDB server has been restarted
