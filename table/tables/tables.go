@@ -699,7 +699,6 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	if setPresume {
 		err = memBuffer.SetWithFlags(key, value, kv.SetPresumeKeyNotExists)
-		sctx.GetSessionVars().StmtCtx.CheckKeyExists[string(key)] = struct{}{}
 	} else {
 		err = memBuffer.Set(key, value)
 	}
@@ -861,7 +860,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		}
 		colTps[col.ID] = &col.FieldType
 	}
-	rowMap, err := tablecodec.DecodeRow(value, colTps, ctx.GetSessionVars().Location())
+	rowMap, err := tablecodec.DecodeRowToDatumMap(value, colTps, ctx.GetSessionVars().Location())
 	if err != nil {
 		return nil, rowMap, err
 	}
@@ -1104,7 +1103,7 @@ func (t *TableCommon) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols 
 		if err != nil {
 			return err
 		}
-		rowMap, err := tablecodec.DecodeRow(it.Value(), colMap, ctx.GetSessionVars().Location())
+		rowMap, err := tablecodec.DecodeRowToDatumMap(it.Value(), colMap, ctx.GetSessionVars().Location())
 		if err != nil {
 			return err
 		}

@@ -284,7 +284,6 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 	if err != nil || len(value) == 0 {
 		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
 			err = us.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
-			sctx.GetSessionVars().StmtCtx.CheckKeyExists[string(key)] = struct{}{}
 		} else {
 			err = us.GetMemBuffer().Set(key, idxVal)
 		}

@@ -955,7 +955,6 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 		LockKeysDuration:      &seVars.StmtCtx.LockKeysDuration,
 		LockKeysCount:         &seVars.StmtCtx.LockKeysCount,
 		LockExpired:           &seVars.TxnCtx.LockExpire,
-		CheckKeyExists:        seVars.StmtCtx.CheckKeyExists,
 	}
 }
 
@@ -1653,7 +1652,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
-	sc.CheckKeyExists = make(map[string]struct{})
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
 	vars.SysWarningCount = warnCount
