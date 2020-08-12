@@ -1104,11 +1104,11 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 	var containsVirtualCol bool
 	decodeColMap, err := decoder.BuildFullDecodeColMap(indexedCols, t, func(genCol *table.Column) (expression.Expression, error) {
 		containsVirtualCol = true
-		expr, err := generate_expr.ParseExpression(genCol.GeneratedExprString)
+		expr, err := generateExpr.ParseExpression(genCol.GeneratedExprString)
 		if err != nil {
 			return nil, err
 		}
-		expr, err = generate_expr.SimpleResolveName(expr, t.Meta())
+		expr, err = generateExpr.SimpleResolveName(expr, t.Meta())
 		if err != nil {
 			return nil, err
 		}

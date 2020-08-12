@@ -112,11 +112,11 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
-			expr, err := generate_expr.ParseExpression(colInfo.GeneratedExprString)
+			expr, err := generateExpr.ParseExpression(colInfo.GeneratedExprString)
 			if err != nil {
 				return nil, err
 			}
-			expr, err = generate_expr.SimpleResolveName(expr, tblInfo)
+			expr, err = generateExpr.SimpleResolveName(expr, tblInfo)
 			if err != nil {
 				return nil, err
 			}
