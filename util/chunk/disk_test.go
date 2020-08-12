@@ -212,15 +212,18 @@ func testListInDisk(c *check.C) {
 }
 
 func (s *testChunkSuite) TestListInDiskWithChecksum(c *check.C) {
-	conf := config.GetGlobalConfig()
-	conf.Security.RequireSecureTransport = false
-	config.StoreGlobalConfig(conf)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.RequireSecureTransport = false
+	})
 	testListInDisk(c)
+
 }
 
 func (s *testChunkSuite) TestListInDiskWithChecksumAndEncrypt(c *check.C) {
-	conf := config.GetGlobalConfig()
-	conf.Security.RequireSecureTransport = true
-	config.StoreGlobalConfig(conf)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.RequireSecureTransport = true
+	})
 	testListInDisk(c)
 }

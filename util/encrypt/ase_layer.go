@@ -39,12 +39,13 @@ type CtrCipher struct {
 }
 
 // NewCtrCipher return a CtrCipher
-func NewCtrCipher(key []byte, nonce uint64) (ctr CtrCipher, err error) {
+func NewCtrCipher(key []byte, nonce uint64) (ctr *CtrCipher, err error) {
 	var block cipher.Block
 	block, err = aes.NewCipher(key)
 	if err != nil {
 		return
 	}
+	ctr = new(CtrCipher)
 	ctr.block = block
 	ctr.nonce = nonce
 	return
@@ -68,7 +69,7 @@ type Writer struct {
 }
 
 // NewWriter returns a new Writer which encrypt data using AES before writing to the underlying object.
-func NewWriter(w io.WriteCloser, ctrCipher CtrCipher) *Writer {
+func NewWriter(w io.WriteCloser, ctrCipher *CtrCipher) *Writer {
 	writer := &Writer{w: w}
 	writer.buf = make([]byte, blockSize)
 	writer.cipherStream = ctrCipher.stream(0)
@@ -135,11 +136,11 @@ func (w *Writer) Close() (err error) {
 // Reader implements an io.ReadAt, reading from the input source after decrypting.
 type Reader struct {
 	r      io.ReaderAt
-	cipher CtrCipher
+	cipher *CtrCipher
 }
 
 // NewReader returns a new Reader which can read from the input source after decrypting.
-func NewReader(r io.ReaderAt, ctrCipher CtrCipher) *Reader {
+func NewReader(r io.ReaderAt, ctrCipher *CtrCipher) *Reader {
 	reader := &Reader{r: r, cipher: ctrCipher}
 	return reader
 }

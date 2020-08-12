@@ -47,8 +47,8 @@ type ListInDisk struct {
 	diskTracker   *disk.Tracker // track disk usage.
 	numRowsInDisk int
 
-	// using by aes encrypt io layer
-	ctrCipher encrypt.CtrCipher
+	// ctrCipher stores the key and nonce using by aes encrypt io layer
+	ctrCipher *encrypt.CtrCipher
 }
 
 var defaultChunkListInDiskLabel fmt.Stringer = stringutil.StringerStr("chunk.ListInDisk")
@@ -169,7 +169,7 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
 	var underlying io.ReaderAt = l.disk
-	if config.GetGlobalConfig().Security.RequireSecureTransport {
+	if l.ctrCipher != nil {
 		underlying = encrypt.NewReader(l.disk, l.ctrCipher)
 	}
 	r := io.NewSectionReader(checksum.NewReader(underlying), off, l.offWrite-off)
