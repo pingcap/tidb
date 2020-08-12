@@ -1412,10 +1412,8 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 }
 
 func (s *testSerialSuite) TestCheckEnumLength(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("create database if not exists test")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2,t3")
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	defer config.RestoreFunc()()
 	_, err := tk.Exec("create table t1 (a enum('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')) charset utf8mb4")
 	c.Assert(err, IsNil)
 	config.UpdateGlobal(func(conf *config.Config) {
