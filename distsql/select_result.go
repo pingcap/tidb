@@ -331,7 +331,6 @@ type selectResultRuntimeStats struct {
 	copRespTime      []time.Duration
 	procKeys         []int64
 	backoffSleep     map[string]time.Duration
-	backoffTimes     map[string]int
 	totalProcessTime time.Duration
 	totalWaitTime    time.Duration
 	rpcStat          tikv.RegionRequestRuntimeStats
