@@ -70,7 +70,7 @@ type idxNameKey struct {
 // unionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type unionStore struct {
-	memBuffer    *memDB
+	memBuffer    *memdb
 	snapshot     Snapshot
 	idxNameCache map[idxNameKey]string
 	opts         options
@@ -143,11 +143,7 @@ func (us *unionStore) HasPresumeKeyNotExists(k Key) bool {
 
 // DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
 func (us *unionStore) UnmarkPresumeKeyNotExists(k Key) {
-	flags, err := us.memBuffer.GetFlags(k)
-	if err != nil {
-		return
-	}
-	us.memBuffer.SetFlags(k, flags.UnmarkPresumeKeyNotExists())
+	us.memBuffer.UpdateFlags(k, DelPresumeKeyNotExists)
 }
 
 func (us *unionStore) GetIndexName(tableID, indexID int64) string {

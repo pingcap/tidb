@@ -44,6 +44,28 @@ func (db *memdb) IterReverse(k Key) (Iterator, error) {
 	return i, nil
 }
 
+func (db *memdb) IterWithFlags(k Key, upperBound Key) MemBufferIterator {
+	i := &memdbIterator{
+		db:           db,
+		start:        k,
+		end:          upperBound,
+		includeFlags: true,
+	}
+	i.init()
+	return i
+}
+
+func (db *memdb) IterReverseWithFlags(k Key) MemBufferIterator {
+	i := &memdbIterator{
+		db:           db,
+		end:          k,
+		reverse:      true,
+		includeFlags: true,
+	}
+	i.init()
+	return i
+}
+
 func (i *memdbIterator) init() {
 	if i.reverse {
 		if len(i.end) == 0 {
@@ -70,6 +92,14 @@ func (i *memdbIterator) Valid() bool {
 		return !i.curr.isNull() && (i.end == nil || bytes.Compare(i.Key(), i.end) < 0)
 	}
 	return !i.curr.isNull()
+}
+
+func (i *memdbIterator) Flags() KeyFlags {
+	return i.curr.getKeyFlags()
+}
+
+func (i *memdbIterator) HasValue() bool {
+	return !i.isFlagsOnly()
 }
 
 func (i *memdbIterator) Key() Key {
