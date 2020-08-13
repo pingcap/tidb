@@ -104,7 +104,7 @@ const (
 	DefInt64Size = int64(unsafe.Sizeof(int64(0)))
 	// DefFloat64Size is the size of float64
 	DefFloat64Size = int64(unsafe.Sizeof(float64(0)))
-	// DefTime64Size is the size of time
+	// DefTimeSize is the size of time
 	DefTimeSize = int64(16)
 
 	// DefPartialResult4AvgDecimalSize is the size of partialResult4AvgDecimal
