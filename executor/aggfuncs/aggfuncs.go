@@ -107,7 +107,6 @@ const (
 	// DefTime64Size is the size of time
 	DefTimeSize = int64(16)
 
-
 	// DefPartialResult4AvgDecimalSize is the size of partialResult4AvgDecimal
 	DefPartialResult4AvgDecimalSize = int64(unsafe.Sizeof(partialResult4AvgDecimal{}))
 	// DefPartialResult4AvgDistinctDecimalSize is the size of partialResult4AvgDistinctDecimal
