@@ -704,6 +704,7 @@ var defaultConf = Config{
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
+	EnableEnumLengthLimit:      true,
 }
 
 var (
