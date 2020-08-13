@@ -15,6 +15,7 @@ package aggfuncs_test
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -128,9 +129,9 @@ func (p *multiArgsAggTest) messUpChunk(c *chunk.Chunk) {
 	}
 }
 
-type memDeltaGens func(*chunk.Chunk) []int64
+type updateMemDeltaGens func(*chunk.Chunk, *types.FieldType) []int64
 
-func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
+func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) []int64 {
 	memDeltas := make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		memDeltas = append(memDeltas, int64(0))
@@ -138,67 +139,7 @@ func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
 	return memDeltas
 }
 
-func int64UpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
-	valSet := set.NewInt64Set()
-	memDeltas := make([]int64, 0)
-	for i := 0; i < srcChk.NumRows(); i++ {
-		row := srcChk.GetRow(i)
-		if row.IsNull(0) {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		val := row.GetInt64(0)
-		if valSet.Exist(val) {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		valSet.Insert(val)
-		memDeltas = append(memDeltas, aggfuncs.DefInt64Size)
-	}
-	return memDeltas
-}
-
-func float32UpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
-	valSet := set.NewFloat64Set()
-	memDeltas := make([]int64, 0)
-	for i := 0; i < srcChk.NumRows(); i++ {
-		row := srcChk.GetRow(i)
-		if row.IsNull(0) {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		val := float64(row.GetFloat32(0))
-		if valSet.Exist(val) {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		valSet.Insert(val)
-		memDeltas = append(memDeltas, aggfuncs.DefFloat64Size)
-	}
-	return memDeltas
-}
-
-func float64UpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
-	valSet := set.NewFloat64Set()
-	memDeltas := make([]int64, 0)
-	for i := 0; i < srcChk.NumRows(); i++ {
-		row := srcChk.GetRow(i)
-		if row.IsNull(0) {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		val := row.GetFloat64(0)
-		if valSet.Exist(val) {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		valSet.Insert(val)
-		memDeltas = append(memDeltas, aggfuncs.DefFloat64Size)
-	}
-	return memDeltas
-}
-
-func stringUpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
+func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) []int64 {
 	valSet := set.NewStringSet()
 	memDeltas := make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
@@ -207,101 +148,76 @@ func stringUpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
 			memDeltas = append(memDeltas, int64(0))
 			continue
 		}
-		val := row.GetString(0)
+		val := ""
+		memDelta := int64(0)
+		switch dataType.Tp {
+		case mysql.TypeLonglong:
+			val = strconv.FormatInt(row.GetInt64(0), 10)
+			memDelta = aggfuncs.DefInt64Size
+			break
+		case mysql.TypeFloat:
+			val = strconv.FormatFloat(float64(row.GetFloat32(0)), 'f', 6, 64)
+			memDelta = aggfuncs.DefFloat64Size
+			break
+		case mysql.TypeDouble:
+			val = strconv.FormatFloat(row.GetFloat64(0), 'f', 6, 64)
+			memDelta = aggfuncs.DefFloat64Size
+			break
+		case mysql.TypeNewDecimal:
+			decimal := row.GetMyDecimal(0)
+			hash, err := decimal.ToHashKey()
+			if err != nil {
+				memDeltas = append(memDeltas, int64(0))
+				continue
+			}
+			val = string(hack.String(hash))
+			memDelta = int64(len(val))
+			break
+		case mysql.TypeString:
+			val = row.GetString(0)
+			memDelta = int64(len(val))
+			break
+		case mysql.TypeDate:
+			val = row.GetTime(0).String()
+			memDelta = aggfuncs.DefTimeSize
+			break
+		case mysql.TypeDuration:
+			val = strconv.FormatInt(row.GetInt64(0), 10)
+			memDelta = aggfuncs.DefInt64Size
+			break
+		case mysql.TypeJSON:
+			json := row.GetJSON(0)
+			bytes := make([]byte, 0)
+			bytes = append(bytes, json.TypeCode)
+			bytes = append(bytes, json.Value...)
+			val = string(bytes)
+			memDelta = int64(len(val))
+			break
+		}
 		if valSet.Exist(val) {
 			memDeltas = append(memDeltas, int64(0))
 			continue
 		}
 		valSet.Insert(val)
-		memDeltas = append(memDeltas, int64(len(val)))
-	}
-	return memDeltas
-}
-
-func decimalUpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
-	valSet := set.NewStringSet()
-	memDeltas := make([]int64, 0)
-	for i := 0; i < srcChk.NumRows(); i++ {
-		row := srcChk.GetRow(i)
-		if row.IsNull(0) {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		val := row.GetMyDecimal(0)
-		hash, err := val.ToHashKey()
-		if err != nil {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		decStr := string(hack.String(hash))
-		if valSet.Exist(decStr) {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		valSet.Insert(decStr)
-		memDeltas = append(memDeltas, int64(len(decStr)))
-	}
-	return memDeltas
-}
-
-func timeUpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
-	valSet := set.NewStringSet()
-	memDeltas := make([]int64, 0)
-	for i := 0; i < srcChk.NumRows(); i++ {
-		row := srcChk.GetRow(i)
-		if row.IsNull(0) {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		val := row.GetTime(0).String()
-		if valSet.Exist(val) {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		valSet.Insert(val)
-		memDeltas = append(memDeltas, aggfuncs.DefTimeSize)
-	}
-	return memDeltas
-}
-
-func jsonUpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
-	valSet := set.NewStringSet()
-	memDeltas := make([]int64, 0)
-	for i := 0; i < srcChk.NumRows(); i++ {
-		row := srcChk.GetRow(i)
-		if row.IsNull(0) {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		val := row.GetJSON(0)
-		bytes := make([]byte, 0)
-		bytes = append(bytes, val.TypeCode)
-		bytes = append(bytes, val.Value...)
-		str := string(bytes)
-		if valSet.Exist(str) {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		valSet.Insert(str)
-		memDeltas = append(memDeltas, int64(len(str)))
+		memDeltas = append(memDeltas, memDelta)
 	}
 	return memDeltas
 }
 
 type aggMemTest struct {
-	aggTest      aggTest
-	memDelta     int64
-	memDeltaGens memDeltaGens
-	isDistinct   bool
+	aggTest            aggTest
+	allocMemDelta      int64
+	updateMemDeltaGens updateMemDeltaGens
+	isDistinct         bool
 }
 
-func buildAggMemTester(funcName string, tp byte, numRows int, memDelta int64, memDeltaGens memDeltaGens, isDistinct bool, results ...interface{}) aggMemTest {
+func buildAggMemTester(funcName string, tp byte, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens, isDistinct bool, results ...interface{}) aggMemTest {
 	aggTest := buildAggTester(funcName, tp, numRows, results)
 	pt := aggMemTest{
-		aggTest:      aggTest,
-		memDelta:     memDelta,
-		memDeltaGens: memDeltaGens,
-		isDistinct:   isDistinct,
+		aggTest:            aggTest,
+		allocMemDelta:      allocMemDelta,
+		updateMemDeltaGens: updateMemDeltaGens,
+		isDistinct:         isDistinct,
 	}
 	return pt
 }
@@ -630,9 +546,9 @@ func (s *testSuite) testAggMemFunc(c *C, p aggMemTest) {
 	}
 	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
 	finalPr, memDelta := finalFunc.AllocPartialResult()
-	c.Assert(memDelta, Equals, p.memDelta)
+	c.Assert(memDelta, Equals, p.allocMemDelta)
 
-	updateMemDeltas := p.memDeltaGens(srcChk)
+	updateMemDeltas := p.updateMemDeltaGens(srcChk, p.aggTest.dataType)
 	iter := chunk.NewIterator4Chunk(srcChk)
 	i := 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
