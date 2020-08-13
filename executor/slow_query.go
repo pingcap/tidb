@@ -16,7 +16,6 @@ package executor
 import (
 	"bufio"
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -267,7 +266,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		go func() {
 			defer wg.Done()
 			e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(sctx, log, v), err}
-			fmt.Print(sctx.GetSessionVars().StmtCtx.GetWarnings())
+			//fmt.Print(sctx.GetSessionVars().StmtCtx.GetWarnings())
 			<-ch
 		}()
 		// read the next file, offset = 0
