@@ -208,8 +208,8 @@ func (s *testMyDecimalSuite) TestToHashKey(c *C) {
 			var dec MyDecimal
 			c.Check(dec.FromString([]byte(num)), IsNil)
 			key, err := dec.ToHashKey()
-			// remove prec and digit len
-			key = key[:len(key)-8]
+			// remove digit len
+			key = key[:len(key)-1]
 			c.Check(err, IsNil)
 			keys = append(keys, string(key))
 		}
@@ -584,6 +584,11 @@ func (s *testMyDecimalSuite) TestToBinFromBin(c *C) {
 		{"00000000000000000000000000000.00000000000012300", 15, 15, "0.000000000000123", ErrTruncated},
 		{"0000000000000000000000000000000000000000000.0000000000001234000000000000000", 16, 16, "0.0000000000001234", ErrTruncated},
 		{"00000000000000000000000000000.000000000000123400", 16, 16, "0.0000000000001234", ErrTruncated},
+		{"0.1", 2, 2, "0.10", nil},
+		{"0.10", 3, 3, "0.100", nil},
+		{"0.1", 3, 1, "0.1", nil},
+		{"0.0000000000001234", 32, 17, "0.00000000000012340", nil},
+		{"0.0000000000001234", 20, 20, "0.00000000000012340000", nil},
 	}
 	for _, ca := range tests {
 		var dec MyDecimal
