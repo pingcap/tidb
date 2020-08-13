@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/check"
@@ -292,4 +293,142 @@ func (s *testChecksumSuite) TestTiCase3648(c *check.C) {
 			c.Assert(err, check.Equals, errChecksumFail)
 		}
 	}
+}
+
+func (s *testChecksumSuite) TestTiCase3649and3650(c *check.C) {
+	path := "TiCase3649and3650"
+	f, err := os.Create(path)
+	c.Assert(err, check.IsNil)
+	defer func() {
+		err = f.Close()
+		c.Assert(err, check.IsNil)
+		err = os.Remove(path)
+		c.Assert(err, check.IsNil)
+	}()
+
+	writeString := "0123456789"
+	c.Assert(err, check.IsNil)
+	csw := NewWriter(NewWriter(NewWriter(NewWriter(f))))
+	w := bytes.NewBuffer(nil)
+	for i := 0; i < 510; i++ {
+		w.WriteString(writeString)
+	}
+	_, err = csw.Write(w.Bytes())
+	c.Assert(err, check.IsNil)
+	_, err = csw.Write(w.Bytes())
+	c.Assert(err, check.IsNil)
+	err = csw.Close()
+	c.Assert(err, check.IsNil)
+
+	f, err = os.Open(path)
+	c.Assert(err, check.IsNil)
+
+	assertReadAt := func(off int64, r []byte, assertErr interface{}, assertN int, assertString string) {
+		cs := NewReader(NewReader(NewReader(NewReader(f))))
+		n, err := cs.ReadAt(r, off)
+		c.Assert(err, check.Equals, assertErr)
+		c.Assert(n, check.Equals, assertN)
+		c.Assert(string(r), check.Equals, assertString)
+	}
+
+	// 2000-3000, across 2 blocks
+	assertReadAt(2000, make([]byte, 1000), nil, 1000, strings.Repeat("0123456789", 100))
+	// 3005-6005, across 4 blocks
+	assertReadAt(3005, make([]byte, 3000), nil, 3000, strings.Repeat("5678901234", 300))
+	// 10000-10200, not eof
+	assertReadAt(10000, make([]byte, 200), nil, 200, strings.Repeat("0123456789", 20))
+	// 10000-10200, eof
+	assertReadAt(10000, make([]byte, 201), io.EOF, 200, strings.Join([]string{strings.Repeat("0123456789", 20), "\x00"}, ""))
+	// 5000-10200, not eof
+	assertReadAt(5000, make([]byte, 5200), nil, 5200, strings.Repeat("0123456789", 520))
+	// 5000-10200, eof
+	assertReadAt(5000, make([]byte, 6000), io.EOF, 5200, strings.Join([]string{strings.Repeat("0123456789", 520), strings.Repeat("\x00", 800)}, ""))
+	// 0-10200, not eof
+	assertReadAt(0, make([]byte, 10200), nil, 10200, strings.Repeat("0123456789", 1020))
+	// 0-10200, eof
+	assertReadAt(0, make([]byte, 11000), io.EOF, 10200, strings.Join([]string{strings.Repeat("0123456789", 1020), strings.Repeat("\x00", 800)}, ""))
+}
+
+func (s *testChecksumSuite) TestTiCase3651and3652(c *check.C) {
+	path1 := "TiCase3652file1"
+	f1, err := os.Create(path1)
+	c.Assert(err, check.IsNil)
+	defer func() {
+		err = f1.Close()
+		c.Assert(err, check.IsNil)
+		err = os.Remove(path1)
+		c.Assert(err, check.IsNil)
+	}()
+	path2 := "TiCase3652file2"
+	f2, err := os.Create(path2)
+	c.Assert(err, check.IsNil)
+	defer func() {
+		err = f2.Close()
+		c.Assert(err, check.IsNil)
+		err = os.Remove(path2)
+		c.Assert(err, check.IsNil)
+	}()
+
+	writeString := "0123456789"
+	c.Assert(err, check.IsNil)
+	w := bytes.NewBuffer(nil)
+	for i := 0; i < 510; i++ {
+		w.WriteString(writeString)
+	}
+	w.Write(w.Bytes())
+
+	// Write all data.
+	csw1 := NewWriter(f1)
+	_, err = csw1.Write(w.Bytes())
+	c.Assert(err, check.IsNil)
+	err = csw1.Close()
+	c.Assert(err, check.IsNil)
+	f1, err = os.Open(path1)
+	c.Assert(err, check.IsNil)
+
+	// Write data by 100 bytes one batch.
+	csw2 := NewWriter(f2)
+	lastPos := 0
+	for i := 100; ; i += 100 {
+		if i < len(w.Bytes()) {
+			_, err = csw2.Write(w.Bytes()[lastPos:i])
+			c.Assert(err, check.IsNil)
+			lastPos = i
+		} else {
+			_, err = csw2.Write(w.Bytes()[lastPos:])
+			c.Assert(err, check.IsNil)
+			break
+		}
+	}
+	c.Assert(err, check.IsNil)
+	err = csw2.Close()
+	c.Assert(err, check.IsNil)
+	f2, err = os.Open(path2)
+	c.Assert(err, check.IsNil)
+
+	// check two files is same
+	s1, err := f1.Stat()
+	c.Assert(err, check.IsNil)
+	s2, err := f2.Stat()
+	c.Assert(err, check.IsNil)
+	c.Assert(s1.Size(), check.Equals, s2.Size())
+	buffer1 := make([]byte, s1.Size())
+	buffer2 := make([]byte, s2.Size())
+	n1, err := f1.ReadAt(buffer1, 0)
+	c.Assert(err, check.IsNil)
+	n2, err := f2.ReadAt(buffer2, 0)
+	c.Assert(err, check.IsNil)
+	c.Assert(n1, check.Equals, n2)
+	c.Assert(buffer1, check.DeepEquals, buffer2)
+
+	// check data
+	assertReadAt := func(off int64, r []byte, assertErr interface{}, assertN int, assertString string, f *os.File) {
+		cs := NewReader(f)
+		n, err := cs.ReadAt(r, off)
+		c.Assert(err, check.Equals, assertErr)
+		c.Assert(n, check.Equals, assertN)
+		c.Assert(string(r), check.Equals, assertString)
+	}
+	assertReadAt(0, make([]byte, 10200), nil, 10200, strings.Repeat("0123456789", 1020), f1)
+	assertReadAt(0, make([]byte, 10200), nil, 10200, strings.Repeat("0123456789", 1020), f2)
 }
