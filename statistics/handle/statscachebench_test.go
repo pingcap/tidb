@@ -168,7 +168,6 @@ func benchmarkStatisticCache(b *testing.B, data *statsCacheTestCase) {
 	//	var wg sync.WaitGroup
 
 	b.Run(BaseTestName+"-Simple", func(b *testing.B) {
-		b.SetParallelism(1)
 		SimplestatsCache, _ := handle.NewStatsCache(data.memoryLimit, handle.SimpleStatsCacheType)
 		benchmarkStatisticCacheExc(b, data, SimplestatsCache)
 		SimplestatsCache.Close()
@@ -178,7 +177,6 @@ func benchmarkStatisticCache(b *testing.B, data *statsCacheTestCase) {
 		}
 	})
 	b.Run(BaseTestName+"-Ristretto", func(b *testing.B) {
-		b.SetParallelism(1)
 		RistrettostatsCache, _ := handle.NewStatsCache(data.memoryLimit, handle.RistrettoStatsCacheType)
 		benchmarkStatisticCacheExc(b, data, RistrettostatsCache)
 		RistrettostatsCache.Close()
