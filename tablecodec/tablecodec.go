@@ -1095,7 +1095,7 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 
 // TruncateIndexValues truncates the index values created using only the leading part of column values.
 func TruncateIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) {
-	for i := 0; i < len(idxInfo.Columns); i++ {
+	for i := 0; i < len(indexedValues); i++ {
 		v := &indexedValues[i]
 		idxCol := idxInfo.Columns[i]
 		noPrefixIndex := idxCol.Length == types.UnspecifiedLength
