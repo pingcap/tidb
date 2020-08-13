@@ -270,6 +270,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			fmt.Print(sctx.GetSessionVars().StmtCtx.GetWarnings())
 			<-ch
 		}()
+		// read the next file, offset = 0
 		if e.fileLine == 0 {
 			offset = 0
 		}
