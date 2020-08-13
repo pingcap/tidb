@@ -95,7 +95,7 @@ func (s *testChecksumSuite) TestTiCase3644(c *check.C) {
 	c.Assert(err, check.IsNil)
 	err = csw.Flush()
 	c.Assert(err, check.IsNil)
-	// Write a byte randomly
+	// Write a byte randomly to disk.
 	_, err = f.Write([]byte{0})
 	c.Assert(err, check.IsNil)
 
@@ -110,11 +110,11 @@ func (s *testChecksumSuite) TestTiCase3644(c *check.C) {
 	for i := 0; ; i++ {
 		cs := NewReader(f)
 		r := make([]byte, 10)
-		_, err := cs.ReadAt(r, int64(i*1024))
+		_, err := cs.ReadAt(r, int64(i*1020))
 		if err == io.EOF {
 			break
 		}
-		if i < 4 {
+		if i < 5 {
 			c.Assert(err, check.Equals, nil)
 		} else {
 			c.Assert(err, check.Equals, errChecksumFail)
@@ -159,7 +159,7 @@ func (s *testChecksumSuite) TestTiCase3645(c *check.C) {
 	for i := 0; ; i++ {
 		cs := NewReader(f)
 		r := make([]byte, 10)
-		_, err := cs.ReadAt(r, int64(i*1024))
+		_, err := cs.ReadAt(r, int64(i*1020))
 		if err == io.EOF {
 			break
 		}
@@ -210,7 +210,7 @@ func (s *testChecksumSuite) TestTiCase3646(c *check.C) {
 	for i := 0; ; i++ {
 		cs := NewReader(f)
 		r := make([]byte, 10)
-		_, err := cs.ReadAt(r, int64(i*1024))
+		_, err := cs.ReadAt(r, int64(i*1020))
 		if err == io.EOF {
 			break
 		}
@@ -236,7 +236,7 @@ func (s *testChecksumSuite) TestTiCase3647(c *check.C) {
 	for i := 0; i <= 10; i++ {
 		cs := NewReader(f)
 		r := make([]byte, 10)
-		_, err := cs.ReadAt(r, int64(i*1024))
+		_, err := cs.ReadAt(r, int64(i*1020))
 		if err == io.EOF {
 			break
 		}
@@ -283,7 +283,7 @@ func (s *testChecksumSuite) TestTiCase3648(c *check.C) {
 	for i := 0; ; i++ {
 		cs := NewReader(f)
 		r := make([]byte, 10)
-		_, err := cs.ReadAt(r, int64(i*1024))
+		_, err := cs.ReadAt(r, int64(i*1020))
 		if err == io.EOF {
 			break
 		}
