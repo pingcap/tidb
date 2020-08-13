@@ -496,7 +496,7 @@ func (vh valueHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	m := make(map[int64]*types.FieldType, 1)
 	m[colID] = ft
 	loc := time.UTC
-	vals, err := tablecodec.DecodeRow(valData, m, loc)
+	vals, err := tablecodec.DecodeRowToDatumMap(valData, m, loc)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -1221,19 +1221,18 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
 	ctx := context.Background()
 	pdCli := h.RegionCache.PDClient()
-	regions, peers, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+	regions, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 	if err != nil {
 		return nil, err
 	}
 
-	recordRegions := make([]RegionMeta, 0, len(peers))
-	for idx, leader := range peers {
-		region := regions[idx]
+	recordRegions := make([]RegionMeta, 0, len(regions))
+	for _, region := range regions {
 		meta := RegionMeta{
-			ID:          region.Id,
-			Leader:      leader,
-			Peers:       region.Peers,
-			RegionEpoch: region.RegionEpoch,
+			ID:          region.Meta.Id,
+			Leader:      region.Leader,
+			Peers:       region.Meta.Peers,
+			RegionEpoch: region.Meta.RegionEpoch,
 		}
 		recordRegions = append(recordRegions, meta)
 	}
@@ -1245,18 +1244,17 @@ func (h tableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*T
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(id, indexID)
-		regions, peers, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+		regions, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 		if err != nil {
 			return nil, err
 		}
-		indexRegions := make([]RegionMeta, 0, len(peers))
-		for idx, leader := range peers {
-			region := regions[idx]
+		indexRegions := make([]RegionMeta, 0, len(regions))
+		for _, region := range regions {
 			meta := RegionMeta{
-				ID:          region.Id,
-				Leader:      leader,
-				Peers:       region.Peers,
-				RegionEpoch: region.RegionEpoch,
+				ID:          region.Meta.Id,
+				Leader:      region.Leader,
+				Peers:       region.Meta.Peers,
+				RegionEpoch: region.Meta.RegionEpoch,
 			}
 			indexRegions = append(indexRegions, meta)
 		}
@@ -1569,7 +1567,7 @@ func (h mvccTxnHandler) handleMvccGetByKey(params map[string]string, decodeData 
 }
 
 func (h mvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldType, tb *model.TableInfo) ([]map[string]string, error) {
-	rs, err := tablecodec.DecodeRow(bs, colMap, time.UTC)
+	rs, err := tablecodec.DecodeRowToDatumMap(bs, colMap, time.UTC)
 	var record []map[string]string
 	for _, col := range tb.Columns {
 		if c, ok := rs[col.ID]; ok {
@@ -1753,7 +1751,12 @@ func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	} else {
 		start = end.Add(-time.Minute * 10)
 	}
-	pb := executor.NewProfileBuilder(sctx, start, end)
+	valueTp := req.FormValue("type")
+	pb, err := executor.NewProfileBuilder(sctx, start, end, valueTp)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	err = pb.Collect()
 	if err != nil {
 		writeError(w, err)

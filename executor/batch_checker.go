@@ -145,6 +145,9 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		if !v.Meta().Unique {
 			continue
 		}
+		if t.Meta().IsCommonHandle && v.Meta().Primary {
+			continue
+		}
 		colVals, err1 := v.FetchValues(row, nil)
 		if err1 != nil {
 			return nil, err1
