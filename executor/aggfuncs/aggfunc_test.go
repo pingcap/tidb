@@ -158,6 +158,26 @@ func int64UpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
 	return memDeltas
 }
 
+func float32UpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
+	valSet := set.NewFloat64Set()
+	memDeltas := make([]int64, 0)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		val := float64(row.GetFloat32(0))
+		if valSet.Exist(val) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		valSet.Insert(val)
+		memDeltas = append(memDeltas, aggfuncs.DefFloat64Size)
+	}
+	return memDeltas
+}
+
 func float64UpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
 	valSet := set.NewFloat64Set()
 	memDeltas := make([]int64, 0)
@@ -220,6 +240,50 @@ func decimalUpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
 		}
 		valSet.Insert(decStr)
 		memDeltas = append(memDeltas, int64(len(decStr)))
+	}
+	return memDeltas
+}
+
+func timeUpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
+	valSet := set.NewStringSet()
+	memDeltas := make([]int64, 0)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		val := row.GetTime(0).String()
+		if valSet.Exist(val) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		valSet.Insert(val)
+		memDeltas = append(memDeltas, aggfuncs.DefTimeSize)
+	}
+	return memDeltas
+}
+
+func jsonUpdateMemDeltaGens(srcChk *chunk.Chunk) []int64 {
+	valSet := set.NewStringSet()
+	memDeltas := make([]int64, 0)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		val := row.GetJSON(0)
+		bytes := make([]byte, 0)
+		bytes = append(bytes, val.TypeCode)
+		bytes = append(bytes, val.Value...)
+		str := string(bytes)
+		if valSet.Exist(str) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		valSet.Insert(str)
+		memDeltas = append(memDeltas, int64(len(str)))
 	}
 	return memDeltas
 }
