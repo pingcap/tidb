@@ -111,6 +111,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 		return withStack(err)
 	} else {
 		pool = newPool
+		defer newPool.Close()
 	}
 
 	m := newGlobalMetadata(conf.OutputDirPath)
@@ -122,7 +123,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 	if conf.Consistency == "lock" {
 		conn, err := createConnWithConsistency(ctx, pool)
 		if err != nil {
-			return err
+			return withStack(err)
 		}
 		m.recordStartTime(time.Now())
 		err = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType)
@@ -143,22 +144,32 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 	if err = conCtrl.Setup(ctx); err != nil {
 		return err
 	}
+	// To avoid lock is not released
+	defer conCtrl.TearDown(ctx)
+
+	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
+	// for other consistencies, record snapshot after whole tables are locked. The recorded meta info is exactly the locked snapshot.
+	if conf.Consistency != "lock" {
+		conn, err := pool.Conn(ctx)
+		if err != nil {
+			return withStack(err)
+		}
+		m.recordStartTime(time.Now())
+		err = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType)
+		if err != nil {
+			log.Info("get global metadata failed", zap.Error(err))
+		}
+		conn.Close()
+	}
 
 	connectPool, err := newConnectionsPool(ctx, conf.Threads, pool)
 	if err != nil {
 		return err
 	}
-
 	defer connectPool.Close()
-	// for other consistencies, we should get table list after consistency is set up and GlobalMetaData is cached
-	// for other consistencies, record snapshot after whole tables are locked. The recorded meta info is exactly the locked snapshot.
+
 	if conf.Consistency != "lock" {
-		m.recordStartTime(time.Now())
 		conn := connectPool.getConn()
-		err = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType)
-		if err != nil {
-			log.Info("get global metadata failed", zap.Error(err))
-		}
 		if err = prepareTableListToDump(conf, conn); err != nil {
 			connectPool.releaseConn(conn)
 			return err

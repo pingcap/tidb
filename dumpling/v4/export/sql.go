@@ -442,17 +442,17 @@ func resetDBWithSessionParams(db *sql.DB, dsn string, params map[string]interfac
 func createConnWithConsistency(ctx context.Context, db *sql.DB) (*sql.Conn, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return nil, err
+		return nil, withStack(err)
 	}
 	_, err = conn.ExecContext(ctx, "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ")
 	if err != nil {
-		return nil, err
+		return nil, withStack(err)
 	}
 	_, err = conn.ExecContext(ctx, "START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */")
 	if err != nil {
-		return nil, err
+		return nil, withStack(err)
 	}
-	return conn, err
+	return conn, nil
 }
 
 func buildSelectField(db *sql.Conn, dbName, tableName string) (string, error) {
