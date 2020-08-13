@@ -134,6 +134,22 @@ alter placement policy
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
 
+	_, err = tk.Exec(`alter table t1 alter partition p0
+drop placement policy
+	role=leader,
+drop placement policy
+	role=leader`)
+	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+
+	_, err = tk.Exec(`alter table t1 alter partition p0
+add placement policy
+	constraints='{"+zone=sh,+zone=bj":1,"+zone=sh,+zone=bj":1}'
+	role=voter
+	replicas=3,
+drop placement policy
+	role=leader`)
+	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+
 	// list/dict detection
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy

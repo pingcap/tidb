@@ -34,6 +34,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 			input:  []*ast.PlacementSpec{},
 			output: []*placement.RuleOp{},
 		},
+
 		{
 			input: []*ast.PlacementSpec{{
 				Role:        ast.PlacementRoleVoter,
@@ -56,6 +57,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					},
 				}},
 		},
+
 		{
 			input: []*ast.PlacementSpec{
 				{
@@ -100,6 +102,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				},
 			},
 		},
+
 		{
 			input: []*ast.PlacementSpec{
 				{
@@ -139,6 +142,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				},
 			},
 		},
+
 		{
 			input: []*ast.PlacementSpec{
 				{
@@ -194,6 +198,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				},
 			},
 		},
+
 		{
 			input: []*ast.PlacementSpec{
 				{
@@ -218,13 +223,82 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				},
 			},
 		},
+
+		{
+			input: []*ast.PlacementSpec{
+				{
+					Role: ast.PlacementRoleLearner,
+					Tp:   ast.PlacementDrop,
+				},
+				{
+					Role: ast.PlacementRoleVoter,
+					Tp:   ast.PlacementDrop,
+				},
+			},
+			output: []*placement.RuleOp{
+				{
+					Action:           placement.RuleOpDel,
+					DeleteByIDPrefix: true,
+					Rule: &placement.Rule{
+						GroupID: placement.RuleDefaultGroupID,
+						Role:    placement.Voter,
+					},
+				},
+				{
+					Action:           placement.RuleOpDel,
+					DeleteByIDPrefix: true,
+					Rule: &placement.Rule{
+						GroupID: placement.RuleDefaultGroupID,
+						Role:    placement.Learner,
+					},
+				},
+			},
+		},
+
+		{
+			input: []*ast.PlacementSpec{
+				{
+					Role:        ast.PlacementRoleLearner,
+					Tp:          ast.PlacementAdd,
+					Replicas:    3,
+					Constraints: `["+  zone=sh", "-zone = bj"]`,
+				},
+				{
+					Role: ast.PlacementRoleVoter,
+					Tp:   ast.PlacementDrop,
+				},
+			},
+			output: []*placement.RuleOp{
+				{
+					Action:           placement.RuleOpDel,
+					DeleteByIDPrefix: true,
+					Rule: &placement.Rule{
+						GroupID: placement.RuleDefaultGroupID,
+						Role:    placement.Voter,
+					},
+				},
+				{
+					Action: placement.RuleOpAdd,
+					Rule: &placement.Rule{
+						GroupID:  placement.RuleDefaultGroupID,
+						Role:     placement.Learner,
+						Override: true,
+						Count:    3,
+						LabelConstraints: []placement.LabelConstraint{
+							{Key: "zone", Op: "in", Values: []string{"sh"}},
+							{Key: "zone", Op: "notIn", Values: []string{"bj"}},
+						},
+					},
+				},
+			},
+		},
 	}
 	for k, t := range tests {
 		out, err := buildPlacementSpecs(t.input)
-		c.Logf("test %d\n", k)
+		c.Logf("test %d", k)
 		if err == nil {
 			for i := range t.output {
-				c.Logf("\t%d-th output\n", i)
+				c.Logf("\t%d-th output", i)
 				found := false
 				for j := range out {
 					ok1, _ := DeepEquals.Check([]interface{}{out[j].Action, t.output[i].Action}, nil)
@@ -236,7 +310,11 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					}
 				}
 				if !found {
-					c.Fatalf("\texcept %+v, but got %+v\n", t.output[i], out)
+					c.Logf("\texcept %+v - %+v\n\tbut got", t.output[i], t.output[i].Rule)
+					for j := range out {
+						c.Logf("\t%+v - %+v", out[j], out[j].Rule)
+					}
+					c.Fail()
 				}
 			}
 		} else {
