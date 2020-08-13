@@ -245,7 +245,7 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, num int) ([]strin
 }
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
-	//to limit the num of go routine
+	// To limit the num of go routine
 	var wg sync.WaitGroup
 	offset := 0
 	ch := make(chan int, sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency())
@@ -266,10 +266,9 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		go func() {
 			defer wg.Done()
 			e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(sctx, log, v), err}
-			//fmt.Print(sctx.GetSessionVars().StmtCtx.GetWarnings())
 			<-ch
 		}()
-		// read the next file, offset = 0
+		// Read the next file, offset = 0
 		if e.fileLine == 0 {
 			offset = 0
 		}
@@ -351,7 +350,6 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 				}
 				if e.checker.hasPrivilege(st.user) {
 					data = append(data, st.convertToDatumRow())
-					//return data
 				}
 				startFlag = false
 			} else {
