@@ -194,6 +194,30 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 				},
 			},
 		},
+		{
+			input: []*ast.PlacementSpec{
+				{
+					Role:        ast.PlacementRoleVoter,
+					Tp:          ast.PlacementAdd,
+					Replicas:    3,
+					Constraints: `["+  zone=sh", "-zone = bj"]`,
+				},
+				{
+					Role: ast.PlacementRoleVoter,
+					Tp:   ast.PlacementDrop,
+				},
+			},
+			output: []*placement.RuleOp{
+				{
+					Action:           placement.RuleOpDel,
+					DeleteByIDPrefix: true,
+					Rule: &placement.Rule{
+						GroupID: placement.RuleDefaultGroupID,
+						Role:    placement.Voter,
+					},
+				},
+			},
+		},
 	}
 	for k, t := range tests {
 		out, err := buildPlacementSpecs(t.input)

@@ -76,6 +76,11 @@ alter placement policy
 	replicas=3`)
 	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
 
+	_, err = tk.Exec(`alter table t1 alter partition p0
+drop placement policy
+	role=leader`)
+	c.Assert(err, ErrorMatches, ".*pd unavailable.*")
+
 	// multiple statements
 	_, err = tk.Exec(`alter table t1 alter partition p0
 add placement policy
