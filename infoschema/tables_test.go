@@ -110,7 +110,7 @@ type testClusterTableSuite struct {
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testTableSuiteBase.SetUpSuite(c)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(c, "127.0.0.1:0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 }
@@ -702,6 +702,8 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 			types: set.NewStringSet("tidb", "tikv", "pd"),
 			addrs: set.NewStringSet(s.listenAddr),
 			names: set.NewStringSet("cpu", "memory", "net", "disk"),
+			// The sysutil package will filter out all disk don't have /dev prefix.
+			skipOnOS: "windows",
 		},
 		{
 			sql:   "select * from information_schema.CLUSTER_SYSTEMINFO;",
