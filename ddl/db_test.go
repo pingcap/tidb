@@ -19,6 +19,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -167,10 +168,10 @@ func testAddIndexWithPK(tk *testkit.TestKit, s *testSerialDBSuite, c *C) {
 func (s *testSerialDBSuite) TestAddIndexWithPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = false
 	})
-	defer config.RestoreFunc()()
 
 	testAddIndexWithPK(tk, s, c)
 	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
@@ -1291,6 +1292,8 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 	}{
 		{model.ActionAddTablePartition, model.JobStateNone, model.StateNone, true},
 		{model.ActionDropTablePartition, model.JobStateNone, model.StateNone, true},
+		// Add table partition now can be cancelled in ReplicaOnly state.
+		{model.ActionAddTablePartition, model.JobStateRunning, model.StateReplicaOnly, true},
 		{model.ActionAddTablePartition, model.JobStateRunning, model.StatePublic, false},
 		{model.ActionDropTablePartition, model.JobStateRunning, model.StatePublic, false},
 	}
@@ -1491,13 +1494,23 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	var err1 error
+	var c3idx table.Index
 	for i := range testCases {
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			s.mustExec(tk, c, "alter table test_drop_column add column c3 int")
+			s.mustExec(tk, c, "alter table test_drop_column add index idx_c3(c3)")
+			tt := s.testGetTable(c, "test_drop_column")
+			for _, idx := range tt.Indices() {
+				if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+					c3idx = idx
+					break
+				}
+			}
 		}
 		_, err1 = tk.Exec("alter table test_drop_column drop column c3")
 		var col1 *table.Column
+		var idx1 table.Index
 		t := s.testGetTable(c, "test_drop_column")
 		for _, col := range t.Cols() {
 			if strings.EqualFold(col.Name.L, "c3") {
@@ -1505,16 +1518,28 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 				break
 			}
 		}
+		for _, idx := range t.Indices() {
+			if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+				idx1 = idx
+				break
+			}
+		}
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(col1, NotNil)
 			c.Assert(col1.Name.L, Equals, "c3")
+			c.Assert(idx1, NotNil)
+			c.Assert(idx1.Meta().Name.L, Equals, "idx_c3")
 			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 		} else {
 			c.Assert(col1, IsNil)
+			c.Assert(idx1, IsNil)
 			c.Assert(err1, IsNil)
 			c.Assert(checkErr, NotNil)
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+			// Check index is deleted
+			ctx := s.s.(sessionctx.Context)
+			checkDelRangeDone(c, ctx, c3idx)
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -1576,28 +1601,50 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	var err1 error
+	var c3idx table.Index
 	for i := range testCases {
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			s.mustExec(tk, c, "alter table test_drop_column add column c3 int, add column c4 int")
+			s.mustExec(tk, c, "alter table test_drop_column add index idx_c3(c3)")
+			tt := s.testGetTable(c, "test_drop_column")
+			for _, idx := range tt.Indices() {
+				if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+					c3idx = idx
+					break
+				}
+			}
 		}
 		_, err1 = tk.Exec("alter table test_drop_column drop column c3, drop column c4")
 		t := s.testGetTable(c, "test_drop_column")
 		col3 := table.FindCol(t.Cols(), "c3")
 		col4 := table.FindCol(t.Cols(), "c4")
+		var idx3 table.Index
+		for _, idx := range t.Indices() {
+			if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+				idx3 = idx
+				break
+			}
+		}
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(col3, NotNil)
 			c.Assert(col4, NotNil)
+			c.Assert(idx3, NotNil)
 			c.Assert(col3.Name.L, Equals, "c3")
 			c.Assert(col4.Name.L, Equals, "c4")
+			c.Assert(idx3.Meta().Name.L, Equals, "idx_c3")
 			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 		} else {
 			c.Assert(col3, IsNil)
 			c.Assert(col4, IsNil)
+			c.Assert(idx3, IsNil)
 			c.Assert(err1, IsNil)
 			c.Assert(checkErr, NotNil)
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+			// Check index is deleted
+			ctx := s.s.(sessionctx.Context)
+			checkDelRangeDone(c, ctx, c3idx)
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -2190,7 +2237,7 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 }
 
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
-func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
+func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1,t2;")
@@ -2262,6 +2309,9 @@ func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	checkTbl2()
 
 	// Test for table has tiflash  replica.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
@@ -2352,6 +2402,28 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	_, err = tk.Exec("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;")
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
+
+	// test for table option "union" not supported
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
+	failSQL = "ALTER TABLE x UNION = (y);"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
+	tk.MustExec("drop table x;")
+	tk.MustExec("drop table y;")
+
+	// test for table option "insert method" not supported
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE INSERT_METHOD=LAST;"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
+	failSQL = "ALTER TABLE x INSERT_METHOD=LAST;"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
+	tk.MustExec("drop table x;")
+	tk.MustExec("drop table y;")
 }
 
 func (s *testDBSuite5) TestRepairTable(c *C) {
@@ -2781,7 +2853,7 @@ func (s *testDBSuite3) TestFKOnGeneratedColumns(c *C) {
 	tk.MustExec("drop table t1,t2,t3,t4,t5;")
 }
 
-func (s *testDBSuite3) TestTruncateTable(c *C) {
+func (s *testSerialDBSuite) TestTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table truncate_table (c1 int, c2 int)")
@@ -2828,6 +2900,9 @@ func (s *testDBSuite3) TestTruncateTable(c *C) {
 	c.Assert(hasOldTableData, IsFalse)
 
 	// Test for truncate table should clear the tiflash available status.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
@@ -3676,8 +3751,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	c.Assert(err, IsNil)
 	_, err = writeOnlyTable.AddRecord(tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	c.Assert(err, IsNil)
-	err = tk.Se.StmtCommit(nil)
-	c.Assert(err, IsNil)
+	tk.Se.StmtCommit()
 	err = tk.Se.CommitTxn(ctx)
 	c.Assert(err, IsNil)
 
@@ -3808,7 +3882,7 @@ func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testSerialDBSuite, c
 	tk.MustExec("insert into t values()")
 	tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
 	_, err := tk.Exec("ALTER TABLE t ADD INDEX idx_y(y1)")
-	c.Assert(err.Error(), Equals, "[ddl:8202]Cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
+	c.Assert(err, IsNil)
 
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
@@ -4001,7 +4075,7 @@ func (s *testDBSuite4) TestIssue9100(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:1503]A PRIMARY must include all columns in the table's partitioning function")
 }
 
-func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
+func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
@@ -4029,7 +4103,9 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 
 }
 
-func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
+func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	s.mustExec(tk, c, "drop table if exists t_flash;")
@@ -4119,6 +4195,14 @@ func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
 	t, dbInfo = is.FindTableByPartitionID(t.Meta().ID)
 	c.Assert(t, IsNil)
 	c.Assert(dbInfo, IsNil)
+	failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
+	// Test for set replica count more than the tiflash store count.
+	s.mustExec(tk, c, "drop table if exists t_flash;")
+	tk.MustExec("create table t_flash(a int, b int)")
+	_, err = tk.Exec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
 }
 
 func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
@@ -4290,7 +4374,10 @@ func (s *testDBSuite2) TestWriteLocal(c *C) {
 	tk2.MustExec("unlock tables")
 }
 
-func (s *testDBSuite2) TestSkipSchemaChecker(c *C) {
+func (s *testSerialDBSuite) TestSkipSchemaChecker(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -4858,6 +4945,198 @@ func (s *testDBSuite1) TestAlterTableWithValidation(c *C) {
 	tk.MustExec("alter table t1 without validation")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8200|ALTER TABLE WITHOUT VALIDATION is currently unsupported"))
+}
+
+func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
+	// Prepare work.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
+	tk.MustExec("insert t1 values (1, 10, 100), (2, 20, 200)")
+	tk.MustExec("alter table t1 add index k2(c2)")
+	tk.MustExec("alter table t1 drop index k2")
+	tk.MustExec("alter table t1 add index k2(c2)")
+	tk.MustExec("alter table t1 drop index k2")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test_db")
+
+	// tkSQLs are the sql statements for the pessimistic transaction.
+	// tk2DDL are the ddl statements executed before the pessimistic transaction.
+	// idxDDL is the DDL statement executed between pessimistic transaction begin and commit.
+	// failCommit means the pessimistic transaction commit should fail not.
+	type caseUnit struct {
+		tkSQLs     []string
+		tk2DDL     []string
+		idxDDL     string
+		checkSQLs  []string
+		rowsExps   [][]string
+		failCommit bool
+		stateEnd   model.SchemaState
+	}
+
+	cases := []caseUnit{
+		// Test secondary index
+		{[]string{"insert into t1 values(3, 30, 300)",
+			"insert into t2 values(11, 11, 11)"},
+			[]string{"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2",
+				"alter table t1 add index kk2(c2, c1)",
+				"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2"},
+			"alter table t1 add index k2(c2)",
+			[]string{"select c3, c2 from t1 use index(k2) where c2 = 20",
+				"select c3, c2 from t1 use index(k2) where c2 = 10",
+				"select * from t1",
+				"select * from t2 where c1 = 11"},
+			[][]string{{"200 20"},
+				{"100 10"},
+				{"1 10 100", "2 20 200", "3 30 300"},
+				{"11 11 11"}},
+			false,
+			model.StateNone},
+		// Test secondary index
+		{[]string{"insert into t2 values(5, 50, 500)",
+			"insert into t2 values(11, 11, 11)",
+			"delete from t2 where c2 = 11",
+			"update t2 set c2 = 110 where c1 = 11"},
+			//"update t2 set c1 = 10 where c3 = 100"},
+			[]string{"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2",
+				"alter table t1 add index kk2(c2, c1)",
+				"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2"},
+			"alter table t1 add index k2(c2)",
+			[]string{"select c3, c2 from t1 use index(k2) where c2 = 20",
+				"select c3, c2 from t1 use index(k2) where c2 = 10",
+				"select * from t1",
+				"select * from t2 where c1 = 11",
+				"select * from t2 where c3 = 100"},
+			[][]string{{"200 20"},
+				{"100 10"},
+				{"1 10 100", "2 20 200"},
+				{},
+				{"1 10 100"}},
+			false,
+			model.StateNone},
+		// Test unique index
+		/* TODO unique index is not supported now.
+		{[]string{"insert into t1 values(3, 30, 300)",
+			"insert into t1 values(4, 40, 400)",
+			"insert into t2 values(11, 11, 11)",
+			"insert into t2 values(12, 12, 11)"},
+			[]string{"alter table t1 add unique index uk3(c3)",
+				"alter table t1 drop index uk3",
+				"alter table t2 add unique index ukc1c3(c1, c3)",
+				"alter table t2 add unique index ukc3(c3)",
+				"alter table t2 drop index ukc1c3",
+				"alter table t2 drop index ukc3",
+				"alter table t2 add index kc3(c3)"},
+			"alter table t1 add unique index uk3(c3)",
+			[]string{"select c3, c2 from t1 use index(uk3) where c3 = 200",
+				"select c3, c2 from t1 use index(uk3) where c3 = 300",
+				"select c3, c2 from t1 use index(uk3) where c3 = 400",
+				"select * from t1",
+				"select * from t2"},
+			[][]string{{"200 20"},
+				{"300 30"},
+				{"400 40"},
+				{"1 10 100", "2 20 200", "3 30 300", "4 40 400"},
+				{"1 10 100", "2 20 200", "11 11 11", "12 12 11"}},
+			false, model.StateNone},
+		// Test unique index fail to commit, this case needs the new index could be inserted
+		{[]string{"insert into t1 values(3, 30, 300)",
+			"insert into t1 values(4, 40, 300)",
+			"insert into t2 values(11, 11, 11)",
+			"insert into t2 values(12, 11, 12)"},
+			//[]string{"alter table t1 add unique index uk3(c3)", "alter table t1 drop index uk3"},
+			[]string{},
+			"alter table t1 add unique index uk3(c3)",
+			[]string{"select c3, c2 from t1 use index(uk3) where c3 = 200",
+				"select c3, c2 from t1 use index(uk3) where c3 = 300",
+				"select c3, c2 from t1 where c1 = 4",
+				"select * from t1",
+				"select * from t2"},
+			[][]string{{"200 20"},
+				{},
+				{},
+				{"1 10 100", "2 20 200"},
+				{"1 10 100", "2 20 200"}},
+			true,
+			model.StateWriteOnly},
+		*/
+	}
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
+
+	// Test add index state change
+	do := s.dom.DDL()
+	startStates := []model.SchemaState{model.StateNone, model.StateDeleteOnly}
+	for _, startState := range startStates {
+		endStatMap := session.ConstOpAddIndex[startState]
+		var endStates []model.SchemaState
+		for st := range endStatMap {
+			endStates = append(endStates, st)
+		}
+		sort.Slice(endStates, func(i, j int) bool { return endStates[i] < endStates[j] })
+		for _, endState := range endStates {
+			for _, curCase := range cases {
+				if endState < curCase.stateEnd {
+					break
+				}
+				tk2.MustExec("drop table if exists t1")
+				tk2.MustExec("drop table if exists t2")
+				tk2.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
+				tk2.MustExec("create table t2 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
+				tk2.MustExec("insert t1 values (1, 10, 100), (2, 20, 200)")
+				tk2.MustExec("insert t2 values (1, 10, 100), (2, 20, 200)")
+				tk2.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
+				tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
+				tk.MustQuery("select * from t2;").Check(testkit.Rows("1 10 100", "2 20 200"))
+
+				for _, DDLSQL := range curCase.tk2DDL {
+					tk2.MustExec(DDLSQL)
+				}
+				hook := &ddl.TestDDLCallback{}
+				prepared := false
+				committed := false
+				hook.OnJobUpdatedExported = func(job *model.Job) {
+					if job.SchemaState == startState {
+						if !prepared {
+							tk.MustExec("begin pessimistic")
+							for _, tkSQL := range curCase.tkSQLs {
+								tk.MustExec(tkSQL)
+							}
+							prepared = true
+						}
+					} else if job.SchemaState == endState {
+						if !committed {
+							if curCase.failCommit {
+								_, err := tk.Exec("commit")
+								c.Assert(err, NotNil)
+							} else {
+								tk.MustExec("commit")
+							}
+						}
+						committed = true
+					}
+				}
+				originalCallback := do.GetHook()
+				do.(ddl.DDLForTest).SetHook(hook)
+				tk2.MustExec(curCase.idxDDL)
+				do.(ddl.DDLForTest).SetHook(originalCallback)
+				tk2.MustExec("admin check table t1")
+				for i, checkSQL := range curCase.checkSQLs {
+					if len(curCase.rowsExps[i]) > 0 {
+						tk2.MustQuery(checkSQL).Check(testkit.Rows(curCase.rowsExps[i]...))
+					} else {
+						tk2.MustQuery(checkSQL).Check(nil)
+					}
+				}
+			}
+		}
+	}
+	tk.MustExec("admin check table t1")
 }
 
 func init() {

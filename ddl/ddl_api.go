@@ -19,6 +19,8 @@ package ddl
 
 import (
 	"bytes"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -35,6 +37,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -43,10 +46,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil"
@@ -629,7 +634,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
-// getDefault value will get the default value for column.
+// getDefaultValue will get the default value for column.
 // 1: get the expr restored string for the column which uses sequence next value as default value.
 // 2: get specific default value for the other column.
 func getDefaultValue(ctx sessionctx.Context, col *table.Column, c *ast.ColumnOption) (interface{}, bool, error) {
@@ -1673,14 +1678,16 @@ func (d *ddl) CreateTableWithInfo(
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
-			if err = d.handleAutoIncID(tbInfo, schema.ID, autoid.RowIDAllocType); err != nil {
+			newEnd := tbInfo.AutoIncID - 1
+			if err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.RowIDAllocType); err != nil {
 				return errors.Trace(err)
 			}
 		}
 		if tbInfo.AutoRandID > 1 {
 			// Default tableAutoRandID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
-			err = d.handleAutoIncID(tbInfo, schema.ID, autoid.AutoRandomType)
+			newEnd := tbInfo.AutoRandID - 1
+			err = d.handleAutoIncID(tbInfo, schema.ID, newEnd, autoid.AutoRandomType)
 		}
 	}
 
@@ -1970,22 +1977,11 @@ func checkCharsetAndCollation(cs string, co string) error {
 
 // handleAutoIncID handles auto_increment option in DDL. It creates a ID counter for the table and initiates the counter to a proper value.
 // For example if the option sets auto_increment to 10. The counter will be set to 9. So the next allocated ID will be 10.
-func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, tp autoid.AllocatorType) error {
+func (d *ddl) handleAutoIncID(tbInfo *model.TableInfo, schemaID int64, newEnd int64, tp autoid.AllocatorType) error {
 	allocs := autoid.NewAllocatorsFromTblInfo(d.store, schemaID, tbInfo)
-	tbInfo.State = model.StatePublic
-	tb, err := table.TableFromMeta(allocs, tbInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// The operation of the minus 1 to make sure that the current value doesn't be used,
-	// the next Alloc operation will get this value.
-	// Its behavior is consistent with MySQL.
-	if tp == autoid.RowIDAllocType {
-		if err = tb.RebaseAutoID(nil, tbInfo.AutoIncID-1, false, tp); err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		if err = tb.RebaseAutoID(nil, tbInfo.AutoRandID-1, false, tp); err != nil {
+	if alloc := allocs.Get(tp); alloc != nil {
+		err := alloc.Rebase(tbInfo.ID, newEnd, false)
+		if err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -2265,6 +2261,8 @@ func (d *ddl) AlterTable(ctx sessionctx.Context, ident ast.Ident, specs []*ast.A
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			isAlterTable := true
 			err = d.RenameTable(ctx, ident, newIdent, isAlterTable)
+		case ast.AlterTableAlterPartition:
+			err = d.AlterTablePartition(ctx, ident, spec)
 		case ast.AlterTablePartition:
 			// Prevent silent succeed if user executes ALTER TABLE x PARTITION BY ...
 			err = errors.New("alter table partition is unsupported")
@@ -2364,16 +2362,18 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		actionType = model.ActionRebaseAutoID
 	}
 
-	autoID, err := t.Allocators(ctx).Get(tp).NextGlobalAutoID(t.Meta().ID)
-	if err != nil {
-		return errors.Trace(err)
+	if alloc := t.Allocators(ctx).Get(tp); alloc != nil {
+		autoID, err := alloc.NextGlobalAutoID(t.Meta().ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// If newBase < autoID, we need to do a rebase before returning.
+		// Assume there are 2 TiDB servers: TiDB-A with allocator range of 0 ~ 30000; TiDB-B with allocator range of 30001 ~ 60000.
+		// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
+		// and TiDB-B finds 100 < 30001 but returns without any handling,
+		// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
+		newBase = mathutil.MaxInt64(newBase, autoID)
 	}
-	// If newBase < autoID, we need to do a rebase before returning.
-	// Assume there are 2 TiDB servers: TiDB-A with allocator range of 0 ~ 30000; TiDB-B with allocator range of 30001 ~ 60000.
-	// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
-	// and TiDB-B finds 100 < 30001 but returns without any handling,
-	// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
-	newBase = mathutil.MaxInt64(newBase, autoID)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -2748,11 +2748,6 @@ func (d *ddl) CoalescePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 }
 
 func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	// TODO: Support truncate multiple partitions
-	if len(spec.PartitionNames) != 1 {
-		return errRunMultiSchemaChanges
-	}
-
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -2767,12 +2762,14 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	var pid int64
-	pid, err = tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
-	if err != nil {
-		return errors.Trace(err)
+	pids := make([]int64, len(spec.PartitionNames))
+	for i, name := range spec.PartitionNames {
+		pid, err := tables.FindPartitionByName(meta, name.L)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		pids[i] = pid
 	}
-	pids := []int64{pid}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -2792,11 +2789,6 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 }
 
 func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
-	// TODO: Support drop multiple partitions
-	if len(spec.PartitionNames) != 1 {
-		return errRunMultiSchemaChanges
-	}
-
 	is := d.infoHandle.Get()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -2811,8 +2803,10 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
 	}
 
-	partName := spec.PartitionNames[0].L
-	partNames := []string{partName}
+	partNames := make([]string, len(spec.PartitionNames))
+	for i, partCIName := range spec.PartitionNames {
+		partNames[i] = partCIName.L
+	}
 	err = checkDropTablePartition(meta, partNames)
 	if err != nil {
 		if ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
@@ -3185,11 +3179,9 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 	return nil
 }
 
-// checkModifyTypes checks if the 'origin' type can be modified to 'to' type with out the need to
-// change or check existing data in the table.
-// It returns error if the two types has incompatible Charset and Collation, different sign, different
-// digital/string types, or length of new Flen and Decimal is less than origin.
-func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
+// CheckModifyTypeCompatible checks whether changes column type to another is compatible considering
+// field length and precision.
+func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) error {
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
@@ -3248,8 +3240,19 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
 		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
+	return nil
+}
 
-	err := checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
+// checkModifyTypes checks if the 'origin' type can be modified to 'to' type with out the need to
+// change or check existing data in the table.
+// It returns error if the two types has incompatible Charset and Collation, different sign, different
+// digital/string types, or length of new Flen and Decimal is less than origin.
+func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
+	err := CheckModifyTypeCompatible(origin, to)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
 	return errors.Trace(err)
 }
 
@@ -3449,6 +3452,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 			ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
 			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
 		)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, chs, coll); err != nil {
@@ -3825,7 +3831,7 @@ func (d *ddl) AlterTableAutoIDCache(ctx sessionctx.Context, ident ast.Ident, new
 	return errors.Trace(err)
 }
 
-// AlterTableCharset changes the table charset and collate.
+// AlterTableCharsetAndCollate changes the table charset and collate.
 func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Ident, toCharset, toCollate string, needsOverwriteCols bool) error {
 	// use the last one.
 	if toCharset == "" && toCollate == "" {
@@ -3898,6 +3904,11 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		}
 	}
 
+	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
@@ -3909,6 +3920,18 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
+	// Check the tiflash replica count should be less than the total tiflash stores.
+	tiflashStoreCnt, err := infoschema.GetTiFlashStoreCount(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if replicaCount > tiflashStoreCnt {
+		return errors.Errorf("the tiflash replica count: %d should be less than the total tiflash server count: %d", replicaCount, tiflashStoreCnt)
+	}
+	return nil
 }
 
 // UpdateTableReplicaInfo updates the table flash replica infos.
@@ -3977,6 +4000,9 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		ast.CharsetOpt{Chs: origCharset, Col: origCollate},
 		ast.CharsetOpt{Chs: dbInfo.Charset, Col: dbInfo.Collate},
 	)
+	if err != nil {
+		return doNothing, err
+	}
 
 	if err = checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origCollate, false); err != nil {
 		return doNothing, err
@@ -4679,10 +4705,9 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 		return ErrCantRemoveAllFields.GenWithStack("can't drop only column %s in table %s",
 			colName, tblInfo.Name)
 	}
-	// We don't support dropping column with index covered now.
-	// We must drop the index first, then drop the column.
-	if isColumnWithIndex(colName.L, tblInfo.Indices) {
-		return errCantDropColWithIndex.GenWithStack("can't drop column %s with index covered now", colName)
+	// We only support dropping column with single-value none Primary Key index covered now.
+	if !isColumnCanDropWithIndex(colName.L, tblInfo.Indices) {
+		return errCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
 	}
 	// Check the column with foreign key.
 	if fkInfo := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
@@ -5125,6 +5150,198 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	}
 
 	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas uint64, cnstr string) ([]*placement.RuleOp, error) {
+	var err error
+	cnstr = strings.TrimSpace(cnstr)
+	rules := make([]*placement.RuleOp, 0, 1)
+	if len(cnstr) > 0 && cnstr[0] == '[' {
+		// can not emit REPLICAS with an array label
+		if replicas == 0 {
+			return rules, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
+		}
+		rule.Count = int(replicas)
+
+		constraints := []string{}
+
+		err = json.Unmarshal([]byte(cnstr), &constraints)
+		if err != nil {
+			return rules, err
+		}
+
+		rule.LabelConstraints, err = placement.CheckLabelConstraints(constraints)
+		if err != nil {
+			return rules, err
+		}
+
+		rules = append(rules, rule)
+	} else if len(cnstr) > 0 && cnstr[0] == '{' {
+		constraints := map[string]int{}
+		err = json.Unmarshal([]byte(cnstr), &constraints)
+		if err != nil {
+			return rules, err
+		}
+
+		ruleCnt := int(replicas)
+		for labels, cnt := range constraints {
+			newRule := rule.Clone()
+			if cnt <= 0 {
+				err = errors.Errorf("count should be positive, but got %d", cnt)
+				break
+			}
+
+			if replicas != 0 {
+				ruleCnt -= cnt
+				if ruleCnt < 0 {
+					err = errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", replicas)
+					break
+				}
+			}
+			newRule.Count = cnt
+
+			newRule.LabelConstraints, err = placement.CheckLabelConstraints(strings.Split(strings.TrimSpace(labels), ","))
+			if err != nil {
+				break
+			}
+			rules = append(rules, newRule)
+		}
+		rule.Count = ruleCnt
+
+		if rule.Count > 0 {
+			rules = append(rules, rule)
+		}
+	} else {
+		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
+	}
+	return rules, err
+}
+
+func buildPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error) {
+	rules := make([]*placement.RuleOp, 0, len(specs))
+
+	var err error
+	var sb strings.Builder
+	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes
+	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+
+	for _, spec := range specs {
+		rule := &placement.RuleOp{
+			Rule: &placement.Rule{
+				GroupID:  placement.RuleDefaultGroupID,
+				Override: true,
+			},
+		}
+
+		switch spec.Role {
+		case ast.PlacementRoleFollower:
+			rule.Role = placement.Follower
+		case ast.PlacementRoleLeader:
+			rule.Role = placement.Leader
+		case ast.PlacementRoleLearner:
+			rule.Role = placement.Learner
+		case ast.PlacementRoleVoter:
+			rule.Role = placement.Voter
+		default:
+			err = errors.Errorf("unknown role: %d", spec.Role)
+		}
+
+		if err == nil {
+			switch spec.Tp {
+			case ast.PlacementAdd:
+				rule.Action = placement.RuleOpAdd
+			case ast.PlacementAlter:
+				rule.Action = placement.RuleOpAdd
+
+				// alter will overwrite all things
+				// drop all rules that will be overridden
+				newRules := rules[:0]
+
+				for _, r := range rules {
+					if r.Role != rule.Role {
+						newRules = append(newRules, r)
+					}
+				}
+
+				rules = newRules
+
+				// delete previous definitions
+				rules = append(rules, &placement.RuleOp{
+					Action:           placement.RuleOpDel,
+					DeleteByIDPrefix: true,
+					Rule: &placement.Rule{
+						GroupID: placement.RuleDefaultGroupID,
+						// ROLE is useless for PD, prevent two alter statements from overriding each other
+						Role: rule.Role,
+					},
+				})
+			default:
+				err = errors.Errorf("unknown action type: %d", spec.Tp)
+			}
+		}
+
+		if err == nil {
+			var newRules []*placement.RuleOp
+			newRules, err = buildPlacementSpecReplicasAndConstraint(rule, spec.Replicas, spec.Constraints)
+			rules = append(rules, newRules...)
+		}
+
+		if err != nil {
+			sb.Reset()
+			if e := spec.Restore(restoreCtx); e != nil {
+				return rules, ErrInvalidPlacementSpec.GenWithStackByArgs("", err)
+			}
+			return rules, ErrInvalidPlacementSpec.GenWithStackByArgs(sb.String(), err)
+		}
+	}
+	return rules, nil
+}
+
+func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) (err error) {
+	schema, tb, err := d.getSchemaAndTableByIdent(ctx, ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	meta := tb.Meta()
+	if meta.Partition == nil {
+		return errors.Trace(ErrPartitionMgmtOnNonpartitioned)
+	}
+
+	partitionID, err := tables.FindPartitionByName(meta, spec.PartitionNames[0].L)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	rules, err := buildPlacementSpecs(spec.PlacementSpecs)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
+	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
+	for _, rule := range rules {
+		rule.Index = placement.RuleIndexPartition
+		rule.StartKeyHex = startKey
+		rule.EndKeyHex = endKey
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    meta.ID,
+		SchemaName: schema.Name.L,
+		Type:       model.ActionAlterTableAlterPartition,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{partitionID, rules},
+	}
+
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }

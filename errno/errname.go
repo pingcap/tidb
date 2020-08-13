@@ -1071,11 +1071,15 @@ var MySQLErrName = map[uint16]string{
 	ErrMixOfGroupFuncAndFieldsIncompatible: "In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by",
 	ErrUnsupportedSecondArgumentType:       "JSON_OBJECTAGG: unsupported second argument type %v",
 	ErrLockExpire:                          "TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction",
+	ErrTableOptionUnionUnsupported:         "CREATE/ALTER table with union option is not supported",
+	ErrTableOptionInsertMethodUnsupported:  "CREATE/ALTER table with insert method option is not supported",
 
 	ErrBRIEBackupFailed:  "Backup failed: %s",
 	ErrBRIERestoreFailed: "Restore failed: %s",
 	ErrBRIEImportFailed:  "Import failed: %s",
 	ErrBRIEExportFailed:  "Export failed: %s",
+
+	ErrInvalidPlacementSpec: "Invalid placement policy '%s': %s",
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:        "PD server timeout",

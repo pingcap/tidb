@@ -75,13 +75,8 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		vars:            vars,
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
-		actionOnExceed:  &EndCopWorkerAction{},
 		rpcCancel:       NewRPCanceller(),
 	}
-	if it.memTracker != nil {
-		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
-	}
-
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -96,7 +91,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
 	}
-	it.actionOnExceed.mu.aliveWorker = it.concurrency
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	}
@@ -409,13 +403,10 @@ type copIterator struct {
 	closed uint32
 
 	minCommitTSPushed
-
-	actionOnExceed *EndCopWorkerAction
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
 type copIteratorWorker struct {
-	id       string
 	taskCh   <-chan *copTask
 	wg       *sync.WaitGroup
 	store    *tikvStore
@@ -428,8 +419,6 @@ type copIteratorWorker struct {
 	memTracker *memory.Tracker
 
 	replicaReadSeed uint32
-
-	actionOnExceed *EndCopWorkerAction
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -501,14 +490,7 @@ const minLogCopTaskTime = 300 * time.Millisecond
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
 	defer worker.wg.Done()
-
 	for task := range worker.taskCh {
-		endWorker, remainWorkers := worker.checkWorkerOOM()
-		if endWorker {
-			logutil.BgLogger().Info("end one copIterator worker.",
-				zap.String("copIteratorWorker id", worker.id), zap.Int("remain alive worker", remainWorkers))
-			return
-		}
 		respCh := worker.respChan
 		if respCh == nil {
 			respCh = task.respChan
@@ -521,29 +503,10 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		}
 		select {
 		case <-worker.finishCh:
-			worker.actionOnExceed.mu.Lock()
-			worker.actionOnExceed.mu.aliveWorker--
-			worker.actionOnExceed.mu.Unlock()
 			return
 		default:
 		}
 	}
-}
-
-func (worker *copIteratorWorker) checkWorkerOOM() (bool, int) {
-	endWorker := false
-	remainWorkers := 0
-	worker.actionOnExceed.mu.Lock()
-	defer worker.actionOnExceed.mu.Unlock()
-	if worker.actionOnExceed.mu.exceeded != 0 {
-		endWorker = true
-		worker.actionOnExceed.mu.aliveWorker--
-		remainWorkers = worker.actionOnExceed.mu.aliveWorker
-		// reset action
-		worker.actionOnExceed.mu.exceeded = 0
-		worker.actionOnExceed.once = sync.Once{}
-	}
-	return endWorker, remainWorkers
 }
 
 // open starts workers and sender goroutines.
@@ -553,7 +516,6 @@ func (it *copIterator) open(ctx context.Context) {
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency; i++ {
 		worker := &copIteratorWorker{
-			id:       fmt.Sprintf("copIteratorWorker-%d", i),
 			taskCh:   taskCh,
 			wg:       &it.wg,
 			store:    it.store,
@@ -571,7 +533,6 @@ func (it *copIterator) open(ctx context.Context) {
 			memTracker: it.memTracker,
 
 			replicaReadSeed: it.replicaReadSeed,
-			actionOnExceed:  it.actionOnExceed,
 		}
 		go worker.run(ctx)
 	}
@@ -878,6 +839,7 @@ type clientHelper struct {
 	*minCommitTSPushed
 	Client
 	resolveLite bool
+	stats       map[tikvrpc.CmdType]*RegionRequestRuntimeStats
 }
 
 // ResolveLocks wraps the ResolveLocks function and store the resolved result.
@@ -885,6 +847,11 @@ func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	var err error
 	var resolvedLocks []uint64
 	var msBeforeTxnExpired int64
+	if ch.stats != nil {
+		defer func(start time.Time) {
+			recordRegionRequestRuntimeStats(ch.stats, tikvrpc.CmdResolveLock, time.Since(start))
+		}(time.Now())
+	}
 	if ch.resolveLite {
 		msBeforeTxnExpired, resolvedLocks, err = ch.LockResolver.resolveLocksLite(bo, callerStartTS, locks)
 	} else {
@@ -906,6 +873,7 @@ func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID
 	if len(directStoreAddr) > 0 {
 		sender.storeAddr = directStoreAddr
 	}
+	sender.stats = ch.stats
 	req.Context.ResolvedLocks = ch.minCommitTSPushed.Get()
 	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, sType)
 	return resp, ctx, sender.storeAddr, err
@@ -1207,49 +1175,4 @@ func (it copErrorResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 func (it copErrorResponse) Close() error {
 	return nil
-}
-
-// EndCopWorkerAction implements memory.ActionOnExceed for copIteratorWorker. If
-// the memory quota of a query is exceeded, EndCopWorkAction.Action would end one copIteratorWorker.
-// If there is only one or zero worker is running, delegate to the fallback action.
-type EndCopWorkerAction struct {
-	once           sync.Once
-	fallbackAction memory.ActionOnExceed
-	mu             struct {
-		sync.Mutex
-		// exceeded indicates that datasource have exceeded memQuota.
-		exceeded uint32
-
-		// alive worker indicates how many copIteratorWorker are running
-		aliveWorker int
-	}
-}
-
-// Action sends a signal to trigger end one copIterator worker.
-func (e *EndCopWorkerAction) Action(t *memory.Tracker) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	// only one or zero worker is running, delegate to the fallback action
-	if e.mu.aliveWorker < 2 {
-		if e.fallbackAction != nil {
-			e.fallbackAction.Action(t)
-		}
-		return
-	}
-	// set exceeded as 1
-	e.once.Do(func() {
-		e.mu.exceeded = 1
-		logutil.BgLogger().Info("memory exceeds quota, mark EndCopWorkerAction exceed signal.",
-			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()), zap.Int64("maxConsumed", t.MaxConsumed()))
-	})
-}
-
-// SetLogHook implements ActionOnExceed.SetLogHook
-func (e *EndCopWorkerAction) SetLogHook(hook func(uint64)) {
-
-}
-
-// SetFallback implements ActionOnExceed.SetFallback
-func (e *EndCopWorkerAction) SetFallback(a memory.ActionOnExceed) {
-	e.fallbackAction = a
 }

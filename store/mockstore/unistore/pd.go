@@ -58,10 +58,6 @@ func (m *mockTSFuture) Wait() (int64, int64, error) {
 	return m.pdc.GetTS(m.ctx)
 }
 
-func (c *pdClient) ConfigClient() pd.ConfigClient {
-	return nil
-}
-
 func (c *pdClient) GetLeaderAddr() string { return "mockpd" }
 
 func (c *pdClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {

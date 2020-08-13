@@ -374,6 +374,7 @@ func generateCert(sn int, commonName string, parentCert *x509.Certificate, paren
 	template := x509.Certificate{
 		SerialNumber:          big.NewInt(int64(sn)),
 		Subject:               pkix.Name{CommonName: commonName, Names: []pkix.AttributeTypeAndValue{util.MockPkixAttribute(util.CommonName, commonName)}},
+		DNSNames:              []string{commonName},
 		NotBefore:             notBefore,
 		NotAfter:              notAfter,
 		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
@@ -454,7 +455,7 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, ts.store)
 	cfg := config.NewConfig()
-	cfg.Port = genPort()
+	cfg.Port, cfg.Status.StatusPort = genPorts()
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)

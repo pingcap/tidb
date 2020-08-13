@@ -133,7 +133,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 			sc.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 		resultDetail := resultSubset.GetExecDetails()
-		r.updateCopRuntimeStats(resultDetail, resultSubset.RespTime())
+		r.updateCopRuntimeStats(ctx, resultDetail, resultSubset.RespTime())
 		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
 		r.partialCount++
 		if resultDetail != nil {
@@ -235,13 +235,13 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
-func (r *selectResult) updateCopRuntimeStats(detail *execdetails.ExecDetails, respTime time.Duration) {
+func (r *selectResult) updateCopRuntimeStats(ctx context.Context, detail *execdetails.ExecDetails, respTime time.Duration) {
 	callee := detail.CalleeAddress
 	if r.rootPlanID == nil || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
 	}
 	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-		logutil.BgLogger().Error("invalid cop task execution summaries length",
+		logutil.Logger(ctx).Error("invalid cop task execution summaries length",
 			zap.Int("expected", len(r.copPlanIDs)),
 			zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
 
@@ -252,9 +252,14 @@ func (r *selectResult) updateCopRuntimeStats(detail *execdetails.ExecDetails, re
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
-			planID := r.copPlanIDs[i]
+			planID := ""
+			if detail.GetExecutorId() != "" {
+				planID = detail.GetExecutorId()
+			} else {
+				planID = r.copPlanIDs[i].String()
+			}
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID.String(), callee, detail)
+				RecordOneCopTask(planID, callee, detail)
 		}
 	}
 }
