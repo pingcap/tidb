@@ -1186,7 +1186,6 @@ import (
 	PlacementCount                         "Placement rules count option"
 	PlacementLabelConstraints              "Placement rules label constraints option"
 	PlacementRole                          "Placement rules role option"
-	PlacementRoleOpt                       "Placement rules role option, optional"
 	PlacementOptions                       "Placement rules options"
 	PlacementSpec                          "Placement rules specification"
 	PlacementSpecList                      "Placement rules specifications"
@@ -1397,15 +1396,6 @@ PlacementLabelConstraints:
 		$$ = $3
 	}
 
-PlacementRoleOpt:
-	{
-		$$ = ast.PlacementRoleNone
-	}
-|	PlacementRole
-	{
-		$$ = $1
-	}
-
 PlacementOptions:
 	PlacementCount
 	{
@@ -1469,7 +1459,7 @@ PlacementSpec:
 		spec.Tp = ast.PlacementAlter
 		$$ = spec
 	}
-|	"DROP" "PLACEMENT" "POLICY" PlacementRoleOpt
+|	"DROP" "PLACEMENT" "POLICY" PlacementRole
 	{
 		spec := &ast.PlacementSpec{Role: $4.(ast.PlacementRole)}
 		spec.Tp = ast.PlacementDrop
