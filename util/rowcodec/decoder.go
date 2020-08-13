@@ -206,9 +206,6 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 
 	for colIdx := range decoder.columns {
 		col := &decoder.columns[colIdx]
-		if decoder.tryAppendHandleColumn(colIdx, col, handle, chk) {
-			continue
-		}
 		// fill the virtual column value after row calculation
 		if col.VirtualGenCol {
 			chk.AppendNull(colIdx)
@@ -222,6 +219,10 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, handle kv.Handle, chk
 			if err != nil {
 				return err
 			}
+			continue
+		}
+
+		if decoder.tryAppendHandleColumn(colIdx, col, handle, chk) {
 			continue
 		}
 

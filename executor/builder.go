@@ -2707,6 +2707,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 			e.handleIdx = append(e.handleIdx, handleCol.Index)
 		}
 		e.handleCols = v.CommonHandleCols
+		e.primaryKeyIndex = tables.FindPrimaryIndex(tbl.Meta())
 	}
 	return e, nil
 }
