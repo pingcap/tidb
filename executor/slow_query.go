@@ -16,6 +16,7 @@ package executor
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -262,10 +263,11 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			}()
 			break
 		}
+		v := offset
 		go func() {
 			defer wg.Done()
-			e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(sctx, log, offset), err}
-			//fmt.Print(sctx.GetSessionVars().StmtCtx.GetWarnings())
+			e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(sctx, log, v), err}
+			fmt.Print(sctx.GetSessionVars().StmtCtx.GetWarnings())
 			<-ch
 		}()
 		if e.fileLine == 0 {
@@ -292,7 +294,7 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 	for index, line := range log {
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			st = &slowQueryTuple{}
-			valid, err := st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], offset+index, e.checker)
+			valid, err := st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], offset+index+1, e.checker)
 			if err != nil {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
@@ -309,7 +311,7 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 					st.prevStmt = line[len(variable.SlowLogPrevStmtPrefix):]
 				} else if strings.HasPrefix(line, variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr) {
 					value := line[len(variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr):]
-					valid, err := st.setFieldValue(tz, variable.SlowLogUserAndHostStr, value, offset+index, e.checker)
+					valid, err := st.setFieldValue(tz, variable.SlowLogUserAndHostStr, value, offset+index+1, e.checker)
 					if err != nil {
 						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 						continue
@@ -324,7 +326,7 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 						if strings.HasSuffix(field, ":") {
 							field = field[:len(field)-1]
 						}
-						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], offset+index, e.checker)
+						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], offset+index+1, e.checker)
 						if err != nil {
 							ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 							continue
@@ -342,7 +344,7 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 					continue
 				}
 				// Get the sql string, and mark the start flag to false.
-				_, err := st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), offset+index, e.checker)
+				_, err := st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), offset+index+1, e.checker)
 				if err != nil {
 					ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 					continue
