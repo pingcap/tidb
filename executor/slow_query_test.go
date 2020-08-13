@@ -35,6 +35,7 @@ import (
 func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
 	retriever := &slowQueryRetriever{}
 	// Ignore the error is ok for test.
+	retriever.parsedSlowLogCh = make(chan parsedSlowLog, 100)
 	terror.Log(retriever.initialize(sctx))
 	ctx := context.Background()
 	//rows, err := retriever.parseSlowLog(ctx, reader, 1024)
