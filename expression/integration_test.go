@@ -6901,3 +6901,13 @@ func (s *testIntegrationSerialSuite) TestIssue19045(c *C) {
 	tk.MustExec(`insert into t(a) values('101'),('101');`)
 	tk.MustQuery(`select  ( SELECT t1.a FROM  t1,  t2 WHERE t1.b = t2.a AND  t2.b = '03' AND t1.c = a.a) invode from t a ;`).Check(testkit.Rows("a011", "a011"))
 }
+
+func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select collation(concat(NULL,NULL));").Check(testkit.Rows("binary"))
+	tk.MustQuery("select coercibility(concat(1,1));").Check(testkit.Rows("4"))
+	tk.MustQuery("select coercibility(1);").Check(testkit.Rows("5"))
+}
