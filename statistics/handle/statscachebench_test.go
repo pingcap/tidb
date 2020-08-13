@@ -118,8 +118,8 @@ func defaultstatsCacheTestCase(numClient int, tableSize int, memoryLimit int64, 
 	return cas
 }
 func BenchmarkStatisticCache(b *testing.B) {
-	numClients := []int{2, 8, 32, 64}
-	tableSizes := []int{10, 20, 100}
+	numClients := []int{2, 8, 16, 32, 64}
+	tableSizes := []int{100, 200, 1000}
 	memoryLimits := []int64{300000, 3000000}
 	for _, numClient := range numClients {
 		for _, tableSize := range tableSizes {
@@ -133,13 +133,14 @@ func BenchmarkStatisticCache(b *testing.B) {
 }
 func getType() queryType {
 	rnd := rand.Int() % 100
-	if rnd < 15 {
+	if rnd < 10 {
 		return typeInsert
 	} else {
 		return typeLookUp
 	}
 }
 func benchmarkStatisticCacheExc(b *testing.B, data *statsCacheTestCase, statsCache handle.StatsCache) {
+	b.StartTimer()
 	var wg sync.WaitGroup
 	for i := 0; i < data.numClient; i++ {
 		wg.Add(1)
@@ -157,28 +158,34 @@ func benchmarkStatisticCacheExc(b *testing.B, data *statsCacheTestCase, statsCac
 				}
 			}
 		}(i)
-		wg.Wait()
 	}
+	wg.Wait()
+	b.StopTimer()
 }
 func benchmarkStatisticCache(b *testing.B, data *statsCacheTestCase) {
 	BaseTestName := "scTest" + "-Client" + fmt.Sprintf("%d", data.numClient) + "-tblSize" + fmt.Sprintf("%d", data.tableSize) + "-mem" + fmt.Sprintf("%d", data.memoryLimit)
 
-	RistrettostatsCache, _ := handle.NewStatsCache(data.memoryLimit, handle.RistrettoStatsCacheType)
-	SimplestatsCache, _ := handle.NewStatsCache(data.memoryLimit, handle.SimpleStatsCacheType)
 	//	var wg sync.WaitGroup
 
 	b.Run(BaseTestName+"-Simple", func(b *testing.B) {
-		b.ResetTimer()
+		b.SetParallelism(1)
+		SimplestatsCache, _ := handle.NewStatsCache(data.memoryLimit, handle.SimpleStatsCacheType)
 		benchmarkStatisticCacheExc(b, data, SimplestatsCache)
+		SimplestatsCache.Close()
 		for i := 0; i < b.N; i++ {
+			SimplestatsCache, _ := handle.NewStatsCache(data.memoryLimit, handle.SimpleStatsCacheType)
 			benchmarkStatisticCacheExc(b, data, SimplestatsCache)
 		}
 	})
 	b.Run(BaseTestName+"-Ristretto", func(b *testing.B) {
-		b.ResetTimer()
+		b.SetParallelism(1)
+		RistrettostatsCache, _ := handle.NewStatsCache(data.memoryLimit, handle.RistrettoStatsCacheType)
 		benchmarkStatisticCacheExc(b, data, RistrettostatsCache)
+		RistrettostatsCache.Close()
 		for i := 0; i < b.N; i++ {
+			RistrettostatsCache, _ := handle.NewStatsCache(data.memoryLimit, handle.RistrettoStatsCacheType)
 			benchmarkStatisticCacheExc(b, data, RistrettostatsCache)
+			RistrettostatsCache.Close()
 		}
 
 	})

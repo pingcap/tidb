@@ -38,6 +38,7 @@ type StatsCache interface {
 	SetBytesLimit(bytesLimit int64)
 	BytesConsumed() int64
 	Clear()
+	Close()
 }
 
 const byteShards = 8
@@ -168,6 +169,11 @@ func (sc *ristrettoStatsCache) GetMutex() *sync.Mutex {
 // SetBytesLimit set new byteslimit
 func (sc *ristrettoStatsCache) SetBytesLimit(bytesLimit int64) {
 	sc.cache.SetNewMaxCost(bytesLimit)
+}
+
+// Close close the cache.
+func (sc *ristrettoStatsCache) Close() {
+	sc.cache.Close()
 }
 
 // Clear clears the cache
@@ -312,6 +318,9 @@ func (sc *simpleStatsCache) lookupUnsafe(id int64) (*statistics.Table, bool) {
 	return table, true
 }
 
+func (sc *simpleStatsCache) Close() {
+}
+
 // Clear clears the cache
 func (sc *simpleStatsCache) Clear() {
 	sc.mu.Lock()
@@ -322,6 +331,8 @@ func (sc *simpleStatsCache) Clear() {
 
 // Lookup get table with id.
 func (sc *simpleStatsCache) Lookup(id int64) (*statistics.Table, bool) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	return sc.lookupUnsafe(id)
 }
 
