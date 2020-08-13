@@ -151,7 +151,7 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 	if sf.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
-	coer := CoercibilityIgnorable
+	coer := CoercibilityCoercible
 	for _, arg := range sf.GetArgs() {
 		if arg.Coercibility() < coer {
 			coer = arg.Coercibility()
@@ -178,8 +178,13 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 
 // DeriveCollationFromExprs derives collation information from these expressions.
 func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string) {
+<<<<<<< HEAD
 	curCoer := CoercibilityCoercible
 	curCollationPriority := -1
+=======
+	curCoer := CoercibilityIgnorable
+	curCollationPriority := 0
+>>>>>>> b9e90ef61... expression: fix wrong collation and coercibility (#19169)
 	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
 	if ctx != nil && ctx.GetSessionVars() != nil {
 		dstCharset, dstCollation = ctx.GetSessionVars().GetCharsetInfo()
