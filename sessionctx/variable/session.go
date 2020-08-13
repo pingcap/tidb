@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -1555,6 +1556,9 @@ type Concurrency struct {
 
 	// ExecutorConcurrency is the number of concurrent worker for all executors.
 	ExecutorConcurrency int
+
+	// SourceAddr is the source address of request. Available in coprocessor ONLY.
+	SourceAddr net.TCPAddr
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.

@@ -1081,7 +1081,8 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	}
 
 	if e.InCoprocessor {
-		logutil.BgLogger().Info("KILL in coprocessor", zap.Uint64("connID", s.ConnectionID), zap.Bool("query", s.Query))
+		logutil.BgLogger().Info("KILL in coprocessor", zap.Uint64("connID", s.ConnectionID), zap.Bool("query", s.Query),
+			zap.String("sourceAddr", e.ctx.GetSessionVars().SourceAddr.IP.String()))
 		sm.Kill(s.ConnectionID, s.Query)
 		return nil
 	}
