@@ -151,19 +151,18 @@ func WriteInsert(pCtx context.Context, tblIR TableDataIR, w io.Writer) error {
 			row.WriteToBuffer(bf, escapeBackSlash)
 			counter += 1
 
+			fileRowIter.Next()
+			if fileRowIter.HasNext() {
+				bf.WriteString(",\n")
+			} else {
+				bf.WriteString(";\n")
+			}
 			if bf.Len() >= lengthLimit {
 				wp.input <- bf
 				bf = pool.Get().(*bytes.Buffer)
 				if bfCap := bf.Cap(); bfCap < lengthLimit {
 					bf.Grow(lengthLimit - bfCap)
 				}
-			}
-
-			fileRowIter.Next()
-			if fileRowIter.HasNext() {
-				bf.WriteString(",\n")
-			} else {
-				bf.WriteString(";\n")
 			}
 
 			select {
