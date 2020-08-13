@@ -381,6 +381,7 @@ select 7;`
 		c.Assert(retriever.files, HasLen, len(cas.files), comment)
 		if len(retriever.files) > 0 {
 			ctx := context.Background()
+			retriever.parsedSlowLogCh = make(chan parsedSlowLog, 100)
 			retriever.parseSlowLog(ctx, sctx, bufio.NewReader(retriever.files[0].file), 1024)
 			slowLog := <-retriever.parsedSlowLogCh
 			rows, err := slowLog.rows, slowLog.err
