@@ -289,11 +289,11 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	// Now we try to cover those still not covered DNF conditions using independence assumption,
 	// i.e., sel(condA or condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
 	if mask > 0 {
-		for i := range remainedExprs {
+		for i, expr := range remainedExprs {
 			if mask&(1<<uint64(i)) == 0 {
 				continue
 			}
-			scalarCond, ok := remainedExprs[i].(*expression.ScalarFunction)
+			scalarCond, ok := expr.(*expression.ScalarFunction)
 			// Make sure we only handle DNF condition.
 			if !ok || scalarCond.FuncName.L != ast.LogicOr {
 				continue
