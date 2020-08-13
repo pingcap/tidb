@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -125,4 +126,33 @@ func (s *testClusteredSuite) TestClusteredInsertIgnoreBatchGetKeyCount(c *C) {
 	snapSize := tikv.SnapCacheSize(txn.GetSnapshot())
 	c.Assert(snapSize, Equals, 1)
 	tk.MustExec("rollback")
+}
+
+func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(name varchar(255), b int, c int, primary key(name(2)), index idx(b));")
+	tk.MustExec("insert into t(name, b) values('aaaaa', 1), ('bbbbb', 2);")
+	tk.MustExec("admin check table t;")
+
+	tk.MustGetErrCode("insert into t(name, b) values('aaa', 3);", errno.ErrDupEntry)
+	sql := "select * from t use index(primary) where name = 'aaaaa';"
+	tk.HasPlan(sql, "TableReader")
+	tk.HasPlan(sql, "TableRangeScan")
+	tk.MustQuery(sql).Check(testkit.Rows("aaaaa 1 <nil>"))
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(name varchar(255), b int, c char(10), primary key(c(2), name(2)), index idx(b));")
+	tk.MustExec("insert into t values ('aaa', 1, 'aaa'), ('bbb', 1, 'bbb');")
+	tk.MustExec("insert into t values ('aa', 1, 'bbb'), ('bbb', 1, 'ccc');")
+	tk.MustGetErrCode("insert into t values ('aa', 1, 'aa');", errno.ErrDupEntry)
+	tk.MustGetErrCode("insert into t values ('aac', 1, 'aac');", errno.ErrDupEntry)
+	tk.MustGetErrCode("insert into t values ('bb', 1, 'bb');", errno.ErrDupEntry)
+	tk.MustGetErrCode("insert into t values ('bbc', 1, 'bbc');", errno.ErrDupEntry)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(name varchar(255), b int, primary key(name(2)), index idx(b));")
+	tk.MustExec("insert into t values ('aaa', 1), ('bbb', 1);")
+	tk.MustQuery("select group_concat(name separator '.') from t use index(idx);").Check(testkit.Rows("aaa.bbb"))
 }
