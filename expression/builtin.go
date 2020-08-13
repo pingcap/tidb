@@ -119,46 +119,39 @@ var (
 )
 
 func checkIllegalMixCollation(funcName string, args []Expression) error {
-	firstExplicitCollation := ""
-	curCollation := ""
-	curCoercibility := CoercibilityIgnorable
-	conflictCollation := make([]string, 2) // record conflict collation for better error message if needed
-	noConflict := true
-	for _, arg := range args {
-		if arg.GetType().EvalType() != types.ETString {
-			continue
-		}
-		if arg.Coercibility() == CoercibilityExplicit {
-			if firstExplicitCollation == "" {
-				firstExplicitCollation = arg.GetType().Collate
-			} else if firstExplicitCollation != arg.GetType().Collate {
-				return collate.ErrIllegalMixCollation.GenWithStackByArgs(firstExplicitCollation, "EXPLICIT", arg.GetType().Collate, "EXPLICIT", funcName)
-			}
-		} else if arg.Coercibility() < curCoercibility {
-			noConflict = true
-			curCoercibility, curCollation = arg.Coercibility(), arg.GetType().Collate
-		} else if arg.Coercibility() == curCoercibility && curCollation != arg.GetType().Collate {
-			p1 := collationPriority[curCollation]
-			p2 := collationPriority[arg.GetType().Collate]
-
-			// same priority means this two collation is incompatible
-			// it might derive coercibility to CoercibilityNone
-			if p1 == p2 {
-				_, noConflict = allowDeriveNoneFunction[funcName]
-				conflictCollation[0], conflictCollation[1] = curCollation, arg.GetType().Collate
-				curCoercibility = CoercibilityNone
-			} else if p1 < p2 {
-				noConflict = true
-				curCollation = arg.GetType().Collate
-			}
-		}
+	if len(args) < 2 {
+		return nil
 	}
-
-	if !noConflict {
-		return collate.ErrIllegalMixCollation.GenWithStackByArgs(conflictCollation[0], "IMPLICIT", conflictCollation[1], "IMPLICIT", funcName)
+	_, _, coercibility, legal := inferCollation(args...)
+	if !legal {
+		return illegalMixCollationErr(funcName, args)
+	}
+	if coercibility == CoercibilityNone {
+		if _, ok := allowDeriveNoneFunction[funcName]; !ok {
+			return illegalMixCollationErr(funcName, args)
+		}
 	}
 
 	return nil
+}
+
+func illegalMixCollationErr(funcName string, args []Expression) error {
+	switch len(args) {
+	case 2:
+		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString(args[0].Coercibility()), args[1].GetType().Collate, coerString(args[1].Coercibility()), funcName)
+	case 3:
+		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString(args[0].Coercibility()), args[1].GetType().Collate, coerString(args[1].Coercibility()), args[0].GetType().Collate, coerString(args[2].Coercibility()), funcName)
+	default:
+		return collate.ErrIllegalMixCollation.GenWithStackByArgs(funcName)
+	}
+}
+
+func coerString(coercibility Coercibility) string {
+	if coercibility == CoercibilityExplicit {
+		return "EXPLICIT"
+	} else {
+		return "IMPLICIT"
+	}
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.

@@ -14,8 +14,6 @@
 package expression
 
 import (
-	"strings"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/tidb/sessionctx"
@@ -146,25 +144,12 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 	if !types.IsString(sf.RetType.Tp) {
 		return CoercibilityNumeric
 	}
-	coer := CoercibilityIgnorable
-	collation := ""
-	for _, arg := range sf.GetArgs() {
-		if arg.Coercibility() < coer {
-			coer, collation = arg.Coercibility(), arg.GetType().Collate
-		} else if arg.Coercibility() == coer && collation != arg.GetType().Collate {
-			p1, ok1 := collationPriority[collation]
-			p2, ok2 := collationPriority[arg.GetType().Collate]
-			if ok1 && ok2 {
-				if p1 == p2 {
-					coer = CoercibilityNone
-					collation = getBinCollation(arg.GetType().Charset)
-				} else if p1 < p2 {
-					collation = arg.GetType().Collate
-				}
-			}
-		}
+
+	_, _, coercibility, _ := inferCollation(sf.GetArgs()...)
+	if coercibility == CoercibilityNumeric {
+		return CoercibilityCoercible
 	}
-	return coer
+	return coercibility
 }
 
 func deriveCoercibilityForConstant(c *Constant) Coercibility {
@@ -185,8 +170,6 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 
 // DeriveCollationFromExprs derives collation information from these expressions.
 func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string) {
-	curCoer := CoercibilityCoercible
-	curCollationPriority := 0
 	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
 	if ctx != nil && ctx.GetSessionVars() != nil {
 		dstCharset, dstCollation = ctx.GetSessionVars().GetCharsetInfo()
@@ -194,37 +177,37 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 			dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
 		}
 	}
-	hasStrArg := false
-	// see https://dev.mysql.com/doc/refman/8.0/en/charset-collation-coercibility.html
-	for _, e := range exprs {
-		if e.GetType().EvalType() != types.ETString {
-			continue
-		}
-		hasStrArg = true
-
-		coer := e.Coercibility()
-		ft := e.GetType()
-		priority := collationPriority[strings.ToLower(ft.Collate)]
-		if coer != curCoer {
-			if coer < curCoer {
-				curCoer, curCollationPriority, dstCharset, dstCollation = coer, priority, ft.Charset, ft.Collate
-			}
-			continue
-		}
-		if priority <= curCollationPriority {
-			if priority == curCollationPriority && dstCollation != ft.Collate {
-				dstCollation = getBinCollation(dstCharset)
-				curCoer = CoercibilityNone
-				curCollationPriority = collationPriority[dstCollation]
-			}
-			continue
-		}
-		curCollationPriority, dstCharset, dstCollation = priority, ft.Charset, ft.Collate
-	}
-	if !hasStrArg {
-		dstCharset, dstCollation = charset.CharsetBin, charset.CollationBin
-	}
+	dstCollation, dstCharset, _, _ = inferCollation(exprs...)
 	return
+}
+
+func inferCollation(exprs ...Expression) (collation, charset string, coercibility Coercibility, legal bool) {
+	firstExplicitCollation := ""
+	coercibility = CoercibilityIgnorable
+	for _, arg := range exprs {
+		if arg.Coercibility() == CoercibilityExplicit {
+			if firstExplicitCollation == "" {
+				firstExplicitCollation = arg.GetType().Collate
+			} else if firstExplicitCollation != arg.GetType().Collate {
+				return "", "", CoercibilityIgnorable, false
+			}
+		} else if arg.Coercibility() < coercibility {
+			coercibility, collation, charset = arg.Coercibility(), arg.GetType().Collate, arg.GetType().Charset
+		} else if arg.Coercibility() == coercibility && collation != arg.GetType().Collate {
+			p1 := collationPriority[collation]
+			p2 := collationPriority[arg.GetType().Collate]
+
+			// same priority means this two collation is incompatible
+			// it might derive coercibility to CoercibilityNone
+			if p1 == p2 {
+				coercibility, collation, charset = CoercibilityNone, getBinCollation(arg.GetType().Charset), arg.GetType().Charset
+			} else if p1 < p2 {
+				collation, charset = arg.GetType().Collate, arg.GetType().Charset
+			}
+		}
+	}
+
+	return collation, charset, coercibility, true
 }
 
 func getBinCollation(cs string) string {
