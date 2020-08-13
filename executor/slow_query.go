@@ -262,10 +262,10 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			}()
 			break
 		}
-		v := offset
+		start := offset
 		go func() {
 			defer wg.Done()
-			e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(sctx, log, v), err}
+			e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(sctx, log, start), err}
 			<-ch
 		}()
 		// Read the next file, offset = 0
