@@ -79,13 +79,16 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, depth int) {
 	}
 	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), rowCount, taskTypeInfo, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
 	pn.encodedPlans[p.ID()] = true
+	depth++
 
 	selectPlan := getSelectPlan(p)
 	if selectPlan == nil {
 		return
 	}
-
-	depth++
+	if !pn.encodedPlans[selectPlan.ID()] {
+		pn.encodePlan(selectPlan, isRoot, depth)
+		return
+	}
 	for _, child := range selectPlan.Children() {
 		if pn.encodedPlans[child.ID()] {
 			continue
