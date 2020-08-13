@@ -179,14 +179,8 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 			dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
 		}
 	}
-	hasStrArg := false
 	// see https://dev.mysql.com/doc/refman/8.0/en/charset-collation-coercibility.html
 	for _, e := range exprs {
-		if e.GetType().EvalType() != types.ETString {
-			continue
-		}
-		hasStrArg = true
-
 		coer := e.Coercibility()
 		ft := e.GetType()
 		priority := collationPriority[strings.ToLower(ft.Collate)]
@@ -201,8 +195,6 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 		}
 		curCollationPriority, dstCharset, dstCollation = priority, ft.Charset, ft.Collate
 	}
-	if !hasStrArg {
-		dstCharset, dstCollation = charset.CharsetBin, charset.CollationBin
-	}
+
 	return
 }
