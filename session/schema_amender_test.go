@@ -278,7 +278,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			// Only the add index amend operations is collected in the results.
 			collector := newAmendCollector()
 			tblID := int64(1)
-			err = collector.collectTblAmendOps(se, tblID, oldTbInfo, newTblInfo)
+			err = collector.collectTblAmendOps(se, tblID, oldTbInfo, newTblInfo, 1<<model.ActionAddIndex)
 			c.Assert(err, IsNil)
 			c.Assert(len(collector.tblAmendOpMap[tblID]), GreaterEqual, 2)
 			var expectedAmendOps []amendOp

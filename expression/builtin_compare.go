@@ -2101,14 +2101,14 @@ func (b *builtinNullEQIntSig) evalInt(row chunk.Row) (val int64, isNull bool, er
 	case !isUnsigned0 && !isUnsigned1 && types.CompareInt64(arg0, arg1) == 0:
 		res = 1
 	case isUnsigned0 && !isUnsigned1:
-		if arg1 < 0 || arg0 > math.MaxInt64 {
+		if arg1 < 0 {
 			break
 		}
 		if types.CompareInt64(arg0, arg1) == 0 {
 			res = 1
 		}
 	case !isUnsigned0 && isUnsigned1:
-		if arg0 < 0 || arg1 > math.MaxInt64 {
+		if arg0 < 0 {
 			break
 		}
 		if types.CompareInt64(arg0, arg1) == 0 {
