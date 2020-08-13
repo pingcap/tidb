@@ -149,7 +149,7 @@ question
 
 ```
 CHANGELOG                       #a206c9     type/CHANGELOG                      #1d76db
-closed/no-pr-quota              #b60205     status/closed pr-quote              #e6e6e6
+closed/no-pr-quota              #b60205     status/closed-no-pr-quote              #e6e6e6
 closed/outdated                 #b60205     status/closed outdated              #e6e6e6
 component/DDL-need-LGT3         #00bff4     component/DDL (3lgtm)               #d1fad7
 component/GC                    #cce2ff     component/GC                        #d1fad7
