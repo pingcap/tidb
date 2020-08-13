@@ -994,7 +994,6 @@ func (b *PlanBuilder) getGenExprs(ctx context.Context, dbName model.CIStr, tbl t
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
 			found := false
 			for _, column := range idx.Columns {
 				if strings.EqualFold(col.Name.L, column.Name.L) {
@@ -1031,70 +1030,24 @@ func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInf
 }
 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
-	// Get generated columns.
-	var genCols []*expression.Column
 	pkOffset := -1
 	tblInfo := tbl.Meta()
-	colsMap := set.NewInt64Set()
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
 	idxReaderCols := make([]*model.ColumnInfo, 0, len(idx.Columns))
 	tblReaderCols := make([]*model.ColumnInfo, 0, len(tbl.Cols()))
-	fullExprCols, fullColNames := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
-	genExprsMap, err := b.getGenExprs(ctx, dbName, tbl, idx, fullExprCols, fullColNames)
-	if err != nil {
-		return nil, err
-	}
+	fullExprCols, _ := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
 	for _, idxCol := range idx.Columns {
 		for i, col := range tblInfo.Columns {
 			if idxCol.Name.L == col.Name.L {
 				idxReaderCols = append(idxReaderCols, col)
 				tblReaderCols = append(tblReaderCols, col)
 				schema.Append(fullExprCols.Columns[i])
-				colsMap.Insert(col.ID)
-				if mysql.HasPriKeyFlag(col.Flag) {
-					pkOffset = len(tblReaderCols) - 1
-				}
-				genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}
-				if expr, ok := genExprsMap[genColumnID]; ok {
-					cols := expression.ExtractColumns(expr)
-					genCols = append(genCols, cols...)
-				}
 			}
 		}
 	}
 	idxCols, idxColLens := expression.IndexInfo2PrefixCols(tblReaderCols, schema.Columns, idx)
 	fullIdxCols, _ := expression.IndexInfo2Cols(tblReaderCols, schema.Columns, idx)
 	// Add generated columns to tblSchema and tblReaderCols.
-	tblSchema := schema.Clone()
-	for _, col := range genCols {
-		if !colsMap.Exist(col.ID) {
-			info := FindColumnInfoByID(tblInfo.Columns, col.ID)
-			if info != nil {
-				tblReaderCols = append(tblReaderCols, info)
-				tblSchema.Append(col)
-				colsMap.Insert(col.ID)
-				if mysql.HasPriKeyFlag(col.RetType.Flag) {
-					pkOffset = len(tblReaderCols) - 1
-				}
-			}
-		}
-	}
-	for k, expr := range genExprsMap {
-		genExprsMap[k], err = expr.ResolveIndices(tblSchema)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if !tbl.Meta().PKIsHandle || pkOffset == -1 {
-		tblReaderCols = append(tblReaderCols, model.NewExtraHandleColInfo())
-		handleCol := &expression.Column{
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			ID:       model.ExtraHandleID,
-		}
-		tblSchema.Append(handleCol)
-		pkOffset = len(tblReaderCols) - 1
-	}
 
 	is := PhysicalIndexScan{
 		Table:            tblInfo,
@@ -1106,13 +1059,29 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		IdxColLens:       idxColLens,
 		dataSourceSchema: schema,
 		Ranges:           ranger.FullRange(),
-		GenExprs:         genExprsMap,
 	}.Init(b.ctx, b.getSelectOffset())
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
 	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx, b.getSelectOffset())
-	ts.SetSchema(tblSchema.Clone())
+	ts.SetSchema(schema.Clone())
+	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+	for offset, col := range ts.Columns {
+		if mysql.HasPriKeyFlag(col.Flag) {
+			pkOffset = offset
+		}
+	}
+	if !tbl.Meta().PKIsHandle || pkOffset == -1 {
+		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+		handleCol := &expression.Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       model.ExtraHandleID,
+		}
+		ts.schema.Append(handleCol)
+		pkOffset = len(ts.Columns) - 1
+	}
+
 	if tbl.Meta().GetPartitionInfo() != nil {
 		pid := tbl.(table.PhysicalTable).GetPhysicalID()
 		is.physicalTableID = pid
@@ -1128,6 +1097,9 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	ts.HandleIdx = pkOffset
 	is.initSchema(idx, fullIdxCols, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
+	if err := rootT.p.ResolveIndices(); err != nil {
+		return nil, err
+	}
 	return rootT.p, nil
 }
 

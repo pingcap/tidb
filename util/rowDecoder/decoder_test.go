@@ -11,7 +11,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package decoder
+package decoder_test
 
 import (
 	"testing"
@@ -21,11 +21,13 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -59,10 +61,10 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 
 	ctx := mock.NewContext()
 	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-	decodeColsMap := make(map[int64]Column, len(cols))
-	decodeColsMap2 := make(map[int64]Column, len(cols))
+	decodeColsMap := make(map[int64]decoder.Column, len(cols))
+	decodeColsMap2 := make(map[int64]decoder.Column, len(cols))
 	for _, col := range tbl.Cols() {
-		tpExpr := Column{
+		tpExpr := decoder.Column{
 			Col: col,
 		}
 		decodeColsMap2[col.ID] = tpExpr
@@ -73,8 +75,8 @@ func (s *testDecoderSuite) TestRowDecoder(c *C) {
 		}
 		decodeColsMap[col.ID] = tpExpr
 	}
-	de := NewRowDecoder(tbl, decodeColsMap)
-	deWithNoGenCols := NewRowDecoder(tbl, decodeColsMap2)
+	de := decoder.NewRowDecoder(tbl, decodeColsMap)
+	deWithNoGenCols := decoder.NewRowDecoder(tbl, decodeColsMap2)
 
 	timeZoneIn8, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
