@@ -6872,3 +6872,32 @@ func (s *testIntegrationSerialSuite) TestIssue18662(c *C) {
 	tk.MustQuery("select * from t where field('A' collate utf8mb4_general_ci, a, b) > 1;").Check(testkit.Rows())
 	tk.MustQuery("select * from t where field('A', a, b) > 1;").Check(testkit.Rows("a A"))
 }
+
+func (s *testIntegrationSerialSuite) TestIssue19045(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec(`CREATE TABLE t (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  a char(10) DEFAULT NULL,
+  PRIMARY KEY (id)
+);`)
+	tk.MustExec(`CREATE TABLE t1 (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  a char(10) DEFAULT NULL,
+  b char(10) DEFAULT NULL,
+  c char(10) DEFAULT NULL,
+  PRIMARY KEY (id)
+);`)
+	tk.MustExec(`CREATE TABLE t2 (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  a char(10) DEFAULT NULL,
+  b char(10) DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY b (b)
+);`)
+	tk.MustExec(`insert into t1(a,b,c) values('hs4_0004', "04", "101"), ('a01', "01", "101"),('a011', "02", "101");`)
+	tk.MustExec(`insert into t2(a,b) values("02","03");`)
+	tk.MustExec(`insert into t(a) values('101'),('101');`)
+	tk.MustQuery(`select  ( SELECT t1.a FROM  t1,  t2 WHERE t1.b = t2.a AND  t2.b = '03' AND t1.c = a.a) invode from t a ;`).Check(testkit.Rows("a011", "a011"))
+}
