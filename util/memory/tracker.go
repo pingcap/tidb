@@ -263,6 +263,19 @@ func (t *Tracker) SearchTracker(label int) *Tracker {
 	return nil
 }
 
+// SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
+func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
+	if t.label == label {
+		return t
+	}
+	for _, child := range t.mu.children {
+		if result := child.SearchTrackerWithoutLock(label); result != nil {
+			return result
+		}
+	}
+	return nil
+}
+
 // String returns the string representation of this Tracker tree.
 func (t *Tracker) String() string {
 	buffer := bytes.NewBufferString("\n")

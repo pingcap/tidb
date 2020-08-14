@@ -1069,13 +1069,13 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 	}
 
 	memoryInfo = "N/A"
-	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ID())
+	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
 	if memTracker != nil {
 		memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
 	}
 
 	diskInfo = "N/A"
-	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ID())
+	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
 	if diskTracker != nil {
 		diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
 	}
