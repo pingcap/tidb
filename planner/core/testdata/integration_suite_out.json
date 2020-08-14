@@ -268,8 +268,8 @@
       {
         "SQL": "explain select /*+ USE_INDEX_MERGE(t, a, b, c) */ * from t where 1 or t.a = 1 or t.b = 2",
         "Plan": [
-          "TableReader_7 8000.00 root  data:Selection_6",
-          "└─Selection_6 8000.00 cop[tikv]  or(or(1, eq(test.t.a, 1)), eq(test.t.b, 2))",
+          "TableReader_7 8000.40 root  data:Selection_6",
+          "└─Selection_6 8000.40 cop[tikv]  or(or(1, eq(test.t.a, 1)), eq(test.t.b, 2))",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }

@@ -303,17 +303,16 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 
 			selectivity := 0.0
 			for _, cond := range dnfItems {
-				scalar, ok := cond.(*expression.ScalarFunction)
-				if !ok {
-					selectivity = 0.0
-					break
+				_, ok := cond.(*expression.CorrelatedColumn)
+				if ok {
+					continue
 				}
 
 				var cnfItems []expression.Expression
-				if scalar.FuncName.L == ast.LogicAnd {
+				if scalar, ok := cond.(*expression.ScalarFunction); ok && scalar.FuncName.L == ast.LogicAnd {
 					cnfItems = expression.FlattenCNFConditions(scalar)
 				} else {
-					cnfItems = append(cnfItems, scalar)
+					cnfItems = append(cnfItems, cond)
 				}
 
 				curSelectivity, _, err := coll.Selectivity(ctx, cnfItems, nil)
