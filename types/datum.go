@@ -430,61 +430,14 @@ func (d *Datum) GetValue() interface{} {
 
 // SetValueWithDefaultCollation sets any kind of value.
 func (d *Datum) SetValueWithDefaultCollation(val interface{}) {
-	if val == nil {
-		d.SetNull()
-		return
-	}
-	switch x := val.(type) {
-	case bool:
-		if x {
-			d.SetInt64(1)
-		} else {
-			d.SetInt64(0)
-		}
-	case int:
-		d.SetInt64(int64(x))
-	case int64:
-		d.SetInt64(x)
-	case uint64:
-		d.SetUint64(x)
-	case float32:
-		d.SetFloat32(x)
-	case float64:
-		d.SetFloat64(x)
-	case string:
-		d.SetString(x, mysql.DefaultCollationName)
-	case []byte:
-		d.SetBytes(x)
-	case *MyDecimal:
-		d.SetMysqlDecimal(x)
-	case Duration:
-		d.SetMysqlDuration(x)
-	case Enum:
-		d.SetMysqlEnum(x, mysql.DefaultCollationName)
-	case BinaryLiteral:
-		d.SetBinaryLiteral(x)
-	case BitLiteral: // Store as BinaryLiteral for Bit and Hex literals
-		d.SetBinaryLiteral(BinaryLiteral(x))
-	case HexLiteral:
-		d.SetBinaryLiteral(BinaryLiteral(x))
-	case Set:
-		d.SetMysqlSet(x, mysql.DefaultCollationName)
-	case json.BinaryJSON:
-		d.SetMysqlJSON(x)
-	case Time:
-		d.SetMysqlTime(x)
-	default:
-		d.SetInterface(x)
-	}
+	d.SetValue(val, &types.FieldType{Collate: mysql.DefaultCollationName})
 }
 
 // SetValue sets any kind of value.
 func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
-	if val == nil {
-		d.SetNull()
-		return
-	}
 	switch x := val.(type) {
+	case nil:
+		d.SetNull()
 	case bool:
 		if x {
 			d.SetInt64(1)
@@ -504,8 +457,16 @@ func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
 	case string:
 		d.SetString(x, tp.Collate)
 	case []byte:
+		if x == nil {
+			d.SetNull()
+			break
+		}
 		d.SetBytes(x)
 	case *MyDecimal:
+		if x == nil {
+			d.SetNull()
+			break
+		}
 		d.SetMysqlDecimal(x)
 	case Duration:
 		d.SetMysqlDuration(x)
