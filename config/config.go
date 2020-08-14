@@ -148,6 +148,8 @@ type Config struct {
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
 	// EnableTelemetry enables the usage data report to PingCAP.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
+	// Labels indicates the label for the tidb server
+	Labels map[string]string `toml:"labels" json:"labels"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -702,6 +704,7 @@ var defaultConf = Config{
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
+	Labels:                     make(map[string]string),
 }
 
 var (
