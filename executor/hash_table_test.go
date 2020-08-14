@@ -15,7 +15,6 @@ package executor
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/util/memory"
 	"hash"
 	"hash/fnv"
 
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 )
 
