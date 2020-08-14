@@ -189,6 +189,7 @@ func EncodeKey(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byte
 // EncodeValue appends the encoded values to byte slice b, returning the appended
 // slice. It does not guarantee the order for comparison.
 func EncodeValue(sc *stmtctx.StatementContext, b []byte, v ...types.Datum) ([]byte, error) {
+<<<<<<< HEAD
 	return encode(sc, b, v, false, false)
 }
 
@@ -209,6 +210,242 @@ func encodeHashChunkRow(sc *stmtctx.StatementContext, b []byte, row chunk.Row, a
 			integer := row.GetInt64(i)
 			if integer < 0 {
 				b = encodeUnsignedInt(b, uint64(integer), comparable)
+=======
+	return encode(sc, b, v, false)
+}
+
+func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *types.FieldType, idx int) (flag byte, b []byte, err error) {
+	if row.IsNull(idx) {
+		flag = NilFlag
+		return
+	}
+	switch tp.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		flag = uvarintFlag
+		if !mysql.HasUnsignedFlag(tp.Flag) && row.GetInt64(idx) < 0 {
+			flag = varintFlag
+		}
+		b = row.GetRaw(idx)
+	case mysql.TypeFloat:
+		flag = floatFlag
+		f := float64(row.GetFloat32(idx))
+		// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+		// It makes -0's hash val different from 0's.
+		if f == 0 {
+			f = 0
+		}
+		b = (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
+	case mysql.TypeDouble:
+		flag = floatFlag
+		f := row.GetFloat64(idx)
+		// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+		// It makes -0's hash val different from 0's.
+		if f == 0 {
+			f = 0
+		}
+		b = (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		flag = compactBytesFlag
+		b = row.GetBytes(idx)
+		b = ConvertByCollation(b, tp)
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		flag = uintFlag
+		t := row.GetTime(idx)
+		// Encoding timestamp need to consider timezone.
+		// If it's not in UTC, transform to UTC first.
+		if t.Type() == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+			err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
+			if err != nil {
+				return
+			}
+		}
+		var v uint64
+		v, err = t.ToPackedUint()
+		if err != nil {
+			return
+		}
+		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
+	case mysql.TypeDuration:
+		flag = durationFlag
+		// duration may have negative value, so we cannot use String to encode directly.
+		b = row.GetRaw(idx)
+	case mysql.TypeNewDecimal:
+		flag = decimalFlag
+		// If hash is true, we only consider the original value of this decimal and ignore it's precision.
+		dec := row.GetMyDecimal(idx)
+		b, err = dec.ToHashKey()
+		if err != nil {
+			return
+		}
+	case mysql.TypeEnum:
+		flag = compactBytesFlag
+		v := uint64(row.GetEnum(idx).ToNumber())
+		str := tp.Elems[v-1]
+		b = ConvertByCollation(hack.Slice(str), tp)
+	case mysql.TypeSet:
+		flag = compactBytesFlag
+		v := uint64(row.GetSet(idx).ToNumber())
+		str := tp.Elems[v-1]
+		b = ConvertByCollation(hack.Slice(str), tp)
+	case mysql.TypeBit:
+		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
+		flag = uvarintFlag
+		v, err1 := types.BinaryLiteral(row.GetBytes(idx)).ToInt(sc)
+		terror.Log(errors.Trace(err1))
+		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
+	case mysql.TypeJSON:
+		flag = jsonFlag
+		b = row.GetBytes(idx)
+	default:
+		return 0, nil, errors.Errorf("unsupport column type for encode %d", tp.Tp)
+	}
+	return
+}
+
+// HashChunkColumns writes the encoded value of each row's column, which of index `colIdx`, to h.
+func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte, isNull []bool) (err error) {
+	return HashChunkSelected(sc, h, chk, tp, colIdx, buf, isNull, nil, false)
+}
+
+// HashChunkSelected writes the encoded value of selected row's column, which of index `colIdx`, to h.
+// sel indicates which rows are selected. If it is nil, all rows are selected.
+func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte,
+	isNull, sel []bool, ignoreNull bool) (err error) {
+	var b []byte
+	column := chk.Column(colIdx)
+	rows := chk.NumRows()
+	switch tp.Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		i64s := column.Int64s()
+		for i, v := range i64s {
+			if sel != nil && !sel[i] {
+				continue
+			}
+			if column.IsNull(i) {
+				buf[0], b = NilFlag, nil
+				isNull[i] = !ignoreNull
+			} else {
+				buf[0] = uvarintFlag
+				if !mysql.HasUnsignedFlag(tp.Flag) && v < 0 {
+					buf[0] = varintFlag
+				}
+				b = column.GetRaw(i)
+			}
+
+			// As the golang doc described, `Hash.Write` never returns an error.
+			// See https://golang.org/pkg/hash/#Hash
+			_, _ = h[i].Write(buf)
+			_, _ = h[i].Write(b)
+		}
+	case mysql.TypeFloat:
+		f32s := column.Float32s()
+		for i, f := range f32s {
+			if sel != nil && !sel[i] {
+				continue
+			}
+			if column.IsNull(i) {
+				buf[0], b = NilFlag, nil
+				isNull[i] = !ignoreNull
+			} else {
+				buf[0] = floatFlag
+				d := float64(f)
+				// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+				// It makes -0's hash val different from 0's.
+				if d == 0 {
+					d = 0
+				}
+				b = (*[sizeFloat64]byte)(unsafe.Pointer(&d))[:]
+			}
+
+			// As the golang doc described, `Hash.Write` never returns an error.
+			// See https://golang.org/pkg/hash/#Hash
+			_, _ = h[i].Write(buf)
+			_, _ = h[i].Write(b)
+		}
+	case mysql.TypeDouble:
+		f64s := column.Float64s()
+		for i, f := range f64s {
+			if sel != nil && !sel[i] {
+				continue
+			}
+			if column.IsNull(i) {
+				buf[0], b = NilFlag, nil
+				isNull[i] = !ignoreNull
+			} else {
+				buf[0] = floatFlag
+				// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+				// It makes -0's hash val different from 0's.
+				if f == 0 {
+					f = 0
+				}
+				b = (*[sizeFloat64]byte)(unsafe.Pointer(&f))[:]
+			}
+
+			// As the golang doc described, `Hash.Write` never returns an error.
+			// See https://golang.org/pkg/hash/#Hash
+			_, _ = h[i].Write(buf)
+			_, _ = h[i].Write(b)
+		}
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
+			if column.IsNull(i) {
+				buf[0], b = NilFlag, nil
+				isNull[i] = !ignoreNull
+			} else {
+				buf[0] = compactBytesFlag
+				b = column.GetBytes(i)
+				b = ConvertByCollation(b, tp)
+			}
+
+			// As the golang doc described, `Hash.Write` never returns an error.
+			// See https://golang.org/pkg/hash/#Hash
+			_, _ = h[i].Write(buf)
+			_, _ = h[i].Write(b)
+		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		ts := column.Times()
+		for i, t := range ts {
+			if sel != nil && !sel[i] {
+				continue
+			}
+			if column.IsNull(i) {
+				buf[0], b = NilFlag, nil
+				isNull[i] = !ignoreNull
+			} else {
+				buf[0] = uintFlag
+				// Encoding timestamp need to consider timezone.
+				// If it's not in UTC, transform to UTC first.
+				if t.Type() == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
+					err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
+					if err != nil {
+						return
+					}
+				}
+				var v uint64
+				v, err = t.ToPackedUint()
+				if err != nil {
+					return
+				}
+				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+			}
+
+			// As the golang doc described, `Hash.Write` never returns an error.
+			// See https://golang.org/pkg/hash/#Hash
+			_, _ = h[i].Write(buf)
+			_, _ = h[i].Write(b)
+		}
+	case mysql.TypeDuration:
+		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
+			if column.IsNull(i) {
+				buf[0], b = NilFlag, nil
+				isNull[i] = !ignoreNull
+>>>>>>> 5184a0d... executor: fix the bug: can not join if join keys are type bigint and type bit (#19032)
 			} else {
 				b = encodeSignedInt(b, integer, comparable)
 			}

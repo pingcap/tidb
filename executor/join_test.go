@@ -1459,3 +1459,216 @@ func (s *testSuite2) TestIssue14514(c *C) {
 	tk.MustExec("create table t (pk varchar(14) primary key, a varchar(12));")
 	tk.MustQuery("select * from (select t1.pk or '/' as c from t as t1 left join t as t2 on t1.a = t2.pk) as t where t.c = 1;").Check(testkit.Rows())
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSuiteJoinSerial) TestOuterMatchStatusIssue14742(c *C) {
+	plannercore.ForceUseOuterBuild4Test = true
+	defer func() { plannercore.ForceUseOuterBuild4Test = false }()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists testjoin;")
+	tk.MustExec("create table testjoin(a int);")
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+
+	tk.MustExec("insert into testjoin values (NULL);")
+	tk.MustExec("insert into testjoin values (1);")
+	tk.MustExec("insert into testjoin values (2), (2), (2);")
+	tk.MustQuery("SELECT * FROM testjoin t1 RIGHT JOIN testjoin t2 ON t1.a > t2.a order by t1.a, t2.a;").Check(testkit.Rows(
+		"<nil> <nil>",
+		"<nil> 2",
+		"<nil> 2",
+		"<nil> 2",
+		"2 1",
+		"2 1",
+		"2 1",
+	))
+}
+
+func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
+	// Two necessary factors to reproduce this issue:
+	// (1) taking HashLeftJoin, i.e., letting the probing tuple lay at the left side of joined tuples
+	// (2) the projection only contains a part of columns from the build side, i.e., pruning the same probe side
+	plannercore.ForcedHashLeftJoin4Test = true
+	defer func() { plannercore.ForcedHashLeftJoin4Test = false }()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table S (a int not null, b int, c int);")
+	tk.MustExec("create table T (a int not null, b int, c int);")
+	tk.MustExec("insert into S values (0,1,2),(0,1,null),(0,1,2);")
+	tk.MustExec("insert into T values (0,10,2),(0,10,null),(1,10,2);")
+	tk.MustQuery("select T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
+		"0 0 <nil>",
+		"0 0 <nil>",
+		"0 0 <nil>",
+		"0 0 2",
+		"0 0 2",
+		"0 0 2",
+	))
+	// NOTE: the HashLeftJoin should be kept
+	tk.MustQuery("explain select T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
+		"Sort_8 12487.50 root  test.t.a, test.t.c",
+		"└─Projection_10 12487.50 root  test.t.a, test.t.a, test.t.c",
+		"  └─HashJoin_11 12487.50 root  inner join, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
+		"    ├─TableReader_17(Build) 9990.00 root  data:Selection_16",
+		"    │ └─Selection_16 9990.00 cop[tikv]  not(isnull(test.t.b))",
+		"    │   └─TableFullScan_15 10000.00 cop[tikv] table:T keep order:false, stats:pseudo",
+		"    └─TableReader_14(Probe) 9990.00 root  data:Selection_13",
+		"      └─Selection_13 9990.00 cop[tikv]  not(isnull(test.s.b))",
+		"        └─TableFullScan_12 10000.00 cop[tikv] table:S keep order:false, stats:pseudo"))
+}
+
+func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
+	config.GetGlobalConfig().OOMAction = config.OOMActionCancel
+	defer func() { config.GetGlobalConfig().OOMAction = config.OOMActionLog }()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, index(a))")
+	tk.MustExec("create table t2(a int, index(a))")
+	tk.MustExec("insert into t1 values(1),(2)")
+	tk.MustExec("insert into t2 values(1),(1),(2),(2)")
+	tk.MustExec("set @@tidb_mem_quota_query=1000")
+	err := tk.QueryToErr("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
+	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
+
+	fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
+	c.Assert(failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+	err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
+	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
+}
+
+func (s *testSuiteJoin1) TestIssue18564(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, primary key(a), index idx(b,a));")
+	tk.MustExec("create table t2(a int, b int, primary key(a), index idx(b,a));")
+	tk.MustExec("insert into t1 values(1, 1)")
+	tk.MustExec("insert into t2 values(1, 1)")
+	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t1 FORCE INDEX (idx) join t2 on t1.b=t2.b and t1.a = t2.a").Check(testkit.Rows("1 1 1 1"))
+}
+
+func (s *testSuite9) TestIssue18572_1(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index idx(b));")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustExec("insert into t1 select * from t1;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr"), IsNil)
+	}()
+
+	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinInnerWorkerErr"), IsTrue)
+}
+
+func (s *testSuite9) TestIssue18572_2(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index idx(b));")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustExec("insert into t1 select * from t1;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr"), IsNil)
+	}()
+
+	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinOuterWorkerErr"), IsTrue)
+}
+
+func (s *testSuite9) TestIssue18572_3(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index idx(b));")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustExec("insert into t1 select * from t1;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr"), IsNil)
+	}()
+
+	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinBuildErr"), IsTrue)
+}
+
+func (s *testSuite9) TestIssue19112(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 ( c_int int, c_decimal decimal(12, 6), key(c_int), unique key(c_decimal) )")
+	tk.MustExec("create table t2 like t1")
+	tk.MustExec("insert into t1 (c_int, c_decimal) values (1, 4.064000), (2, 0.257000), (3, 1.010000)")
+	tk.MustExec("insert into t2 (c_int, c_decimal) values (1, 4.064000), (3, 1.010000)")
+	tk.MustQuery("select /*+ HASH_JOIN(t1,t2) */  * from t1 join t2 on t1.c_decimal = t2.c_decimal order by t1.c_int").Check(testkit.Rows(
+		"1 4.064000 1 4.064000",
+		"3 1.010000 3 1.010000"))
+}
+
+func (s *testSuiteJoin3) TestIssue11896(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// compare bigint to bit(64)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 bigint)")
+	tk.MustExec("create table t1(c1 bit(64))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x00\x00\x00\x00\x00\x00\x00\x01"))
+
+	// compare int to bit(32)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int)")
+	tk.MustExec("create table t1(c1 bit(32))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x00\x00\x00\x01"))
+
+	// compare mediumint to bit(24)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 mediumint)")
+	tk.MustExec("create table t1(c1 bit(24))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x00\x00\x01"))
+
+	// compare smallint to bit(16)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 smallint)")
+	tk.MustExec("create table t1(c1 bit(16))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x00\x01"))
+
+	// compare tinyint to bit(8)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 tinyint)")
+	tk.MustExec("create table t1(c1 bit(8))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x01"))
+}
+>>>>>>> 5184a0d... executor: fix the bug: can not join if join keys are type bigint and type bit (#19032)
