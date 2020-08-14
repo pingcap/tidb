@@ -65,10 +65,9 @@ func (s *testSuite9) TestIssue18631(c *C) {
 		"1 1 1 1 1 1 1 1"))
 }
 
-func (s *testSuiteWithData) TestIndexJoinOnSinglePartitionTable(c *C) {
+func (s *testSuiteAgg) TestIndexJoinOnSinglePartitionTable(c *C) {
 	// For issue 19145
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set @try_old_partition_implementation = 1")
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue )")
 	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue )")
