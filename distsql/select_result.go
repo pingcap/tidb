@@ -251,12 +251,8 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, detail *execde
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
-			//planID := ""
-			//if detail.GetExecutorId() != "" {
-			//	planID = detail.GetExecutorId()
-			//} else {
+			// Fixme: Use detail.GetExecutorId() if exist.
 			planID := r.copPlanIDs[i]
-			//}
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
 				RecordOneCopTask(planID, callee, detail)
 		}

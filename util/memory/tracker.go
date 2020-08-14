@@ -393,4 +393,5 @@ const (
 	LabelForRowChunks       int = -14
 	LabelForStatsCache      int = -15
 	LabelForOuterList       int = -16
+	LabelForApplyCache      int = -17
 )

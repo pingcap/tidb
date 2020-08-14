@@ -46,7 +46,7 @@ func newApplyCache(ctx sessionctx.Context) (*applyCache, error) {
 	c := applyCache{
 		cache:       cache,
 		memCapacity: ctx.GetSessionVars().NestedLoopJoinCacheCapacity,
-		memTracker:  memory.NewTracker(-1, -1),
+		memTracker:  memory.NewTracker(memory.LabelForApplyCache, -1),
 	}
 	return &c, nil
 }
