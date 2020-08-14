@@ -413,7 +413,7 @@ func (s *testSplitIndex) TestClusterIndexSplitTable(c *C) {
 	ctx := mock.NewContext()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	e := &SplitTableRegionExec{
-		baseExecutor: newBaseExecutor(ctx, nil, nil),
+		baseExecutor: newBaseExecutor(ctx, nil, nil, 0),
 		tableInfo:    tbInfo,
 		handleCols:   buildHandleColsForSplit(sc, tbInfo),
 		lower:        types.MakeDatums(1, 0),

@@ -231,19 +231,19 @@ func (s *testSuite) TestToString(c *C) {
 	child4.Consume(4 * 1024 * 1024 * 1024)
 
 	c.Assert(parent.String(), Equals, `
-"parent"{
+"1"{
   "consumed": 4.00293168798089 GB
-  "child 1"{
+  "2"{
     "quota": 1000 Bytes
     "consumed": 100 Bytes
   }
-  "child 2"{
+  "3"{
     "consumed": 2 KB
   }
-  "child 3"{
+  "4"{
     "consumed": 3 MB
   }
-  "child 4"{
+  "5"{
     "consumed": 4 GB
   }
 }

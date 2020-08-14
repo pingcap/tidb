@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"context"
-	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -41,7 +40,7 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 	}
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()) != len(sr.copPlanIDs), IsTrue)
 	sr.updateCopRuntimeStats(context.Background(), &execdetails.ExecDetails{CalleeAddress: "callee"}, 0)
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234), IsFalse)
+	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String(), Equals, "")
 
 	sr.copPlanIDs = []int{sr.rootPlanID}
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, NotNil)

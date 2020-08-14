@@ -271,7 +271,7 @@ func (t *Tracker) String() string {
 }
 
 func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
-	fmt.Fprintf(buffer, "%s\"%s\"{\n", indent, t.label)
+	fmt.Fprintf(buffer, "%s\"%d\"{\n", indent, t.label)
 	if t.bytesLimit > 0 {
 		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.BytesToString(t.bytesLimit))
 	}
