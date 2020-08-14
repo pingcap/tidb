@@ -295,10 +295,8 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 	}
 	for k, t := range tests {
 		out, err := buildPlacementSpecs(t.input)
-		c.Logf("test %d", k)
 		if err == nil {
 			for i := range t.output {
-				c.Logf("\t%d-th output", i)
 				found := false
 				for j := range out {
 					ok1, _ := DeepEquals.Check([]interface{}{out[j].Action, t.output[i].Action}, nil)
@@ -310,6 +308,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 					}
 				}
 				if !found {
+					c.Logf("test %d, %d-th output", k, i)
 					c.Logf("\texcept %+v - %+v\n\tbut got", t.output[i], t.output[i].Rule)
 					for j := range out {
 						c.Logf("\t%+v - %+v", out[j], out[j].Rule)
