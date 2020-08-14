@@ -16,8 +16,6 @@ package kv
 import (
 	"context"
 	"sync"
-
-	"github.com/pingcap/log"
 )
 
 // InjectionConfig is used for fault injections for KV components.
@@ -58,7 +56,6 @@ func NewInjectedStore(store Storage, cfg *InjectionConfig) Storage {
 
 // Begin creates an injected Transaction.
 func (s *InjectedStore) Begin() (Transaction, error) {
-	log.Info("hello transaction")
 	txn, err := s.Storage.Begin()
 	return &InjectedTransaction{
 		Transaction: txn,

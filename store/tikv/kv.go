@@ -25,7 +25,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -280,7 +279,6 @@ func (s *tikvStore) runSafePointChecker() {
 }
 
 func (s *tikvStore) Begin() (kv.Transaction, error) {
-	log.Info("hello transaction")
 	txn, err := newTiKVTxn(s)
 	if err != nil {
 		return nil, errors.Trace(err)
