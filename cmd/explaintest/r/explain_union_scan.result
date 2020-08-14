@@ -20,13 +20,13 @@ Projection_17	10.00	root	test.t1.id, test.t1.province_id, test.t1.city_name, tes
     │   ├─UnionScan_38	10.00	root	gt(test.t1.province_id, 1), lt(test.t1.province_id, 100)
     │   │ └─TableReader_41	10.00	root	data:Selection_40
     │   │   └─Selection_40	10.00	cop	gt(test.t1.province_id, 1), lt(test.t1.province_id, 100)
-    │   │     └─TableScan_39	14.30	cop	table:city, range:[-inf,+inf], keep order:false
+    │   │     └─TableScan_39	13.96	cop	table:city, range:[-inf,+inf], keep order:false
     │   └─UnionScan_28	1.00	root	
     │     └─IndexLookUp_27	1.00	root	
     │       ├─IndexScan_25	1.00	cop	table:city, index:id, range: decided by [eq(test.t2.id, test.t1.id)], keep order:false
     │       └─TableScan_26	1.00	cop	table:city, keep order:false
-    └─UnionScan_52	519304.44	root	gt(test.t3.province_id, 1), lt(test.t3.province_id, 100), not(isnull(test.t3.province_id))
-      └─TableReader_55	519304.44	root	data:Selection_54
-        └─Selection_54	519304.44	cop	gt(test.t3.province_id, 1), lt(test.t3.province_id, 100), not(isnull(test.t3.province_id))
+    └─UnionScan_52	532199.19	root	gt(test.t3.province_id, 1), lt(test.t3.province_id, 100), not(isnull(test.t3.province_id))
+      └─TableReader_55	532199.19	root	data:Selection_54
+        └─Selection_54	532199.19	cop	gt(test.t3.province_id, 1), lt(test.t3.province_id, 100), not(isnull(test.t3.province_id))
           └─TableScan_53	536284.00	cop	table:city, range:[-inf,+inf], keep order:false
 commit;
