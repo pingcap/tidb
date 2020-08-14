@@ -31,13 +31,15 @@ type testDiskSerialSuite struct {
 }
 
 func (s *testDiskSerialSuite) TestRemoveDir(c *check.C) {
-	InitializeTempDir()
+	err := InitializeTempDir()
+	c.Assert(err, check.IsNil)
 	c.Assert(checkTempDirExist(), check.Equals, true)
 	c.Assert(os.RemoveAll(config.GetGlobalConfig().TempStoragePath), check.IsNil)
 	c.Assert(checkTempDirExist(), check.Equals, false)
 	for i := 0; i < 10; i++ {
 		go CheckAndInitTempDir()
 	}
-	CheckAndInitTempDir()
+	err = CheckAndInitTempDir()
+	c.Assert(err, check.IsNil)
 	c.Assert(checkTempDirExist(), check.Equals, true)
 }

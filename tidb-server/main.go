@@ -167,7 +167,8 @@ func main() {
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, reloadConfig, overrideConfig)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		config.GetGlobalConfig().UpdateTempStoragePath()
-		disk.InitializeTempDir()
+		err := disk.InitializeTempDir()
+		terror.MustNil(err)
 		checkTempStorageQuota()
 	}
 	setGlobalVars()

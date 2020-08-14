@@ -34,15 +34,15 @@ var (
 
 // CheckAndInitTempDir check whether the temp directory is existed.
 // If not, initializes the temp directory.
-func CheckAndInitTempDir() {
-	_, err, _ := sf.Do("tempDir", func() (interface{}, error) {
+func CheckAndInitTempDir() (err error) {
+	_, err, _ = sf.Do("tempDir", func() (value interface{}, err error) {
 		if !checkTempDirExist() {
 			log.Info("Tmp-storage-path not found. Try to initialize TempDir.")
-			InitializeTempDir()
+			err = InitializeTempDir()
 		}
-		return nil, nil
+		return
 	})
-	terror.MustNil(err)
+	return
 }
 
 func checkTempDirExist() bool {
@@ -55,12 +55,14 @@ func checkTempDirExist() bool {
 }
 
 // InitializeTempDir initializes the temp directory.
-func InitializeTempDir() {
+func InitializeTempDir() error {
 	tempDir := config.GetGlobalConfig().TempStoragePath
 	_, err := os.Stat(tempDir)
 	if err != nil && !os.IsExist(err) {
 		err = os.MkdirAll(tempDir, 0755)
-		terror.MustNil(err)
+		if err != nil {
+			return err
+		}
 	}
 	lockFile := "_dir.lock"
 	tempDirLock, err = fslock.Lock(filepath.Join(tempDir, lockFile))
@@ -72,11 +74,13 @@ func InitializeTempDir() {
 		default:
 			log.Error("Failed to acquire exclusive lock on the temporary storage dir.", zap.String("TempStoragePath", tempDir), zap.Error(err))
 		}
-		os.Exit(1)
+		return err
 	}
 
 	subDirs, err := ioutil.ReadDir(tempDir)
-	terror.MustNil(err)
+	if err != nil {
+		return err
+	}
 
 	for _, subDir := range subDirs {
 		// Do not remove the lock file.
@@ -89,6 +93,7 @@ func InitializeTempDir() {
 				zap.String("tempStorageSubDir", filepath.Join(tempDir, subDir.Name())), zap.Error(err))
 		}
 	}
+	return nil
 }
 
 // CleanUp releases the directory lock when exiting TiDB.
