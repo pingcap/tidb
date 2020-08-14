@@ -37,7 +37,9 @@ var (
 	ErrUnsupportedCollation = terror.ClassDDL.New(mysql.ErrUnknownCollation, "Unsupported collation when new collation is enabled: '%-.64s'")
 	// ErrIllegalMixCollation is returned when illegal mix of collations.
 	ErrIllegalMixCollation  = terror.ClassExpression.New(mysql.ErrCantAggregateNcollations, mysql.MySQLErrName[mysql.ErrCantAggregateNcollations])
+	// ErrIllegalMix2Collation is returned when illegal mix of 2 collations.
 	ErrIllegalMix2Collation = terror.ClassExpression.New(mysql.ErrCantAggregate2collations, mysql.MySQLErrName[mysql.ErrCantAggregate2collations])
+	// ErrIllegalMix3Collation is returned when illegal mix of 3 collations.
 	ErrIllegalMix3Collation = terror.ClassExpression.New(mysql.ErrCantAggregate3collations, mysql.MySQLErrName[mysql.ErrCantAggregate3collations])
 )
 

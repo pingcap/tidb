@@ -149,9 +149,8 @@ func illegalMixCollationErr(funcName string, args []Expression) error {
 func coerString(coercibility Coercibility) string {
 	if coercibility == CoercibilityExplicit {
 		return "EXPLICIT"
-	} else {
-		return "IMPLICIT"
 	}
+	return "IMPLICIT"
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
