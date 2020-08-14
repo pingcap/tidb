@@ -258,7 +258,7 @@ group= "abc"
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
 	c.Assert(len(conf.Labels), Equals, 2)
 	c.Assert(conf.Labels["foo"], Equals, "bar")
-	c.Assert(conf.Labels["group"],Equals,"abc")
+	c.Assert(conf.Labels["group"], Equals, "abc")
 
 	_, err = f.WriteString(`
 [log.file]
