@@ -267,8 +267,9 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		// Read the next file, offset = 0
 		if e.fileLine == 0 {
 			offset = 0
+		} else {
+			offset = e.fileLine - len(log)
 		}
-		offset = e.fileLine - len(log)
 		if e.fileIdx >= len(e.files) {
 			break
 		}
