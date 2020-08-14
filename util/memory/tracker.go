@@ -375,23 +375,38 @@ func (t *Tracker) setParent(parent *Tracker) {
 }
 
 const (
-	LabelForSQLText              int = -1
-	LabelForIndexWorker          int = -2
-	LabelForInnerList            int = -3
-	LabelForInnerTable           int = -4
-	LabelForOuterTable           int = -5
-	LabelForCoprocessor          int = -6
-	LabelForChunkList            int = -7
+	// LabelForSQLText represents the label of the SQL Text
+	LabelForSQLText int = -1
+	// LabelForIndexWorker represents the label of the index worker
+	LabelForIndexWorker int = -2
+	// LabelForInnerList represents the label of the inner list
+	LabelForInnerList int = -3
+	// LabelForInnerTable represents the label of the inner table
+	LabelForInnerTable int = -4
+	// LabelForOuterTable represents the label of the outer table
+	LabelForOuterTable int = -5
+	// LabelForCoprocessor represents the label of the coprocessor
+	LabelForCoprocessor int = -6
+	// LabelForChunkList represents the label of the chunk list
+	LabelForChunkList int = -7
+	// LabelForGlobalSimpleLRUCache represents the label of the Global SimpleLRUCache
 	LabelForGlobalSimpleLRUCache int = -8
-	LabelForChunkListInDisk      int = -9
-	LabelForRowContainer         int = -10
-	// LabelForGlobalStorage represents the label of the GlobalDiskUsageTracker
+	// LabelForChunkListInDisk represents the label of the chunk list in disk
+	LabelForChunkListInDisk int = -9
+	// LabelForRowContainer represents the label of the row container
+	LabelForRowContainer int = -10
+	// LabelForGlobalStorage represents the label of the Global Storage
 	LabelForGlobalStorage int = -11
-	// LabelForGlobalMemory represents the label of the GlobalMemoryUsageTracker
-	LabelForGlobalMemory    int = -12
+	// LabelForGlobalMemory represents the label of the Global Memory
+	LabelForGlobalMemory int = -12
+	// LabelForBuildSideResult represents the label of the BuildSideResult
 	LabelForBuildSideResult int = -13
-	LabelForRowChunks       int = -14
-	LabelForStatsCache      int = -15
-	LabelForOuterList       int = -16
-	LabelForApplyCache      int = -17
+	// LabelForRowChunks represents the label of the row chunks
+	LabelForRowChunks int = -14
+	// LabelForStatsCache represents the label of the stats cache
+	LabelForStatsCache int = -15
+	// LabelForOuterList represents the label of the outer list
+	LabelForOuterList int = -16
+	// LabelForApplyCache represents the label of the apply cache
+	LabelForApplyCache int = -17
 )

@@ -323,7 +323,7 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 	// region10: [90 ~ +inf)
 	ctx := mock.NewContext()
 	e := &SplitTableRegionExec{
-		baseExecutor: newBaseExecutor(ctx, nil,  0),
+		baseExecutor: newBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,
 		handleCols:   core.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
 		lower:        []types.Datum{types.NewDatum(0)},
