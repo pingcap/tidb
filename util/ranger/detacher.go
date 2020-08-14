@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 )
 
@@ -117,7 +118,13 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
 				return -1
 			}
-			if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
+			if constVal, ok := f.GetArgs()[1].(*expression.Constant); ok {
+				val, err := constVal.Eval(chunk.Row{})
+				if err != nil || val.IsNull() {
+					// treat col<=>null as range scan instead of point get to avoid incorrect results
+					// when nullable unique index has multiple matches for filter x is null
+					return -1
+				}
 				for i, col := range cols {
 					if col.Equal(nil, c) {
 						return i
@@ -129,7 +136,11 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
 				return -1
 			}
-			if _, ok := f.GetArgs()[0].(*expression.Constant); ok {
+			if constVal, ok := f.GetArgs()[0].(*expression.Constant); ok {
+				val, err := constVal.Eval(chunk.Row{})
+				if err != nil || val.IsNull() {
+					return -1
+				}
 				for i, col := range cols {
 					if col.Equal(nil, c) {
 						return i
