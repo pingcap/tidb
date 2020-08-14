@@ -718,11 +718,11 @@ func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
 	return [][]byte{intHandleBytes}, err
 }
 
-func decodeIndexKvNewCollation(key, value []byte, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
+func decodeIndexKvNewCollation(key, value []byte, hdStatus HandleStatus, colLens int, columns []rowcodec.ColInfo) ([][]byte, error) {
 	vLen := len(value)
 	tailLen := int(value[0])
 	restoredVal := value[1 : vLen-tailLen]
-	resultValues, err := decodeRestoredValues(columns, restoredVal)
+	resultValues, err := decodeRestoredValues(columns[:colLens], restoredVal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -732,7 +732,7 @@ func decodeIndexKvNewCollation(key, value []byte, hdStatus HandleStatus, columns
 
 	if tailLen < 8 {
 		// In non-unique index.
-		_, keySuffix, err := CutIndexKeyNew(key, len(columns))
+		_, keySuffix, err := CutIndexKeyNew(key, colLens)
 		if err != nil {
 			return nil, err
 		}
@@ -809,7 +809,7 @@ func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, column
 		if value[0] <= 1 && value[1] == CommonHandleFlag {
 			return decodeIndexKVUniqueCommonHandle(key, value, colsLen, hdStatus, columns)
 		}
-		return decodeIndexKvNewCollation(key, value, hdStatus, columns)
+		return decodeIndexKvNewCollation(key, value, hdStatus, colsLen, columns)
 	}
 	return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
 }
@@ -824,7 +824,7 @@ func decodeIndexKVUniqueCommonHandle(key, value []byte, colsLen int, hdStatus Ha
 	if int(handleEndOff) < len(value) {
 		// new collation values.
 		restoredValue := value[handleEndOff:]
-		resultValues, err = decodeRestoredValues(columns, restoredValue)
+		resultValues, err = decodeRestoredValues(columns[:colsLen], restoredValue)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
