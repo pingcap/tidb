@@ -348,7 +348,7 @@ func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.Physica
 		tps = append(tps, &col.FieldType)
 	}
 	tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
-	readerExec.checkIndexValue = &checkIndexValue{genExprs: is.GenExprs, idxColTps: tps}
+	readerExec.checkIndexValue = &checkIndexValue{idxColTps: tps}
 
 	colNames := make([]string, 0, len(is.Columns))
 	for _, col := range is.Columns {
@@ -906,6 +906,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
 
 	// If the push-downed condition contains virtual column, we may build a selection upon reader
+	originReader := reader
 	if sel, ok := reader.(*SelectionExec); ok {
 		reader = sel.children[0]
 	}
@@ -959,7 +960,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
-		return reader
+		return originReader
 	}
 	return us
 }

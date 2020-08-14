@@ -24,7 +24,7 @@ require (
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
-	github.com/pingcap/br v0.0.0-20200727110227-c6c8b7734bfa
+	github.com/pingcap/br v0.0.0-20200805095214-09dcc7534821
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20190809092503-95897b64e011
 	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
@@ -34,7 +34,7 @@ require (
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
 	github.com/pingcap/parser v0.0.0-20200803072748-fdf66528323d
 	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200520083007-2c251bd8f181
-	github.com/pingcap/sysutil v0.0.0-20200408114249-ed3bd6f7fdb1
+	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
 	github.com/pingcap/tidb-tools v4.0.1-0.20200530144555-cdec43635625+incompatible
 	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
 	github.com/prometheus/client_golang v1.5.1

@@ -365,7 +365,6 @@ type IndexLookUpExecutor struct {
 type checkIndexValue struct {
 	idxColTps  []*types.FieldType
 	idxTblCols []*table.Column
-	genExprs   map[model.TableColumnID]expression.Expression
 }
 
 // Open implements the Executor Open interface.
@@ -831,7 +830,6 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			break
 		}
 
-		tblReaderExec := tableReader.(*TableReaderExecutor)
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			handle := row.GetInt64(w.handleIdx)
@@ -843,21 +841,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			idxRow := task.idxRows.GetRow(offset)
 			vals = vals[:0]
 			for i, col := range w.idxTblCols {
-				if col.IsGenerated() && !col.GeneratedStored {
-					expr := w.genExprs[model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}]
-					// Eval the column value
-					val, err := expr.Eval(row)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					val, err = table.CastValue(tblReaderExec.ctx, val, col.ColumnInfo, false, false)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					vals = append(vals, val)
-				} else {
-					vals = append(vals, row.GetDatum(i, &col.FieldType))
-				}
+				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
 			vals = tables.TruncateIndexValuesIfNeeded(tblInfo, w.idxLookup.index, vals)
 			for i, val := range vals {

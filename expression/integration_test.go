@@ -3228,9 +3228,9 @@ func (s *testIntegrationSuite) TestArithmeticBuiltin(c *C) {
 	result = tk.MustQuery("SELECT 1.175494351E-37 div 1.7976931348623157E+308, 1.7976931348623157E+308 div -1.7976931348623157E+307, 1 div 1e-82;")
 	result.Check(testkit.Rows("0 -1 <nil>"))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|",
-		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308, decimal(309,0) BINARY)'",
-		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(1.7976931348623157e+308, decimal(309,0) BINARY)'",
-		"Warning|1292|Truncated incorrect DECIMAL value: 'cast(-1.7976931348623158e+307, decimal(309,0) BINARY)'",
+		"Warning|1292|Truncated incorrect DECIMAL value: '1.7976931348623157e+308'",
+		"Warning|1292|Truncated incorrect DECIMAL value: '1.7976931348623157e+308'",
+		"Warning|1292|Truncated incorrect DECIMAL value: '-1.7976931348623158e+307'",
 		"Warning|1365|Division by 0"))
 	rs, err = tk.Exec("select 1e300 DIV 1.5")
 	c.Assert(err, IsNil)
@@ -6558,6 +6558,18 @@ func (s *testIntegrationSuite) TestIssue17727(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue17989(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b tinyint as(a+1), c int as(b+1));")
+	tk.MustExec("set sql_mode='';")
+	tk.MustExec("insert into t(a) values(2000);")
+	tk.MustExec("create index idx on t(c);")
+	tk.MustQuery("select c from t;").Check(testkit.Rows("128"))
+	tk.MustExec("admin check table t")
+}
+
 func (s *testIntegrationSerialSuite) TestIssue18702(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -6721,4 +6733,33 @@ func (s *testIntegrationSerialSuite) TestIssue18662(c *C) {
 	tk.MustQuery("select * from t where field('A', a, b collate utf8mb4_general_ci) > 1;").Check(testkit.Rows())
 	tk.MustQuery("select * from t where field('A' collate utf8mb4_general_ci, a, b) > 1;").Check(testkit.Rows())
 	tk.MustQuery("select * from t where field('A', a, b) > 1;").Check(testkit.Rows("a A"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue19045(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec(`CREATE TABLE t (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  a char(10) DEFAULT NULL,
+  PRIMARY KEY (id)
+);`)
+	tk.MustExec(`CREATE TABLE t1 (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  a char(10) DEFAULT NULL,
+  b char(10) DEFAULT NULL,
+  c char(10) DEFAULT NULL,
+  PRIMARY KEY (id)
+);`)
+	tk.MustExec(`CREATE TABLE t2 (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  a char(10) DEFAULT NULL,
+  b char(10) DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY b (b)
+);`)
+	tk.MustExec(`insert into t1(a,b,c) values('hs4_0004', "04", "101"), ('a01', "01", "101"),('a011', "02", "101");`)
+	tk.MustExec(`insert into t2(a,b) values("02","03");`)
+	tk.MustExec(`insert into t(a) values('101'),('101');`)
+	tk.MustQuery(`select  ( SELECT t1.a FROM  t1,  t2 WHERE t1.b = t2.a AND  t2.b = '03' AND t1.c = a.a) invode from t a ;`).Check(testkit.Rows("a011", "a011"))
 }
