@@ -23,11 +23,11 @@ require (
 	github.com/klauspost/cpuid v1.2.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20200806113332-5b9f73333a19
+	github.com/ngaut/unistore v0.0.0-20200810072146-7f5bfa3012dd
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
-	github.com/pingcap/badger v1.5.1-0.20200714132513-80ba2000f159
+	github.com/pingcap/badger v1.5.1-0.20200810065601-8c92a97807f9
 	github.com/pingcap/br v0.0.0-20200805121136-181c081ba6ac
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
 	github.com/pingcap/errors v0.11.5-0.20200729012136-4e113ddee29e
