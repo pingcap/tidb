@@ -303,6 +303,16 @@ func (e *sum4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, p
 	return nil
 }
 
+func (e *sum4DistinctFloat64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4SumDistinctFloat64)(src), (*partialResult4SumDistinctFloat64)(dst)
+	if p1.isNull {
+		return 0, nil
+	}
+	p2.isNull = false
+	p2.val += p1.val
+	return 0, nil
+}
+
 type sum4DistinctDecimal struct {
 	baseSumAggFunc
 }
@@ -362,4 +372,16 @@ func (e *sum4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, p
 	}
 	chk.AppendMyDecimal(e.ordinal, &p.val)
 	return nil
+}
+
+func (e *sum4DistinctDecimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4SumDistinctDecimal)(src), (*partialResult4SumDistinctDecimal)(dst)
+	if p1.isNull {
+		return 0, nil
+	}
+	p2.isNull = false
+	var newSum types.MyDecimal
+	err = types.DecimalAdd(&p1.val, &p2.val, &newSum)
+	p2.val = newSum
+	return 0, nil
 }

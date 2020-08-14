@@ -203,7 +203,9 @@ func (e *avgPartial4Decimal) MergePartialResult(sctx sessionctx.Context, src, ds
 
 type partialResult4AvgDistinctDecimal struct {
 	partialResult4AvgDecimal
-	valSet set.StringSet
+	valSet  set.StringSet
+	valList []*types.MyDecimal
+	strList []string
 }
 
 type avgOriginal4DistinctDecimal struct {
@@ -222,6 +224,7 @@ func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p.sum = *types.NewDecFromInt(0)
 	p.count = int64(0)
 	p.valSet = set.NewStringSet()
+	p.valList, p.strList = p.valList[:0], p.strList[:0]
 }
 
 func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -278,6 +281,33 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	}
 	chk.AppendMyDecimal(e.ordinal, finalResult)
 	return nil
+}
+
+type avgPartial4DistinctDecimal struct {
+	avgOriginal4DistinctDecimal
+}
+
+func (e *avgPartial4DistinctDecimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4AvgDistinctDecimal)(src), (*partialResult4AvgDistinctDecimal)(dst)
+	if p1.count == 0 {
+		return 0, nil
+	}
+	for i := range p1.valList {
+		if p2.valSet.Exist(p1.strList[i]) {
+			continue
+		}
+		p2.valSet.Insert(p1.strList[i])
+		p2.valList = append(p2.valList, p1.valList[i])
+		p2.strList = append(p2.strList, p1.strList[i])
+		newSum := new(types.MyDecimal)
+		err = types.DecimalAdd(&p2.sum, p1.valList[i], newSum)
+		if err != nil {
+			return 0, err
+		}
+		p2.sum = *newSum
+		p2.count++
+	}
+	return 0, nil
 }
 
 // All the following avg function implementations return the float64 result,
@@ -452,4 +482,24 @@ func (e *avgOriginal4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Co
 	}
 	chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
 	return nil
+}
+
+type avgPartial4DistinctFloat64 struct {
+	avgOriginal4DistinctFloat64
+}
+
+func (e *avgPartial4DistinctFloat64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4AvgDistinctFloat64)(src), (*partialResult4AvgDistinctFloat64)(dst)
+	if p1.count == 0 {
+		return 0, nil
+	}
+	for f := range p1.valSet {
+		if p2.valSet.Exist(f) {
+			continue
+		}
+		p2.valSet.Insert(f)
+		p2.sum += f
+		p2.count++
+	}
+	return 0, nil
 }

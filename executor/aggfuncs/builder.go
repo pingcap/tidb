@@ -138,28 +138,51 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		ordinal: ordinal,
 	}
 
-	// If HasDistinct and mode is CompleteMode or Partial1Mode, we should
-	// use countOriginalWithDistinct.
-	if aggFuncDesc.HasDistinct &&
-		(aggFuncDesc.Mode == aggregation.CompleteMode || aggFuncDesc.Mode == aggregation.Partial1Mode) {
-		if len(base.args) == 1 {
-			// optimize with single column
-			// TODO: because Time and JSON does not have `hashcode()` or similar method
-			// so they're in exception for now.
-			// TODO: add hashCode method for all evaluate types (Decimal, Time, Duration, JSON).
-			// https://github.com/pingcap/tidb/issues/15857
-			switch aggFuncDesc.Args[0].GetType().EvalType() {
-			case types.ETInt:
-				return &countOriginalWithDistinct4Int{baseCount{base}}
-			case types.ETReal:
-				return &countOriginalWithDistinct4Real{baseCount{base}}
-			case types.ETDecimal:
-				return &countOriginalWithDistinct4Decimal{baseCount{base}}
-			case types.ETDuration:
-				return &countOriginalWithDistinct4Duration{baseCount{base}}
-			case types.ETString:
-				return &countOriginalWithDistinct4String{baseCount{base}}
+	// If HasDistinct, we should use countXXXWithDistinct.
+	if aggFuncDesc.HasDistinct {
+		switch aggFuncDesc.Mode {
+		case aggregation.CompleteMode, aggregation.Partial1Mode:
+			if len(base.args) == 1 {
+				// optimize with single column
+				// TODO: because Time and JSON does not have `hashcode()` or similar method
+				// so they're in exception for now.
+				// TODO: add hashCode method for all evaluate types (Time, JSON).
+				// https://github.com/pingcap/tidb/issues/15857
+				switch aggFuncDesc.Args[0].GetType().EvalType() {
+				case types.ETInt:
+					return &countOriginalWithDistinct4Int{baseCount{base}}
+				case types.ETReal:
+					return &countOriginalWithDistinct4Real{baseCount{base}}
+				case types.ETDecimal:
+					return &countOriginalWithDistinct4Decimal{baseCount{base}}
+				case types.ETDuration:
+					return &countOriginalWithDistinct4Duration{baseCount{base}}
+				case types.ETString:
+					return &countOriginalWithDistinct4String{baseCount{base}}
+				}
 			}
+			return &countOriginalWithDistinct{baseCount{base}}
+		case aggregation.Partial2Mode, aggregation.FinalMode:
+			if len(base.args) == 1 {
+				// optimize with single column
+				// TODO: because Time and JSON does not have `hashcode()` or similar method
+				// so they're in exception for now.
+				// TODO: add hashCode method for all evaluate types (Time, JSON).
+				// https://github.com/pingcap/tidb/issues/15857
+				switch aggFuncDesc.Args[0].GetType().EvalType() {
+				case types.ETInt:
+					return &countPartialWithDistinct4Int{countOriginalWithDistinct4Int{baseCount{base}}}
+				case types.ETReal:
+					return &countPartialWithDistinct4Real{countOriginalWithDistinct4Real{baseCount{base}}}
+				case types.ETDecimal:
+					return &countPartialWithDistinct4Decimal{countOriginalWithDistinct4Decimal{baseCount{base}}}
+				case types.ETDuration:
+					return &countPartialWithDistinct4Duration{countOriginalWithDistinct4Duration{baseCount{base}}}
+				case types.ETString:
+					return &countPartialWithDistinct4String{countOriginalWithDistinct4String{baseCount{base}}}
+				}
+			}
+			return &countPartialWithDistinct{countOriginalWithDistinct{baseCount{base}}}
 		}
 		return &countOriginalWithDistinct{baseCount{base}}
 	}
@@ -255,8 +278,14 @@ func buildAvg(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 	case aggregation.Partial2Mode, aggregation.FinalMode:
 		switch aggFuncDesc.RetTp.Tp {
 		case mysql.TypeNewDecimal:
+			if aggFuncDesc.HasDistinct {
+				return &avgPartial4DistinctDecimal{avgOriginal4DistinctDecimal{base}}
+			}
 			return &avgPartial4Decimal{baseAvgDecimal{base}}
 		case mysql.TypeDouble:
+			if aggFuncDesc.HasDistinct {
+				return &avgPartial4DistinctFloat64{avgOriginal4DistinctFloat64{base}}
+			}
 			return &avgPartial4Float64{baseAvgFloat64{base}}
 		}
 	}
