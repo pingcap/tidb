@@ -6429,6 +6429,18 @@ func (s *testIntegrationSerialSuite) TestCollateDDL(c *C) {
 	tk.MustExec("drop database t;")
 }
 
+func (s *testIntegrationSerialSuite) TestNewCollationCheckClusterIndexTable(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.MustExec("create table t(name char(255) primary key, b int, c int, index idx(name), unique index uidx(name))")
+	tk.MustExec("insert into t values(\"aaaa\", 1, 1), (\"bbb\", 2, 2), (\"ccc\", 3, 3)")
+	tk.MustExec("admin check table t")
+}
+
 func (s *testIntegrationSuite) TestIssue15986(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -6950,12 +6962,41 @@ func (s *testIntegrationSerialSuite) TestIssue18662(c *C) {
 	tk.MustQuery("select * from t where field('A', a, b) > 1;").Check(testkit.Rows("a A"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue19045(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2")
+	tk.MustExec(`CREATE TABLE t (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  a char(10) DEFAULT NULL,
+  PRIMARY KEY (id)
+);`)
+	tk.MustExec(`CREATE TABLE t1 (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  a char(10) DEFAULT NULL,
+  b char(10) DEFAULT NULL,
+  c char(10) DEFAULT NULL,
+  PRIMARY KEY (id)
+);`)
+	tk.MustExec(`CREATE TABLE t2 (
+  id int(11) NOT NULL AUTO_INCREMENT,
+  a char(10) DEFAULT NULL,
+  b char(10) DEFAULT NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY b (b)
+);`)
+	tk.MustExec(`insert into t1(a,b,c) values('hs4_0004', "04", "101"), ('a01', "01", "101"),('a011', "02", "101");`)
+	tk.MustExec(`insert into t2(a,b) values("02","03");`)
+	tk.MustExec(`insert into t(a) values('101'),('101');`)
+	tk.MustQuery(`select  ( SELECT t1.a FROM  t1,  t2 WHERE t1.b = t2.a AND  t2.b = '03' AND t1.c = a.a) invode from t a ;`).Check(testkit.Rows("a011", "a011"))
+}
 
-func (s *testIntegrationSerialSuite) TestIssueRefactor(c *C) {
+func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set names utf8mb4 collate utf8mb4_unicode_ci;")
-	tk.MustQuery("select collation(concat(1,1));").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(concat(NULL,NULL));").Check(testkit.Rows("binary"))
+	tk.MustQuery("select coercibility(concat(1,1));").Check(testkit.Rows("4"))
+	tk.MustQuery("select coercibility(1);").Check(testkit.Rows("5"))
 }
