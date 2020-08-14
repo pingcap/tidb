@@ -269,7 +269,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			offset = 0
 		}
 		offset += len(log)
-		if len(log) == 0 {
+		if e.fileIdx >= len(e.files) {
 			break
 		}
 		select {
