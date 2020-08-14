@@ -146,9 +146,11 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 	if !types.IsString(sf.RetType.Tp) {
 		return CoercibilityNumeric
 	}
-	_, _, coer, _ := inferCollation(sf.GetArgs()...)
-	if coer == CoercibilityNumeric {
-		return CoercibilityCoercible
+	coer := CoercibilityCoercible
+	for _, arg := range sf.GetArgs() {
+		if arg.Coercibility() < coer {
+			coer = arg.Coercibility()
+		}
 	}
 	return coer
 }
