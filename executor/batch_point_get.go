@@ -86,6 +86,8 @@ func (e *BatchPointGetExec) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.DelOption(kv.CollectRuntimeStats)
 	}
+	e.inited = false
+	e.index = 0
 	return nil
 }
 
