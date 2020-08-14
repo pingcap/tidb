@@ -6460,6 +6460,18 @@ func (s *testIntegrationSuite) TestIssue1223(c *C) {
 		`{"test": [null]}`, `{"test": true}`, `{"test": false}`, `""`, "null", `"0"`))
 }
 
+func (s *testIntegrationSerialSuite) TestNewCollationWithClusterIndex(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.MustExec("create table t(d double primary key, a int, name varchar(255), index idx(name(2)), index midx(a, name))")
+	tk.MustExec("insert into t values(2.11, 1, \"aa\"), (-1, 0, \"abcd\"), (9.99, 0, \"aaaa\")")
+	tk.MustQuery("select d from t use index(idx) where name=\"aa\"").Check(testkit.Rows("2.11"))
+}
+
 func (s *testIntegrationSuite) TestIssue15743(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
