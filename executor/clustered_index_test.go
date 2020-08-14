@@ -50,6 +50,22 @@ func (s *testClusteredSuite) TestClusteredUnionScan(c *C) {
 	tk.MustExec("rollback")
 }
 
+func (s *testClusteredSuite) TestClusteredUnionScanIndexLookup(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, pk char(10), c int, primary key(pk), key(a));")
+	tk.MustExec("insert into t values (1, '111', 3);")
+
+	tk.MustExec("begin")
+	tk.MustExec("update t set a = a + 1, pk = '222' where a = 1;")
+	sql := "select pk, c from t where a = 2;"
+	tk.HasPlan(sql, "IndexLookUp")
+	tk.MustQuery(sql).Check(testkit.Rows("222 3"))
+
+	tk.MustExec("commit")
+	tk.MustQuery(sql).Check(testkit.Rows("222 3"))
+}
+
 func (s *testClusteredSuite) TestClusteredIndexLookUp(c *C) {
 	tk := s.newTK(c)
 	tk.MustExec("drop table if exists t")
