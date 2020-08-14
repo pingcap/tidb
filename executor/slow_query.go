@@ -252,17 +252,13 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	defer close(ch)
 	for {
 		log, err := e.getBatchLog(reader, logNum)
-		wg.Add(1)
-		ch <- 1
 		if err != nil {
-			go func() {
-				defer wg.Done()
-				e.parsedSlowLogCh <- parsedSlowLog{nil, err}
-				<-ch
-			}()
+			e.parsedSlowLogCh <- parsedSlowLog{nil, err}
 			break
 		}
 		start := offset
+		wg.Add(1)
+		ch <- 1
 		go func() {
 			defer wg.Done()
 			e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(sctx, log, start), err}
