@@ -150,6 +150,7 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 		}
 	}
 
+	// it is weird if a ScalarFunction is CoercibilityNumeric but return string type
 	if coer == CoercibilityNumeric {
 		return CoercibilityCoercible
 	}
