@@ -113,12 +113,15 @@ var (
 	}
 
 	// collationPriority is the priority when infer the result collation, the priority of collation a > b iff collationPriority[a] > collationPriority[b]
+	// collation a and b are incompatible if collationPriority[a] = collationPriority[b]
 	collationPriority = map[string]int{
 		charset.CollationASCII:   1,
 		charset.CollationLatin1:  2,
 		"utf8_general_ci":        3,
+		"utf8_unicode_ci":        3,
 		charset.CollationUTF8:    4,
 		"utf8mb4_general_ci":     5,
+		"utf8mb4_unicode_ci":     5,
 		charset.CollationUTF8MB4: 6,
 		charset.CollationBin:     7,
 	}
@@ -143,11 +146,9 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 	if !types.IsString(sf.RetType.Tp) {
 		return CoercibilityNumeric
 	}
-	coer := CoercibilityCoercible
-	for _, arg := range sf.GetArgs() {
-		if arg.Coercibility() < coer {
-			coer = arg.Coercibility()
-		}
+	_, _, coer, _ := inferCollation(sf.GetArgs()...)
+	if coer == CoercibilityNumeric {
+		return CoercibilityCoercible
 	}
 	return coer
 }
@@ -205,4 +206,42 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 		dstCharset, dstCollation = charset.CharsetBin, charset.CollationBin
 	}
 	return
+}
+
+func inferCollation(exprs ...Expression) (collation, charset string, coercibility Coercibility, legal bool) {
+	firstExplicitCollation := ""
+	coercibility = CoercibilityIgnorable
+	for _, arg := range exprs {
+		if arg.Coercibility() == CoercibilityExplicit {
+			if firstExplicitCollation == "" {
+				firstExplicitCollation = arg.GetType().Collate
+			} else if firstExplicitCollation != arg.GetType().Collate {
+				return "", "", CoercibilityIgnorable, false
+			}
+		} else if arg.Coercibility() < coercibility {
+			coercibility, collation, charset = arg.Coercibility(), arg.GetType().Collate, arg.GetType().Charset
+		} else if arg.Coercibility() == coercibility && collation != arg.GetType().Collate {
+			p1 := collationPriority[collation]
+			p2 := collationPriority[arg.GetType().Collate]
+
+			// same priority means this two collation is incompatible
+			// it might derive coercibility to CoercibilityNone
+			if p1 == p2 {
+				coercibility, collation, charset = CoercibilityNone, getBinCollation(arg.GetType().Charset), arg.GetType().Charset
+			} else if p1 < p2 {
+				collation, charset = arg.GetType().Collate, arg.GetType().Charset
+			}
+		}
+	}
+	return collation, charset, coercibility, true
+}
+
+func getBinCollation(cs string) string {
+	switch cs {
+	case charset.CharsetUTF8:
+		return charset.CollationUTF8
+	case charset.CharsetUTF8MB4:
+		return charset.CollationUTF8MB4
+	}
+	panic("never reachable")
 }
