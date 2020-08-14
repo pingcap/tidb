@@ -21,10 +21,12 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {
@@ -98,7 +100,7 @@ func averageAbsoluteError(cms *CMSketch, mp map[int64]uint32) (uint64, error) {
 		} else {
 			diff = estimate - uint64(count)
 		}
-		total += uint64(diff)
+		total += diff
 	}
 	return total / uint64(len(mp)), nil
 }
@@ -158,7 +160,7 @@ func (s *testStatisticsSuite) TestCMSketchCoding(c *C) {
 	bytes, err := EncodeCMSketchWithoutTopN(lSketch)
 	c.Assert(err, IsNil)
 	c.Assert(len(bytes), Equals, 61457)
-	rSketch, err := decodeCMSketch(bytes, nil)
+	rSketch, err := DecodeCMSketch(bytes, nil)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
 }
@@ -281,16 +283,25 @@ func (s *testStatisticsSuite) TestCMSketchCodingTopN(c *C) {
 		}
 	}
 	lSketch.topN = make(map[uint64][]*TopNMeta)
+	unsignedLong := types.NewFieldType(mysql.TypeLonglong)
+	unsignedLong.Flag |= mysql.UnsignedFlag
+	chk := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeBlob), unsignedLong}, 20, 20)
+	var rows []chunk.Row
 	for i := 0; i < 20; i++ {
 		tString := []byte(fmt.Sprintf("%20000d", i))
 		h1, h2 := murmur3.Sum128(tString)
 		lSketch.topN[h1] = []*TopNMeta{{h2, tString, math.MaxUint64}}
+		chk.AppendBytes(0, tString)
+		chk.AppendUint64(1, math.MaxUint64)
+		rows = append(rows, chk.GetRow(i))
 	}
 
 	bytes, err := EncodeCMSketchWithoutTopN(lSketch)
 	c.Assert(err, IsNil)
 	c.Assert(len(bytes), Equals, 61457)
-	rSketch, err := decodeCMSketch(bytes, lSketch.TopN())
+	rSketch, err := DecodeCMSketch(bytes, rows)
 	c.Assert(err, IsNil)
 	c.Assert(lSketch.Equal(rSketch), IsTrue)
+	// do not panic
+	DecodeCMSketch([]byte{}, rows)
 }

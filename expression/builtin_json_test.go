@@ -20,12 +20,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testEvaluatorSuite) TestJSONType(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONType]
 	tbl := []struct {
 		Input    interface{}
@@ -50,7 +48,6 @@ func (s *testEvaluatorSuite) TestJSONType(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONQuote(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONQuote]
 	tbl := []struct {
 		Input    interface{}
@@ -79,7 +76,6 @@ func (s *testEvaluatorSuite) TestJSONQuote(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONUnquote]
 	tbl := []struct {
 		Input    interface{}
@@ -111,7 +107,6 @@ func (s *testEvaluatorSuite) TestJSONUnquote(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONExtract]
 	jstr := `{"a": [{"aa": [{"aaa": 1}]}], "aaa": 2}`
 	tbl := []struct {
@@ -149,7 +144,6 @@ func (s *testEvaluatorSuite) TestJSONExtract(c *C) {
 
 // TestJSONSetInsertReplace tests grammar of json_{set,insert,replace}.
 func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		fc           functionClass
 		Input        []interface{}
@@ -195,7 +189,6 @@ func (s *testEvaluatorSuite) TestJSONSetInsertReplace(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONMerge]
 	tbl := []struct {
 		Input    []interface{}
@@ -226,7 +219,6 @@ func (s *testEvaluatorSuite) TestJSONMerge(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONMergePreserve(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONMergePreserve]
 	tbl := []struct {
 		Input    []interface{}
@@ -257,7 +249,6 @@ func (s *testEvaluatorSuite) TestJSONMergePreserve(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONArray(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONArray]
 	tbl := []struct {
 		Input    []interface{}
@@ -282,7 +273,6 @@ func (s *testEvaluatorSuite) TestJSONArray(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONObject(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONObject]
 	tbl := []struct {
 		Input        []interface{}
@@ -326,7 +316,6 @@ func (s *testEvaluatorSuite) TestJSONObject(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONRemove(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONRemove]
 	tbl := []struct {
 		Input    []interface{}
@@ -376,7 +365,6 @@ func (s *testEvaluatorSuite) TestJSONRemove(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONContains(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONContains]
 	tbl := []struct {
 		input    []interface{}
@@ -456,7 +444,6 @@ func (s *testEvaluatorSuite) TestJSONContains(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONContainsPath(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONContainsPath]
 	jsonString := `{"a": 1, "b": 2, "c": {"d": 4}}`
 	invalidJSON := `{"a": 1`
@@ -515,7 +502,6 @@ func (s *testEvaluatorSuite) TestJSONContainsPath(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONLength(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONLength]
 	tbl := []struct {
 		input    []interface{}
@@ -587,13 +573,13 @@ func (s *testEvaluatorSuite) TestJSONLength(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONKeys(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONKeys]
 	tbl := []struct {
 		input    []interface{}
 		expected interface{}
 		success  bool
 	}{
+
 		// Tests nil arguments
 		{[]interface{}{nil}, nil, true},
 		{[]interface{}{nil, "$.c"}, nil, true},
@@ -601,12 +587,12 @@ func (s *testEvaluatorSuite) TestJSONKeys(c *C) {
 		{[]interface{}{nil, nil}, nil, true},
 
 		// Tests with other type
-		{[]interface{}{`1`}, nil, false},
-		{[]interface{}{`"str"`}, nil, false},
-		{[]interface{}{`true`}, nil, false},
-		{[]interface{}{`null`}, nil, false},
-		{[]interface{}{`[1, 2]`}, nil, false},
-		{[]interface{}{`["1", "2"]`}, nil, false},
+		{[]interface{}{`1`}, nil, true},
+		{[]interface{}{`"str"`}, nil, true},
+		{[]interface{}{`true`}, nil, true},
+		{[]interface{}{`null`}, nil, true},
+		{[]interface{}{`[1, 2]`}, nil, true},
+		{[]interface{}{`["1", "2"]`}, nil, true},
 
 		// Tests without path expression
 		{[]interface{}{`{}`}, `[]`, true},
@@ -657,7 +643,6 @@ func (s *testEvaluatorSuite) TestJSONKeys(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONDepth(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONDepth]
 	tbl := []struct {
 		input    []interface{}
@@ -716,7 +701,6 @@ func (s *testEvaluatorSuite) TestJSONDepth(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONArrayAppend(c *C) {
-	defer testleak.AfterTest(c)()
 	sampleJSON, err := json.ParseBinaryFromString(`{"b": 2}`)
 	c.Assert(err, IsNil)
 	fc := funcs[ast.JSONArrayAppend]
@@ -795,7 +779,6 @@ func (s *testEvaluatorSuite) TestJSONArrayAppend(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONSearch]
 	jsonString := `["abc", [{"k": "10"}, "def"], {"x":"abc"}, {"y":"bcd"}]`
 	jsonString2 := `["abc", [{"k": "10"}, "def"], {"x":"ab%d"}, {"y":"abcd"}]`
@@ -808,6 +791,7 @@ func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
 		{[]interface{}{jsonString, `one`, `abc`}, `"$[0]"`, true},
 		{[]interface{}{jsonString, `all`, `abc`}, `["$[0]", "$[2].x"]`, true},
 		{[]interface{}{jsonString, `all`, `ghi`}, nil, true},
+		{[]interface{}{jsonString, `ALL`, `ghi`}, nil, true},
 		{[]interface{}{jsonString, `all`, `10`}, `"$[1][0].k"`, true},
 		{[]interface{}{jsonString, `all`, `10`, nil, `$`}, `"$[1][0].k"`, true},
 		{[]interface{}{jsonString, `all`, `10`, nil, `$[*]`}, `"$[1][0].k"`, true},
@@ -842,6 +826,7 @@ func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
 		{[]interface{}{jsonString, `all`, `abc`, `??`}, nil, false},       // wrong escape_char
 		{[]interface{}{jsonString, `all`, `abc`, nil, nil}, nil, true},    // NULL path
 		{[]interface{}{jsonString, `all`, `abc`, nil, `$xx`}, nil, false}, // wrong path
+		{[]interface{}{jsonString, nil, `abc`}, nil, true},
 	}
 	for _, t := range tbl {
 		args := types.MakeDatums(t.input...)
@@ -857,7 +842,6 @@ func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
 				c.Assert(err, IsNil)
 				j2 = d.GetMysqlJSON()
 				cmp := json.CompareBinary(j1, j2)
-				//fmt.Println(j1, j2)
 				c.Assert(cmp, Equals, 0)
 			case nil:
 				c.Assert(d.IsNull(), IsTrue)
@@ -869,7 +853,6 @@ func (s *testEvaluatorSuite) TestJSONSearch(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestJSONArrayInsert(c *C) {
-	defer testleak.AfterTest(c)()
 	fc := funcs[ast.JSONArrayInsert]
 	tbl := []struct {
 		input    []interface{}
@@ -937,6 +920,78 @@ func (s *testEvaluatorSuite) TestJSONArrayInsert(c *C) {
 			}
 		} else {
 			c.Assert(t.err.Equal(err), Equals, true)
+		}
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONValid(c *C) {
+	fc := funcs[ast.JSONValid]
+	tbl := []struct {
+		Input    interface{}
+		Expected interface{}
+	}{
+		{`{"a":1}`, 1},
+		{`hello`, 0},
+		{`"hello"`, 1},
+		{`null`, 1},
+		{`{}`, 1},
+		{`[]`, 1},
+		{`2`, 1},
+		{`2.5`, 1},
+		{`2019-8-19`, 0},
+		{`"2019-8-19"`, 1},
+		{2, 0},
+		{2.5, 0},
+		{nil, nil},
+	}
+	dtbl := tblToDtbl(tbl)
+	for _, t := range dtbl {
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Input"]))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		c.Assert(err, IsNil)
+		c.Assert(d, testutil.DatumEquals, t["Expected"][0])
+	}
+}
+
+func (s *testEvaluatorSuite) TestJSONStorageSize(c *C) {
+	fc := funcs[ast.JSONStorageSize]
+	tbl := []struct {
+		input    []interface{}
+		expected interface{}
+		success  bool
+	}{
+		// Tests scalar arguments
+		{[]interface{}{`null`}, 4, true},
+		{[]interface{}{`true`}, 4, true},
+		{[]interface{}{`1`}, 1, true},
+		{[]interface{}{`"1"`}, 3, true},
+		// Tests nil arguments
+		{[]interface{}{nil}, nil, true},
+		// Tests valid json documents
+		{[]interface{}{`{}`}, 2, true},
+		{[]interface{}{`{"a":1}`}, 8, true},
+		{[]interface{}{`[{"a":{"a":1},"b":2}]`}, 25, true},
+		{[]interface{}{`{"a": 1000, "b": "wxyz", "c": "[1, 3, 5, 7]"}`}, 45, true},
+		// Tests invalid json documents
+		{[]interface{}{`[{"a":1]`}, 0, false},
+		{[]interface{}{`[{a":1]`}, 0, false},
+	}
+	for _, t := range tbl {
+		args := types.MakeDatums(t.input...)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants(args))
+		c.Assert(err, IsNil)
+		d, err := evalBuiltinFunc(f, chunk.Row{})
+		if t.success {
+			c.Assert(err, IsNil)
+
+			if t.expected == nil {
+				c.Assert(d.IsNull(), IsTrue)
+			} else {
+				c.Assert(d.GetInt64(), Equals, int64(t.expected.(int)))
+			}
+		} else {
+			c.Assert(err, NotNil)
 		}
 	}
 }

@@ -36,6 +36,8 @@ import (
 type RestrictedSQLExecutor interface {
 	// ExecRestrictedSQL run sql statement in ctx with some restriction.
 	ExecRestrictedSQL(sql string) ([]chunk.Row, []*ast.ResultField, error)
+	// ExecRestrictedSQLWithContext run sql statement in ctx with some restriction.
+	ExecRestrictedSQLWithContext(ctx context.Context, sql string) ([]chunk.Row, []*ast.ResultField, error)
 	// ExecRestrictedSQLWithSnapshot run sql statement in ctx with some restriction and with snapshot.
 	// If current session sets the snapshot timestamp, then execute with this snapshot timestamp.
 	// Otherwise, execute with the current transaction start timestamp if the transaction is valid.
@@ -48,6 +50,8 @@ type RestrictedSQLExecutor interface {
 // session.Session.Execute, then privilege/privileges and tidb would become a circle.
 type SQLExecutor interface {
 	Execute(ctx context.Context, sql string) ([]RecordSet, error)
+	// ExecuteInternal means execute sql as the internal sql.
+	ExecuteInternal(ctx context.Context, sql string) ([]RecordSet, error)
 }
 
 // SQLParser is an interface provides parsing sql statement.

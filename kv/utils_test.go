@@ -15,6 +15,7 @@ package kv
 
 import (
 	"context"
+	"strconv"
 
 	. "github.com/pingcap/check"
 )
@@ -25,7 +26,7 @@ type testUtilsSuite struct {
 }
 
 func (s testUtilsSuite) TestIncInt64(c *C) {
-	mb := NewMemDbBuffer(DefaultTxnMembufCap)
+	mb := newMemDB()
 	key := Key("key")
 	v, err := IncInt64(mb, key, 1)
 	c.Check(err, IsNil)
@@ -38,10 +39,19 @@ func (s testUtilsSuite) TestIncInt64(c *C) {
 	c.Check(err, IsNil)
 	_, err = IncInt64(mb, key, 1)
 	c.Check(err, NotNil)
+
+	// test int overflow
+	maxUint32 := int64(^uint32(0))
+	err = mb.Set(key, []byte(strconv.FormatInt(maxUint32, 10)))
+	c.Check(err, IsNil)
+	v, err = IncInt64(mb, key, 1)
+	c.Check(err, IsNil)
+	c.Check(v, Equals, maxUint32+1)
+
 }
 
 func (s testUtilsSuite) TestGetInt64(c *C) {
-	mb := NewMemDbBuffer(DefaultTxnMembufCap)
+	mb := newMemDB()
 	key := Key("key")
 	v, err := GetInt64(context.TODO(), mb, key)
 	c.Check(v, Equals, int64(0))

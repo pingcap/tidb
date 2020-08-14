@@ -14,6 +14,7 @@
 package distsql
 
 import (
+	"context"
 	"fmt"
 
 	. "github.com/pingcap/check"
@@ -29,7 +30,7 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 	sr := selectResult{ctx: ctx}
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, IsNil)
 	sr.rootPlanID = copPlan{}
-	sr.updateCopRuntimeStats("a", 0)
+	sr.updateCopRuntimeStats(context.Background(), &execdetails.ExecDetails{CalleeAddress: "a"}, 0)
 
 	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
 	t := uint64(1)
@@ -39,14 +40,14 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 		},
 	}
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()) != len(sr.copPlanIDs), IsTrue)
-	sr.updateCopRuntimeStats("callee", 0)
+	sr.updateCopRuntimeStats(context.Background(), &execdetails.ExecDetails{CalleeAddress: "callee"}, 0)
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats("callee"), IsFalse)
 
 	sr.copPlanIDs = []fmt.Stringer{copPlan{}}
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, NotNil)
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()), Equals, len(sr.copPlanIDs))
-	sr.updateCopRuntimeStats("callee", 0)
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats("callee").String(), Equals, "time:1ns, loops:1, rows:1")
+	sr.updateCopRuntimeStats(context.Background(), &execdetails.ExecDetails{CalleeAddress: "callee"}, 0)
+	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats("callee").String(), Equals, "time:1ns, loops:1")
 }
 
 type copPlan struct{}

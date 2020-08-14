@@ -16,16 +16,18 @@ package cascades
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/planner/property"
 )
 
 func (s *testCascadesSuite) TestGetEnforcerRules(c *C) {
 	prop := &property.PhysicalProperty{}
-	enforcers := GetEnforcerRules(prop)
+	group := memo.NewGroupWithSchema(nil, expression.NewSchema())
+	enforcers := GetEnforcerRules(group, prop)
 	c.Assert(enforcers, IsNil)
 	col := &expression.Column{}
 	prop.Items = append(prop.Items, property.Item{Col: col})
-	enforcers = GetEnforcerRules(prop)
+	enforcers = GetEnforcerRules(group, prop)
 	c.Assert(enforcers, NotNil)
 	c.Assert(len(enforcers), Equals, 1)
 	_, ok := enforcers[0].(*OrderEnforcer)
@@ -35,8 +37,9 @@ func (s *testCascadesSuite) TestGetEnforcerRules(c *C) {
 func (s *testCascadesSuite) TestNewProperties(c *C) {
 	prop := &property.PhysicalProperty{}
 	col := &expression.Column{}
+	group := memo.NewGroupWithSchema(nil, expression.NewSchema())
 	prop.Items = append(prop.Items, property.Item{Col: col})
-	enforcers := GetEnforcerRules(prop)
+	enforcers := GetEnforcerRules(group, prop)
 	orderEnforcer, _ := enforcers[0].(*OrderEnforcer)
 	newProp := orderEnforcer.NewProperty(prop)
 	c.Assert(newProp.Items, IsNil)

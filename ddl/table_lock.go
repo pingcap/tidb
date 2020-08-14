@@ -91,7 +91,7 @@ func onLockTables(t *meta.Meta, job *model.Job) (ver int64, err error) {
 			}
 		default:
 			job.State = model.JobStateCancelled
-			return ver, ErrInvalidTableLockState.GenWithStack("invalid table lock state %v", tbInfo.Lock.State)
+			return ver, ErrInvalidDDLState.GenWithStackByArgs("table lock", tbInfo.Lock.State)
 		}
 	}
 

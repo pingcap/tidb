@@ -17,18 +17,20 @@ import (
 	"context"
 	"crypto/tls"
 	"math"
+	"net"
+	"runtime"
 	"testing"
 	"time"
 
-	"github.com/coreos/etcd/integration"
 	"github.com/ngaut/pools"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/metrics"
@@ -39,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
 	dto "github.com/prometheus/client_model/go"
+	"go.etcd.io/etcd/integration"
 )
 
 func TestT(t *testing.T) {
@@ -72,10 +75,29 @@ func (mebd *mockEtcdBackend) StartGCWorker() error {
 	panic("not implemented")
 }
 
+// ETCD use ip:port as unix socket address, however this address is invalid on windows.
+// We have to skip some of the test in such case.
+// https://github.com/etcd-io/etcd/blob/f0faa5501d936cd8c9f561bb9d1baca70eb67ab1/pkg/types/urls.go#L42
+func unixSocketAvailable() bool {
+	c, err := net.Listen("unix", "127.0.0.1:0")
+	if err == nil {
+		c.Close()
+		return true
+	}
+	return false
+}
+
 func TestInfo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	if !unixSocketAvailable() {
+		return
+	}
+	testleak.BeforeTest()
 	defer testleak.AfterTestT(t)()
 	ddlLease := 80 * time.Millisecond
-	s, err := mockstore.NewMockTikvStore()
+	s, err := mockstore.NewMockStore()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +123,10 @@ func TestInfo(t *testing.T) {
 		ddl.WithInfoHandle(dom.infoHandle),
 		ddl.WithLease(ddlLease),
 	)
+	err = dom.ddl.Start(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	err = failpoint.Enable("github.com/pingcap/tidb/domain/MockReplaceDDL", `return(true)`)
 	if err != nil {
 		t.Fatal(err)
@@ -116,21 +142,24 @@ func TestInfo(t *testing.T) {
 
 	// Test for GetServerInfo and GetServerInfoByID.
 	ddlID := dom.ddl.GetID()
-	serverInfo := dom.InfoSyncer().GetServerInfo()
-	info, err := dom.info.GetServerInfoByID(goCtx, ddlID)
+	serverInfo, err := infosync.GetServerInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := infosync.GetServerInfoByID(goCtx, ddlID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if serverInfo.ID != info.ID {
 		t.Fatalf("server self info %v, info %v", serverInfo, info)
 	}
-	_, err = dom.info.GetServerInfoByID(goCtx, "not_exist_id")
+	_, err = infosync.GetServerInfoByID(goCtx, "not_exist_id")
 	if err == nil || (err != nil && err.Error() != "[info-syncer] get /tidb/server/info/not_exist_id failed") {
 		t.Fatal(err)
 	}
 
 	// Test for GetAllServerInfo.
-	infos, err := dom.info.GetAllServerInfo(goCtx)
+	infos, err := infosync.GetAllServerInfo(goCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,9 +173,13 @@ func TestInfo(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-dom.ddl.SchemaSyncer().Done()
+	err = failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone")
+	if err != nil {
+		t.Fatal(err)
+	}
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 1000; i++ {
 		if dom.SchemaValidator.IsStarted() {
 			syncerStarted = true
 			break
@@ -155,10 +188,6 @@ func TestInfo(t *testing.T) {
 	}
 	if !syncerStarted {
 		t.Fatal("start syncer failed")
-	}
-	err = failpoint.Disable("github.com/pingcap/tidb/ddl/util/ErrorMockSessionDone")
-	if err != nil {
-		t.Fatal(err)
 	}
 	// Make sure loading schema is normal.
 	cs := &ast.CharsetOpt{
@@ -180,7 +209,7 @@ func TestInfo(t *testing.T) {
 
 	// Test for RemoveServerInfo.
 	dom.info.RemoveServerInfo()
-	infos, err = dom.info.GetAllServerInfo(goCtx)
+	infos, err = infosync.GetAllServerInfo(goCtx)
 	if err != nil || len(infos) != 0 {
 		t.Fatalf("err %v, infos %v", err, infos)
 	}
@@ -209,9 +238,11 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {}
 
+func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {}
+
 func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	ddlLease := 80 * time.Millisecond
 	dom := NewDomain(store, ddlLease, 0, mockFactory)
@@ -267,7 +298,7 @@ func (*testSuite) TestT(c *C) {
 	m, err := dom.GetSnapshotMeta(snapTS)
 	c.Assert(err, IsNil)
 	tblInfo1, err := m.GetTable(dbInfo.ID, tbl.Meta().ID)
-	c.Assert(err.Error(), Equals, meta.ErrDBNotExists.Error())
+	c.Assert(meta.ErrDBNotExists.Equal(err), IsTrue)
 	c.Assert(tblInfo1, IsNil)
 	m, err = dom.GetSnapshotMeta(currSnapTS)
 	c.Assert(err, IsNil)
@@ -282,29 +313,29 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 
 	// for schemaValidator
-	schemaVer := dom.SchemaValidator.(*schemaValidator).latestSchemaVer
+	schemaVer := dom.SchemaValidator.(*schemaValidator).LatestSchemaVersion()
 	ver, err := store.CurrentVersion()
 	c.Assert(err, IsNil)
 	ts := ver.Ver
 
-	succ := dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ := dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
 	err = dom.Reload()
 	c.Assert(err, NotNil)
-	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 	time.Sleep(ddlLease)
 
 	ver, err = store.CurrentVersion()
 	c.Assert(err, IsNil)
 	ts = ver.Ver
-	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultUnknown)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
-	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 
 	// For slow query.
@@ -316,23 +347,33 @@ func (*testSuite) TestT(c *C) {
 
 	res := dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2})
 	c.Assert(res, HasLen, 2)
-	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
-	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
+	c.Assert(res[0].SQL, Equals, "bbb")
+	c.Assert(res[0].Duration, Equals, 3*time.Second)
+	c.Assert(res[1].SQL, Equals, "ccc")
+	c.Assert(res[1].Duration, Equals, 2*time.Second)
 
 	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2, Kind: ast.ShowSlowKindInternal})
 	c.Assert(res, HasLen, 1)
-	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
+	c.Assert(res[0].SQL, Equals, "aaa")
+	c.Assert(res[0].Duration, Equals, time.Second)
+	c.Assert(res[0].Internal, Equals, true)
 
 	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 4, Kind: ast.ShowSlowKindAll})
 	c.Assert(res, HasLen, 3)
-	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
-	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
-	c.Assert(*res[2], Equals, SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
+	c.Assert(res[0].SQL, Equals, "bbb")
+	c.Assert(res[0].Duration, Equals, 3*time.Second)
+	c.Assert(res[1].SQL, Equals, "ccc")
+	c.Assert(res[1].Duration, Equals, 2*time.Second)
+	c.Assert(res[2].SQL, Equals, "aaa")
+	c.Assert(res[2].Duration, Equals, time.Second)
+	c.Assert(res[2].Internal, Equals, true)
 
 	res = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 2})
 	c.Assert(res, HasLen, 2)
-	c.Assert(*res[0], Equals, SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
-	c.Assert(*res[1], Equals, SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
+	c.Assert(res[0].SQL, Equals, "ccc")
+	c.Assert(res[0].Duration, Equals, 2*time.Second)
+	c.Assert(res[1].SQL, Equals, "bbb")
+	c.Assert(res[1].Duration, Equals, 3*time.Second)
 
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
@@ -359,7 +400,7 @@ func (*testSuite) TestT(c *C) {
 		SchemaOutOfDateRetryInterval = originalRetryInterval
 	}()
 	dom.SchemaValidator.Stop()
-	err = schemaChecker.Check(uint64(123456))
+	_, err = schemaChecker.Check(uint64(123456))
 	c.Assert(err.Error(), Equals, ErrInfoSchemaExpired.Error())
 	dom.SchemaValidator.Reset()
 
@@ -372,7 +413,7 @@ func (*testSuite) TestT(c *C) {
 	beforeTS := variable.GoTimeToTS(time.Now())
 	infoSyncer.ReportMinStartTS(dom.Store())
 	afterTS := variable.GoTimeToTS(time.Now())
-	c.Assert(infoSyncer.minStartTS > beforeTS && infoSyncer.minStartTS < afterTS, IsFalse)
+	c.Assert(infoSyncer.GetMinStartTS() > beforeTS && infoSyncer.GetMinStartTS() < afterTS, IsFalse)
 	lowerLimit := time.Now().Add(-time.Duration(kv.MaxTxnTimeUse) * time.Millisecond)
 	validTS := variable.GoTimeToTS(lowerLimit.Add(time.Minute))
 	sm.PS = []*util.ProcessInfo{
@@ -383,7 +424,7 @@ func (*testSuite) TestT(c *C) {
 	}
 	infoSyncer.SetSessionManager(sm)
 	infoSyncer.ReportMinStartTS(dom.Store())
-	c.Assert(infoSyncer.minStartTS == validTS, IsTrue)
+	c.Assert(infoSyncer.GetMinStartTS() == validTS, IsTrue)
 
 	err = store.Close()
 	c.Assert(err, IsNil)
@@ -421,6 +462,6 @@ func (*testSuite) TestSessionPool(c *C) {
 }
 
 func (*testSuite) TestErrorCode(c *C) {
-	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, mysql.ErrUnknown)
-	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, mysql.ErrUnknown)
+	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, errno.ErrInfoSchemaExpired)
+	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, errno.ErrInfoSchemaChanged)
 }

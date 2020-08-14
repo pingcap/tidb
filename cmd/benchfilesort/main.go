@@ -20,7 +20,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
-	"path"
+	"path/filepath"
 	"runtime/pprof"
 	"time"
 
@@ -191,7 +191,7 @@ func decodeMeta(fd *os.File) error {
 func export() error {
 	var outputBytes []byte
 
-	fileName := path.Join(tmpDir, "data.out")
+	fileName := filepath.Join(tmpDir, "data.out")
 	outputFile, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return errors.Trace(err)
@@ -224,7 +224,7 @@ func load(ratio int) ([]*comparableRow, error) {
 		fd  *os.File
 	)
 
-	fileName := path.Join(tmpDir, "data.out")
+	fileName := filepath.Join(tmpDir, "data.out")
 	fd, err = os.Open(fileName)
 	if os.IsNotExist(err) {
 		return nil, errors.New("data file (data.out) does not exist")
@@ -284,7 +284,7 @@ func driveGenCmd() {
 	err = export()
 	terror.MustNil(err)
 	cLog("Done!")
-	cLogf("Data placed in: %s", path.Join(tmpDir, "data.out"))
+	cLogf("Data placed in: %s", filepath.Join(tmpDir, "data.out"))
 	cLog("Time used: ", time.Since(start))
 	cLog("=================================")
 }

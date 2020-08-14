@@ -27,66 +27,45 @@ type rank struct {
 
 type partialResult4Rank struct {
 	curIdx   int64
-	seenRows int64
-	results  []int64
-	lastRow  chunk.Row
+	lastRank int64
+	rows     []chunk.Row
 }
 
-func (p *partialResult4Rank) reset() {
-	p.curIdx = 0
-	p.seenRows = 0
-	p.results = p.results[:0]
-}
-
-func (p *partialResult4Rank) updatePartialResult(
-	rowsInGroup []chunk.Row,
-	isDense bool,
-	compareRows func(prev, curr chunk.Row) int,
-) {
-	if len(rowsInGroup) == 0 {
-		return
-	}
-	lastRow := p.lastRow
-	for _, row := range rowsInGroup {
-		p.seenRows++
-		if p.seenRows == 1 {
-			p.results = append(p.results, 1)
-			lastRow = row
-			continue
-		}
-		var rank int64
-		if compareRows(lastRow, row) == 0 {
-			rank = p.results[len(p.results)-1]
-		} else if isDense {
-			rank = p.results[len(p.results)-1] + 1
-		} else {
-			rank = p.seenRows
-		}
-		p.results = append(p.results, rank)
-		lastRow = row
-	}
-	p.lastRow = rowsInGroup[len(rowsInGroup)-1].CopyConstruct()
-}
-
-func (r *rank) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4Rank{})
+func (r *rank) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	return PartialResult(&partialResult4Rank{}), 0
 }
 
 func (r *rank) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4Rank)(pr)
-	p.reset()
+	p.curIdx = 0
+	p.lastRank = 0
+	p.rows = p.rows[:0]
 }
 
-func (r *rank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (r *rank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Rank)(pr)
-	p.updatePartialResult(rowsInGroup, r.isDense, r.compareRows)
-	return nil
+	p.rows = append(p.rows, rowsInGroup...)
+	return 0, nil
 }
 
 func (r *rank) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4Rank)(pr)
-	chk.AppendInt64(r.ordinal, p.results[p.curIdx])
 	p.curIdx++
+	if p.curIdx == 1 {
+		p.lastRank = 1
+		chk.AppendInt64(r.ordinal, p.lastRank)
+		return nil
+	}
+	if r.compareRows(p.rows[p.curIdx-2], p.rows[p.curIdx-1]) == 0 {
+		chk.AppendInt64(r.ordinal, p.lastRank)
+		return nil
+	}
+	if r.isDense {
+		p.lastRank++
+	} else {
+		p.lastRank = p.curIdx
+	}
+	chk.AppendInt64(r.ordinal, p.lastRank)
 	return nil
 }
 

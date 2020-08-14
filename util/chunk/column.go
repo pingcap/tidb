@@ -14,6 +14,7 @@
 package chunk
 
 import (
+	"fmt"
 	"math/bits"
 	"reflect"
 	"time"
@@ -37,7 +38,7 @@ func (c *Column) AppendMyDecimal(dec *types.MyDecimal) {
 
 func (c *Column) appendNameValue(name string, val uint64) {
 	var buf [8]byte
-	*(*uint64)(unsafe.Pointer(&buf[0])) = val
+	copy(buf[:], (*[8]byte)(unsafe.Pointer(&val))[:])
 	c.data = append(c.data, buf[:]...)
 	c.data = append(c.data, name...)
 	c.finishAppendVar()
@@ -91,8 +92,31 @@ func (c *Column) isFixed() bool {
 	return c.elemBuf != nil
 }
 
-// Reset resets this Column.
-func (c *Column) Reset() {
+// Reset resets this Column according to the EvalType.
+// Different from reset, Reset will reset the elemBuf.
+func (c *Column) Reset(eType types.EvalType) {
+	switch eType {
+	case types.ETInt:
+		c.ResizeInt64(0, false)
+	case types.ETReal:
+		c.ResizeFloat64(0, false)
+	case types.ETDecimal:
+		c.ResizeDecimal(0, false)
+	case types.ETString:
+		c.ReserveString(0)
+	case types.ETDatetime, types.ETTimestamp:
+		c.ResizeTime(0, false)
+	case types.ETDuration:
+		c.ResizeGoDuration(0, false)
+	case types.ETJson:
+		c.ReserveJSON(0)
+	default:
+		panic(fmt.Sprintf("invalid EvalType %v", eType))
+	}
+}
+
+// reset resets the underlying data of this Column but doesn't modify its data type.
+func (c *Column) reset() {
 	c.length = 0
 	c.nullBitmap = c.nullBitmap[:0]
 	if len(c.offsets) > 0 {
@@ -240,7 +264,11 @@ const (
 	sizeFloat64    = int(unsafe.Sizeof(float64(0)))
 	sizeMyDecimal  = int(unsafe.Sizeof(types.MyDecimal{}))
 	sizeGoDuration = int(unsafe.Sizeof(time.Duration(0)))
-	sizeTime       = int(unsafe.Sizeof(types.Time{}))
+	sizeTime       = int(unsafe.Sizeof(types.ZeroTime))
+)
+
+var (
+	emptyBuf = make([]byte, 4*1024)
 )
 
 // resize resizes the column so that it contains n elements, only valid for fixed-length types.
@@ -250,6 +278,11 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		(*reflect.SliceHeader)(unsafe.Pointer(&c.data)).Len = sizeData
 	} else {
 		c.data = make([]byte, sizeData)
+	}
+	if !isNull {
+		for j := 0; j < sizeData; j += len(emptyBuf) {
+			copy(c.data[j:], emptyBuf)
+		}
 	}
 
 	newNulls := false
@@ -261,7 +294,7 @@ func (c *Column) resize(n, typeSize int, isNull bool) {
 		newNulls = true
 	}
 	if !isNull || !newNulls {
-		var nullVal byte = 0
+		var nullVal byte
 		if !isNull {
 			nullVal = 0xFF
 		}
@@ -339,7 +372,7 @@ func (c *Column) nullCount() int {
 	var cnt, i int
 	for ; i+8 <= c.length; i += 8 {
 		// 0 is null and 1 is not null
-		cnt += 8 - bits.OnesCount8(uint8(c.nullBitmap[i>>3]))
+		cnt += 8 - bits.OnesCount8(c.nullBitmap[i>>3])
 	}
 	for ; i < c.length; i++ {
 		if c.IsNull(i) {
@@ -534,7 +567,9 @@ func (c *Column) getNameValue(rowID int) (string, uint64) {
 	if start == end {
 		return "", 0
 	}
-	return string(hack.String(c.data[start+8 : end])), *(*uint64)(unsafe.Pointer(&c.data[start]))
+	var val uint64
+	copy((*[8]byte)(unsafe.Pointer(&val))[:], c.data[start:])
+	return string(hack.String(c.data[start+8 : end])), val
 }
 
 // GetRaw returns the underlying raw bytes in the specific row.
@@ -612,10 +647,25 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 		return c.CopyConstruct(dst)
 	}
 
+	selLength := len(sel)
+	if selLength == c.length {
+		// The variable 'ascend' is used to check if the sel array is in ascending order
+		ascend := true
+		for i := 1; i < selLength; i++ {
+			if sel[i] < sel[i-1] {
+				ascend = false
+				break
+			}
+		}
+		if ascend {
+			return c.CopyConstruct(dst)
+		}
+	}
+
 	if dst == nil {
 		dst = newColumn(c.typeSize(), len(sel))
 	} else {
-		dst.Reset()
+		dst.reset()
 	}
 
 	if c.isFixed() {
@@ -648,6 +698,14 @@ func (c *Column) CopyReconstruct(sel []int, dst *Column) *Column {
 // The caller should ensure that all these columns have the same
 // length, and data stored in the result column is fixed-length type.
 func (c *Column) MergeNulls(cols ...*Column) {
+	if !c.isFixed() {
+		panic("result column should be fixed-length type")
+	}
+	for _, col := range cols {
+		if c.length != col.length {
+			panic("should ensure all columns have the same length")
+		}
+	}
 	for _, col := range cols {
 		for i := range c.nullBitmap {
 			// bit 0 is null, 1 is not null, so do AND operations here.

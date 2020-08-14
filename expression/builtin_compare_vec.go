@@ -14,7 +14,7 @@
 package expression
 
 import (
-	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -161,20 +161,37 @@ func (b *builtinGreatestIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 func (b *builtinGreatestIntSig) vectorized() bool {
 	return true
 }
-func (b *builtinLTStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinLTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
 
 func (b *builtinGEIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinGEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err = b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err = b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	result.MergeNulls(buf0, buf1)
+	vecResOfGE(result.Int64s())
+	return nil
 }
 
 func (b *builtinLeastRealSig) vectorized() bool {
@@ -213,457 +230,444 @@ func (b *builtinLeastRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colu
 }
 
 func (b *builtinLeastStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinEQJSONSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinNEDecimalSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinNEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinNullEQJSONSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinNullEQJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinLTTimeSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinLTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinEQDurationSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinEQIntSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinNEIntSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinNEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinLERealSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinLERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinGTIntSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinGTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinGTJSONSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinGTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinNETimeSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinNETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinCoalesceDurationSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinLTJSONSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinLTJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinNEDurationSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinNEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinNullEQIntSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinNullEQRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinNullEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf0, err := b.bufAllocator.get(types.ETReal, n)
-	if err != nil {
+func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
 		return err
 	}
-	defer b.bufAllocator.put(buf0)
 
-	buf1, err := b.bufAllocator.get(types.ETReal, n)
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETString, n)
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
 
-	if err := b.args[0].VecEvalReal(b.ctx, input, buf0); err != nil {
+	buf2, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
 		return err
 	}
-	arg0 := buf0.Float64s()
+	defer b.bufAllocator.put(buf2)
 
-	if err := b.args[1].VecEvalReal(b.ctx, input, buf1); err != nil {
+	src := result
+	arg := buf1
+	dst := buf2
+	for j := 1; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if src.IsNull(i) || arg.IsNull(i) {
+				dst.AppendNull()
+				continue
+			}
+			srcStr := src.GetString(i)
+			argStr := arg.GetString(i)
+			if types.CompareString(srcStr, argStr, b.collation) < 0 {
+				dst.AppendString(srcStr)
+			} else {
+				dst.AppendString(argStr)
+			}
+		}
+		src, dst = dst, src
+		arg.ReserveString(n)
+		dst.ReserveString(n)
+	}
+	if len(b.args)%2 == 0 {
+		src.CopyConstruct(result)
+	}
+	return nil
+}
+
+func (b *builtinEQIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
 		return err
 	}
-	arg1 := buf1.Float64s()
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
 
 	result.ResizeInt64(n, false)
-	i64s := result.Int64s()
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	result.MergeNulls(buf0, buf1)
+	vecResOfEQ(result.Int64s())
+	return nil
+}
 
+func (b *builtinNEIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinNEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	result.MergeNulls(buf0, buf1)
+	vecResOfNE(result.Int64s())
+	return nil
+}
+
+func (b *builtinGTIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinGTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	result.MergeNulls(buf0, buf1)
+	vecResOfGT(result.Int64s())
+	return nil
+}
+
+func (b *builtinNullEQIntSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinNullEQIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	buf0, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err := b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	result.ResizeInt64(n, false)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	i64s := result.Int64s()
 	for i := 0; i < n; i++ {
 		isNull0 := buf0.IsNull(i)
 		isNull1 := buf1.IsNull(i)
-		switch {
-		case isNull0 && isNull1:
+		if isNull0 && isNull1 {
 			i64s[i] = 1
-		case isNull0 != isNull1:
-			break
-		case types.CompareFloat64(arg0[i], arg1[i]) == 0:
+		} else if isNull0 || isNull1 || i64s[i] != 0 {
+			i64s[i] = 0
+		} else {
 			i64s[i] = 1
 		}
 	}
 	return nil
 }
 
-func (b *builtinNullEQTimeSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinNullEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinCoalesceRealSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinCoalesceStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinIntervalIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIntervalIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	var err error
+	if err = b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
+		return err
+	}
+	i64s := result.Int64s()
+	var idx int
+	for i, v := range i64s {
+		if result.IsNull(i) {
+			result.SetNull(i, false)
+			i64s[i] = -1
+			continue
+		}
+		idx, err = b.binSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		i64s[i] = int64(idx)
+	}
+	return nil
 }
 
 func (b *builtinIntervalRealSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinIntervalRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
+	n := input.NumRows()
+	buf, err := b.bufAllocator.get(types.ETReal, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf)
+	if err = b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
+		return err
+	}
 
-func (b *builtinLTRealSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinLTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinGEStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinGEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinEQStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	f64s := buf.Float64s()
+	result.ResizeInt64(n, false)
+	res := result.Int64s()
+	var idx int
+	for i := 0; i < n; i++ {
+		if buf.IsNull(i) {
+			res[i] = -1
+			continue
+		}
+		idx, err = b.binSearch(f64s[i], b.args[1:], input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		res[i] = int64(idx)
+	}
+	return nil
 }
 
 func (b *builtinLEIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLEIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
 
-func (b *builtinLEDecimalSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinLEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinEQTimeSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinEQTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinNullEQDecimalSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinNullEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinCoalesceDecimalSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinGEDurationSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinGEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinNullEQStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinNullEQStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	result.ResizeInt64(n, false)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	result.MergeNulls(buf0, buf1)
+	vecResOfLE(result.Int64s())
+	return nil
 }
 
 func (b *builtinLTIntSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLTIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	n := input.NumRows()
+	var err error
+	var buf0, buf1 *chunk.Column
+	buf0, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf0)
+	if err := b.args[0].VecEvalInt(b.ctx, input, buf0); err != nil {
+		return err
+	}
+	buf1, err = b.bufAllocator.get(types.ETInt, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(n, false)
+	vecCompareInt(mysql.HasUnsignedFlag(b.args[0].GetType().Flag), mysql.HasUnsignedFlag(b.args[1].GetType().Flag), buf0, buf1, result)
+	result.MergeNulls(buf0, buf1)
+	vecResOfLT(result.Int64s())
+	return nil
 }
 
-func (b *builtinLEJSONSig) vectorized() bool {
-	return false
+func vecResOfLT(res []int64) {
+	n := len(res)
+	for i := 0; i < n; i++ {
+		if res[i] < 0 {
+			res[i] = 1
+		} else {
+			res[i] = 0
+		}
+	}
 }
 
-func (b *builtinLEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+func vecResOfNE(res []int64) {
+	n := len(res)
+	for i := 0; i < n; i++ {
+		if res[i] != 0 {
+			res[i] = 1
+		} else {
+			res[i] = 0
+		}
+	}
 }
 
-func (b *builtinCoalesceIntSig) vectorized() bool {
-	return false
+func vecResOfEQ(res []int64) {
+	n := len(res)
+	for i := 0; i < n; i++ {
+		if res[i] == 0 {
+			res[i] = 1
+		} else {
+			res[i] = 0
+		}
+	}
 }
 
-func (b *builtinCoalesceIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+func vecResOfLE(res []int64) {
+	n := len(res)
+	for i := 0; i < n; i++ {
+		if res[i] <= 0 {
+			res[i] = 1
+		} else {
+			res[i] = 0
+		}
+	}
 }
 
-func (b *builtinGEJSONSig) vectorized() bool {
-	return false
+func vecResOfGT(res []int64) {
+	n := len(res)
+	for i := 0; i < n; i++ {
+		if res[i] > 0 {
+			res[i] = 1
+		} else {
+			res[i] = 0
+		}
+	}
 }
 
-func (b *builtinGEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+func vecResOfGE(res []int64) {
+	n := len(res)
+	for i := 0; i < n; i++ {
+		if res[i] >= 0 {
+			res[i] = 1
+		} else {
+			res[i] = 0
+		}
+	}
 }
 
-func (b *builtinLETimeSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinLETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinGETimeSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinGETimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinNEStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinNEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+//vecCompareInt is vectorized CompareInt()
+func vecCompareInt(isUnsigned0, isUnsigned1 bool, largs, rargs, result *chunk.Column) {
+	switch {
+	case isUnsigned0 && isUnsigned1:
+		types.VecCompareUU(largs.Uint64s(), rargs.Uint64s(), result.Int64s())
+	case isUnsigned0 && !isUnsigned1:
+		types.VecCompareUI(largs.Uint64s(), rargs.Int64s(), result.Int64s())
+	case !isUnsigned0 && isUnsigned1:
+		types.VecCompareIU(largs.Int64s(), rargs.Uint64s(), result.Int64s())
+	case !isUnsigned0 && !isUnsigned1:
+		types.VecCompareII(largs.Int64s(), rargs.Int64s(), result.Int64s())
+	}
 }
 
 func (b *builtinGreatestTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinGreatestTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
+	n := input.NumRows()
+	dst, err := b.bufAllocator.get(types.ETTimestamp, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dst)
 
-func (b *builtinLTDecimalSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinLTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinGTDurationSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinGTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinNEJSONSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinNEJSONSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinCoalesceTimeSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinGTDecimalSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinGTDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinLEStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinLEStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinLEDurationSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinLEDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinCoalesceJSONSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinCoalesceJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinGTRealSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinGTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinGTTimeSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinGTTimeSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinGEDecimalSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinGEDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinEQRealSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinEQRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dst.ResizeTime(n, false)
+	dstTimes := dst.Times()
+	for i := 0; i < n; i++ {
+		dstTimes[i] = types.ZeroDatetime
+	}
+	var argTime types.Time
+	for j := 0; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if result.IsNull(i) || dst.IsNull(i) {
+				dst.SetNull(i, true)
+				continue
+			}
+			argTime, err = types.ParseDatetime(sc, result.GetString(i))
+			if err != nil {
+				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+					return err
+				}
+				continue
+			}
+			if argTime.Compare(dstTimes[i]) > 0 {
+				dstTimes[i] = argTime
+			}
+		}
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if dst.IsNull(i) {
+			result.AppendNull()
+		} else {
+			result.AppendString(dstTimes[i].String())
+		}
+	}
+	return nil
 }
 
 func (b *builtinGreatestRealSig) vectorized() bool {
@@ -701,66 +705,117 @@ func (b *builtinGreatestRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 	return nil
 }
 
-func (b *builtinGTStringSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinGTStringSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
 func (b *builtinLeastTimeSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
+	n := input.NumRows()
+	dst, err := b.bufAllocator.get(types.ETTimestamp, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(dst)
 
-func (b *builtinNERealSig) vectorized() bool {
-	return false
-}
+	sc := b.ctx.GetSessionVars().StmtCtx
+	dst.ResizeTime(n, false)
+	dstTimes := dst.Times()
+	for i := 0; i < n; i++ {
+		dstTimes[i] = types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.DefaultFsp)
+	}
+	var argTime types.Time
 
-func (b *builtinNERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
+	findInvalidTime := make([]bool, n)
+	invalidValue := make([]string, n)
 
-func (b *builtinGERealSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinGERealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinEQDecimalSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinEQDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
-
-func (b *builtinNullEQDurationSig) vectorized() bool {
-	return false
-}
-
-func (b *builtinNullEQDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	for j := 0; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, result); err != nil {
+			return err
+		}
+		dst.MergeNulls(result)
+		for i := 0; i < n; i++ {
+			if dst.IsNull(i) {
+				continue
+			}
+			argTime, err = types.ParseDatetime(sc, result.GetString(i))
+			if err != nil {
+				if err = handleInvalidTimeError(b.ctx, err); err != nil {
+					return err
+				} else if !findInvalidTime[i] {
+					// Make a deep copy here.
+					// Otherwise invalidValue will internally change with result.
+					invalidValue[i] = string(result.GetBytes(i))
+					findInvalidTime[i] = true
+				}
+				continue
+			}
+			if argTime.Compare(dstTimes[i]) < 0 {
+				dstTimes[i] = argTime
+			}
+		}
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if dst.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		if findInvalidTime[i] {
+			result.AppendString(invalidValue[i])
+		} else {
+			result.AppendString(dstTimes[i].String())
+		}
+	}
+	return nil
 }
 
 func (b *builtinGreatestStringSig) vectorized() bool {
-	return false
+	return true
 }
 
 func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
-}
+	if err := b.args[0].VecEvalString(b.ctx, input, result); err != nil {
+		return err
+	}
 
-func (b *builtinLTDurationSig) vectorized() bool {
-	return false
-}
+	n := input.NumRows()
+	buf1, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf1)
+	buf2, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(buf2)
 
-func (b *builtinLTDurationSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
-	return errors.Errorf("not implemented")
+	src := result
+	arg := buf1
+	dst := buf2
+	for j := 1; j < len(b.args); j++ {
+		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
+			return err
+		}
+		for i := 0; i < n; i++ {
+			if src.IsNull(i) || arg.IsNull(i) {
+				dst.AppendNull()
+				continue
+			}
+			srcStr := src.GetString(i)
+			argStr := arg.GetString(i)
+			if types.CompareString(srcStr, argStr, b.collation) > 0 {
+				dst.AppendString(srcStr)
+			} else {
+				dst.AppendString(argStr)
+			}
+		}
+		src, dst = dst, src
+		arg.ReserveString(n)
+		dst.ReserveString(n)
+	}
+	if len(b.args)%2 == 0 {
+		src.CopyConstruct(result)
+	}
+	return nil
 }

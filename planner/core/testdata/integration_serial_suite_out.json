@@ -1,0 +1,379 @@
+[
+  {
+    "Name": "TestSelPushDownTiFlash",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where t.a > 1 and t.b = \"flash\" or t.a + 3 * t.a = 5",
+        "Plan": [
+          "TableReader_7 8000.00 root  data:Selection_6",
+          "└─Selection_6 8000.00 cop[tiflash]  or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
+          "  └─TableFullScan_5 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where cast(t.a as float) + 3 = 5.1",
+        "Plan": [
+          "Selection_7 10000.00 root  eq(plus(cast(test.t.a), 3), 5.1)",
+          "└─TableReader_6 10000.00 root  data:TableFullScan_5",
+          "  └─TableFullScan_5 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestBroadcastJoin",
+    "Cases": [
+      {
+        "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
+        "Plan": [
+          "StreamAgg_32 1.00 root  funcs:count(Column#14)->Column#11",
+          "└─TableReader_33 1.00 root  data:StreamAgg_13",
+          "  └─StreamAgg_13 1.00 cop[tiflash]  funcs:count(1)->Column#14",
+	  "    └─BroadcastJoin_31 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─Selection_23(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │ └─TableFullScan_22 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─Selection_21(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_20 8.00 cop[tiflash] table:fact_t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ broadcast_join(fact_t,d1_t,d2_t,d3_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
+        "Plan": [
+          "StreamAgg_52 1.00 root  funcs:count(Column#20)->Column#17",
+          "└─TableReader_53 1.00 root  data:StreamAgg_17",
+          "  └─StreamAgg_17 1.00 cop[tiflash]  funcs:count(1)->Column#20",
+          "    └─BroadcastJoin_51 8.00 cop[tiflash]  inner join, left key:test.fact_t.d3_k, right key:test.d3_t.d3_k",
+          "      ├─Selection_43(Build) 2.00 cop[tiflash]  not(isnull(test.d3_t.d3_k))",
+          "      │ └─TableFullScan_42 2.00 cop[tiflash] table:d3_t keep order:false, global read",
+          "      └─BroadcastJoin_33(Probe) 8.00 cop[tiflash]  inner join, left key:test.fact_t.d2_k, right key:test.d2_t.d2_k",
+          "        ├─Selection_29(Build) 2.00 cop[tiflash]  not(isnull(test.d2_t.d2_k))",
+          "        │ └─TableFullScan_28 2.00 cop[tiflash] table:d2_t keep order:false, global read",
+          "        └─BroadcastJoin_37(Probe) 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "          ├─Selection_27(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "          │ └─TableFullScan_26 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "          └─Selection_41(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
+          "            └─TableFullScan_40 8.00 cop[tiflash] table:fact_t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ broadcast_join(fact_t,d1_t), broadcast_join_local(d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
+        "Plan": [
+          "StreamAgg_25 1.00 root  funcs:count(Column#14)->Column#11",
+          "└─TableReader_26 1.00 root  data:StreamAgg_13",
+          "  └─StreamAgg_13 1.00 cop[tiflash]  funcs:count(1)->Column#14",
+          "    └─BroadcastJoin_24 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─Selection_18(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │ └─TableFullScan_17 2.00 cop[tiflash] table:d1_t keep order:false",
+          "      └─Selection_16(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_15 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ broadcast_join(fact_t,d1_t,d2_t,d3_t), broadcast_join_local(d2_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
+        "Plan": [
+          "StreamAgg_36 1.00 root  funcs:count(Column#20)->Column#17",
+          "└─TableReader_37 1.00 root  data:StreamAgg_17",
+          "  └─StreamAgg_17 1.00 cop[tiflash]  funcs:count(1)->Column#20",
+          "    └─BroadcastJoin_35 8.00 cop[tiflash]  inner join, left key:test.fact_t.d3_k, right key:test.d3_t.d3_k",
+          "      ├─Selection_29(Build) 2.00 cop[tiflash]  not(isnull(test.d3_t.d3_k))",
+          "      │ └─TableFullScan_28 2.00 cop[tiflash] table:d3_t keep order:false, global read",
+          "      └─BroadcastJoin_19(Probe) 8.00 cop[tiflash]  inner join, left key:test.fact_t.d2_k, right key:test.d2_t.d2_k",
+          "        ├─Selection_27(Build) 2.00 cop[tiflash]  not(isnull(test.d2_t.d2_k))",
+          "        │ └─TableFullScan_26 2.00 cop[tiflash] table:d2_t keep order:false",
+          "        └─BroadcastJoin_20(Probe) 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "          ├─Selection_25(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "          │ └─TableFullScan_24 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "          └─Selection_23(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
+          "            └─TableFullScan_22 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k",
+        "Plan": [
+          "StreamAgg_23 1.00 root  funcs:count(Column#14)->Column#11",
+          "└─TableReader_24 1.00 root  data:StreamAgg_12",
+          "  └─StreamAgg_12 1.00 cop[tiflash]  funcs:count(1)->Column#14",
+          "    └─BroadcastJoin_22 8.00 cop[tiflash]  left outer join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─Selection_16(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │ └─TableFullScan_15 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─TableFullScan_14(Probe) 8.00 cop[tiflash] table:fact_t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k",
+        "Plan": [
+          "StreamAgg_23 1.00 root  funcs:count(Column#14)->Column#11",
+          "└─TableReader_24 1.00 root  data:StreamAgg_12",
+          "  └─StreamAgg_12 1.00 cop[tiflash]  funcs:count(1)->Column#14",
+          "    └─BroadcastJoin_22 8.00 cop[tiflash]  right outer join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─TableFullScan_16(Build) 2.00 cop[tiflash] table:d1_t keep order:false",
+          "      └─Selection_15(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_14 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestReadFromStorageHint",
+    "Cases": [
+      {
+        "SQL": "desc select avg(a) from t",
+        "Plan": [
+          "StreamAgg_24 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
+          "└─TableReader_25 1.00 root  data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
+          "    └─TableFullScan_22 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
+          "└─TableReader_17 1.00 root  data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
+          "    └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root  funcs:sum(Column#6)->Column#4",
+          "└─TableReader_17 1.00 root  data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(test.t.a)->Column#6",
+          "    └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root  funcs:sum(Column#6)->Column#4",
+          "└─TableReader_17 1.00 root  data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(plus(test.t.a, 1))->Column#6",
+          "    └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
+        "Plan": [
+          "StreamAgg_16 1.00 root  funcs:sum(Column#6)->Column#4",
+          "└─TableReader_17 1.00 root  data:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tiflash]  funcs:sum(isnull(test.t.a))->Column#6",
+          "    └─TableFullScan_15 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIKV[t2]) */ * from t t1, t t2 where t1.a = t2.a",
+        "Plan": [
+          "HashJoin_37 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader_55(Build) 9990.00 root  data:Selection_54",
+          "│ └─Selection_54 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "│   └─TableFullScan_53 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_49(Probe) 9990.00 root  data:Selection_48",
+          "  └─Selection_48 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan_47 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIFLASH[t2]) */ * from t t1, t t2 where t1.a = t2.a",
+        "Plan": [
+          "HashJoin_23 12487.50 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader_31(Build) 9990.00 root  data:Selection_30",
+          "│ └─Selection_30 9990.00 cop[tiflash]  not(isnull(test.t.a))",
+          "│   └─TableFullScan_29 10000.00 cop[tiflash] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_34(Probe) 9990.00 root  data:Selection_33",
+          "  └─Selection_33 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    └─TableFullScan_32 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
+        "Plan": [
+          "TableReader_8 44.00 root  data:TableRangeScan_7",
+          "└─TableRangeScan_7 44.00 cop[tiflash] table:tt range:(1,20), [30,55), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
+        "Plan": [
+          "TableReader_6 44.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 44.00 cop[tiflash] table:tt range:(1,20), [30,55), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select * from ttt order by ttt.a desc",
+        "Plan": [
+          "TableReader_13 10000.00 root  data:TableFullScan_12",
+          "└─TableFullScan_12 10000.00 cop[tikv] table:ttt keep order:true, desc, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
+        "Plan": [
+          "Sort_4 10000.00 root  test.ttt.a:desc",
+          "└─TableReader_8 10000.00 root  data:TableFullScan_7",
+          "  └─TableFullScan_7 10000.00 cop[tiflash] table:ttt keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a",
+        "Plan": [
+          "TableReader_11 10000.00 root  data:TableFullScan_10",
+          "└─TableFullScan_10 10000.00 cop[tiflash] table:ttt keep order:true, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tikv[t, ttt]) */ * from ttt",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tikv] table:ttt keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]There are no matching table names for (t) in optimizer hint /*+ READ_FROM_STORAGE(tikv[t, ttt]) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t, ttt], tikv[tt]) */ * from ttt",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:ttt keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]There are no matching table names for (t, tt) in optimizer hint /*+ READ_FROM_STORAGE(tiflash[t, ttt], tikv[tt]) */. Maybe you can use the table alias name"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestReadFromStorageHintAndIsolationRead",
+    "Cases": [
+      {
+        "SQL": "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
+        "Plan": [
+          "StreamAgg_20 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
+          "└─IndexReader_21 1.00 root  index:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tikv]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
+          "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]Storage hints are conflict, you can only specify one storage type of table test.t"
+        ]
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
+        "Plan": [
+          "StreamAgg_20 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
+          "└─IndexReader_21 1.00 root  index:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tikv]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
+          "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
+        "Plan": [
+          "StreamAgg_20 1.00 root  funcs:avg(Column#7, Column#8)->Column#4",
+          "└─IndexReader_21 1.00 root  index:StreamAgg_8",
+          "  └─StreamAgg_8 1.00 cop[tikv]  funcs:count(test.t.a)->Column#7, funcs:sum(test.t.a)->Column#8",
+          "    └─IndexFullScan_19 10000.00 cop[tikv] table:t, index:ia(a) keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]No available path for table test.t with the store type tiflash of the hint /*+ read_from_storage */, please check the status of the table replica and variable value of tidb_isolation_read_engines(map[0:{}])"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIsolationReadDoNotFilterSystemDB",
+    "Cases": [
+      {
+        "SQL": "desc select * from metrics_schema.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'",
+        "Plan": [
+          "MemTableScan_5 10000.00 root table:tidb_query_duration PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"
+        ]
+      },
+      {
+        "SQL": "desc select * from information_schema.tables",
+        "Plan": [
+          "MemTableScan_4 10000.00 root table:TABLES "
+        ]
+      },
+      {
+        "SQL": "desc select * from mysql.stats_meta",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tikv] table:stats_meta keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIsolationReadTiFlashNotChoosePointGet",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where t.a = 1",
+        "Result": [
+          "TableReader_6 1.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 1.00 cop[tiflash] table:t range:[1,1], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where t.a in (1, 2)",
+        "Result": [
+          "TableReader_6 2.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 2.00 cop[tiflash] table:t range:[1,1], [2,2], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIsolationReadTiFlashUseIndexHint",
+    "Cases": [
+      {
+        "SQL": "explain select * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select * from t use index();",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ use_index(t, idx)*/ * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "TiDB doesn't support index in the isolation read engines(value: 'tiflash')"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ use_index(t)*/ * from t",
+        "Plan": [
+          "TableReader_5 10000.00 root  data:TableFullScan_4",
+          "└─TableFullScan_4 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      }
+    ]
+  }
+]

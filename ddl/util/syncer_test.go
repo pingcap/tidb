@@ -16,28 +16,37 @@ package util_test
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/coreos/etcd/clientv3"
-	"github.com/coreos/etcd/etcdserver"
-	"github.com/coreos/etcd/integration"
-	"github.com/coreos/etcd/mvcc/mvccpb"
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	. "github.com/pingcap/tidb/ddl"
 	. "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/store/mockstore"
+	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/etcdserver"
+	"go.etcd.io/etcd/integration"
+	"go.etcd.io/etcd/mvcc/mvccpb"
 	goctx "golang.org/x/net/context"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
 
 func TestSyncerSimple(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
 	testLease := 5 * time.Millisecond
 	origin := CheckVersFirstWaitTime
 	CheckVersFirstWaitTime = 0
@@ -45,7 +54,7 @@ func TestSyncerSimple(t *testing.T) {
 		CheckVersFirstWaitTime = origin
 	}()
 
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,6 +70,10 @@ func TestSyncerSimple(t *testing.T) {
 		WithStore(store),
 		WithLease(testLease),
 	)
+	err = d.Start(nil)
+	if err != nil {
+		t.Fatalf("DDL start failed %v", err)
+	}
 	defer d.Stop()
 
 	// for init function
@@ -93,6 +106,10 @@ func TestSyncerSimple(t *testing.T) {
 		WithStore(store),
 		WithLease(testLease),
 	)
+	err = d1.Start(nil)
+	if err != nil {
+		t.Fatalf("DDL start failed %v", err)
+	}
 	defer d1.Stop()
 	if err = d1.SchemaSyncer().Init(ctx); err != nil {
 		t.Fatalf("schema version syncer init failed %v", err)
@@ -102,16 +119,19 @@ func TestSyncerSimple(t *testing.T) {
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	currentVer := int64(123)
+	var checkErr string
 	go func() {
 		defer wg.Done()
 		select {
 		case resp := <-d.SchemaSyncer().GlobalVersionCh():
 			if len(resp.Events) < 1 {
-				t.Fatalf("get chan events count less than 1")
+				checkErr = "get chan events count less than 1"
+				return
 			}
 			checkRespKV(t, 1, DDLGlobalSchemaVersion, fmt.Sprintf("%v", currentVer), resp.Events[0].Kv)
-		case <-time.After(100 * time.Millisecond):
-			t.Fatalf("get udpate version failed")
+		case <-time.After(3 * time.Second):
+			checkErr = "get udpate version failed"
+			return
 		}
 	}()
 
@@ -123,8 +143,12 @@ func TestSyncerSimple(t *testing.T) {
 
 	wg.Wait()
 
+	if checkErr != "" {
+		t.Fatalf(checkErr)
+	}
+
 	// for CheckAllVersions
-	childCtx, cancel := goctx.WithTimeout(ctx, 20*time.Millisecond)
+	childCtx, cancel := goctx.WithTimeout(ctx, 200*time.Millisecond)
 	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer)
 	if err == nil {
 		t.Fatalf("check result not match")
@@ -132,18 +156,14 @@ func TestSyncerSimple(t *testing.T) {
 	cancel()
 
 	// for UpdateSelfVersion
-	childCtx, cancel = goctx.WithTimeout(ctx, 100*time.Millisecond)
-	err = d.SchemaSyncer().UpdateSelfVersion(childCtx, currentVer)
+	err = d.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer)
 	if err != nil {
 		t.Fatalf("update self version failed %v", errors.ErrorStack(err))
 	}
-	cancel()
-	childCtx, cancel = goctx.WithTimeout(ctx, 100*time.Millisecond)
-	err = d1.SchemaSyncer().UpdateSelfVersion(childCtx, currentVer)
+	err = d1.SchemaSyncer().UpdateSelfVersion(context.Background(), currentVer)
 	if err != nil {
 		t.Fatalf("update self version failed %v", errors.ErrorStack(err))
 	}
-	cancel()
 	childCtx, _ = goctx.WithTimeout(ctx, minInterval)
 	err = d1.SchemaSyncer().UpdateSelfVersion(childCtx, currentVer)
 	if !isTimeoutError(err) {
@@ -151,13 +171,11 @@ func TestSyncerSimple(t *testing.T) {
 	}
 
 	// for CheckAllVersions
-	childCtx, _ = goctx.WithTimeout(ctx, 100*time.Millisecond)
-	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer-1)
+	err = d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer-1)
 	if err != nil {
 		t.Fatalf("check all versions failed %v", err)
 	}
-	childCtx, _ = goctx.WithTimeout(ctx, 100*time.Millisecond)
-	err = d.SchemaSyncer().OwnerCheckAllVersions(childCtx, currentVer)
+	err = d.SchemaSyncer().OwnerCheckAllVersions(context.Background(), currentVer)
 	if err != nil {
 		t.Fatalf("check all versions failed %v", err)
 	}
@@ -168,7 +186,6 @@ func TestSyncerSimple(t *testing.T) {
 	}
 
 	// for StartCleanWork
-	go d.SchemaSyncer().StartCleanWork()
 	ttl := 10
 	// Make sure NeededCleanTTL > ttl, then we definitely clean the ttl.
 	NeededCleanTTL = int64(11)
@@ -178,12 +195,10 @@ func TestSyncerSimple(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new session failed %v", err)
 	}
-	childCtx, cancel = context.WithTimeout(ctx, 100*time.Millisecond)
-	err = PutKVToEtcd(childCtx, cli, 5, ttlKey, ttlVal, clientv3.WithLease(session.Lease()))
+	err = PutKVToEtcd(context.Background(), cli, 5, ttlKey, ttlVal, clientv3.WithLease(session.Lease()))
 	if err != nil {
 		t.Fatalf("put kv to etcd failed %v", err)
 	}
-	cancel()
 	// Make sure the ttlKey is exist in etcd.
 	resp, err = cli.Get(ctx, ttlKey)
 	if err != nil {
@@ -215,14 +230,14 @@ func TestSyncerSimple(t *testing.T) {
 	}
 	checkRespKV(t, 0, ttlKey, "", resp.Kvs...)
 
-	// for RemoveSelfVersionPath
+	// for Close
 	resp, err = cli.Get(goctx.Background(), key)
 	if err != nil {
 		t.Fatalf("get key %s failed %v", key, err)
 	}
 	currVer := fmt.Sprintf("%v", currentVer)
 	checkRespKV(t, 1, key, currVer, resp.Kvs...)
-	d.SchemaSyncer().RemoveSelfVersionPath()
+	d.SchemaSyncer().Close()
 	resp, err = cli.Get(goctx.Background(), key)
 	if err != nil {
 		t.Fatalf("get key %s failed %v", key, err)
@@ -233,7 +248,7 @@ func TestSyncerSimple(t *testing.T) {
 }
 
 func isTimeoutError(err error) bool {
-	if terror.ErrorEqual(err, goctx.DeadlineExceeded) || grpc.Code(errors.Cause(err)) == codes.DeadlineExceeded ||
+	if terror.ErrorEqual(err, goctx.DeadlineExceeded) || status.Code(errors.Cause(err)) == codes.DeadlineExceeded ||
 		terror.ErrorEqual(err, etcdserver.ErrTimeout) {
 		return true
 	}
@@ -253,7 +268,7 @@ func checkRespKV(t *testing.T, kvCount int, key, val string,
 	if string(kv.Key) != key {
 		t.Fatalf("key resp %s, exported %s", kv.Key, key)
 	}
-	if val != val {
+	if string(kv.Value) != val {
 		t.Fatalf("val resp %s, exported %s", kv.Value, val)
 	}
 }

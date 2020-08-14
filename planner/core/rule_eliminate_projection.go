@@ -57,13 +57,14 @@ func canProjectionBeEliminatedStrict(p *PhysicalProjection) bool {
 func resolveColumnAndReplace(origin *expression.Column, replace map[string]*expression.Column) {
 	dst := replace[string(origin.HashCode(nil))]
 	if dst != nil {
-		colName, retType, inOperand := origin.ColName, origin.RetType, origin.InOperand
+		retType, inOperand := origin.RetType, origin.InOperand
 		*origin = *dst
-		origin.ColName, origin.RetType, origin.InOperand = colName, retType, inOperand
+		origin.RetType, origin.InOperand = retType, inOperand
 	}
 }
 
-func resolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) {
+// ResolveExprAndReplace replaces columns fields of expressions by children logical plans.
+func ResolveExprAndReplace(origin expression.Expression, replace map[string]*expression.Column) {
 	switch expr := origin.(type) {
 	case *expression.Column:
 		resolveColumnAndReplace(expr, replace)
@@ -71,7 +72,7 @@ func resolveExprAndReplace(origin expression.Expression, replace map[string]*exp
 		resolveColumnAndReplace(&expr.Column, replace)
 	case *expression.ScalarFunction:
 		for _, arg := range expr.GetArgs() {
-			resolveExprAndReplace(arg, replace)
+			ResolveExprAndReplace(arg, replace)
 		}
 	}
 }
@@ -97,6 +98,9 @@ func eliminatePhysicalProjection(p PhysicalPlan) PhysicalPlan {
 	newCols := newRoot.Schema().Columns
 	for i, oldCol := range oldSchema.Columns {
 		oldCol.Index = newCols[i].Index
+		oldCol.ID = newCols[i].ID
+		oldCol.UniqueID = newCols[i].UniqueID
+		oldCol.VirtualExpr = newCols[i].VirtualExpr
 		newRoot.Schema().Columns[i] = oldCol
 	}
 	return newRoot
@@ -138,9 +142,9 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	}
 	p.replaceExprColumns(replace)
 	if isProj {
-		if child, ok := p.Children()[0].(*LogicalProjection); ok && !exprsHasSideEffects(child.Exprs) {
+		if child, ok := p.Children()[0].(*LogicalProjection); ok && !ExprsHasSideEffects(child.Exprs) {
 			for i := range proj.Exprs {
-				proj.Exprs[i] = replaceColumnOfExpr(proj.Exprs[i], child)
+				proj.Exprs[i] = expression.FoldConstant(ReplaceColumnOfExpr(proj.Exprs[i], child, child.Schema()))
 			}
 			p.Children()[0] = child.Children()[0]
 		}
@@ -156,16 +160,17 @@ func (pe *projectionEliminator) eliminate(p LogicalPlan, replace map[string]*exp
 	return p.Children()[0]
 }
 
-func replaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection) expression.Expression {
+// ReplaceColumnOfExpr replaces column of expression by another LogicalProjection.
+func ReplaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection, schema *expression.Schema) expression.Expression {
 	switch v := expr.(type) {
 	case *expression.Column:
-		idx := proj.Schema().ColumnIndex(v)
+		idx := schema.ColumnIndex(v)
 		if idx != -1 && idx < len(proj.Exprs) {
 			return proj.Exprs[idx]
 		}
 	case *expression.ScalarFunction:
 		for i := range v.GetArgs() {
-			v.GetArgs()[i] = replaceColumnOfExpr(v.GetArgs()[i], proj)
+			v.GetArgs()[i] = ReplaceColumnOfExpr(v.GetArgs()[i], proj, schema)
 		}
 	}
 	return expr
@@ -173,46 +178,46 @@ func replaceColumnOfExpr(expr expression.Expression, proj *LogicalProjection) ex
 
 func (p *LogicalJoin) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, equalExpr := range p.EqualConditions {
-		resolveExprAndReplace(equalExpr, replace)
+		ResolveExprAndReplace(equalExpr, replace)
 	}
 	for _, leftExpr := range p.LeftConditions {
-		resolveExprAndReplace(leftExpr, replace)
+		ResolveExprAndReplace(leftExpr, replace)
 	}
 	for _, rightExpr := range p.RightConditions {
-		resolveExprAndReplace(rightExpr, replace)
+		ResolveExprAndReplace(rightExpr, replace)
 	}
 	for _, otherExpr := range p.OtherConditions {
-		resolveExprAndReplace(otherExpr, replace)
+		ResolveExprAndReplace(otherExpr, replace)
 	}
 }
 
 func (p *LogicalProjection) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Exprs {
-		resolveExprAndReplace(expr, replace)
+		ResolveExprAndReplace(expr, replace)
 	}
 }
 
 func (la *LogicalAggregation) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, agg := range la.AggFuncs {
 		for _, aggExpr := range agg.Args {
-			resolveExprAndReplace(aggExpr, replace)
+			ResolveExprAndReplace(aggExpr, replace)
 		}
 	}
 	for _, gbyItem := range la.GroupByItems {
-		resolveExprAndReplace(gbyItem, replace)
+		ResolveExprAndReplace(gbyItem, replace)
 	}
 	la.collectGroupByColumns()
 }
 
 func (p *LogicalSelection) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, expr := range p.Conditions {
-		resolveExprAndReplace(expr, replace)
+		ResolveExprAndReplace(expr, replace)
 	}
 }
 
 func (la *LogicalApply) replaceExprColumns(replace map[string]*expression.Column) {
 	la.LogicalJoin.replaceExprColumns(replace)
-	for _, coCol := range la.corCols {
+	for _, coCol := range la.CorCols {
 		dst := replace[string(coCol.Column.HashCode(nil))]
 		if dst != nil {
 			coCol.Column = *dst
@@ -222,20 +227,20 @@ func (la *LogicalApply) replaceExprColumns(replace map[string]*expression.Column
 
 func (ls *LogicalSort) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range ls.ByItems {
-		resolveExprAndReplace(byItem.Expr, replace)
+		ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
 func (lt *LogicalTopN) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, byItem := range lt.ByItems {
-		resolveExprAndReplace(byItem.Expr, replace)
+		ResolveExprAndReplace(byItem.Expr, replace)
 	}
 }
 
 func (p *LogicalWindow) replaceExprColumns(replace map[string]*expression.Column) {
 	for _, desc := range p.WindowFuncDescs {
 		for _, arg := range desc.Args {
-			resolveExprAndReplace(arg, replace)
+			ResolveExprAndReplace(arg, replace)
 		}
 	}
 	for _, item := range p.PartitionBy {

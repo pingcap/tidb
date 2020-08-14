@@ -86,6 +86,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 	switch a.Name {
 	case ast.AggFuncCount:
 		a.typeInfer4Count(ctx)
+	case ast.AggFuncApproxCountDistinct:
+		a.typeInfer4ApproxCountDistinct(ctx)
 	case ast.AggFuncSum:
 		a.typeInfer4Sum(ctx)
 	case ast.AggFuncAvg:
@@ -107,6 +109,10 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4PercentRank()
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		a.typeInfer4LeadLag(ctx)
+	case ast.AggFuncVarPop:
+		a.typeInfer4VarPop(ctx)
+	case ast.AggFuncJsonObjectAgg:
+		a.typeInfer4JsonFuncs(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
@@ -116,14 +122,21 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 func (a *baseFuncDesc) typeInfer4Count(ctx sessionctx.Context) {
 	a.RetTp = types.NewFieldType(mysql.TypeLonglong)
 	a.RetTp.Flen = 21
+	a.RetTp.Decimal = 0
+	// count never returns null
+	a.RetTp.Flag |= mysql.NotNullFlag
 	types.SetBinChsClnFlag(a.RetTp)
+}
+
+func (a *baseFuncDesc) typeInfer4ApproxCountDistinct(ctx sessionctx.Context) {
+	a.typeInfer4Count(ctx)
 }
 
 // typeInfer4Sum should returns a "decimal", otherwise it returns a "double".
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxDecimalWidth, 0
 	case mysql.TypeNewDecimal:
@@ -146,7 +159,7 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx sessionctx.Context) {
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Avg(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		if a.Args[0].GetType().Decimal < 0 {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
@@ -188,7 +201,8 @@ func (a *baseFuncDesc) typeInfer4MaxMin(ctx sessionctx.Context) {
 		a.RetTp = a.Args[0].GetType().Clone()
 		a.RetTp.Flag &^= mysql.NotNullFlag
 	}
-	if a.RetTp.Tp == mysql.TypeEnum || a.RetTp.Tp == mysql.TypeSet {
+	// TODO: fix other aggFuncs for TypeEnum & TypeSet
+	if (a.RetTp.Tp == mysql.TypeEnum || a.RetTp.Tp == mysql.TypeSet) && a.Name != ast.AggFuncFirstRow {
 		a.RetTp = &types.FieldType{Tp: mysql.TypeString, Flen: mysql.MaxFieldCharLength}
 	}
 }
@@ -199,6 +213,11 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx sessionctx.Context) {
 	types.SetBinChsClnFlag(a.RetTp)
 	a.RetTp.Flag |= mysql.UnsignedFlag | mysql.NotNullFlag
 	// TODO: a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
+}
+
+func (a *baseFuncDesc) typeInfer4JsonFuncs(ctx sessionctx.Context) {
+	a.RetTp = types.NewFieldType(mysql.TypeJSON)
+	types.SetBinChsClnFlag(a.RetTp)
 }
 
 func (a *baseFuncDesc) typeInfer4NumberFuncs() {
@@ -233,6 +252,12 @@ func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
 	}
 }
 
+func (a *baseFuncDesc) typeInfer4VarPop(ctx sessionctx.Context) {
+	//var_pop's return value type is double
+	a.RetTp = types.NewFieldType(mysql.TypeDouble)
+	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+}
+
 // GetDefaultValue gets the default value when the function's input is null.
 // According to MySQL, default values of the function are listed as follows:
 // e.g.
@@ -243,16 +268,21 @@ func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
 // | t     | a       | int(11) |
 // +-------+---------+---------+
 //
-// Query: `select a, avg(a), sum(a), count(a), bit_xor(a), bit_or(a), bit_and(a), max(a), min(a), group_concat(a) from t;`
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
-// | a    | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) |
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
-// | NULL |   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |
-// +------+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+
+// Query: `select avg(a), sum(a), count(a), bit_xor(a), bit_or(a), bit_and(a), max(a), min(a), group_concat(a), approx_count_distinct(a) from test.t;`
+//+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+--------------------------+
+//| avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) | approx_count_distinct(a) |
+//+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+--------------------------+
+//|   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |                        0 |
+//+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+--------------------------+
+
 func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 	switch a.Name {
 	case ast.AggFuncCount, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		v = types.NewIntDatum(0)
+	case ast.AggFuncApproxCountDistinct:
+		if a.RetTp.Tp != mysql.TypeString {
+			v = types.NewIntDatum(0)
+		}
 	case ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncMax,
 		ast.AggFuncMin, ast.AggFuncGroupConcat:
 		v = types.Datum{}
@@ -265,11 +295,13 @@ func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 // We do not need to wrap cast upon these functions,
 // since the EvalXXX method called by the arg is determined by the corresponding arg type.
 var noNeedCastAggFuncs = map[string]struct{}{
-	ast.AggFuncCount:    {},
-	ast.AggFuncMax:      {},
-	ast.AggFuncMin:      {},
-	ast.AggFuncFirstRow: {},
-	ast.WindowFuncNtile: {},
+	ast.AggFuncCount:               {},
+	ast.AggFuncApproxCountDistinct: {},
+	ast.AggFuncMax:                 {},
+	ast.AggFuncMin:                 {},
+	ast.AggFuncFirstRow:            {},
+	ast.WindowFuncNtile:            {},
+	ast.AggFuncJsonObjectAgg:       {},
 }
 
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.

@@ -22,12 +22,14 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testUnitTestSuit{})
+var _ = SerialSuites(&testUnitTestSuit{})
 
 type testUnitTestSuit struct {
 	ctx sessionctx.Context
@@ -68,30 +70,31 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 	defer testleak.AfterTest(c)()
 	totalSchema := expression.NewSchema()
 	totalSchema.Append(&expression.Column{
-		ColName:  model.NewCIStr("col1"),
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	totalSchema.Append(&expression.Column{
-		ColName:  model.NewCIStr("col2"),
 		UniqueID: 2,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
 	totalSchema.Append(&expression.Column{
-		ColName:  model.NewCIStr("col3"),
 		UniqueID: 3,
 		RetType:  s.newTypeWithFlen(mysql.TypeVarchar, 10),
 	})
 	totalSchema.Append(&expression.Column{
-		ColName:  model.NewCIStr("col4"),
 		UniqueID: 4,
 		RetType:  s.newTypeWithFlen(mysql.TypeVarchar, 10),
 	})
 	totalSchema.Append(&expression.Column{
-		ColName:  model.NewCIStr("col5"),
 		UniqueID: 5,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	})
+	names := make(types.NameSlice, 0, 5)
+	names = append(names, &types.FieldName{ColName: model.NewCIStr("col1")})
+	names = append(names, &types.FieldName{ColName: model.NewCIStr("col2")})
+	names = append(names, &types.FieldName{ColName: model.NewCIStr("col3")})
+	names = append(names, &types.FieldName{ColName: model.NewCIStr("col4")})
+	names = append(names, &types.FieldName{ColName: model.NewCIStr("col5")})
 	testCases := []struct {
 		expr       string
 		corColIDs  []int64
@@ -164,14 +167,23 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 			access:     "[eq(Column#1, Column#5) eq(Column#2, Column#5) eq(Column#3, col1)]",
 			remained:   "[]",
 		},
+		{
+			expr:       "col3 = CHAR(1 COLLATE 'binary')",
+			corColIDs:  []int64{},
+			idxColIDs:  []int64{3},
+			idxColLens: []int{types.UnspecifiedLength},
+			access:     "[]",
+			remained:   "[eq(Column#3, \x01)]",
+		},
 	}
+	collate.SetNewCollationEnabledForTest(true)
 	for _, tt := range testCases {
 		comment := Commentf("failed at case:\nexpr: %v\ncorColIDs: %v\nidxColIDs: %v\nidxColLens: %v\naccess: %v\nremained: %v\n", tt.expr, tt.corColIDs, tt.idxColIDs, tt.idxColLens, tt.access, tt.remained)
-		filters, err := expression.ParseSimpleExprsWithSchema(s.ctx, tt.expr, totalSchema)
+		filters, err := expression.ParseSimpleExprsWithNames(s.ctx, tt.expr, totalSchema, names)
+		c.Assert(err, IsNil, comment)
 		if sf, ok := filters[0].(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicAnd {
 			filters = expression.FlattenCNFConditions(sf)
 		}
-		c.Assert(err, IsNil, comment)
 		trueFilters := make([]expression.Expression, 0, len(filters))
 		idMap := make(map[int64]struct{})
 		for _, id := range tt.corColIDs {
@@ -182,15 +194,16 @@ func (s *testUnitTestSuit) TestIndexPathSplitCorColCond(c *C) {
 			c.Assert(err, IsNil, comment)
 			trueFilters = append(trueFilters, trueFilter)
 		}
-		path := accessPath{
-			eqCondCount:  0,
-			tableFilters: trueFilters,
-			idxCols:      expression.FindPrefixOfIndex(totalSchema.Columns, tt.idxColIDs),
-			idxColLens:   tt.idxColLens,
+		path := util.AccessPath{
+			EqCondCount:  0,
+			TableFilters: trueFilters,
+			IdxCols:      expression.FindPrefixOfIndex(totalSchema.Columns, tt.idxColIDs),
+			IdxColLens:   tt.idxColLens,
 		}
 
-		access, remained := path.splitCorColAccessCondFromFilters(path.eqCondCount)
+		access, remained := path.SplitCorColAccessCondFromFilters(s.ctx, path.EqCondCount)
 		c.Assert(fmt.Sprintf("%s", access), Equals, tt.access, comment)
 		c.Assert(fmt.Sprintf("%s", remained), Equals, tt.remained, comment)
 	}
+	collate.SetNewCollationEnabledForTest(false)
 }

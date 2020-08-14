@@ -15,8 +15,8 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"sort"
 	"time"
@@ -25,18 +25,17 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/rowDecoder"
+	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -44,7 +43,7 @@ import (
 // DDLInfo is for DDL information.
 type DDLInfo struct {
 	SchemaVer   int64
-	ReorgHandle int64        // It's only used for DDL information.
+	ReorgHandle kv.Handle    // It's only used for DDL information.
 	Jobs        []*model.Job // It's the currently running jobs.
 }
 
@@ -78,7 +77,11 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 		return info, nil
 	}
 
-	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob)
+	tbl, err := t.GetTable(addIdxJob.SchemaID, addIdxJob.TableID)
+	if err != nil {
+		return info, nil
+	}
+	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob, tbl.IsCommonHandle)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -89,25 +92,32 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 // IsJobRollbackable checks whether the job can be rollback.
 func IsJobRollbackable(job *model.Job) bool {
 	switch job.Type {
-	case model.ActionDropIndex:
-		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization, otherwise will cause inconsistent between record and index.
+	case model.ActionDropIndex, model.ActionDropPrimaryKey:
+		// We can't cancel if index current state is in StateDeleteOnly or StateDeleteReorganization or StateWriteOnly, otherwise there will be an inconsistent issue between record and index.
+		// In WriteOnly state, we can rollback for normal index but can't rollback for expression index(need to drop hidden column). Since we can't
+		// know the type of index here, we consider all indices except primary index as non-rollbackable.
+		// TODO: distinguish normal index and expression index so that we can rollback `DropIndex` for normal index in WriteOnly state.
+		// TODO: make DropPrimaryKey rollbackable in WriteOnly, it need to deal with some tests.
 		if job.SchemaState == model.StateDeleteOnly ||
-			job.SchemaState == model.StateDeleteReorganization {
+			job.SchemaState == model.StateDeleteReorganization ||
+			job.SchemaState == model.StateWriteOnly {
 			return false
 		}
-	case model.ActionDropSchema, model.ActionDropTable:
+	case model.ActionDropSchema, model.ActionDropTable, model.ActionDropSequence:
 		// To simplify the rollback logic, cannot be canceled in the following states.
 		if job.SchemaState == model.StateWriteOnly ||
 			job.SchemaState == model.StateDeleteOnly {
 			return false
 		}
-	case model.ActionDropColumn, model.ActionModifyColumn,
-		model.ActionDropTablePartition, model.ActionAddTablePartition,
+	case model.ActionAddTablePartition:
+		return job.SchemaState == model.StateNone || job.SchemaState == model.StateReplicaOnly
+	case model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn,
+		model.ActionDropTablePartition,
 		model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
-		model.ActionModifySchemaCharsetAndCollate:
+		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable, model.ActionModifyTableAutoIdCache:
 		return job.SchemaState == model.StateNone
 	}
 	return true
@@ -119,13 +129,18 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 		return nil, nil
 	}
 
-	jobs, err := GetDDLJobs(txn)
+	errs := make([]error, len(ids))
+	t := meta.NewMeta(txn)
+	generalJobs, err := getDDLJobsInQueue(t, meta.DefaultJobListKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	addIdxJobs, err := getDDLJobsInQueue(t, meta.AddIndexJobListKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jobs := append(generalJobs, addIdxJobs...)
 
-	errs := make([]error, len(ids))
-	t := meta.NewMeta(txn)
 	for i, id := range ids {
 		found := false
 		for j, job := range jobs {
@@ -152,13 +167,14 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 
 			job.State = model.JobStateCancelling
 			// Make sure RawArgs isn't overwritten.
-			err := job.DecodeArgs(job.RawArgs)
+			err := json.Unmarshal(job.RawArgs, &job.Args)
 			if err != nil {
 				errs[i] = errors.Trace(err)
 				continue
 			}
-			if job.Type == model.ActionAddIndex {
-				err = t.UpdateDDLJob(int64(j), job, true, meta.AddIndexJobListKey)
+			if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
+				offset := int64(j - len(generalJobs))
+				err = t.UpdateDDLJob(offset, job, true, meta.AddIndexJobListKey)
 			} else {
 				err = t.UpdateDDLJob(int64(j), job, true)
 			}
@@ -232,28 +248,47 @@ func GetHistoryDDLJobs(txn kv.Transaction, maxNumJobs int) ([]*model.Job, error)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	jobsLen := len(jobs)
-	if jobsLen > maxNumJobs {
-		start := jobsLen - maxNumJobs
-		jobs = jobs[start:]
-	}
-	jobsLen = len(jobs)
-	ret := make([]*model.Job, 0, jobsLen)
-	for i := jobsLen - 1; i >= 0; i-- {
-		ret = append(ret, jobs[i])
-	}
-	return ret, nil
+	return jobs, nil
 }
 
-func nextIndexVals(data []types.Datum) []types.Datum {
-	// Add 0x0 to the end of data.
-	return append(data, types.Datum{})
+// IterHistoryDDLJobs iterates history DDL jobs until the `finishFn` return true or error.
+func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
+	txnMeta := meta.NewMeta(txn)
+	iter, err := txnMeta.GetLastHistoryDDLJobsIterator()
+	if err != nil {
+		return err
+	}
+	cacheJobs := make([]*model.Job, 0, DefNumHistoryJobs)
+	for {
+		cacheJobs, err = iter.GetLastJobs(DefNumHistoryJobs, cacheJobs)
+		if err != nil || len(cacheJobs) == 0 {
+			return err
+		}
+		finish, err := finishFn(cacheJobs)
+		if err != nil || finish {
+			return err
+		}
+	}
+}
+
+// IterAllDDLJobs will iterates running DDL jobs first, return directly if `finishFn` return true or error,
+// then iterates history DDL jobs until the `finishFn` return true or error.
+func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
+	jobs, err := GetDDLJobs(txn)
+	if err != nil {
+		return err
+	}
+
+	finish, err := finishFn(jobs)
+	if err != nil || finish {
+		return err
+	}
+	return IterHistoryDDLJobs(txn, finishFn)
 }
 
 // RecordData is the record data composed of a handle and values.
 type RecordData struct {
-	Handle int64
+	Handle kv.Handle
 	Values []types.Datum
 }
 
@@ -281,6 +316,8 @@ const (
 // It returns nil if the count from the index is equal to the count from the table columns,
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
+	// Here we need check all indexes, includes invisible index
+	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	// Add `` for some names like `table name`.
 	sql := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.`%s` USE INDEX()", dbName, tableName)
 	tblCnt, err := getCount(ctx, sql)
@@ -293,7 +330,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		if err != nil {
 			return 0, i, errors.Trace(err)
 		}
-		logutil.Logger(context.Background()).Info("check indices count, table %s cnt %d, index %s cnt %d",
+		logutil.Logger(context.Background()).Info("check indices count",
 			zap.String("table", tableName), zap.Int64("cnt", tblCnt), zap.Reflect("index", idx), zap.Int64("cnt", idxCnt))
 		if tblCnt == idxCnt {
 			continue
@@ -310,161 +347,16 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	return 0, 0, nil
 }
 
-// ScanIndexData scans the index handles and values in a limited number, according to the index information.
-// It returns data and the next startVals until it doesn't have data, then returns data is nil and
-// the next startVals is the values which can't get data. If startVals = nil and limit = -1,
-// it returns the index data of the whole.
-func ScanIndexData(sc *stmtctx.StatementContext, txn kv.Transaction, kvIndex table.Index, startVals []types.Datum, limit int64) (
-	[]*RecordData, []types.Datum, error) {
-	it, _, err := kvIndex.Seek(sc, txn, startVals)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	defer it.Close()
-
-	var idxRows []*RecordData
-	var curVals []types.Datum
-	for limit != 0 {
-		val, h, err1 := it.Next()
-		if terror.ErrorEqual(err1, io.EOF) {
-			return idxRows, nextIndexVals(curVals), nil
-		} else if err1 != nil {
-			return nil, nil, errors.Trace(err1)
-		}
-		idxRows = append(idxRows, &RecordData{Handle: h, Values: val})
-		limit--
-		curVals = val
-	}
-
-	nextVals, _, err := it.Next()
-	if terror.ErrorEqual(err, io.EOF) {
-		return idxRows, nextIndexVals(curVals), nil
-	} else if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
-	return idxRows, nextVals, nil
-}
-
-// CompareIndexData compares index data one by one.
-// It returns nil if the data from the index is equal to the data from the table columns,
-// otherwise it returns an error with a different set of records.
-// genExprs is use to calculate the virtual generate column.
-func CompareIndexData(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
-	err := checkIndexAndRecord(sessCtx, txn, t, idx, genExprs)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return CheckRecordAndIndex(sessCtx, txn, t, idx, genExprs)
-}
-
-func getIndexFieldTypes(t table.Table, idx table.Index) ([]*types.FieldType, error) {
-	idxColumns := idx.Meta().Columns
-	tblColumns := t.Meta().Columns
-	fieldTypes := make([]*types.FieldType, 0, len(idxColumns))
-	for _, col := range idxColumns {
-		colInfo := model.FindColumnInfo(tblColumns, col.Name.L)
-		if colInfo == nil {
-			return nil, errors.Errorf("index col:%v not found in table:%v", col.Name.String(), t.Meta().Name.String())
-		}
-
-		fieldTypes = append(fieldTypes, &colInfo.FieldType)
-	}
-	return fieldTypes, nil
-}
-
-// adjustDatumKind treats KindString as KindBytes.
-func adjustDatumKind(vals1, vals2 []types.Datum) {
-	if len(vals1) != len(vals2) {
-		return
-	}
-
-	for i, val1 := range vals1 {
-		val2 := vals2[i]
-		if val1.Kind() != val2.Kind() {
-			if (val1.Kind() == types.KindBytes || val1.Kind() == types.KindString) &&
-				(val2.Kind() == types.KindBytes || val2.Kind() == types.KindString) {
-				vals1[i].SetBytes(val1.GetBytes())
-				vals2[i].SetBytes(val2.GetBytes())
-			}
-		}
-	}
-}
-
-func checkIndexAndRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
-	it, err := idx.SeekFirst(txn)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer it.Close()
-
-	cols := make([]*table.Column, len(idx.Meta().Columns))
-	for i, col := range idx.Meta().Columns {
-		cols[i] = t.Cols()[col.Offset]
-	}
-
-	fieldTypes, err := getIndexFieldTypes(t, idx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	rowDecoder := makeRowDecoder(t, cols, genExprs)
-	sc := sessCtx.GetSessionVars().StmtCtx
-	for {
-		vals1, h, err := it.Next()
-		if terror.ErrorEqual(err, io.EOF) {
-			break
-		} else if err != nil {
-			return errors.Trace(err)
-		}
-
-		vals1, err = tablecodec.UnflattenDatums(vals1, fieldTypes, sessCtx.GetSessionVars().Location())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		vals2, err := rowWithCols(sessCtx, txn, t, h, cols, rowDecoder)
-		vals2 = tables.TruncateIndexValuesIfNeeded(t.Meta(), idx.Meta(), vals2)
-		if kv.ErrNotExist.Equal(err) {
-			record := &RecordData{Handle: h, Values: vals1}
-			err = ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record, nil)
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-		adjustDatumKind(vals1, vals2)
-		if !compareDatumSlice(sc, vals1, vals2) {
-			record1 := &RecordData{Handle: h, Values: vals1}
-			record2 := &RecordData{Handle: h, Values: vals2}
-			return ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record1, record2)
-		}
-	}
-
-	return nil
-}
-
-func compareDatumSlice(sc *stmtctx.StatementContext, val1s, val2s []types.Datum) bool {
-	if len(val1s) != len(val2s) {
-		return false
-	}
-	for i, v := range val1s {
-		res, err := v.CompareDatum(sc, &val2s[i])
-		if err != nil || res != 0 {
-			return false
-		}
-	}
-	return true
-}
-
 // CheckRecordAndIndex is exported for testing.
-func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
+func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
 	sc := sessCtx.GetSessionVars().StmtCtx
 	cols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
 		cols[i] = t.Cols()[col.Offset]
 	}
 
-	startKey := t.RecordKey(math.MinInt64)
-	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
+	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
+	filterFunc := func(h1 kv.Handle, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
@@ -479,7 +371,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 				vals1[i] = colDefVal
 			}
 		}
-		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
+		isExist, h2, err := idx.Exist(sc, txn.GetUnionStore(), vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
 			record2 := &RecordData{Handle: h2, Values: vals1}
@@ -495,8 +387,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 
 		return true, nil
 	}
-	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc, genExprs)
-
+	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -504,191 +395,19 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	return nil
 }
 
-func scanTableData(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, cols []*table.Column, startHandle, limit int64) (
-	[]*RecordData, int64, error) {
-	var records []*RecordData
-
-	startKey := t.RecordKey(startHandle)
-	filterFunc := func(h int64, d []types.Datum, cols []*table.Column) (bool, error) {
-		if limit != 0 {
-			r := &RecordData{
-				Handle: h,
-				Values: d,
-			}
-			records = append(records, r)
-			limit--
-			return true, nil
-		}
-		return false, nil
-	}
-	err := iterRecords(sessCtx, retriever, t, startKey, cols, filterFunc, nil)
+func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder, error) {
+	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, err
 	}
+	mockSchema := expression.NewSchema(exprCols...)
+	decodeColsMap := decoder.BuildFullDecodeColMap(t, mockSchema)
 
-	if len(records) == 0 {
-		return records, startHandle, nil
-	}
-
-	nextHandle := records[len(records)-1].Handle + 1
-
-	return records, nextHandle, nil
+	return decoder.NewRowDecoder(t, decodeColsMap), nil
 }
 
-// ScanTableRecord scans table row handles and column values in a limited number.
-// It returns data and the next startHandle until it doesn't have data, then returns data is nil and
-// the next startHandle is the handle which can't get data. If startHandle = 0 and limit = -1,
-// it returns the table data of the whole.
-func ScanTableRecord(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startHandle, limit int64) (
-	[]*RecordData, int64, error) {
-	return scanTableData(sessCtx, retriever, t, t.Cols(), startHandle, limit)
-}
-
-// ScanSnapshotTableRecord scans the ver version of the table data in a limited number.
-// It returns data and the next startHandle until it doesn't have data, then returns data is nil and
-// the next startHandle is the handle which can't get data. If startHandle = 0 and limit = -1,
-// it returns the table data of the whole.
-func ScanSnapshotTableRecord(sessCtx sessionctx.Context, store kv.Storage, ver kv.Version, t table.Table, startHandle, limit int64) (
-	[]*RecordData, int64, error) {
-	snap, err := store.GetSnapshot(ver)
-	if err != nil {
-		return nil, 0, errors.Trace(err)
-	}
-
-	if sessCtx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snap.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
-	}
-
-	records, nextHandle, err := ScanTableRecord(sessCtx, snap, t, startHandle, limit)
-
-	return records, nextHandle, errors.Trace(err)
-}
-
-// CompareTableRecord compares data and the corresponding table data one by one.
-// It returns nil if data is equal to the data that scans from table, otherwise
-// it returns an error with a different set of records. If exact is false, only compares handle.
-func CompareTableRecord(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, data []*RecordData, exact bool) error {
-	m := make(map[int64][]types.Datum, len(data))
-	for _, r := range data {
-		if _, ok := m[r.Handle]; ok {
-			return errRepeatHandle.GenWithStack("handle:%d is repeated in data", r.Handle)
-		}
-		m[r.Handle] = r.Values
-	}
-
-	startKey := t.RecordKey(0)
-	sc := sessCtx.GetSessionVars().StmtCtx
-	filterFunc := func(h int64, vals []types.Datum, cols []*table.Column) (bool, error) {
-		vals2, ok := m[h]
-		if !ok {
-			record := &RecordData{Handle: h, Values: vals}
-			return false, ErrDataInConsistent.GenWithStack("data:%#v != record:%#v", nil, record)
-		}
-		if !exact {
-			delete(m, h)
-			return true, nil
-		}
-
-		if !compareDatumSlice(sc, vals, vals2) {
-			record1 := &RecordData{Handle: h, Values: vals2}
-			record2 := &RecordData{Handle: h, Values: vals}
-			return false, ErrDataInConsistent.GenWithStack("data:%#v != record:%#v", record1, record2)
-		}
-
-		delete(m, h)
-
-		return true, nil
-	}
-	err := iterRecords(sessCtx, txn, t, startKey, t.Cols(), filterFunc, nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for h, vals := range m {
-		record := &RecordData{Handle: h, Values: vals}
-		return ErrDataInConsistent.GenWithStack("data:%#v != record:%#v", record, nil)
-	}
-
-	return nil
-}
-
-func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
-	var containsVirtualCol bool
-	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(decodeCol, t, func(genCol *table.Column) (expression.Expression, error) {
-		containsVirtualCol = true
-		return genExpr[model.TableColumnID{TableID: t.Meta().ID, ColumnID: genCol.ID}], nil
-	})
-	_ = ignored
-
-	if containsVirtualCol {
-		decoder.SubstituteGenColsInDecodeColMap(decodeColsMap)
-		decoder.RemoveUnusedVirtualCols(decodeColsMap, decodeCol)
-	}
-	return decoder.NewRowDecoder(t, decodeColsMap)
-}
-
-// genExprs use to calculate generated column value.
-func rowWithCols(sessCtx sessionctx.Context, txn kv.Retriever, t table.Table, h int64, cols []*table.Column, rowDecoder *decoder.RowDecoder) ([]types.Datum, error) {
-	key := t.RecordKey(h)
-	value, err := txn.Get(context.TODO(), key)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	v := make([]types.Datum, len(cols))
-	for i, col := range cols {
-		if col == nil {
-			continue
-		}
-		if col.State != model.StatePublic {
-			return nil, errInvalidColumnState.GenWithStack("Cannot use none public column - %v", cols)
-		}
-		if col.IsPKHandleColumn(t.Meta()) {
-			if mysql.HasUnsignedFlag(col.Flag) {
-				v[i].SetUint64(uint64(h))
-			} else {
-				v[i].SetInt64(h)
-			}
-			continue
-		}
-	}
-
-	rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, h, value, sessCtx.GetSessionVars().Location(), time.UTC, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	for i, col := range cols {
-		if col == nil {
-			continue
-		}
-		if col.State != model.StatePublic {
-			// TODO: check this
-			return nil, errInvalidColumnState.GenWithStack("Cannot use none public column - %v", cols)
-		}
-		if col.IsPKHandleColumn(t.Meta()) {
-			continue
-		}
-		ri, ok := rowMap[col.ID]
-		if !ok {
-			if mysql.HasNotNullFlag(col.Flag) && col.ToInfo().OriginDefaultValue == nil {
-				return nil, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h)
-			}
-			// NULL value is regarded as its default value.
-			colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			v[i] = colDefVal
-			continue
-		}
-		v[i] = ri
-	}
-	return v, nil
-}
-
-// genExprs use to calculate generated column value.
-func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
-	fn table.RecordIterFunc, genExprs map[model.TableColumnID]expression.Expression) error {
+func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {
 	prefix := t.RecordPrefix()
 	keyUpperBound := prefix.PrefixNext()
 
@@ -706,7 +425,10 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		zap.Stringer("startKey", startKey),
 		zap.Stringer("key", it.Key()),
 		zap.Binary("value", it.Value()))
-	rowDecoder := makeRowDecoder(t, cols, genExprs)
+	rowDecoder, err := makeRowDecoder(t, sessCtx)
+	if err != nil {
+		return err
+	}
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock
@@ -722,15 +444,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		}
 		data := make([]types.Datum, 0, len(cols))
 		for _, col := range cols {
-			if col.IsPKHandleColumn(t.Meta()) {
-				if mysql.HasUnsignedFlag(col.Flag) {
-					data = append(data, types.NewUintDatum(uint64(handle)))
-				} else {
-					data = append(data, types.NewIntDatum(handle))
-				}
-			} else {
-				data = append(data, rowMap[col.ID])
-			}
+			data = append(data, rowMap[col.ID])
 		}
 		more, err := fn(handle, data, cols)
 		if !more || err != nil {
@@ -747,25 +461,13 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 	return nil
 }
 
-// admin error codes.
-const (
-	codeDataNotEqual       terror.ErrCode = 1
-	codeRepeatHandle                      = 2
-	codeInvalidColumnState                = 3
-	codeDDLJobNotFound                    = 4
-	codeCancelFinishedJob                 = 5
-	codeCannotCancelDDLJob                = 6
-)
-
 var (
 	// ErrDataInConsistent indicate that meets inconsistent data.
-	ErrDataInConsistent   = terror.ClassAdmin.New(codeDataNotEqual, "data isn't equal")
-	errRepeatHandle       = terror.ClassAdmin.New(codeRepeatHandle, "handle is repeated")
-	errInvalidColumnState = terror.ClassAdmin.New(codeInvalidColumnState, "invalid column state")
+	ErrDataInConsistent = terror.ClassAdmin.New(errno.ErrDataInConsistent, errno.MySQLErrName[errno.ErrDataInConsistent])
 	// ErrDDLJobNotFound indicates the job id was not found.
-	ErrDDLJobNotFound = terror.ClassAdmin.New(codeDDLJobNotFound, "DDL Job:%v not found")
+	ErrDDLJobNotFound = terror.ClassAdmin.New(errno.ErrDDLJobNotFound, errno.MySQLErrName[errno.ErrDDLJobNotFound])
 	// ErrCancelFinishedDDLJob returns when cancel a finished ddl job.
-	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(codeCancelFinishedJob, "This job:%v is finished, so can't be cancelled")
+	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(errno.ErrCancelFinishedDDLJob, errno.MySQLErrName[errno.ErrCancelFinishedDDLJob])
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
-	ErrCannotCancelDDLJob = terror.ClassAdmin.New(codeCannotCancelDDLJob, "This job:%v is almost finished, can't be cancelled now")
+	ErrCannotCancelDDLJob = terror.ClassAdmin.New(errno.ErrCannotCancelDDLJob, errno.MySQLErrName[errno.ErrCannotCancelDDLJob])
 )

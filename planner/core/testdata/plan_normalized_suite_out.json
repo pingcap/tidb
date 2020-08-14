@@ -1,0 +1,203 @@
+[
+  {
+    "Name": "TestNormalizedPlan",
+    "Cases": [
+      {
+        "SQL": "select * from t1;",
+        "Plan": [
+          " TableReader_5 root data:TableFullScan_4",
+          " └─TableScan_4 cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a<1;",
+        "Plan": [
+          " TableReader_6 root data:TableRangeScan_5",
+          " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a>1",
+        "Plan": [
+          " TableReader_6 root data:TableRangeScan_5",
+          " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a=1",
+        "Plan": [
+          " Point_Get_1 root table:t1, handle:?"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where a in (1,2,3)",
+        "Plan": [
+          " Batch_Point_Get_1 root table:t1, handle:?, keep order:false, desc:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where b=1",
+        "Plan": [
+          " IndexLookUp_10 root ",
+          " ├─IndexScan_8  cop  table:t1, index:b(b), range:[?,?], keep order:false",
+          " └─TableScan_9  cop  table:t1, keep order:false"
+        ]
+      },
+      {
+        "SQL": "select a+1,b+2 from t1 use index(b) where b=3",
+        "Plan": [
+          " Projection_4    root plus(test.t1.a, ?), plus(test.t1.b, ?)",
+          " └─IndexReader_6 root index:IndexRangeScan_5",
+          "   └─IndexScan_5 cop  table:t1, index:b(b), range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
+        "Plan": [
+          " Projection_10            root test.t1.a, test.t1.b, test.t1.c",
+          " └─Apply_12               root semi join, equal:eq(Column#8, Column#7)",
+          "   ├─Projection_13        root cast(test.t1.a), test.t1.a, test.t1.b, test.t1.c",
+          "   │ └─TableReader_16     root data:Selection_15",
+          "   │   └─Selection_15     cop  gt(test.t1.b, ?)",
+          "   │     └─TableScan_14   cop  table:t1, range:[?,?], keep order:false",
+          "   └─StreamAgg_34         root funcs:sum(Column#11)->Column#7",
+          "     └─TableReader_35     root data:StreamAgg_23",
+          "       └─StreamAgg_23     cop  funcs:sum(test.t2.b)->Column#11",
+          "         └─Selection_33   cop  not(isnull(test.t2.b))",
+          "           └─TableScan_32 cop  table:t2, range: decided by eq(test.t2.a, test.t1.a), keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT * from t1 where a!=1 order by c limit 1",
+        "Plan": [
+          " TopN_8             root test.t1.c",
+          " └─TableReader_16   root data:TopN_15",
+          "   └─TopN_15        cop  test.t1.c",
+          "     └─TableScan_14 cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          " MergeJoin_7       root inner join, left key:test.t1.a, right key:test.t2.a",
+          " ├─TableReader_11  root data:Selection_10",
+          " │ └─Selection_10  cop  gt(test.t1.c, ?)",
+          " │   └─TableScan_9 cop  table:t1, range:[?,?], keep order:true",
+          " └─TableReader_13  root data:TableFullScan_12",
+          "   └─TableScan_12  cop  table:t2, range:[?,?], keep order:true"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          " IndexJoin_12       root inner join, inner:TableReader_9, outer key:test.t1.a, inner key:test.t2.a",
+          " ├─TableReader_30   root data:Selection_29",
+          " │ └─Selection_29   cop  gt(test.t1.c, ?)",
+          " │   └─TableScan_28 cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader_9    root data:TableRangeScan_8",
+          "   └─TableScan_8    cop  table:t2, range: decided by [test.t1.a], keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          " HashJoin_29        root inner join, equal:eq(test.t1.a, test.t2.a)",
+          " ├─TableReader_32   root data:Selection_31",
+          " │ └─Selection_31   cop  gt(test.t1.c, ?)",
+          " │   └─TableScan_30 cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader_34   root data:TableFullScan_33",
+          "   └─TableScan_33   cop  table:t2, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          " HashJoin_29        root inner join, equal:eq(test.t1.a, test.t2.a)",
+          " ├─TableReader_32   root data:Selection_31",
+          " │ └─Selection_31   cop  gt(test.t1.c, ?)",
+          " │   └─TableScan_30 cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader_34   root data:TableFullScan_33",
+          "   └─TableScan_33   cop  table:t2, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+        "Plan": [
+          " IndexJoin_12       root inner join, inner:TableReader_9, outer key:test.t1.a, inner key:test.t2.a",
+          " ├─TableReader_30   root data:Selection_29",
+          " │ └─Selection_29   cop  gt(test.t1.c, ?)",
+          " │   └─TableScan_28 cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader_9    root data:TableRangeScan_8",
+          "   └─TableScan_8    cop  table:t2, range: decided by [test.t1.a], keep order:false"
+        ]
+      },
+      {
+        "SQL": "select count(1) as num,a from t1 where a=1 group by a union select count(1) as num,a from t1 where a=3 group by a;",
+        "Plan": [
+          " HashAgg_17         root group by:Column#10, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10",
+          " └─Union_18         root ",
+          "   ├─Projection_19  root ?, test.t1.a",
+          "   │ └─Point_Get_20 root table:t1, handle:?",
+          "   └─Projection_21  root ?, test.t1.a",
+          "     └─Point_Get_22 root table:t1, handle:?"
+        ]
+      },
+      {
+        "SQL": "insert into t1 values (1,1,1)",
+        "Plan": [
+          ""
+        ]
+      },
+      {
+        "SQL": "insert into t1 select * from t2 where t2.a>0 and t2.b!=0",
+        "Plan": [
+          " TableReader_9   root data:Selection_8",
+          " └─Selection_8   cop  ne(test.t2.b, ?)",
+          "   └─TableScan_7 cop  table:t2, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "update t1 set a=a+1",
+        "Plan": [
+          " TableReader_6 root data:TableFullScan_5",
+          " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "update t1 set a=a+1 where a>0",
+        "Plan": [
+          " TableReader_7 root data:TableRangeScan_6",
+          " └─TableScan_6 cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "delete from t1",
+        "Plan": [
+          " TableReader_6 root data:TableFullScan_5",
+          " └─TableScan_5 cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "SQL": "delete from t1 where a>0 and b=1 and c!=2",
+        "Plan": [
+          " IndexLookUp_12   root ",
+          " ├─IndexScan_9    cop  table:t1, index:b(b), range:[?,?], keep order:false",
+          " └─Selection_11   cop  ne(test.t1.c, ?)",
+          "   └─TableScan_10 cop  table:t1, keep order:false"
+        ]
+      },
+      {
+        "SQL": "create table t1_tmp (a int)",
+        "Plan": [
+          ""
+        ]
+      },
+      {
+        "SQL": "alter table t1_tmp add column c int",
+        "Plan": [
+          ""
+        ]
+      }
+    ]
+  }
+]

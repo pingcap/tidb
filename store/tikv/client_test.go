@@ -16,11 +16,14 @@ package tikv
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -35,8 +38,13 @@ type testClientSuite struct {
 	OneByOneSuite
 }
 
+type testClientSerialSuite struct {
+	OneByOneSuite
+}
+
 var _ = Suite(&testClientSuite{})
-var _ = Suite(&testClientFailSuite{})
+var _ = SerialSuites(&testClientFailSuite{})
+var _ = SerialSuites(&testClientSerialSuite{})
 
 func setMaxBatchSize(size uint) {
 	newConf := config.NewConfig()
@@ -44,22 +52,22 @@ func setMaxBatchSize(size uint) {
 	config.StoreGlobalConfig(newConf)
 }
 
-func (s *testClientSuite) TestConn(c *C) {
+func (s *testClientSerialSuite) TestConn(c *C) {
 	maxBatchSize := config.GetGlobalConfig().TiKVClient.MaxBatchSize
 	setMaxBatchSize(0)
 
 	client := newRPCClient(config.Security{})
 
 	addr := "127.0.0.1:6379"
-	conn1, err := client.getConnArray(addr)
+	conn1, err := client.getConnArray(addr, true)
 	c.Assert(err, IsNil)
 
-	conn2, err := client.getConnArray(addr)
+	conn2, err := client.getConnArray(addr, true)
 	c.Assert(err, IsNil)
 	c.Assert(conn2.Get(), Not(Equals), conn1.Get())
 
 	client.Close()
-	conn3, err := client.getConnArray(addr)
+	conn3, err := client.getConnArray(addr, true)
 	c.Assert(err, NotNil)
 	c.Assert(conn3, IsNil)
 	setMaxBatchSize(maxBatchSize)
@@ -108,7 +116,7 @@ func (s *testClientSuite) TestSendWhenReconnect(c *C) {
 
 	rpcClient := newRPCClient(config.Security{})
 	addr := fmt.Sprintf("%s:%d", "127.0.0.1", port)
-	conn, err := rpcClient.getConnArray(addr)
+	conn, err := rpcClient.getConnArray(addr, true)
 	c.Assert(err, IsNil)
 
 	// Suppose all connections are re-establishing.
@@ -121,4 +129,103 @@ func (s *testClientSuite) TestSendWhenReconnect(c *C) {
 	c.Assert(err.Error() == "no available connections", IsTrue)
 	conn.Close()
 	server.Stop()
+}
+
+// chanClient sends received requests to the channel.
+type chanClient struct {
+	wg *sync.WaitGroup
+	ch chan<- *tikvrpc.Request
+}
+
+func (c *chanClient) Close() error {
+	return nil
+}
+
+func (c *chanClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	c.wg.Wait()
+	c.ch <- req
+	return nil, nil
+}
+
+func (s *testClientSuite) TestCollapseResolveLock(c *C) {
+	buildResolveLockReq := func(regionID uint64, startTS uint64, commitTS uint64, keys [][]byte) *tikvrpc.Request {
+		region := &metapb.Region{Id: regionID}
+		req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, &kvrpcpb.ResolveLockRequest{
+			StartVersion:  startTS,
+			CommitVersion: commitTS,
+			Keys:          keys,
+		})
+		tikvrpc.SetContext(req, region, nil)
+		return req
+	}
+	buildBatchResolveLockReq := func(regionID uint64, txnInfos []*kvrpcpb.TxnInfo) *tikvrpc.Request {
+		region := &metapb.Region{Id: regionID}
+		req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, &kvrpcpb.ResolveLockRequest{
+			TxnInfos: txnInfos,
+		})
+		tikvrpc.SetContext(req, region, nil)
+		return req
+	}
+
+	var wg sync.WaitGroup
+	reqCh := make(chan *tikvrpc.Request)
+	client := reqCollapse{&chanClient{wg: &wg, ch: reqCh}}
+	ctx := context.Background()
+
+	// Collapse ResolveLock.
+	resolveLockReq := buildResolveLockReq(1, 10, 20, nil)
+	wg.Add(1)
+	go client.SendRequest(ctx, "", resolveLockReq, time.Second)
+	go client.SendRequest(ctx, "", resolveLockReq, time.Second)
+	time.Sleep(300 * time.Millisecond)
+	wg.Done()
+	req := <-reqCh
+	c.Assert(*req, DeepEquals, *resolveLockReq)
+	select {
+	case <-reqCh:
+		c.Fatal("fail to collapse ResolveLock")
+	default:
+	}
+
+	// Don't collapse ResolveLockLite.
+	resolveLockLiteReq := buildResolveLockReq(1, 10, 20, [][]byte{[]byte("foo")})
+	wg.Add(1)
+	go client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
+	go client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
+	time.Sleep(300 * time.Millisecond)
+	wg.Done()
+	for i := 0; i < 2; i++ {
+		req := <-reqCh
+		c.Assert(*req, DeepEquals, *resolveLockLiteReq)
+	}
+
+	// Don't collapse BatchResolveLock.
+	batchResolveLockReq := buildBatchResolveLockReq(1, []*kvrpcpb.TxnInfo{
+		{Txn: 10, Status: 20},
+	})
+	wg.Add(1)
+	go client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
+	go client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
+	time.Sleep(300 * time.Millisecond)
+	wg.Done()
+	for i := 0; i < 2; i++ {
+		req := <-reqCh
+		c.Assert(*req, DeepEquals, *batchResolveLockReq)
+	}
+
+	// Mixed
+	wg.Add(1)
+	go client.SendRequest(ctx, "", resolveLockReq, time.Second)
+	go client.SendRequest(ctx, "", resolveLockLiteReq, time.Second)
+	go client.SendRequest(ctx, "", batchResolveLockReq, time.Second)
+	time.Sleep(300 * time.Millisecond)
+	wg.Done()
+	for i := 0; i < 3; i++ {
+		<-reqCh
+	}
+	select {
+	case <-reqCh:
+		c.Fatal("unexpected request")
+	default:
+	}
 }

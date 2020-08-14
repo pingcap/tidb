@@ -17,28 +17,23 @@ import (
 	"fmt"
 	"math"
 	"sort"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // Error instances.
 var (
-	ErrUnsupportedType = terror.ClassOptimizer.New(CodeUnsupportedType, "Unsupported type")
-)
-
-// Error codes.
-const (
-	CodeUnsupportedType terror.ErrCode = 1
+	ErrUnsupportedType = terror.ClassOptimizer.New(errno.ErrUnsupportedType, errno.MySQLErrName[errno.ErrUnsupportedType])
 )
 
 // RangeType is alias for int.
@@ -156,6 +151,7 @@ func NullRange() []*Range {
 type builder struct {
 	err error
 	sc  *stmtctx.StatementContext
+	ctx *sessionctx.Context
 }
 
 func (r *builder) build(expr expression.Expression) []point {
@@ -213,18 +209,33 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		err   error
 		ft    *types.FieldType
 	)
+
+	// refineValue refines the constant datum for string type since we may eval the constant to another collation instead of its own collation.
+	refineValue := func(col *expression.Column, value *types.Datum) {
+		if col.RetType.EvalType() == types.ETString && value.Kind() == types.KindString {
+			value.SetString(value.GetString(), col.RetType.Collate)
+		}
+	}
 	if col, ok := expr.GetArgs()[0].(*expression.Column); ok {
-		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
-		op = expr.FuncName.L
 		ft = col.RetType
+		value, err = expr.GetArgs()[1].Eval(chunk.Row{})
+		if err != nil {
+			return nil
+		}
+		refineValue(col, &value)
+		op = expr.FuncName.L
 	} else {
 		col, ok := expr.GetArgs()[1].(*expression.Column)
 		if !ok {
 			return nil
 		}
 		ft = col.RetType
-
 		value, err = expr.GetArgs()[0].Eval(chunk.Row{})
+		if err != nil {
+			return nil
+		}
+		refineValue(col, &value)
+
 		switch expr.FuncName.L {
 		case ast.GE:
 			op = ast.LE
@@ -238,15 +249,7 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 			op = expr.FuncName.L
 		}
 	}
-	if err != nil {
-		return nil
-	}
 	if value.IsNull() {
-		return nil
-	}
-
-	value, err = HandlePadCharToFullLength(r.sc, ft, value)
-	if err != nil {
 		return nil
 	}
 
@@ -284,64 +287,6 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 		return []point{startPoint, endPoint}
 	}
 	return nil
-}
-
-// HandlePadCharToFullLength handles the "PAD_CHAR_TO_FULL_LENGTH" sql mode for
-// CHAR[N] index columns.
-// NOTE: kv.ErrNotExist is returned to indicate that this value can not match
-//		 any (key, value) pair in tikv storage. This error should be handled by
-//		 the caller.
-func HandlePadCharToFullLength(sc *stmtctx.StatementContext, ft *types.FieldType, val types.Datum) (types.Datum, error) {
-	isChar := (ft.Tp == mysql.TypeString)
-	isBinary := (isChar && ft.Collate == charset.CollationBin)
-	isVarchar := (ft.Tp == mysql.TypeVarString || ft.Tp == mysql.TypeVarchar)
-	isVarBinary := (isVarchar && ft.Collate == charset.CollationBin)
-
-	if !isChar && !isVarchar && !isBinary && !isVarBinary {
-		return val, nil
-	}
-
-	hasBinaryFlag := mysql.HasBinaryFlag(ft.Flag)
-	targetStr, err := val.ToString()
-	if err != nil {
-		return val, err
-	}
-
-	switch {
-	case isBinary || isVarBinary:
-		val.SetString(targetStr)
-		return val, nil
-	case isVarchar && hasBinaryFlag:
-		noTrailingSpace := strings.TrimRight(targetStr, " ")
-		if numSpacesToFill := ft.Flen - len(noTrailingSpace); numSpacesToFill > 0 {
-			noTrailingSpace += strings.Repeat(" ", numSpacesToFill)
-		}
-		val.SetString(noTrailingSpace)
-		return val, nil
-	case isVarchar && !hasBinaryFlag:
-		val.SetString(targetStr)
-		return val, nil
-	case isChar && hasBinaryFlag:
-		noTrailingSpace := strings.TrimRight(targetStr, " ")
-		val.SetString(noTrailingSpace)
-		return val, nil
-	case isChar && !hasBinaryFlag && !sc.PadCharToFullLength:
-		val.SetString(targetStr)
-		return val, nil
-	case isChar && !hasBinaryFlag && sc.PadCharToFullLength:
-		if len(targetStr) != ft.Flen {
-			// return kv.ErrNotExist to indicate that this value can not match any
-			// (key, value) pair in tikv storage.
-			return val, kv.ErrNotExist
-		}
-		// Trailing spaces of data typed "CHAR[N]" is trimed in the storage, we
-		// need to trim these trailing spaces as well.
-		noTrailingSpace := strings.TrimRight(targetStr, " ")
-		val.SetString(noTrailingSpace)
-		return val, nil
-	default:
-		return val, nil
-	}
 }
 
 // handleUnsignedIntCol handles the case when unsigned column meets negative integer value.
@@ -411,6 +356,7 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]point, 0, len(list)*2)
 	hasNull := false
+	colCollate := expr.GetArgs()[0].GetType().Collate
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
@@ -426,8 +372,14 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 			hasNull = true
 			continue
 		}
-		startPoint := point{value: types.NewDatum(dt.GetValue()), start: true}
-		endPoint := point{value: types.NewDatum(dt.GetValue())}
+		if dt.Kind() == types.KindString {
+			dt.SetString(dt.GetString(), colCollate)
+		}
+		var startValue, endValue types.Datum
+		dt.Copy(&startValue)
+		dt.Copy(&endValue)
+		startPoint := point{value: startValue, start: true}
+		endPoint := point{value: endValue}
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
 	sorter := pointSorter{points: rangePoints, sc: r.sc}
@@ -453,7 +405,12 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]point, bool) {
 }
 
 func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []point {
+	_, collation := expr.CharsetAndCollation(expr.GetCtx())
+	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().Collate, collation) {
+		return fullRange
+	}
 	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(chunk.Row{})
+	tpOfPattern := expr.GetArgs()[0].GetType()
 	if err != nil {
 		r.err = errors.Trace(err)
 		return fullRange
@@ -505,11 +462,11 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 		return []point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
 	if isExactMatch {
-		val := types.NewStringDatum(string(lowValue))
+		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.Collate, tpOfPattern.Flen)
 		return []point{{value: val, start: true}, {value: val}}
 	}
 	startPoint := point{start: true, excl: exclude}
-	startPoint.value.SetBytesAsString(lowValue)
+	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.Collate, uint32(tpOfPattern.Flen))
 	highValue := make([]byte, len(lowValue))
 	copy(highValue, lowValue)
 	endPoint := point{excl: true}
@@ -519,7 +476,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 		// e.g., the start point value is "abc", so the end point value is "abd".
 		highValue[i]++
 		if highValue[i] != 0 {
-			endPoint.value.SetBytesAsString(highValue)
+			endPoint.value.SetBytesAsString(highValue, tpOfPattern.Collate, uint32(tpOfPattern.Flen))
 			break
 		}
 		// If highValue[i] is 255 and highValue[i]++ is 0, then the end point value is max value.
@@ -656,21 +613,23 @@ func (r *builder) merge(a, b []point, union bool) []point {
 	} else {
 		requiredInRangeCount = 2
 	}
-	merged := make([]point, 0, len(mergedPoints))
+	curTail := 0
 	for _, val := range mergedPoints {
 		if val.start {
 			inRangeCount++
 			if inRangeCount == requiredInRangeCount {
-				// just reached the required in range count, a new range started.
-				merged = append(merged, val)
+				// Just reached the required in range count, a new range started.
+				mergedPoints[curTail] = val
+				curTail++
 			}
 		} else {
 			if inRangeCount == requiredInRangeCount {
-				// just about to leave the required in range count, the range is ended.
-				merged = append(merged, val)
+				// Just about to leave the required in range count, the range is ended.
+				mergedPoints[curTail] = val
+				curTail++
 			}
 			inRangeCount--
 		}
 	}
-	return merged
+	return mergedPoints[:curTail]
 }

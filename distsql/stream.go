@@ -43,6 +43,9 @@ type streamResult struct {
 	curr         *tipb.Chunk
 	partialCount int64
 	feedback     *statistics.QueryFeedback
+
+	fetchDuration    time.Duration
+	durationReported bool
 }
 
 func (r *streamResult) Fetch(context.Context) {}
@@ -70,13 +73,18 @@ func (r *streamResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Response, result *tipb.Chunk) (bool, error) {
 	startTime := time.Now()
 	resultSubset, err := resp.Next(ctx)
-	// TODO: Add a label to distinguish between success or failure.
-	// https://github.com/pingcap/tidb/issues/11397
-	metrics.DistSQLQueryHistgram.WithLabelValues(r.label, r.sqlType).Observe(time.Since(startTime).Seconds())
+	duration := time.Since(startTime)
+	r.fetchDuration += duration
 	if err != nil {
 		return false, err
 	}
 	if resultSubset == nil {
+		if !r.durationReported {
+			// TODO: Add a label to distinguish between success or failure.
+			// https://github.com/pingcap/tidb/issues/11397
+			metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType).Observe(r.fetchDuration.Seconds())
+			r.durationReported = true
+		}
 		return true, nil
 	}
 
@@ -89,7 +97,7 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 		return false, errors.Errorf("stream response error: [%d]%s\n", stream.Error.Code, stream.Error.Msg)
 	}
 	for _, warning := range stream.Warnings {
-		r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.New(terror.ErrCode(warning.Code), warning.Msg))
+		r.ctx.GetSessionVars().StmtCtx.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 	}
 
 	err = result.Unmarshal(stream.Data)
@@ -98,7 +106,11 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	}
 	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts)
 	r.partialCount++
-	r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(resultSubset.GetExecDetails(), nil)
+	resultDetail := resultSubset.GetExecDetails()
+	if resultDetail != nil {
+		resultDetail.CopTime = duration
+	}
+	r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(resultDetail, nil)
 	return false, nil
 }
 

@@ -9,8 +9,8 @@ advertise-address = ""
 # TiDB server port.
 port = 4000
 
-# Registered store name, [tikv, mocktikv]
-store = "mocktikv"
+# Registered store name, [tikv, unistore]
+store = "unistore"
 
 # TiDB storage path.
 path = "/tmp/tidb"
@@ -31,18 +31,34 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
-# Set the memory quota for a query in bytes. Default: 32GB
-mem-quota-query = 34359738368
+# The maximum memory available for a single SQL statement. Default: 1GB
+mem-quota-query = 1073741824
 
-# Set to true to enable use of temporary disk for some executors when mem-quota-query is exceeded.
+# The maximum number available of a NLJ cache for a single SQL statement. Default: 20MB
+nested-loop-join-cache-capacity = 20971520
+
+# Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 oom-use-tmp-storage = true
 
-# What to do when mem-quota-query is exceeded and can not be spilled over to disk any more.
+# Specifies the temporary storage path for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
+# It defaults to a generated directory in `<TMPDIR>/<os/user.Current().Uid>_tidb/` if it is unset.
+# It only takes effect when `oom-use-tmp-storage` is `true`.
+# tmp-storage-path = "/tmp/<os/user.Current().Uid>_tidb/MC4wLjAuMDo0MDAwLzAuMC4wLjA6MTAwODA=/tmp-storage"
+
+# Specifies the maximum use of temporary storage (bytes) for all active queries when `oom-use-tmp-storage` is enabled.
+# If the `tmp-storage-quota` exceeds the capacity of the temporary storage directory, tidb-server would return an error and exit.
+# The default value of tmp-storage-quota is under 0 which means tidb-server wouldn't check the capacity.
+tmp-storage-quota = -1
+
+# Specifies what operation TiDB performs when a single SQL statement exceeds the memory quota specified by mem-quota-query and cannot be spilled over to disk.
 # Valid options: ["log", "cancel"]
-oom-action = "log"
+oom-action = "cancel"
 
 # Enable coprocessor streaming.
 enable-streaming = false
+
+# Enable batch commit for the DMLs.
+enable-batch-dml = false
 
 # Set system variable 'lower_case_table_names'
 lower-case-table-names = 2
@@ -57,6 +73,9 @@ check-mb4-value-in-utf8 = true
 # treat-old-version-utf8-as-utf8mb4 use for upgrade compatibility. Set to true will treat old version table/column UTF8 charset as UTF8MB4.
 treat-old-version-utf8-as-utf8mb4 = true
 
+# max-index-length is used to deal with compatibility issues from v3.0.7 and previous version upgrades. It can only be in [3072, 3072*4].
+max-index-length = 3072
+
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
 enable-table-lock = false
 
@@ -66,6 +85,40 @@ delay-clean-table-lock = 0
 # Maximum number of the splitting region, which is used by the split region statement.
 split-region-max-num = 1000
 
+# alter-primary-key is used to control alter primary key feature. Default is false, indicate the alter primary key feature is disabled.
+# If it is true, we can add the primary key by "alter table". However, if a table already exists before the switch is turned true and the data type of its primary key column is an integer,
+# the primary key cannot be dropped.
+alter-primary-key = false
+
+# server-version is used to change the version string of TiDB in the following scenarios:
+# 1. the server version returned by builtin-function `VERSION()`.
+# 2. the server version filled in handshake packets of MySQL Connection Protocol, see https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::Handshake for more details.
+# if server-version = "", the default value(original TiDB version string) is used.
+server-version = ""
+
+# repair mode is used to repair the broken table meta in TiKV in extreme cases.
+repair-mode = false
+
+# Repair table list is used to list the tables in repair mode with the format like ["db.table",].
+# In repair mode, repairing table which is not in repair list will get wrong database or wrong table error.
+repair-table-list = []
+
+# The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
+max-server-connections = 0
+
+# Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
+new_collations_enabled_on_first_bootstrap = false
+
+# Don't register information of this TiDB to etcd, so this instance of TiDB won't appear in the services like dashboard.
+# This option is useful when you want to embed TiDB into your service(i.e. use TiDB as a library).
+# *If you want to start a TiDB service, NEVER enable this.*
+skip-register-to-dashboard = false
+
+# When enabled, usage data (for example, instance versions) will be reported to PingCAP periodically for user experience analytics.
+# If this config is set to `false` on all TiDB servers, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
+# See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
+enable-telemetry = true
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -73,11 +126,14 @@ level = "info"
 # Log format, one of json, text, console.
 format = "text"
 
-# Disable automatic timestamp in output.
-disable-timestamp = false
+# Enable automatic timestamps in log output, if not set, it will be defaulted to true.
+# enable-timestamp = true
 
-# Disable stack information in error message.
-disable-error-stack = true
+# Enable annotating logs with the full stack error message, if not set, it will be defaulted to false.
+# enable-error-stack = false
+
+# Whether to enable slow query log.
+enable-slow-log = true
 
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
@@ -85,11 +141,15 @@ slow-query-file = "tidb-slow.log"
 # Queries with execution time greater than this value will be logged. (Milliseconds)
 slow-threshold = 300
 
+# record-plan-in-slow-log is used to enable record query plan in slow log.
+# 0 is disable. 1 is enable.
+record-plan-in-slow-log = 1
+
 # Queries with internal result greater than this value will be logged.
 expensive-threshold = 10000
 
 # Maximum query length recorded in log.
-query-log-max-len = 2048
+query-log-max-len = 4096
 
 # File logging.
 [log.file]
@@ -104,9 +164,6 @@ max-days = 0
 
 # Maximum number of old log files to retain. No clean up by default.
 max-backups = 0
-
-# Rotate log by day
-log-rotate = true
 
 [security]
 # Path of file that contains list of trusted SSL CAs for connection with mysql client.
@@ -134,14 +191,16 @@ report-status = true
 # TiDB status host.
 status-host = "0.0.0.0"
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+## status-host is the HTTP address for reporting the internal status of a TiDB server, for example:
+## API for prometheus: http://${status-host}:${status_port}/metrics
+## API for pprof:      http://${status-host}:${status_port}/debug/pprof
 # TiDB status port.
 status-port = 10080
 
-# Prometheus pushgateway address, leaves it empty will disable prometheus push.
+# Prometheus pushgateway address, leaves it empty will disable push to pushgateway.
 metrics-addr = ""
 
-# Prometheus client push interval in second, set \"0\" to disable prometheus push.
+# Prometheus client push interval in second, set \"0\" to disable push to pushgateway.
 metrics-interval = 15
 
 # Record statements qps by database name if it is enabled.
@@ -151,8 +210,8 @@ record-db-qps = false
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0
 
-# Max memory size to use, 0 use the total usable memory in the machine.
-max-memory = 0
+# Memory size quota for tidb server, 0 means unlimited
+server-memory-quota = 0
 
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
@@ -173,7 +232,7 @@ run-auto-analyze = true
 feedback-probability = 0.05
 
 # The max number of query feedback that cache in memory.
-query-feedback-limit = 1024
+query-feedback-limit = 512
 
 # Pseudo stats will be used if the ratio between the modify count and
 # row count in statistics of a table is greater than it.
@@ -186,11 +245,28 @@ force-priority = "NO_PRIORITY"
 # Bind info lease duration, which influences the duration of loading bind info and handling invalid bind.
 bind-info-lease = "3s"
 
+# Whether support pushing down aggregation with distinct to cop task
+distinct-agg-push-down = false
+
 # The limitation of the size in byte for the entries in one transaction.
 # If using TiKV as the storage, the entry represents a key/value pair.
-# WARNING: Do not set the value too large, otherwise it will make a very large impact on the TiKV cluster.
-# Please adjust this configuration carefully.
+# NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
+# this value should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
+# If binlog is disabled or binlog is enabled without Kafka, this value should be less than 10737418240(10G).
 txn-total-size-limit = 104857600
+
+# The limitation of the size in byte for each entry in one transaction.
+# NOTE: Increasing this limit may cause performance problems.
+txn-entry-size-limit = 6291456
+
+# The max number of running concurrency two phase committer request for an SQL.
+committer-concurrency = 16
+
+# max lifetime of transaction ttl manager.
+max-txn-ttl = 600000
+
+# the interval duration between two memory profile into global tracker
+mem-profile-interval = "1m"
 
 [proxy-protocol]
 # PROXY protocol acceptable client networks.
@@ -258,7 +334,7 @@ local-agent-host-port = ""
 
 [tikv-client]
 # Max gRPC connections that will be established with each tikv-server.
-grpc-connection-count = 16
+grpc-connection-count = 4
 
 # After a duration of this time in seconds if the client doesn't see any activity it pings
 # the server to see if the transport is still alive.
@@ -271,6 +347,9 @@ grpc-keepalive-timeout = 3
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
+# Enable async commit for all transactions.
+enable-async-commit = false
+
 # Max batch size in gRPC.
 max-batch-size = 128
 # Overload threshold of TiKV.
@@ -280,17 +359,42 @@ max-batch-wait-time = 0
 # Batch wait size, to avoid waiting too long.
 batch-wait-size = 8
 
-# Enable chunk encoded data.
-enable-arrow = true
+# Enable chunk encoded data for coprocessor requests.
+enable-chunk-rpc = true
 
-[txn-local-latches]
-# Enable local latches for transactions. Enable it when
-# there are lots of conflicts between transactions.
-enabled = false
-capacity = 2048000
+# If a Region has not been accessed for more than the given duration (in seconds), it
+# will be reloaded from the PD.
+region-cache-ttl = 600
+
+# store-limit is used to restrain TiDB from sending request to some stores which is up to the limit.
+# If a store has been up to the limit, it will return error for the successive request in same store.
+# default 0 means shutting off store limit.
+store-limit = 0
+
+# store-liveness-timeout is used to control timeout for store liveness after sending request failed.
+store-liveness-timeout = "5s"
+
+# ttl-refreshed-txn-size decides whether a transaction should update its lock TTL.
+# If the size(in byte) of a transaction is large than `ttl-refreshed-txn-size`, it update the lock TTL during the 2PC.
+ttl-refreshed-txn-size = 33554432
+
+[tikv-client.copr-cache]
+# Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and
+# reuses the result when corresponding data in TiKV is unchanged, on a region basis.
+enable = true
+
+# The capacity in MB of the cache.
+capacity-mb = 1000.0
+
+# Only cache requests whose result set is small.
+admission-max-result-mb = 10.0
+# Only cache requests takes notable time to process.
+admission-min-process-ms = 5
 
 [binlog]
 # enable to write binlog.
+# NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
+# txn-total-size-limit should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
 enable = false
 
 # WriteTimeout specifies how long it will wait for writing binlog to pump.
@@ -313,13 +417,32 @@ enable = true
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
 
-# default TTL in milliseconds for pessimistic lock.
-# The value must between "15s" and "120s".
-ttl = "40s"
-
 [stmt-summary]
+# enable statement summary.
+enable = true
+
+# enable statement summary for TiDB internal query, default is false.
+enable-internal-query = false
+
 # max number of statements kept in memory.
-max-stmt-count = 100
+max-stmt-count = 200
 
 # max length of displayed normalized sql and sample sql.
 max-sql-length = 4096
+
+# the refresh interval of statement summary, it's counted in seconds.
+refresh-interval = 1800
+
+# the maximum history size of statement summary.
+history-size = 24
+
+# experimental section controls the features that are still experimental: their semantics,
+# interfaces are subject to change, using these features in the production environment is not recommended.
+[experimental]
+# enable creating expression index.
+allow-expression-index = false
+
+# server level isolation read by engines and labels
+[isolation-read]
+# engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
+engines = ["tikv", "tiflash", "tidb"]

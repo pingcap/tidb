@@ -23,18 +23,25 @@ type Variables struct {
 
 	// Hook is used for test to verify the variable take effect.
 	Hook func(name string, vars *Variables)
+
+	// Pointer to SessionVars.Killed
+	// Killed is a flag to indicate that this query is killed.
+	Killed *uint32
 }
 
 // NewVariables create a new Variables instance with default values.
-func NewVariables() *Variables {
+func NewVariables(killed *uint32) *Variables {
 	return &Variables{
 		BackoffLockFast: DefBackoffLockFast,
 		BackOffWeight:   DefBackOffWeight,
+		Killed:          killed,
 	}
 }
 
+var ignoreKill uint32
+
 // DefaultVars is the default variables instance.
-var DefaultVars = NewVariables()
+var DefaultVars = NewVariables(&ignoreKill)
 
 // Default values
 const (

@@ -16,6 +16,7 @@ package distsql
 import (
 	"context"
 	"fmt"
+	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -25,11 +26,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tipb/go-tipb"
-)
-
-// XAPI error codes.
-const (
-	codeInvalidResp = 1
 )
 
 // Select sends a DAG request, returns SelectResult.
@@ -76,14 +72,12 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		}, nil
 	}
 	encodetype := tipb.EncodeType_TypeDefault
-	if enableTypeArrow(sctx) {
-		encodetype = tipb.EncodeType_TypeArrow
+	if canUseChunkRPC(sctx) {
+		encodetype = tipb.EncodeType_TypeChunk
 	}
 	return &selectResult{
 		label:      "dag",
 		resp:       resp,
-		results:    make(chan resultWithErr, kvReq.Concurrency),
-		closed:     make(chan struct{}),
 		rowLen:     len(fieldTypes),
 		fieldTypes: fieldTypes,
 		ctx:        sctx,
@@ -123,8 +117,6 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 	result := &selectResult{
 		label:      "analyze",
 		resp:       resp,
-		results:    make(chan resultWithErr, kvReq.Concurrency),
-		closed:     make(chan struct{}),
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		sqlType:    label,
 		encodeType: tipb.EncodeType_TypeDefault,
@@ -141,8 +133,6 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 	result := &selectResult{
 		label:      "checksum",
 		resp:       resp,
-		results:    make(chan resultWithErr, kvReq.Concurrency),
-		closed:     make(chan struct{}),
 		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
 		sqlType:    metrics.LblGeneral,
 		encodeType: tipb.EncodeType_TypeDefault,
@@ -152,22 +142,57 @@ func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv
 
 // SetEncodeType sets the encoding method for the DAGRequest. The supported encoding
 // methods are:
-// 1. TypeArrow: the result is encoded using the Chunk format, refer util/chunk/chunk.go
+// 1. TypeChunk: the result is encoded using the Chunk format, refer util/chunk/chunk.go
 // 2. TypeDefault: the result is encoded row by row
 func SetEncodeType(ctx sessionctx.Context, dagReq *tipb.DAGRequest) {
-	if enableTypeArrow(ctx) {
-		dagReq.EncodeType = tipb.EncodeType_TypeArrow
+	if canUseChunkRPC(ctx) {
+		dagReq.EncodeType = tipb.EncodeType_TypeChunk
+		setChunkMemoryLayout(dagReq)
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeDefault
 	}
 }
 
-func enableTypeArrow(ctx sessionctx.Context) bool {
-	if !ctx.GetSessionVars().EnableArrow {
+func canUseChunkRPC(ctx sessionctx.Context) bool {
+	if !ctx.GetSessionVars().EnableChunkRPC {
 		return false
 	}
 	if ctx.GetSessionVars().EnableStreaming {
 		return false
 	}
+	if !checkAlignment() {
+		return false
+	}
 	return true
+}
+
+var supportedAlignment = unsafe.Sizeof(types.MyDecimal{}) == 40
+
+// checkAlignment checks the alignment in current system environment.
+// The alignment is influenced by system, machine and Golang version.
+// Using this function can guarantee the alignment is we want.
+func checkAlignment() bool {
+	return supportedAlignment
+}
+
+var systemEndian tipb.Endian
+
+// setChunkMemoryLayout sets the chunk memory layout for the DAGRequest.
+func setChunkMemoryLayout(dagReq *tipb.DAGRequest) {
+	dagReq.ChunkMemoryLayout = &tipb.ChunkMemoryLayout{Endian: GetSystemEndian()}
+}
+
+// GetSystemEndian gets the system endian.
+func GetSystemEndian() tipb.Endian {
+	return systemEndian
+}
+
+func init() {
+	i := 0x0100
+	ptr := unsafe.Pointer(&i)
+	if 0x01 == *(*byte)(ptr) {
+		systemEndian = tipb.Endian_BigEndian
+	} else {
+		systemEndian = tipb.Endian_LittleEndian
+	}
 }

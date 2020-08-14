@@ -775,8 +775,68 @@ func (s *testChunkSuite) TestGetRaw(c *check.C) {
 	i = 0
 	for row := it.Begin(); row != it.End(); row = it.Next() {
 		c.Assert(row.GetRaw(0), check.DeepEquals, []byte(fmt.Sprint(i)))
-		c.Assert(col.GetRaw(int(i)), check.DeepEquals, []byte(fmt.Sprint(i)))
+		c.Assert(col.GetRaw(i), check.DeepEquals, []byte(fmt.Sprint(i)))
 		i++
+	}
+}
+
+func (s *testChunkSuite) TestResize(c *check.C) {
+	col := NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
+	for i := 0; i < 1024; i++ {
+		col.AppendInt64(int64(i))
+	}
+	col.ResizeInt64(1024, false)
+	for i := 0; i < 1024; i++ {
+		c.Assert(col.Int64s()[i], check.Equals, int64(0))
+	}
+
+	col = NewColumn(types.NewFieldType(mysql.TypeFloat), 1024)
+	for i := 0; i < 1024; i++ {
+		col.AppendFloat32(float32(i))
+	}
+	col.ResizeFloat32(1024, false)
+	for i := 0; i < 1024; i++ {
+		c.Assert(col.Float32s()[i], check.Equals, float32(0))
+	}
+
+	col = NewColumn(types.NewFieldType(mysql.TypeDouble), 1024)
+	for i := 0; i < 1024; i++ {
+		col.AppendFloat64(float64(i))
+	}
+	col.ResizeFloat64(1024, false)
+	for i := 0; i < 1024; i++ {
+		c.Assert(col.Float64s()[i], check.Equals, float64(0))
+	}
+
+	col = NewColumn(types.NewFieldType(mysql.TypeNewDecimal), 1024)
+	for i := 0; i < 1024; i++ {
+		col.AppendMyDecimal(new(types.MyDecimal).FromInt(int64(i)))
+	}
+	col.ResizeDecimal(1024, false)
+	for i := 0; i < 1024; i++ {
+		var d types.MyDecimal
+		c.Assert(col.Decimals()[i], check.Equals, d)
+	}
+
+	col = NewColumn(types.NewFieldType(mysql.TypeDuration), 1024)
+	for i := 0; i < 1024; i++ {
+		col.AppendDuration(types.Duration{Duration: time.Duration(i), Fsp: int8(i)})
+	}
+	col.ResizeGoDuration(1024, false)
+	for i := 0; i < 1024; i++ {
+		c.Assert(col.GoDurations()[i], check.Equals, time.Duration(0))
+	}
+
+	col = NewColumn(types.NewFieldType(mysql.TypeDatetime), 1024)
+	for i := 0; i < 1024; i++ {
+		gt := types.FromDate(rand.Intn(2200), rand.Intn(10)+1, rand.Intn(20)+1, rand.Intn(12), rand.Intn(60), rand.Intn(60), rand.Intn(1000000))
+		t := types.NewTime(gt, 0, 0)
+		col.AppendTime(t)
+	}
+	col.ResizeTime(1024, false)
+	for i := 0; i < 1024; i++ {
+		var t types.Time
+		c.Assert(col.Times()[i], check.Equals, t)
 	}
 }
 
@@ -916,6 +976,23 @@ func (s *testChunkSuite) TestVectorizedNulls(c *check.C) {
 			c.Assert(rowResult.IsNull(i), check.Equals, vecResult.IsNull(i))
 		}
 	}
+}
+
+func (s *testChunkSuite) TestResetColumn(c *check.C) {
+	col0 := NewColumn(types.NewFieldType(mysql.TypeVarString), 0)
+	col1 := NewColumn(types.NewFieldType(mysql.TypeLonglong), 0)
+
+	// using col0.reset() here will cause panic since it doesn't reset the elemBuf field which
+	// is used by MergeNulls.
+	col0.Reset(types.ETInt)
+	col0.MergeNulls(col1)
+
+	col := NewColumn(types.NewFieldType(mysql.TypeDatetime), 0)
+	col.Reset(types.ETDuration)
+	col.AppendDuration(types.Duration{})
+	// using col.reset() above will let this assertion fail since the length of initialized elemBuf
+	// is sizeTime.
+	c.Assert(len(col.data), check.Equals, sizeGoDuration)
 }
 
 func BenchmarkMergeNullsVectorized(b *testing.B) {

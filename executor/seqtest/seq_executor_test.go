@@ -36,9 +36,13 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
+	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -47,9 +51,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
@@ -63,14 +69,13 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-var _ = Suite(&seqTestSuite{})
-var _ = Suite(&seqTestSuite1{})
+var _ = SerialSuites(&seqTestSuite{})
+var _ = SerialSuites(&seqTestSuite1{})
 
 type seqTestSuite struct {
-	cluster   *mocktikv.Cluster
-	mvccStore mocktikv.MVCCStore
-	store     kv.Storage
-	domain    *domain.Domain
+	cluster cluster.Cluster
+	store   kv.Storage
+	domain  *domain.Domain
 	*parser.Parser
 	ctx *mock.Context
 }
@@ -82,15 +87,14 @@ func (s *seqTestSuite) SetUpSuite(c *C) {
 	flag.Lookup("mockTikv")
 	useMockTikv := *mockTikv
 	if useMockTikv {
-		s.cluster = mocktikv.NewCluster()
-		mocktikv.BootstrapWithSingleStore(s.cluster)
-		s.mvccStore = mocktikv.MustNewMVCCStore()
-		store, err := mockstore.NewMockTikvStore(
-			mockstore.WithCluster(s.cluster),
-			mockstore.WithMVCCStore(s.mvccStore),
+		var err error
+		s.store, err = mockstore.NewMockStore(
+			mockstore.WithClusterInspector(func(c cluster.Cluster) {
+				mockstore.BootstrapWithSingleStore(c)
+				s.cluster = c
+			}),
 		)
 		c.Assert(err, IsNil)
-		s.store = store
 		session.SetSchemaLease(0)
 		session.DisableStats4Test()
 	}
@@ -110,9 +114,10 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("create table earlyclose (id int primary key)")
 
-	// Insert 1000 rows.
+	N := 100
+	// Insert N rows.
 	var values []string
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < N; i++ {
 		values = append(values, fmt.Sprintf("(%d)", i))
 	}
 	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
@@ -125,10 +130,10 @@ func (s *seqTestSuite) TestEarlyClose(c *C) {
 	tblID := tbl.Meta().ID
 
 	// Split the table.
-	s.cluster.SplitTable(s.mvccStore, tblID, 500)
+	s.cluster.SplitTable(tblID, N/2)
 
 	ctx := context.Background()
-	for i := 0; i < 500; i++ {
+	for i := 0; i < N/2; i++ {
 		rss, err1 := tk.Se.Execute(ctx, "select * from earlyclose order by id")
 		c.Assert(err1, IsNil)
 		rs := rss[0]
@@ -168,6 +173,9 @@ func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 }
 
 func (s *seqTestSuite) TestShow(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -186,7 +194,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	row := result.Rows()[0]
 	// For issue https://github.com/pingcap/tidb/issues/1061
 	expectedRow := []interface{}{
-		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
+		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT 1,\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`),\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -206,7 +214,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	c.Check(result.Rows(), HasLen, 1)
 	row = result.Rows()[0]
 	expectedRow = []interface{}{
-		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2.0',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
+		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT 2.0,\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`),\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		c.Check(r, Equals, expectedRow[i])
 	}
@@ -268,6 +276,29 @@ func (s *seqTestSuite) TestShow(c *C) {
 		c.Check(r, Equals, expectedRow[i])
 	}
 
+	// test SHOW CREATE TABLE with invisible index
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (
+		a int,
+		b int,
+		c int UNIQUE KEY,
+		d int UNIQUE KEY,
+		index invisible_idx_b (b) invisible,
+		index (d) invisible)`)
+	excepted :=
+		"t CREATE TABLE `t` (\n" +
+			"  `a` int(11) DEFAULT NULL,\n" +
+			"  `b` int(11) DEFAULT NULL,\n" +
+			"  `c` int(11) DEFAULT NULL,\n" +
+			"  `d` int(11) DEFAULT NULL,\n" +
+			"  KEY `invisible_idx_b` (`b`) /*!80000 INVISIBLE */,\n" +
+			"  KEY `d` (`d`) /*!80000 INVISIBLE */,\n" +
+			"  UNIQUE KEY `c` (`c`),\n" +
+			"  UNIQUE KEY `d_2` (`d`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	tk.MustQuery("show create table t").Check(testkit.Rows(excepted))
+	tk.MustExec("drop table t")
+
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
 	c.Check(result.Rows(), HasLen, 1)
@@ -281,17 +312,23 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustExec(`create index idx5 using hash on show_index (id) using btree comment 'idx';`)
 	tk.MustExec(`create index idx6 using hash on show_index (id);`)
 	tk.MustExec(`create index idx7 on show_index (id);`)
+	tk.MustExec(`create index idx8 on show_index (id) visible;`)
+	tk.MustExec(`create index idx9 on show_index (id) invisible;`)
+	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testutil.RowsWithSep("|",
-		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE||",
-		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH||",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH||",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE||",
+		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|NULL",
+		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|NULL",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>|YES|HASH| |YES|NULL",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>|YES|HASH||idx|YES|NULL",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>|YES|BTREE||idx|YES|NULL",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>|YES|HASH| |YES|NULL",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>|YES|BTREE| |YES|NULL",
+		"show_index|1|idx8|1|id|A|0|<nil>|<nil>|YES|BTREE| |YES|NULL",
+		"show_index|1|idx9|1|id|A|0|<nil>|<nil>|YES|BTREE| |NO|NULL",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>|YES|BTREE| |YES|(`id` * 2 + 1)",
 	))
 
 	// For show like with escape
@@ -502,7 +539,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 	tk.MustQuery("show create table t").Check(testutil.RowsWithSep("|",
 		"t CREATE TABLE `t` (\n"+
 			"  `a` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE ( `a` ) (\n  PARTITION p0 VALUES LESS THAN (10),\n  PARTITION p1 VALUES LESS THAN (20),\n  PARTITION p2 VALUES LESS THAN (MAXVALUE)\n)",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE ( `a` ) (\n  PARTITION `p0` VALUES LESS THAN (10),\n  PARTITION `p1` VALUES LESS THAN (20),\n  PARTITION `p2` VALUES LESS THAN (MAXVALUE)\n)",
 	))
 
 	tk.MustExec(`drop table if exists t`)
@@ -525,7 +562,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 			"  `b` int(11) DEFAULT NULL,\n"+
 			"  `c` char(1) DEFAULT NULL,\n"+
 			"  `d` int(11) DEFAULT NULL\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"+"\nPARTITION BY RANGE COLUMNS(a,d,c) (\n  PARTITION p0 VALUES LESS THAN (5,10,\"ggg\"),\n  PARTITION p1 VALUES LESS THAN (10,20,\"mmm\"),\n  PARTITION p2 VALUES LESS THAN (15,30,\"sss\"),\n  PARTITION p3 VALUES LESS THAN (50,MAXVALUE,MAXVALUE)\n)",
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
 	// Test hash partition
@@ -592,6 +629,21 @@ func (s *seqTestSuite) TestShow(c *C) {
 		"c8|datetime|YES||CURRENT_TIMESTAMP|DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
 		"c9|year(4)|YES||2014|",
 	))
+
+	// Test if 'show [status|variables]' is sorted by Variable_name (#14542)
+	sqls := []string{
+		"show global status;",
+		"show session status;",
+		"show global variables",
+		"show session variables"}
+
+	for _, sql := range sqls {
+		res := tk.MustQuery(sql)
+		c.Assert(res, NotNil)
+		sorted := tk.MustQuery(sql).Sort()
+		c.Assert(sorted, NotNil)
+		c.Check(res, DeepEquals, sorted)
+	}
 }
 
 func (s *seqTestSuite) TestShowStatsHealthy(c *C) {
@@ -653,6 +705,24 @@ func (s *seqTestSuite) TestIndexDoubleReadClose(c *C) {
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
+// TestIndexMergeReaderClose checks that when a partial index worker failed to start, the goroutine doesn't
+// leak.
+func (s *seqTestSuite) TestIndexMergeReaderClose(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("create index idx1 on t(a)")
+	tk.MustExec("create index idx2 on t(b)")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr", "return"), IsNil)
+	err := tk.QueryToErr("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/startPartialIndexWorkerErr"), IsNil)
+	c.Assert(err, NotNil)
+	c.Check(checkGoroutineExists("fetchLoop"), IsFalse)
+	c.Check(checkGoroutineExists("fetchHandles"), IsFalse)
+	c.Check(checkGoroutineExists("waitPartialWorkersAndCloseFetchChan"), IsFalse)
+}
+
 func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec(`use test;`)
@@ -660,10 +730,10 @@ func (s *seqTestSuite) TestParallelHashAggClose(c *C) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	// desc select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b
-	// HashAgg_8              | 2.40  | root | group by:t.b, funcs:sum(t.a)
-	// └─Projection_9         | 3.00  | root | cast(test.t.a), test.t.b
-	//   └─TableReader_11     | 3.00  | root | data:TableScan_10
-	//     └─TableScan_10     | 3.00  | cop  | table:t, range:[-inf,+inf], keep order:fa$se, stats:pseudo |
+	// HashAgg_8                | 2.40  | root       | group by:t.b, funcs:sum(t.a)
+	// └─Projection_9           | 3.00  | root       | cast(test.t.a), test.t.b
+	//   └─TableReader_11       | 3.00  | root       | data:TableFullScan_10
+	//     └─TableFullScan_10   | 3.00  | cop[tikv]  | table:t, keep order:fa$se, stats:pseudo |
 
 	// Goroutine should not leak when error happen.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/parallelHashAggError", `return(true)`), IsNil)
@@ -709,6 +779,11 @@ func checkGoroutineExists(keyword string) bool {
 }
 
 func (s *seqTestSuite) TestAdminShowNextID(c *C) {
+	HelperTestAdminShowNextID(c, s, `admin show `)
+	HelperTestAdminShowNextID(c, s, `show table `)
+}
+
+func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
@@ -719,39 +794,115 @@ func (s *seqTestSuite) TestAdminShowNextID(c *C) {
 	defer autoid.SetStep(autoIDStep)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t,tt")
 	tk.MustExec("create table t(id int, c int)")
 	// Start handle is 1.
-	r := tk.MustQuery("admin show t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 1"))
+	r := tk.MustQuery(str + " t next_row_id")
+	r.Check(testkit.Rows("test t _tidb_rowid 1 AUTO_INCREMENT"))
 	// Row ID is step + 1.
 	tk.MustExec("insert into t values(1, 1)")
-	r = tk.MustQuery("admin show t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 11"))
+	r = tk.MustQuery(str + " t next_row_id")
+	r.Check(testkit.Rows("test t _tidb_rowid 11 AUTO_INCREMENT"))
 	// Row ID is original + step.
 	for i := 0; i < int(step); i++ {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
-	r = tk.MustQuery("admin show t next_row_id")
-	r.Check(testkit.Rows("test t _tidb_rowid 21"))
+	r = tk.MustQuery(str + " t next_row_id")
+	r.Check(testkit.Rows("test t _tidb_rowid 21 AUTO_INCREMENT"))
+	tk.MustExec("drop table t")
 
 	// test for a table with the primary key
 	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
 	// Start handle is 1.
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test tt id 1"))
+	r = tk.MustQuery(str + " tt next_row_id")
+	r.Check(testkit.Rows("test tt id 1 AUTO_INCREMENT"))
 	// After rebasing auto ID, row ID is 20 + step + 1.
 	tk.MustExec("insert into tt values(20, 1)")
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test tt id 31"))
+	r = tk.MustQuery(str + " tt next_row_id")
+	r.Check(testkit.Rows("test tt id 31 AUTO_INCREMENT"))
 	// test for renaming the table
+	tk.MustExec("drop database if exists test1")
 	tk.MustExec("create database test1")
 	tk.MustExec("rename table test.tt to test1.tt")
 	tk.MustExec("use test1")
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31"))
+	r = tk.MustQuery(str + " tt next_row_id")
+	r.Check(testkit.Rows("test1 tt id 31 AUTO_INCREMENT"))
 	tk.MustExec("insert test1.tt values ()")
-	r = tk.MustQuery("admin show tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 41"))
+	r = tk.MustQuery(str + " tt next_row_id")
+	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
+	tk.MustExec("drop table tt")
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
+
+	// Test for a table with auto_random primary key.
+	tk.MustExec("create table t3(id bigint primary key auto_random(5), c int)")
+	// Start handle is 1.
+	r = tk.MustQuery(str + " t3 next_row_id")
+	r.Check(testkit.Rows("test1 t3 id 1 AUTO_RANDOM"))
+	// Insert some rows.
+	tk.MustExec("insert into t3 (c) values (1), (2);")
+	r = tk.MustQuery(str + " t3 next_row_id")
+	r.Check(testkit.Rows("test1 t3 id 11 AUTO_RANDOM"))
+	// Rebase.
+	tk.MustExec("insert into t3 (id, c) values (103, 3);")
+	r = tk.MustQuery(str + " t3 next_row_id")
+	r.Check(testkit.Rows("test1 t3 id 114 AUTO_RANDOM"))
+
+	// Test for a sequence.
+	tk.MustExec("create sequence seq1 start 15 cache 57")
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  15 SEQUENCE"))
+	r = tk.MustQuery("select nextval(seq1)")
+	r.Check(testkit.Rows("15"))
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r = tk.MustQuery("select nextval(seq1)")
+	r.Check(testkit.Rows("16"))
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  72 SEQUENCE"))
+	r = tk.MustQuery("select setval(seq1, 96)")
+	r.Check(testkit.Rows("96"))
+	r = tk.MustQuery(str + " seq1 next_row_id")
+	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 AUTO_INCREMENT", "test1 seq1  97 SEQUENCE"))
+}
+
+func (s *seqTestSuite) TestNoHistoryWhenDisableRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists history")
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("set @@autocommit = 0")
+
+	// retry_limit = 0 will not add history.
+	tk.MustExec("set @@tidb_retry_limit = 0")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
+
+	// Disable auto_retry will add history for auto committed only
+	tk.MustExec("set @@autocommit = 1")
+	tk.MustExec("set @@tidb_retry_limit = 10")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 1")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `return(true)`), IsNil)
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
+	tk.MustExec("begin")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 0)
+	tk.MustExec("commit")
+
+	// Enable auto_retry will add history for both.
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/keepHistory", `return(true)`), IsNil)
+	tk.MustExec("insert history values (1)")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/keepHistory"), IsNil)
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 1)
+	tk.MustExec("begin")
+	tk.MustExec("insert history values (1)")
+	c.Assert(session.GetHistory(tk.Se).Count(), Equals, 2)
+	tk.MustExec("commit")
 }
 
 func (s *seqTestSuite) TestPrepareMaxParamCountCheck(c *C) {
@@ -845,6 +996,13 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
+	// Test tidb_batch_insert could not work if enable-batch-dml is disabled.
+	tk.MustExec("set @@session.tidb_batch_insert=1;")
+	_, err = tk.Exec("insert into batch_insert (c) select * from batch_insert;")
+	c.Assert(err, NotNil)
+	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue)
+	tk.MustExec("set @@session.tidb_batch_insert=0;")
+
 	// for on duplicate key
 	_, err = tk.Exec(`insert into batch_insert_on_duplicate select * from batch_insert_on_duplicate as tt
 		on duplicate key update batch_insert_on_duplicate.id=batch_insert_on_duplicate.id+1000;`)
@@ -852,6 +1010,11 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	c.Assert(kv.ErrTxnTooLarge.Equal(err), IsTrue, Commentf("%v", err))
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableBatchDML = true
+	})
 
 	// Change to batch inset mode and batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
@@ -963,8 +1126,8 @@ func (s *seqTestSuite1) SetUpSuite(c *C) {
 	s.cli = cli
 
 	var err error
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
+	s.store, err = mockstore.NewMockStore(
+		mockstore.WithClientHijacker(hijackClient),
 	)
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
@@ -1009,9 +1172,10 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	// Insert some data to make sure plan build IndexLookup for t.
 	tk.MustExec("insert into t values (1), (2)")
 
-	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
-	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
-	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.ExpensiveThreshold = 0
+	})
 
 	cli.setCheckPriority(pb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")
@@ -1031,12 +1195,76 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	cli.setCheckPriority(pb.CommandPri_Low)
 	tk.MustQuery("select LOW_PRIORITY id from t where id = 1")
 
+	cli.setCheckPriority(pb.CommandPri_High)
+	tk.MustExec("set tidb_force_priority = 'HIGH_PRIORITY'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("3"))
+	tk.MustExec("update t set id = id + 1")
+	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+
+	cli.setCheckPriority(pb.CommandPri_Low)
+	tk.MustExec("set tidb_force_priority = 'LOW_PRIORITY'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("4"))
+	tk.MustExec("update t set id = id + 1")
+	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+
+	cli.setCheckPriority(pb.CommandPri_Normal)
+	tk.MustExec("set tidb_force_priority = 'DELAYED'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("5"))
+	tk.MustExec("update t set id = id + 1")
+	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+
+	cli.setCheckPriority(pb.CommandPri_Low)
+	tk.MustExec("set tidb_force_priority = 'NO_PRIORITY'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("6"))
+	tk.MustExec("update t set id = id + 1")
+	tk.MustQuery("select v from t1 where id = 0 or id = 1").Check(testkit.Rows("0", "1"))
+
 	cli.mu.Lock()
 	cli.mu.checkPrio = false
 	cli.mu.Unlock()
 }
 
-func (s *seqTestSuite) TestAutoIDInRetry(c *C) {
+func (s *seqTestSuite) TestShowForNewCollations(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	expectRows := testkit.Rows(
+		"ascii_bin ascii 65 Yes Yes 1",
+		"binary binary 63 Yes Yes 1",
+		"latin1_bin latin1 47 Yes Yes 1",
+		"utf8_bin utf8 83 Yes Yes 1",
+		"utf8_general_ci utf8 33  Yes 1",
+		"utf8_unicode_ci utf8 192  Yes 1",
+		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
+		"utf8mb4_general_ci utf8mb4 45  Yes 1",
+		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
+	)
+	tk.MustQuery("show collation").Check(expectRows)
+	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
+}
+
+func (s *seqTestSuite) TestForbidUnsupportedCollations(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	mustGetUnsupportedCollation := func(sql string, coll string) {
+		tk.MustGetErrMsg(sql, fmt.Sprintf("[ddl:1273]Unsupported collation when new collation is enabled: '%s'", coll))
+	}
+
+	mustGetUnsupportedCollation("select 'a' collate utf8_roman_ci", "utf8_roman_ci")
+	mustGetUnsupportedCollation("select cast('a' as char) collate utf8_roman_ci", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set names utf8 collate utf8_roman_ci", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set session collation_server = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set session collation_database = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set session collation_connection = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set global collation_server = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set global collation_database = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set global collation_connection = 'utf8_roman_ci'", "utf8_roman_ci")
+}
+
+func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int not null auto_increment primary key)")
@@ -1047,12 +1275,108 @@ func (s *seqTestSuite) TestAutoIDInRetry(c *C) {
 	tk.MustExec("insert into t values (),()")
 	tk.MustExec("insert into t values ()")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID", `return(true)`), IsNil)
 	tk.MustExec("commit")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoID"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoIncID"), IsNil)
 
 	tk.MustExec("insert into t values ()")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
+
+func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create database if not exists auto_random_retry")
+	tk.MustExec("use auto_random_retry")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id bigint auto_random(3) primary key)")
+
+	extractMaskedOrderedHandles := func() []int64 {
+		handles, err := ddltestutil.ExtractAllTableHandles(tk.Se, "auto_random_retry", "t")
+		c.Assert(err, IsNil)
+		return testutil.ConfigTestUtils.MaskSortHandles(handles, 3, mysql.TypeLong)
+	}
+
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("set @@tidb_retry_limit = 10")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values (),()")
+	tk.MustExec("insert into t values ()")
+
+	session.ResetMockAutoRandIDRetryCount(5)
+	fpName := "github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"
+	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
+	tk.MustExec("commit")
+	c.Assert(failpoint.Disable(fpName), IsNil)
+	tk.MustExec("insert into t values ()")
+	maskedHandles := extractMaskedOrderedHandles()
+	c.Assert(maskedHandles, DeepEquals, []int64{1, 2, 3, 4, 5})
+
+	session.ResetMockAutoRandIDRetryCount(11)
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	c.Assert(failpoint.Enable(fpName, `return(true)`), IsNil)
+	// Insertion failure will skip the 6 in retryInfo.
+	tk.MustGetErrCode("commit", errno.ErrTxnRetryable)
+	c.Assert(failpoint.Disable(fpName), IsNil)
+
+	tk.MustExec("insert into t values ()")
+	maskedHandles = extractMaskedOrderedHandles()
+	c.Assert(maskedHandles, DeepEquals, []int64{1, 2, 3, 4, 5, 7})
+}
+
+func (s *seqTestSuite) TestAutoRandRecoverTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	tk.MustExec("create database if not exists test_recover")
+	tk.MustExec("use test_recover")
+	tk.MustExec("drop table if exists t_recover_auto_rand")
+	defer func(originGC bool) {
+		if originGC {
+			ddl.EmulatorGCEnable()
+		} else {
+			ddl.EmulatorGCDisable()
+		}
+	}(ddl.IsEmulatorGCEnable())
+
+	// Disable emulator GC.
+	// Otherwise emulator GC will delete table record as soon as possible after execute drop table ddl.
+	ddl.EmulatorGCDisable()
+	gcTimeFormat := "20060102-15:04:05 -0700 MST"
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = '%[1]s'`
+
+	// Set GC safe point.
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	err := gcutil.EnableGC(tk.Se)
+	c.Assert(err, IsNil)
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+	const autoRandIDStep = 5000
+	stp := autoid.GetStep()
+	autoid.SetStep(autoRandIDStep)
+	defer autoid.SetStep(stp)
+
+	// Check rebase auto_random id.
+	tk.MustExec("create table t_recover_auto_rand (a bigint auto_random(5) primary key);")
+	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
+	tk.MustExec("drop table t_recover_auto_rand")
+	tk.MustExec("recover table t_recover_auto_rand")
+	tk.MustExec("insert into t_recover_auto_rand values (),(),()")
+	hs, err := ddltestutil.ExtractAllTableHandles(tk.Se, "test_recover", "t_recover_auto_rand")
+	c.Assert(err, IsNil)
+	ordered := testutil.ConfigTestUtils.MaskSortHandles(hs, 5, mysql.TypeLong)
+
+	c.Assert(ordered, DeepEquals, []int64{1, 2, 3, autoRandIDStep + 1, autoRandIDStep + 2, autoRandIDStep + 3})
 }
 
 func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
@@ -1081,4 +1405,19 @@ func (s *seqTestSuite) TestMaxDeltaSchemaCount(c *C) {
 	tk.MustExec("use test")
 	c.Assert(variable.GetMaxDeltaSchemaCount(), Equals, int64(2048))
 	tk.MustQuery("select @@global.tidb_max_delta_schema_count").Check(testkit.Rows("2048"))
+}
+
+func (s *seqTestSuite) TestOOMPanicInHashJoinWhenFetchBuildRows(c *C) {
+	fpName := "github.com/pingcap/tidb/executor/errorFetchBuildSideRowsMockOOMPanic"
+	c.Assert(failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(c1 int, c2 int)")
+	tk.MustExec("insert into t values(1,1),(2,2)")
+	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
+	c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 }

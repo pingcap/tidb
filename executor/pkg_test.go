@@ -15,8 +15,12 @@ import (
 )
 
 var _ = Suite(&pkgTestSuite{})
+var _ = SerialSuites(&pkgTestSerialSuite{})
 
 type pkgTestSuite struct {
+}
+
+type pkgTestSerialSuite struct {
 }
 
 func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
@@ -51,7 +55,8 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 	innerFilter := outerFilter.Clone()
 	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
 	joiner := newJoiner(sctx, plannercore.InnerJoin, false,
-		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter}, retTypes(outerExec), retTypes(innerExec))
+		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter},
+		retTypes(outerExec), retTypes(innerExec), nil)
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(sctx, joinSchema, nil),
@@ -60,6 +65,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		outerFilter:  []expression.Expression{outerFilter},
 		innerFilter:  []expression.Expression{innerFilter},
 		joiner:       joiner,
+		ctx:          sctx,
 	}
 	join.innerList = chunk.NewList(retTypes(innerExec), innerExec.initCap, innerExec.maxChunkSize)
 	join.innerChunk = newFirstChunk(innerExec)

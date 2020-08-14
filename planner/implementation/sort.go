@@ -31,9 +31,34 @@ func NewSortImpl(sort *plannercore.PhysicalSort) *SortImpl {
 }
 
 // CalcCost calculates the cost of the sort Implementation.
-func (impl *SortImpl) CalcCost(outCount float64, childCosts []float64, children ...*memo.Group) float64 {
-	cnt := math.Min(children[0].Prop.Stats.RowCount, impl.plan.GetChildReqProps(0).ExpectedCnt)
+func (impl *SortImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
+	cnt := math.Min(children[0].GetPlan().Stats().RowCount, impl.plan.GetChildReqProps(0).ExpectedCnt)
 	sort := impl.plan.(*plannercore.PhysicalSort)
-	impl.cost = sort.GetCost(cnt) + childCosts[0]
+	impl.cost = sort.GetCost(cnt, children[0].GetPlan().Schema()) + children[0].GetCost()
 	return impl.cost
+}
+
+// AttachChildren implements Implementation AttachChildren interface.
+func (impl *SortImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	sort := impl.plan.(*plannercore.PhysicalSort)
+	sort.SetChildren(children[0].GetPlan())
+	// When the Sort orderByItems contain ScalarFunction, we need
+	// to inject two Projections below and above the Sort.
+	impl.plan = plannercore.InjectProjBelowSort(sort, sort.ByItems)
+	return impl
+}
+
+// NominalSortImpl is the implementation of NominalSort.
+type NominalSortImpl struct {
+	baseImpl
+}
+
+// AttachChildren implements Implementation AttachChildren interface.
+func (impl *NominalSortImpl) AttachChildren(children ...memo.Implementation) memo.Implementation {
+	return children[0]
+}
+
+// NewNominalSortImpl creates a new NominalSort Implementation.
+func NewNominalSortImpl(sort *plannercore.NominalSort) *NominalSortImpl {
+	return &NominalSortImpl{baseImpl{plan: sort}}
 }

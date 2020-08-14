@@ -31,6 +31,7 @@ const (
 	typePut mvccValueType = iota
 	typeDelete
 	typeRollback
+	typeLock
 )
 
 type mvccValue struct {
@@ -188,25 +189,21 @@ func (mh *marshalHelper) ReadSlice(r *bytes.Buffer, slice *[]byte) {
 	*slice = data
 }
 
-func newEntry(key MvccKey) *mvccEntry {
-	return &mvccEntry{
-		key: key,
-	}
-}
-
 // lockErr returns ErrLocked.
 // Note that parameter key is raw key, while key in ErrLocked is mvcc key.
 func (l *mvccLock) lockErr(key []byte) error {
 	return &ErrLocked{
-		Key:     mvccEncode(key, lockVer),
-		Primary: l.primary,
-		StartTS: l.startTS,
-		TTL:     l.ttl,
-		TxnSize: l.txnSize,
+		Key:         mvccEncode(key, lockVer),
+		Primary:     l.primary,
+		StartTS:     l.startTS,
+		ForUpdateTS: l.forUpdateTS,
+		TTL:         l.ttl,
+		TxnSize:     l.txnSize,
+		LockType:    l.op,
 	}
 }
 
-func (l *mvccLock) check(ts uint64, key []byte) (uint64, error) {
+func (l *mvccLock) check(ts uint64, key []byte, resolvedLocks []uint64) (uint64, error) {
 	// ignore when ts is older than lock or lock's type is Lock.
 	// Pessimistic lock doesn't block read.
 	if l.startTS > ts || l.op == kvrpcpb.Op_Lock || l.op == kvrpcpb.Op_PessimisticLock {
@@ -216,6 +213,12 @@ func (l *mvccLock) check(ts uint64, key []byte) (uint64, error) {
 	if ts == math.MaxUint64 && bytes.Equal(l.primary, key) {
 		return l.startTS - 1, nil
 	}
+	// Skip lock if the lock is resolved.
+	for _, resolved := range resolvedLocks {
+		if l.startTS == resolved {
+			return ts, nil
+		}
+	}
 	return 0, l.lockErr(key)
 }
 
@@ -223,16 +226,16 @@ func (e *mvccEntry) Less(than btree.Item) bool {
 	return bytes.Compare(e.key, than.(*mvccEntry).key) < 0
 }
 
-func (e *mvccEntry) Get(ts uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error) {
+func (e *mvccEntry) Get(ts uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) ([]byte, error) {
 	if isoLevel == kvrpcpb.IsolationLevel_SI && e.lock != nil {
 		var err error
-		ts, err = e.lock.check(ts, e.key.Raw())
+		ts, err = e.lock.check(ts, e.key.Raw(), resolvedLocks)
 		if err != nil {
 			return nil, err
 		}
 	}
 	for _, v := range e.values {
-		if v.commitTS <= ts && v.valueType != typeRollback {
+		if v.commitTS <= ts && v.valueType != typeRollback && v.valueType != typeLock {
 			return v.value, nil
 		}
 	}
@@ -250,11 +253,11 @@ func (e *rawEntry) Less(than btree.Item) bool {
 
 // MVCCStore is a mvcc key-value storage.
 type MVCCStore interface {
-	Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) ([]byte, error)
-	Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
-	ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
-	BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel) []Pair
-	PessimisticLock(mutations []*kvrpcpb.Mutation, primary []byte, startTS, forUpdateTS uint64, ttl uint64) []error
+	Get(key []byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) ([]byte, error)
+	Scan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) []Pair
+	ReverseScan(startKey, endKey []byte, limit int, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) []Pair
+	BatchGet(ks [][]byte, startTS uint64, isoLevel kvrpcpb.IsolationLevel, resolvedLocks []uint64) []Pair
+	PessimisticLock(req *kvrpcpb.PessimisticLockRequest) *kvrpcpb.PessimisticLockResponse
 	PessimisticRollback(keys [][]byte, startTS, forUpdateTS uint64) []error
 	Prewrite(req *kvrpcpb.PrewriteRequest) []error
 	Commit(keys [][]byte, startTS, commitTS uint64) error
@@ -266,7 +269,7 @@ type MVCCStore interface {
 	BatchResolveLock(startKey, endKey []byte, txnInfos map[uint64]uint64) error
 	GC(startKey, endKey []byte, safePoint uint64) error
 	DeleteRange(startKey, endKey []byte) error
-	CheckTxnStatus(primaryKey []byte, lockTS uint64, startTS, currentTS uint64) (ttl, commitTS uint64, err error)
+	CheckTxnStatus(primaryKey []byte, lockTS uint64, startTS, currentTS uint64, rollbackIfNotFound bool) (uint64, uint64, kvrpcpb.Action, error)
 	Close() error
 }
 

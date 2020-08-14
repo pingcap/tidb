@@ -16,6 +16,7 @@ package expression
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -26,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = check.Suite(&testUtilSuite{})
@@ -47,8 +48,9 @@ func (s *testUtilSuite) checkPanic(f func()) (ret bool) {
 
 func (s *testUtilSuite) TestBaseBuiltin(c *check.C) {
 	ctx := mock.NewContext()
-	bf := newBaseBuiltinFuncWithTp(ctx, nil, types.ETTimestamp)
-	_, _, err := bf.evalInt(chunk.Row{})
+	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
+	c.Assert(err, check.IsNil)
+	_, _, err = bf.evalInt(chunk.Row{})
 	c.Assert(err, check.NotNil)
 	_, _, err = bf.evalReal(chunk.Row{})
 	c.Assert(err, check.NotNil)
@@ -101,13 +103,13 @@ func (s *testUtilSuite) TestClone(c *check.C) {
 		&builtinTiDBVersionSig{}, &builtinRowCountSig{}, &builtinJSONTypeSig{}, &builtinJSONQuoteSig{}, &builtinJSONUnquoteSig{},
 		&builtinJSONArraySig{}, &builtinJSONArrayAppendSig{}, &builtinJSONObjectSig{}, &builtinJSONExtractSig{}, &builtinJSONSetSig{},
 		&builtinJSONInsertSig{}, &builtinJSONReplaceSig{}, &builtinJSONRemoveSig{}, &builtinJSONMergeSig{}, &builtinJSONContainsSig{},
-		&builtinJSONDepthSig{}, &builtinJSONSearchSig{}, &builtinJSONKeysSig{}, &builtinJSONKeys2ArgsSig{}, &builtinJSONLengthSig{},
-		&builtinLikeSig{}, &builtinRegexpBinarySig{}, &builtinRegexpSig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
+		&builtinJSONStorageSizeSig{}, &builtinJSONDepthSig{}, &builtinJSONSearchSig{}, &builtinJSONKeysSig{}, &builtinJSONKeys2ArgsSig{}, &builtinJSONLengthSig{},
+		&builtinLikeSig{}, &builtinRegexpSig{}, &builtinRegexpUTF8Sig{}, &builtinAbsRealSig{}, &builtinAbsIntSig{},
 		&builtinAbsUIntSig{}, &builtinAbsDecSig{}, &builtinRoundRealSig{}, &builtinRoundIntSig{}, &builtinRoundDecSig{},
 		&builtinRoundWithFracRealSig{}, &builtinRoundWithFracIntSig{}, &builtinRoundWithFracDecSig{}, &builtinCeilRealSig{}, &builtinCeilIntToDecSig{},
 		&builtinCeilIntToIntSig{}, &builtinCeilDecToIntSig{}, &builtinCeilDecToDecSig{}, &builtinFloorRealSig{}, &builtinFloorIntToDecSig{},
 		&builtinFloorIntToIntSig{}, &builtinFloorDecToIntSig{}, &builtinFloorDecToDecSig{}, &builtinLog1ArgSig{}, &builtinLog2ArgsSig{},
-		&builtinLog2Sig{}, &builtinLog10Sig{}, &builtinRandSig{}, &builtinRandWithSeedSig{}, &builtinPowSig{},
+		&builtinLog2Sig{}, &builtinLog10Sig{}, &builtinRandSig{}, &builtinRandWithSeedFirstGenSig{}, &builtinPowSig{},
 		&builtinConvSig{}, &builtinCRC32Sig{}, &builtinSignSig{}, &builtinSqrtSig{}, &builtinAcosSig{},
 		&builtinAsinSig{}, &builtinAtan1ArgSig{}, &builtinAtan2ArgsSig{}, &builtinCosSig{}, &builtinCotSig{},
 		&builtinDegreesSig{}, &builtinExpSig{}, &builtinPISig{}, &builtinRadiansSig{}, &builtinSinSig{},
@@ -125,18 +127,18 @@ func (s *testUtilSuite) TestClone(c *check.C) {
 		&builtinInJSONSig{}, &builtinRowSig{}, &builtinSetVarSig{}, &builtinGetVarSig{}, &builtinLockSig{},
 		&builtinReleaseLockSig{}, &builtinValuesIntSig{}, &builtinValuesRealSig{}, &builtinValuesDecimalSig{}, &builtinValuesStringSig{},
 		&builtinValuesTimeSig{}, &builtinValuesDurationSig{}, &builtinValuesJSONSig{}, &builtinBitCountSig{}, &builtinGetParamStringSig{},
-		&builtinLengthSig{}, &builtinASCIISig{}, &builtinConcatSig{}, &builtinConcatWSSig{}, &builtinLeftBinarySig{},
-		&builtinLeftSig{}, &builtinRightBinarySig{}, &builtinRightSig{}, &builtinRepeatSig{}, &builtinLowerSig{},
-		&builtinReverseSig{}, &builtinReverseBinarySig{}, &builtinSpaceSig{}, &builtinUpperSig{}, &builtinStrcmpSig{},
-		&builtinReplaceSig{}, &builtinConvertSig{}, &builtinSubstringBinary2ArgsSig{}, &builtinSubstringBinary3ArgsSig{}, &builtinSubstring2ArgsSig{},
-		&builtinSubstring3ArgsSig{}, &builtinSubstringIndexSig{}, &builtinLocate2ArgsSig{}, &builtinLocate3ArgsSig{}, &builtinLocateBinary2ArgsSig{},
-		&builtinLocateBinary3ArgsSig{}, &builtinHexStrArgSig{}, &builtinHexIntArgSig{}, &builtinUnHexSig{}, &builtinTrim1ArgSig{},
-		&builtinTrim2ArgsSig{}, &builtinTrim3ArgsSig{}, &builtinLTrimSig{}, &builtinRTrimSig{}, &builtinLpadSig{},
-		&builtinLpadBinarySig{}, &builtinRpadSig{}, &builtinRpadBinarySig{}, &builtinBitLengthSig{}, &builtinCharSig{},
-		&builtinCharLengthSig{}, &builtinFindInSetSig{}, &builtinMakeSetSig{}, &builtinOctIntSig{}, &builtinOctStringSig{},
+		&builtinLengthSig{}, &builtinASCIISig{}, &builtinConcatSig{}, &builtinConcatWSSig{}, &builtinLeftSig{},
+		&builtinLeftUTF8Sig{}, &builtinRightSig{}, &builtinRightUTF8Sig{}, &builtinRepeatSig{}, &builtinLowerSig{},
+		&builtinReverseUTF8Sig{}, &builtinReverseSig{}, &builtinSpaceSig{}, &builtinUpperSig{}, &builtinStrcmpSig{},
+		&builtinReplaceSig{}, &builtinConvertSig{}, &builtinSubstring2ArgsSig{}, &builtinSubstring3ArgsSig{}, &builtinSubstring2ArgsUTF8Sig{},
+		&builtinSubstring3ArgsUTF8Sig{}, &builtinSubstringIndexSig{}, &builtinLocate2ArgsUTF8Sig{}, &builtinLocate3ArgsUTF8Sig{}, &builtinLocate2ArgsSig{},
+		&builtinLocate3ArgsSig{}, &builtinHexStrArgSig{}, &builtinHexIntArgSig{}, &builtinUnHexSig{}, &builtinTrim1ArgSig{},
+		&builtinTrim2ArgsSig{}, &builtinTrim3ArgsSig{}, &builtinLTrimSig{}, &builtinRTrimSig{}, &builtinLpadUTF8Sig{},
+		&builtinLpadSig{}, &builtinRpadUTF8Sig{}, &builtinRpadSig{}, &builtinBitLengthSig{}, &builtinCharSig{},
+		&builtinCharLengthUTF8Sig{}, &builtinFindInSetSig{}, &builtinMakeSetSig{}, &builtinOctIntSig{}, &builtinOctStringSig{},
 		&builtinOrdSig{}, &builtinQuoteSig{}, &builtinBinSig{}, &builtinEltSig{}, &builtinExportSet3ArgSig{},
 		&builtinExportSet4ArgSig{}, &builtinExportSet5ArgSig{}, &builtinFormatWithLocaleSig{}, &builtinFormatSig{}, &builtinFromBase64Sig{},
-		&builtinToBase64Sig{}, &builtinInsertBinarySig{}, &builtinInsertSig{}, &builtinInstrSig{}, &builtinInstrBinarySig{},
+		&builtinToBase64Sig{}, &builtinInsertSig{}, &builtinInsertUTF8Sig{}, &builtinInstrUTF8Sig{}, &builtinInstrSig{},
 		&builtinFieldRealSig{}, &builtinFieldIntSig{}, &builtinFieldStringSig{}, &builtinDateSig{}, &builtinDateLiteralSig{},
 		&builtinDateDiffSig{}, &builtinNullTimeDiffSig{}, &builtinTimeStringTimeDiffSig{}, &builtinDurationStringTimeDiffSig{}, &builtinDurationDurationTimeDiffSig{},
 		&builtinStringTimeTimeDiffSig{}, &builtinStringDurationTimeDiffSig{}, &builtinStringStringTimeDiffSig{}, &builtinTimeTimeTimeDiffSig{}, &builtinDateFormatSig{},
@@ -254,15 +256,14 @@ func (s testUtilSuite) TestGetStrIntFromConstant(c *check.C) {
 }
 
 func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
-	corCol1 := &CorrelatedColumn{Data: &One.Value}
+	corCol1 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol1.RetType = types.NewFieldType(mysql.TypeLonglong)
-	corCol2 := &CorrelatedColumn{Data: &One.Value}
+	corCol2 := &CorrelatedColumn{Data: &NewOne().Value}
 	corCol2.RetType = types.NewFieldType(mysql.TypeLonglong)
 	cast := BuildCastFunction(ctx, corCol1, types.NewFieldType(mysql.TypeLonglong))
 	plus := newFunction(ast.Plus, cast, corCol2)
-	plus2 := newFunction(ast.Plus, plus, One)
+	plus2 := newFunction(ast.Plus, plus, NewOne())
 	ans1 := &Constant{Value: types.NewIntDatum(3), RetType: types.NewFieldType(mysql.TypeLonglong)}
 	ret, err := SubstituteCorCol2Constant(plus2)
 	c.Assert(err, check.IsNil)
@@ -280,22 +281,50 @@ func (s *testUtilSuite) TestSubstituteCorCol2Constant(c *check.C) {
 }
 
 func (s *testUtilSuite) TestPushDownNot(c *check.C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	// !((a=1||a=1)&&a=1)
-	eqFunc := newFunction(ast.EQ, col, One)
+	eqFunc := newFunction(ast.EQ, col, NewOne())
 	orFunc := newFunction(ast.LogicOr, eqFunc, eqFunc)
 	andFunc := newFunction(ast.LogicAnd, orFunc, eqFunc)
 	notFunc := newFunction(ast.UnaryNot, andFunc)
 	// (a!=1&&a!=1)||a=1
-	neFunc := newFunction(ast.NE, col, One)
+	neFunc := newFunction(ast.NE, col, NewOne())
 	andFunc2 := newFunction(ast.LogicAnd, neFunc, neFunc)
 	orFunc2 := newFunction(ast.LogicOr, andFunc2, neFunc)
 	notFuncCopy := notFunc.Clone()
-	ret := PushDownNot(ctx, notFunc, false)
+	ret := PushDownNot(ctx, notFunc)
 	c.Assert(ret.Equal(ctx, orFunc2), check.IsTrue)
 	c.Assert(notFunc.Equal(ctx, notFuncCopy), check.IsTrue)
+
+	// issue 15725
+	// (not not a) should be optimized to (a is true)
+	notFunc = newFunction(ast.UnaryNot, col)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, col)), check.IsTrue)
+
+	// (not not (a+1)) should be optimized to (a+1 is true)
+	plusFunc := newFunction(ast.Plus, col, NewOne())
+	notFunc = newFunction(ast.UnaryNot, plusFunc)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, plusFunc)), check.IsTrue)
+
+	// (not not not a) should be optimized to (not (a is true))
+	notFunc = newFunction(ast.UnaryNot, col)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruth, col))), check.IsTrue)
+
+	// (not not not not a) should be optimized to (a is true)
+	notFunc = newFunction(ast.UnaryNot, col)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	notFunc = newFunction(ast.UnaryNot, notFunc)
+	ret = PushDownNot(ctx, notFunc)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, col)), check.IsTrue)
 }
 
 func (s *testUtilSuite) TestFilter(c *check.C) {
@@ -321,6 +350,48 @@ func (s *testUtilSuite) TestFilterOutInPlace(c *check.C) {
 	c.Assert(remained[1].(*ScalarFunction).FuncName.L, check.Equals, "eq")
 	c.Assert(len(filtered), check.Equals, 1)
 	c.Assert(filtered[0].(*ScalarFunction).FuncName.L, check.Equals, "or")
+}
+
+func (s *testUtilSuite) TestHashGroupKey(c *check.C) {
+	ctx := mock.NewContext()
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	for i := 0; i < len(tNames); i++ {
+		ft := eType2FieldType(eTypes[i])
+		if eTypes[i] == types.ETDecimal {
+			ft.Flen = 0
+		}
+		colExpr := &Column{Index: 0, RetType: ft}
+		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+		fillColumnWithGener(eTypes[i], input, 0, nil)
+		colBuf := chunk.NewColumn(ft, 1024)
+		bufs := make([][]byte, 1024)
+		for j := 0; j < 1024; j++ {
+			bufs[j] = bufs[j][:0]
+		}
+		var err error
+		err = EvalExpr(ctx, colExpr, input, colBuf)
+		if err != nil {
+			c.Fatal(err)
+		}
+		if bufs, err = codec.HashGroupKey(sc, 1024, colBuf, bufs, ft); err != nil {
+			c.Fatal(err)
+		}
+
+		var buf []byte
+		for j := 0; j < input.NumRows(); j++ {
+			d, err := colExpr.Eval(input.GetRow(j))
+			if err != nil {
+				c.Fatal(err)
+			}
+			buf, err = codec.EncodeValue(sc, buf[:0], d)
+			if err != nil {
+				c.Fatal(err)
+			}
+			c.Assert(string(bufs[j]), check.Equals, string(buf))
+		}
+	}
 }
 
 func isLogicOrFunction(e Expression) bool {
@@ -420,7 +491,7 @@ func (m *MockExpr) MarshalJSON() ([]byte, error)            { return nil, nil }
 func (m *MockExpr) Eval(row chunk.Row) (types.Datum, error) { return types.NewDatum(m.i), m.err }
 func (m *MockExpr) EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error) {
 	if x, ok := m.i.(int64); ok {
-		return int64(x), false, m.err
+		return x, false, m.err
 	}
 	return 0, m.i == nil, m.err
 }
@@ -432,7 +503,7 @@ func (m *MockExpr) EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64,
 }
 func (m *MockExpr) EvalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error) {
 	if x, ok := m.i.(string); ok {
-		return string(x), false, m.err
+		return x, false, m.err
 	}
 	return "", m.i == nil, m.err
 }
@@ -446,7 +517,7 @@ func (m *MockExpr) EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Ti
 	if x, ok := m.i.(types.Time); ok {
 		return x, false, m.err
 	}
-	return types.Time{}, m.i == nil, m.err
+	return types.ZeroTime, m.i == nil, m.err
 }
 func (m *MockExpr) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error) {
 	if x, ok := m.i.(types.Duration); ok {
@@ -460,14 +531,27 @@ func (m *MockExpr) EvalJSON(ctx sessionctx.Context, row chunk.Row) (val json.Bin
 	}
 	return json.BinaryJSON{}, m.i == nil, m.err
 }
+func (m *MockExpr) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
+	return types.Datum{}, m.err
+}
 func (m *MockExpr) GetType() *types.FieldType                         { return m.t }
 func (m *MockExpr) Clone() Expression                                 { return nil }
 func (m *MockExpr) Equal(ctx sessionctx.Context, e Expression) bool   { return false }
 func (m *MockExpr) IsCorrelated() bool                                { return false }
-func (m *MockExpr) ConstItem() bool                                   { return false }
+func (m *MockExpr) ConstItem(_ *stmtctx.StatementContext) bool        { return false }
 func (m *MockExpr) Decorrelate(schema *Schema) Expression             { return m }
 func (m *MockExpr) ResolveIndices(schema *Schema) (Expression, error) { return m, nil }
 func (m *MockExpr) resolveIndices(schema *Schema) error               { return nil }
 func (m *MockExpr) ExplainInfo() string                               { return "" }
+func (m *MockExpr) ExplainNormalizedInfo() string                     { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte      { return nil }
 func (m *MockExpr) Vectorized() bool                                  { return false }
+func (m *MockExpr) SupportReverseEval() bool                          { return false }
+func (m *MockExpr) HasCoercibility() bool                             { return false }
+func (m *MockExpr) Coercibility() Coercibility                        { return 0 }
+func (m *MockExpr) SetCoercibility(Coercibility)                      {}
+
+func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
+	return "", ""
+}
+func (m *MockExpr) SetCharsetAndCollation(chs, coll string) {}

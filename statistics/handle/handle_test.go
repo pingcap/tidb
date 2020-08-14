@@ -15,11 +15,14 @@ package handle_test
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
+	"unsafe"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
@@ -48,6 +51,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
+	tk.MustExec("delete from mysql.stats_extended")
 	do.StatsHandle().Clear()
 }
 
@@ -94,6 +98,64 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
+}
+
+func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int,c3 int)")
+	testKit.MustExec("insert into t values(1, 2, 3)")
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsTrue)
+	testKit.MustExec("analyze table t")
+
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+
+	c.Assert(statsTbl.Pseudo, IsFalse)
+	testKit.MustExec("create index idx_t on t(c1)")
+	do.InfoSchema()
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+
+	// If index is build, but stats is not updated. statsTbl can also work.
+	c.Assert(statsTbl.Pseudo, IsFalse)
+	// But the added index will not work.
+	c.Assert(statsTbl.Indices[int64(1)], IsNil)
+
+	testKit.MustExec("analyze table t")
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+
+	c.Assert(statsTbl.Pseudo, IsFalse)
+
+	// If the new schema drop a column, the table stats can still work.
+	testKit.MustExec("alter table t drop column c2")
+	is = do.InfoSchema()
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(is)
+
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(statsTbl.Pseudo, IsFalse)
+
+	// If the new schema add a column, the table stats can still work.
+	testKit.MustExec("alter table t add column c10 int")
+	is = do.InfoSchema()
+
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(is)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsFalse)
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
 }
 
 func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
@@ -199,8 +261,8 @@ func (s *testStatsSuite) TestAvgColLen(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("create table t (c1 int, c2 varchar(100), c3 float, c4 datetime)")
-	testKit.MustExec("insert into t values(1, '1234567', 12.3, '2018-03-07 19:00:57')")
+	testKit.MustExec("create table t (c1 int, c2 varchar(100), c3 float, c4 datetime, c5 varchar(100))")
+	testKit.MustExec("insert into t values(1, '1234567', 12.3, '2018-03-07 19:00:57', NULL)")
 	testKit.MustExec("analyze table t")
 	do := s.do
 	is := do.InfoSchema()
@@ -209,18 +271,38 @@ func (s *testStatsSuite) TestAvgColLen(c *C) {
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count, false), Equals, 1.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeListInDisk(statsTbl.Count), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeChunkFormat(statsTbl.Count), Equals, 8.0)
 
 	// The size of varchar type is LEN + BYTE, here is 1 + 7 = 8
 	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count, false), Equals, 8.0)
 	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false), Equals, 8.0)
 	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count, false), Equals, 8.0)
-	testKit.MustExec("insert into t values(132, '123456789112', 1232.3, '2018-03-07 19:17:29')")
+	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeListInDisk(statsTbl.Count), Equals, 8.0-3)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeListInDisk(statsTbl.Count), Equals, float64(unsafe.Sizeof(float32(12.3))))
+	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeListInDisk(statsTbl.Count), Equals, float64(unsafe.Sizeof(types.ZeroTime)))
+	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeChunkFormat(statsTbl.Count), Equals, 8.0-3+8)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeChunkFormat(statsTbl.Count), Equals, float64(unsafe.Sizeof(float32(12.3))))
+	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeChunkFormat(statsTbl.Count), Equals, float64(unsafe.Sizeof(types.ZeroTime)))
+	c.Assert(statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeChunkFormat(statsTbl.Count), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeListInDisk(statsTbl.Count), Equals, 0.0)
+	testKit.MustExec("insert into t values(132, '123456789112', 1232.3, '2018-03-07 19:17:29', NULL)")
 	testKit.MustExec("analyze table t")
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSize(statsTbl.Count, false), Equals, 1.5)
 	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSize(statsTbl.Count, false), Equals, 10.5)
 	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.Count, false), Equals, 8.0)
 	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSize(statsTbl.Count, false), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeListInDisk(statsTbl.Count), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeListInDisk(statsTbl.Count), Equals, math.Round((10.5-math.Log2(10.5))*100)/100)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeListInDisk(statsTbl.Count), Equals, float64(unsafe.Sizeof(float32(12.3))))
+	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeListInDisk(statsTbl.Count), Equals, float64(unsafe.Sizeof(types.ZeroTime)))
+	c.Assert(statsTbl.Columns[tableInfo.Columns[0].ID].AvgColSizeChunkFormat(statsTbl.Count), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[1].ID].AvgColSizeChunkFormat(statsTbl.Count), Equals, math.Round((10.5-math.Log2(10.5))*100)/100+8)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSizeChunkFormat(statsTbl.Count), Equals, float64(unsafe.Sizeof(float32(12.3))))
+	c.Assert(statsTbl.Columns[tableInfo.Columns[3].ID].AvgColSizeChunkFormat(statsTbl.Count), Equals, float64(unsafe.Sizeof(types.ZeroTime)))
+	c.Assert(statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeChunkFormat(statsTbl.Count), Equals, 8.0)
+	c.Assert(statsTbl.Columns[tableInfo.Columns[4].ID].AvgColSizeListInDisk(statsTbl.Count), Equals, 0.0)
 }
 
 func (s *testStatsSuite) TestDurationToTS(c *C) {
@@ -371,7 +453,7 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
-	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6)")
+	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
 	testKit.MustExec("analyze table t")
 	h := s.do.StatsHandle()
 	is := s.do.InfoSchema()
@@ -384,6 +466,10 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	h.Clear()
 	c.Assert(h.InitStats(is), IsNil)
 	table0 := h.GetTableStats(tbl.Meta())
+	cols := table0.Columns
+	c.Assert(cols[1].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x36))
+	c.Assert(cols[2].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x37))
+	c.Assert(cols[3].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x38))
 	h.Clear()
 	c.Assert(h.Update(is), IsNil)
 	table1 := h.GetTableStats(tbl.Meta())
@@ -429,10 +515,15 @@ func (s *testStatsSuite) TestLoadStats(c *C) {
 	stat = h.GetTableStats(tableInfo)
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	c.Assert(hg.Len(), Greater, 0)
+	// Following test tests whether the LoadNeededHistograms would panic.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail", `return(true)`), IsNil)
+	err = h.LoadNeededHistograms()
+	c.Assert(err, NotNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/statistics/handle/mockGetStatsReaderFail"), IsNil)
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -515,4 +606,103 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't' and Is_index = 1").Sort()
 	c.Assert(len(result.Rows()), Equals, 1)
 	c.Assert(result.Rows()[0][9], Equals, "0")
+}
+
+func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	err := tk.ExecToErr("drop statistics s1")
+	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
+	tk.MustExec("insert into t values(1,1,5,1),(2,2,4,2),(3,3,3,3),(4,4,2,4),(5,5,1,5)")
+	tk.MustExec("analyze table t")
+	err = tk.ExecToErr("create statistics s1(correlation) on not_exist_db.t(b,c)")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'not_exist_db.t' doesn't exist")
+	err = tk.ExecToErr("create statistics s1(correlation) on not_exist_tbl(b,c)")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.not_exist_tbl' doesn't exist")
+	err = tk.ExecToErr("create statistics s1(correlation) on t(b,e)")
+	c.Assert(err.Error(), Equals, "[ddl:1072]column does not exist: e")
+	tk.MustExec("create statistics s1(correlation) on t(a,b)")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 No need to create correlation statistics on the integer primary key column",
+	))
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended where stats_name = 's1' and db = 'test'").Check(testkit.Rows())
+	err = tk.ExecToErr("create statistics s1(correlation) on t(b,c,d)")
+	c.Assert(err.Error(), Equals, "[planner:1815]Only support Correlation and Dependency statistics types on 2 columns")
+
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended where stats_name = 's1' and db = 'test'").Check(testkit.Rows())
+	tk.MustExec("create statistics s1(correlation) on t(b,c)")
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended where stats_name = 's1' and db = 'test'").Check(testkit.Rows(
+		"2 [2,3] <nil> <nil> 0",
+	))
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	do.StatsHandle().Update(is)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
+
+	tk.MustExec("update mysql.stats_extended set status = 1 where stats_name = 's1' and db = 'test'")
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(is)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 1)
+
+	tk.MustExec("drop statistics s1")
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended where stats_name = 's1' and db = 'test'").Check(testkit.Rows(
+		"2 [2,3] <nil> <nil> 2",
+	))
+	do.StatsHandle().Update(is)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
+}
+
+func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
+	tk.MustExec("insert into t values(1,1,5,1),(2,2,4,2),(3,3,3,3),(4,4,2,4),(5,5,1,5)")
+	tk.MustExec("analyze table t")
+	tk.MustExec("create statistics s1(correlation) on t(b,c)")
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended where stats_name = 's1' and db = 'test'").Check(testkit.Rows(
+		"2 [2,3] <nil> <nil> 0",
+	))
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	do.StatsHandle().Update(is)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
+
+	tk.MustExec("update mysql.stats_extended set status = 1 where stats_name = 's1' and db = 'test'")
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(is)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 1)
+
+	tk.MustExec("delete from mysql.stats_extended where stats_name = 's1' and db = 'test'")
+	do.StatsHandle().Update(is)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 1)
+
+	tk.MustExec("admin reload statistics")
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
 }

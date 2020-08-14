@@ -16,7 +16,9 @@ package chunk
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,12 +29,19 @@ import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/check"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
 
 func TestT(t *testing.T) {
+	path, _ := ioutil.TempDir("", "oom-use-tmp-storage")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = path
+	})
+	_ = os.RemoveAll(path) // clean the uncleared temp file during the last run.
+	_ = os.MkdirAll(path, 0755)
 	check.TestingT(t)
 }
 
@@ -100,7 +109,7 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 	row := chk.GetRow(0)
 	c.Assert(row.GetFloat32(0), check.Equals, f32Val)
 	c.Assert(row.GetTime(2).Compare(tVal), check.Equals, 0)
-	// fsp no longer maintain in arrow
+	// fsp is no longer maintained in chunk
 	c.Assert(row.GetDuration(3, 0).Duration, check.DeepEquals, durVal.Duration)
 	c.Assert(row.GetEnum(4), check.DeepEquals, enumVal)
 	c.Assert(row.GetSet(5), check.DeepEquals, setVal)
@@ -115,6 +124,21 @@ func (s *testChunkSuite) TestChunk(c *check.C) {
 	c.Assert(chk.GetRow(0).GetInt64(0), check.Equals, int64(1))
 	c.Assert(chk.GetRow(0).GetInt64(1), check.Equals, int64(1))
 	c.Assert(chk.NumRows(), check.Equals, 1)
+
+	// AppendRowByColIdxs and AppendPartialRowByColIdxs can do projection from row.
+	chk = newChunk(8, 8)
+	row = MutRowFromValues(0, 1, 2, 3).ToRow()
+	chk.AppendRowByColIdxs(row, []int{3})
+	chk.AppendRowByColIdxs(row, []int{1})
+	chk.AppendRowByColIdxs(row, []int{})
+	c.Assert(chk.Column(0).Int64s(), check.DeepEquals, []int64{3, 1})
+	c.Assert(chk.numVirtualRows, check.Equals, 3)
+	chk.AppendPartialRowByColIdxs(1, row, []int{2})
+	chk.AppendPartialRowByColIdxs(1, row, []int{0})
+	chk.AppendPartialRowByColIdxs(0, row, []int{1, 3})
+	c.Assert(chk.Column(0).Int64s(), check.DeepEquals, []int64{3, 1, 1})
+	c.Assert(chk.Column(1).Int64s(), check.DeepEquals, []int64{2, 0, 3})
+	c.Assert(chk.numVirtualRows, check.Equals, 3)
 
 	// Test Reset.
 	chk = newChunk(0)
@@ -538,11 +562,11 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 
 	//cap(c.nullBitmap) + cap(c.offsets)*4 + cap(c.data) + cap(c.elemBuf)
 	colUsage := make([]int, len(fieldTypes))
-	colUsage[0] = initCap>>3 + 0 + initCap*4 + 4
-	colUsage[1] = initCap>>3 + (initCap+1)*4 + initCap*8 + 0
-	colUsage[2] = initCap>>3 + (initCap+1)*4 + initCap*8 + 0
-	colUsage[3] = initCap>>3 + 0 + initCap*sizeTime + sizeTime
-	colUsage[4] = initCap>>3 + 0 + initCap*8 + 8
+	colUsage[0] = (initCap+7)>>3 + 0 + initCap*4 + 4
+	colUsage[1] = (initCap+7)>>3 + (initCap+1)*4 + initCap*8 + 0
+	colUsage[2] = (initCap+7)>>3 + (initCap+1)*4 + initCap*8 + 0
+	colUsage[3] = (initCap+7)>>3 + 0 + initCap*sizeTime + sizeTime
+	colUsage[4] = (initCap+7)>>3 + 0 + initCap*8 + 8
 
 	expectedUsage := 0
 	for i := range colUsage {
@@ -553,7 +577,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 
 	jsonObj, err := json.ParseBinaryFromString("1")
 	c.Assert(err, check.IsNil)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
 	chk.AppendFloat32(0, 12.4)
@@ -572,7 +596,7 @@ func (s *testChunkSuite) TestChunkMemoryUsage(c *check.C) {
 	chk.AppendDuration(4, durationObj)
 
 	memUsage = chk.MemoryUsage()
-	colUsage[1] = initCap>>3 + (initCap+1)*4 + cap(chk.columns[1].data) + 0
+	colUsage[1] = (initCap+7)>>3 + (initCap+1)*4 + cap(chk.columns[1].data) + 0
 	expectedUsage = 0
 	for i := range colUsage {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
@@ -588,15 +612,15 @@ func (s *testChunkSuite) TestSwapColumn(c *check.C) {
 
 	// chk1: column1 refers to column0
 	chk1 := NewChunkWithCapacity(fieldTypes, 1)
-	chk1.AppendFloat64(0, 1)
+	chk1.AppendFloat32(0, 1)
 	chk1.MakeRef(0, 1)
-	chk1.AppendFloat64(2, 3)
+	chk1.AppendFloat32(2, 3)
 
 	// chk2: column1 refers to column0
 	chk2 := NewChunkWithCapacity(fieldTypes, 1)
-	chk2.AppendFloat64(0, 1)
+	chk2.AppendFloat32(0, 1)
 	chk2.MakeRef(0, 1)
-	chk2.AppendFloat64(2, 3)
+	chk2.AppendFloat32(2, 3)
 
 	c.Assert(chk1.columns[0] == chk1.columns[1], check.IsTrue)
 	c.Assert(chk2.columns[0] == chk2.columns[1], check.IsTrue)
@@ -751,8 +775,8 @@ func (s *testChunkSuite) TestMakeRefTo(c *check.C) {
 	fieldTypes = append(fieldTypes, &types.FieldType{Tp: mysql.TypeFloat})
 
 	chk1 := NewChunkWithCapacity(fieldTypes, 1)
-	chk1.AppendFloat64(0, 1)
-	chk1.AppendFloat64(1, 3)
+	chk1.AppendFloat32(0, 1)
+	chk1.AppendFloat32(1, 3)
 
 	chk2 := NewChunkWithCapacity(fieldTypes, 1)
 	chk2.MakeRefTo(0, chk1, 1)
@@ -933,7 +957,7 @@ func BenchmarkChunkMemoryUsage(b *testing.B) {
 
 	initCap := 10
 	chk := NewChunkWithCapacity(fieldTypes, initCap)
-	timeObj := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 0, Type: mysql.TypeDatetime}
+	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
 	for i := 0; i < initCap; i++ {

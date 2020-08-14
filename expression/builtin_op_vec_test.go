@@ -14,43 +14,81 @@
 package expression
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 var vecBuiltinOpCases = map[string][]vecExprBenchCase{
 	ast.IsTruth: {
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}, geners: []dataGenerator{&defaultGener{0.2, types.ETReal}}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}, geners: []dataGenerator{&defaultGener{0.2, types.ETDecimal}}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 	},
 	ast.IsFalsity: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 	},
 	ast.LogicOr: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETDuration}},
 	},
 	ast.LogicXor: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
 	},
-	ast.Xor: {},
+	ast.Xor: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+	},
 	ast.LogicAnd: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal, types.ETReal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETDuration}},
+	},
+	ast.Or: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+	},
+	ast.BitNeg: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 	},
 	ast.UnaryNot: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 	},
-	ast.UnaryMinus: {},
+	ast.And: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}, geners: makeBinaryLogicOpDataGeners()},
+	},
+	ast.RightShift: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+	},
+	ast.LeftShift: {
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt, types.ETInt}},
+	},
+	ast.UnaryMinus: {
+		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal}},
+		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
+		{
+			retEvalType:        types.ETInt,
+			childrenTypes:      []types.EvalType{types.ETInt},
+			childrenFieldTypes: []*types.FieldType{{Tp: mysql.TypeLonglong, Flag: mysql.UnsignedFlag}},
+			geners:             []dataGenerator{newRangeInt64Gener(0, math.MaxInt64)},
+		},
+	},
 	ast.IsNull: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETReal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETInt}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDecimal}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDuration}},
+		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
 }
 
@@ -75,11 +113,12 @@ func (g *givenValsGener) gen() interface{} {
 func makeGivenValsOrDefaultGener(vals []interface{}, eType types.EvalType) *givenValsGener {
 	g := &givenValsGener{}
 	g.given = vals
-	g.fallback = &defaultGener{0.2, eType}
+	g.fallback = newDefaultGener(0.2, eType)
 	return g
 }
 
 func makeBinaryLogicOpDataGeners() []dataGenerator {
+	// TODO: rename this to makeBinaryOpDataGenerator, since the BIT ops are also using it?
 	pairs := [][]interface{}{
 		{nil, nil},
 		{0, nil},
@@ -118,4 +157,38 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinOpFunc(c *C) {
 
 func BenchmarkVectorizedBuiltinOpFunc(b *testing.B) {
 	benchmarkVectorizedBuiltinFunc(b, vecBuiltinOpCases)
+}
+
+func (s *testEvaluatorSuite) TestBuiltinUnaryMinusIntSig(c *C) {
+	ctx := mock.NewContext()
+	ft := eType2FieldType(types.ETInt)
+	col0 := &Column{RetType: ft, Index: 0}
+	f, err := funcs[ast.UnaryMinus].getFunction(ctx, []Expression{col0})
+	c.Assert(err, IsNil)
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 1024)
+	result := chunk.NewColumn(ft, 1024)
+
+	c.Assert(mysql.HasUnsignedFlag(col0.GetType().Flag), IsFalse)
+	input.AppendInt64(0, 233333)
+	c.Assert(f.vecEvalInt(input, result), IsNil)
+	c.Assert(result.GetInt64(0), Equals, int64(-233333))
+	input.Reset()
+	input.AppendInt64(0, math.MinInt64)
+	c.Assert(f.vecEvalInt(input, result), NotNil)
+	input.Column(0).SetNull(0, true)
+	c.Assert(f.vecEvalInt(input, result), IsNil)
+	c.Assert(result.IsNull(0), IsTrue)
+
+	col0.GetType().Flag |= mysql.UnsignedFlag
+	c.Assert(mysql.HasUnsignedFlag(col0.GetType().Flag), IsTrue)
+	input.Reset()
+	input.AppendUint64(0, 233333)
+	c.Assert(f.vecEvalInt(input, result), IsNil)
+	c.Assert(result.GetInt64(0), Equals, int64(-233333))
+	input.Reset()
+	input.AppendUint64(0, -(math.MinInt64)+1)
+	c.Assert(f.vecEvalInt(input, result), NotNil)
+	input.Column(0).SetNull(0, true)
+	c.Assert(f.vecEvalInt(input, result), IsNil)
+	c.Assert(result.IsNull(0), IsTrue)
 }

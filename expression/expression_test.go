@@ -22,12 +22,11 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
-	defer testleak.AfterTest(c)()
-
 	res := NewValuesFunc(s.ctx, 0, types.NewFieldType(mysql.TypeLonglong))
 	c.Assert(res.FuncName.O, Equals, "values")
 	c.Assert(res.RetType.Tp, Equals, mysql.TypeLonglong)
@@ -36,13 +35,12 @@ func (s *testEvaluatorSuite) TestNewValuesFunc(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
-	defer testleak.AfterTest(c)()
 	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong).add("col1", mysql.TypeLonglong).build()
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
 	col1 := schema.Columns[1]
 	schema.Columns = schema.Columns[:1]
-	innerIfNull, err := newFunctionForTest(s.ctx, ast.Ifnull, col1, One.Clone())
+	innerIfNull, err := newFunctionForTest(s.ctx, ast.Ifnull, col1, NewOne())
 	c.Assert(err, IsNil)
 	outerIfNull, err := newFunctionForTest(s.ctx, ast.Ifnull, col0, innerIfNull)
 	c.Assert(err, IsNil)
@@ -53,19 +51,17 @@ func (s *testEvaluatorSuite) TestEvaluateExprWithNull(c *C) {
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
 	res = EvaluateExprWithNull(s.ctx, schema, outerIfNull)
-	c.Assert(res.Equal(s.ctx, One), IsTrue)
+	c.Assert(res.Equal(s.ctx, NewOne()), IsTrue)
 }
 
 func (s *testEvaluatorSuite) TestConstant(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
-	c.Assert(Zero.IsCorrelated(), IsFalse)
-	c.Assert(Zero.ConstItem(), IsTrue)
-	c.Assert(Zero.Decorrelate(nil).Equal(s.ctx, Zero), IsTrue)
-	c.Assert(Zero.HashCode(sc), DeepEquals, []byte{0x0, 0x8, 0x0})
-	c.Assert(Zero.Equal(s.ctx, One), IsFalse)
-	res, err := Zero.MarshalJSON()
+	c.Assert(NewZero().IsCorrelated(), IsFalse)
+	c.Assert(NewZero().ConstItem(sc), IsTrue)
+	c.Assert(NewZero().Decorrelate(nil).Equal(s.ctx, NewZero()), IsTrue)
+	c.Assert(NewZero().HashCode(sc), DeepEquals, []byte{0x0, 0x8, 0x0})
+	c.Assert(NewZero().Equal(s.ctx, NewOne()), IsFalse)
+	res, err := NewZero().MarshalJSON()
 	c.Assert(err, IsNil)
 	c.Assert(res, DeepEquals, []byte{0x22, 0x30, 0x22})
 }
@@ -87,16 +83,59 @@ func (s *testEvaluatorSuite) TestIsBinaryLiteral(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestConstItem(c *C) {
-	defer testleak.AfterTest(c)()
-
 	sf := newFunction(ast.Rand)
-	c.Assert(sf.ConstItem(), Equals, false)
+	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, false)
 	sf = newFunction(ast.UUID)
-	c.Assert(sf.ConstItem(), Equals, false)
-	sf = newFunction(ast.GetParam, One)
-	c.Assert(sf.ConstItem(), Equals, false)
-	sf = newFunction(ast.Abs, One)
-	c.Assert(sf.ConstItem(), Equals, true)
+	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, false)
+	sf = newFunction(ast.GetParam, NewOne())
+	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, false)
+	sf = newFunction(ast.Abs, NewOne())
+	c.Assert(sf.ConstItem(s.ctx.GetSessionVars().StmtCtx), Equals, true)
+}
+
+func (s *testEvaluatorSuite) TestVectorizable(c *C) {
+	exprs := make([]Expression, 0, 4)
+	sf := newFunction(ast.Rand)
+	column := &Column{
+		UniqueID: 0,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	exprs = append(exprs, sf)
+	exprs = append(exprs, NewOne())
+	exprs = append(exprs, NewNull())
+	exprs = append(exprs, column)
+	c.Assert(Vectorizable(exprs), Equals, true)
+
+	column0 := &Column{
+		UniqueID: 1,
+		RetType:  types.NewFieldType(mysql.TypeString),
+	}
+	column1 := &Column{
+		UniqueID: 2,
+		RetType:  types.NewFieldType(mysql.TypeString),
+	}
+	column2 := &Column{
+		UniqueID: 3,
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	exprs = exprs[:0]
+	sf = newFunction(ast.SetVar, column0, column1)
+	exprs = append(exprs, sf)
+	c.Assert(Vectorizable(exprs), Equals, false)
+
+	exprs = exprs[:0]
+	sf = newFunction(ast.GetVar, column0)
+	exprs = append(exprs, sf)
+	c.Assert(Vectorizable(exprs), Equals, false)
+
+	exprs = exprs[:0]
+	sf = newFunction(ast.NextVal, column0)
+	exprs = append(exprs, sf)
+	sf = newFunction(ast.LastVal, column0)
+	exprs = append(exprs, sf)
+	sf = newFunction(ast.SetVal, column1, column2)
+	exprs = append(exprs, sf)
+	c.Assert(Vectorizable(exprs), Equals, false)
 }
 
 type testTableBuilder struct {
@@ -143,11 +182,44 @@ func tableInfoToSchemaForTest(tableInfo *model.TableInfo) *Schema {
 	for i, col := range columns {
 		schema.Append(&Column{
 			UniqueID: int64(i),
-			TblName:  tableInfo.Name,
-			ColName:  col.Name,
 			ID:       col.ID,
 			RetType:  &col.FieldType,
 		})
 	}
 	return schema
+}
+
+func (s *testEvaluatorSuite) TestEvalExpr(c *C) {
+	ctx := mock.NewContext()
+	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
+	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
+	for i := 0; i < len(tNames); i++ {
+		ft := eType2FieldType(eTypes[i])
+		colExpr := &Column{Index: 0, RetType: ft}
+		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
+		fillColumnWithGener(eTypes[i], input, 0, nil)
+		colBuf := chunk.NewColumn(ft, 1024)
+		colBuf2 := chunk.NewColumn(ft, 1024)
+		var err error
+		c.Assert(colExpr.Vectorized(), IsTrue)
+		ctx.GetSessionVars().EnableVectorizedExpression = false
+		err = EvalExpr(ctx, colExpr, input, colBuf)
+		if err != nil {
+			c.Fatal(err)
+		}
+		ctx.GetSessionVars().EnableVectorizedExpression = true
+		err = EvalExpr(ctx, colExpr, input, colBuf2)
+		if err != nil {
+			c.Fatal(err)
+		}
+		for j := 0; j < 1024; j++ {
+			isNull := colBuf.IsNull(j)
+			isNull2 := colBuf2.IsNull(j)
+			c.Assert(isNull, Equals, isNull2)
+			if isNull {
+				continue
+			}
+			c.Assert(string(colBuf.GetRaw(j)), Equals, string(colBuf2.GetRaw(j)))
+		}
+	}
 }

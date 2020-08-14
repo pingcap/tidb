@@ -15,19 +15,23 @@ package statistics
 
 import (
 	"context"
-	"math/rand"
 	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 // SampleItem is an item of sampled column value.
@@ -37,9 +41,9 @@ type SampleItem struct {
 	// Ordinal is original position of this item in SampleCollector before sorting. This
 	// is used for computing correlation.
 	Ordinal int
-	// RowID is the row id of the sample in its key.
+	// Handle is the handle of the sample in its key.
 	// This property is used to calculate Ordinal in fast analyze.
-	RowID int64
+	Handle kv.Handle
 }
 
 // SortSampleItems sorts a slice of SampleItem.
@@ -162,13 +166,15 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 	// to the underlying slice, GC can't free them which lead to memory leak eventually.
 	// TODO: Refactor the proto to avoid copying here.
 	if len(c.Samples) < int(c.MaxSampleSize) {
-		newItem := &SampleItem{Value: types.CloneDatum(d)}
+		newItem := &SampleItem{}
+		d.Copy(&newItem.Value)
 		c.Samples = append(c.Samples, newItem)
 	} else {
-		shouldAdd := rand.Int63n(c.seenValues) < c.MaxSampleSize
+		shouldAdd := int64(fastrand.Uint64N(uint64(c.seenValues))) < c.MaxSampleSize
 		if shouldAdd {
-			idx := rand.Intn(int(c.MaxSampleSize))
-			newItem := &SampleItem{Value: types.CloneDatum(d)}
+			idx := int(fastrand.Uint32N(uint32(c.MaxSampleSize)))
+			newItem := &SampleItem{}
+			d.Copy(&newItem.Value)
 			// To keep the order of the elements, we use delete and append, not direct replacement.
 			c.Samples = append(c.Samples[:idx], c.Samples[idx+1:]...)
 			c.Samples = append(c.Samples, newItem)
@@ -197,6 +203,8 @@ type SampleBuilder struct {
 	MaxFMSketchSize int64
 	CMSketchDepth   int32
 	CMSketchWidth   int32
+	Collators       []collate.Collator
+	ColsFieldType   []*types.FieldType
 }
 
 // CollectColumnStats collects sample from the result set using Reservoir Sampling algorithm,
@@ -241,6 +249,18 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 				datums = datums[1:]
 			}
 			for i, val := range datums {
+				if s.Collators[i] != nil && !val.IsNull() {
+					decodedVal, err := tablecodec.DecodeColumnValue(val.GetBytes(), s.ColsFieldType[i], s.Sc.TimeZone)
+					if err != nil {
+						return nil, nil, err
+					}
+					decodedVal.SetBytesAsString(s.Collators[i].Key(decodedVal.GetString()), decodedVal.Collation(), uint32(decodedVal.Length()))
+					encodedKey, err := tablecodec.EncodeValue(s.Sc, nil, decodedVal)
+					if err != nil {
+						return nil, nil, err
+					}
+					val.SetBytes(encodedKey)
+				}
 				err = collectors[i].collect(s.Sc, val)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
@@ -260,9 +280,9 @@ func RowToDatums(row chunk.Row, fields []*ast.ResultField) []types.Datum {
 }
 
 // ExtractTopN extracts the topn from the CM Sketch.
-func (c *SampleCollector) ExtractTopN(numTop uint32) {
+func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContext, tp *types.FieldType, timeZone *time.Location) error {
 	if numTop == 0 {
-		return
+		return nil
 	}
 	values := make([][]byte, 0, len(c.Samples))
 	for _, sample := range c.Samples {
@@ -270,14 +290,24 @@ func (c *SampleCollector) ExtractTopN(numTop uint32) {
 	}
 	helper := newTopNHelper(values, numTop)
 	cms := c.CMSketch
-	cms.topN = make(map[uint64][]*TopNMeta)
+	cms.topN = make(map[uint64][]*TopNMeta, helper.actualNumTop)
 	// Process them decreasingly so we can handle most frequent values first and reduce the probability of hash collision
 	// by small values.
 	for i := uint32(0); i < helper.actualNumTop; i++ {
-		data := helper.sorted[i].data
-		h1, h2 := murmur3.Sum128(data)
+		h1, h2 := murmur3.Sum128(helper.sorted[i].data)
 		realCnt := cms.queryHashValue(h1, h2)
+		// Because the encode of topn is the new encode type. But analyze proto returns the old encode type for a sample datum,
+		// we should decode it and re-encode it to get the correct bytes.
+		d, err := tablecodec.DecodeColumnValue(helper.sorted[i].data, tp, timeZone)
+		if err != nil {
+			return err
+		}
+		data, err := tablecodec.EncodeValue(sc, nil, d)
+		if err != nil {
+			return err
+		}
 		cms.subValue(h1, h2, realCnt)
 		cms.topN[h1] = append(cms.topN[h1], &TopNMeta{h2, data, realCnt})
 	}
+	return nil
 }

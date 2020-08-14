@@ -14,10 +14,11 @@
 package executor
 
 import (
+	"fmt"
 	"hash"
 	"hash/fnv"
-	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
@@ -26,26 +27,24 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"go.uber.org/zap"
 )
 
 const (
 	// estCountMaxFactor defines the factor of estCountMax with maxChunkSize.
 	// estCountMax is maxChunkSize * estCountMaxFactor, the maximum threshold of estCount.
 	// if estCount is larger than estCountMax, set estCount to estCountMax.
-	// Set this threshold to prevent innerEstCount being too large and causing a performance and memory regression.
+	// Set this threshold to prevent buildSideEstCount being too large and causing a performance and memory regression.
 	estCountMaxFactor = 10 * 1024
 
 	// estCountMinFactor defines the factor of estCountMin with maxChunkSize.
 	// estCountMin is maxChunkSize * estCountMinFactor, the minimum threshold of estCount.
 	// If estCount is smaller than estCountMin, set estCount to 0.
-	// Set this threshold to prevent innerEstCount being too small and causing a performance regression.
+	// Set this threshold to prevent buildSideEstCount being too small and causing a performance regression.
 	estCountMinFactor = 8
 
-	// estCountDivisor defines the divisor of innerEstCount.
-	// Set this divisor to prevent innerEstCount being too large and causing a performance regression.
+	// estCountDivisor defines the divisor of buildSideEstCount.
+	// Set this divisor to prevent buildSideEstCount being too large and causing a performance regression.
 	estCountDivisor = 8
 )
 
@@ -77,81 +76,54 @@ func (hc *hashContext) initHash(rows int) {
 	}
 }
 
+type hashStatistic struct {
+	probeCollision   int
+	buildTableElapse time.Duration
+}
+
+func (s *hashStatistic) String() string {
+	return fmt.Sprintf("probe collision:%v, build:%v", s.probeCollision, s.buildTableElapse)
+}
+
 // hashRowContainer handles the rows and the hash map of a table.
 type hashRowContainer struct {
 	sc   *stmtctx.StatementContext
 	hCtx *hashContext
+	stat hashStatistic
 
 	// hashTable stores the map of hashKey and RowPtr
-	hashTable *rowHashMap
+	hashTable baseHashTable
 
-	// memTracker is the reference of records.GetMemTracker().
-	// records would be set to nil for garbage collection when spilling is activated
-	// so we need this reference.
-	memTracker *memory.Tracker
-
-	// records stores the chunks in memory.
-	records *chunk.List
-	// recordsInDisk stores the chunks in disk.
-	recordsInDisk *chunk.ListInDisk
-
-	// exceeded indicates that records have exceeded memQuota during
-	// this PutChunk and we should spill now.
-	// It's for concurrency usage, so access it with atomic.
-	exceeded uint32
-	// spilled indicates that records have spilled out into disk.
-	// It's for concurrency usage, so access it with atomic.
-	spilled uint32
+	rowContainer *chunk.RowContainer
 }
 
 func newHashRowContainer(sCtx sessionctx.Context, estCount int, hCtx *hashContext) *hashRowContainer {
 	maxChunkSize := sCtx.GetSessionVars().MaxChunkSize
-	// The estCount from cost model is not quite accurate and we need
-	// to avoid that it's too large to consume redundant memory.
-	// So I invent a rough protection, firstly divide it by estCountDivisor
-	// then set a maximum threshold and a minimum threshold.
-	estCount /= estCountDivisor
-	if estCount > maxChunkSize*estCountMaxFactor {
-		estCount = maxChunkSize * estCountMaxFactor
-	}
-	if estCount < maxChunkSize*estCountMinFactor {
-		estCount = 0
-	}
-	initList := chunk.NewList(hCtx.allTypes, maxChunkSize, maxChunkSize)
+	rc := chunk.NewRowContainer(hCtx.allTypes, maxChunkSize)
 	c := &hashRowContainer{
-		sc:   sCtx.GetSessionVars().StmtCtx,
-		hCtx: hCtx,
-
-		hashTable:  newRowHashMap(estCount),
-		memTracker: initList.GetMemTracker(),
-		records:    initList,
+		sc:           sCtx.GetSessionVars().StmtCtx,
+		hCtx:         hCtx,
+		hashTable:    newConcurrentMapHashTable(),
+		rowContainer: rc,
 	}
-
 	return c
 }
 
-// GetMatchedRows get matched rows from probeRow. It can be called
+// GetMatchedRowsAndPtrs get matched rows and Ptrs from probeRow. It can be called
 // in multiple goroutines while each goroutine should keep its own
 // h and buf.
-func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, err error) {
-	hasNull, key, err := c.getJoinKeyFromChkRow(c.sc, probeRow, hCtx)
-	if err != nil || hasNull {
-		return
-	}
-	innerPtrs := c.hashTable.Get(key)
+func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (matched []chunk.Row, matchedPtrs []chunk.RowPtr, err error) {
+	innerPtrs := c.hashTable.Get(probeKey)
 	if len(innerPtrs) == 0 {
 		return
 	}
 	matched = make([]chunk.Row, 0, len(innerPtrs))
 	var matchedRow chunk.Row
+	matchedPtrs = make([]chunk.RowPtr, 0, len(innerPtrs))
 	for _, ptr := range innerPtrs {
-		if c.alreadySpilled() {
-			matchedRow, err = c.recordsInDisk.GetRow(ptr)
-			if err != nil {
-				return
-			}
-		} else {
-			matchedRow = c.records.GetRow(ptr)
+		matchedRow, err = c.rowContainer.GetRow(ptr)
+		if err != nil {
+			return
 		}
 		var ok bool
 		ok, err = c.matchJoinKey(matchedRow, probeRow, hCtx)
@@ -159,9 +131,11 @@ func (c *hashRowContainer) GetMatchedRows(probeRow chunk.Row, hCtx *hashContext)
 			return
 		}
 		if !ok {
+			c.stat.probeCollision++
 			continue
 		}
 		matched = append(matched, matchedRow)
+		matchedPtrs = append(matchedPtrs, ptr)
 	}
 	return
 }
@@ -173,62 +147,43 @@ func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx 
 		probeRow, probeHCtx.allTypes, probeHCtx.keyColIdx)
 }
 
-func (c *hashRowContainer) spillToDisk() (err error) {
-	N := c.records.NumChunks()
-	c.recordsInDisk = chunk.NewListInDisk(c.hCtx.allTypes)
-	for i := 0; i < N; i++ {
-		chk := c.records.GetChunk(i)
-		err = c.recordsInDisk.Add(chk)
-		if err != nil {
-			return
-		}
-	}
-	return
+// alreadySpilledSafeForTest indicates that records have spilled out into disk. It's thread-safe.
+func (c *hashRowContainer) alreadySpilledSafeForTest() bool {
+	return c.rowContainer.AlreadySpilledSafeForTest()
 }
-
-// alreadySpilled indicates that records have spilled out into disk.
-func (c *hashRowContainer) alreadySpilled() bool { return c.recordsInDisk != nil }
-
-// alreadySpilledSafe indicates that records have spilled out into disk. It's thread-safe.
-func (c *hashRowContainer) alreadySpilledSafe() bool { return atomic.LoadUint32(&c.spilled) == 1 }
 
 // PutChunk puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
 // key of hash table: hash value of key columns
 // value of hash table: RowPtr of the corresponded row
-func (c *hashRowContainer) PutChunk(chk *chunk.Chunk) error {
-	var chkIdx uint32
-	if c.alreadySpilled() {
-		// append chk to disk.
-		chkIdx = uint32(c.recordsInDisk.NumChunks())
-		err := c.recordsInDisk.Add(chk)
-		if err != nil {
-			return err
-		}
-	} else {
-		chkIdx = uint32(c.records.NumChunks())
-		c.records.Add(chk)
-		if atomic.LoadUint32(&c.exceeded) != 0 {
-			err := c.spillToDisk()
-			if err != nil {
-				return err
-			}
-			c.records = nil // GC its internal chunks.
-			c.memTracker.Consume(-c.memTracker.BytesConsumed())
-			atomic.StoreUint32(&c.spilled, 1)
-		}
+func (c *hashRowContainer) PutChunk(chk *chunk.Chunk, ignoreNulls []bool) error {
+	return c.PutChunkSelected(chk, nil, ignoreNulls)
+}
+
+// PutChunkSelected selectively puts a chunk into hashRowContainer and build hash map. It's not thread-safe.
+// key of hash table: hash value of key columns
+// value of hash table: RowPtr of the corresponded row
+func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNulls []bool) error {
+	start := time.Now()
+	defer func() { c.stat.buildTableElapse += time.Since(start) }()
+
+	chkIdx := uint32(c.rowContainer.NumChunks())
+	err := c.rowContainer.Add(chk)
+	if err != nil {
+		return err
 	}
 	numRows := chk.NumRows()
 	c.hCtx.initHash(numRows)
 
 	hCtx := c.hCtx
-	for _, colIdx := range c.hCtx.keyColIdx {
-		err := codec.HashChunkColumns(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull)
+	for keyIdx, colIdx := range c.hCtx.keyColIdx {
+		ignoreNull := len(ignoreNulls) > keyIdx && ignoreNulls[keyIdx]
+		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[colIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	for i := 0; i < numRows; i++ {
-		if c.hCtx.hasNull[i] {
+		if (selected != nil && !selected[i]) || c.hCtx.hasNull[i] {
 			continue
 		}
 		key := c.hCtx.hashVals[i].Sum64()
@@ -250,155 +205,171 @@ func (*hashRowContainer) getJoinKeyFromChkRow(sc *stmtctx.StatementContext, row 
 	return false, hCtx.hashVals[0].Sum64(), err
 }
 
-// Len returns the length of the records in hashRowContainer.
-func (c hashRowContainer) Len() int {
+// NumChunks returns the number of chunks in the rowContainer
+func (c *hashRowContainer) NumChunks() int {
+	return c.rowContainer.NumChunks()
+}
+
+// NumRowsOfChunk returns the number of rows of a chunk
+func (c *hashRowContainer) NumRowsOfChunk(chkID int) int {
+	return c.rowContainer.NumRowsOfChunk(chkID)
+}
+
+// GetChunk returns chkIdx th chunk of in memory records, only works if rowContainer is not spilled
+func (c *hashRowContainer) GetChunk(chkIdx int) (*chunk.Chunk, error) {
+	return c.rowContainer.GetChunk(chkIdx)
+}
+
+// GetRow returns the row the ptr pointed to in the rowContainer
+func (c *hashRowContainer) GetRow(ptr chunk.RowPtr) (chunk.Row, error) {
+	return c.rowContainer.GetRow(ptr)
+}
+
+// Len returns number of records in the hash table.
+func (c *hashRowContainer) Len() uint64 {
 	return c.hashTable.Len()
 }
 
 func (c *hashRowContainer) Close() error {
-	if c.recordsInDisk != nil {
-		return c.recordsInDisk.Close()
-	}
-	return nil
+	return c.rowContainer.Close()
 }
 
 // GetMemTracker returns the underlying memory usage tracker in hashRowContainer.
-func (c *hashRowContainer) GetMemTracker() *memory.Tracker { return c.memTracker }
+func (c *hashRowContainer) GetMemTracker() *memory.Tracker { return c.rowContainer.GetMemTracker() }
 
 // GetDiskTracker returns the underlying disk usage tracker in hashRowContainer.
-func (c *hashRowContainer) GetDiskTracker() *disk.Tracker { return c.recordsInDisk.GetDiskTracker() }
+func (c *hashRowContainer) GetDiskTracker() *disk.Tracker { return c.rowContainer.GetDiskTracker() }
 
 // ActionSpill returns a memory.ActionOnExceed for spilling over to disk.
 func (c *hashRowContainer) ActionSpill() memory.ActionOnExceed {
-	return &spillDiskAction{c: c}
+	return c.rowContainer.ActionSpill()
 }
-
-// spillDiskAction implements memory.ActionOnExceed for chunk.List. If
-// the memory quota of a query is exceeded, spillDiskAction.Action is
-// triggered.
-type spillDiskAction struct {
-	once           sync.Once
-	c              *hashRowContainer
-	fallbackAction memory.ActionOnExceed
-}
-
-// Action sends a signal to trigger spillToDisk method of hashRowContainer
-// and if it is already triggered before, call its fallbackAction.
-func (a *spillDiskAction) Action(t *memory.Tracker) {
-	if a.c.alreadySpilledSafe() {
-		if a.fallbackAction != nil {
-			a.fallbackAction.Action(t)
-		}
-	}
-	a.once.Do(func() {
-		atomic.StoreUint32(&a.c.exceeded, 1)
-		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.", zap.String("memory", t.String()))
-	})
-}
-
-func (a *spillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
-	a.fallbackAction = fallback
-}
-
-func (a *spillDiskAction) SetLogHook(hook func(uint64)) {}
 
 const (
 	initialEntrySliceLen = 64
-	maxEntrySliceLen     = 8 * 1024
+	maxEntrySliceLen     = 8192
 )
 
 type entry struct {
 	ptr  chunk.RowPtr
-	next entryAddr
+	next *entry
 }
 
 type entryStore struct {
 	slices [][]entry
+	cursor int
 }
 
-func (es *entryStore) init() {
-	es.slices = [][]entry{make([]entry, 0, initialEntrySliceLen)}
-	// Reserve the first empty entry, so entryAddr{} can represent nullEntryAddr.
-	reserved := es.put(entry{})
-	if reserved != nullEntryAddr {
-		panic("entryStore: first entry is not nullEntryAddr")
-	}
+func newEntryStore() *entryStore {
+	es := new(entryStore)
+	es.slices = [][]entry{make([]entry, initialEntrySliceLen)}
+	es.cursor = 0
+	return es
 }
 
-func (es *entryStore) put(e entry) entryAddr {
+func (es *entryStore) GetStore() (e *entry) {
 	sliceIdx := uint32(len(es.slices) - 1)
 	slice := es.slices[sliceIdx]
-	if len(slice) == cap(slice) {
+	if es.cursor >= cap(slice) {
 		size := cap(slice) * 2
 		if size >= maxEntrySliceLen {
 			size = maxEntrySliceLen
 		}
-		slice = make([]entry, 0, size)
+		slice = make([]entry, size)
 		es.slices = append(es.slices, slice)
 		sliceIdx++
+		es.cursor = 0
 	}
-	addr := entryAddr{sliceIdx: sliceIdx, offset: uint32(len(slice))}
-	es.slices[sliceIdx] = append(slice, e)
-	return addr
+	e = &es.slices[sliceIdx][es.cursor]
+	es.cursor++
+	return
 }
 
-func (es *entryStore) get(addr entryAddr) entry {
-	return es.slices[addr.sliceIdx][addr.offset]
+type baseHashTable interface {
+	Put(hashKey uint64, rowPtr chunk.RowPtr)
+	Get(hashKey uint64) (rowPtrs []chunk.RowPtr)
+	Len() uint64
 }
 
-type entryAddr struct {
-	sliceIdx uint32
-	offset   uint32
-}
-
-var nullEntryAddr = entryAddr{}
-
-// rowHashMap stores multiple rowPtr of rows for a given key with minimum GC overhead.
+// TODO (fangzhuhe) remove unsafeHashTable later if it not used anymore
+// unsafeHashTable stores multiple rowPtr of rows for a given key with minimum GC overhead.
 // A given key can store multiple values.
 // It is not thread-safe, should only be used in one goroutine.
-type rowHashMap struct {
-	entryStore entryStore
-	hashTable  map[uint64]entryAddr
-	length     int
+type unsafeHashTable struct {
+	hashMap    map[uint64]*entry
+	entryStore *entryStore
+	length     uint64
 }
 
-// newRowHashMap creates a new rowHashMap. estCount means the estimated size of the hashMap.
+// newUnsafeHashTable creates a new unsafeHashTable. estCount means the estimated size of the hashMap.
 // If unknown, set it to 0.
-func newRowHashMap(estCount int) *rowHashMap {
-	m := new(rowHashMap)
-	m.hashTable = make(map[uint64]entryAddr, estCount)
-	m.entryStore.init()
-	return m
+func newUnsafeHashTable(estCount int) *unsafeHashTable {
+	ht := new(unsafeHashTable)
+	ht.hashMap = make(map[uint64]*entry, estCount)
+	ht.entryStore = newEntryStore()
+	return ht
 }
 
-// Put puts the key/rowPtr pairs to the rowHashMap, multiple rowPtrs are stored in a list.
-func (m *rowHashMap) Put(hashKey uint64, rowPtr chunk.RowPtr) {
-	oldEntryAddr := m.hashTable[hashKey]
-	e := entry{
-		ptr:  rowPtr,
-		next: oldEntryAddr,
-	}
-	newEntryAddr := m.entryStore.put(e)
-	m.hashTable[hashKey] = newEntryAddr
-	m.length++
+// Put puts the key/rowPtr pairs to the unsafeHashTable, multiple rowPtrs are stored in a list.
+func (ht *unsafeHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
+	oldEntry := ht.hashMap[hashKey]
+	newEntry := ht.entryStore.GetStore()
+	newEntry.ptr = rowPtr
+	newEntry.next = oldEntry
+	ht.hashMap[hashKey] = newEntry
+	ht.length++
 }
 
 // Get gets the values of the "key" and appends them to "values".
-func (m *rowHashMap) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
-	entryAddr := m.hashTable[hashKey]
-	for entryAddr != nullEntryAddr {
-		e := m.entryStore.get(entryAddr)
-		entryAddr = e.next
-		rowPtrs = append(rowPtrs, e.ptr)
-	}
-	// Keep the order of input.
-	for i := 0; i < len(rowPtrs)/2; i++ {
-		j := len(rowPtrs) - 1 - i
-		rowPtrs[i], rowPtrs[j] = rowPtrs[j], rowPtrs[i]
+func (ht *unsafeHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
+	entryAddr := ht.hashMap[hashKey]
+	for entryAddr != nil {
+		rowPtrs = append(rowPtrs, entryAddr.ptr)
+		entryAddr = entryAddr.next
 	}
 	return
 }
 
-// Len returns the number of rowPtrs in the rowHashMap, the number of keys may be less than Len
+// Len returns the number of rowPtrs in the unsafeHashTable, the number of keys may be less than Len
 // if the same key is put more than once.
-func (m *rowHashMap) Len() int { return m.length }
+func (ht *unsafeHashTable) Len() uint64 { return ht.length }
+
+// concurrentMapHashTable is a concurrent hash table built on concurrentMap
+type concurrentMapHashTable struct {
+	hashMap    concurrentMap
+	entryStore *entryStore
+	length     uint64
+}
+
+// newConcurrentMapHashTable creates a concurrentMapHashTable
+func newConcurrentMapHashTable() *concurrentMapHashTable {
+	ht := new(concurrentMapHashTable)
+	ht.hashMap = newConcurrentMap()
+	ht.entryStore = newEntryStore()
+	ht.length = 0
+	return ht
+}
+
+// Len return the number of rowPtrs in the concurrentMapHashTable
+func (ht *concurrentMapHashTable) Len() uint64 {
+	return ht.length
+}
+
+// Put puts the key/rowPtr pairs to the concurrentMapHashTable, multiple rowPtrs are stored in a list.
+func (ht *concurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
+	newEntry := ht.entryStore.GetStore()
+	newEntry.ptr = rowPtr
+	newEntry.next = nil
+	ht.hashMap.Insert(hashKey, newEntry)
+	atomic.AddUint64(&ht.length, 1)
+}
+
+// Get gets the values of the "key" and appends them to "values".
+func (ht *concurrentMapHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
+	entryAddr, _ := ht.hashMap.Get(hashKey)
+	for entryAddr != nil {
+		rowPtrs = append(rowPtrs, entryAddr.ptr)
+		entryAddr = entryAddr.next
+	}
+	return
+}

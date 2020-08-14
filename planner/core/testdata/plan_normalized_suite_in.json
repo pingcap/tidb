@@ -1,0 +1,30 @@
+[
+	{
+		"name": "TestNormalizedPlan",
+		"cases": [
+			"select * from t1;",
+			"select * from t1 where a<1;",
+			"select * from t1 where a>1",
+			"select * from t1 where a=1",
+			"select * from t1 where a in (1,2,3)",
+			"select * from t1 where b=1",
+			"select a+1,b+2 from t1 use index(b) where b=3",
+			"select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
+			"SELECT * from t1 where a!=1 order by c limit 1",
+			"SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+			"SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+			"SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+			"SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+			"SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
+			"select count(1) as num,a from t1 where a=1 group by a union select count(1) as num,a from t1 where a=3 group by a;",
+			"insert into t1 values (1,1,1)",
+			"insert into t1 select * from t2 where t2.a>0 and t2.b!=0",
+          	"update t1 set a=a+1",
+			"update t1 set a=a+1 where a>0",
+			"delete from t1",
+			"delete from t1 where a>0 and b=1 and c!=2",
+			"create table t1_tmp (a int)",
+			"alter table t1_tmp add column c int"
+		]
+	}
+]

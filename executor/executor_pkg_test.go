@@ -15,23 +15,39 @@ package executor
 
 import (
 	"context"
+	"crypto/tls"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/expression"
+	plannerutil "github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var _ = Suite(&testExecSuite{})
+var _ = SerialSuites(&testExecSerialSuite{})
+
+// Note: it's a tricky way to export the `inspectionSummaryRules` and `inspectionRules` for unit test but invisible for normal code
+var (
+	InspectionSummaryRules = inspectionSummaryRules
+	InspectionRules        = inspectionRules
+)
 
 type testExecSuite struct {
+}
+
+type testExecSerialSuite struct {
 }
 
 // mockSessionManager is a mocked session manager which is used for test.
@@ -60,6 +76,9 @@ func (msm *mockSessionManager) GetProcessInfo(id uint64) (*util.ProcessInfo, boo
 // Kill implements the SessionManager.Kill interface.
 func (msm *mockSessionManager) Kill(cid uint64, query bool) {
 
+}
+
+func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
 }
 
 func (s *testExecSuite) TestShowProcessList(c *C) {
@@ -119,7 +138,7 @@ func buildSchema(names []string, ftypes []byte) *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(names))...)
 	for i := range names {
 		col := &expression.Column{
-			ColName: model.NewCIStr(names[i]),
+			UniqueID: int64(i),
 		}
 		// User varchar as the default return column type.
 		tp := mysql.TypeVarchar
@@ -234,4 +253,141 @@ func assertEqualStrings(c *C, got []field, expect []string) {
 	for i := 0; i < len(got); i++ {
 		c.Assert(string(got[i].str), Equals, expect[i])
 	}
+}
+
+func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+		conf.MemQuotaQuery = 1
+	})
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
+	}()
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	opt := mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+		ndvs:   cas.ndvs,
+	}
+	dataSource := buildMockDataSource(opt)
+	exec := &SortExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
+		schema:       dataSource.schema,
+	}
+	for _, idx := range cas.orderByIdx {
+		exec.ByItems = append(exec.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
+	}
+	tmpCtx := context.Background()
+	chk := newFirstChunk(exec)
+	dataSource.prepareChunks()
+	err := exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Test only 1 partition and all data in memory.
+	c.Assert(len(exec.partitionList), Equals, 1)
+	c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, false)
+	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	err = exec.Close()
+	c.Assert(err, IsNil)
+
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 1)
+	dataSource.prepareChunks()
+	err = exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Test 2 partitions and all data in disk.
+	// Now spilling is in parallel.
+	// Maybe the second add() will called before spilling, depends on
+	// Golang goroutine scheduling. So the result has two possibilities.
+	if len(exec.partitionList) == 2 {
+		c.Assert(len(exec.partitionList), Equals, 2)
+		c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
+		c.Assert(exec.partitionList[1].AlreadySpilledSafeForTest(), Equals, true)
+		c.Assert(exec.partitionList[0].NumRow(), Equals, 1024)
+		c.Assert(exec.partitionList[1].NumRow(), Equals, 1024)
+	} else {
+		c.Assert(len(exec.partitionList), Equals, 1)
+		c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
+		c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	}
+
+	err = exec.Close()
+	c.Assert(err, IsNil)
+
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 24000)
+	dataSource.prepareChunks()
+	err = exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Test only 1 partition but spill disk.
+	c.Assert(len(exec.partitionList), Equals, 1)
+	c.Assert(exec.partitionList[0].AlreadySpilledSafeForTest(), Equals, true)
+	c.Assert(exec.partitionList[0].NumRow(), Equals, 2048)
+	err = exec.Close()
+	c.Assert(err, IsNil)
+
+	// Test partition nums.
+	ctx = mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 16864*50)
+	ctx.GetSessionVars().StmtCtx.MemTracker.Consume(16864 * 45)
+	cas = &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
+	opt = mockDataSourceParameters{
+		schema: expression.NewSchema(cas.columns()...),
+		rows:   cas.rows,
+		ctx:    cas.ctx,
+		ndvs:   cas.ndvs,
+	}
+	dataSource = buildMockDataSource(opt)
+	exec = &SortExec{
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
+		schema:       dataSource.schema,
+	}
+	for _, idx := range cas.orderByIdx {
+		exec.ByItems = append(exec.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
+	}
+	tmpCtx = context.Background()
+	chk = newFirstChunk(exec)
+	dataSource.prepareChunks()
+	err = exec.Open(tmpCtx)
+	c.Assert(err, IsNil)
+	for {
+		err = exec.Next(tmpCtx, chk)
+		c.Assert(err, IsNil)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+	// Don't spill too many partitions.
+	c.Assert(len(exec.partitionList) <= 4, IsTrue)
+	err = exec.Close()
+	c.Assert(err, IsNil)
 }

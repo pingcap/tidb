@@ -67,6 +67,17 @@ func newBuffer(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	return nil, errors.Errorf("get column buffer for unsupported EvalType=%v", evalType)
 }
 
+// GetColumn allocates a column buffer with the specific eval type and capacity.
+// the allocator is not responsible for initializing the column, so please initialize it before using.
+func GetColumn(evalType types.EvalType, capacity int) (*chunk.Column, error) {
+	return globalColumnAllocator.get(evalType, capacity)
+}
+
+// PutColumn releases a column buffer.
+func PutColumn(buf *chunk.Column) {
+	globalColumnAllocator.put(buf)
+}
+
 func (r *localSliceBuffer) get(evalType types.EvalType, capacity int) (*chunk.Column, error) {
 	r.Lock()
 	if r.size > 0 {
@@ -100,4 +111,38 @@ func (r *localSliceBuffer) put(buf *chunk.Column) {
 	}
 	r.size++
 	r.Unlock()
+}
+
+// vecEvalIntByRows uses the non-vectorized(row-based) interface `evalInt` to eval the expression.
+func vecEvalIntByRows(sig builtinFunc, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	i64s := result.Int64s()
+	for i := 0; i < n; i++ {
+		res, isNull, err := sig.evalInt(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		result.SetNull(i, isNull)
+		i64s[i] = res
+	}
+	return nil
+}
+
+// vecEvalStringByRows uses the non-vectorized(row-based) interface `evalString` to eval the expression.
+func vecEvalStringByRows(sig builtinFunc, input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		res, isNull, err := sig.evalString(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(res)
+	}
+	return nil
 }

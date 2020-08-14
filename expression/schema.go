@@ -15,9 +15,6 @@ package expression
 
 import (
 	"strings"
-
-	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
@@ -88,43 +85,6 @@ func ExprFromSchema(expr Expression, schema *Schema) bool {
 	return false
 }
 
-// FindColumn finds an Column from schema for a ast.ColumnName. It compares the db/table/column names.
-// If there are more than one result, it will raise ambiguous error.
-func (s *Schema) FindColumn(astCol *ast.ColumnName) (*Column, error) {
-	col, _, err := s.FindColumnAndIndex(astCol)
-	return col, err
-}
-
-// FindColumnAndIndex finds an Column and its index from schema for a ast.ColumnName.
-// It compares the db/table/column names. If there are more than one result, raise ambiguous error.
-func (s *Schema) FindColumnAndIndex(astCol *ast.ColumnName) (*Column, int, error) {
-	dbName, tblName, colName := astCol.Schema, astCol.Table, astCol.Name
-	idx := -1
-	for i, col := range s.Columns {
-		if (dbName.L == "" || dbName.L == col.DBName.L) &&
-			(tblName.L == "" || tblName.L == col.TblName.L) &&
-			(colName.L == col.ColName.L) {
-			if idx == -1 {
-				idx = i
-			} else {
-				// For query like:
-				// create table t1(a int); create table t2(d int);
-				// select 1 from t1, t2 where 1 = (select d from t2 where a > 1) and d = 1;
-				// we will get an Apply operator whose schema is [test.t1.a, test.t2.d, test.t2.d],
-				// we check whether the column of the schema comes from a subquery to avoid
-				// causing the ambiguous error when resolve the column `d` in the Selection.
-				if !col.IsReferenced {
-					return nil, -1, errors.Errorf("Column %s is ambiguous", col.String())
-				}
-			}
-		}
-	}
-	if idx == -1 {
-		return nil, idx, nil
-	}
-	return s.Columns[idx], idx, nil
-}
-
 // RetrieveColumn retrieves column in expression from the columns in schema.
 func (s *Schema) RetrieveColumn(col *Column) *Column {
 	index := s.ColumnIndex(col)
@@ -152,16 +112,6 @@ func (s *Schema) ColumnIndex(col *Column) int {
 		}
 	}
 	return -1
-}
-
-// FindColumnByName finds a column by its name.
-func (s *Schema) FindColumnByName(name string) *Column {
-	for _, col := range s.Columns {
-		if col.ColName.L == name {
-			return col
-		}
-	}
-	return nil
 }
 
 // Contains checks if the schema contains the column.
@@ -211,6 +161,23 @@ func (s *Schema) ColumnsByIndices(offsets []int) []*Column {
 	return cols
 }
 
+// ExtractColGroups checks if column groups are from current schema, and returns
+// offsets of those satisfied column groups.
+func (s *Schema) ExtractColGroups(colGroups [][]*Column) ([][]int, []int) {
+	if len(colGroups) == 0 {
+		return nil, nil
+	}
+	extracted := make([][]int, 0, len(colGroups))
+	offsets := make([]int, 0, len(colGroups))
+	for i, g := range colGroups {
+		if j := s.ColumnsIndices(g); j != nil {
+			extracted = append(extracted, j)
+			offsets = append(offsets, i)
+		}
+	}
+	return extracted, offsets
+}
+
 // MergeSchema will merge two schema into one schema. We shouldn't need to consider unique keys.
 // That will be processed in build_key_info.go.
 func MergeSchema(lSchema, rSchema *Schema) *Schema {
@@ -227,6 +194,16 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 	tmpR := rSchema.Clone()
 	ret := NewSchema(append(tmpL.Columns, tmpR.Columns...)...)
 	return ret
+}
+
+// GetUsedList shows whether each column in schema is contained in usedCols.
+func GetUsedList(usedCols []*Column, schema *Schema) []bool {
+	tmpSchema := NewSchema(usedCols...)
+	used := make([]bool, schema.Len())
+	for i, col := range schema.Columns {
+		used[i] = tmpSchema.Contains(col)
+	}
+	return used
 }
 
 // NewSchema returns a schema made by its parameter.

@@ -68,7 +68,7 @@ func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	return tblInfo
 }
 
-// testTableInfo creates a test table with num int columns and with no index.
+// testTableInfoWithPartition creates a test table with num int columns and with no index.
 func testTableInfoWithPartition(c *C, d *ddl, name string, num int) *model.TableInfo {
 	tblInfo := testTableInfo(c, d, name, num)
 	genIDs, err := d.genGlobalIDs(1)
@@ -86,6 +86,30 @@ func testTableInfoWithPartition(c *C, d *ddl, name string, num int) *model.Table
 	}
 
 	return tblInfo
+}
+
+// testTableInfoWithPartitionLessThan creates a test table with num int columns and one partition specified with lessthan.
+func testTableInfoWithPartitionLessThan(c *C, d *ddl, name string, num int, lessthan string) *model.TableInfo {
+	tblInfo := testTableInfoWithPartition(c, d, name, num)
+	tblInfo.Partition.Definitions[0].LessThan = []string{lessthan}
+	return tblInfo
+}
+
+func testAddedNewTablePartitionInfo(c *C, d *ddl, tblInfo *model.TableInfo, partName, lessthan string) *model.PartitionInfo {
+	genIDs, err := d.genGlobalIDs(1)
+	c.Assert(err, IsNil)
+	pid := genIDs[0]
+	// the new added partition should change the partition state to state none at the beginning.
+	return &model.PartitionInfo{
+		Type:   model.PartitionTypeRange,
+		Expr:   tblInfo.Columns[0].Name.L,
+		Enable: true,
+		Definitions: []model.PartitionDefinition{{
+			ID:       pid,
+			Name:     model.NewCIStr(partName),
+			LessThan: []string{lessthan},
+		}},
+	}
 }
 
 // testViewInfo creates a test view with num int columns.
@@ -298,8 +322,8 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 	if tblInfo == nil {
 		return nil, errors.New("table not found")
 	}
-	alloc := autoid.NewAllocator(d.store, schemaID, false)
-	tbl, err := table.TableFromMeta(alloc, tblInfo)
+	alloc := autoid.NewAllocator(d.store, schemaID, false, autoid.RowIDAllocType)
+	tbl, err := table.TableFromMeta(autoid.NewAllocators(alloc), tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -308,8 +332,9 @@ func testGetTableWithError(d *ddl, schemaID, tableID int64) (table.Table, error)
 
 func (s *testTableSuite) SetUpSuite(c *C) {
 	s.store = testCreateStore(c, "test_table")
-	s.d = newDDL(
+	s.d = testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(s.store),
 		WithLease(testLease),
 	)

@@ -17,35 +17,34 @@ import (
 	"database/sql"
 	"fmt"
 	"io/ioutil"
-	"net/http"
 	"os"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
 type testDumpStatsSuite struct {
+	*testServerClient
 	server *Server
 	sh     *StatsHandler
 	store  kv.Storage
 	domain *domain.Domain
 }
 
-var _ = Suite(new(testDumpStatsSuite))
+var _ = Suite(&testDumpStatsSuite{
+	testServerClient: newTestServerClient(),
+})
 
 func (ds *testDumpStatsSuite) startServer(c *C) {
-	mvccStore := mocktikv.MustNewMVCCStore()
 	var err error
-	ds.store, err = mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
+	ds.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	session.DisableStats4Test()
 	ds.domain, err = session.BootstrapSession(ds.store)
@@ -53,16 +52,16 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	ds.domain.SetStatsUpdating(true)
 	tidbdrv := NewTiDBDriver(ds.store)
 
-	cfg := config.NewConfig()
-	cfg.Port = 4001
-	cfg.Status.StatusPort = 10090
+	cfg := newTestConfig()
+	cfg.Port = ds.port
+	cfg.Status.StatusPort = ds.statusPort
 	cfg.Status.ReportStatus = true
 
 	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
 	ds.server = server
 	go server.Run()
-	waitUntilServerOnline(cfg.Status.StatusPort)
+	ds.waitUntilServerOnline()
 
 	do, err := session.GetDomain(ds.store)
 	c.Assert(err, IsNil)
@@ -83,13 +82,13 @@ func (ds *testDumpStatsSuite) stopServer(c *C) {
 
 func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	ds.startServer(c)
+	defer ds.stopServer(c)
 	ds.prepareData(c)
-	defer ds.server.Close()
 
 	router := mux.NewRouter()
 	router.Handle("/stats/dump/{db}/{table}", ds.sh)
 
-	resp, err := http.Get("http://127.0.0.1:10090/stats/dump/tidb/test")
+	resp, err := ds.fetchStatus("/stats/dump/tidb/test")
 	c.Assert(err, IsNil)
 	defer resp.Body.Close()
 
@@ -115,7 +114,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	ds.prepare4DumpHistoryStats(c)
 
 	// test dump history stats
-	resp1, err := http.Get("http://127.0.0.1:10090/stats/dump/tidb/test")
+	resp1, err := ds.fetchStatus("/stats/dump/tidb/test")
 	c.Assert(err, IsNil)
 	defer resp1.Body.Close()
 	js, err = ioutil.ReadAll(resp1.Body)
@@ -131,7 +130,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 		c.Assert(os.Remove(path1), IsNil)
 	}()
 
-	resp1, err = http.Get("http://127.0.0.1:10090/stats/dump/tidb/test/" + snapshot)
+	resp1, err = ds.fetchStatus("/stats/dump/tidb/test/" + snapshot)
 	c.Assert(err, IsNil)
 
 	js, err = ioutil.ReadAll(resp1.Body)
@@ -141,7 +140,7 @@ func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 }
 
 func (ds *testDumpStatsSuite) prepareData(c *C) {
-	db, err := sql.Open("mysql", getDSN())
+	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 	dbt := &DBTest{c, db}
@@ -162,7 +161,7 @@ func (ds *testDumpStatsSuite) prepareData(c *C) {
 }
 
 func (ds *testDumpStatsSuite) prepare4DumpHistoryStats(c *C) {
-	db, err := sql.Open("mysql", getDSN())
+	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 
@@ -181,7 +180,7 @@ func (ds *testDumpStatsSuite) prepare4DumpHistoryStats(c *C) {
 }
 
 func (ds *testDumpStatsSuite) checkCorrelation(c *C) {
-	db, err := sql.Open("mysql", getDSN(nil))
+	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	dbt := &DBTest{c, db}
 	defer db.Close()
@@ -209,9 +208,9 @@ func (ds *testDumpStatsSuite) checkCorrelation(c *C) {
 }
 
 func (ds *testDumpStatsSuite) checkData(c *C, path string) {
-	db, err := sql.Open("mysql", getDSN(func(config *mysql.Config) {
+	db, err := sql.Open("mysql", ds.getDSN(func(config *mysql.Config) {
 		config.AllowAllFiles = true
-		config.Strict = false
+		config.Params = map[string]string{"sql_mode": "''"}
 	}))
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	dbt := &DBTest{c, db}
@@ -236,7 +235,7 @@ func (ds *testDumpStatsSuite) checkData(c *C, path string) {
 }
 
 func (ds *testDumpStatsSuite) clearData(c *C, path string) {
-	db, err := sql.Open("mysql", getDSN())
+	db, err := sql.Open("mysql", ds.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
 

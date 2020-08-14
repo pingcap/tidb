@@ -91,11 +91,6 @@ func (s *RangeTaskRunner) SetRegionsPerTask(regionsPerTask int) {
 	s.regionsPerTask = regionsPerTask
 }
 
-// SetStatLogInterval sets the time interval to log the stats.
-func (s *RangeTaskRunner) SetStatLogInterval(interval time.Duration) {
-	s.statLogInterval = interval
-}
-
 // RunOnRange runs the task on the given range.
 // Empty startKey or endKey means unbounded.
 func (s *RangeTaskRunner) RunOnRange(ctx context.Context, startKey, endKey kv.Key) error {
@@ -162,7 +157,7 @@ Loop:
 		default:
 		}
 
-		bo := NewBackoffer(ctx, locateRegionMaxBackoff)
+		bo := NewBackofferWithVars(ctx, locateRegionMaxBackoff, nil)
 
 		rangeEndKey, err := s.store.GetRegionCache().BatchLoadRegionsFromKey(bo, key, s.regionsPerTask)
 		if err != nil {
@@ -267,12 +262,11 @@ type rangeTaskWorker struct {
 // run starts the worker. It collects all objects from `w.taskCh` and process them one by one.
 func (w *rangeTaskWorker) run(ctx context.Context, cancel context.CancelFunc) {
 	defer w.wg.Done()
-
 	for r := range w.taskCh {
 		select {
 		case <-ctx.Done():
 			w.err = ctx.Err()
-			break
+			return
 		default:
 		}
 

@@ -14,26 +14,13 @@
 package privileges
 
 import (
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	mysql "github.com/pingcap/tidb/errno"
 )
 
-// privilege error codes.
-const (
-	codeInvalidPrivilegeType  terror.ErrCode = 1
-	codeInvalidUserNameFormat                = 2
-	codeErrNonexistingGrant                  = mysql.ErrNonexistingGrant
-)
-
+// error definitions.
 var (
-	errInvalidPrivilegeType  = terror.ClassPrivilege.New(codeInvalidPrivilegeType, "unknown privilege type %s")
-	errInvalidUserNameFormat = terror.ClassPrivilege.New(codeInvalidUserNameFormat, "wrong username format")
-	errNonexistingGrant      = terror.ClassPrivilege.New(codeErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
+	errInvalidPrivilegeType = terror.ClassPrivilege.New(mysql.ErrInvalidPrivilegeType, mysql.MySQLErrName[mysql.ErrInvalidPrivilegeType])
+	ErrNonexistingGrant     = terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
+	errLoadPrivilege        = terror.ClassPrivilege.New(mysql.ErrLoadPrivilege, mysql.MySQLErrName[mysql.ErrLoadPrivilege])
 )
-
-func init() {
-	privilegeMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeErrNonexistingGrant: mysql.ErrNonexistingGrant,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassPrivilege] = privilegeMySQLErrCodes
-}

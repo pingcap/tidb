@@ -20,29 +20,25 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 type dbTestSuite struct{}
 
 var _ = Suite(&dbTestSuite{})
 
-var suite = new(dbTestSuite)
-
 func (ts *dbTestSuite) TestIntegration(c *C) {
+	testleak.BeforeTest()
+	defer testleak.AfterTest(c)()
 	var err error
 	lease := 50 * time.Millisecond
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	mvccStore := mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithMVCCStore(mvccStore),
-	)
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
+	defer store.Close()
 	session.SetSchemaLease(lease)
-	_, err = session.BootstrapSession(store)
+	domain, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer domain.Close()
 
 	// for NotifyUpdatePrivilege
 	createRoleSQL := `CREATE ROLE 'test'@'localhost';`
@@ -54,7 +50,7 @@ func (ts *dbTestSuite) TestIntegration(c *C) {
 	// for BindHandle
 	se.Execute(context.Background(), "use test")
 	se.Execute(context.Background(), "drop table if exists t")
-	se.Execute(context.Background(), "create table t(i int, s varchar(20), index(i, s))")
+	se.Execute(context.Background(), "create table t(i int, s varchar(20), index index_t(i, s))")
 	_, err = se.Execute(context.Background(), "create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
 	c.Assert(err, IsNil, Commentf("err %v", err))
 }

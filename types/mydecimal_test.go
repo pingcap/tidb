@@ -14,7 +14,6 @@
 package types
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
@@ -22,8 +21,13 @@ import (
 )
 
 var _ = Suite(&testMyDecimalSuite{})
+var _ = SerialSuites(&testMyDecimalSerialSuite{})
 
 type testMyDecimalSuite struct {
+}
+
+// testMyDecimalSerialSuite hold test cases that must run in serial
+type testMyDecimalSerialSuite struct {
 }
 
 func (s *testMyDecimalSuite) TestFromInt(c *C) {
@@ -153,7 +157,7 @@ func (s *testMyDecimalSuite) TestToHashKey(c *C) {
 	}{
 		{[]string{"1.1", "1.1000", "1.1000000", "1.10000000000", "01.1", "0001.1", "001.1000000"}},
 		{[]string{"-1.1", "-1.1000", "-1.1000000", "-1.10000000000", "-01.1", "-0001.1", "-001.1000000"}},
-		{[]string{".1", "0.1", "000000.1", ".10000", "0000.10000", "000000000000000000.1"}},
+		{[]string{".1", "0.1", "0.10", "000000.1", ".10000", "0000.10000", "000000000000000000.1"}},
 		{[]string{"0", "0000", ".0", ".00000", "00000.00000", "-0", "-0000", "-.0", "-.00000", "-00000.00000"}},
 		{[]string{".123456789123456789", ".1234567891234567890", ".12345678912345678900", ".123456789123456789000", ".1234567891234567890000", "0.123456789123456789",
 			".1234567891234567890000000000", "0000000.123456789123456789000"}},
@@ -204,6 +208,8 @@ func (s *testMyDecimalSuite) TestToHashKey(c *C) {
 			var dec MyDecimal
 			c.Check(dec.FromString([]byte(num)), IsNil)
 			key, err := dec.ToHashKey()
+			// remove digit len
+			key = key[:len(key)-1]
 			c.Check(err, IsNil)
 			keys = append(keys, string(key))
 		}
@@ -255,7 +261,8 @@ func (s *testMyDecimalSuite) TestRemoveTrailingZeros(c *C) {
 	}
 }
 
-func (s *testMyDecimalSuite) TestShift(c *C) {
+// this test will change global variable `wordBufLen`, so it must run in serial
+func (s *testMyDecimalSerialSuite) TestShift(c *C) {
 	type tcase struct {
 		input  string
 		shift  int
@@ -473,7 +480,8 @@ func (s *testMyDecimalSuite) TestRoundWithCeil(c *C) {
 	}
 }
 
-func (s *testMyDecimalSuite) TestFromString(c *C) {
+// this test will change global variable `wordBufLen`, so it must run in serial
+func (s *testMyDecimalSerialSuite) TestFromString(c *C) {
 	type tcase struct {
 		input  string
 		output string
@@ -541,33 +549,6 @@ func (s *testMyDecimalSuite) TestToString(c *C) {
 	}
 }
 
-func (s *testMyDecimalSuite) TestCopy(c *C) {
-	type tcase struct {
-		input string
-	}
-	tests := []tcase{
-		{".0"},
-		{".123"},
-		{"123.123"},
-		{"123."},
-		{"123"},
-		{"123.1230"},
-		{"-123.1230"},
-		{"00123.123"},
-	}
-	for _, ca := range tests {
-		var dec MyDecimal
-		err := dec.FromString([]byte(ca.input))
-		c.Assert(err, IsNil)
-
-		dec2 := dec.Copy()
-		c.Assert(reflect.DeepEqual(dec, *dec2), IsTrue)
-	}
-
-	var dec *MyDecimal
-	c.Assert(dec.Copy(), IsNil)
-}
-
 func (s *testMyDecimalSuite) TestToBinFromBin(c *C) {
 	type tcase struct {
 		input     string
@@ -592,6 +573,22 @@ func (s *testMyDecimalSuite) TestToBinFromBin(c *C) {
 		{"000000000.01", 7, 3, "0.010", nil},
 		{"123.4", 10, 2, "123.40", nil},
 		{"1000", 3, 0, "0", ErrOverflow},
+		{"0.1", 1, 1, "0.1", nil},
+		{"0.100", 1, 1, "0.1", ErrTruncated},
+		{"0.1000", 1, 1, "0.1", ErrTruncated},
+		{"0.10000", 1, 1, "0.1", ErrTruncated},
+		{"0.100000", 1, 1, "0.1", ErrTruncated},
+		{"0.1000000", 1, 1, "0.1", ErrTruncated},
+		{"0.10", 1, 1, "0.1", ErrTruncated},
+		{"0000000000000000000000000000000000000000000.000000000000123000000000000000", 15, 15, "0.000000000000123", ErrTruncated},
+		{"00000000000000000000000000000.00000000000012300", 15, 15, "0.000000000000123", ErrTruncated},
+		{"0000000000000000000000000000000000000000000.0000000000001234000000000000000", 16, 16, "0.0000000000001234", ErrTruncated},
+		{"00000000000000000000000000000.000000000000123400", 16, 16, "0.0000000000001234", ErrTruncated},
+		{"0.1", 2, 2, "0.10", nil},
+		{"0.10", 3, 3, "0.100", nil},
+		{"0.1", 3, 1, "0.1", nil},
+		{"0.0000000000001234", 32, 17, "0.00000000000012340", nil},
+		{"0.0000000000001234", 20, 20, "0.00000000000012340000", nil},
 	}
 	for _, ca := range tests {
 		var dec MyDecimal
@@ -919,6 +916,21 @@ func (s *testMyDecimalSuite) TestMaxOrMin(c *C) {
 		dec := NewMaxOrMinDec(tt.neg, tt.prec, tt.frac)
 		c.Assert(dec.String(), Equals, tt.result)
 	}
+}
+
+func (s *testMyDecimalSuite) TestReset(c *C) {
+	var x1, y1, z1 MyDecimal
+	c.Assert(x1.FromString([]byte("38520.130741106671")), IsNil)
+	c.Assert(y1.FromString([]byte("9863.944799797851")), IsNil)
+	c.Assert(DecimalAdd(&x1, &y1, &z1), IsNil)
+
+	var x2, y2, z2 MyDecimal
+	c.Assert(x2.FromString([]byte("121519.080207244")), IsNil)
+	c.Assert(y2.FromString([]byte("54982.444519146")), IsNil)
+	c.Assert(DecimalAdd(&x2, &y2, &z2), IsNil)
+
+	c.Assert(DecimalAdd(&x2, &y2, &z1), IsNil)
+	c.Assert(z1, Equals, z2)
 }
 
 func benchmarkMyDecimalToBinOrHashCases() []string {

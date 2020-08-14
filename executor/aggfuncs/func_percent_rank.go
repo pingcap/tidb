@@ -25,29 +25,37 @@ type percentRank struct {
 	rowComparer
 }
 
-func (pr *percentRank) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4Rank{})
+func (pr *percentRank) AllocPartialResult() (partial PartialResult, memDelta int64) {
+	return PartialResult(&partialResult4Rank{}), 0
 }
 
 func (pr *percentRank) ResetPartialResult(partial PartialResult) {
 	p := (*partialResult4Rank)(partial)
-	p.reset()
+	p.curIdx = 0
+	p.lastRank = 0
+	p.rows = p.rows[:0]
 }
 
-func (pr *percentRank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, partial PartialResult) error {
+func (pr *percentRank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, partial PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Rank)(partial)
-	p.updatePartialResult(rowsInGroup, false, pr.compareRows)
-	return nil
+	p.rows = append(p.rows, rowsInGroup...)
+	return 0, nil
 }
 
 func (pr *percentRank) AppendFinalResult2Chunk(sctx sessionctx.Context, partial PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4Rank)(partial)
-	numRows := len(p.results)
-	if numRows == 1 {
-		chk.AppendFloat64(pr.ordinal, 0)
-	} else {
-		chk.AppendFloat64(pr.ordinal, float64(p.results[p.curIdx]-1)/float64(numRows-1))
-	}
+	numRows := int64(len(p.rows))
 	p.curIdx++
+	if p.curIdx == 1 {
+		p.lastRank = 1
+		chk.AppendFloat64(pr.ordinal, 0)
+		return nil
+	}
+	if pr.compareRows(p.rows[p.curIdx-2], p.rows[p.curIdx-1]) == 0 {
+		chk.AppendFloat64(pr.ordinal, float64(p.lastRank-1)/float64(numRows-1))
+		return nil
+	}
+	p.lastRank = p.curIdx
+	chk.AppendFloat64(pr.ordinal, float64(p.lastRank-1)/float64(numRows-1))
 	return nil
 }

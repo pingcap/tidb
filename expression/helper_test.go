@@ -14,22 +14,21 @@
 package expression
 
 import (
-	driver "github.com/pingcap/tidb/types/parser_driver"
 	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 func (s *testExpressionSuite) TestGetTimeValue(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	v, err := GetTimeValue(ctx, "2012-12-12 00:00:00", mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
@@ -71,9 +70,9 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 		{"2012-12-12 00:00:00", "2012-12-12 00:00:00"},
 		{ast.CurrentTimestamp, time.Unix(1234, 0).Format(types.TimeFormat)},
 		{types.ZeroDatetimeStr, "0000-00-00 00:00:00"},
-		{ast.NewValueExpr("2012-12-12 00:00:00"), "2012-12-12 00:00:00"},
-		{ast.NewValueExpr(int64(0)), "0000-00-00 00:00:00"},
-		{ast.NewValueExpr(nil), nil},
+		{ast.NewValueExpr("2012-12-12 00:00:00", charset.CharsetUTF8MB4, charset.CollationUTF8MB4), "2012-12-12 00:00:00"},
+		{ast.NewValueExpr(int64(0), "", ""), "0000-00-00 00:00:00"},
+		{ast.NewValueExpr(nil, "", ""), nil},
 		{&ast.FuncCallExpr{FnName: model.NewCIStr(ast.CurrentTimestamp)}, strings.ToUpper(ast.CurrentTimestamp)},
 		//{&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(0))}, "0000-00-00 00:00:00"},
 	}
@@ -95,8 +94,8 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 		Expr interface{}
 	}{
 		{"2012-13-12 00:00:00"},
-		{ast.NewValueExpr("2012-13-12 00:00:00")},
-		{ast.NewValueExpr(int64(1))},
+		{ast.NewValueExpr("2012-13-12 00:00:00", charset.CharsetUTF8MB4, charset.CollationUTF8MB4)},
+		{ast.NewValueExpr(int64(1), "", "")},
 		{&ast.FuncCallExpr{FnName: model.NewCIStr("xxx")}},
 		//{&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(1))}},
 	}
@@ -108,7 +107,6 @@ func (s *testExpressionSuite) TestGetTimeValue(c *C) {
 }
 
 func (s *testExpressionSuite) TestIsCurrentTimestampExpr(c *C) {
-	defer testleak.AfterTest(c)()
 	buildTimestampFuncCallExpr := func(i int64) *ast.FuncCallExpr {
 		var args []ast.ExprNode
 		if i != 0 {
@@ -117,7 +115,7 @@ func (s *testExpressionSuite) TestIsCurrentTimestampExpr(c *C) {
 		return &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: args}
 	}
 
-	v := IsValidCurrentTimestampExpr(ast.NewValueExpr("abc"), nil)
+	v := IsValidCurrentTimestampExpr(ast.NewValueExpr("abc", charset.CharsetUTF8MB4, charset.CollationUTF8MB4), nil)
 	c.Assert(v, IsFalse)
 	v = IsValidCurrentTimestampExpr(buildTimestampFuncCallExpr(0), nil)
 	c.Assert(v, IsTrue)
@@ -134,7 +132,6 @@ func (s *testExpressionSuite) TestIsCurrentTimestampExpr(c *C) {
 }
 
 func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
-	defer testleak.AfterTest(c)()
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
 
@@ -142,16 +139,16 @@ func (s *testExpressionSuite) TestCurrentTimestampTimeZone(c *C) {
 	variable.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+00:00"))
 	v, err := GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
-	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{
-		Time: types.FromDate(1970, 1, 1, 0, 20, 34, 0),
-		Type: mysql.TypeTimestamp})
+	c.Assert(v.GetMysqlTime(), DeepEquals, types.NewTime(
+		types.FromDate(1970, 1, 1, 0, 20, 34, 0),
+		mysql.TypeTimestamp, types.DefaultFsp))
 
 	// CurrentTimestamp from "timestamp" session variable is based on UTC, so change timezone
 	// would get different value.
 	variable.SetSessionSystemVar(sessionVars, "time_zone", types.NewStringDatum("+08:00"))
 	v, err = GetTimeValue(ctx, ast.CurrentTimestamp, mysql.TypeTimestamp, types.MinFsp)
 	c.Assert(err, IsNil)
-	c.Assert(v.GetMysqlTime(), DeepEquals, types.Time{
-		Time: types.FromDate(1970, 1, 1, 8, 20, 34, 0),
-		Type: mysql.TypeTimestamp})
+	c.Assert(v.GetMysqlTime(), DeepEquals, types.NewTime(
+		types.FromDate(1970, 1, 1, 8, 20, 34, 0),
+		mysql.TypeTimestamp, types.DefaultFsp))
 }

@@ -82,20 +82,22 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	tests := []struct {
 		input  string
 		format string
-		expect types.MysqlTime
+		expect types.CoreTime
 	}{
 		{`01,05,2013`, `%d,%m,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
 		{`May 01, 2013`, `%M %d,%Y`, types.FromDate(2013, 5, 1, 0, 0, 0, 0)},
 		{`a09:30:17`, `a%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
 		{`09:30:17a`, `%h:%i:%s`, types.FromDate(0, 0, 0, 9, 30, 17, 0)},
-		{`abc`, `abc`, types.ZeroTime},
+		{`12:43:24`, `%h:%i:%s`, types.FromDate(0, 0, 0, 0, 43, 24, 0)},
+		{`abc`, `abc`, types.ZeroCoreTime},
 		{`09`, `%m`, types.FromDate(0, 9, 0, 0, 0, 0, 0)},
 		{`09`, `%s`, types.FromDate(0, 0, 0, 0, 0, 9, 0)},
-		{`12:43:24 AM`, `%r`, types.FromDate(0, 0, 0, 12, 43, 24, 0)},
+		{`12:43:24 AM`, `%r`, types.FromDate(0, 0, 0, 0, 43, 24, 0)},
+		{`12:43:24 PM`, `%r`, types.FromDate(0, 0, 0, 12, 43, 24, 0)},
 		{`11:43:24 PM`, `%r`, types.FromDate(0, 0, 0, 23, 43, 24, 0)},
 		{`00:12:13`, `%T`, types.FromDate(0, 0, 0, 0, 12, 13, 0)},
 		{`23:59:59`, `%T`, types.FromDate(0, 0, 0, 23, 59, 59, 0)},
-		{`00/00/0000`, `%m/%d/%Y`, types.ZeroTime},
+		{`00/00/0000`, `%m/%d/%Y`, types.ZeroCoreTime},
 		{`04/30/2004`, `%m/%d/%Y`, types.FromDate(2004, 4, 30, 0, 0, 0, 0)},
 		{`15:35:00`, `%H:%i:%s`, types.FromDate(0, 0, 0, 15, 35, 0, 0)},
 		{`Jul 17 33`, `%b %k %S`, types.FromDate(0, 7, 0, 17, 0, 33, 0)},
@@ -103,6 +105,8 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 		{`10:13 PM`, `%l:%i %p`, types.FromDate(0, 0, 0, 22, 13, 0, 0)},
 		{`12:00:00 AM`, `%h:%i:%s %p`, types.FromDate(0, 0, 0, 0, 0, 0, 0)},
 		{`12:00:00 PM`, `%h:%i:%s %p`, types.FromDate(0, 0, 0, 12, 0, 0, 0)},
+		{`12:00:00 PM`, `%I:%i:%s %p`, types.FromDate(0, 0, 0, 12, 0, 0, 0)},
+		{`1:00:00 PM`, `%h:%i:%s %p`, types.FromDate(0, 0, 0, 13, 0, 0, 0)},
 		{`18/10/22`, `%y/%m/%d`, types.FromDate(2018, 10, 22, 0, 0, 0, 0)},
 		{`8/10/22`, `%y/%m/%d`, types.FromDate(2008, 10, 22, 0, 0, 0, 0)},
 		{`69/10/22`, `%y/%m/%d`, types.FromDate(2069, 10, 22, 0, 0, 0, 0)},
@@ -118,7 +122,7 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	for i, tt := range tests {
 		var t types.Time
 		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsTrue, Commentf("no.%d failed", i))
-		c.Assert(t.Time, Equals, tt.expect, Commentf("no.%d failed", i))
+		c.Assert(t.CoreTime(), Equals, tt.expect, Commentf("no.%d failed", i))
 	}
 
 	errTests := []struct {
@@ -127,15 +131,17 @@ func (s *testTimeSuite) TestStrToDate(c *C) {
 	}{
 		{`04/31/2004`, `%m/%d/%Y`},
 		{`a09:30:17`, `%h:%i:%s`}, // format mismatch
-		{`12:43:24 PM`, `%r`},
-		{`12:43:24`, `%r`}, // no PM or AM followed
-		{`23:60:12`, `%T`}, // invalid minute
+		{`12:43:24`, `%r`},        // no PM or AM followed
+		{`23:60:12`, `%T`},        // invalid minute
 		{`18`, `%l`},
 		{`00:21:22 AM`, `%h:%i:%s %p`},
 		{`100/10/22`, `%y/%m/%d`},
+		{"2010-11-12 11 am", `%Y-%m-%d %H %p`},
+		{"2010-11-12 13 am", `%Y-%m-%d %h %p`},
+		{"2010-11-12 0 am", `%Y-%m-%d %h %p`},
 	}
-	for _, tt := range errTests {
+	for i, tt := range errTests {
 		var t types.Time
-		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsFalse)
+		c.Assert(t.StrToDate(sc, tt.input, tt.format), IsFalse, Commentf("no.%d failed", i))
 	}
 }

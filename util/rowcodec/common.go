@@ -19,6 +19,8 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/types"
 )
 
 // CodecVer is the constant number that represent the new row format.
@@ -26,68 +28,19 @@ const CodecVer = 128
 
 var errInvalidCodecVer = errors.New("invalid codec version")
 
-// row is the struct type used to access a row.
-// There are two types of row, small and large.
-// A small row takes one byte colID and two bytes offset, optimized for most cases.
-// If the max colID is larger than 255 or total value size is larger than 65535, the row type would be large.
-// A large row takes four bytes colID and four bytes offset.
-type row struct {
-	isLarge        bool
-	numNotNullCols uint16
-	numNullCols    uint16
-	data           []byte
-
-	// for small rows
-	colIDs  []byte
-	offsets []uint16
-
-	// for large row
-	colIDs32  []uint32
-	offsets32 []uint32
-}
-
-func (r *row) getData(i int) []byte {
-	var start, end uint32
-	if r.isLarge {
-		if i > 0 {
-			start = r.offsets32[i-1]
-		}
-		end = r.offsets32[i]
-	} else {
-		if i > 0 {
-			start = uint32(r.offsets[i-1])
-		}
-		end = uint32(r.offsets[i])
-	}
-	return r.data[start:end]
-}
-
-func (r *row) setRowData(rowData []byte) error {
-	if rowData[0] != CodecVer {
-		return errInvalidCodecVer
-	}
-	r.isLarge = rowData[1]&1 > 0
-	r.numNotNullCols = binary.LittleEndian.Uint16(rowData[2:])
-	r.numNullCols = binary.LittleEndian.Uint16(rowData[4:])
-	cursor := 6
-	if r.isLarge {
-		colIDsLen := int(r.numNotNullCols+r.numNullCols) * 4
-		r.colIDs32 = bytesToU32Slice(rowData[cursor : cursor+colIDsLen])
-		cursor += colIDsLen
-		offsetsLen := int(r.numNotNullCols) * 4
-		r.offsets32 = bytesToU32Slice(rowData[cursor : cursor+offsetsLen])
-		cursor += offsetsLen
-	} else {
-		colIDsLen := int(r.numNotNullCols + r.numNullCols)
-		r.colIDs = rowData[cursor : cursor+colIDsLen]
-		cursor += colIDsLen
-		offsetsLen := int(r.numNotNullCols) * 2
-		r.offsets = bytes2U16Slice(rowData[cursor : cursor+offsetsLen])
-		cursor += offsetsLen
-	}
-	r.data = rowData[cursor:]
-	return nil
-}
+// First byte in the encoded value which specifies the encoding type.
+const (
+	NilFlag          byte = 0
+	BytesFlag        byte = 1
+	CompactBytesFlag byte = 2
+	IntFlag          byte = 3
+	UintFlag         byte = 4
+	FloatFlag        byte = 5
+	DecimalFlag      byte = 6
+	VarintFlag       byte = 8
+	VaruintFlag      byte = 9
+	JSONFlag         byte = 10
+)
 
 func bytesToU32Slice(b []byte) []uint32 {
 	if len(b) == 0 {
@@ -178,7 +131,7 @@ func encodeUint(buf []byte, uVal uint64) []byte {
 		binary.LittleEndian.PutUint32(tmp[:], uint32(uVal))
 		buf = append(buf, tmp[:4]...)
 	} else {
-		binary.LittleEndian.PutUint64(tmp[:], uint64(uVal))
+		binary.LittleEndian.PutUint64(tmp[:], uVal)
 		buf = append(buf, tmp[:8]...)
 	}
 	return buf
@@ -194,5 +147,100 @@ func decodeUint(val []byte) uint64 {
 		return uint64(binary.LittleEndian.Uint32(val))
 	default:
 		return binary.LittleEndian.Uint64(val)
+	}
+}
+
+type largeNotNullSorter Encoder
+
+func (s *largeNotNullSorter) Less(i, j int) bool {
+	return s.colIDs32[i] < s.colIDs32[j]
+}
+
+func (s *largeNotNullSorter) Len() int {
+	return int(s.numNotNullCols)
+}
+
+func (s *largeNotNullSorter) Swap(i, j int) {
+	s.colIDs32[i], s.colIDs32[j] = s.colIDs32[j], s.colIDs32[i]
+	s.values[i], s.values[j] = s.values[j], s.values[i]
+}
+
+type smallNotNullSorter Encoder
+
+func (s *smallNotNullSorter) Less(i, j int) bool {
+	return s.colIDs[i] < s.colIDs[j]
+}
+
+func (s *smallNotNullSorter) Len() int {
+	return int(s.numNotNullCols)
+}
+
+func (s *smallNotNullSorter) Swap(i, j int) {
+	s.colIDs[i], s.colIDs[j] = s.colIDs[j], s.colIDs[i]
+	s.values[i], s.values[j] = s.values[j], s.values[i]
+}
+
+type smallNullSorter Encoder
+
+func (s *smallNullSorter) Less(i, j int) bool {
+	nullCols := s.colIDs[s.numNotNullCols:]
+	return nullCols[i] < nullCols[j]
+}
+
+func (s *smallNullSorter) Len() int {
+	return int(s.numNullCols)
+}
+
+func (s *smallNullSorter) Swap(i, j int) {
+	nullCols := s.colIDs[s.numNotNullCols:]
+	nullCols[i], nullCols[j] = nullCols[j], nullCols[i]
+}
+
+type largeNullSorter Encoder
+
+func (s *largeNullSorter) Less(i, j int) bool {
+	nullCols := s.colIDs32[s.numNotNullCols:]
+	return nullCols[i] < nullCols[j]
+}
+
+func (s *largeNullSorter) Len() int {
+	return int(s.numNullCols)
+}
+
+func (s *largeNullSorter) Swap(i, j int) {
+	nullCols := s.colIDs32[s.numNotNullCols:]
+	nullCols[i], nullCols[j] = nullCols[j], nullCols[i]
+}
+
+const (
+	// Length of rowkey.
+	rowKeyLen = 19
+	// Index of record flag 'r' in rowkey used by master tidb-server.
+	// The rowkey format is t{8 bytes id}_r{8 bytes handle}
+	recordPrefixIdx = 10
+)
+
+// IsRowKey determine whether key is row key.
+// this method will be used in unistore.
+func IsRowKey(key []byte) bool {
+	return len(key) == rowKeyLen && key[0] == 't' && key[recordPrefixIdx] == 'r'
+}
+
+// IsNewFormat checks whether row data is in new-format.
+func IsNewFormat(rowData []byte) bool {
+	return rowData[0] == CodecVer
+}
+
+// FieldTypeFromModelColumn creates a types.FieldType from model.ColumnInfo.
+// export for test case and CDC.
+func FieldTypeFromModelColumn(col *model.ColumnInfo) *types.FieldType {
+	return &types.FieldType{
+		Tp:      col.Tp,
+		Flag:    col.Flag,
+		Flen:    col.Flen,
+		Decimal: col.Decimal,
+		Elems:   col.Elems,
+		Charset: col.Charset,
+		Collate: col.Collate,
 	}
 }

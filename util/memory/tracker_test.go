@@ -21,6 +21,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
@@ -47,13 +48,13 @@ func (s *testSuite) TestSetLabel(c *C) {
 	c.Assert(tracker.label.String(), Equals, "old label")
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
-	c.Assert(tracker.parent, IsNil)
+	c.Assert(tracker.getParent(), IsNil)
 	c.Assert(len(tracker.mu.children), Equals, 0)
 	tracker.SetLabel(stringutil.StringerStr("new label"))
 	c.Assert(tracker.label.String(), Equals, "new label")
 	c.Assert(tracker.BytesConsumed(), Equals, int64(0))
 	c.Assert(tracker.bytesLimit, Equals, int64(-1))
-	c.Assert(tracker.parent, IsNil)
+	c.Assert(tracker.getParent(), IsNil)
 	c.Assert(len(tracker.mu.children), Equals, 0)
 }
 
@@ -140,7 +141,7 @@ func (s *testSuite) TestAttachTo(c *C) {
 	child.AttachTo(oldParent)
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(oldParent.BytesConsumed(), Equals, int64(100))
-	c.Assert(child.parent, DeepEquals, oldParent)
+	c.Assert(child.getParent(), DeepEquals, oldParent)
 	c.Assert(len(oldParent.mu.children), Equals, 1)
 	c.Assert(oldParent.mu.children[0], DeepEquals, child)
 
@@ -148,10 +149,27 @@ func (s *testSuite) TestAttachTo(c *C) {
 	c.Assert(child.BytesConsumed(), Equals, int64(100))
 	c.Assert(oldParent.BytesConsumed(), Equals, int64(0))
 	c.Assert(newParent.BytesConsumed(), Equals, int64(100))
-	c.Assert(child.parent, DeepEquals, newParent)
+	c.Assert(child.getParent(), DeepEquals, newParent)
 	c.Assert(len(newParent.mu.children), Equals, 1)
 	c.Assert(newParent.mu.children[0], DeepEquals, child)
 	c.Assert(len(oldParent.mu.children), Equals, 0)
+}
+
+func (s *testSuite) TestDetach(c *C) {
+	parent := NewTracker(stringutil.StringerStr("parent"), -1)
+	child := NewTracker(stringutil.StringerStr("child"), -1)
+	child.Consume(100)
+	child.AttachTo(parent)
+	c.Assert(child.BytesConsumed(), Equals, int64(100))
+	c.Assert(parent.BytesConsumed(), Equals, int64(100))
+	c.Assert(len(parent.mu.children), Equals, 1)
+	c.Assert(parent.mu.children[0], DeepEquals, child)
+
+	child.Detach()
+	c.Assert(child.BytesConsumed(), Equals, int64(100))
+	c.Assert(parent.BytesConsumed(), Equals, int64(0))
+	c.Assert(len(parent.mu.children), Equals, 0)
+	c.Assert(child.getParent(), IsNil)
 }
 
 func (s *testSuite) TestReplaceChild(c *C) {
@@ -168,21 +186,32 @@ func (s *testSuite) TestReplaceChild(c *C) {
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
 	c.Assert(len(parent.mu.children), Equals, 1)
 	c.Assert(parent.mu.children[0], DeepEquals, newChild)
-	c.Assert(newChild.parent, DeepEquals, parent)
-	c.Assert(oldChild.parent, IsNil)
+	c.Assert(newChild.getParent(), DeepEquals, parent)
+	c.Assert(oldChild.getParent(), IsNil)
 
 	parent.ReplaceChild(oldChild, nil)
 	c.Assert(parent.BytesConsumed(), Equals, int64(500))
 	c.Assert(len(parent.mu.children), Equals, 1)
 	c.Assert(parent.mu.children[0], DeepEquals, newChild)
-	c.Assert(newChild.parent, DeepEquals, parent)
-	c.Assert(oldChild.parent, IsNil)
+	c.Assert(newChild.getParent(), DeepEquals, parent)
+	c.Assert(oldChild.getParent(), IsNil)
 
 	parent.ReplaceChild(newChild, nil)
 	c.Assert(parent.BytesConsumed(), Equals, int64(0))
 	c.Assert(len(parent.mu.children), Equals, 0)
-	c.Assert(newChild.parent, IsNil)
-	c.Assert(oldChild.parent, IsNil)
+	c.Assert(newChild.getParent(), IsNil)
+	c.Assert(oldChild.getParent(), IsNil)
+
+	node1 := NewTracker(stringutil.StringerStr("Node1"), -1)
+	node2 := NewTracker(stringutil.StringerStr("Node2"), -1)
+	node3 := NewTracker(stringutil.StringerStr("Node3"), -1)
+	node2.AttachTo(node1)
+	node3.AttachTo(node2)
+	node3.Consume(100)
+	c.Assert(node1.BytesConsumed(), Equals, int64(100))
+	node2.ReplaceChild(node3, nil)
+	c.Assert(node2.BytesConsumed(), Equals, int64(0))
+	c.Assert(node1.BytesConsumed(), Equals, int64(0))
 }
 
 func (s *testSuite) TestToString(c *C) {
@@ -250,6 +279,55 @@ func (s *testSuite) TestMaxConsumed(c *C) {
 	}
 }
 
+func (s *testSuite) TestGlobalTracker(c *C) {
+	r := NewGlobalTracker(stringutil.StringerStr("root"), -1)
+	c1 := NewTracker(stringutil.StringerStr("child 1"), -1)
+	c2 := NewTracker(stringutil.StringerStr("child 2"), -1)
+	c1.Consume(100)
+	c2.Consume(200)
+
+	c1.AttachToGlobalTracker(r)
+	c2.AttachToGlobalTracker(r)
+	c.Assert(r.BytesConsumed(), Equals, int64(300))
+	c.Assert(c1.getParent(), DeepEquals, r)
+	c.Assert(c2.getParent(), DeepEquals, r)
+	c.Assert(len(r.mu.children), Equals, 0)
+
+	c1.DetachFromGlobalTracker()
+	c2.DetachFromGlobalTracker()
+	c.Assert(r.BytesConsumed(), Equals, int64(0))
+	c.Assert(c1.getParent(), IsNil)
+	c.Assert(c2.getParent(), IsNil)
+	c.Assert(len(r.mu.children), Equals, 0)
+
+	defer func() {
+		v := recover()
+		c.Assert(v, Equals, "Attach to a non-GlobalTracker")
+	}()
+	commonTracker := NewTracker(stringutil.StringerStr("common"), -1)
+	c1.AttachToGlobalTracker(commonTracker)
+
+	c1.AttachTo(commonTracker)
+	c.Assert(commonTracker.BytesConsumed(), Equals, int64(100))
+	c.Assert(len(commonTracker.mu.children), Equals, 1)
+	c.Assert(c1.getParent(), DeepEquals, commonTracker)
+
+	c1.AttachToGlobalTracker(r)
+	c.Assert(commonTracker.BytesConsumed(), Equals, int64(0))
+	c.Assert(len(commonTracker.mu.children), Equals, 0)
+	c.Assert(r.BytesConsumed(), Equals, int64(100))
+	c.Assert(c1.getParent(), DeepEquals, r)
+	c.Assert(len(r.mu.children), Equals, 0)
+
+	defer func() {
+		v := recover()
+		c.Assert(v, Equals, "Detach from a non-GlobalTracker")
+	}()
+	c2.AttachTo(commonTracker)
+	c2.DetachFromGlobalTracker()
+
+}
+
 func BenchmarkConsume(b *testing.B) {
 	tracker := NewTracker(stringutil.StringerStr("root"), -1)
 	b.RunParallel(func(pb *testing.PB) {
@@ -259,4 +337,8 @@ func BenchmarkConsume(b *testing.B) {
 			childTracker.Consume(256 << 20)
 		}
 	})
+}
+
+func (s *testSuite) TestErrorCode(c *C) {
+	c.Assert(int(errMemExceedThreshold.ToSQLError().Code), Equals, errno.ErrMemExceedThreshold)
 }

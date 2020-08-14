@@ -1,1 +1,23 @@
-/expression @qw4990 @SunRunAway @XuHuaiyu @Reminiscent
+/distsql @pingcap/exec-reviewers
+/executor @pingcap/exec-reviewers
+/expression @pingcap/exec-reviewers
+/types @pingcap/exec-reviewers
+/util/chunk @pingcap/exec-reviewers
+/util/disk @pingcap/exec-reviewers
+/util/execdetails @pingcap/exec-reviewers
+/util/expensivequery @pingcap/exec-reviewers
+/util/filesort @pingcap/exec-reviewers
+/util/memory @pingcap/exec-reviewers
+/util/sqlexec @pingcap/exec-reviewers
+
+/planner @pingcap/planner-reviewers
+/statistics @pingcap/planner-reviewers
+/util/ranger @pingcap/planner-reviewers
+/util/plancodec @pingcap/planner-reviewers
+/bindinfo @pingcap/planner-reviewers
+
+/ddl @pingcap/co-ddl
+/domain @pingcap/co-ddl
+/infoschema @pingcap/co-ddl
+/meta @pingcap/co-ddl
+/owner @pingcap/co-ddl

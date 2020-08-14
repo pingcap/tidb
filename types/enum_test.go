@@ -15,16 +15,20 @@ package types
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testEnumSuite{})
+var _ = SerialSuites(&testEnumSuite{})
 
 type testEnumSuite struct {
 }
 
 func (s *testEnumSuite) TestEnum(c *C) {
 	defer testleak.AfterTest(c)()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	tbl := []struct {
 		Elems    []string
 		Name     string
@@ -34,9 +38,33 @@ func (s *testEnumSuite) TestEnum(c *C) {
 		{[]string{"a"}, "b", 0},
 		{[]string{"a"}, "1", 1},
 	}
+	citbl := []struct {
+		Elems    []string
+		Name     string
+		Expected int
+	}{
+		{[]string{"a", "b"}, "A     ", 1},
+		{[]string{"a"}, "A", 1},
+		{[]string{"a"}, "b", 0},
+		{[]string{"啊"}, "啊", 1},
+		{[]string{"a"}, "1", 1},
+	}
 
 	for _, t := range tbl {
-		e, err := ParseEnumName(t.Elems, t.Name)
+		e, err := ParseEnumName(t.Elems, t.Name, mysql.DefaultCollationName)
+		if t.Expected == 0 {
+			c.Assert(err, NotNil)
+			c.Assert(e.ToNumber(), Equals, float64(0))
+			c.Assert(e.String(), Equals, "")
+			continue
+		}
+
+		c.Assert(err, IsNil)
+		c.Assert(e.String(), Equals, t.Elems[t.Expected-1])
+		c.Assert(e.ToNumber(), Equals, float64(t.Expected))
+	}
+	for _, t := range citbl {
+		e, err := ParseEnumName(t.Elems, t.Name, "utf8_general_ci")
 		if t.Expected == 0 {
 			c.Assert(err, NotNil)
 			c.Assert(e.ToNumber(), Equals, float64(0))

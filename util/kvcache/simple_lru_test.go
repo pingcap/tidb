@@ -14,6 +14,8 @@
 package kvcache
 
 import (
+	"fmt"
+	"reflect"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -265,4 +267,19 @@ func (s *testLRUCacheSuite) TestValues(c *C) {
 	for i := 0; i < 5; i++ {
 		c.Assert(values[i], Equals, int64(4-i))
 	}
+}
+
+func (s *testLRUCacheSuite) TestPutProfileName(c *C) {
+	lru := NewSimpleLRUCache(3, 0, 10)
+	c.Assert(lru.capacity, Equals, uint(3))
+	t := reflect.TypeOf(*lru)
+	pt := reflect.TypeOf(lru)
+	functionName := ""
+	for i := 0; i < pt.NumMethod(); i++ {
+		if pt.Method(i).Name == "Put" {
+			functionName = "Put"
+		}
+	}
+	pName := fmt.Sprintf("%s.(*%s).%s", t.PkgPath(), t.Name(), functionName)
+	c.Assert(pName, Equals, ProfileName)
 }

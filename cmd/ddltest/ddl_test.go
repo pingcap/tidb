@@ -35,6 +35,7 @@ import (
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -44,6 +45,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 	log "github.com/sirupsen/logrus"
 	goctx "golang.org/x/net/context"
 )
@@ -62,7 +65,7 @@ var (
 	startPort         = flag.Int("start_port", 5000, "First tidb-server listening port")
 	statusPort        = flag.Int("status_port", 8000, "First tidb-server status port")
 	logLevel          = flag.String("L", "error", "log level")
-	ddlServerLogLevel = flag.String("ddl_log_level", "debug", "DDL server log level")
+	ddlServerLogLevel = flag.String("ddl_log_level", "fatal", "DDL server log level")
 	dataNum           = flag.Int("n", 100, "minimal test dataset for a table")
 	enableRestart     = flag.Bool("enable_restart", true, "whether random restart servers for tests")
 )
@@ -77,11 +80,10 @@ type server struct {
 }
 
 type TestDDLSuite struct {
-	store     kv.Storage
-	dom       *domain.Domain
-	storePath string
-	s         session.Session
-	ctx       sessionctx.Context
+	store kv.Storage
+	dom   *domain.Domain
+	s     session.Session
+	ctx   sessionctx.Context
 
 	m     sync.Mutex
 	procs []*server
@@ -90,6 +92,8 @@ type TestDDLSuite struct {
 	quit chan struct{}
 
 	retryCount int
+
+	testutil.CommonHandleSuite
 }
 
 func (s *TestDDLSuite) SetUpSuite(c *C) {
@@ -104,9 +108,8 @@ func (s *TestDDLSuite) SetUpSuite(c *C) {
 	// Make sure the schema lease of this session is equal to other TiDB servers'.
 	session.SetSchemaLease(time.Duration(*lease) * time.Second)
 
-	dom, err := session.BootstrapSession(s.store)
+	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	s.dom = dom
 
 	s.s, err = session.CreateSession(s.store)
 	c.Assert(err, IsNil)
@@ -116,13 +119,19 @@ func (s *TestDDLSuite) SetUpSuite(c *C) {
 	_, err = s.s.Execute(goCtx, "create database if not exists test_ddl")
 	c.Assert(err, IsNil)
 
-	_, err = s.s.Execute(goCtx, "use test_ddl")
-	c.Assert(err, IsNil)
-
 	s.Bootstrap(c)
 
 	// Stop current DDL worker, so that we can't be the owner now.
 	err = domain.GetDomain(s.ctx).DDL().Stop()
+	c.Assert(err, IsNil)
+	ddl.RunWorker = false
+	session.ResetStoreForWithTiKVTest(s.store)
+	s.s, err = session.CreateSession(s.store)
+	c.Assert(err, IsNil)
+	s.dom, err = session.BootstrapSession(s.store)
+	c.Assert(err, IsNil)
+	s.ctx = s.s.(sessionctx.Context)
+	_, err = s.s.Execute(goCtx, "use test_ddl")
 	c.Assert(err, IsNil)
 
 	addEnvPath("..")
@@ -256,8 +265,7 @@ func createLogFiles(c *C, length int) {
 }
 
 func (s *TestDDLSuite) startServer(i int, fp *os.File) (*server, error) {
-	var cmd *exec.Cmd
-	cmd = exec.Command("ddltest_tidb-server",
+	cmd := exec.Command("ddltest_tidb-server",
 		"--store=tikv",
 		fmt.Sprintf("-L=%s", *ddlServerLogLevel),
 		fmt.Sprintf("--path=%s%s", *etcd, *tikvPath),
@@ -352,7 +360,8 @@ func isRetryError(err error) bool {
 		strings.Contains(err.Error(), "connection refused") ||
 		strings.Contains(err.Error(), "getsockopt: connection reset by peer") ||
 		strings.Contains(err.Error(), "KV error safe to retry") ||
-		strings.Contains(err.Error(), "try again later") {
+		strings.Contains(err.Error(), "try again later") ||
+		strings.Contains(err.Error(), "invalid connection") {
 		return true
 	}
 
@@ -419,15 +428,6 @@ func (s *TestDDLSuite) query(query string, args ...interface{}) (*sql.Rows, erro
 
 		return r, err
 	}
-}
-
-func (s *TestDDLSuite) mustQuery(c *C, query string, args ...interface{}) *sql.Rows {
-	r, err := s.query(query, args...)
-	if err != nil {
-		log.Fatalf("[mustQuery fail]query - %v %v, error - %v", query, args, err)
-	}
-
-	return r
 }
 
 func (s *TestDDLSuite) getServer() *server {
@@ -517,44 +517,35 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 }
 
 func (s *TestDDLSuite) Bootstrap(c *C) {
-	goCtx := goctx.Background()
-	// Initialize test data, you must use session to do it
-	_, err := s.s.Execute(goCtx, "use test_ddl")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "drop table if exists test_index, test_column, test_insert, test_conflict_insert, "+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_ddl")
+	tk.MustExec("drop table if exists test_index, test_column, test_insert, test_conflict_insert, " +
 		"test_update, test_conflict_update, test_delete, test_conflict_delete, test_mixed, test_inc")
-	c.Assert(err, IsNil)
 
-	_, err = s.s.Execute(goCtx, "create table test_index (c int, c1 bigint, c2 double, c3 varchar(256), primary key(c))")
-	c.Assert(err, IsNil)
+	tk.MustExec("create table test_index (c int, c1 bigint, c2 double, c3 varchar(256), primary key(c))")
+	tk.MustExec("create table test_column (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_insert (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_conflict_insert (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_update (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_conflict_update (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_delete (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_conflict_delete (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_mixed (c1 int, c2 int, primary key(c1))")
+	tk.MustExec("create table test_inc (c1 int, c2 int, primary key(c1))")
 
-	_, err = s.s.Execute(goCtx, "create table test_column (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_insert (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_conflict_insert (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_update (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_conflict_update (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_delete (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_conflict_delete (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_mixed (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
-
-	_, err = s.s.Execute(goCtx, "create table test_inc (c1 int, c2 int, primary key(c1))")
-	c.Assert(err, IsNil)
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("drop table if exists test_insert_common, test_conflict_insert_common, " +
+		"test_update_common, test_conflict_update_common, test_delete_common, test_conflict_delete_common, " +
+		"test_mixed_common, test_inc_common")
+	tk.MustExec("create table test_insert_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_conflict_insert_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_update_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_conflict_update_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_delete_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_conflict_delete_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_mixed_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("create table test_inc_common (c1 int, c2 int, primary key(c1, c2))")
+	tk.MustExec("set @@tidb_enable_clustered_index = 0")
 }
 
 func (s *TestDDLSuite) TestSimple(c *C) {
@@ -575,6 +566,11 @@ func (s *TestDDLSuite) TestSimple(c *C) {
 }
 
 func (s *TestDDLSuite) TestSimpleInsert(c *C) {
+	tblName := "test_insert"
+	if s.IsCommonHandle {
+		tblName = "test_insert_common"
+	}
+
 	workerNum := 10
 	rowCount := 10000
 	batch := rowCount / workerNum
@@ -589,7 +585,7 @@ func (s *TestDDLSuite) TestSimpleInsert(c *C) {
 
 			for j := 0; j < batch; j++ {
 				k := batch*i + j
-				s.execInsert(c, fmt.Sprintf("insert into test_insert values (%d, %d)", k, k))
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 			}
 		}(i)
 	}
@@ -603,17 +599,23 @@ func (s *TestDDLSuite) TestSimpleInsert(c *C) {
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_insert")
-	handles := make(map[int64]struct{})
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
+	handles := kv.NewHandleMap()
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
 		c.Assert(data[0].GetValue(), Equals, data[1].GetValue())
 		return true, nil
 	})
 	c.Assert(err, IsNil)
-	c.Assert(handles, HasLen, rowCount, Commentf("%d %d", len(handles), rowCount))
+	c.Assert(handles.Len(), Equals, rowCount, Commentf("%d %d", handles.Len(), rowCount))
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleInsert)
 }
 
 func (s *TestDDLSuite) TestSimpleConflictInsert(c *C) {
+	tblName := "test_conflict_insert"
+	if s.IsCommonHandle {
+		tblName = "test_conflict_insert_common"
+	}
+
 	var mu sync.Mutex
 	keysMap := make(map[int64]int64)
 
@@ -631,7 +633,7 @@ func (s *TestDDLSuite) TestSimpleConflictInsert(c *C) {
 
 			for j := 0; j < batch; j++ {
 				k := randomNum(rowCount)
-				s.exec(fmt.Sprintf("insert into test_conflict_insert values (%d, %d)", k, k))
+				s.exec(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 				mu.Lock()
 				keysMap[int64(k)] = int64(k)
 				mu.Unlock()
@@ -647,19 +649,24 @@ func (s *TestDDLSuite) TestSimpleConflictInsert(c *C) {
 	err := ctx.NewTxn(goctx.Background())
 	c.Assert(err, IsNil)
 
-	tbl := s.getTable(c, "test_conflict_insert")
-	handles := make(map[int64]struct{})
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
+	tbl := s.getTable(c, tblName)
+	handles := kv.NewHandleMap()
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
 		c.Assert(keysMap, HasKey, data[0].GetValue())
 		c.Assert(data[0].GetValue(), Equals, data[1].GetValue())
 		return true, nil
 	})
 	c.Assert(err, IsNil)
-	c.Assert(len(handles), Equals, len(keysMap))
+	c.Assert(handles.Len(), Equals, len(keysMap))
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleConflictInsert)
 }
 
 func (s *TestDDLSuite) TestSimpleUpdate(c *C) {
+	tblName := "test_update"
+	if s.IsCommonHandle {
+		tblName = "test_update_common"
+	}
 	var mu sync.Mutex
 	keysMap := make(map[int64]int64)
 
@@ -677,9 +684,9 @@ func (s *TestDDLSuite) TestSimpleUpdate(c *C) {
 
 			for j := 0; j < batch; j++ {
 				k := batch*i + j
-				s.execInsert(c, fmt.Sprintf("insert into test_update values (%d, %d)", k, k))
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 				v := randomNum(rowCount)
-				s.mustExec(c, fmt.Sprintf("update test_update set c2 = %d where c1 = %d", v, k))
+				s.mustExec(c, fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, v, k))
 				mu.Lock()
 				keysMap[int64(k)] = int64(v)
 				mu.Unlock()
@@ -695,19 +702,24 @@ func (s *TestDDLSuite) TestSimpleUpdate(c *C) {
 	err := ctx.NewTxn(goctx.Background())
 	c.Assert(err, IsNil)
 
-	tbl := s.getTable(c, "test_update")
-	handles := make(map[int64]struct{})
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
+	tbl := s.getTable(c, tblName)
+	handles := kv.NewHandleMap()
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
 		key := data[0].GetInt64()
 		c.Assert(data[1].GetValue(), Equals, keysMap[key])
 		return true, nil
 	})
 	c.Assert(err, IsNil)
-	c.Assert(handles, HasLen, rowCount)
+	c.Assert(handles.Len(), Equals, rowCount)
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleUpdate)
 }
 
 func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
+	tblName := "test_conflict_update"
+	if s.IsCommonHandle {
+		tblName = "test_conflict_update_common"
+	}
 	var mu sync.Mutex
 	keysMap := make(map[int64]int64)
 
@@ -725,7 +737,7 @@ func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
 
 			for j := 0; j < batch; j++ {
 				k := batch*i + j
-				s.execInsert(c, fmt.Sprintf("insert into test_conflict_update values (%d, %d)", k, k))
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 				mu.Lock()
 				keysMap[int64(k)] = int64(k)
 				mu.Unlock()
@@ -747,9 +759,9 @@ func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
 
 			for j := 0; j < batch; j++ {
 				k := randomNum(rowCount)
-				s.mustExec(c, fmt.Sprintf("update test_conflict_update set c2 = %d where c1 = %d", defaultValue, k))
+				s.mustExec(c, fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, defaultValue, k))
 				mu.Lock()
-				keysMap[int64(k)] = int64(defaultValue)
+				keysMap[int64(k)] = defaultValue
 				mu.Unlock()
 			}
 		}()
@@ -763,10 +775,10 @@ func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
 	err := ctx.NewTxn(goctx.Background())
 	c.Assert(err, IsNil)
 
-	tbl := s.getTable(c, "test_conflict_update")
-	handles := make(map[int64]struct{})
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
+	tbl := s.getTable(c, tblName)
+	handles := kv.NewHandleMap()
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
 		c.Assert(keysMap, HasKey, data[0].GetValue())
 
 		if !reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) && !reflect.DeepEqual(data[1].GetValue(), defaultValue) {
@@ -776,10 +788,15 @@ func (s *TestDDLSuite) TestSimpleConflictUpdate(c *C) {
 		return true, nil
 	})
 	c.Assert(err, IsNil)
-	c.Assert(handles, HasLen, rowCount)
+	c.Assert(handles.Len(), Equals, rowCount)
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleConflictUpdate)
 }
 
 func (s *TestDDLSuite) TestSimpleDelete(c *C) {
+	tblName := "test_delete"
+	if s.IsCommonHandle {
+		tblName = "test_delete_common"
+	}
 	workerNum := 10
 	rowCount := 10000
 	batch := rowCount / workerNum
@@ -794,8 +811,8 @@ func (s *TestDDLSuite) TestSimpleDelete(c *C) {
 
 			for j := 0; j < batch; j++ {
 				k := batch*i + j
-				s.execInsert(c, fmt.Sprintf("insert into test_delete values (%d, %d)", k, k))
-				s.mustExec(c, fmt.Sprintf("delete from test_delete where c1 = %d", k))
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
+				s.mustExec(c, fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
 			}
 		}(i)
 	}
@@ -808,17 +825,22 @@ func (s *TestDDLSuite) TestSimpleDelete(c *C) {
 	err := ctx.NewTxn(goctx.Background())
 	c.Assert(err, IsNil)
 
-	tbl := s.getTable(c, "test_delete")
-	handles := make(map[int64]struct{})
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
+	tbl := s.getTable(c, tblName)
+	handles := kv.NewHandleMap()
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
 		return true, nil
 	})
 	c.Assert(err, IsNil)
-	c.Assert(handles, HasLen, 0)
+	c.Assert(handles.Len(), Equals, 0)
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleDelete)
 }
 
 func (s *TestDDLSuite) TestSimpleConflictDelete(c *C) {
+	tblName := "test_conflict_delete"
+	if s.IsCommonHandle {
+		tblName = "test_conflict_delete_common"
+	}
 	var mu sync.Mutex
 	keysMap := make(map[int64]int64)
 
@@ -836,7 +858,7 @@ func (s *TestDDLSuite) TestSimpleConflictDelete(c *C) {
 
 			for j := 0; j < batch; j++ {
 				k := batch*i + j
-				s.execInsert(c, fmt.Sprintf("insert into test_conflict_delete values (%d, %d)", k, k))
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 				mu.Lock()
 				keysMap[int64(k)] = int64(k)
 				mu.Unlock()
@@ -857,7 +879,7 @@ func (s *TestDDLSuite) TestSimpleConflictDelete(c *C) {
 
 			for j := 0; j < batch; j++ {
 				k := randomNum(rowCount)
-				s.mustExec(c, fmt.Sprintf("delete from test_conflict_delete where c1 = %d", k))
+				s.mustExec(c, fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
 				mu.Lock()
 				delete(keysMap, int64(k))
 				mu.Unlock()
@@ -873,18 +895,23 @@ func (s *TestDDLSuite) TestSimpleConflictDelete(c *C) {
 	err := ctx.NewTxn(goctx.Background())
 	c.Assert(err, IsNil)
 
-	tbl := s.getTable(c, "test_conflict_delete")
-	handles := make(map[int64]struct{})
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-		handles[h] = struct{}{}
+	tbl := s.getTable(c, tblName)
+	handles := kv.NewHandleMap()
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+		handles.Set(h, struct{}{})
 		c.Assert(keysMap, HasKey, data[0].GetValue())
 		return true, nil
 	})
 	c.Assert(err, IsNil)
-	c.Assert(len(handles), Equals, len(keysMap))
+	c.Assert(handles.Len(), Equals, len(keysMap))
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleConflictDelete)
 }
 
 func (s *TestDDLSuite) TestSimpleMixed(c *C) {
+	tblName := "test_mixed"
+	if s.IsCommonHandle {
+		tblName = "test_mixed_common"
+	}
 	workerNum := 10
 	rowCount := 10000
 	batch := rowCount / workerNum
@@ -899,7 +926,7 @@ func (s *TestDDLSuite) TestSimpleMixed(c *C) {
 
 			for j := 0; j < batch; j++ {
 				k := batch*i + j
-				s.execInsert(c, fmt.Sprintf("insert into test_mixed values (%d, %d)", k, k))
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 			}
 		}(i)
 	}
@@ -920,11 +947,11 @@ func (s *TestDDLSuite) TestSimpleMixed(c *C) {
 
 			for j := 0; j < batch; j++ {
 				key := atomic.AddInt64(&rowID, 1)
-				s.execInsert(c, fmt.Sprintf("insert into test_mixed values (%d, %d)", key, key))
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, key, key))
 				key = int64(randomNum(rowCount))
-				s.mustExec(c, fmt.Sprintf("update test_mixed set c2 = %d where c1 = %d", defaultValue, key))
+				s.mustExec(c, fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, defaultValue, key))
 				key = int64(randomNum(rowCount))
-				s.mustExec(c, fmt.Sprintf("delete from test_mixed where c1 = %d", key))
+				s.mustExec(c, fmt.Sprintf("delete from %s where c1 = %d", tblName, key))
 			}
 		}()
 	}
@@ -937,10 +964,10 @@ func (s *TestDDLSuite) TestSimpleMixed(c *C) {
 	err := ctx.NewTxn(goctx.Background())
 	c.Assert(err, IsNil)
 
-	tbl := s.getTable(c, "test_mixed")
+	tbl := s.getTable(c, tblName)
 	updateCount := int64(0)
 	insertCount := int64(0)
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) {
 			insertCount++
 		} else if reflect.DeepEqual(data[1].GetValue(), defaultValue) && data[0].GetInt64() < int64(rowCount) {
@@ -957,9 +984,14 @@ func (s *TestDDLSuite) TestSimpleMixed(c *C) {
 	c.Assert(insertCount, Greater, int64(0))
 	c.Assert(updateCount, Greater, int64(0))
 	c.Assert(deleteCount, Greater, int64(0))
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleMixed)
 }
 
 func (s *TestDDLSuite) TestSimpleInc(c *C) {
+	tblName := "test_inc"
+	if s.IsCommonHandle {
+		tblName = "test_inc_common"
+	}
 	workerNum := 10
 	rowCount := 1000
 	batch := rowCount / workerNum
@@ -974,7 +1006,7 @@ func (s *TestDDLSuite) TestSimpleInc(c *C) {
 
 			for j := 0; j < batch; j++ {
 				k := batch*i + j
-				s.execInsert(c, fmt.Sprintf("insert into test_inc values (%d, %d)", k, k))
+				s.execInsert(c, fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 			}
 		}(i)
 	}
@@ -991,7 +1023,7 @@ func (s *TestDDLSuite) TestSimpleInc(c *C) {
 			defer wg.Done()
 
 			for j := 0; j < batch; j++ {
-				s.mustExec(c, fmt.Sprintf("update test_inc set c2 = c2 + 1 where c1 = 0"))
+				s.mustExec(c, fmt.Sprintf("update %s set c2 = c2 + 1 where c1 = 0", tblName))
 			}
 		}()
 	}
@@ -1005,7 +1037,7 @@ func (s *TestDDLSuite) TestSimpleInc(c *C) {
 	c.Assert(err, IsNil)
 
 	tbl := s.getTable(c, "test_inc")
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if reflect.DeepEqual(data[0].GetValue(), int64(0)) {
 			if *enableRestart {
 				c.Assert(data[1].GetValue(), GreaterEqual, int64(rowCount))
@@ -1019,6 +1051,7 @@ func (s *TestDDLSuite) TestSimpleInc(c *C) {
 		return true, nil
 	})
 	c.Assert(err, IsNil)
+	s.RerunWithCommonHandleEnabled(c, s.TestSimpleInc)
 }
 
 // addEnvPath appends newPath to $PATH.

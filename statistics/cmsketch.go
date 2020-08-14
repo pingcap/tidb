@@ -15,7 +15,6 @@ package statistics
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"reflect"
 	"sort"
@@ -26,10 +25,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 // topNThreshold is the minimum ratio of the number of topn elements in CMSketch, 10 means 1 / 10 = 10%.
@@ -53,11 +52,25 @@ type TopNMeta struct {
 	Count uint64
 }
 
+// GetH2 get the the second part of `murmur3.Sum128()`, just for test.
+func (t *TopNMeta) GetH2() uint64 {
+	return t.h2
+}
+
 // NewCMSketch returns a new CM sketch.
 func NewCMSketch(d, w int32) *CMSketch {
 	tbl := make([][]uint32, d)
+	// Background: The Go's memory allocator will ask caller to sweep spans in some scenarios.
+	// This can cause memory allocation request latency unpredictable, if the list of spans which need sweep is too long.
+	// For memory allocation large than 32K, the allocator will never allocate memory from spans list.
+	//
+	// The memory referenced by the CMSketch will never be freed.
+	// If the number of table or index is extremely large, there will be a large amount of spans in global list.
+	// The default value of `d` is 5 and `w` is 2048, if we use a single slice for them the size will be 40K.
+	// This allocation will be handled by mheap and will never have impact on normal allocations.
+	arena := make([]uint32, d*w)
 	for i := range tbl {
-		tbl[i] = make([]uint32, w)
+		tbl[i] = arena[i*int(w) : (i+1)*int(w)]
 	}
 	return &CMSketch{depth: d, width: w, table: tbl}
 }
@@ -72,7 +85,7 @@ type topNHelper struct {
 }
 
 func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
-	counter := make(map[hack.MutableString]uint64)
+	counter := make(map[hack.MutableString]uint64, len(sample))
 	for i := range sample {
 		counter[hack.String(sample[i])]++
 	}
@@ -110,6 +123,9 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 
 // NewCMSketchWithTopN returns a new CM sketch with TopN elements, the estimate NDV and the scale ratio.
 func NewCMSketchWithTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) (*CMSketch, uint64, uint64) {
+	if rowCount == 0 || len(sample) == 0 {
+		return nil, 0, 0
+	}
 	helper := newTopNHelper(sample, numTop)
 	// rowCount is not a accurate value when fast analyzing
 	// In some cases, if user triggers fast analyze when rowCount is close to sampleSize, unexpected bahavior might happen.
@@ -124,7 +140,7 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64, default
 	c = NewCMSketch(d, w)
 	enableTopN := helper.sampleSize/topNThreshold <= helper.sumTopN
 	if enableTopN {
-		c.topN = make(map[uint64][]*TopNMeta)
+		c.topN = make(map[uint64][]*TopNMeta, helper.actualNumTop)
 		for i := uint32(0); i < helper.actualNumTop; i++ {
 			data, cnt := helper.sorted[i].data, helper.sorted[i].cnt
 			h1, h2 := murmur3.Sum128(data)
@@ -148,11 +164,11 @@ func buildCMSWithTopN(helper *topNHelper, d, w int32, scaleRatio uint64, default
 
 func calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount uint64) uint64 {
 	sampleNDV := uint64(len(helper.sorted))
-	if rowCount <= (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio {
+	if rowCount <= (helper.sampleSize-helper.onlyOnceItems)*scaleRatio {
 		return 1
 	}
-	estimateRemainingCount := rowCount - (helper.sampleSize-uint64(helper.onlyOnceItems))*scaleRatio
-	return estimateRemainingCount / mathutil.MaxUint64(1, estimateNDV-uint64(sampleNDV)+helper.onlyOnceItems)
+	estimateRemainingCount := rowCount - (helper.sampleSize-helper.onlyOnceItems)*scaleRatio
+	return estimateRemainingCount / mathutil.MaxUint64(1, estimateNDV-sampleNDV+helper.onlyOnceItems)
 }
 
 func (c *CMSketch) findTopNMeta(h1, h2 uint64, d []byte) *TopNMeta {
@@ -162,6 +178,15 @@ func (c *CMSketch) findTopNMeta(h1, h2 uint64, d []byte) *TopNMeta {
 		}
 	}
 	return nil
+}
+
+// MemoryUsage returns the total memory usage of a CMSketch.
+// only calc the hashtable size(CMSketch.table) and the CMSketch.topN
+// data are not tracked because size of CMSketch.topN take little influence
+// We ignore the size of other metadata in CMSketch.
+func (c *CMSketch) MemoryUsage() (sum int64) {
+	sum = int64(c.depth * c.width * 4)
+	return
 }
 
 // queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
@@ -178,7 +203,8 @@ func (c *CMSketch) updateTopNWithDelta(h1, h2 uint64, d []byte, delta uint64) bo
 	return false
 }
 
-func (c *CMSketch) queryTopN(h1, h2 uint64, d []byte) (uint64, bool) {
+// QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
+func (c *CMSketch) QueryTopN(h1, h2 uint64, d []byte) (uint64, bool) {
 	if c.topN == nil {
 		return 0, false
 	}
@@ -214,7 +240,7 @@ func (c *CMSketch) considerDefVal(cnt uint64) bool {
 // updateValueBytes updates value of d to count.
 func (c *CMSketch) updateValueBytes(d []byte, count uint64) {
 	h1, h2 := murmur3.Sum128(d)
-	if oriCount, ok := c.queryTopN(h1, h2, d); ok {
+	if oriCount, ok := c.QueryTopN(h1, h2, d); ok {
 		deltaCount := count - oriCount
 		c.updateTopNWithDelta(h1, h2, d, deltaCount)
 	}
@@ -262,7 +288,7 @@ func (c *CMSketch) queryValue(sc *stmtctx.StatementContext, val types.Datum) (ui
 // QueryBytes is used to query the count of specified bytes.
 func (c *CMSketch) QueryBytes(d []byte) uint64 {
 	h1, h2 := murmur3.Sum128(d)
-	if count, ok := c.queryTopN(h1, h2, d); ok {
+	if count, ok := c.QueryTopN(h1, h2, d); ok {
 		return count
 	}
 	return c.queryHashValue(h1, h2)
@@ -333,10 +359,13 @@ func (c *CMSketch) mergeTopN(lTopN map[uint64][]*TopNMeta, rTopN map[uint64][]*T
 
 // MergeCMSketch merges two CM Sketch.
 func (c *CMSketch) MergeCMSketch(rc *CMSketch, numTopN uint32) error {
+	if c == nil || rc == nil {
+		return nil
+	}
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
-	if c.topN != nil || rc.topN != nil {
+	if len(c.topN) > 0 || len(rc.topN) > 0 {
 		c.mergeTopN(c.topN, rc.topN, numTopN, false)
 	}
 	c.count += rc.count
@@ -360,7 +389,7 @@ func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, numTopN uint32
 	if c.depth != rc.depth || c.width != rc.width {
 		return errors.New("Dimensions of Count-Min Sketch should be the same")
 	}
-	if c.topN != nil || rc.topN != nil {
+	if len(c.topN) > 0 || len(rc.topN) > 0 {
 		c.mergeTopN(c.topN, rc.topN, numTopN, true)
 	}
 	for i := range c.table {
@@ -393,7 +422,7 @@ func CMSketchToProto(c *CMSketch) *tipb.CMSketch {
 
 // CMSketchFromProto converts CMSketch from its protobuf representation.
 func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
-	if protoSketch == nil {
+	if protoSketch == nil || len(protoSketch.Rows) == 0 {
 		return nil
 	}
 	c := NewCMSketch(int32(len(protoSketch.Rows)), int32(len(protoSketch.Rows[0].Counters)))
@@ -408,7 +437,7 @@ func CMSketchFromProto(protoSketch *tipb.CMSketch) *CMSketch {
 	if len(protoSketch.TopN) == 0 {
 		return c
 	}
-	c.topN = make(map[uint64][]*TopNMeta)
+	c.topN = make(map[uint64][]*TopNMeta, len(protoSketch.TopN))
 	for _, e := range protoSketch.TopN {
 		h1, h2 := murmur3.Sum128(e.Data)
 		c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, e.Data, e.Count})
@@ -428,8 +457,8 @@ func EncodeCMSketchWithoutTopN(c *CMSketch) ([]byte, error) {
 	return protoData, err
 }
 
-// decodeCMSketch decode a CMSketch from the given byte slice.
-func decodeCMSketch(data []byte, topN []*TopNMeta) (*CMSketch, error) {
+// DecodeCMSketch decode a CMSketch from the given byte slice.
+func DecodeCMSketch(data []byte, topNRows []chunk.Row) (*CMSketch, error) {
 	if data == nil {
 		return nil, nil
 	}
@@ -438,27 +467,12 @@ func decodeCMSketch(data []byte, topN []*TopNMeta) (*CMSketch, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if len(p.Rows) == 0 && len(topN) == 0 {
-		return nil, nil
-	}
-	for _, meta := range topN {
-		p.TopN = append(p.TopN, &tipb.CMSketchTopN{Data: meta.Data, Count: meta.Count})
+	for _, row := range topNRows {
+		data := make([]byte, len(row.GetBytes(0)))
+		copy(data, row.GetBytes(0))
+		p.TopN = append(p.TopN, &tipb.CMSketchTopN{Data: data, Count: row.GetUint64(1)})
 	}
 	return CMSketchFromProto(p), nil
-}
-
-// LoadCMSketchWithTopN loads the CM sketch with topN from storage.
-func LoadCMSketchWithTopN(exec sqlexec.RestrictedSQLExecutor, tableID, isIndex, histID int64, cms []byte) (*CMSketch, error) {
-	sql := fmt.Sprintf("select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %d and is_index = %d and hist_id = %d", tableID, isIndex, histID)
-	topNRows, _, err := exec.ExecRestrictedSQL(sql)
-	if err != nil {
-		return nil, err
-	}
-	topN := make([]*TopNMeta, 0, len(topNRows))
-	for _, row := range topNRows {
-		topN = append(topN, &TopNMeta{Data: row.GetBytes(0), Count: row.GetUint64(1)})
-	}
-	return decodeCMSketch(cms, topN)
 }
 
 // TotalCount returns the total count in the sketch, it is only used for test.
@@ -489,7 +503,7 @@ func (c *CMSketch) Copy() *CMSketch {
 	}
 	var topN map[uint64][]*TopNMeta
 	if c.topN != nil {
-		topN = make(map[uint64][]*TopNMeta)
+		topN = make(map[uint64][]*TopNMeta, len(c.topN))
 		for h1, vals := range c.topN {
 			newVals := make([]*TopNMeta, 0, len(vals))
 			for _, val := range vals {
@@ -513,6 +527,20 @@ func (c *CMSketch) TopN() []*TopNMeta {
 		topN = append(topN, meta...)
 	}
 	return topN
+}
+
+// TopNMap gets the origin topN map.
+func (c *CMSketch) TopNMap() map[uint64][]*TopNMeta {
+	return c.topN
+}
+
+// AppendTopN appends a topn into the cm sketch.
+func (c *CMSketch) AppendTopN(data []byte, count uint64) {
+	if c.topN == nil {
+		c.topN = make(map[uint64][]*TopNMeta)
+	}
+	h1, h2 := murmur3.Sum128(data)
+	c.topN[h1] = append(c.topN[h1], &TopNMeta{h2, data, count})
 }
 
 // GetWidthAndDepth returns the width and depth of CM Sketch.

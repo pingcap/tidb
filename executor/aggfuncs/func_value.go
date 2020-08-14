@@ -20,14 +20,13 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
-// valueExtractor is used to extract values for `first_value`, `last_value`, `nth_value`,
+// valueEvaluator is used to evaluate values for `first_value`, `last_value`, `nth_value`,
 // `lead` and `lag`.
-type valueExtractor interface {
-	// extractRow extracts the expression using row and stores the result inside.
-	extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error
+type valueEvaluator interface {
+	// evaluateRow evaluates the expression using row and stores the result inside.
+	evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error
 	// appendResult appends the result to chunk.
 	appendResult(chk *chunk.Chunk, colIdx int)
 }
@@ -37,7 +36,7 @@ type value4Int struct {
 	isNull bool
 }
 
-func (v *value4Int) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4Int) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
 	v.val, v.isNull, err = expr.EvalInt(ctx, row)
 	return err
@@ -56,7 +55,7 @@ type value4Float32 struct {
 	isNull bool
 }
 
-func (v *value4Float32) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4Float32) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
 	var val float64
 	val, v.isNull, err = expr.EvalReal(ctx, row)
@@ -77,10 +76,9 @@ type value4Decimal struct {
 	isNull bool
 }
 
-func (v *value4Decimal) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4Decimal) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
 	v.val, v.isNull, err = expr.EvalDecimal(ctx, row)
-	v.val = v.val.Copy()
 	return err
 }
 
@@ -97,7 +95,7 @@ type value4Float64 struct {
 	isNull bool
 }
 
-func (v *value4Float64) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4Float64) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
 	v.val, v.isNull, err = expr.EvalReal(ctx, row)
 	return err
@@ -116,12 +114,12 @@ type value4String struct {
 	isNull bool
 }
 
-func (v *value4String) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4String) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
 	v.val, v.isNull, err = expr.EvalString(ctx, row)
-	v.val = stringutil.Copy(v.val)
 	return err
 }
+
 func (v *value4String) appendResult(chk *chunk.Chunk, colIdx int) {
 	if v.isNull {
 		chk.AppendNull(colIdx)
@@ -135,7 +133,7 @@ type value4Time struct {
 	isNull bool
 }
 
-func (v *value4Time) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4Time) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
 	v.val, v.isNull, err = expr.EvalTime(ctx, row)
 	return err
@@ -154,7 +152,7 @@ type value4Duration struct {
 	isNull bool
 }
 
-func (v *value4Duration) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4Duration) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
 	v.val, v.isNull, err = expr.EvalDuration(ctx, row)
 	return err
@@ -173,7 +171,7 @@ type value4JSON struct {
 	isNull bool
 }
 
-func (v *value4JSON) extractRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
+func (v *value4JSON) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
 	var err error
 	v.val, v.isNull, err = expr.EvalJSON(ctx, row)
 	v.val = v.val.Copy() // deep copy to avoid content change.
@@ -188,7 +186,7 @@ func (v *value4JSON) appendResult(chk *chunk.Chunk, colIdx int) {
 	}
 }
 
-func buildValueExtractor(tp *types.FieldType) valueExtractor {
+func buildValueEvaluator(tp *types.FieldType) valueEvaluator {
 	evalType := tp.EvalType()
 	if tp.Tp == mysql.TypeBit {
 		evalType = types.ETString
@@ -225,11 +223,11 @@ type firstValue struct {
 
 type partialResult4FirstValue struct {
 	gotFirstValue bool
-	extractor     valueExtractor
+	evaluator     valueEvaluator
 }
 
-func (v *firstValue) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4FirstValue{extractor: buildValueExtractor(v.tp)})
+func (v *firstValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	return PartialResult(&partialResult4FirstValue{evaluator: buildValueEvaluator(v.tp)}), 0
 }
 
 func (v *firstValue) ResetPartialResult(pr PartialResult) {
@@ -237,19 +235,19 @@ func (v *firstValue) ResetPartialResult(pr PartialResult) {
 	p.gotFirstValue = false
 }
 
-func (v *firstValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (v *firstValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstValue)(pr)
 	if p.gotFirstValue {
-		return nil
+		return 0, nil
 	}
 	if len(rowsInGroup) > 0 {
 		p.gotFirstValue = true
-		err := p.extractor.extractRow(sctx, v.args[0], rowsInGroup[0])
+		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[0])
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 func (v *firstValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -257,7 +255,7 @@ func (v *firstValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Partial
 	if !p.gotFirstValue {
 		chk.AppendNull(v.ordinal)
 	} else {
-		p.extractor.appendResult(chk, v.ordinal)
+		p.evaluator.appendResult(chk, v.ordinal)
 	}
 	return nil
 }
@@ -270,11 +268,11 @@ type lastValue struct {
 
 type partialResult4LastValue struct {
 	gotLastValue bool
-	extractor    valueExtractor
+	evaluator    valueEvaluator
 }
 
-func (v *lastValue) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4LastValue{extractor: buildValueExtractor(v.tp)})
+func (v *lastValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	return PartialResult(&partialResult4LastValue{evaluator: buildValueEvaluator(v.tp)}), 0
 }
 
 func (v *lastValue) ResetPartialResult(pr PartialResult) {
@@ -282,16 +280,16 @@ func (v *lastValue) ResetPartialResult(pr PartialResult) {
 	p.gotLastValue = false
 }
 
-func (v *lastValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (v *lastValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4LastValue)(pr)
 	if len(rowsInGroup) > 0 {
 		p.gotLastValue = true
-		err := p.extractor.extractRow(sctx, v.args[0], rowsInGroup[len(rowsInGroup)-1])
+		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[len(rowsInGroup)-1])
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 func (v *lastValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -299,7 +297,7 @@ func (v *lastValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialR
 	if !p.gotLastValue {
 		chk.AppendNull(v.ordinal)
 	} else {
-		p.extractor.appendResult(chk, v.ordinal)
+		p.evaluator.appendResult(chk, v.ordinal)
 	}
 	return nil
 }
@@ -313,11 +311,11 @@ type nthValue struct {
 
 type partialResult4NthValue struct {
 	seenRows  uint64
-	extractor valueExtractor
+	evaluator valueEvaluator
 }
 
-func (v *nthValue) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4NthValue{extractor: buildValueExtractor(v.tp)})
+func (v *nthValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	return PartialResult(&partialResult4NthValue{evaluator: buildValueEvaluator(v.tp)}), 0
 }
 
 func (v *nthValue) ResetPartialResult(pr PartialResult) {
@@ -325,20 +323,20 @@ func (v *nthValue) ResetPartialResult(pr PartialResult) {
 	p.seenRows = 0
 }
 
-func (v *nthValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (v *nthValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	if v.nth == 0 {
-		return nil
+		return 0, nil
 	}
 	p := (*partialResult4NthValue)(pr)
 	numRows := uint64(len(rowsInGroup))
 	if v.nth > p.seenRows && v.nth-p.seenRows <= numRows {
-		err := p.extractor.extractRow(sctx, v.args[0], rowsInGroup[v.nth-p.seenRows-1])
+		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[v.nth-p.seenRows-1])
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
 	p.seenRows += numRows
-	return nil
+	return 0, nil
 }
 
 func (v *nthValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -346,7 +344,7 @@ func (v *nthValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialRe
 	if v.nth == 0 || p.seenRows < v.nth {
 		chk.AppendNull(v.ordinal)
 	} else {
-		p.extractor.appendResult(chk, v.ordinal)
+		p.evaluator.appendResult(chk, v.ordinal)
 	}
 	return nil
 }

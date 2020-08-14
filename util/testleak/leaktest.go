@@ -31,31 +31,57 @@ import (
 func interestingGoroutines() (gs []string) {
 	buf := make([]byte, 2<<20)
 	buf = buf[:runtime.Stack(buf, true)]
+	ignoreList := []string{
+		"created by github.com/pingcap/tidb.init",
+		"testing.RunTests",
+		"check.(*resultTracker).start",
+		"check.(*suiteRunner).runFunc",
+		"check.(*suiteRunner).parallelRun",
+		"localstore.(*dbStore).scheduler",
+		"tikv.(*noGCHandler).Start",
+		"ddl.(*ddl).start",
+		"ddl.(*delRange).startEmulator",
+		"domain.NewDomain",
+		"testing.(*T).Run",
+		"domain.(*Domain).LoadPrivilegeLoop",
+		"domain.(*Domain).UpdateTableStatsLoop",
+		"testing.Main(",
+		"runtime.goexit",
+		"created by runtime.gc",
+		"interestingGoroutines",
+		"runtime.MHeap_Scavenger",
+		"created by os/signal.init",
+		// these go routines are async terminated, so they may still alive after test end, thus cause
+		// false positive leak failures
+		"google.golang.org/grpc.(*addrConn).resetTransport",
+		"google.golang.org/grpc.(*ccBalancerWrapper).watcher",
+		"github.com/pingcap/goleveldb/leveldb/util.(*BufferPool).drain",
+		"github.com/pingcap/goleveldb/leveldb.(*DB).compactionError",
+		"github.com/pingcap/goleveldb/leveldb.(*DB).mpoolDrain",
+		"go.etcd.io/etcd/v3/pkg/logutil.(*MergeLogger).outputLoop",
+		"oracles.(*pdOracle).updateTS",
+		"tikv.(*tikvStore).runSafePointChecker",
+		"tikv.(*RegionCache).asyncCheckAndResolveLoop",
+		"github.com/pingcap/badger.(*writeWorker).runMergeLSM",
+	}
+	shouldIgnore := func(stack string) bool {
+		if stack == "" {
+			return true
+		}
+		for _, ident := range ignoreList {
+			if strings.Contains(stack, ident) {
+				return true
+			}
+		}
+		return false
+	}
 	for _, g := range strings.Split(string(buf), "\n\n") {
 		sl := strings.SplitN(g, "\n", 2)
 		if len(sl) != 2 {
 			continue
 		}
 		stack := strings.TrimSpace(sl[1])
-		if stack == "" ||
-			strings.Contains(stack, "created by github.com/pingcap/tidb.init") ||
-			strings.Contains(stack, "testing.RunTests") ||
-			strings.Contains(stack, "check.(*resultTracker).start") ||
-			strings.Contains(stack, "check.(*suiteRunner).runFunc") ||
-			strings.Contains(stack, "check.(*suiteRunner).parallelRun") ||
-			strings.Contains(stack, "localstore.(*dbStore).scheduler") ||
-			strings.Contains(stack, "tikv.(*noGCHandler).Start") ||
-			strings.Contains(stack, "ddl.(*ddl).start") ||
-			strings.Contains(stack, "ddl.(*delRange).startEmulator") ||
-			strings.Contains(stack, "domain.NewDomain") ||
-			strings.Contains(stack, "testing.(*T).Run") ||
-			strings.Contains(stack, "domain.(*Domain).LoadPrivilegeLoop") ||
-			strings.Contains(stack, "domain.(*Domain).UpdateTableStatsLoop") ||
-			strings.Contains(stack, "testing.Main(") ||
-			strings.Contains(stack, "runtime.goexit") ||
-			strings.Contains(stack, "created by runtime.gc") ||
-			strings.Contains(stack, "interestingGoroutines") ||
-			strings.Contains(stack, "runtime.MHeap_Scavenger") {
+		if shouldIgnore(stack) {
 			continue
 		}
 		gs = append(gs, stack)
@@ -64,37 +90,54 @@ func interestingGoroutines() (gs []string) {
 	return
 }
 
-var beforeTestGorountines = map[string]bool{}
+var beforeTestGoroutines = map[string]bool{}
+var testGoroutinesInited bool
 
 // BeforeTest gets the current goroutines.
 // It's used for check.Suite.SetUpSuite() function.
 // Now it's only used in the tidb_test.go.
+// Note: it's not accurate, consider the following function:
+// func loop() {
+//   for {
+//     select {
+//       case <-ticker.C:
+//         DoSomething()
+//     }
+//   }
+// }
+// If this loop step into DoSomething() during BeforeTest(), the stack for this goroutine will contain DoSomething().
+// Then if this loop jumps out of DoSomething during AfterTest(), the stack for this goroutine will not contain DoSomething().
+// Resulting in false-positive leak reports.
 func BeforeTest() {
 	for _, g := range interestingGoroutines() {
-		beforeTestGorountines[g] = true
+		beforeTestGoroutines[g] = true
 	}
+	testGoroutinesInited = true
 }
 
 const defaultCheckCnt = 50
 
 func checkLeakAfterTest(errorFunc func(cnt int, g string)) func() {
-	if len(beforeTestGorountines) == 0 {
+	// After `BeforeTest`, `beforeTestGoroutines` may still be empty, in this case,
+	// we shouldn't init it again.
+	if !testGoroutinesInited && len(beforeTestGoroutines) == 0 {
 		for _, g := range interestingGoroutines() {
-			beforeTestGorountines[g] = true
+			beforeTestGoroutines[g] = true
 		}
 	}
 
 	cnt := defaultCheckCnt
 	return func() {
 		defer func() {
-			beforeTestGorountines = map[string]bool{}
+			beforeTestGoroutines = map[string]bool{}
+			testGoroutinesInited = false
 		}()
 
 		var leaked []string
 		for i := 0; i < cnt; i++ {
 			leaked = leaked[:0]
 			for _, g := range interestingGoroutines() {
-				if !beforeTestGorountines[g] {
+				if !beforeTestGoroutines[g] {
 					leaked = append(leaked, g)
 				}
 			}

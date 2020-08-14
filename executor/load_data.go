@@ -18,10 +18,15 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -34,7 +39,7 @@ import (
 
 var (
 	null          = []byte("NULL")
-	taskQueueSize = 64 // the maximum number of pending tasks to commit in queue
+	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 )
 
 // LoadDataExec represents a load data executor.
@@ -120,10 +125,102 @@ type LoadDataInfo struct {
 	IgnoreLines uint64
 	Ctx         sessionctx.Context
 	rows        [][]types.Datum
+	Drained     bool
+
+	ColumnAssignments  []*ast.Assignment
+	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
+	FieldMappings      []*FieldMapping
 
 	commitTaskQueue chan CommitTask
 	StopCh          chan struct{}
 	QuitCh          chan struct{}
+}
+
+// FieldMapping inticates the relationship between input field and table column or user variable
+type FieldMapping struct {
+	Column  *table.Column
+	UserVar *ast.VariableExpr
+}
+
+// initLoadColumns sets columns which the input fields loaded to.
+func (e *LoadDataInfo) initLoadColumns(columnNames []string) error {
+	var cols []*table.Column
+	var missingColName string
+	var err error
+	tableCols := e.Table.Cols()
+
+	if len(columnNames) != len(tableCols) {
+		for _, v := range e.ColumnAssignments {
+			columnNames = append(columnNames, v.Column.Name.O)
+		}
+
+		cols, missingColName = table.FindCols(tableCols, columnNames, e.Table.Meta().PKIsHandle)
+		if missingColName != "" {
+			return errors.Errorf("LOAD DATA INTO %s: unknown column %s", e.Table.Meta().Name.O, missingColName)
+		}
+	} else {
+		cols = tableCols
+	}
+
+	for _, col := range cols {
+		if !col.IsGenerated() {
+			e.insertColumns = append(e.insertColumns, col)
+		}
+		if col.Name.L == model.ExtraHandleName.L {
+			if !e.ctx.GetSessionVars().AllowWriteRowID {
+				return errors.Errorf("load data statement for _tidb_rowid are not supported.")
+			}
+			e.hasExtraHandle = true
+			break
+		}
+	}
+
+	// Check column whether is specified only once.
+	err = table.CheckOnce(cols)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// initFieldMappings make a field mapping slice to implicitly map input field to table column or user defined variable
+// the slice's order is the same as the order of the input fields.
+// Returns a slice of same ordered column names without user defined variable names.
+func (e *LoadDataInfo) initFieldMappings() []string {
+	columns := make([]string, 0, len(e.ColumnsAndUserVars)+len(e.ColumnAssignments))
+	tableCols := e.Table.Cols()
+
+	if len(e.ColumnsAndUserVars) == 0 {
+		for _, v := range tableCols {
+			fieldMapping := &FieldMapping{
+				Column: v,
+			}
+			e.FieldMappings = append(e.FieldMappings, fieldMapping)
+			columns = append(columns, v.Name.O)
+		}
+
+		return columns
+	}
+
+	var column *table.Column
+
+	for _, v := range e.ColumnsAndUserVars {
+		if v.ColumnName != nil {
+			column = table.FindCol(tableCols, v.ColumnName.Name.O)
+			columns = append(columns, v.ColumnName.Name.O)
+		} else {
+			column = nil
+		}
+
+		fieldMapping := &FieldMapping{
+			Column:  column,
+			UserVar: v.UserVar,
+		}
+		e.FieldMappings = append(e.FieldMappings, fieldMapping)
+	}
+
+	return columns
 }
 
 // GetRows getter for rows
@@ -200,10 +297,10 @@ func (e *LoadDataInfo) CommitOneTask(ctx context.Context, task CommitTask) error
 		logutil.Logger(ctx).Error("commit error CheckAndInsert", zap.Error(err))
 		return err
 	}
-	if err = e.Ctx.StmtCommit(); err != nil {
-		logutil.Logger(ctx).Error("commit error commit", zap.Error(err))
-		return err
-	}
+	failpoint.Inject("commitOneTaskErr", func() error {
+		return errors.New("mock commit one task error")
+	})
+	e.Ctx.StmtCommit()
 	// Make sure that there are no retries when committing.
 	if err = e.Ctx.RefreshTxnCtx(ctx); err != nil {
 		logutil.Logger(ctx).Error("commit error refresh", zap.Error(err))
@@ -229,28 +326,38 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 			e.ctx.StmtRollback()
 		}
 	}()
-	var tasks uint64 = 0
+	var tasks uint64
 	var end = false
 	for !end {
 		select {
 		case <-e.QuitCh:
 			err = errors.New("commit forced to quit")
 			logutil.Logger(ctx).Error("commit forced to quit, possible preparation failed")
-			break
+			return err
 		case commitTask, ok := <-e.commitTaskQueue:
 			if ok {
+				start := time.Now()
 				err = e.CommitOneTask(ctx, commitTask)
 				if err != nil {
 					break
 				}
 				tasks++
+				logutil.Logger(ctx).Info("commit one task success",
+					zap.Duration("commit time usage", time.Since(start)),
+					zap.Uint64("keys processed", commitTask.cnt),
+					zap.Uint64("tasks processed", tasks),
+					zap.Int("tasks in queue", len(e.commitTaskQueue)))
 			} else {
 				end = true
-				break
 			}
 		}
 		if err != nil {
 			logutil.Logger(ctx).Error("load data commit work error", zap.Error(err))
+			break
+		}
+		if atomic.CompareAndSwapUint32(&e.Ctx.GetSessionVars().Killed, 1, 0) {
+			logutil.Logger(ctx).Info("load data query interrupted quit data processing")
+			err = ErrQueryInterrupted
 			break
 		}
 	}
@@ -261,9 +368,6 @@ func (e *LoadDataInfo) CommitWork(ctx context.Context) error {
 func (e *LoadDataInfo) SetMaxRowsInBatch(limit uint64) {
 	e.maxRowsInBatch = limit
 	e.rows = make([][]types.Datum, 0, limit)
-	for i := 0; uint64(i) < limit; i++ {
-		e.rows = append(e.rows, make([]types.Datum, len(e.Table.Cols())))
-	}
 	e.curBatchCnt = 0
 }
 
@@ -408,7 +512,7 @@ func (e *LoadDataInfo) InsertData(ctx context.Context, prevData, curData []byte)
 		// rowCount will be used in fillRow(), last insert ID will be assigned according to the rowCount = 1.
 		// So should add first here.
 		e.rowCount++
-		e.colsToRow(ctx, cols)
+		e.rows = append(e.rows, e.colsToRow(ctx, cols))
 		e.curBatchCnt++
 		if e.maxRowsInBatch != 0 && e.rowCount%e.maxRowsInBatch == 0 {
 			reachLimit = true
@@ -447,42 +551,71 @@ func (e *LoadDataInfo) SetMessage() {
 }
 
 func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datum {
-	totalCols := e.Table.Cols()
-	for i := 0; i < len(e.row); i++ {
+	row := make([]types.Datum, 0, len(e.insertColumns))
+
+	for i := 0; i < len(e.FieldMappings); i++ {
 		if i >= len(cols) {
-			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
-			if types.IsTypeTime(totalCols[i].Tp) && mysql.HasNotNullFlag(totalCols[i].Flag) {
-				e.row[i].SetMysqlTime(types.CurrentTime(totalCols[i].Tp))
+			if e.FieldMappings[i].Column == nil {
+				sessionVars := e.Ctx.GetSessionVars()
+				sessionVars.SetUserVar(e.FieldMappings[i].UserVar.Name, "", mysql.DefaultCollationName)
 				continue
 			}
-			e.row[i].SetNull()
+
+			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
+			if types.IsTypeTime(e.FieldMappings[i].Column.Tp) && mysql.HasNotNullFlag(e.FieldMappings[i].Column.Flag) {
+				row = append(row, types.NewTimeDatum(types.CurrentTime(e.FieldMappings[i].Column.Tp)))
+				continue
+			}
+
+			row = append(row, types.NewDatum(nil))
 			continue
 		}
+
+		if e.FieldMappings[i].Column == nil {
+			sessionVars := e.Ctx.GetSessionVars()
+			sessionVars.SetUserVar(e.FieldMappings[i].UserVar.Name, string(cols[i].str), mysql.DefaultCollationName)
+			continue
+		}
+
 		// The field with only "\N" in it is handled as NULL in the csv file.
 		// See http://dev.mysql.com/doc/refman/5.7/en/load-data.html
 		if cols[i].maybeNull && string(cols[i].str) == "N" {
-			e.row[i].SetNull()
-		} else {
-			e.row[i].SetString(string(cols[i].str))
+			row = append(row, types.NewDatum(nil))
+			continue
 		}
+
+		row = append(row, types.NewDatum(string(cols[i].str)))
 	}
-	row, err := e.getRowInPlace(ctx, e.row, e.rows[e.curBatchCnt])
+	for i := 0; i < len(e.ColumnAssignments); i++ {
+		// eval expression of `SET` clause
+		d, err := expression.EvalAstExpr(e.Ctx, e.ColumnAssignments[i].Expr)
+		if err != nil {
+			e.handleWarning(err)
+			return nil
+		}
+		row = append(row, d)
+	}
+
+	// a new row buffer will be allocated in getRow
+	newRow, err := e.getRow(ctx, row)
 	if err != nil {
 		e.handleWarning(err)
 		return nil
 	}
-	return row
+
+	return newRow
 }
 
-func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) (int64, error) {
+func (e *LoadDataInfo) addRecordLD(ctx context.Context, row []types.Datum) error {
 	if row == nil {
-		return 0, nil
+		return nil
 	}
-	h, err := e.addRecord(ctx, row)
+	err := e.addRecord(ctx, row)
 	if err != nil {
 		e.handleWarning(err)
+		return err
 	}
-	return h, nil
+	return nil
 }
 
 type field struct {
@@ -495,9 +628,9 @@ type fieldWriter struct {
 	pos           int
 	ReadBuf       []byte
 	OutputBuf     []byte
+	term          string
 	enclosedChar  byte
 	fieldTermChar byte
-	term          string
 	isEnclosed    bool
 	isLineStart   bool
 	isFieldStart  bool
@@ -616,14 +749,12 @@ func (w *fieldWriter) GetField() (bool, field) {
 			}
 		} else if ch == '\\' {
 			// TODO: escape only support '\'
-			w.OutputBuf = append(w.OutputBuf, ch)
+			// When the escaped character is interpreted as if
+			// it was not escaped, backslash is ignored.
 			flag, ch = w.getChar()
 			if flag {
-				if ch == w.enclosedChar {
-					w.OutputBuf = append(w.OutputBuf, ch)
-				} else {
-					w.putback()
-				}
+				w.OutputBuf = append(w.OutputBuf, '\\')
+				w.OutputBuf = append(w.OutputBuf, ch)
 			}
 		} else {
 			w.OutputBuf = append(w.OutputBuf, ch)

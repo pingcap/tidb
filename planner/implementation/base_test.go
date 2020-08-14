@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/planner/memo"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -54,10 +55,9 @@ func (s *testImplSuite) TestBaseImplementation(c *C) {
 	impl := &baseImpl{plan: p}
 	c.Assert(impl.GetPlan(), Equals, p)
 
-	childCosts := []float64{5.0}
-	cost := impl.CalcCost(10, childCosts, nil)
-	c.Assert(cost, Equals, 5.0)
-	c.Assert(impl.GetCost(), Equals, 5.0)
+	cost := impl.CalcCost(10, []memo.Implementation{}...)
+	c.Assert(cost, Equals, 0.0)
+	c.Assert(impl.GetCost(), Equals, 0.0)
 
 	impl.SetCost(6.0)
 	c.Assert(impl.GetCost(), Equals, 6.0)

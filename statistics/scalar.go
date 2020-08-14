@@ -54,19 +54,11 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	case types.KindMysqlTime:
 		valueTime := value.GetMysqlTime()
 		var minTime types.Time
-		switch valueTime.Type {
+		switch valueTime.Type() {
 		case mysql.TypeDate:
-			minTime = types.Time{
-				Time: types.MinDatetime,
-				Type: mysql.TypeDate,
-				Fsp:  types.DefaultFsp,
-			}
+			minTime = types.NewTime(types.MinDatetime, mysql.TypeDate, types.DefaultFsp)
 		case mysql.TypeDatetime:
-			minTime = types.Time{
-				Time: types.MinDatetime,
-				Type: mysql.TypeDatetime,
-				Fsp:  types.DefaultFsp,
-			}
+			minTime = types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.DefaultFsp)
 		case mysql.TypeTimestamp:
 			minTime = types.MinTimestamp
 		}
@@ -255,15 +247,15 @@ func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		return values
 	case types.KindMysqlTime:
 		lowTime, highTime := low.GetMysqlTime(), high.GetMysqlTime()
-		if lowTime.Type != highTime.Type {
+		if lowTime.Type() != highTime.Type() {
 			return nil
 		}
-		fsp := mathutil.MaxInt8(lowTime.Fsp, highTime.Fsp)
+		fsp := mathutil.MaxInt8(lowTime.Fsp(), highTime.Fsp())
 		var stepSize int64
 		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-		if lowTime.Type == mysql.TypeDate {
+		if lowTime.Type() == mysql.TypeDate {
 			stepSize = 24 * int64(time.Hour)
-			lowTime.Time = types.FromDate(lowTime.Time.Year(), lowTime.Time.Month(), lowTime.Time.Day(), 0, 0, 0, 0)
+			lowTime.SetCoreTime(types.FromDate(lowTime.Year(), lowTime.Month(), lowTime.Day(), 0, 0, 0, 0))
 		} else {
 			var err error
 			lowTime, err = lowTime.RoundFrac(sc, fsp)

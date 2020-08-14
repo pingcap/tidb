@@ -14,12 +14,26 @@
 package executor_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite4) TestWindowFunctions(c *C) {
+func (s *testSuite7) TestWindowFunctions(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_window_concurrency = 1")
+	doTestWindowFunctions(tk)
+}
+
+func (s *testSuite7) TestWindowParallelFunctions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@tidb_window_concurrency = 4")
+	doTestWindowFunctions(tk)
+}
+
+func doTestWindowFunctions(tk *testkit.TestKit) {
+	var result *testkit.Result
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int)")
@@ -28,11 +42,11 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 		tk.MustExec("set @@tidb_enable_window_function = 0")
 	}()
 	tk.MustExec("insert into t values (1,2,3),(4,3,2),(2,3,4)")
-	result := tk.MustQuery("select count(a) over () from t")
+	result = tk.MustQuery("select count(a) over () from t")
 	result.Check(testkit.Rows("3", "3", "3"))
 	result = tk.MustQuery("select sum(a) over () + count(a) over () from t")
 	result.Check(testkit.Rows("10", "10", "10"))
-	result = tk.MustQuery("select sum(a) over (partition by a) from t")
+	result = tk.MustQuery("select sum(a) over (partition by a) from t").Sort()
 	result.Check(testkit.Rows("1", "2", "4"))
 	result = tk.MustQuery("select 1 + sum(a) over (), count(a) over () from t")
 	result.Check(testkit.Rows("8 3", "8 3", "8 3"))
@@ -43,7 +57,7 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 
 	result = tk.MustQuery("select a, row_number() over() from t")
 	result.Check(testkit.Rows("1 1", "4 2", "2 3"))
-	result = tk.MustQuery("select a, row_number() over(partition by a) from t")
+	result = tk.MustQuery("select a, row_number() over(partition by a) from t").Sort()
 	result.Check(testkit.Rows("1 1", "2 1", "4 1"))
 
 	result = tk.MustQuery("select a, sum(a) over(rows between unbounded preceding and 1 following) from t")
@@ -64,6 +78,12 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("<nil> <nil> <nil>", "1 2019-02-01 6", "2 2019-02-02 6", "3 2019-02-03 10", "5 2019-02-05 5"))
 	result = tk.MustQuery("select a, b, sum(a) over(order by b desc range between interval 1 day preceding and interval 2 day following) from t")
 	result.Check(testkit.Rows("5 2019-02-05 8", "3 2019-02-03 6", "2 2019-02-02 6", "1 2019-02-01 3", "<nil> <nil> <nil>"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("CREATE TABLE t (id INTEGER, sex CHAR(1))")
+	tk.MustExec("insert into t values (1, 'M'), (2, 'F'), (3, 'F'), (4, 'F'), (5, 'M'), (10, NULL), (11, NULL)")
+	result = tk.MustQuery("SELECT sex, id, RANK() OVER (PARTITION BY sex ORDER BY id DESC) FROM t").Sort()
+	result.Check(testkit.Rows("<nil> 10 2", "<nil> 11 1", "F 2 3", "F 3 2", "F 4 1", "M 1 2", "M 5 1"))
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int, b int)")
@@ -101,8 +121,8 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 	result = tk.MustQuery("select a, first_value(a) over(rows between 1 following and 1 following), last_value(a) over(rows between 1 following and 1 following) from t")
 	result.Check(testkit.Rows("1 1 1", "1 2 2", "2 2 2", "2 <nil> <nil>"))
 	result = tk.MustQuery("select a, first_value(rand(0)) over(), last_value(rand(0)) over() from t")
-	result.Check(testkit.Rows("1 0.9451961492941164 0.05434383959970039", "1 0.9451961492941164 0.05434383959970039",
-		"2 0.9451961492941164 0.05434383959970039", "2 0.9451961492941164 0.05434383959970039"))
+	result.Check(testkit.Rows("1 0.15522042769493574 0.33109208227236947", "1 0.15522042769493574 0.33109208227236947",
+		"2 0.15522042769493574 0.33109208227236947", "2 0.15522042769493574 0.33109208227236947"))
 
 	result = tk.MustQuery("select a, b, cume_dist() over() from t")
 	result.Check(testkit.Rows("1 1 1", "1 2 1", "2 1 1", "2 2 1"))
@@ -146,7 +166,7 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 	result = tk.MustQuery("SELECT CUME_DIST() OVER (ORDER BY null);")
 	result.Check(testkit.Rows("1"))
 
-	tk.MustQuery("select lead(a) over(partition by null) from t").Check(testkit.Rows("1", "2", "2", "<nil>"))
+	tk.MustQuery("select lead(a) over(partition by null) from t").Sort().Check(testkit.Rows("1", "2", "2", "<nil>"))
 
 	tk.MustExec("create table issue10494(a INT, b CHAR(1), c DATETIME, d BLOB)")
 	tk.MustExec("insert into issue10494 VALUES (1,'x','2010-01-01','blob'), (2, 'y', '2011-01-01', ''), (3, 'y', '2012-01-01', ''), (4, 't', '2012-01-01', 'blob'), (5, null, '2013-01-01', null)")
@@ -174,11 +194,12 @@ func (s *testSuite4) TestWindowFunctions(c *C) {
 	result.Check(testkit.Rows("1 3", "2 4", "3 5", "4 3"))
 
 	tk.Se.GetSessionVars().MaxChunkSize = 1
-	result = tk.MustQuery("select a, row_number() over (partition by a) from t")
+	result = tk.MustQuery("select a, row_number() over (partition by a) from t").Sort()
 	result.Check(testkit.Rows("1 1", "1 2", "2 1", "2 2"))
 }
 
-func (s *testSuite4) TestWindowFunctionsIssue11614(c *C) {
+func (s *testSuite7) TestWindowFunctionsDataReference(c *C) {
+	// see https://github.com/pingcap/tidb/issues/11614
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -192,4 +213,144 @@ func (s *testSuite4) TestWindowFunctionsIssue11614(c *C) {
 	result.Check(testkit.Rows("2 1 0", "2 2 0.5", "2 3 1"))
 	result = tk.MustQuery("select a, b, CUME_DIST() over (partition by a order by b) from t")
 	result.Check(testkit.Rows("2 1 0.3333333333333333", "2 2 0.6666666666666666", "2 3 1"))
+
+	// see https://github.com/pingcap/tidb/issues/12415
+	result = tk.MustQuery("select b, first_value(b) over (order by b RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) from t")
+	result.Check(testkit.Rows("1 1", "2 1", "3 1"))
+	result = tk.MustQuery("select b, first_value(b) over (order by b ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) from t")
+	result.Check(testkit.Rows("1 1", "2 1", "3 1"))
+}
+
+func (s *testSuite7) TestSlidingWindowFunctions(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	idTypes := []string{"FLOAT", "DOUBLE"}
+	useHighPrecisions := []string{"ON", "OFF"}
+	for _, idType := range idTypes {
+		for _, useHighPrecision := range useHighPrecisions {
+			tk.MustExec("drop table if exists t;")
+			tk.MustExec(fmt.Sprintf("CREATE TABLE t (id %s, sex CHAR(1));", idType))
+			tk.MustExec(fmt.Sprintf("SET SESSION windowing_use_high_precision = %s;", useHighPrecision))
+			baseTestSlidingWindowFunctions(tk)
+		}
+	}
+}
+
+func baseTestSlidingWindowFunctions(tk *testkit.TestKit) {
+	var result *testkit.Result
+	tk.MustExec("insert into t values (1,'M')")
+	tk.MustExec("insert into t values (2,'F')")
+	tk.MustExec("insert into t values (3,'F')")
+	tk.MustExec("insert into t values (4,'F')")
+	tk.MustExec("insert into t values (5,'M')")
+	tk.MustExec("insert into t values (10,null)")
+	tk.MustExec("insert into t values (11,null)")
+	tk.MustExec("PREPARE p FROM 'SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN ? PRECEDING and ? PRECEDING) FROM t';")
+	tk.MustExec("SET @p1= 1;")
+	tk.MustExec("SET @p2= 2;")
+	result = tk.MustQuery("EXECUTE p USING @p1, @p2;")
+	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
+	result = tk.MustQuery("EXECUTE p USING @p2, @p1;")
+	result.Check(testkit.Rows("M 0", "F 1", "F 2", "F 2", "M 2", "<nil> 2", "<nil> 2"))
+	tk.MustExec("DROP PREPARE p;")
+	tk.MustExec("PREPARE p FROM 'SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN ? FOLLOWING and ? FOLLOWING) FROM t';")
+	tk.MustExec("SET @p1= 1;")
+	tk.MustExec("SET @p2= 2;")
+	result = tk.MustQuery("EXECUTE p USING @p2, @p1;")
+	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
+	result = tk.MustQuery("EXECUTE p USING @p1, @p2;")
+	result.Check(testkit.Rows("M 2", "F 2", "F 2", "F 2", "M 2", "<nil> 1", "<nil> 0"))
+	tk.MustExec("DROP PREPARE p;")
+
+	// COUNT ROWS
+	result = tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 2", "F 2", "F 2", "F 2", "M 2", "<nil> 1", "<nil> 0"))
+	result = tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
+	result = tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 1", "F 2", "F 2", "M 2", "<nil> 2", "<nil> 2"))
+	result = tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING and 3 PRECEDING) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
+
+	// COUNT RANGE
+	result = tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id RANGE BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 2", "F 2", "F 2", "F 1", "M 0", "<nil> 1", "<nil> 0"))
+	result = tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id RANGE BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
+	result = tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id RANGE BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 1", "F 2", "F 2", "M 2", "<nil> 0", "<nil> 1"))
+	result = tk.MustQuery("SELECT sex, COUNT(id) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING and 3 PRECEDING) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
+
+	// SUM ROWS
+	result = tk.MustQuery("SELECT sex, SUM(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 5", "F 7", "F 9", "F 15", "M 21", "<nil> 11", "<nil> <nil>"))
+	result = tk.MustQuery("SELECT sex, SUM(id) OVER (ORDER BY id ROWS BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M <nil>", "F <nil>", "F <nil>", "F <nil>", "M <nil>", "<nil> <nil>", "<nil> <nil>"))
+	result = tk.MustQuery("SELECT sex, SUM(id) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;")
+	result.Check(testkit.Rows("M <nil>", "F 1", "F 3", "F 5", "M 7", "<nil> 9", "<nil> 15"))
+	result = tk.MustQuery("SELECT sex, SUM(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING and 3 PRECEDING) FROM t;")
+	result.Check(testkit.Rows("M <nil>", "F <nil>", "F <nil>", "F <nil>", "M <nil>", "<nil> <nil>", "<nil> <nil>"))
+	result = tk.MustQuery("SELECT sex, SUM(id) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING and 1 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 3", "F 6", "F 10", "F 15", "M 25", "<nil> 36", "<nil> 36"))
+
+	// SUM RANGE
+	result = tk.MustQuery("SELECT sex, SUM(id) OVER (ORDER BY id RANGE BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 5", "F 7", "F 9", "F 5", "M <nil>", "<nil> 11", "<nil> <nil>"))
+	result = tk.MustQuery("SELECT sex, SUM(id) OVER (ORDER BY id RANGE BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M <nil>", "F <nil>", "F <nil>", "F <nil>", "M <nil>", "<nil> <nil>", "<nil> <nil>"))
+	result = tk.MustQuery("SELECT sex, SUM(id) OVER (ORDER BY id RANGE BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;")
+	result.Check(testkit.Rows("M <nil>", "F 1", "F 3", "F 5", "M 7", "<nil> <nil>", "<nil> 10"))
+	result = tk.MustQuery("SELECT sex, SUM(id) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 6", "F 10", "F 14", "F 12", "M 9", "<nil> 21", "<nil> 21"))
+	result = tk.MustQuery("SELECT sex, SUM(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("<nil> 21", "<nil> 21", "M 12", "F 14", "F 10", "F 6", "M 3"))
+
+	// AVG ROWS
+	result = tk.MustQuery("SELECT sex, AVG(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 2.5", "F 3.5", "F 4.5", "F 7.5", "M 10.5", "<nil> 11", "<nil> <nil>"))
+	result = tk.MustQuery("SELECT sex, AVG(id) OVER (ORDER BY id ROWS BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M <nil>", "F <nil>", "F <nil>", "F <nil>", "M <nil>", "<nil> <nil>", "<nil> <nil>"))
+	result = tk.MustQuery("SELECT sex, AVG(id) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;")
+	result.Check(testkit.Rows("M <nil>", "F 1", "F 1.5", "F 2.5", "M 3.5", "<nil> 4.5", "<nil> 7.5"))
+	result = tk.MustQuery("SELECT sex, AVG(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING and 3 PRECEDING) FROM t;")
+	result.Check(testkit.Rows("M <nil>", "F <nil>", "F <nil>", "F <nil>", "M <nil>", "<nil> <nil>", "<nil> <nil>"))
+	result = tk.MustQuery("SELECT sex, AVG(id) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING and 1 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 1.5", "F 2", "F 2.5", "F 3", "M 4.166666666666667", "<nil> 5.142857142857143", "<nil> 5.142857142857143"))
+
+	// AVG RANGE
+	result = tk.MustQuery("SELECT sex, AVG(id) OVER (ORDER BY id RANGE BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 2.5", "F 3.5", "F 4.5", "F 5", "M <nil>", "<nil> 11", "<nil> <nil>"))
+	result = tk.MustQuery("SELECT sex, AVG(id) OVER (ORDER BY id RANGE BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M <nil>", "F <nil>", "F <nil>", "F <nil>", "M <nil>", "<nil> <nil>", "<nil> <nil>"))
+	result = tk.MustQuery("SELECT sex, AVG(id) OVER (ORDER BY id RANGE BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;")
+	result.Check(testkit.Rows("M <nil>", "F 1", "F 1.5", "F 2.5", "M 3.5", "<nil> <nil>", "<nil> 10"))
+	result = tk.MustQuery("SELECT sex, AVG(id) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 2", "F 2.5", "F 3.5", "F 4", "M 4.5", "<nil> 10.5", "<nil> 10.5"))
+	result = tk.MustQuery("SELECT sex, AVG(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("<nil> 10.5", "<nil> 10.5", "M 4", "F 3.5", "F 2.5", "F 2", "M 1.5"))
+
+	// BIT_XOR ROWS
+	result = tk.MustQuery("SELECT sex, BIT_XOR(id) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 1", "F 7", "F 1", "F 15", "M 1", "<nil> 11", "<nil> 0"))
+	result = tk.MustQuery("SELECT sex, BIT_XOR(id) OVER (ORDER BY id ROWS BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
+	result = tk.MustQuery("SELECT sex, BIT_XOR(id) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 1", "F 3", "F 1", "M 7", "<nil> 1", "<nil> 15"))
+	result = tk.MustQuery("SELECT sex, BIT_XOR(id) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING and 3 PRECEDING) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
+	result = tk.MustQuery("SELECT sex, BIT_XOR(id) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING and 1 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 3", "F 0", "F 4", "F 1", "M 11", "<nil> 0", "<nil> 0"))
+
+	// BIT_XOR RANGE
+	result = tk.MustQuery("SELECT sex, BIT_XOR(id) OVER (ORDER BY id RANGE BETWEEN 1 FOLLOWING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 1", "F 7", "F 1", "F 5", "M 0", "<nil> 11", "<nil> 0"))
+	result = tk.MustQuery("SELECT sex, BIT_XOR(id) OVER (ORDER BY id RANGE BETWEEN 3 FOLLOWING and 1 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 0", "F 0", "F 0", "M 0", "<nil> 0", "<nil> 0"))
+	result = tk.MustQuery("SELECT sex, BIT_XOR(id) OVER (ORDER BY id RANGE BETWEEN 2 PRECEDING and 1 PRECEDING) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 1", "F 3", "F 1", "M 7", "<nil> 0", "<nil> 10"))
+	result = tk.MustQuery("SELECT sex, BIT_XOR(id) OVER (ORDER BY id RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("M 0", "F 4", "F 0", "F 2", "M 1", "<nil> 1", "<nil> 1"))
+	result = tk.MustQuery("SELECT sex, BIT_XOR(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;")
+	result.Check(testkit.Rows("<nil> 1", "<nil> 1", "M 2", "F 0", "F 4", "F 0", "M 3"))
 }

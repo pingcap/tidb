@@ -50,9 +50,9 @@ func (s *testStatisticsSuite) TestNewHistogramBySelectivity(c *C) {
 	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(25), HighVal: []types.Datum{types.MaxValueDatum()}})
 	intColResult := `column:1 ndv:16 totColSize:0
 num: 30 lower_bound: 0 upper_bound: 2 repeats: 10
-num: 20 lower_bound: 6 upper_bound: 8 repeats: 0
+num: 11 lower_bound: 6 upper_bound: 8 repeats: 0
 num: 30 lower_bound: 9 upper_bound: 11 repeats: 0
-num: 10 lower_bound: 12 upper_bound: 14 repeats: 0
+num: 1 lower_bound: 12 upper_bound: 14 repeats: 0
 num: 30 lower_bound: 27 upper_bound: 29 repeats: 0`
 
 	stringCol := &Column{}

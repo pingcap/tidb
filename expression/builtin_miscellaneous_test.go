@@ -22,12 +22,10 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testEvaluatorSuite) TestInetAton(c *C) {
-	defer testleak.AfterTest(c)()
 	tbl := []struct {
 		Input    interface{}
 		Expected interface{}
@@ -93,8 +91,6 @@ func (s *testEvaluatorSuite) TestIsIPv4(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestUUID(c *C) {
-	defer testleak.AfterTest(c)()
-
 	f, err := newFunctionForTest(s.ctx, ast.UUID)
 	c.Assert(err, IsNil)
 	d, err := f.Eval(chunk.Row{})
@@ -120,8 +116,6 @@ func (s *testEvaluatorSuite) TestUUID(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestAnyValue(c *C) {
-	defer testleak.AfterTest(c)()
-
 	tbl := []struct {
 		arg interface{}
 		ret interface{}
@@ -324,10 +318,9 @@ func (s *testEvaluatorSuite) TestIsIPv4Compat(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestNameConst(c *C) {
-	defer testleak.AfterTest(c)()
 	dec := types.NewDecFromFloatForTest(123.123)
-	tm := types.Time{Time: types.FromGoTime(time.Now()), Fsp: 6, Type: mysql.TypeDatetime}
-	du := types.Duration{Duration: time.Duration(12*time.Hour + 1*time.Minute + 1*time.Second), Fsp: types.DefaultFsp}
+	tm := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)
+	du := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second, Fsp: types.DefaultFsp}
 	cases := []struct {
 		colName string
 		arg     interface{}

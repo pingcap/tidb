@@ -91,6 +91,16 @@ func (s *FspTest) TestParseFrac(c *C) {
 	c.Assert(overflow, Equals, false)
 	c.Assert(err, IsNil)
 
+	obtained, overflow, err = ParseFrac("1234567", 6)
+	c.Assert(obtained, Equals, 123457)
+	c.Assert(overflow, Equals, false)
+	c.Assert(err, IsNil)
+
+	obtained, overflow, err = ParseFrac("1234567", 4)
+	c.Assert(obtained, Equals, 123500)
+	c.Assert(overflow, Equals, false)
+	c.Assert(err, IsNil)
+
 	// 1236 round 3 -> 124 -> 124000
 	obtained, overflow, err = ParseFrac("1236", 3)
 	c.Assert(obtained, Equals, 124000)

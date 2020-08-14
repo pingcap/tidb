@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 )
 
 // detachColumnCNFConditions detaches the condition for calculating range from the other conditions.
@@ -95,8 +96,27 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 	if !ok {
 		return -1
 	}
-	if f.FuncName.L == ast.EQ {
+	_, collation := expr.CharsetAndCollation(f.GetCtx())
+	switch f.FuncName.L {
+	case ast.LogicOr:
+		dnfItems := expression.FlattenDNFConditions(f)
+		offset := int(-1)
+		for _, dnfItem := range dnfItems {
+			curOffset := getEqOrInColOffset(dnfItem, cols)
+			if curOffset == -1 {
+				return -1
+			}
+			if offset != -1 && curOffset != offset {
+				return -1
+			}
+			offset = curOffset
+		}
+		return offset
+	case ast.EQ:
 		if c, ok := f.GetArgs()[0].(*expression.Column); ok {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+				return -1
+			}
 			if _, ok := f.GetArgs()[1].(*expression.Constant); ok {
 				for i, col := range cols {
 					if col.Equal(nil, c) {
@@ -106,6 +126,9 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 			}
 		}
 		if c, ok := f.GetArgs()[1].(*expression.Column); ok {
+			if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
+				return -1
+			}
 			if _, ok := f.GetArgs()[0].(*expression.Constant); ok {
 				for i, col := range cols {
 					if col.Equal(nil, c) {
@@ -114,10 +137,12 @@ func getEqOrInColOffset(expr expression.Expression, cols []*expression.Column) i
 				}
 			}
 		}
-	}
-	if f.FuncName.L == ast.In {
+	case ast.In:
 		c, ok := f.GetArgs()[0].(*expression.Column)
 		if !ok {
+			return -1
+		}
+		if c.RetType.EvalType() == types.ETString && !collate.CompatibleCollate(c.RetType.Collate, collation) {
 			return -1
 		}
 		for _, arg := range f.GetArgs()[1:] {
@@ -306,7 +331,7 @@ func detachDNFCondAndBuildRangeForIndex(sctx sessionctx.Context, condition *expr
 		}
 	}
 
-	totalRanges, err := unionRanges(sc, totalRanges)
+	totalRanges, err := UnionRanges(sc, totalRanges)
 	if err != nil {
 		return nil, nil, false, errors.Trace(err)
 	}

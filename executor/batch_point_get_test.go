@@ -29,7 +29,7 @@ type testBatchPointGetSuite struct {
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -99,4 +99,54 @@ func (s *testBatchPointGetSuite) TestBatchPointGetExec(c *C) {
 		"2",
 		"4",
 	))
+}
+
+func (s *testBatchPointGetSuite) TestBatchPointGetInTxn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key auto_increment, name varchar(30))")
+
+	// Fix a bug that BatchPointGetExec doesn't consider membuffer data in a transaction.
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (4, 'name')")
+	tk.MustQuery("select * from t where id in (4)").Check(testkit.Rows("4 name"))
+	tk.MustQuery("select * from t where id in (4) for update").Check(testkit.Rows("4 name"))
+	tk.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t values (4, 'name')")
+	tk.MustQuery("select * from t where id in (4)").Check(testkit.Rows("4 name"))
+	tk.MustQuery("select * from t where id in (4) for update").Check(testkit.Rows("4 name"))
+	tk.MustExec("rollback")
+
+	tk.MustExec("create table s (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("insert s values (1, 1, 1), (3, 3, 3), (5, 5, 5)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update s set c = 10 where a = 3")
+	tk.MustQuery("select * from s where (a, b) in ((1, 1), (2, 2), (3, 3)) for update").Check(testkit.Rows("1 1 1", "3 3 10"))
+	tk.MustExec("rollback")
+}
+
+func (s *testBatchPointGetSuite) TestBatchPointGetCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table customers (id int primary key, token varchar(255) unique)")
+	tk.MustExec("INSERT INTO test.customers (id, token) VALUES (28, '07j')")
+	tk.MustExec("INSERT INTO test.customers (id, token) VALUES (29, '03j')")
+	tk.MustExec("BEGIN")
+	tk.MustQuery("SELECT id, token FROM test.customers WHERE id IN (28)")
+	tk.MustQuery("SELECT id, token FROM test.customers WHERE id IN (28, 29);").Check(testkit.Rows("28 07j", "29 03j"))
+}
+
+func (s *testBatchPointGetSuite) TestIssue18843(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t18843 ( id bigint(10) primary key, f varchar(191) default null, unique key `idx_f` (`f`))")
+	tk.MustExec("insert into t18843 values (1, '')")
+	tk.MustQuery("select * from t18843 where f in (null)").Check(testkit.Rows())
+
+	tk.MustExec("insert into t18843 values (2, null)")
+	tk.MustQuery("select * from t18843 where f in (null)").Check(testkit.Rows())
+	tk.MustQuery("select * from t18843 where f is null").Check(testkit.Rows("2 <nil>"))
 }

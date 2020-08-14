@@ -20,13 +20,15 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 type memIndexReader struct {
@@ -40,8 +42,8 @@ type memIndexReader struct {
 	addedRowsLen  int
 	retFieldTypes []*types.FieldType
 	outputOffset  []int
-	// belowHandleIndex is the handle's position of the below scan plan.
-	belowHandleIndex int
+	// belowHandleCols is the handle's position of the below scan plan.
+	belowHandleCols plannercore.HandleCols
 }
 
 func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *memIndexReader {
@@ -51,16 +53,16 @@ func buildMemIndexReader(us *UnionScanExec, idxReader *IndexReaderExecutor) *mem
 		outputOffset = append(outputOffset, col.Index)
 	}
 	return &memIndexReader{
-		ctx:              us.ctx,
-		index:            idxReader.index,
-		table:            idxReader.table.Meta(),
-		kvRanges:         kvRanges,
-		desc:             us.desc,
-		conditions:       us.conditions,
-		addedRows:        make([][]types.Datum, 0, len(us.dirty.addedRows)),
-		retFieldTypes:    retTypes(us),
-		outputOffset:     outputOffset,
-		belowHandleIndex: us.belowHandleIndex,
+		ctx:             us.ctx,
+		index:           idxReader.index,
+		table:           idxReader.table.Meta(),
+		kvRanges:        kvRanges,
+		desc:            us.desc,
+		conditions:      us.conditions,
+		addedRows:       make([][]types.Datum, 0, us.dirty.addedRows.Len()),
+		retFieldTypes:   retTypes(us),
+		outputOffset:    outputOffset,
+		belowHandleCols: us.belowHandleCols,
 	}
 }
 
@@ -109,11 +111,20 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 }
 
 func (m *memIndexReader) decodeIndexKeyValue(key, value []byte, tps []*types.FieldType) ([]types.Datum, error) {
-	pkStatus := tablecodec.PrimaryKeyIsSigned
+	hdStatus := tablecodec.HandleDefault
 	if mysql.HasUnsignedFlag(tps[len(tps)-1].Flag) {
-		pkStatus = tablecodec.PrimaryKeyIsUnsigned
+		hdStatus = tablecodec.HandleIsUnsigned
 	}
-	values, err := tablecodec.DecodeIndexKV(key, value, len(m.index.Columns), pkStatus)
+	colInfos := make([]rowcodec.ColInfo, 0, len(m.index.Columns))
+	for _, idxCol := range m.index.Columns {
+		col := m.table.Columns[idxCol.Offset]
+		colInfos = append(colInfos, rowcodec.ColInfo{
+			ID:         col.ID,
+			IsPKHandle: m.table.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
+		})
+	}
+	values, err := tablecodec.DecodeIndexKV(key, value, len(m.index.Columns), hdStatus, colInfos)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -139,16 +150,37 @@ type memTableReader struct {
 	addedRows     [][]types.Datum
 	retFieldTypes []*types.FieldType
 	colIDs        map[int64]int
+	buffer        allocBuf
+	pkColIDs      []int64
+}
+
+type allocBuf struct {
 	// cache for decode handle.
 	handleBytes []byte
+	rd          *rowcodec.BytesDecoder
 }
 
 func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *memTableReader {
-	colIDs := make(map[int64]int)
+	colIDs := make(map[int64]int, len(us.columns))
 	for i, col := range us.columns {
 		colIDs[col.ID] = i
 	}
 
+	colInfo := make([]rowcodec.ColInfo, 0, len(us.columns))
+	for i := range us.columns {
+		col := us.columns[i]
+		colInfo = append(colInfo, rowcodec.ColInfo{
+			ID:         col.ID,
+			IsPKHandle: us.table.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
+		})
+	}
+
+	pkColIDs := tables.TryGetCommonPkColumnIds(us.table.Meta())
+	if len(pkColIDs) == 0 {
+		pkColIDs = []int64{-1}
+	}
+	rd := rowcodec.NewByteDecoder(colInfo, pkColIDs, nil, us.ctx.GetSessionVars().TimeZone)
 	return &memTableReader{
 		ctx:           us.ctx,
 		table:         us.table.Meta(),
@@ -156,10 +188,14 @@ func buildMemTableReader(us *UnionScanExec, tblReader *TableReaderExecutor) *mem
 		kvRanges:      tblReader.kvRanges,
 		desc:          us.desc,
 		conditions:    us.conditions,
-		addedRows:     make([][]types.Datum, 0, len(us.dirty.addedRows)),
+		addedRows:     make([][]types.Datum, 0, us.dirty.addedRows.Len()),
 		retFieldTypes: retTypes(us),
 		colIDs:        colIDs,
-		handleBytes:   make([]byte, 0, 16),
+		buffer: allocBuf{
+			handleBytes: make([]byte, 0, 16),
+			rd:          rd,
+		},
+		pkColIDs: pkColIDs,
 	}
 }
 
@@ -196,19 +232,19 @@ func (m *memTableReader) decodeRecordKeyValue(key, value []byte) ([]types.Datum,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return decodeRowData(m.ctx, m.table, m.columns, m.colIDs, handle, m.handleBytes, value)
+	return m.decodeRowData(handle, value)
 }
 
 // decodeRowData uses to decode row data value.
-func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, cacheBytes, value []byte) ([]types.Datum, error) {
-	values, err := getRowData(ctx.GetSessionVars().StmtCtx, tb, columns, colIDs, handle, cacheBytes, value)
+func (m *memTableReader) decodeRowData(handle kv.Handle, value []byte) ([]types.Datum, error) {
+	values, err := m.getRowData(handle, value)
 	if err != nil {
 		return nil, err
 	}
-	ds := make([]types.Datum, 0, len(columns))
-	for _, col := range columns {
-		offset := colIDs[col.ID]
-		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, ctx.GetSessionVars().TimeZone)
+	ds := make([]types.Datum, 0, len(m.columns))
+	for _, col := range m.columns {
+		offset := m.colIDs[col.ID]
+		d, err := tablecodec.DecodeColumnValue(values[offset], &col.FieldType, m.ctx.GetSessionVars().TimeZone)
 		if err != nil {
 			return nil, err
 		}
@@ -218,8 +254,14 @@ func decodeRowData(ctx sessionctx.Context, tb *model.TableInfo, columns []*model
 }
 
 // getRowData decodes raw byte slice to row data.
-func getRowData(ctx *stmtctx.StatementContext, tb *model.TableInfo, columns []*model.ColumnInfo, colIDs map[int64]int, handle int64, cacheBytes, value []byte) ([][]byte, error) {
-	pkIsHandle := tb.PKIsHandle
+func (m *memTableReader) getRowData(handle kv.Handle, value []byte) ([][]byte, error) {
+	colIDs := m.colIDs
+	pkIsHandle := m.table.PKIsHandle
+	buffer := &m.buffer
+	ctx := m.ctx.GetSessionVars().StmtCtx
+	if rowcodec.IsNewFormat(value) {
+		return buffer.rd.DecodeToBytes(colIDs, handle, value, buffer.handleBytes)
+	}
 	values, err := tablecodec.CutRowNew(value, colIDs)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -228,18 +270,27 @@ func getRowData(ctx *stmtctx.StatementContext, tb *model.TableInfo, columns []*m
 		values = make([][]byte, len(colIDs))
 	}
 	// Fill the handle and null columns.
-	for _, col := range columns {
+	for _, col := range m.columns {
 		id := col.ID
 		offset := colIDs[id]
+		if m.table.IsCommonHandle {
+			for i, colID := range m.pkColIDs {
+				if colID == col.ID {
+					values[offset] = handle.EncodedCol(i)
+					break
+				}
+			}
+			continue
+		}
 		if (pkIsHandle && mysql.HasPriKeyFlag(col.Flag)) || id == model.ExtraHandleID {
 			var handleDatum types.Datum
 			if mysql.HasUnsignedFlag(col.Flag) {
 				// PK column is Unsigned.
-				handleDatum = types.NewUintDatum(uint64(handle))
+				handleDatum = types.NewUintDatum(uint64(handle.IntValue()))
 			} else {
-				handleDatum = types.NewIntDatum(handle)
+				handleDatum = types.NewIntDatum(handle.IntValue())
 			}
-			handleData, err1 := codec.EncodeValue(ctx, cacheBytes, handleDatum)
+			handleData, err1 := codec.EncodeValue(ctx, buffer.handleBytes, handleDatum)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
@@ -299,19 +350,10 @@ func reverseDatumSlice(rows [][]types.Datum) {
 	}
 }
 
-func (m *memIndexReader) getMemRowsHandle() ([]int64, error) {
-	pkTp := types.NewFieldType(mysql.TypeLonglong)
-	if m.table.PKIsHandle {
-		for _, col := range m.table.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				pkTp = &col.FieldType
-				break
-			}
-		}
-	}
-	handles := make([]int64, 0, m.addedRowsLen)
+func (m *memIndexReader) getMemRowsHandle() ([]kv.Handle, error) {
+	handles := make([]kv.Handle, 0, m.addedRowsLen)
 	err := iterTxnMemBuffer(m.ctx, m.kvRanges, func(key, value []byte) error {
-		handle, err := tablecodec.DecodeIndexHandle(key, value, len(m.index.Columns), pkTp)
+		handle, err := tablecodec.DecodeIndexHandle(key, value, len(m.index.Columns))
 		if err != nil {
 			return err
 		}
@@ -346,15 +388,15 @@ func buildMemIndexLookUpReader(us *UnionScanExec, idxLookUpReader *IndexLookUpEx
 	kvRanges := idxLookUpReader.kvRanges
 	outputOffset := []int{len(idxLookUpReader.index.Columns)}
 	memIdxReader := &memIndexReader{
-		ctx:              us.ctx,
-		index:            idxLookUpReader.index,
-		table:            idxLookUpReader.table.Meta(),
-		kvRanges:         kvRanges,
-		desc:             idxLookUpReader.desc,
-		addedRowsLen:     len(us.dirty.addedRows),
-		retFieldTypes:    retTypes(us),
-		outputOffset:     outputOffset,
-		belowHandleIndex: us.belowHandleIndex,
+		ctx:             us.ctx,
+		index:           idxLookUpReader.index,
+		table:           idxLookUpReader.table.Meta(),
+		kvRanges:        kvRanges,
+		desc:            idxLookUpReader.desc,
+		addedRowsLen:    us.dirty.addedRows.Len(),
+		retFieldTypes:   retTypes(us),
+		outputOffset:    outputOffset,
+		belowHandleCols: us.belowHandleCols,
 	}
 
 	return &memIndexLookUpReader{
@@ -381,6 +423,26 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		colIDs[col.ID] = i
 	}
 
+	tblInfo := m.table.Meta()
+	colInfos := make([]rowcodec.ColInfo, 0, len(m.columns))
+	for i := range m.columns {
+		col := m.columns[i]
+		colInfos = append(colInfos, rowcodec.ColInfo{
+			ID:         col.ID,
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
+		})
+	}
+	handleColIDs := []int64{-1}
+	if tblInfo.IsCommonHandle {
+		handleColIDs = handleColIDs[:0]
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		for _, idxCol := range pkIdx.Columns {
+			colID := tblInfo.Columns[idxCol.Offset].ID
+			handleColIDs = append(handleColIDs, colID)
+		}
+	}
+	rd := rowcodec.NewByteDecoder(colInfos, handleColIDs, nil, nil)
 	memTblReader := &memTableReader{
 		ctx:           m.ctx,
 		table:         m.table.Meta(),
@@ -390,7 +452,10 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		addedRows:     make([][]types.Datum, 0, len(handles)),
 		retFieldTypes: m.retFieldTypes,
 		colIDs:        colIDs,
-		handleBytes:   make([]byte, 0, 16),
+		buffer: allocBuf{
+			handleBytes: make([]byte, 0, 16),
+			rd:          rd,
+		},
 	}
 
 	return memTblReader.getMemRows()

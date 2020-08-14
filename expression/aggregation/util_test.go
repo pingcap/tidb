@@ -6,7 +6,6 @@ import (
 	"github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/testleak"
 )
 
 var _ = check.Suite(&testUtilSuite{})
@@ -15,7 +14,6 @@ type testUtilSuite struct {
 }
 
 func (s *testUtilSuite) TestDistinct(c *check.C) {
-	defer testleak.AfterTest(c)()
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	dc := createDistinctChecker(sc)
 	tests := []struct {

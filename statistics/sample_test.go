@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -65,6 +66,8 @@ func (s *testSampleSuite) TestCollectColumnStats(c *C) {
 		MaxFMSketchSize: 1000,
 		CMSketchWidth:   2048,
 		CMSketchDepth:   8,
+		Collators:       make([]collate.Collator, 1),
+		ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
 	}
 	c.Assert(s.rs.Close(), IsNil)
 	collectors, pkBuilder, err := builder.CollectColumnStats()
@@ -72,7 +75,7 @@ func (s *testSampleSuite) TestCollectColumnStats(c *C) {
 	c.Assert(collectors[0].NullCount+collectors[0].Count, Equals, int64(s.count))
 	c.Assert(collectors[0].FMSketch.NDV(), Equals, int64(6232))
 	c.Assert(collectors[0].CMSketch.TotalCount(), Equals, uint64(collectors[0].Count))
-	c.Assert(int64(pkBuilder.Count), Equals, int64(s.count))
+	c.Assert(pkBuilder.Count, Equals, int64(s.count))
 	c.Assert(pkBuilder.Hist().NDV, Equals, int64(s.count))
 }
 
@@ -86,6 +89,8 @@ func (s *testSampleSuite) TestMergeSampleCollector(c *C) {
 		MaxFMSketchSize: 1000,
 		CMSketchWidth:   2048,
 		CMSketchDepth:   8,
+		Collators:       make([]collate.Collator, 2),
+		ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong)},
 	}
 	c.Assert(s.rs.Close(), IsNil)
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
@@ -112,6 +117,8 @@ func (s *testSampleSuite) TestCollectorProtoConversion(c *C) {
 		MaxFMSketchSize: 1000,
 		CMSketchWidth:   2048,
 		CMSketchDepth:   8,
+		Collators:       make([]collate.Collator, 2),
+		ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong)},
 	}
 	c.Assert(s.rs.Close(), IsNil)
 	collectors, pkBuilder, err := builder.CollectColumnStats()

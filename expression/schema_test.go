@@ -17,7 +17,6 @@ import (
 	"fmt"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
 )
 
 // generateKeys4Schema will generate keys for a given schema. Used only in this file.
@@ -31,34 +30,25 @@ func generateKeys4Schema(schema *Schema) {
 }
 
 // generateSchema will generate a schema for test. Used only in this file.
-func (s *testEvalSuite) generateSchema(colCount int, dbName, tblName string) *Schema {
+func (s *testEvalSuite) generateSchema(colCount int) *Schema {
 	cols := make([]*Column, 0, colCount)
 	for i := 0; i < colCount; i++ {
 		cols = append(cols, &Column{
 			UniqueID: s.allocColID(),
-			DBName:   model.NewCIStr(dbName),
-			TblName:  model.NewCIStr(tblName),
-			ColName:  model.NewCIStr(fmt.Sprintf("C%v", i)),
 		})
-		if i >= 2 {
-			cols[i].DBName = model.NewCIStr("")
-		}
-		if i >= 3 {
-			cols[i].TblName = model.NewCIStr("")
-		}
 	}
 	return NewSchema(cols...)
 }
 
 func (s *testEvalSuite) TestSchemaString(c *C) {
-	schema := s.generateSchema(5, "T", "B")
+	schema := s.generateSchema(5)
 	c.Assert(schema.String(), Equals, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: []")
 	generateKeys4Schema(schema)
 	c.Assert(schema.String(), Equals, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: [[Column#1],[Column#2],[Column#3],[Column#4]]")
 }
 
 func (s *testEvalSuite) TestSchemaRetrieveColumn(c *C) {
-	schema := s.generateSchema(5, "T", "B")
+	schema := s.generateSchema(5)
 	colOutSchema := &Column{
 		UniqueID: 100,
 	}
@@ -69,7 +59,7 @@ func (s *testEvalSuite) TestSchemaRetrieveColumn(c *C) {
 }
 
 func (s *testEvalSuite) TestSchemaIsUniqueKey(c *C) {
-	schema := s.generateSchema(5, "T", "B")
+	schema := s.generateSchema(5)
 	generateKeys4Schema(schema)
 	colOutSchema := &Column{
 		UniqueID: 100,
@@ -85,7 +75,7 @@ func (s *testEvalSuite) TestSchemaIsUniqueKey(c *C) {
 }
 
 func (s *testEvalSuite) TestSchemaContains(c *C) {
-	schema := s.generateSchema(5, "T", "B")
+	schema := s.generateSchema(5)
 	colOutSchema := &Column{
 		UniqueID: 100,
 	}
@@ -96,7 +86,7 @@ func (s *testEvalSuite) TestSchemaContains(c *C) {
 }
 
 func (s *testEvalSuite) TestSchemaColumnsIndices(c *C) {
-	schema := s.generateSchema(5, "T", "B")
+	schema := s.generateSchema(5)
 	colOutSchema := &Column{
 		UniqueID: 100,
 	}
@@ -110,7 +100,7 @@ func (s *testEvalSuite) TestSchemaColumnsIndices(c *C) {
 }
 
 func (s *testEvalSuite) TestSchemaColumnsByIndices(c *C) {
-	schema := s.generateSchema(5, "T", "B")
+	schema := s.generateSchema(5)
 	indices := []int{0, 1, 2, 3}
 	retCols := schema.ColumnsByIndices(indices)
 	for i, ret := range retCols {
@@ -119,10 +109,10 @@ func (s *testEvalSuite) TestSchemaColumnsByIndices(c *C) {
 }
 
 func (s *testEvalSuite) TestSchemaMergeSchema(c *C) {
-	lSchema := s.generateSchema(5, "T", "B")
+	lSchema := s.generateSchema(5)
 	generateKeys4Schema(lSchema)
 
-	rSchema := s.generateSchema(5, "T", "B")
+	rSchema := s.generateSchema(5)
 	generateKeys4Schema(rSchema)
 
 	c.Assert(MergeSchema(nil, nil), IsNil)
@@ -132,14 +122,20 @@ func (s *testEvalSuite) TestSchemaMergeSchema(c *C) {
 	schema := MergeSchema(lSchema, rSchema)
 	for i := 0; i < len(lSchema.Columns); i++ {
 		c.Assert(schema.Columns[i].UniqueID, Equals, lSchema.Columns[i].UniqueID)
-		c.Assert(schema.Columns[i].DBName, Equals, lSchema.Columns[i].DBName)
-		c.Assert(schema.Columns[i].TblName, Equals, lSchema.Columns[i].TblName)
-		c.Assert(schema.Columns[i].ColName, Equals, lSchema.Columns[i].ColName)
 	}
 	for i := 0; i < len(rSchema.Columns); i++ {
 		c.Assert(schema.Columns[i+len(lSchema.Columns)].UniqueID, Equals, rSchema.Columns[i].UniqueID)
-		c.Assert(schema.Columns[i+len(lSchema.Columns)].DBName, Equals, rSchema.Columns[i].DBName)
-		c.Assert(schema.Columns[i+len(lSchema.Columns)].TblName, Equals, rSchema.Columns[i].TblName)
-		c.Assert(schema.Columns[i+len(lSchema.Columns)].ColName, Equals, rSchema.Columns[i].ColName)
 	}
+}
+
+func (s *testEvalSuite) TestGetUsedList(c *C) {
+	schema := s.generateSchema(5)
+	var usedCols []*Column
+	usedCols = append(usedCols, schema.Columns[3])
+	usedCols = append(usedCols, s.generateSchema(2).Columns...)
+	usedCols = append(usedCols, schema.Columns[1])
+	usedCols = append(usedCols, schema.Columns[3])
+
+	used := GetUsedList(usedCols, schema)
+	c.Assert(used, DeepEquals, []bool{false, true, false, true, false})
 }

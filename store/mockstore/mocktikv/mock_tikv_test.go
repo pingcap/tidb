@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 )
 
@@ -50,6 +51,9 @@ func (s *testMockTiKVSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 }
 
+// PutMutations is exported for testing.
+var PutMutations = putMutations
+
 func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
 	var mutations []*kvrpcpb.Mutation
 	for i := 0; i < len(kvpairs); i += 2 {
@@ -71,25 +75,25 @@ func lock(key, primary string, ts uint64) *kvrpcpb.LockInfo {
 }
 
 func (s *testMockTiKVSuite) mustGetNone(c *C, key string, ts uint64) {
-	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI, nil)
 	c.Assert(err, IsNil)
 	c.Assert(val, IsNil)
 }
 
 func (s *testMockTiKVSuite) mustGetErr(c *C, key string, ts uint64) {
-	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI, nil)
 	c.Assert(err, NotNil)
 	c.Assert(val, IsNil)
 }
 
 func (s *testMockTiKVSuite) mustGetOK(c *C, key string, ts uint64, expect string) {
-	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_SI, nil)
 	c.Assert(err, IsNil)
 	c.Assert(string(val), Equals, expect)
 }
 
 func (s *testMockTiKVSuite) mustGetRC(c *C, key string, ts uint64, expect string) {
-	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_RC)
+	val, err := s.store.Get([]byte(key), ts, kvrpcpb.IsolationLevel_RC, nil)
 	c.Assert(err, IsNil)
 	c.Assert(string(val), Equals, expect)
 }
@@ -133,7 +137,7 @@ func (s *testMockTiKVSuite) mustScanOK(c *C, start string, limit int, ts uint64,
 }
 
 func (s *testMockTiKVSuite) mustRangeScanOK(c *C, start, end string, limit int, ts uint64, expect ...string) {
-	pairs := s.store.Scan([]byte(start), []byte(end), limit, ts, kvrpcpb.IsolationLevel_SI)
+	pairs := s.store.Scan([]byte(start), []byte(end), limit, ts, kvrpcpb.IsolationLevel_SI, nil)
 	c.Assert(len(pairs)*2, Equals, len(expect))
 	for i := 0; i < len(pairs); i++ {
 		c.Assert(pairs[i].Err, IsNil)
@@ -147,13 +151,18 @@ func (s *testMockTiKVSuite) mustReverseScanOK(c *C, end string, limit int, ts ui
 }
 
 func (s *testMockTiKVSuite) mustRangeReverseScanOK(c *C, start, end string, limit int, ts uint64, expect ...string) {
-	pairs := s.store.ReverseScan([]byte(start), []byte(end), limit, ts, kvrpcpb.IsolationLevel_SI)
+	pairs := s.store.ReverseScan([]byte(start), []byte(end), limit, ts, kvrpcpb.IsolationLevel_SI, nil)
 	c.Assert(len(pairs)*2, Equals, len(expect))
 	for i := 0; i < len(pairs); i++ {
 		c.Assert(pairs[i].Err, IsNil)
 		c.Assert(pairs[i].Key, BytesEquals, []byte(expect[i*2]))
 		c.Assert(string(pairs[i].Value), Equals, expect[i*2+1])
 	}
+}
+
+func MustPrewriteOK(c *C, store MVCCStore, mutations []*kvrpcpb.Mutation, primary string, startTS uint64, ttl uint64) {
+	s := testMockTiKVSuite{store}
+	s.mustPrewriteWithTTLOK(c, mutations, primary, startTS, ttl)
 }
 
 func (s *testMockTiKVSuite) mustPrewriteOK(c *C, mutations []*kvrpcpb.Mutation, primary string, startTS uint64) {
@@ -166,6 +175,7 @@ func (s *testMockTiKVSuite) mustPrewriteWithTTLOK(c *C, mutations []*kvrpcpb.Mut
 		PrimaryLock:  []byte(primary),
 		StartVersion: startTS,
 		LockTtl:      ttl,
+		MinCommitTs:  startTS + 1,
 	}
 	errs := s.store.Prewrite(req)
 	for _, err := range errs {
@@ -401,7 +411,7 @@ func (s *testMockTiKVSuite) TestBatchGet(c *C) {
 	s.mustPutOK(c, "k2", "v2", 3, 4)
 	s.mustPutOK(c, "k3", "v3", 1, 2)
 	batchKeys := [][]byte{[]byte("k1"), []byte("k2"), []byte("k3")}
-	pairs := s.store.BatchGet(batchKeys, 5, kvrpcpb.IsolationLevel_SI)
+	pairs := s.store.BatchGet(batchKeys, 5, kvrpcpb.IsolationLevel_SI, nil)
 	for _, pair := range pairs {
 		c.Assert(pair.Err, IsNil)
 	}
@@ -429,6 +439,23 @@ func (s *testMockTiKVSuite) TestScanLock(c *C) {
 		lock("s1", "p1", 5),
 		lock("s2", "p2", 10),
 	})
+}
+
+func (s *testMockTiKVSuite) TestScanWithResolvedLock(c *C) {
+	s.mustPrewriteOK(c, putMutations("p1", "v5", "s1", "v5"), "p1", 5)
+	s.mustPrewriteOK(c, putMutations("p2", "v10", "s2", "v10"), "p1", 5)
+
+	pairs := s.store.Scan([]byte("p1"), nil, 3, 10, kvrpcpb.IsolationLevel_SI, nil)
+	lock, ok := errors.Cause(pairs[0].Err).(*ErrLocked)
+	c.Assert(ok, IsTrue)
+	_, ok = errors.Cause(pairs[1].Err).(*ErrLocked)
+	c.Assert(ok, IsTrue)
+
+	// Mock the request after resolving lock.
+	pairs = s.store.Scan([]byte("p1"), nil, 3, 10, kvrpcpb.IsolationLevel_SI, []uint64{lock.StartTS})
+	for _, pair := range pairs {
+		c.Assert(pair.Err, IsNil)
+	}
 }
 
 func (s *testMockTiKVSuite) TestCommitConflict(c *C) {
@@ -659,27 +686,79 @@ func (s *testMVCCLevelDB) TestErrors(c *C) {
 }
 
 func (s *testMVCCLevelDB) TestCheckTxnStatus(c *C) {
-	s.mustPrewriteWithTTLOK(c, putMutations("pk", "val"), "pk", 5, 666)
+	startTS := uint64(5 << 18)
+	s.mustPrewriteWithTTLOK(c, putMutations("pk", "val"), "pk", startTS, 666)
 
-	ttl, commitTS, err := s.store.CheckTxnStatus([]byte("pk"), 5, 0, 666)
+	ttl, commitTS, action, err := s.store.CheckTxnStatus([]byte("pk"), startTS, startTS+100, 666, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(666))
 	c.Assert(commitTS, Equals, uint64(0))
+	c.Assert(action, Equals, kvrpcpb.Action_MinCommitTSPushed)
 
-	s.mustCommitOK(c, [][]byte{[]byte("pk")}, 5, 30)
+	// MaxUint64 as callerStartTS shouldn't update minCommitTS but return Action_MinCommitTSPushed.
+	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("pk"), startTS, math.MaxUint64, 666, false)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Equals, uint64(666))
+	c.Assert(commitTS, Equals, uint64(0))
+	c.Assert(action, Equals, kvrpcpb.Action_MinCommitTSPushed)
+	s.mustCommitOK(c, [][]byte{[]byte("pk")}, startTS, startTS+101)
 
-	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk"), 5, 0, 666)
+	ttl, commitTS, _, err = s.store.CheckTxnStatus([]byte("pk"), startTS, 0, 666, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
-	c.Assert(commitTS, Equals, uint64(30))
+	c.Assert(commitTS, Equals, startTS+101)
 
-	s.mustPrewriteWithTTLOK(c, putMutations("pk1", "val"), "pk1", 5, 666)
-	s.mustRollbackOK(c, [][]byte{[]byte("pk1")}, 5)
+	s.mustPrewriteWithTTLOK(c, putMutations("pk1", "val"), "pk1", startTS, 666)
+	s.mustRollbackOK(c, [][]byte{[]byte("pk1")}, startTS)
 
-	ttl, commitTS, err = s.store.CheckTxnStatus([]byte("pk1"), 5, 0, 666)
+	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("pk1"), startTS, 0, 666, false)
 	c.Assert(err, IsNil)
 	c.Assert(ttl, Equals, uint64(0))
 	c.Assert(commitTS, Equals, uint64(0))
+	c.Assert(action, Equals, kvrpcpb.Action_NoAction)
+
+	s.mustPrewriteWithTTLOK(c, putMutations("pk2", "val"), "pk2", startTS, 666)
+	currentTS := uint64(777 << 18)
+	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("pk2"), startTS, 0, currentTS, false)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Equals, uint64(0))
+	c.Assert(commitTS, Equals, uint64(0))
+	c.Assert(action, Equals, kvrpcpb.Action_TTLExpireRollback)
+
+	// Cover the TxnNotFound case.
+	_, _, _, err = s.store.CheckTxnStatus([]byte("txnNotFound"), 5, 0, 666, false)
+	c.Assert(err, NotNil)
+	notFound, ok := errors.Cause(err).(*ErrTxnNotFound)
+	c.Assert(ok, IsTrue)
+	c.Assert(notFound.StartTs, Equals, uint64(5))
+	c.Assert(string(notFound.PrimaryKey), Equals, "txnNotFound")
+
+	ttl, commitTS, action, err = s.store.CheckTxnStatus([]byte("txnNotFound"), 5, 0, 666, true)
+	c.Assert(err, IsNil)
+	c.Assert(ttl, Equals, uint64(0))
+	c.Assert(commitTS, Equals, uint64(0))
+	c.Assert(action, Equals, kvrpcpb.Action_LockNotExistRollback)
+
+	// Check the rollback tombstone blocks this prewrite which comes with a smaller startTS.
+	req := &kvrpcpb.PrewriteRequest{
+		Mutations:    putMutations("txnNotFound", "val"),
+		PrimaryLock:  []byte("txnNotFound"),
+		StartVersion: 4,
+		MinCommitTs:  6,
+	}
+	errs := s.store.Prewrite(req)
+	c.Assert(errs, NotNil)
+}
+
+func (s *testMVCCLevelDB) TestRejectCommitTS(c *C) {
+	s.mustPrewriteOK(c, putMutations("x", "A"), "x", 5)
+	// Push the minCommitTS
+	_, _, _, err := s.store.CheckTxnStatus([]byte("x"), 5, 100, 100, false)
+	c.Assert(err, IsNil)
+	err = s.store.Commit([][]byte{[]byte("x")}, 5, 10)
+	e, ok := errors.Cause(err).(*ErrCommitTSExpired)
+	c.Assert(ok, IsTrue)
+	c.Assert(e.MinCommitTs, Equals, uint64(101))
 }
 
 func (s *testMVCCLevelDB) TestMvccGetByKey(c *C) {

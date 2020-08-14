@@ -17,6 +17,7 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -28,6 +29,11 @@ func (s *testSuite) TestBatchInsertWithOnDuplicate(c *C) {
 	tk.MustExec(ctx, "drop table if exists duplicate_test")
 	tk.MustExec(ctx, "create table duplicate_test(id int auto_increment, k1 int, primary key(id), unique key uk(k1))")
 	tk.MustExec(ctx, "insert into duplicate_test(k1) values(?),(?),(?),(?),(?)", tk.PermInt(5)...)
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableBatchDML = true
+	})
 
 	tk.ConcurrentRun(c, 3, 2, // concurrent: 3, loops: 2,
 		// prepare data for each loop.

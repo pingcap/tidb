@@ -14,6 +14,7 @@
 package json
 
 import (
+	"math"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -33,6 +34,7 @@ func (s *testJSONSuite) TestBinaryJSONMarshalUnmarshal(c *C) {
 		`{"a": [1, "2", {"aa": "bb"}, 4, null], "b": true, "c": null}`,
 		`{"aaaaaaaaaaa": [1, "2", {"aa": "bb"}, 4.1], "bbbbbbbbbb": true, "ccccccccc": "d"}`,
 		`[{"a": 1, "b": true}, 3, 3.5, "hello, world", null, true]`,
+		`{"a": "&<>"}`,
 	}
 	for _, str := range strs {
 		parsedBJ := mustParseBinaryFromString(c, str)
@@ -160,36 +162,36 @@ func (s *testJSONSuite) TestBinaryJSONModify(c *C) {
 		base     string
 		setField string
 		setValue string
-		mt       ModifyType
 		expected string
 		success  bool
+		mt       ModifyType
 	}{
-		{`null`, "$", `{}`, ModifySet, `{}`, true},
-		{`{}`, "$.a", `3`, ModifySet, `{"a": 3}`, true},
-		{`{"a": 3}`, "$.a", `[]`, ModifyReplace, `{"a": []}`, true},
-		{`{"a": 3}`, "$.b", `"3"`, ModifySet, `{"a": 3, "b": "3"}`, true},
-		{`{"a": []}`, "$.a[0]", `3`, ModifySet, `{"a": [3]}`, true},
-		{`{"a": [3]}`, "$.a[1]", `4`, ModifyInsert, `{"a": [3, 4]}`, true},
-		{`{"a": [3]}`, "$[0]", `4`, ModifySet, `4`, true},
-		{`{"a": [3]}`, "$[1]", `4`, ModifySet, `[{"a": [3]}, 4]`, true},
-		{`{"b": true}`, "$.b", `false`, ModifySet, `{"b": false}`, true},
+		{`null`, "$", `{}`, `{}`, true, ModifySet},
+		{`{}`, "$.a", `3`, `{"a": 3}`, true, ModifySet},
+		{`{"a": 3}`, "$.a", `[]`, `{"a": []}`, true, ModifyReplace},
+		{`{"a": 3}`, "$.b", `"3"`, `{"a": 3, "b": "3"}`, true, ModifySet},
+		{`{"a": []}`, "$.a[0]", `3`, `{"a": [3]}`, true, ModifySet},
+		{`{"a": [3]}`, "$.a[1]", `4`, `{"a": [3, 4]}`, true, ModifyInsert},
+		{`{"a": [3]}`, "$[0]", `4`, `4`, true, ModifySet},
+		{`{"a": [3]}`, "$[1]", `4`, `[{"a": [3]}, 4]`, true, ModifySet},
+		{`{"b": true}`, "$.b", `false`, `{"b": false}`, true, ModifySet},
 
 		// nothing changed because the path is empty and we want to insert.
-		{`{}`, "$", `1`, ModifyInsert, `{}`, true},
+		{`{}`, "$", `1`, `{}`, true, ModifyInsert},
 		// nothing changed because the path without last leg doesn't exist.
-		{`{"a": [3, 4]}`, "$.b[1]", `3`, ModifySet, `{"a": [3, 4]}`, true},
+		{`{"a": [3, 4]}`, "$.b[1]", `3`, `{"a": [3, 4]}`, true, ModifySet},
 		// nothing changed because the path without last leg doesn't exist.
-		{`{"a": [3, 4]}`, "$.a[2].b", `3`, ModifySet, `{"a": [3, 4]}`, true},
+		{`{"a": [3, 4]}`, "$.a[2].b", `3`, `{"a": [3, 4]}`, true, ModifySet},
 		// nothing changed because we want to insert but the full path exists.
-		{`{"a": [3, 4]}`, "$.a[0]", `30`, ModifyInsert, `{"a": [3, 4]}`, true},
+		{`{"a": [3, 4]}`, "$.a[0]", `30`, `{"a": [3, 4]}`, true, ModifyInsert},
 		// nothing changed because we want to replace but the full path doesn't exist.
-		{`{"a": [3, 4]}`, "$.a[2]", `30`, ModifyReplace, `{"a": [3, 4]}`, true},
+		{`{"a": [3, 4]}`, "$.a[2]", `30`, `{"a": [3, 4]}`, true, ModifyReplace},
 
 		// bad path expression.
-		{"null", "$.*", "{}", ModifySet, "null", false},
-		{"null", "$[*]", "{}", ModifySet, "null", false},
-		{"null", "$**.a", "{}", ModifySet, "null", false},
-		{"null", "$**[3]", "{}", ModifySet, "null", false},
+		{"null", "$.*", "{}", "null", false, ModifySet},
+		{"null", "$[*]", "{}", "null", false, ModifySet},
+		{"null", "$**.a", "{}", "null", false, ModifySet},
+		{"null", "$**[3]", "{}", "null", false, ModifySet},
 	}
 	for _, tt := range tests {
 		pathExpr, err := ParseJSONPathExpr(tt.setField)
@@ -258,22 +260,52 @@ func (s *testJSONSuite) TestCompareBinary(c *C) {
 	jObject := mustParseBinaryFromString(c, `{"a": "b"}`)
 
 	var tests = []struct {
-		left  BinaryJSON
-		right BinaryJSON
+		left   BinaryJSON
+		right  BinaryJSON
+		result int
 	}{
-		{jNull, jIntegerSmall},
-		{jIntegerSmall, jIntegerLarge},
-		{jIntegerLarge, jStringSmall},
-		{jStringSmall, jStringLarge},
-		{jStringLarge, jObject},
-		{jObject, jArraySmall},
-		{jArraySmall, jArrayLarge},
-		{jArrayLarge, jBoolFalse},
-		{jBoolFalse, jBoolTrue},
+		{jNull, jIntegerSmall, -1},
+		{jIntegerSmall, jIntegerLarge, -1},
+		{jIntegerLarge, jStringSmall, -1},
+		{jStringSmall, jStringLarge, -1},
+		{jStringLarge, jObject, -1},
+		{jObject, jArraySmall, -1},
+		{jArraySmall, jArrayLarge, -1},
+		{jArrayLarge, jBoolFalse, -1},
+		{jBoolFalse, jBoolTrue, -1},
+		{CreateBinary(int64(922337203685477580)), CreateBinary(int64(922337203685477580)), 0},
+		{CreateBinary(int64(922337203685477580)), CreateBinary(int64(922337203685477581)), -1},
+		{CreateBinary(int64(922337203685477581)), CreateBinary(int64(922337203685477580)), 1},
+
+		{CreateBinary(int64(-1)), CreateBinary(uint64(18446744073709551615)), -1},
+		{CreateBinary(int64(922337203685477580)), CreateBinary(uint64(922337203685477581)), -1},
+		{CreateBinary(int64(2)), CreateBinary(uint64(1)), 1},
+		{CreateBinary(int64(math.MaxInt64)), CreateBinary(uint64(math.MaxInt64)), 0},
+
+		{CreateBinary(uint64(18446744073709551615)), CreateBinary(int64(-1)), 1},
+		{CreateBinary(uint64(922337203685477581)), CreateBinary(int64(922337203685477580)), 1},
+		{CreateBinary(uint64(1)), CreateBinary(int64(2)), -1},
+		{CreateBinary(uint64(math.MaxInt64)), CreateBinary(int64(math.MaxInt64)), 0},
+
+		{CreateBinary(float64(9.0)), CreateBinary(int64(9)), 0},
+		{CreateBinary(float64(8.9)), CreateBinary(int64(9)), -1},
+		{CreateBinary(float64(9.1)), CreateBinary(int64(9)), 1},
+
+		{CreateBinary(float64(9.0)), CreateBinary(uint64(9)), 0},
+		{CreateBinary(float64(8.9)), CreateBinary(uint64(9)), -1},
+		{CreateBinary(float64(9.1)), CreateBinary(uint64(9)), 1},
+
+		{CreateBinary(int64(9)), CreateBinary(float64(9.0)), 0},
+		{CreateBinary(int64(9)), CreateBinary(float64(8.9)), 1},
+		{CreateBinary(int64(9)), CreateBinary(float64(9.1)), -1},
+
+		{CreateBinary(uint64(9)), CreateBinary(float64(9.0)), 0},
+		{CreateBinary(uint64(9)), CreateBinary(float64(8.9)), 1},
+		{CreateBinary(uint64(9)), CreateBinary(float64(9.1)), -1},
 	}
 	for _, tt := range tests {
 		cmp := CompareBinary(tt.left, tt.right)
-		c.Assert(cmp < 0, IsTrue)
+		c.Assert(cmp == tt.result, IsTrue, Commentf("left: %v, right: %v, expect: %v, got: %v", tt.left, tt.right, tt.result, cmp))
 	}
 }
 

@@ -15,7 +15,6 @@ package timeutil
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -23,14 +22,15 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/uber-go/atomic"
 	"go.uber.org/zap"
 )
 
 // init initializes `locCache`.
 func init() {
 	// We need set systemTZ when it is in testing process.
-	if systemTZ == "" {
-		systemTZ = "System"
+	if systemTZ.Load() == "" {
+		systemTZ.Store("System")
 	}
 	locCa = &locCache{}
 	locCa.locMap = make(map[string]*time.Location)
@@ -40,14 +40,7 @@ func init() {
 var locCa *locCache
 
 // systemTZ is current TiDB's system timezone name.
-var systemTZ string
-var zoneSources = []string{
-	"/usr/share/zoneinfo/",
-	"/usr/share/lib/zoneinfo/",
-	"/usr/lib/locale/TZ/",
-	// this is for macOS
-	"/var/db/timezone/zoneinfo/",
-}
+var systemTZ atomic.String
 
 // locCache is a simple map with lock. It stores all used timezone during the lifetime of tidb instance.
 // Talked with Golang team about whether they can have some forms of cache policy available for programmer,
@@ -60,7 +53,7 @@ type locCache struct {
 }
 
 // InferSystemTZ reads system timezone from `TZ`, the path of the soft link of `/etc/localtime`. If both of them are failed, system timezone will be set to `UTC`.
-// It is exported because we need to use it during bootstap stage. And it should be only used at that stage.
+// It is exported because we need to use it during bootstrap stage. And it should be only used at that stage.
 func InferSystemTZ() string {
 	// consult $TZ to find the time zone to use.
 	// no $TZ means use the system default /etc/localtime.
@@ -79,10 +72,9 @@ func InferSystemTZ() string {
 		}
 		logutil.BgLogger().Error("locate timezone files failed", zap.Error(err1))
 	case tz != "" && tz != "UTC":
-		for _, source := range zoneSources {
-			if _, err := os.Stat(source + tz); err == nil {
-				return tz
-			}
+		_, err := time.LoadLocation(tz)
+		if err == nil {
+			return tz
 		}
 	}
 	return "UTC"
@@ -99,18 +91,18 @@ func inferTZNameFromFileName(path string) (string, error) {
 	substrMojave := "zoneinfo.default"
 
 	if idx := strings.Index(path, substrMojave); idx != -1 {
-		return string(path[idx+len(substrMojave)+1:]), nil
+		return path[idx+len(substrMojave)+1:], nil
 	}
 
 	if idx := strings.Index(path, substr); idx != -1 {
-		return string(path[idx+len(substr)+1:]), nil
+		return path[idx+len(substr)+1:], nil
 	}
 	return "", fmt.Errorf("path %s is not supported", path)
 }
 
 // SystemLocation returns time.SystemLocation's IANA timezone location. It is TiDB's global timezone location.
 func SystemLocation() *time.Location {
-	loc, err := LoadLocation(systemTZ)
+	loc, err := LoadLocation(systemTZ.Load())
 	if err != nil {
 		return time.Local
 	}
@@ -122,8 +114,17 @@ var setSysTZOnce sync.Once
 // SetSystemTZ sets systemTZ by the value loaded from mysql.tidb.
 func SetSystemTZ(name string) {
 	setSysTZOnce.Do(func() {
-		systemTZ = name
+		systemTZ.Store(name)
 	})
+}
+
+// GetSystemTZ gets the value of systemTZ, an error is returned if systemTZ is not properly set.
+func GetSystemTZ() (string, error) {
+	systemTZ := systemTZ.Load()
+	if systemTZ == "System" || systemTZ == "" {
+		return "", fmt.Errorf("variable `systemTZ` is not properly set")
+	}
+	return systemTZ, nil
 }
 
 // getLoc first trying to load location from a cache map. If nothing found in such map, then call
@@ -161,11 +162,36 @@ func LoadLocation(name string) (*time.Location, error) {
 func Zone(loc *time.Location) (string, int64) {
 	_, offset := time.Now().In(loc).Zone()
 	name := loc.String()
-	// when we found name is "System", we have no chice but push down
-	// "System" to tikv side.
+	// when we found name is "System", we have no choice but push down
+	// "System" to TiKV side.
 	if name == "Local" {
 		name = "System"
 	}
 
 	return name, int64(offset)
+}
+
+// ConstructTimeZone constructs timezone by name first. When the timezone name
+// is set, the daylight saving problem must be considered. Otherwise the
+// timezone offset in seconds east of UTC is used to constructed the timezone.
+func ConstructTimeZone(name string, offset int) (*time.Location, error) {
+	if name != "" {
+		return LoadLocation(name)
+	}
+	return time.FixedZone("", offset), nil
+}
+
+// WithinDayTimePeriod tests whether `now` is between `start` and `end`.
+func WithinDayTimePeriod(start, end, now time.Time) bool {
+	// Converts to UTC and only keeps the hour and minute info.
+	start, end, now = start.UTC(), end.UTC(), now.UTC()
+	start = time.Date(0, 0, 0, start.Hour(), start.Minute(), 0, 0, time.UTC)
+	end = time.Date(0, 0, 0, end.Hour(), end.Minute(), 0, 0, time.UTC)
+	now = time.Date(0, 0, 0, now.Hour(), now.Minute(), 0, 0, time.UTC)
+	// for cases like from 00:00 to 06:00
+	if end.Sub(start) >= 0 {
+		return now.Sub(start) >= 0 && now.Sub(end) <= 0
+	}
+	// for cases like from 22:00 to 06:00
+	return now.Sub(end) <= 0 || now.Sub(start) >= 0
 }

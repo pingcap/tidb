@@ -25,7 +25,7 @@ type testMockSuite struct {
 }
 
 func (s testMockSuite) TestInterface(c *C) {
-	storage := NewMockStorage()
+	storage := newMockStorage()
 	storage.GetClient()
 	storage.UUID()
 	version, err := storage.CurrentVersion()
@@ -34,11 +34,11 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Check(err, IsNil)
 	_, err = snapshot.BatchGet(context.Background(), []Key{Key("abc"), Key("def")})
 	c.Check(err, IsNil)
-	snapshot.SetPriority(0)
+	snapshot.SetOption(Priority, PriorityNormal)
 
 	transaction, err := storage.Begin()
 	c.Check(err, IsNil)
-	err = transaction.LockKeys(context.Background(), 0, Key("lock"))
+	err = transaction.LockKeys(context.Background(), new(LockCtx), Key("lock"))
 	c.Check(err, IsNil)
 	transaction.SetOption(Option(23), struct{}{})
 	if mock, ok := transaction.(*mockTxn); ok {
@@ -67,7 +67,6 @@ func (s testMockSuite) TestInterface(c *C) {
 	c.Assert(transaction.Len(), Equals, 0)
 	c.Assert(transaction.Size(), Equals, 0)
 	c.Assert(transaction.GetMemBuffer(), IsNil)
-	transaction.SetCap(0)
 	transaction.Reset()
 	err = transaction.Rollback()
 	c.Check(err, IsNil)
@@ -101,7 +100,7 @@ func (s testMockSuite) TestIsPoint(c *C) {
 
 	kr = KeyRange{
 		StartKey: Key(""),
-		EndKey:   Key([]byte{0}),
+		EndKey:   []byte{0},
 	}
 	c.Check(kr.IsPoint(), IsTrue)
 }

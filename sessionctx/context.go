@@ -73,14 +73,17 @@ type Context interface {
 	// StoreQueryFeedback stores the query feedback.
 	StoreQueryFeedback(feedback interface{})
 
+	// HasDirtyContent checks whether there's dirty update on the given table.
+	HasDirtyContent(tid int64) bool
+
 	// StmtCommit flush all changes by the statement to the underlying transaction.
-	StmtCommit() error
+	StmtCommit()
 	// StmtRollback provides statement level rollback.
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
 	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
-	StmtAddDirtyTableOP(op int, physicalID int64, handle int64)
+	StmtAddDirtyTableOP(op int, physicalID int64, handle kv.Handle)
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
 	// AddTableLock adds table lock to the session lock map.
@@ -97,8 +100,8 @@ type Context interface {
 	ReleaseAllTableLocks()
 	// HasLockedTables uses to check whether this session locked any tables.
 	HasLockedTables() bool
-	// PrepareTxnFuture uses to prepare txn by future.
-	PrepareTxnFuture(ctx context.Context)
+	// PrepareTSFuture uses to prepare timestamp by future.
+	PrepareTSFuture(ctx context.Context)
 }
 
 type basicCtxType int
@@ -130,7 +133,7 @@ type connIDCtxKeyType struct{}
 // ConnID is the key in context.
 var ConnID = connIDCtxKeyType{}
 
-// SetCommitCtx sets the variables for context before commit a transaction.
+// SetCommitCtx sets connection id into context
 func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
 	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
 }

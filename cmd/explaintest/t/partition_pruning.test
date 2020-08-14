@@ -6,7 +6,7 @@ set @@session.tidb_enable_table_partition=1;
 -- source include/have_partition.inc
 
 --disable_warnings
-drop table if exists t1,t2,t3,t4,t5,t6,t7,t8,t9;
+drop table if exists t0,t1,t2,t3,t4,t5,t6,t7,t8,t9;
 --enable_warnings
 
 --echo #
@@ -766,6 +766,7 @@ explain select * from t2;
 explain select * from t2 where a = 101;
 explain select * from t2 where a = 550;
 explain select * from t2 where a = 833;
+explain select * from t2 where a in (10,20,30);
 explain select * from t2 where (a = 100 OR a = 900);
 explain select * from t2 where (a > 100 AND a < 600);
 explain select * from t2 where b = 4;
@@ -946,3 +947,71 @@ drop table t0, t1;
 drop table if exists t;
 create table t(a timestamp) partition by range(unix_timestamp(a)) (partition p0 values less than(unix_timestamp('2019-02-16 14:20:00')), partition p1 values less than (maxvalue));
 explain select * from t where a between timestamp'2019-02-16 14:19:00' and timestamp'2019-02-16 14:21:00';
+
+drop table if exists t;
+create table t(a int) partition by range(a) (partition p0 values less than (100), partition p1 values less than (200), partition p2 values less than (300));
+begin;
+explain select * from t;
+insert into t values(1);
+explain select * from t;
+rollback;
+begin;
+insert into t values(101);
+explain select * from t;
+rollback;
+begin;
+insert into t values(201);
+explain select * from t;
+rollback;
+explain select * from t;
+
+drop table if exists t;
+CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+  `b` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY RANGE COLUMNS(a) (
+  PARTITION p0 VALUES LESS THAN (1),
+  PARTITION p1 VALUES LESS THAN (10),
+  PARTITION p2 VALUES LESS THAN (100)
+);
+
+desc select * from t where a = 11 and b = 1 or a = 12 and b = 1;
+
+#
+# MySQL doesn't support partition pruning for 'floor(unix_timestamp(ts))' but it works on TiDB
+# https://github.com/pingcap/tidb/issues/16354
+#
+drop table if exists t;
+create table t (ts timestamp(3) not null default current_timestamp(3))
+partition by range (floor(unix_timestamp(ts))) (
+  partition p0 values less than (unix_timestamp('2020-04-05 00:00:00')),
+  partition p1 values less than (unix_timestamp('2020-04-15 00:00:00')),
+  partition p2 values less than (unix_timestamp('2020-04-25 00:00:00'))
+);
+
+explain select * from t where ts = '2020-04-06 00:00:00' -- p1;
+explain select * from t where ts = '2020-04-05 00:00:00.001' -- p1;
+explain select * from t where ts > '2020-04-15 00:00:00' -- p2;
+explain select * from t where ts > '2020-04-14 23:59:59.999' -- p1,p2;
+explain select * from t where ts > '2020-04-15 00:00:00.001' -- p2;
+explain select * from t where ts > '2020-04-26 00:00:00.001' -- dual;
+explain select * from t where ts >= '2020-04-04 12:22:32' --  p0,p1,p2;
+explain select * from t where ts >= '2020-04-05 00:00:00' -- p1,p2;
+explain select * from t where ts >= '2020-04-25 00:00:00' -- dual;
+explain select * from t where ts < '2020-04-25 00:00:00' -- p0,p1,p2;
+explain select * from t where ts < '2020-04-15 00:00:00.001' -- p0,p1,p2;
+explain select * from t where ts < '2020-04-15 00:00:00' -- expect perfect : p0,p1,  obtain: p0,p1,p2;
+explain select * from t where ts < '2020-04-14 23:59:59.999' -- p0,p1;
+explain select * from t where ts < '2020-04-03 00:00:00' -- p0;
+explain select * from t where ts < '2021-05-03 00:00:00' -- p0,p1,p2;
+explain select * from t where ts <= '2020-04-05 00:00:00' -- p0,p1;
+explain select * from t where ts <= '2020-04-03 00:00:00' -- p0;
+explain select * from t where ts <= '2020-04-14 23:59:59.123' -- p0,p1;
+explain select * from t where ts <= '2020-04-25 00:00:00' -- p0,p1,p2;
+explain select * from t where ts > '2020-04-25 00:00:00' or ts < '2020-01-02 00:00:00' -- p0;
+explain select * from t where ts > '2020-04-02 00:00:00' and ts < '2020-04-07 00:00:00' -- p0,p1;
+
+drop table if exists t;
+create table t (id int, name varchar(20)) partition by hash(id) partitions 128;
+explain SELECT * FROM t partition (p1) where name = '1';

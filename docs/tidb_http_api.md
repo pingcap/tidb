@@ -252,19 +252,27 @@ timezone.*
     }
     ```
 
+    *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `test(p1)` for example:*
+
+    ```shell
+    $curl http://127.0.0.1:10080/mvcc/index/test(p1)/t1/idx/1\?a\=A
+    ```
+
 1. Scatter regions of the specified table, add a `scatter-range` scheduler for the PD and the range is same as the table range.
 
     ```shell
-    curl -X POST http://{TiDBIP}:10080/tables/{db}/{table}/scatter
+    curl http://{TiDBIP}:10080/tables/{db}/{table}/scatter
     ```
+    *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `test(p1)` for example.*
 
     **Note**: The `scatter-range` scheduler may conflict with the global scheduler, do not use it for long periods on the larger table.
 
 1. Stop scatter the regions, disable the `scatter-range` scheduler for the specified table.
 
     ```shell
-    curl -X POST http://{TiDBIP}:10080/tables/{db}/{table}/stop-scatter
+    curl http://{TiDBIP}:10080/tables/{db}/{table}/stop-scatter
     ```
+    *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `test(p1)` for example.*
 
 1. Get TiDB server settings
 
@@ -301,29 +309,31 @@ timezone.*
     ```shell
     $curl http://127.0.0.1:10080/info/all
     {
+        "servers_num": 2,
+        "owner_id": "29a65ec0-d931-4f9e-a212-338eaeffab96",
+        "is_all_server_version_consistent": true,
         "all_servers_info": {
-            "275a19ae-d248-4dc0-b78c-6613a7509423": {
-                "ddl_id": "275a19ae-d248-4dc0-b78c-6613a7509423",
-                "git_hash": "f572e33854e1c0f942f031e9656d0004f99995c6",
-                "ip": "192.168.197.206",
-                "lease": "45s",
-                "listening_port": 4001,
-                "status_port": 10081,
-                "version": "5.7.25-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
-            },
-            "f7e73ed5-63b4-4cb4-ba7c-42b32dc74e77": {
-                "ddl_id": "f7e73ed5-63b4-4cb4-ba7c-42b32dc74e77",
-                "git_hash": "f572e33854e1c0f942f031e9656d0004f99995c6",
-                "ip": "192.168.197.206",
-                "lease": "45s",
+            "29a65ec0-d931-4f9e-a212-338eaeffab96": {
+                "version": "5.7.25-TiDB-v4.0.0-alpha-669-g8f2a09a52-dirty",
+                "git_hash": "8f2a09a52fdcaf9d9bfd775d2c6023f363dc121e",
+                "ddl_id": "29a65ec0-d931-4f9e-a212-338eaeffab96",
+                "ip": "",
                 "listening_port": 4000,
                 "status_port": 10080,
-                "version": "5.7.25-TiDB-v2.1.0-rc.3-355-gf572e3385-dirty"
+                "lease": "45s",
+                "binlog_status": "Off"
+            },
+            "cd13c9eb-c3ee-4887-af9b-e64f3162d92c": {
+                "version": "5.7.25-TiDB-v4.0.0-alpha-669-g8f2a09a52-dirty",
+                "git_hash": "8f2a09a52fdcaf9d9bfd775d2c6023f363dc121e",
+                "ddl_id": "cd13c9eb-c3ee-4887-af9b-e64f3162d92c",
+                "ip": "",
+                "listening_port": 4001,
+                "status_port": 10081,
+                "lease": "45s",
+                "binlog_status": "Off"
             }
-        },
-        "is_all_server_version_consistent": true,
-        "owner_id": "f7e73ed5-63b4-4cb4-ba7c-42b32dc74e77",
-        "servers_num": 2
+        }
     }
     ```
 
@@ -411,3 +421,28 @@ timezone.*
     ```shell
     curl http://{TiDBIP}:10080/stats/dump/{db}/{table}/{yyyy-MM-dd HH:mm:ss}
     ```
+
+1. Resume the binlog writing when Pump is recovered.
+
+    ```shell
+    curl http://{TiDBIP}:10080/binlog/recover
+    ```
+
+    Return value:
+
+    * timeout, return status code: 400, message: `timeout`
+    * If it returns normally, status code: 200, message example:
+        ```text
+        {
+          "Skipped": false,
+          "SkippedCommitterCounter": 0
+        }
+        ```
+        `Skipped`: false indicates that the current binlog is not in the skipped state, otherwise, it is in the skipped state
+        `SkippedCommitterCounter`: Represents how many transactions are currently being committed in the skipped state. By default, the API will return after waiting until all skipped-binlog transactions are committed. If this value is greater than 0, it means that you need to wait until them are committed .
+
+    Param:
+
+    * op=nowait: return after binlog status is recoverd, do not wait until the skipped-binlog transactions are committed.
+    * op=reset: reset `SkippedCommitterCounter` to 0 to avoid the problem that `SkippedCommitterCounter` is not cleared due to some unusual cases.
+    * op=status: Get the current status of binlog recovery.

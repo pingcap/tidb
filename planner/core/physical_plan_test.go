@@ -15,11 +15,14 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner"
@@ -27,23 +30,39 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testPlanSuite{})
+var _ = SerialSuites(&testPlanSerialSuite{})
 
-type testPlanSuite struct {
+type testPlanSuiteBase struct {
 	*parser.Parser
 	is infoschema.InfoSchema
+}
+
+func (s *testPlanSuiteBase) SetUpSuite(c *C) {
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	s.Parser = parser.New()
+	s.Parser.EnableWindowFunc(true)
+}
+
+type testPlanSerialSuite struct {
+	testPlanSuiteBase
+}
+
+type testPlanSuite struct {
+	testPlanSuiteBase
 
 	testData testutil.TestData
 }
 
 func (s *testPlanSuite) SetUpSuite(c *C) {
-	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
-	s.Parser = parser.New()
-	s.Parser.EnableWindowFunc(true)
+	s.testPlanSuiteBase.SetUpSuite(c)
 
 	var err error
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "plan_suite")
@@ -79,7 +98,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSimpleCase(c *C) {
 
 		err = se.NewTxn(context.Background())
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -101,6 +120,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
+	ctx := se.(sessionctx.Context)
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.ExecutorConcurrency = 4
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.SetHashJoinConcurrency(5)
 
 	var input []string
 	var output []struct {
@@ -113,7 +137,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -138,8 +162,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
+	sessionVars.SetHashJoinConcurrency(5)
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.ExecutorConcurrency = 4
 	var input []string
 	var output []struct {
 		SQL  string
@@ -151,7 +178,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -185,7 +212,7 @@ func (s *testPlanSuite) TestDAGPlanTopN(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -222,15 +249,15 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		core.Preprocess(se, stmt, s.is)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Best = core.ToString(p)
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, Commentf("for %s", tt))
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, Commentf("for %s", tt))
+		c.Assert(hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, Commentf("for %s", tt))
 	}
 }
 
@@ -258,7 +285,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnion(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -297,8 +324,8 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		txn, err := se.Txn(true)
 		c.Assert(err, IsNil)
 		txn.Set(kv.Key("AAA"), []byte("BBB"))
-		c.Assert(se.StmtCommit(), IsNil)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		se.StmtCommit()
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -320,11 +347,12 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	c.Assert(err, IsNil)
 	se.Execute(context.Background(), "use test")
 	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
-	c.Assert(err, IsNil)
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.ExecutorConcurrency = 4
 
 	var input []string
 	var output []struct {
@@ -337,7 +365,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -372,7 +400,7 @@ func (s *testPlanSuite) TestRefine(c *C) {
 		c.Assert(err, IsNil, comment)
 		sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
 		sc.IgnoreTruncate = false
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -407,7 +435,7 @@ func (s *testPlanSuite) TestAggEliminator(c *C) {
 		c.Assert(err, IsNil, comment)
 		sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
 		sc.IgnoreTruncate = false
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -444,11 +472,11 @@ func (s *testPlanSuite) TestRequestTypeSupportedOff(c *C) {
 	c.Assert(err, IsNil)
 
 	sql := "select * from t where a in (1, 10, 20)"
-	expect := "TableReader(Table(t))->Sel([in(Column#1, 1, 10, 20)])"
+	expect := "TableReader(Table(t))->Sel([in(test.t.a, 1, 10, 20)])"
 
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+	p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 	c.Assert(err, IsNil)
 	c.Assert(core.ToString(p), Equals, expect, Commentf("for %s", sql))
 }
@@ -457,79 +485,41 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
 	defer func() {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := session.CreateSession4Test(store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
 
-	var input []string
+	tk.MustExec("use test")
+	var input [][]string
 	var output []struct {
-		SQL  string
-		Best string
+		SQL  []string
+		Plan []string
 	}
+	tk.MustExec("create table t (a int primary key, b int, index idx(a))")
+	tk.MustExec("create table tt (a int primary key) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
+
+	tk.MustExec("set @try_old_partition_implementation = 1")
+
 	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		comment := Commentf("case:%v sql:%s", i, tt)
-		stmt, err := s.ParseOneStmt(tt, "", "")
-		c.Assert(err, IsNil, comment)
-		err = se.NewTxn(context.Background())
-		c.Assert(err, IsNil)
-		// Make txn not read only.
-		txn, err := se.Txn(true)
-		c.Assert(err, IsNil)
-		txn.Set(kv.Key("AAA"), []byte("BBB"))
-		c.Assert(se.StmtCommit(), IsNil)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
-		c.Assert(err, IsNil, comment)
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Best = core.ToString(p)
-		})
-		c.Assert(core.ToString(p), Equals, output[i].Best, Commentf("for %s", tt))
-	}
-
-	definitions := []model.PartitionDefinition{
-		{
-			ID:       41,
-			Name:     model.NewCIStr("p1"),
-			LessThan: []string{"16"},
-		},
-		{
-			ID:       42,
-			Name:     model.NewCIStr("p2"),
-			LessThan: []string{"32"},
-		},
-	}
-	pis := core.MockPartitionInfoSchema(definitions)
-
-	tests := []struct {
-		sql  string
-		best string
-	}{
-		// Index Join + Union Scan + Union All is not supported now.
-		{
-			sql:  "select /*+ TIDB_INLJ(t2) */ * from t t1, t t2 where t1.a = t2.a",
-			best: "LeftHashJoin{UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}->UnionAll{TableReader(Table(t))->UnionScan([])->TableReader(Table(t))->UnionScan([])}}(Column#1,Column#14)",
-		},
-	}
-	for i, tt := range tests {
-		comment := Commentf("case:%v sql:%s", i, tt.sql)
-		stmt, err := s.ParseOneStmt(tt.sql, "", "")
-		c.Assert(err, IsNil, comment)
-		err = se.NewTxn(context.Background())
-		c.Assert(err, IsNil)
-		// Make txn not read only.
-		txn, err := se.Txn(true)
-		c.Assert(err, IsNil)
-		txn.Set(kv.Key("AAA"), []byte("BBB"))
-		c.Assert(se.StmtCommit(), IsNil)
-		p, err := planner.Optimize(context.TODO(), se, stmt, pis)
-		c.Assert(err, IsNil, comment)
-		c.Assert(core.ToString(p), Equals, tt.best, comment)
+	for i, ts := range input {
+		tk.MustExec("begin")
+		for j, tt := range ts {
+			if j != len(ts)-1 {
+				tk.MustExec(tt)
+			}
+			s.testData.OnRecord(func() {
+				output[i].SQL = ts
+				if j == len(ts)-1 {
+					output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				}
+			})
+			if j == len(ts)-1 {
+				tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+			}
+		}
+		tk.MustExec("rollback")
 	}
 }
 
@@ -551,14 +541,14 @@ func (s *testPlanSuite) TestDoSubquery(c *C) {
 	}{
 		{
 			sql:  "do 1 in (select a from t)",
-			best: "LeftHashJoin{Dual->TableReader(Table(t))}->Projection",
+			best: "LeftHashJoin{Dual->PointGet(Handle(t.a)1)}->Projection",
 		},
 	}
 	for _, tt := range tests {
 		comment := Commentf("for %s", tt.sql)
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		c.Assert(core.ToString(p), Equals, tt.best, comment)
 	}
@@ -579,7 +569,7 @@ func (s *testPlanSuite) TestIndexLookupCartesianJoin(c *C) {
 	sql := "select /*+ TIDB_INLJ(t1, t2) */ * from t t1 join t t2"
 	stmt, err := s.ParseOneStmt(sql, "", "")
 	c.Assert(err, IsNil)
-	p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+	p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 	c.Assert(err, IsNil)
 	c.Assert(core.ToString(p), Equals, "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}")
 	warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -609,7 +599,7 @@ func (s *testPlanSuite) TestSemiJoinToInner(c *C) {
 	for i, tt := range input {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
@@ -641,7 +631,7 @@ func (s *testPlanSuite) TestUnmatchedTableInHint(c *C) {
 		se.GetSessionVars().StmtCtx.SetWarnings(nil)
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil)
-		_, err = planner.Optimize(context.TODO(), se, stmt, s.is)
+		_, _, err = planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
 		s.testData.OnRecord(func() {
@@ -684,7 +674,7 @@ func (s *testPlanSuite) TestHintScope(c *C) {
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(context.Background(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.Background(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = test
@@ -725,7 +715,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		se.GetSessionVars().StmtCtx.SetWarnings(nil)
-		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
 
@@ -735,7 +725,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 			if len(warnings) > 0 {
 				output[i].Warning = warnings[0].Err.Error()
 			}
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best)
 		if output[i].Warning == "" {
@@ -745,7 +735,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning)
 			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning)
 		}
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+		c.Assert(hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -763,8 +753,8 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	c.Assert(err, IsNil)
 
 	sessionVars := se.(sessionctx.Context).GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
 
 	var input []struct {
 		SQL         string
@@ -785,7 +775,7 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 		stmt, err := s.ParseOneStmt(test.SQL, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
 
@@ -815,59 +805,207 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 		dom.Close()
 		store.Close()
 	}()
-	se, err := session.CreateSession4Test(store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "insert into mysql.opt_rule_blacklist values(\"aggregation_eliminate\")")
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "admin reload opt_rule_blacklist")
-	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ta")
+	tk.MustExec("create table ta(a int, b int, index(a))")
 
-	tests := []struct {
-		sql     string
-		best    string
-		warning string
-	}{
-		{
-			sql:  "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ sum(a) from t group by a",
-			best: "TableReader(Table(t)->HashAgg)->HashAgg",
-		},
-		{
-			sql:  "select /*+ AGG_TO_COP(), USE_INDEX(t) */ sum(b) from t group by b",
-			best: "TableReader(Table(t)->HashAgg)->HashAgg",
-		},
-		{
-			sql:     "select /*+ AGG_TO_COP(), HASH_AGG(), USE_INDEX(t) */ distinct a from t group by a",
-			best:    "TableReader(Table(t)->HashAgg)->HashAgg->HashAgg",
-			warning: "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
-		},
-		{
-			sql:     "select /*+ AGG_TO_COP(), HASH_AGG(), HASH_JOIN(t1), USE_INDEX(t1), USE_INDEX(t2) */ sum(t1.a) from t t1, t t2 where t1.a = t2.b group by t1.a",
-			best:    "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(Column#1,Column#14)->Projection->HashAgg",
-			warning: "[planner:1815]Optimizer Hint AGG_TO_COP is inapplicable",
-		},
-	}
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Best    string
+			Warning string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+
 	ctx := context.Background()
-	for i, test := range tests {
+	is := domain.GetDomain(tk.Se).InfoSchema()
+	for i, test := range input {
 		comment := Commentf("case:%v sql:%s", i, test)
-		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+		s.testData.OnRecord(func() {
+			output[i].SQL = test
+		})
+		c.Assert(test, Equals, output[i].SQL, comment)
 
-		stmt, err := s.ParseOneStmt(test.sql, "", "")
+		tk.Se.GetSessionVars().StmtCtx.SetWarnings(nil)
+
+		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, _, err := planner.Optimize(ctx, tk.Se, stmt, is)
 		c.Assert(err, IsNil)
-		c.Assert(core.ToString(p), Equals, test.best, comment)
+		planString := core.ToString(p)
+		s.testData.OnRecord(func() {
+			output[i].Best = planString
+		})
+		c.Assert(planString, Equals, output[i].Best, comment)
 
-		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
-		if test.warning == "" {
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		s.testData.OnRecord(func() {
+			if len(warnings) > 0 {
+				output[i].Warning = warnings[0].Err.Error()
+			}
+		})
+		if output[i].Warning == "" {
 			c.Assert(len(warnings), Equals, 0, comment)
 		} else {
 			c.Assert(len(warnings), Equals, 1, comment)
 			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
-			c.Assert(warnings[0].Err.Error(), Equals, test.warning, comment)
+			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning, comment)
 		}
+	}
+}
+
+func (s *testPlanSuite) TestPushdownDistinctEnable(c *C) {
+	defer testleak.AfterTest(c)()
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
+		"set session tidb_opt_agg_push_down = 1",
+	}
+	s.doTestPushdownDistinct(c, vars, input, output)
+}
+
+func (s *testPlanSuite) TestPushdownDistinctDisable(c *C) {
+	defer testleak.AfterTest(c)()
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		fmt.Sprintf("set @@session.%s = 0", variable.TiDBOptDistinctAggPushDown),
+		"set session tidb_opt_agg_push_down = 1",
+	}
+	s.doTestPushdownDistinct(c, vars, input, output)
+}
+
+func (s *testPlanSuite) TestPushdownDistinctEnableAggPushDownDisable(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
+		"set session tidb_opt_agg_push_down = 0",
+	}
+	s.doTestPushdownDistinct(c, vars, input, output)
+}
+
+func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, output []struct {
+	SQL    string
+	Plan   []string
+	Result []string
+}) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index(c))")
+	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 3), (1, 2, 3), (2, 1, 3), (1, 2, NULL);")
+
+	tk.MustExec("drop table if exists pt")
+	tk.MustExec(`CREATE TABLE pt (a int, b int) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (2),
+		PARTITION p1 VALUES LESS THAN (100)
+	);`)
+
+	tk.MustExec("drop table if exists ta")
+	tk.MustExec("create table ta(a int);")
+	tk.MustExec("insert into ta values(1), (1);")
+	tk.MustExec("drop table if exists tb")
+	tk.MustExec("create table tb(a int);")
+	tk.MustExec("insert into tb values(1), (1);")
+
+	tk.MustExec("set session sql_mode=''")
+	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggPartialConcurrency))
+	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggFinalConcurrency))
+
+	tk.MustExec("set @try_old_partition_implementation = 1")
+
+	for _, v := range vars {
+		tk.MustExec(v)
+	}
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testPlanSuite) TestGroupConcatOrderby(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test(id int, name int)")
+	tk.MustExec("insert into test values(1, 10);")
+	tk.MustExec("insert into test values(1, 20);")
+	tk.MustExec("insert into test values(1, 30);")
+	tk.MustExec("insert into test values(2, 20);")
+	tk.MustExec("insert into test values(3, 200);")
+	tk.MustExec("insert into test values(3, 500);")
+
+	tk.MustExec("drop table if exists ptest;")
+	tk.MustExec("CREATE TABLE ptest (id int,name int) PARTITION BY RANGE ( id ) " +
+		"(PARTITION `p0` VALUES LESS THAN (2), PARTITION `p1` VALUES LESS THAN (11))")
+	tk.MustExec("insert into ptest select * from test;")
+	tk.MustExec(fmt.Sprintf("set session tidb_opt_distinct_agg_push_down = %v", 1))
+	tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", 1))
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
 	}
 }
 
@@ -890,11 +1028,11 @@ func (s *testPlanSuite) TestHintAlias(c *C) {
 	}{
 		{
 			sql1: "select /*+ TIDB_SMJ(t1) */ t1.a, t1.b from t t1, (select /*+ TIDB_INLJ(t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			sql2: "select /*+ SM_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+			sql2: "select /*+ MERGE_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ INL_JOIN(t3) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
 		},
 		{
 			sql1: "select /*+ TIDB_HJ(t1) */ t1.a, t1.b from t t1, (select /*+ TIDB_SMJ(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
-			sql2: "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ SM_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
+			sql2: "select /*+ HASH_JOIN(t1) */ t1.a, t1.b from t t1, (select /*+ MERGE_JOIN(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
 		},
 		{
 			sql1: "select /*+ TIDB_INLJ(t1) */ t1.a, t1.b from t t1, (select /*+ TIDB_HJ(t2) */ t2.a from t t2, t t3 where t2.a = t3.c) s where t1.a=s.a",
@@ -909,9 +1047,9 @@ func (s *testPlanSuite) TestHintAlias(c *C) {
 		stmt2, err := s.ParseOneStmt(tt.sql2, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p1, err := planner.Optimize(ctx, se, stmt1, s.is)
+		p1, _, err := planner.Optimize(ctx, se, stmt1, s.is)
 		c.Assert(err, IsNil)
-		p2, err := planner.Optimize(ctx, se, stmt2, s.is)
+		p2, _, err := planner.Optimize(ctx, se, stmt2, s.is)
 		c.Assert(err, IsNil)
 
 		c.Assert(core.ToString(p1), Equals, core.ToString(p2))
@@ -947,13 +1085,13 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		stmt, err := s.ParseOneStmt(test, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
 			output[i].SQL = test
 			output[i].Best = core.ToString(p)
 			output[i].HasWarn = len(se.GetSessionVars().StmtCtx.GetWarnings()) > 0
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -962,7 +1100,56 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		} else {
 			c.Assert(warnings, HasLen, 0, comment)
 		}
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+		c.Assert(hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
+	}
+}
+
+func (s *testPlanSuite) TestIndexMergeHint(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+
+	var input []string
+	var output []struct {
+		SQL     string
+		Best    string
+		HasWarn bool
+		Hints   string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	ctx := context.Background()
+	for i, test := range input {
+		comment := Commentf("case:%v sql:%s", i, test)
+		se.GetSessionVars().StmtCtx.SetWarnings(nil)
+		stmt, err := s.ParseOneStmt(test, "", "")
+		c.Assert(err, IsNil, comment)
+		sctx := se.(sessionctx.Context)
+		err = executor.ResetContextOfStmt(sctx, stmt)
+		c.Assert(err, IsNil)
+		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
+			output[i].SQL = test
+			output[i].Best = core.ToString(p)
+			output[i].HasWarn = len(se.GetSessionVars().StmtCtx.GetWarnings()) > 0
+			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
+		})
+		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
+		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
+		if output[i].HasWarn {
+			c.Assert(warnings, HasLen, 1, comment)
+		} else {
+			c.Assert(warnings, HasLen, 0, comment)
+		}
+		c.Assert(hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -992,15 +1179,60 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 
-		p, err := planner.Optimize(ctx, se, stmt, s.is)
+		p, _, err := planner.Optimize(ctx, se, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = core.ToString(p)
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+		c.Assert(hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
+	}
+}
+
+func (s *testPlanSuite) TestInlineProjection(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `drop table if exists test.t1, test.t2;`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
+	c.Assert(err, IsNil)
+
+	var input []string
+	var output []struct {
+		SQL   string
+		Plan  string
+		Hints string
+	}
+	is := domain.GetDomain(se).InfoSchema()
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		comment := Commentf("case:%v sql: %s", i, tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
+		c.Assert(err, IsNil, comment)
+
+		p, _, err := planner.Optimize(ctx, se, stmt, is)
+		c.Assert(err, IsNil, comment)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = core.ToString(p)
+			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
+		})
+		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
+		c.Assert(hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -1036,7 +1268,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderSplitAvg(c *C) {
 		c.Assert(err, IsNil, comment)
 
 		core.Preprocess(se, stmt, s.is)
-		p, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil, comment)
 
 		c.Assert(core.ToString(p), Equals, tt.plan, comment)
@@ -1072,4 +1304,238 @@ func testDAGPlanBuilderSplitAvg(c *C, root core.PhysicalPlan) {
 	for _, son := range childs {
 		testDAGPlanBuilderSplitAvg(c, son)
 	}
+}
+
+func (s *testPlanSuite) TestIndexJoinHint(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `drop table if exists test.t1, test.t2, test.t;`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, "CREATE TABLE `t` ( `a` bigint(20) NOT NULL, `b` tinyint(1) DEFAULT NULL, `c` datetime DEFAULT NULL, `d` int(10) unsigned DEFAULT NULL, `e` varchar(20) DEFAULT NULL, `f` double DEFAULT NULL, `g` decimal(30,5) DEFAULT NULL, `h` float DEFAULT NULL, `i` date DEFAULT NULL, `j` timestamp NULL DEFAULT NULL, PRIMARY KEY (`a`), UNIQUE KEY `b` (`b`), KEY `c` (`c`,`d`,`e`), KEY `f` (`f`), KEY `g` (`g`,`h`), KEY `g_2` (`g`), UNIQUE KEY `g_3` (`g`), KEY `i` (`i`) );")
+	c.Assert(err, IsNil)
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan string
+	}
+	is := domain.GetDomain(se).InfoSchema()
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		comment := Commentf("case:%v sql: %s", i, tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
+		c.Assert(err, IsNil, comment)
+		p, _, err := planner.Optimize(ctx, se, stmt, is)
+		c.Assert(err, IsNil, comment)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = core.ToString(p)
+		})
+		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
+	}
+}
+
+func (s *testPlanSuite) TestDAGPlanBuilderWindow(c *C) {
+	defer testleak.AfterTest(c)()
+	var input []string
+	var output []struct {
+		SQL  string
+		Best string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		"set @@session.tidb_window_concurrency = 1",
+	}
+	s.doTestDAGPlanBuilderWindow(c, vars, input, output)
+}
+
+func (s *testPlanSuite) TestDAGPlanBuilderWindowParallel(c *C) {
+	defer testleak.AfterTest(c)()
+	var input []string
+	var output []struct {
+		SQL  string
+		Best string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		"set @@session.tidb_window_concurrency = 4",
+	}
+	s.doTestDAGPlanBuilderWindow(c, vars, input, output)
+}
+
+func (s *testPlanSuite) doTestDAGPlanBuilderWindow(c *C, vars, input []string, output []struct {
+	SQL  string
+	Best string
+}) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+
+	for _, v := range vars {
+		_, err = se.Execute(ctx, v)
+		c.Assert(err, IsNil)
+	}
+
+	for i, tt := range input {
+		comment := Commentf("case:%v sql:%s", i, tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
+		c.Assert(err, IsNil, comment)
+
+		err = se.NewTxn(context.Background())
+		c.Assert(err, IsNil)
+		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Best = core.ToString(p)
+		})
+		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
+	}
+}
+
+func (s *testPlanSuite) TestNominalSort(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	tk.MustExec("create table t (a int, b int, index idx_a(a), index idx_b(b))")
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("insert into t values(1, 2)")
+	tk.MustExec("insert into t values(2, 4)")
+	tk.MustExec("insert into t values(3, 5)")
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testPlanSuite) TestHintFromDiffDatabase(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `drop table if exists test.t1`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `create table test.t1(a bigint, index idx_a(a));`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `create table test.t2(a bigint, index idx_a(a));`)
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(ctx, "drop database if exists test2")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, "create database test2")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, "use test2")
+	c.Assert(err, IsNil)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan string
+	}
+	is := domain.GetDomain(se).InfoSchema()
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		comment := Commentf("case:%v sql: %s", i, tt)
+		stmt, err := s.ParseOneStmt(tt, "", "")
+		c.Assert(err, IsNil, comment)
+		p, _, err := planner.Optimize(ctx, se, stmt, is)
+		c.Assert(err, IsNil, comment)
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = core.ToString(p)
+		})
+		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
+	}
+}
+
+func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `drop table if exists test.tt`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `create table test.tt (a int,b int, index(a), index(b));`)
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(ctx, "insert into tt values (1, 1), (2, 2), (3, 4)")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set @try_old_partition_implementation = 1")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+
+	// This assert makes sure a query with or without nth_plan() hint output exactly the same plan(including plan ID).
+	// The query below is the same as queries in the testdata except for nth_plan() hint.
+	// Currently its output is the same as the second test case in the testdata, which is `output[1]`. If this doesn't
+	// hold in the future, you may need to modify this.
+	tk.MustQuery("explain select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
 }

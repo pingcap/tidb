@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 )
 
 func boolToInt64(v bool) int64 {
@@ -56,10 +56,7 @@ func IsValidCurrentTimestampExpr(exprNode ast.ExprNode, fieldType *types.FieldTy
 
 // GetTimeValue gets the time value with type tp.
 func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d types.Datum, err error) {
-	value := types.Time{
-		Type: tp,
-		Fsp:  fsp,
-	}
+	value := types.NewTime(types.ZeroCoreTime, tp, fsp)
 
 	sc := ctx.GetSessionVars().StmtCtx
 	switch x := v.(type) {
@@ -70,7 +67,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d t
 			if err != nil {
 				return d, err
 			}
-			value.Time = types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-int(fsp))) * time.Nanosecond))
+			value.SetCoreTime(types.FromGoTime(defaultTime.Truncate(time.Duration(math.Pow10(9-int(fsp))) * time.Nanosecond)))
 			if tp == mysql.TypeTimestamp || tp == mysql.TypeDatetime {
 				err = value.ConvertTimeZone(time.Local, ctx.GetSessionVars().Location())
 				if err != nil {
@@ -105,7 +102,7 @@ func GetTimeValue(ctx sessionctx.Context, v interface{}, tp byte, fsp int8) (d t
 		}
 	case *ast.FuncCallExpr:
 		if x.FnName.L == ast.CurrentTimestamp {
-			d.SetString(strings.ToUpper(ast.CurrentTimestamp))
+			d.SetString(strings.ToUpper(ast.CurrentTimestamp), mysql.DefaultCollationName)
 			return d, nil
 		}
 		return d, errDefaultValue
@@ -148,7 +145,7 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 	}
 
 	if timestampStr != "" {
-		timestamp, err := types.StrToInt(sessionVars.StmtCtx, timestampStr)
+		timestamp, err := types.StrToInt(sessionVars.StmtCtx, timestampStr, false)
 		if err != nil {
 			return time.Time{}, err
 		}

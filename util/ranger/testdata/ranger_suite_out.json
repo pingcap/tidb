@@ -5,16 +5,16 @@
       {
         "SQL": "explain select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t",
         "Result": [
-          "Projection_11 2.00 root Column#18",
-          "└─Apply_13 2.00 root CARTESIAN left outer semi join, inner:StreamAgg_20, other cond:eq(Column#5, Column#16)",
-          "  ├─TableReader_15 2.00 root data:TableScan_14",
-          "  │ └─TableScan_14 2.00 cop table:t, range:[-inf,+inf], keep order:false",
-          "  └─StreamAgg_20 1.00 root funcs:count(1)",
-          "    └─IndexMergeJoin_44 2.00 root inner join, inner:TableReader_42, outer key:Column#6, inner key:Column#11",
-          "      ├─IndexReader_33 2.00 root index:IndexScan_32",
-          "      │ └─IndexScan_32 2.00 cop table:s, index:b, c, d, range: decided by [eq(Column#7, 1) in(Column#8, 1, 2) eq(Column#9, Column#1)], keep order:false",
-          "      └─TableReader_42 1.00 root data:TableScan_41",
-          "        └─TableScan_41 1.00 cop table:t1, range: decided by [Column#6], keep order:true"
+          "Projection_11 2.00 root  Column#17",
+          "└─Apply_13 2.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.e, Column#16)",
+          "  ├─TableReader_15(Build) 2.00 root  data:TableFullScan_14",
+          "  │ └─TableFullScan_14 2.00 cop[tikv] table:t keep order:false",
+          "  └─StreamAgg_20(Probe) 1.00 root  funcs:count(1)->Column#16",
+          "    └─IndexMergeJoin_46 2.00 root  inner join, inner:TableReader_41, outer key:test.t.a, inner key:test.t.a",
+          "      ├─IndexReader_33(Build) 2.00 root  index:IndexRangeScan_32",
+          "      │ └─IndexRangeScan_32 2.00 cop[tikv] table:s, index:idx(b, c, d) range: decided by [eq(test.t.b, 1) in(test.t.c, 1, 2) eq(test.t.d, test.t.a)], keep order:false",
+          "      └─TableReader_41(Probe) 1.00 root  data:TableRangeScan_40",
+          "        └─TableRangeScan_40 1.00 cop[tikv] table:t1 range: decided by [test.t.a], keep order:true"
         ]
       },
       {
@@ -23,6 +23,157 @@
           "1",
           "1"
         ]
+      }
+    ]
+  },
+  {
+    "Name": "TestIndexStringIsTrueRange",
+    "Cases": [
+      {
+        "SQL": "explain select * from t0 where c0",
+        "Result": [
+          "TableReader_7 0.80 root  data:Selection_6",
+          "└─Selection_6 0.80 cop[tikv]  test.t0.c0",
+          "  └─TableFullScan_5 1.00 cop[tikv] table:t0 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t0 where c0 and c0 > '123'",
+        "Result": [
+          "IndexReader_7 1.00 root  index:Selection_6",
+          "└─Selection_6 1.00 cop[tikv]  test.t0.c0",
+          "  └─IndexRangeScan_5 1.00 cop[tikv] table:t0, index:i0(c0) range:(\"123\",+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t0 where c0 and c0 <> '123'",
+        "Result": [
+          "IndexReader_7 1.00 root  index:Selection_6",
+          "└─Selection_6 1.00 cop[tikv]  test.t0.c0",
+          "  └─IndexRangeScan_5 1.00 cop[tikv] table:t0, index:i0(c0) range:[-inf,\"123\"), (\"123\",+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t0 where c0 is true",
+        "Result": [
+          "TableReader_7 0.80 root  data:Selection_6",
+          "└─Selection_6 0.80 cop[tikv]  istrue(cast(test.t0.c0))",
+          "  └─TableFullScan_5 1.00 cop[tikv] table:t0 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t0 where c0 is false",
+        "Result": [
+          "TableReader_7 0.80 root  data:Selection_6",
+          "└─Selection_6 0.80 cop[tikv]  isfalse(cast(test.t0.c0))",
+          "  └─TableFullScan_5 1.00 cop[tikv] table:t0 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select * from t0 where c0 and c0 in ('123','456','789')",
+        "Result": [
+          "IndexReader_7 1.00 root  index:Selection_6",
+          "└─Selection_6 1.00 cop[tikv]  test.t0.c0",
+          "  └─IndexRangeScan_5 1.00 cop[tikv] table:t0, index:i0(c0) range:[\"123\",\"123\"], [\"456\",\"456\"], [\"789\",\"789\"], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain SELECT * FROM t0 WHERE ('a' != t0.c0) AND t0.c0;",
+        "Result": [
+          "IndexReader_7 1.00 root  index:Selection_6",
+          "└─Selection_6 1.00 cop[tikv]  test.t0.c0",
+          "  └─IndexRangeScan_5 1.00 cop[tikv] table:t0, index:i0(c0) range:[-inf,\"a\"), (\"a\",+inf], keep order:false"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestCompIndexDNFMatch",
+    "Cases": [
+      {
+        "SQL": "select * from t where a = 1 and b in (1, 2) and c > 1;",
+        "Plan": [
+          "IndexReader_6 0.67 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.67 cop[tikv] table:t, index:a(a, b, c) range:(1 1 1,1 1 +inf], (1 2 1,1 2 +inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and (b = 1 or b = 2) and c > 1;",
+        "Plan": [
+          "IndexReader_6 0.67 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.67 cop[tikv] table:t, index:a(a, b, c) range:(1 1 1,1 1 +inf], (1 2 1,1 2 +inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and (b = 1 or b in (2, 3)) and c > 1;",
+        "Plan": [
+          "IndexReader_6 1.00 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a, b, c) range:(1 1 1,1 1 +inf], (1 2 1,1 2 +inf], (1 3 1,1 3 +inf], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and (b = 1 or b = 2) and b = 3 and c > 1;",
+        "Plan": [
+          "TableDual_5 0.00 root  rows:0"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t where a = 1 and (b is null or b = 2);",
+        "Plan": [
+          "IndexReader_6 0.20 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 0.20 cop[tikv] table:t, index:a(a, b, c) range:[1 NULL,1 NULL], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and (b is null or b = 2) and c > 1;",
+        "Plan": [
+          "IndexReader_7 0.07 root  index:Selection_6",
+          "└─Selection_6 0.07 cop[tikv]  gt(test.t.c, 1)",
+          "  └─IndexRangeScan_5 0.20 cop[tikv] table:t, index:a(a, b, c) range:[1 NULL,1 NULL], [1 2,1 2], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1 2 2"
+        ]
+      },
+      {
+        "SQL": "select * from t where a = 1 and b is null and c > 1;",
+        "Plan": [
+          "IndexReader_7 0.03 root  index:Selection_6",
+          "└─Selection_6 0.03 cop[tikv]  gt(test.t.c, 1)",
+          "  └─IndexRangeScan_5 0.10 cop[tikv] table:t, index:a(a, b, c) range:[1 NULL,1 NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t where a = 1 and b is null and b is null and c > 1;",
+        "Plan": [
+          "IndexReader_7 0.03 root  index:Selection_6",
+          "└─Selection_6 0.03 cop[tikv]  gt(test.t.c, 1)",
+          "  └─IndexRangeScan_5 0.10 cop[tikv] table:t, index:a(a, b, c) range:[1 NULL,1 NULL], keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select * from t where a = 1 and b is null and b = 1 and c > 1;",
+        "Plan": [
+          "IndexReader_7 0.27 root  index:Selection_6",
+          "└─Selection_6 0.27 cop[tikv]  isnull(test.t.b)",
+          "  └─IndexRangeScan_5 0.33 cop[tikv] table:t, index:a(a, b, c) range:(1 1 1,1 1 +inf], keep order:false, stats:pseudo"
+        ],
+        "Result": null
       }
     ]
   }

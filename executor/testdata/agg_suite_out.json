@@ -1,0 +1,81 @@
+[
+  {
+    "Name": "TestInjectProjBelowTopN",
+    "Cases": [
+      [
+        "Projection_10 10000.00 root  test.t.i",
+        "└─Sort_4 10000.00 root  Column#3",
+        "  └─Projection_11 10000.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
+        "    └─TableReader_8 10000.00 root  data:TableFullScan_7",
+        "      └─TableFullScan_7 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+      ],
+      [
+        "1",
+        "1",
+        "1",
+        "2",
+        "2",
+        "2",
+        "3",
+        "3",
+        "3"
+      ],
+      [
+        "Projection_15 2.00 root  test.t.i",
+        "└─TopN_7 2.00 root  Column#3, offset:0, count:2",
+        "  └─Projection_16 2.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
+        "    └─TableReader_12 2.00 root  data:TopN_11",
+        "      └─TopN_11 2.00 cop[tikv]  plus(test.t.i, 1), offset:0, count:2",
+        "        └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+      ],
+      [
+        "1",
+        "1"
+      ],
+      [
+        "1 1 1",
+        "1 1 1",
+        "1 1 1",
+        "2 2 2",
+        "2 2 2",
+        "2 2 2",
+        "3 3 3",
+        "3 3 3",
+        "3 3 3"
+      ]
+    ]
+  },
+  {
+    "Name": "TestIssue12759HashAggCalledByApply",
+    "Cases": [
+      [
+        "Projection_28 1.00 root  Column#3, Column#6, Column#9, Column#12",
+        "└─Apply_30 1.00 root  CARTESIAN left outer join",
+        "  ├─Apply_32(Build) 1.00 root  CARTESIAN left outer join",
+        "  │ ├─Apply_34(Build) 1.00 root  CARTESIAN left outer join",
+        "  │ │ ├─HashAgg_39(Build) 1.00 root  funcs:sum(Column#22)->Column#3, funcs:firstrow(Column#23)->test.test.a",
+        "  │ │ │ └─TableReader_40 1.00 root  data:HashAgg_35",
+        "  │ │ │   └─HashAgg_35 1.00 cop[tikv]  funcs:sum(test.test.a)->Column#22, funcs:firstrow(test.test.a)->Column#23",
+        "  │ │ │     └─TableFullScan_38 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo",
+        "  │ │ └─Projection_43(Probe) 1.00 root  <nil>->Column#6",
+        "  │ │   └─Limit_44 1.00 root  offset:0, count:1",
+        "  │ │     └─TableReader_50 1.00 root  data:Limit_49",
+        "  │ │       └─Limit_49 1.00 cop[tikv]  offset:0, count:1",
+        "  │ │         └─Selection_48 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
+        "  │ │           └─TableFullScan_47 1000.00 cop[tikv] table:test keep order:false, stats:pseudo",
+        "  │ └─Projection_54(Probe) 1.00 root  <nil>->Column#9",
+        "  │   └─Limit_55 1.00 root  offset:0, count:1",
+        "  │     └─TableReader_61 1.00 root  data:Limit_60",
+        "  │       └─Limit_60 1.00 cop[tikv]  offset:0, count:1",
+        "  │         └─Selection_59 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
+        "  │           └─TableFullScan_58 1000.00 cop[tikv] table:test keep order:false, stats:pseudo",
+        "  └─Projection_65(Probe) 1.00 root  <nil>->Column#12",
+        "    └─Limit_66 1.00 root  offset:0, count:1",
+        "      └─TableReader_72 1.00 root  data:Limit_71",
+        "        └─Limit_71 1.00 cop[tikv]  offset:0, count:1",
+        "          └─Selection_70 1.00 cop[tikv]  eq(test.test.a, test.test.a)",
+        "            └─TableFullScan_69 1000.00 cop[tikv] table:test keep order:false, stats:pseudo"
+      ]
+    ]
+  }
+]

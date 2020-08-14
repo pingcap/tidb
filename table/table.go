@@ -22,8 +22,8 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
@@ -38,9 +38,24 @@ const (
 	NormalTable Type = iota
 	// VirtualTable , store no data, just extract data from the memory struct.
 	VirtualTable
-	// MemoryTable , store data only in local memory.
-	MemoryTable
+	// ClusterTable , contain the `VirtualTable` in the all cluster tidb nodes.
+	ClusterTable
 )
+
+// IsNormalTable checks whether the table is a normal table type.
+func (tp Type) IsNormalTable() bool {
+	return tp == NormalTable
+}
+
+// IsVirtualTable checks whether the table is a virtual table type.
+func (tp Type) IsVirtualTable() bool {
+	return tp == VirtualTable
+}
+
+// IsClusterTable checks whether the table is a cluster table type.
+func (tp Type) IsClusterTable() bool {
+	return tp == ClusterTable
+}
 
 const (
 	// DirtyTableAddRow is the constant for dirty table operation type.
@@ -51,55 +66,67 @@ const (
 
 var (
 	// ErrColumnCantNull is used for inserting null to a not null column.
-	ErrColumnCantNull  = terror.ClassTable.New(codeColumnCantNull, mysql.MySQLErrName[mysql.ErrBadNull])
-	errUnknownColumn   = terror.ClassTable.New(codeUnknownColumn, "unknown column")
-	errDuplicateColumn = terror.ClassTable.New(codeDuplicateColumn, "duplicate column")
+	ErrColumnCantNull = terror.ClassTable.New(mysql.ErrBadNull, mysql.MySQLErrName[mysql.ErrBadNull])
+	// ErrUnknownColumn is returned when accessing an unknown column.
+	ErrUnknownColumn   = terror.ClassTable.New(mysql.ErrBadField, mysql.MySQLErrName[mysql.ErrBadField])
+	errDuplicateColumn = terror.ClassTable.New(mysql.ErrFieldSpecifiedTwice, mysql.MySQLErrName[mysql.ErrFieldSpecifiedTwice])
 
-	errGetDefaultFailed = terror.ClassTable.New(codeGetDefaultFailed, "get default value fail")
+	errGetDefaultFailed = terror.ClassTable.New(mysql.ErrFieldGetDefaultFailed, mysql.MySQLErrName[mysql.ErrFieldGetDefaultFailed])
 
 	// ErrNoDefaultValue is used when insert a row, the column value is not given, and the column has not null flag
 	// and it doesn't have a default value.
-	ErrNoDefaultValue = terror.ClassTable.New(codeNoDefaultValue, mysql.MySQLErrName[mysql.ErrNoDefaultForField])
+	ErrNoDefaultValue = terror.ClassTable.New(mysql.ErrNoDefaultForField, mysql.MySQLErrName[mysql.ErrNoDefaultForField])
 	// ErrIndexOutBound returns for index column offset out of bound.
-	ErrIndexOutBound = terror.ClassTable.New(codeIndexOutBound, "index column offset out of bound")
+	ErrIndexOutBound = terror.ClassTable.New(mysql.ErrIndexOutBound, mysql.MySQLErrName[mysql.ErrIndexOutBound])
 	// ErrUnsupportedOp returns for unsupported operation.
-	ErrUnsupportedOp = terror.ClassTable.New(codeUnsupportedOp, "operation not supported")
+	ErrUnsupportedOp = terror.ClassTable.New(mysql.ErrUnsupportedOp, mysql.MySQLErrName[mysql.ErrUnsupportedOp])
 	// ErrRowNotFound returns for row not found.
-	ErrRowNotFound = terror.ClassTable.New(codeRowNotFound, "can not find the row")
+	ErrRowNotFound = terror.ClassTable.New(mysql.ErrRowNotFound, mysql.MySQLErrName[mysql.ErrRowNotFound])
 	// ErrTableStateCantNone returns for table none state.
-	ErrTableStateCantNone = terror.ClassTable.New(codeTableStateCantNone, "table can not be in none state")
+	ErrTableStateCantNone = terror.ClassTable.New(mysql.ErrTableStateCantNone, mysql.MySQLErrName[mysql.ErrTableStateCantNone])
 	// ErrColumnStateCantNone returns for column none state.
-	ErrColumnStateCantNone = terror.ClassTable.New(codeColumnStateCantNone, "column can not be in none state")
+	ErrColumnStateCantNone = terror.ClassTable.New(mysql.ErrColumnStateCantNone, mysql.MySQLErrName[mysql.ErrColumnStateCantNone])
 	// ErrColumnStateNonPublic returns for column non-public state.
-	ErrColumnStateNonPublic = terror.ClassTable.New(codeColumnStateNonPublic, "can not use non-public column")
+	ErrColumnStateNonPublic = terror.ClassTable.New(mysql.ErrColumnStateNonPublic, mysql.MySQLErrName[mysql.ErrColumnStateNonPublic])
 	// ErrIndexStateCantNone returns for index none state.
-	ErrIndexStateCantNone = terror.ClassTable.New(codeIndexStateCantNone, "index can not be in none state")
+	ErrIndexStateCantNone = terror.ClassTable.New(mysql.ErrIndexStateCantNone, mysql.MySQLErrName[mysql.ErrIndexStateCantNone])
 	// ErrInvalidRecordKey returns for invalid record key.
-	ErrInvalidRecordKey = terror.ClassTable.New(codeInvalidRecordKey, "invalid record key")
-	// ErrTruncateWrongValue returns for truncate wrong value for field.
-	ErrTruncateWrongValue = terror.ClassTable.New(codeTruncateWrongValue, "incorrect value")
+	ErrInvalidRecordKey = terror.ClassTable.New(mysql.ErrInvalidRecordKey, mysql.MySQLErrName[mysql.ErrInvalidRecordKey])
 	// ErrTruncatedWrongValueForField returns for truncate wrong value for field.
-	ErrTruncatedWrongValueForField = terror.ClassTable.New(codeTruncateWrongValue, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
+	ErrTruncatedWrongValueForField = terror.ClassTable.New(mysql.ErrTruncatedWrongValueForField, mysql.MySQLErrName[mysql.ErrTruncatedWrongValueForField])
 	// ErrUnknownPartition returns unknown partition error.
-	ErrUnknownPartition = terror.ClassTable.New(codeUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
+	ErrUnknownPartition = terror.ClassTable.New(mysql.ErrUnknownPartition, mysql.MySQLErrName[mysql.ErrUnknownPartition])
 	// ErrNoPartitionForGivenValue returns table has no partition for value.
-	ErrNoPartitionForGivenValue = terror.ClassTable.New(codeNoPartitionForGivenValue, mysql.MySQLErrName[mysql.ErrNoPartitionForGivenValue])
+	ErrNoPartitionForGivenValue = terror.ClassTable.New(mysql.ErrNoPartitionForGivenValue, mysql.MySQLErrName[mysql.ErrNoPartitionForGivenValue])
 	// ErrLockOrActiveTransaction returns when execute unsupported statement in a lock session or an active transaction.
-	ErrLockOrActiveTransaction = terror.ClassTable.New(codeLockOrActiveTransaction, mysql.MySQLErrName[mysql.ErrLockOrActiveTransaction])
+	ErrLockOrActiveTransaction = terror.ClassTable.New(mysql.ErrLockOrActiveTransaction, mysql.MySQLErrName[mysql.ErrLockOrActiveTransaction])
+	// ErrSequenceHasRunOut returns when sequence has run out.
+	ErrSequenceHasRunOut = terror.ClassTable.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])
+	// ErrRowDoesNotMatchGivenPartitionSet returns when the destination partition conflict with the partition selection.
+	ErrRowDoesNotMatchGivenPartitionSet = terror.ClassTable.NewStd(mysql.ErrRowDoesNotMatchGivenPartitionSet)
 )
 
 // RecordIterFunc is used for low-level record iteration.
-type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool, err error)
+type RecordIterFunc func(h kv.Handle, rec []types.Datum, cols []*Column) (more bool, err error)
 
 // AddRecordOpt contains the options will be used when adding a record.
 type AddRecordOpt struct {
 	CreateIdxOpt
-	IsUpdate bool
+	IsUpdate      bool
+	ReserveAutoID int
 }
 
 // AddRecordOption is defined for the AddRecord() method of the Table interface.
 type AddRecordOption interface {
 	ApplyOn(*AddRecordOpt)
+}
+
+// WithReserveAutoIDHint tells the AddRecord operation to reserve a batch of auto ID in the stmtctx.
+type WithReserveAutoIDHint int
+
+// ApplyOn implements the AddRecordOption interface.
+func (n WithReserveAutoIDHint) ApplyOn(opt *AddRecordOpt) {
+	opt.ReserveAutoID = int(n)
 }
 
 // ApplyOn implements the AddRecordOption interface, so any CreateIdxOptFunc
@@ -123,17 +150,26 @@ type Table interface {
 	IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*Column, fn RecordIterFunc) error
 
 	// RowWithCols returns a row that contains the given cols.
-	RowWithCols(ctx sessionctx.Context, h int64, cols []*Column) ([]types.Datum, error)
+	RowWithCols(ctx sessionctx.Context, h kv.Handle, cols []*Column) ([]types.Datum, error)
 
 	// Row returns a row for all columns.
-	Row(ctx sessionctx.Context, h int64) ([]types.Datum, error)
+	Row(ctx sessionctx.Context, h kv.Handle) ([]types.Datum, error)
 
-	// Cols returns the columns of the table which is used in select.
+	// Cols returns the columns of the table which is used in select, including hidden columns.
 	Cols() []*Column
+
+	// VisibleCols returns the columns of the table which is used in select, excluding hidden columns.
+	VisibleCols() []*Column
+
+	// HiddenCols returns the hidden columns of the table.
+	HiddenCols() []*Column
 
 	// WritableCols returns columns of the table in writable states.
 	// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
 	WritableCols() []*Column
+
+	// FullHiddenColsAndVisibleCols returns hidden columns in all states and unhidden columns in public states.
+	FullHiddenColsAndVisibleCols() []*Column
 
 	// Indices returns the indices of the table.
 	Indices() []Index
@@ -154,33 +190,30 @@ type Table interface {
 	FirstKey() kv.Key
 
 	// RecordKey returns the key in KV storage for the row.
-	RecordKey(h int64) kv.Key
+	RecordKey(h kv.Handle) kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
-	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID int64, err error)
+	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
-	UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error
+	UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error
 
 	// RemoveRecord removes a row in the table.
-	RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error
+	RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error
 
-	// AllocHandle allocates a handle for a new row.
-	AllocHandle(ctx sessionctx.Context) (int64, error)
-
-	// Allocator returns Allocator.
-	Allocator(ctx sessionctx.Context) autoid.Allocator
+	// Allocators returns all allocators.
+	Allocators(ctx sessionctx.Context) autoid.Allocators
 
 	// RebaseAutoID rebases the auto_increment ID base.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
 	// If allocIDs is false, it will not allocate IDs.
-	RebaseAutoID(ctx sessionctx.Context, newBase int64, allocIDs bool) error
+	RebaseAutoID(ctx sessionctx.Context, newBase int64, allocIDs bool, tp autoid.AllocatorType) error
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
 
 	// Seek returns the handle greater or equal to h.
-	Seek(ctx sessionctx.Context, h int64) (handle int64, found bool, err error)
+	Seek(ctx sessionctx.Context, h kv.Handle) (handle kv.Handle, found bool, err error)
 
 	// Type returns the type of table
 	Type() Type
@@ -192,7 +225,32 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 		span1 := span.Tracer().StartSpan("table.AllocAutoIncrementValue", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
-	return t.Allocator(sctx).Alloc(t.Meta().ID)
+	increment := sctx.GetSessionVars().AutoIncrementIncrement
+	offset := sctx.GetSessionVars().AutoIncrementOffset
+	_, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(1), int64(increment), int64(offset))
+	if err != nil {
+		return 0, err
+	}
+	return max, err
+}
+
+// AllocBatchAutoIncrementValue allocates batch auto_increment value for rows, returning firstID, increment and err.
+// The caller can derive the autoID by adding increment to firstID for N-1 times.
+func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("table.AllocBatchAutoIncrementValue", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+	}
+	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
+	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
+	min, max, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(t.Meta().ID, uint64(N), increment, offset)
+	if err != nil {
+		return min, max, err
+	}
+	// SeekToFirstAutoIDUnSigned seeks to first autoID. Because AutoIncrement always allocate from 1,
+	// signed and unsigned value can be unified as the unsigned handle.
+	nr := int64(autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset)))
+	return nr, increment, nil
 }
 
 // PhysicalTable is an abstraction for two kinds of table representation: partition or non-partitioned table.
@@ -208,62 +266,12 @@ type PhysicalTable interface {
 type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
-	GetPartitionByRow(sessionctx.Context, []types.Datum) (Table, error)
+	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
 // Currently, it is assigned to tables.TableFromMeta in tidb package's init function.
-var TableFromMeta func(alloc autoid.Allocator, tblInfo *model.TableInfo) (Table, error)
+var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (Table, error)
 
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table
-
-// Table error codes.
-const (
-	codeGetDefaultFailed     = 1
-	codeIndexOutBound        = 2
-	codeUnsupportedOp        = 3
-	codeRowNotFound          = 4
-	codeTableStateCantNone   = 5
-	codeColumnStateCantNone  = 6
-	codeColumnStateNonPublic = 7
-	codeIndexStateCantNone   = 8
-	codeInvalidRecordKey     = 9
-
-	codeColumnCantNull     = mysql.ErrBadNull
-	codeUnknownColumn      = 1054
-	codeDuplicateColumn    = 1110
-	codeNoDefaultValue     = 1364
-	codeTruncateWrongValue = 1366
-	// MySQL error code, "Trigger creation context of table `%-.64s`.`%-.64s` is invalid".
-	// It may happen when inserting some data outside of all table partitions.
-
-	codeUnknownPartition         = mysql.ErrUnknownPartition
-	codeNoPartitionForGivenValue = mysql.ErrNoPartitionForGivenValue
-	codeLockOrActiveTransaction  = mysql.ErrLockOrActiveTransaction
-)
-
-// Slice is used for table sorting.
-type Slice []Table
-
-func (s Slice) Len() int { return len(s) }
-
-func (s Slice) Less(i, j int) bool {
-	return s[i].Meta().Name.O < s[j].Meta().Name.O
-}
-
-func (s Slice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
-
-func init() {
-	tableMySQLErrCodes := map[terror.ErrCode]uint16{
-		codeColumnCantNull:           mysql.ErrBadNull,
-		codeUnknownColumn:            mysql.ErrBadField,
-		codeDuplicateColumn:          mysql.ErrFieldSpecifiedTwice,
-		codeNoDefaultValue:           mysql.ErrNoDefaultForField,
-		codeTruncateWrongValue:       mysql.ErrTruncatedWrongValueForField,
-		codeUnknownPartition:         mysql.ErrUnknownPartition,
-		codeNoPartitionForGivenValue: mysql.ErrNoPartitionForGivenValue,
-		codeLockOrActiveTransaction:  mysql.ErrLockOrActiveTransaction,
-	}
-	terror.ErrClassToMySQLCodes[terror.ClassTable] = tableMySQLErrCodes
-}

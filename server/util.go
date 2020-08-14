@@ -43,7 +43,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
@@ -204,29 +203,28 @@ func dumpBinaryTime(dur time.Duration) (data []byte) {
 	return
 }
 
-func dumpBinaryDateTime(data []byte, t types.Time, loc *time.Location) ([]byte, error) {
-	if t.Type == mysql.TypeTimestamp && loc != nil {
-		// TODO: Consider time_zone variable.
-		t1, err := t.Time.GoTime(time.Local)
-		if err != nil {
-			return nil, errors.Errorf("FATAL: convert timestamp %v go time return error!", t.Time)
-		}
-		t.Time = types.FromGoTime(t1.In(loc))
-	}
-
-	year, mon, day := t.Time.Year(), t.Time.Month(), t.Time.Day()
-	switch t.Type {
+func dumpBinaryDateTime(data []byte, t types.Time) []byte {
+	year, mon, day := t.Year(), t.Month(), t.Day()
+	switch t.Type() {
 	case mysql.TypeTimestamp, mysql.TypeDatetime:
-		data = append(data, 11)
-		data = dumpUint16(data, uint16(year))
-		data = append(data, byte(mon), byte(day), byte(t.Time.Hour()), byte(t.Time.Minute()), byte(t.Time.Second()))
-		data = dumpUint32(data, uint32(t.Time.Microsecond()))
+		if t.IsZero() {
+			data = append(data, 0)
+		} else {
+			data = append(data, 11)
+			data = dumpUint16(data, uint16(year))
+			data = append(data, byte(mon), byte(day), byte(t.Hour()), byte(t.Minute()), byte(t.Second()))
+			data = dumpUint32(data, uint32(t.Microsecond()))
+		}
 	case mysql.TypeDate:
-		data = append(data, 4)
-		data = dumpUint16(data, uint16(year)) //year
-		data = append(data, byte(mon), byte(day))
+		if t.IsZero() {
+			data = append(data, 0)
+		} else {
+			data = append(data, 4)
+			data = dumpUint16(data, uint16(year)) //year
+			data = append(data, byte(mon), byte(day))
+		}
 	}
-	return data, nil
+	return data
 }
 
 func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte, error) {
@@ -262,11 +260,7 @@ func dumpBinaryRow(buffer []byte, columns []*ColumnInfo, row chunk.Row) ([]byte,
 			mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 			buffer = dumpLengthEncodedString(buffer, row.GetBytes(i))
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-			var err error
-			buffer, err = dumpBinaryDateTime(buffer, row.GetTime(i), nil)
-			if err != nil {
-				return buffer, err
-			}
+			buffer = dumpBinaryDateTime(buffer, row.GetTime(i))
 		case mysql.TypeDuration:
 			buffer = append(buffer, dumpBinaryTime(row.GetDuration(i, 0).Duration)...)
 		case mysql.TypeEnum:

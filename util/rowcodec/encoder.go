@@ -30,67 +30,75 @@ import (
 type Encoder struct {
 	row
 	tempColIDs []int64
-	values     []types.Datum
-	tempData   []byte
-	sc         *stmtctx.StatementContext
-}
-
-// NewEncoder creates a new Encoder with column IDs.
-func NewEncoder(colIDs []int64, sc *stmtctx.StatementContext) *Encoder {
-	return &Encoder{
-		tempColIDs: colIDs,
-		sc:         sc,
-	}
-}
-
-func (encoder *Encoder) reset() {
-	encoder.isLarge = false
-	encoder.numNotNullCols = 0
-	encoder.numNullCols = 0
-	encoder.data = encoder.data[:0]
-	encoder.values = encoder.values[:0]
+	values     []*types.Datum
+	// Enable indicates whether this encoder should be use.
+	Enable bool
 }
 
 // Encode encodes a row from a datums slice.
-func (encoder *Encoder) Encode(values []types.Datum, buf []byte) ([]byte, error) {
+func (encoder *Encoder) Encode(sc *stmtctx.StatementContext, colIDs []int64, values []types.Datum, buf []byte) ([]byte, error) {
 	encoder.reset()
-	encoder.values = append(encoder.values, values...)
-	for i, colID := range encoder.tempColIDs {
-		if colID > 255 {
-			encoder.isLarge = true
-		}
-		if values[i].IsNull() {
-			encoder.numNullCols++
-		} else {
-			encoder.numNotNullCols++
-		}
+	encoder.appendColVals(colIDs, values)
+	numCols, notNullIdx := encoder.reformatCols()
+	err := encoder.encodeRowCols(sc, numCols, notNullIdx)
+	if err != nil {
+		return nil, err
 	}
-	return encoder.build(buf)
+	return encoder.row.toBytes(buf[:0]), nil
 }
 
-func (encoder *Encoder) build(buf []byte) ([]byte, error) {
-	r := &encoder.row
-	// Separate null and not-null column IDs.
-	numCols := len(encoder.tempColIDs)
-	nullIdx := numCols - int(r.numNullCols)
-	notNullIdx := 0
-	if r.isLarge {
-		encoder.initColIDs32()
-		encoder.initOffsets32()
+func (encoder *Encoder) reset() {
+	encoder.large = false
+	encoder.numNotNullCols = 0
+	encoder.numNullCols = 0
+	encoder.data = encoder.data[:0]
+	encoder.tempColIDs = encoder.tempColIDs[:0]
+	encoder.values = encoder.values[:0]
+	encoder.offsets32 = encoder.offsets32[:0]
+	encoder.offsets = encoder.offsets[:0]
+}
+
+func (encoder *Encoder) appendColVals(colIDs []int64, values []types.Datum) {
+	for i, colID := range colIDs {
+		encoder.appendColVal(colID, &values[i])
+	}
+}
+
+func (encoder *Encoder) appendColVal(colID int64, d *types.Datum) {
+	if colID > 255 {
+		encoder.large = true
+	}
+	if d.IsNull() {
+		encoder.numNullCols++
 	} else {
-		encoder.initColIDs()
-		encoder.initOffsets()
+		encoder.numNotNullCols++
+	}
+	encoder.tempColIDs = append(encoder.tempColIDs, colID)
+	encoder.values = append(encoder.values, d)
+}
+
+func (encoder *Encoder) reformatCols() (numCols, notNullIdx int) {
+	r := &encoder.row
+	numCols = len(encoder.tempColIDs)
+	nullIdx := numCols - int(r.numNullCols)
+	notNullIdx = 0
+	if r.large {
+		r.initColIDs32()
+		r.initOffsets32()
+	} else {
+		r.initColIDs()
+		r.initOffsets()
 	}
 	for i, colID := range encoder.tempColIDs {
 		if encoder.values[i].IsNull() {
-			if r.isLarge {
+			if r.large {
 				r.colIDs32[nullIdx] = uint32(colID)
 			} else {
 				r.colIDs[nullIdx] = byte(colID)
 			}
 			nullIdx++
 		} else {
-			if r.isLarge {
+			if r.large {
 				r.colIDs32[notNullIdx] = uint32(colID)
 			} else {
 				r.colIDs[notNullIdx] = byte(colID)
@@ -99,7 +107,7 @@ func (encoder *Encoder) build(buf []byte) ([]byte, error) {
 			notNullIdx++
 		}
 	}
-	if r.isLarge {
+	if r.large {
 		largeNotNullSorter := (*largeNotNullSorter)(encoder)
 		sort.Sort(largeNotNullSorter)
 		if r.numNullCols > 0 {
@@ -114,203 +122,96 @@ func (encoder *Encoder) build(buf []byte) ([]byte, error) {
 			sort.Sort(smallNullSorter)
 		}
 	}
+	return
+}
+
+func (encoder *Encoder) encodeRowCols(sc *stmtctx.StatementContext, numCols, notNullIdx int) error {
+	r := &encoder.row
 	for i := 0; i < notNullIdx; i++ {
+		d := encoder.values[i]
 		var err error
-		r.data, err = encodeDatum(r.data, encoder.values[i], encoder.sc)
+		r.data, err = encodeValueDatum(sc, d, r.data)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return err
 		}
-		if len(r.data) > math.MaxUint16 && !r.isLarge {
-			// We need to convert the row to large row.
-			encoder.initColIDs32()
+		// handle convert to large
+		if len(r.data) > math.MaxUint16 && !r.large {
+			r.initColIDs32()
 			for j := 0; j < numCols; j++ {
 				r.colIDs32[j] = uint32(r.colIDs[j])
 			}
-			encoder.initOffsets32()
+			r.initOffsets32()
 			for j := 0; j <= i; j++ {
 				r.offsets32[j] = uint32(r.offsets[j])
 			}
-			r.isLarge = true
+			r.large = true
 		}
-		if r.isLarge {
+		if r.large {
 			r.offsets32[i] = uint32(len(r.data))
 		} else {
 			r.offsets[i] = uint16(len(r.data))
 		}
 	}
-	buf = append(buf, CodecVer)
-	flag := byte(0)
-	if r.isLarge {
-		flag = 1
-	}
-	buf = append(buf, flag)
-	buf = append(buf, byte(r.numNotNullCols), byte(r.numNotNullCols>>8))
-	buf = append(buf, byte(r.numNullCols), byte(r.numNullCols>>8))
-	if r.isLarge {
-		buf = append(buf, u32SliceToBytes(r.colIDs32)...)
-		buf = append(buf, u32SliceToBytes(r.offsets32)...)
-	} else {
-		buf = append(buf, r.colIDs...)
-		buf = append(buf, u16SliceToBytes(r.offsets)...)
-	}
-	buf = append(buf, r.data...)
-	return buf, nil
+	return nil
 }
 
-func encodeDatum(buf []byte, d types.Datum, sc *stmtctx.StatementContext) ([]byte, error) {
+// encodeValueDatum encodes one row datum entry into bytes.
+// due to encode as value, this method will flatten value type like tablecodec.flatten
+func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byte) (nBuffer []byte, err error) {
 	switch d.Kind() {
 	case types.KindInt64:
-		buf = encodeInt(buf, d.GetInt64())
+		buffer = encodeInt(buffer, d.GetInt64())
 	case types.KindUint64:
-		buf = encodeUint(buf, d.GetUint64())
+		buffer = encodeUint(buffer, d.GetUint64())
 	case types.KindString, types.KindBytes:
-		buf = append(buf, d.GetBytes()...)
-	case types.KindFloat32, types.KindFloat64:
-		buf = encodeUint(buf, uint64(math.Float64bits(d.GetFloat64())))
-	case types.KindMysqlDecimal:
-		var err error
-		buf, err = codec.EncodeDecimal(buf, d.GetMysqlDecimal(), d.Length(), d.Frac())
-		if terror.ErrorEqual(err, types.ErrTruncated) {
-			err = sc.HandleTruncate(err)
-		} else if terror.ErrorEqual(err, types.ErrOverflow) {
-			err = sc.HandleOverflow(err, err)
-		}
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+		buffer = append(buffer, d.GetBytes()...)
 	case types.KindMysqlTime:
+		// for mysql datetime, timestamp and date type
 		t := d.GetMysqlTime()
-		// Encoding timestamp need to consider timezone.
-		// If it's not in UTC, transform to UTC first.
-		if t.Type == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
-			err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
+		if t.Type() == mysql.TypeTimestamp && sc != nil && sc.TimeZone != time.UTC {
+			err = t.ConvertTimeZone(sc.TimeZone, time.UTC)
 			if err != nil {
-				return nil, errors.Trace(err)
+				return
 			}
 		}
-		v, err := t.ToPackedUint()
+		var v uint64
+		v, err = t.ToPackedUint()
 		if err != nil {
-			return nil, errors.Trace(err)
+			return
 		}
-		buf = encodeUint(buf, v)
+		buffer = encodeUint(buffer, v)
 	case types.KindMysqlDuration:
-		buf = encodeInt(buf, int64(d.GetMysqlDuration().Duration))
+		buffer = encodeInt(buffer, int64(d.GetMysqlDuration().Duration))
 	case types.KindMysqlEnum:
-		buf = encodeUint(buf, uint64(d.GetMysqlEnum().ToNumber()))
+		buffer = encodeUint(buffer, d.GetMysqlEnum().Value)
 	case types.KindMysqlSet:
-		buf = encodeUint(buf, uint64(d.GetMysqlSet().ToNumber()))
-	case types.KindMysqlBit, types.KindBinaryLiteral:
-		val, err := types.BinaryLiteral(d.GetBytes()).ToInt(sc)
+		buffer = encodeUint(buffer, d.GetMysqlSet().Value)
+	case types.KindBinaryLiteral, types.KindMysqlBit:
+		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
+		var val uint64
+		val, err = d.GetBinaryLiteral().ToInt(sc)
 		if err != nil {
-			terror.Log(errors.Trace(err))
+			return
 		}
-		buf = encodeUint(buf, val)
+		buffer = encodeUint(buffer, val)
+	case types.KindFloat32, types.KindFloat64:
+		buffer = codec.EncodeFloat(buffer, d.GetFloat64())
+	case types.KindMysqlDecimal:
+		buffer, err = codec.EncodeDecimal(buffer, d.GetMysqlDecimal(), d.Length(), d.Frac())
+		if err != nil && sc != nil {
+			if terror.ErrorEqual(err, types.ErrTruncated) {
+				err = sc.HandleTruncate(err)
+			} else if terror.ErrorEqual(err, types.ErrOverflow) {
+				err = sc.HandleOverflow(err, err)
+			}
+		}
 	case types.KindMysqlJSON:
 		j := d.GetMysqlJSON()
-		buf = append(buf, j.TypeCode)
-		buf = append(buf, j.Value...)
+		buffer = append(buffer, j.TypeCode)
+		buffer = append(buffer, j.Value...)
 	default:
-		return nil, errors.Errorf("unsupport encode type %d", d.Kind())
+		err = errors.Errorf("unsupport encode type %d", d.Kind())
 	}
-	return buf, nil
-}
-
-func (encoder *Encoder) initColIDs() {
-	numCols := int(encoder.numNotNullCols + encoder.numNullCols)
-	if cap(encoder.colIDs) >= numCols {
-		encoder.colIDs = encoder.colIDs[:numCols]
-	} else {
-		encoder.colIDs = make([]byte, numCols)
-	}
-}
-
-func (encoder *Encoder) initColIDs32() {
-	numCols := int(encoder.numNotNullCols + encoder.numNullCols)
-	if cap(encoder.colIDs32) >= numCols {
-		encoder.colIDs32 = encoder.colIDs32[:numCols]
-	} else {
-		encoder.colIDs32 = make([]uint32, numCols)
-	}
-}
-
-func (encoder *Encoder) initOffsets() {
-	if cap(encoder.offsets) >= int(encoder.numNotNullCols) {
-		encoder.offsets = encoder.offsets[:encoder.numNotNullCols]
-	} else {
-		encoder.offsets = make([]uint16, encoder.numNotNullCols)
-	}
-}
-
-func (encoder *Encoder) initOffsets32() {
-	if cap(encoder.offsets32) >= int(encoder.numNotNullCols) {
-		encoder.offsets32 = encoder.offsets32[:encoder.numNotNullCols]
-	} else {
-		encoder.offsets32 = make([]uint32, encoder.numNotNullCols)
-	}
-}
-
-/*
-	We define several sorters to avoid switch cost in sort functions.
-*/
-
-type largeNotNullSorter Encoder
-
-func (s *largeNotNullSorter) Less(i, j int) bool {
-	return s.colIDs32[i] < s.colIDs32[j]
-}
-
-func (s *largeNotNullSorter) Len() int {
-	return int(s.numNotNullCols)
-}
-
-func (s *largeNotNullSorter) Swap(i, j int) {
-	s.colIDs32[i], s.colIDs32[j] = s.colIDs32[j], s.colIDs32[i]
-	s.values[i], s.values[j] = s.values[j], s.values[i]
-}
-
-type smallNotNullSorter Encoder
-
-func (s *smallNotNullSorter) Less(i, j int) bool {
-	return s.colIDs[i] < s.colIDs[j]
-}
-
-func (s *smallNotNullSorter) Len() int {
-	return int(s.numNotNullCols)
-}
-
-func (s *smallNotNullSorter) Swap(i, j int) {
-	s.colIDs[i], s.colIDs[j] = s.colIDs[j], s.colIDs[i]
-	s.values[i], s.values[j] = s.values[j], s.values[i]
-}
-
-type smallNullSorter Encoder
-
-func (s *smallNullSorter) Less(i, j int) bool {
-	nullCols := s.colIDs[s.numNotNullCols:]
-	return nullCols[i] < nullCols[j]
-}
-
-func (s *smallNullSorter) Len() int {
-	return int(s.numNullCols)
-}
-
-func (s *smallNullSorter) Swap(i, j int) {
-	nullCols := s.colIDs[s.numNotNullCols:]
-	nullCols[i], nullCols[j] = nullCols[j], nullCols[i]
-}
-
-type largeNullSorter Encoder
-
-func (s *largeNullSorter) Less(i, j int) bool {
-	nullCols := s.colIDs32[s.numNotNullCols:]
-	return nullCols[i] < nullCols[j]
-}
-
-func (s *largeNullSorter) Len() int {
-	return int(s.numNullCols)
-}
-
-func (s *largeNullSorter) Swap(i, j int) {
-	nullCols := s.colIDs32[s.numNotNullCols:]
-	nullCols[i], nullCols[j] = nullCols[j], nullCols[i]
+	nBuffer = buffer
+	return
 }

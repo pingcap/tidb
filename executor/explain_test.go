@@ -14,6 +14,7 @@
 package executor_test
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -24,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite1) TestExplainPriviliges(c *C) {
+func (s *testSuite1) TestExplainPrivileges(c *C) {
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
@@ -36,7 +37,6 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 	tk.MustExec("create table t (id int)")
 	tk.MustExec("create view v as select * from t")
 	tk.MustExec(`create user 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err = session.CreateSession4Test(s.store)
@@ -45,7 +45,6 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 	tk1.Se = se
 
 	tk.MustExec(`grant select on explaindatabase.v to 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "explaindatabase"))
 
 	tk1.MustExec("use explaindatabase")
@@ -54,11 +53,9 @@ func (s *testSuite1) TestExplainPriviliges(c *C) {
 	c.Assert(err.Error(), Equals, plannercore.ErrViewNoExplain.Error())
 
 	tk.MustExec(`grant show view on explaindatabase.v to 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 	tk1.MustQuery("explain select * from v")
 
 	tk.MustExec(`revoke select on explaindatabase.v from 'explain'@'%'`)
-	tk.MustExec(`flush privileges`)
 
 	err = tk1.ExecToErr("explain select * from v")
 	c.Assert(err.Error(), Equals, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", "explain", "%", "v").Error())
@@ -114,26 +111,29 @@ func (s *testSuite1) TestExplainAnalyzeMemory(c *C) {
 
 	s.checkMemoryInfo(c, tk, "explain analyze select * from t order by v")
 	s.checkMemoryInfo(c, tk, "explain analyze select * from t order by v limit 5")
-	s.checkMemoryInfo(c, tk, "explain analyze select /*+ TIDB_HJ(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1")
-	s.checkMemoryInfo(c, tk, "explain analyze select /*+ TIDB_SMJ(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
-	s.checkMemoryInfo(c, tk, "explain analyze select /*+ TIDB_INLJ(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ MERGE_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkMemoryInfo(c, tk, "explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
 	s.checkMemoryInfo(c, tk, "explain analyze select sum(k) from t group by v")
 	s.checkMemoryInfo(c, tk, "explain analyze select sum(v) from t group by k")
 	s.checkMemoryInfo(c, tk, "explain analyze select * from t")
 	s.checkMemoryInfo(c, tk, "explain analyze select k from t use index(k)")
 	s.checkMemoryInfo(c, tk, "explain analyze select * from t use index(k)")
+	s.checkMemoryInfo(c, tk, "explain analyze select v+k from t")
 }
 
 func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
-	memCol := 5
-	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp"}
+	memCol := 6
+	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection", "Selection", "Agg"}
 	rows := tk.MustQuery(sql).Rows()
 	for _, row := range rows {
 		strs := make([]string, len(row))
 		for i, c := range row {
 			strs[i] = c.(string)
 		}
-		if strings.Contains(strs[2], "cop") {
+		if strings.Contains(strs[3], "cop") {
 			continue
 		}
 
@@ -153,7 +153,42 @@ func (s *testSuite1) checkMemoryInfo(c *C, tk *testkit.TestKit, sql string) {
 	}
 }
 
-func (s *testSuite1) TestExplainAnalyzeExecutionInfo(c *C) {
+func (s *testSuite1) TestMemoryAndDiskUsageAfterClose(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v int, k int, key(k))")
+	batch := 128
+	limit := tk.Se.GetSessionVars().MaxChunkSize*2 + 10
+	var buf bytes.Buffer
+	for i := 0; i < limit; {
+		buf.Reset()
+		_, err := buf.WriteString("insert into t values ")
+		c.Assert(err, IsNil)
+		for j := 0; j < batch && i < limit; i, j = i+1, j+1 {
+			if j > 0 {
+				_, err = buf.WriteString(", ")
+				c.Assert(err, IsNil)
+			}
+			_, err = buf.WriteString(fmt.Sprintf("(%v,%v)", i, i))
+			c.Assert(err, IsNil)
+		}
+		tk.MustExec(buf.String())
+	}
+	SQLs := []string{"select v+abs(k) from t",
+		"select v from t where abs(v) > 0",
+		"select v from t order by v",
+		"select count(v) from t",            // StreamAgg
+		"select count(v) from t group by v", // HashAgg
+	}
+	for _, sql := range SQLs {
+		tk.MustQuery(sql)
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.BytesConsumed(), Equals, int64(0))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(0))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.DiskTracker.BytesConsumed(), Equals, int64(0))
+	}
+}
+
+func (s *testSuite2) TestExplainAnalyzeExecutionInfo(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (v int, k int, key(k))")
@@ -161,9 +196,11 @@ func (s *testSuite1) TestExplainAnalyzeExecutionInfo(c *C) {
 
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t order by v")
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t order by v limit 5")
-	s.checkExecutionInfo(c, tk, "explain analyze select /*+ TIDB_HJ(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1")
-	s.checkExecutionInfo(c, tk, "explain analyze select /*+ TIDB_SMJ(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
-	s.checkExecutionInfo(c, tk, "explain analyze select /*+ TIDB_INLJ(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.v = t2.v+1")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ MERGE_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k+1")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ INL_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
+	s.checkExecutionInfo(c, tk, "explain analyze select /*+ INL_MERGE_JOIN(t1, t2) */ t1.k from t t1, t t2 where t1.k = t2.k and t1.v=1")
 	s.checkExecutionInfo(c, tk, "explain analyze select sum(k) from t group by v")
 	s.checkExecutionInfo(c, tk, "explain analyze select sum(v) from t group by k")
 	s.checkExecutionInfo(c, tk, "explain analyze select * from t")
@@ -187,7 +224,7 @@ func (s *testSuite1) TestExplainAnalyzeExecutionInfo(c *C) {
 	tk.MustExec("drop table if exists lineitem")
 }
 
-func (s *testSuite1) checkExecutionInfo(c *C, tk *testkit.TestKit, sql string) {
+func (s *testSuite2) checkExecutionInfo(c *C, tk *testkit.TestKit, sql string) {
 	executionInfoCol := 4
 	rows := tk.MustQuery(sql).Rows()
 	for _, row := range rows {
@@ -197,5 +234,27 @@ func (s *testSuite1) checkExecutionInfo(c *C, tk *testkit.TestKit, sql string) {
 		}
 
 		c.Assert(strs[executionInfoCol], Not(Equals), "time:0s, loops:0, rows:0")
+	}
+}
+
+func (s *testSuite2) TestExplainAnalyzeActRowsNotEmpty(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index (a))")
+	tk.MustExec("insert into t values (1, 1)")
+
+	s.checkActRowsNotEmpty(c, tk, "explain analyze select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333")
+}
+
+func (s *testSuite2) checkActRowsNotEmpty(c *C, tk *testkit.TestKit, sql string) {
+	actRowsCol := 2
+	rows := tk.MustQuery(sql).Rows()
+	for _, row := range rows {
+		strs := make([]string, len(row))
+		for i, c := range row {
+			strs[i] = c.(string)
+		}
+
+		c.Assert(strs[actRowsCol], Not(Equals), "")
 	}
 }

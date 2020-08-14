@@ -7,36 +7,36 @@ analyze table t1, t2;
 set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
-id	count	task	operator info
-IndexHashJoin_32	5.00	root	inner join, inner:IndexLookUp_23, outer key:Column#4, inner key:Column#1
-├─IndexLookUp_23	5.00	root	
-│ ├─Selection_22	5.00	cop	not(isnull(Column#1))
-│ │ └─IndexScan_20	5.00	cop	table:t1, index:a, range: decided by [eq(Column#1, Column#4)], keep order:false
-│ └─TableScan_21	5.00	cop	table:t1, keep order:false
-└─TableReader_35	1.00	root	data:Selection_34
-  └─Selection_34	1.00	cop	not(isnull(Column#4))
-    └─TableScan_33	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
+id	estRows	task	access object	operator info
+IndexJoin_25	5.00	root		inner join, inner:IndexLookUp_24, outer key:test.t2.a, inner key:test.t1.a
+├─TableReader_43(Build)	1.00	root		data:Selection_42
+│ └─Selection_42	1.00	cop[tikv]		not(isnull(test.t2.a))
+│   └─TableFullScan_41	1.00	cop[tikv]	table:t2	keep order:false
+└─IndexLookUp_24(Probe)	5.00	root		
+  ├─Selection_23(Build)	5.00	cop[tikv]		not(isnull(test.t1.a))
+  │ └─IndexRangeScan_21	5.00	cop[tikv]	table:t1, index:idx(a)	range: decided by [eq(test.t1.a, test.t2.a)], keep order:false
+  └─TableRowIDScan_22(Probe)	5.00	cop[tikv]	table:t1	keep order:false
 explain select * from t1 join t2 on t1.a=t2.a;
-id	count	task	operator info
-Projection_6	5.00	root	Column#1, Column#2, Column#4, Column#5
-└─HashRightJoin_22	5.00	root	inner join, inner:TableReader_33, equal:[eq(Column#4, Column#1)]
-  ├─TableReader_33	1.00	root	data:Selection_32
-  │ └─Selection_32	1.00	cop	not(isnull(Column#4))
-  │   └─TableScan_31	1.00	cop	table:t2, range:[-inf,+inf], keep order:false
-  └─TableReader_39	5.00	root	data:Selection_38
-    └─Selection_38	5.00	cop	not(isnull(Column#1))
-      └─TableScan_37	5.00	cop	table:t1, range:[-inf,+inf], keep order:false
+id	estRows	task	access object	operator info
+Projection_6	5.00	root		test.t1.a, test.t1.b, test.t2.a, test.t2.b
+└─HashJoin_37	5.00	root		inner join, equal:[eq(test.t2.a, test.t1.a)]
+  ├─TableReader_48(Build)	1.00	root		data:Selection_47
+  │ └─Selection_47	1.00	cop[tikv]		not(isnull(test.t2.a))
+  │   └─TableFullScan_46	1.00	cop[tikv]	table:t2	keep order:false
+  └─TableReader_54(Probe)	5.00	root		data:Selection_53
+    └─Selection_53	5.00	cop[tikv]		not(isnull(test.t1.a))
+      └─TableFullScan_52	5.00	cop[tikv]	table:t1	keep order:false
 drop table if exists t1, t2;
 create table t1(a int not null, b int not null);
 create table t2(a int not null, b int not null, key a(a));
 set @@tidb_opt_insubq_to_join_and_agg=0;
 explain select /*+ TIDB_INLJ(t2@sel_2) */ * from t1 where t1.a in (select t2.a from t2);
-id	count	task	operator info
-IndexMergeJoin_14	8000.00	root	semi join, inner:IndexReader_12, outer key:Column#1, inner key:Column#4
-├─TableReader_18	10000.00	root	data:TableScan_17
-│ └─TableScan_17	10000.00	cop	table:t1, range:[-inf,+inf], keep order:false, stats:pseudo
-└─IndexReader_12	1.25	root	index:IndexScan_11
-  └─IndexScan_11	1.25	cop	table:t2, index:a, range: decided by [eq(Column#4, Column#1)], keep order:true, stats:pseudo
+id	estRows	task	access object	operator info
+IndexJoin_10	8000.00	root		semi join, inner:IndexReader_9, outer key:test.t1.a, inner key:test.t2.a
+├─TableReader_18(Build)	10000.00	root		data:TableFullScan_17
+│ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexReader_9(Probe)	1.25	root		index:IndexRangeScan_8
+  └─IndexRangeScan_8	1.25	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 set @@tidb_opt_insubq_to_join_and_agg=1;
@@ -44,12 +44,11 @@ drop table if exists t1, t2;
 create table t1(a int not null, b int not null, key a(a));
 create table t2(a int not null, b int not null, key a(a));
 explain select /*+ TIDB_INLJ(t1) */ * from t1 where t1.a in (select t2.a from t2);
-id	count	task	operator info
-Projection_8	10000.00	root	Column#1, Column#2
-└─IndexMergeJoin_17	10000.00	root	inner join, inner:IndexLookUp_15, outer key:Column#4, inner key:Column#1
-  ├─IndexLookUp_15	1.25	root	
-  │ ├─IndexScan_13	1.25	cop	table:t1, index:a, range: decided by [eq(Column#1, Column#4)], keep order:true, stats:pseudo
-  │ └─TableScan_14	1.25	cop	table:t1, keep order:false, stats:pseudo
-  └─StreamAgg_24	8000.00	root	group by:Column#4, funcs:firstrow(Column#4)
-    └─IndexReader_37	10000.00	root	index:IndexScan_36
-      └─IndexScan_36	10000.00	cop	table:t2, index:a, range:[NULL,+inf], keep order:true, stats:pseudo
+id	estRows	task	access object	operator info
+IndexJoin_13	10000.00	root		inner join, inner:IndexLookUp_12, outer key:test.t2.a, inner key:test.t1.a
+├─StreamAgg_26(Build)	8000.00	root		group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a
+│ └─IndexReader_39	10000.00	root		index:IndexFullScan_38
+│   └─IndexFullScan_38	10000.00	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo
+└─IndexLookUp_12(Probe)	1.25	root		
+  ├─IndexRangeScan_10(Build)	1.25	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo
+  └─TableRowIDScan_11(Probe)	1.25	cop[tikv]	table:t1	keep order:false, stats:pseudo

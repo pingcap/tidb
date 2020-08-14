@@ -18,8 +18,12 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-func (s *testSuite4) TestDirtyTransaction(c *C) {
+func (s *testSuite7) TestDirtyTransaction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, index idx_b (b));")
@@ -92,9 +96,57 @@ func (s *testSuite4) TestDirtyTransaction(c *C) {
 	tk.MustQuery("select * from t where c1 < 5").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select c2 from t").Check(testkit.Rows("1"))
 	tk.MustExec("commit")
+
+	// Test general virtual column
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int as (a+1), c int as (b+1), index(c));")
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1, default, default), (2, default, default), (3, default, default);")
+	// TableReader
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3", "2 3 4", "3 4 5"))
+	tk.MustQuery("select b from t;").Check(testkit.Rows("2", "3", "4"))
+	tk.MustQuery("select c from t;").Check(testkit.Rows("3", "4", "5"))
+	tk.MustQuery("select a from t;").Check(testkit.Rows("1", "2", "3"))
+	// IndexReader
+	tk.MustQuery("select c from t where c > 3;").Check(testkit.Rows("4", "5"))
+	tk.MustQuery("select c from t order by c;").Check(testkit.Rows("3", "4", "5"))
+	// IndexLookup
+	tk.MustQuery("select * from t where c > 3;").Check(testkit.Rows("2 3 4", "3 4 5"))
+	tk.MustQuery("select a, b from t use index(c) where c > 3;").Check(testkit.Rows("2 3", "3 4"))
+	tk.MustQuery("select a, c from t use index(c) where c > 3;").Check(testkit.Rows("2 4", "3 5"))
+	tk.MustQuery("select b, c from t use index(c) where c > 3;").Check(testkit.Rows("3 4", "4 5"))
+	// Delete and update some data
+	tk.MustExec("delete from t where c > 4;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3", "2 3 4"))
+	tk.MustExec("update t set a = 3 where b > 1;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3 4 5", "3 4 5"))
+	tk.MustExec("commit;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3 4 5", "3 4 5"))
+	// Again with non-empty table
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t values (1, default, default), (2, default, default), (3, default, default);")
+	// TableReader
+	tk.MustQuery("select * from t;").Check(testkit.Rows("3 4 5", "3 4 5", "1 2 3", "2 3 4", "3 4 5"))
+	tk.MustQuery("select b from t;").Check(testkit.Rows("4", "4", "2", "3", "4"))
+	tk.MustQuery("select c from t;").Check(testkit.Rows("3", "4", "5", "5", "5"))
+	tk.MustQuery("select a from t;").Check(testkit.Rows("3", "3", "1", "2", "3"))
+	// IndexReader
+	tk.MustQuery("select c from t where c > 3;").Check(testkit.Rows("4", "5", "5", "5"))
+	tk.MustQuery("select c from t order by c;").Check(testkit.Rows("3", "4", "5", "5", "5"))
+	// IndexLookup
+	tk.MustQuery("select * from t where c > 3;").Check(testkit.Rows("3 4 5", "3 4 5", "2 3 4", "3 4 5"))
+	tk.MustQuery("select a, b from t use index(c) where c > 3;").Check(testkit.Rows("2 3", "3 4", "3 4", "3 4"))
+	tk.MustQuery("select a, c from t use index(c) where c > 3;").Check(testkit.Rows("2 4", "3 5", "3 5", "3 5"))
+	tk.MustQuery("select b, c from t use index(c) where c > 3;").Check(testkit.Rows("3 4", "4 5", "4 5", "4 5"))
+	// Delete and update some data
+	tk.MustExec("delete from t where c > 4;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3", "2 3 4"))
+	tk.MustExec("update t set a = 3 where b > 2;")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 3", "3 4 5"))
+	tk.MustExec("commit;")
 }
 
-func (s *testSuite4) TestUnionScanWithCastCondition(c *C) {
+func (s *testSuite7) TestUnionScanWithCastCondition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table ta (a varchar(20))")
@@ -107,7 +159,7 @@ func (s *testSuite4) TestUnionScanWithCastCondition(c *C) {
 	tk.MustExec("rollback")
 }
 
-func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
+func (s *testSuite7) TestUnionScanForMemBufferReader(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -233,4 +285,50 @@ func (s *testSuite4) TestUnionScanForMemBufferReader(c *C) {
 	tk.MustQuery("select * from t1 use index(idx);").Check(testkit.Rows("1 1 2", "2 2 2"))
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t1;")
+
+	// Test update with 2 index, one untouched, the other index is touched.
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int,b int,c int,unique index idx1(a), index idx2(b));")
+	tk.MustExec("insert into t1 values (1, 1, 1);")
+	tk.MustExec("update t1 set b=b+1 where a=1;")
+	tk.MustQuery("select * from t1 use index(idx2);").Check(testkit.Rows("1 2 1"))
+	tk.MustExec("admin check table t1;")
+}
+
+func (s *testSuite7) TestForUpdateUntouchedIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	checkFunc := func() {
+		tk.MustExec("begin")
+		tk.MustExec("insert into t values ('a', 1), ('b', 3), ('a', 2) on duplicate key update b = b + 1;")
+		tk.MustExec("commit")
+		tk.MustExec("admin check table t")
+
+		// Test for autocommit
+		tk.MustExec("set autocommit=0")
+		tk.MustExec("insert into t values ('a', 1), ('b', 3), ('a', 2) on duplicate key update b = b + 1;")
+		tk.MustExec("set autocommit=1")
+		tk.MustExec("admin check table t")
+	}
+
+	// Test for primary key.
+	tk.MustExec("create table t (a varchar(10) primary key,b int)")
+	checkFunc()
+
+	// Test for unique key.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10),b int, unique index(a))")
+	checkFunc()
+
+	// Test for on duplicate update also conflict too.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int,b int, unique index(a))")
+	tk.MustExec("begin")
+	_, err := tk.Exec("insert into t values (1, 1), (2, 2), (1, 3) on duplicate key update a = a + 1;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'a'")
+	tk.MustExec("commit")
+	tk.MustExec("admin check table t")
 }

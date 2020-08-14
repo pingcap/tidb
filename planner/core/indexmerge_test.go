@@ -20,8 +20,11 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testIndexMergeSuite{})
@@ -31,15 +34,24 @@ type testIndexMergeSuite struct {
 
 	is  infoschema.InfoSchema
 	ctx sessionctx.Context
+
+	testdata testutil.TestData
 }
 
 func (s *testIndexMergeSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{MockSignedTable(), MockView()})
 	s.ctx = MockContext()
 	s.Parser = parser.New()
+	var err error
+	s.testdata, err = testutil.LoadTestSuiteData("testdata", "index_merge_suite")
+	c.Assert(err, IsNil)
 }
 
-func getIndexMergePathDigest(paths []*accessPath, startIndex int) string {
+func (s *testIndexMergeSuite) TearDownSuite(c *C) {
+	c.Assert(s.testdata.GenerateOutputIfNeeded(), IsNil)
+}
+
+func getIndexMergePathDigest(paths []*util.AccessPath, startIndex int) string {
 	if len(paths) == startIndex {
 		return "[]"
 	}
@@ -50,18 +62,18 @@ func getIndexMergePathDigest(paths []*accessPath, startIndex int) string {
 		}
 		path := paths[i]
 		idxMergeDisgest += "{Idxs:["
-		for j := 0; j < len(path.partialIndexPaths); j++ {
+		for j := 0; j < len(path.PartialIndexPaths); j++ {
 			if j > 0 {
 				idxMergeDisgest += ","
 			}
-			idxMergeDisgest += path.partialIndexPaths[j].index.Name.L
+			idxMergeDisgest += path.PartialIndexPaths[j].Index.Name.L
 		}
 		idxMergeDisgest += "],TbFilters:["
-		for j := 0; j < len(path.tableFilters); j++ {
+		for j := 0; j < len(path.TableFilters); j++ {
 			if j > 0 {
 				idxMergeDisgest += ","
 			}
-			idxMergeDisgest += path.tableFilters[j].String()
+			idxMergeDisgest += path.TableFilters[j].String()
 		}
 		idxMergeDisgest += "]}"
 	}
@@ -69,51 +81,23 @@ func getIndexMergePathDigest(paths []*accessPath, startIndex int) string {
 	return idxMergeDisgest
 }
 
-func (s *testIndexMergeSuite) TestIndexMergePathGenerateion(c *C) {
+func (s *testIndexMergeSuite) TestIndexMergePathGeneration(c *C) {
 	defer testleak.AfterTest(c)()
-	tests := []struct {
-		sql            string
-		idxMergeDigest string
-	}{
-		{
-			sql:            "select * from t",
-			idxMergeDigest: "[]",
-		},
-		{
-			sql:            "select * from t where c < 1",
-			idxMergeDigest: "[]",
-		},
-		{
-			sql:            "select * from t where c < 1 or f > 2",
-			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[]}]",
-		},
-		{
-			sql: "select * from t where (c < 1 or f > 2) and (c > 5 or f < 7)",
-			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(Column#3, 5), lt(Column#9, 7))]}," +
-				"{Idxs:[c_d_e,f_g],TbFilters:[or(lt(Column#3, 1), gt(Column#9, 2))]}]",
-		},
-		{
-			sql: "select * from t where (c < 1 or f > 2) and (c > 5 or f < 7) and (c < 1 or g > 2)",
-			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(Column#3, 5), lt(Column#9, 7)),or(lt(Column#3, 1), gt(Column#10, 2))]}," +
-				"{Idxs:[c_d_e,f_g],TbFilters:[or(lt(Column#3, 1), gt(Column#9, 2)),or(lt(Column#3, 1), gt(Column#10, 2))]}," +
-				"{Idxs:[c_d_e,g],TbFilters:[or(lt(Column#3, 1), gt(Column#9, 2)),or(gt(Column#3, 5), lt(Column#9, 7))]}]",
-		},
-		{
-			sql: "select * from t where (c < 1 or f > 2) and (c > 5 or f < 7) and (e < 1 or f > 2)",
-			idxMergeDigest: "[{Idxs:[c_d_e,f_g],TbFilters:[or(gt(Column#3, 5), lt(Column#9, 7)),or(lt(Column#5, 1), gt(Column#9, 2))]}," +
-				"{Idxs:[c_d_e,f_g],TbFilters:[or(lt(Column#3, 1), gt(Column#9, 2)),or(lt(Column#5, 1), gt(Column#9, 2))]}]",
-		},
-	}
+	var input, output []string
+	s.testdata.GetTestCases(c, &input, &output)
 	ctx := context.TODO()
-	for i, tc := range tests {
-		comment := Commentf("case:%v sql:%s", i, tc.sql)
-		stmt, err := s.ParseOneStmt(tc.sql, "", "")
+	for i, tc := range input {
+		comment := Commentf("case:%v sql:%s", i, tc)
+		stmt, err := s.ParseOneStmt(tc, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
-			c.Assert(err.Error(), Equals, tc.idxMergeDigest, comment)
+			s.testdata.OnRecord(func() {
+				output[i] = err.Error()
+			})
+			c.Assert(err.Error(), Equals, output[i], comment)
 			continue
 		}
 		c.Assert(err, IsNil)
@@ -132,8 +116,12 @@ func (s *testIndexMergeSuite) TestIndexMergePathGenerateion(c *C) {
 		}
 		ds.ctx.GetSessionVars().SetEnableIndexMerge(true)
 		idxMergeStartIndex := len(ds.possibleAccessPaths)
-		_, err = lp.recursiveDeriveStats()
+		_, err = lp.recursiveDeriveStats(nil)
 		c.Assert(err, IsNil)
-		c.Assert(getIndexMergePathDigest(ds.possibleAccessPaths, idxMergeStartIndex), Equals, tc.idxMergeDigest, comment)
+		result := getIndexMergePathDigest(ds.possibleAccessPaths, idxMergeStartIndex)
+		s.testdata.OnRecord(func() {
+			output[i] = result
+		})
+		c.Assert(result, Equals, output[i], comment)
 	}
 }

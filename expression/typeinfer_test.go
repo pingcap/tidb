@@ -24,14 +24,14 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testleak"
 	"golang.org/x/net/context"
 )
 
-var _ = Suite(&testInferTypeSuite{})
+var _ = SerialSuites(&testInferTypeSuite{})
 
 type typeInferTestCase struct {
 	sql     string
@@ -47,12 +47,10 @@ type testInferTypeSuite struct {
 }
 
 func (s *testInferTypeSuite) SetUpSuite(c *C) {
-	testleak.BeforeTest()
 	s.Parser = parser.New()
 }
 
 func (s *testInferTypeSuite) TearDownSuite(c *C) {
-	testleak.AfterTest(c)()
 }
 
 func (s *testInferTypeSuite) TestInferType(c *C) {
@@ -127,9 +125,12 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 	tests = append(tests, s.createTestCase4JSONFuncs()...)
 	tests = append(tests, s.createTestCase4MiscellaneousFunc()...)
 
+	sctx := testKit.Se.(sessionctx.Context)
+	c.Assert(sctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, mysql.DefaultCharset), IsNil)
+	c.Assert(sctx.GetSessionVars().SetSystemVar(variable.CollationConnection, mysql.DefaultCollationName), IsNil)
+
 	ctx := context.Background()
 	for _, tt := range tests {
-		sctx := testKit.Se.(sessionctx.Context)
 		sql := "select " + tt.sql + " from t"
 		comment := Commentf("for %s", sql)
 		stmt, err := s.ParseOneStmt(sql, "", "")
@@ -141,7 +142,7 @@ func (s *testInferTypeSuite) TestInferType(c *C) {
 		is := domain.GetDomain(sctx).InfoSchema()
 		err = plannercore.Preprocess(sctx, stmt, is)
 		c.Assert(err, IsNil, comment)
-		p, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, is)
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmt, is)
 		c.Assert(err, IsNil, comment)
 		tp := p.Schema().Columns[0].RetType
 
@@ -222,15 +223,15 @@ func (s *testInferTypeSuite) createTestCase4Columns() []typeInferTestCase {
 		{"c_timestamp_d", mysql.TypeTimestamp, charset.CharsetBin, mysql.BinaryFlag, 19, 0},
 		{"c_char       ", mysql.TypeString, charset.CharsetUTF8MB4, 0, 20, 0}, // TODO: flag should be BinaryFlag
 		{"c_bchar      ", mysql.TypeString, charset.CharsetUTF8MB4, mysql.BinaryFlag, 20, 0},
-		{"c_varchar    ", mysql.TypeVarchar, charset.CharsetUTF8MB4, 0, 20, 0},                   // TODO: BinaryFlag, tp should be TypeVarString
-		{"c_bvarchar   ", mysql.TypeVarchar, charset.CharsetUTF8MB4, mysql.BinaryFlag, 20, 0},    // TODO: BinaryFlag, tp should be TypeVarString
-		{"c_text_d     ", mysql.TypeBlob, charset.CharsetUTF8MB4, 0, 65535, 0},                   // TODO: BlobFlag, BinaryFlag
-		{"c_btext_d    ", mysql.TypeBlob, charset.CharsetUTF8MB4, mysql.BinaryFlag, 65535, 0},    // TODO: BlobFlag, BinaryFlag
-		{"c_binary     ", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, 0},         // TODO: BinaryFlag
-		{"c_varbinary  ", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 20, 0},        // TODO: BinaryFlag, tp should be TypeVarString
-		{"c_blob_d     ", mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag, 65535, 0},        // TODO: BlobFlag, BinaryFlag
-		{"c_set        ", mysql.TypeSet, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, 0},  // TODO: SetFlag, BinaryFlag, Flen should be 5
-		{"c_enum       ", mysql.TypeEnum, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, 0}, // TODO: EnumFlag, BinaryFlag, Flen should be 1
+		{"c_varchar    ", mysql.TypeVarchar, charset.CharsetUTF8MB4, 0, 20, 0},                // TODO: BinaryFlag, tp should be TypeVarString
+		{"c_bvarchar   ", mysql.TypeVarchar, charset.CharsetUTF8MB4, mysql.BinaryFlag, 20, 0}, // TODO: BinaryFlag, tp should be TypeVarString
+		{"c_text_d     ", mysql.TypeBlob, charset.CharsetUTF8MB4, 0, 65535, 0},                // TODO: BlobFlag, BinaryFlag
+		{"c_btext_d    ", mysql.TypeBlob, charset.CharsetUTF8MB4, mysql.BinaryFlag, 65535, 0}, // TODO: BlobFlag, BinaryFlag
+		{"c_binary     ", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, 0},      // TODO: BinaryFlag
+		{"c_varbinary  ", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 20, 0},     // TODO: BinaryFlag, tp should be TypeVarString
+		{"c_blob_d     ", mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag, 65535, 0},     // TODO: BlobFlag, BinaryFlag
+		{"c_set        ", mysql.TypeSet, charset.CharsetUTF8MB4, 0, 5, 0},                     // TODO: SetFlag, BinaryFlag
+		{"c_enum       ", mysql.TypeEnum, charset.CharsetUTF8MB4, 0, 1, 0},                    // TODO: EnumFlag, BinaryFlag
 	}
 }
 
@@ -381,22 +382,22 @@ func (s *testInferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"char(c_blob_d     )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 4, types.UnspecifiedLength},
 		{"char(c_set        )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 4, types.UnspecifiedLength},
 		{"char(c_enum       )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 4, types.UnspecifiedLength},
-		{"char(c_int_d      , c_int_d       using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_bigint_d   , c_bigint_d    using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_float_d    , c_float_d     using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_double_d   , c_double_d    using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_decimal    , c_decimal     using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_datetime   , c_datetime    using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_time_d     , c_time_d      using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_timestamp_d, c_timestamp_d using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_char       , c_char        using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_varchar    , c_varchar     using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_text_d     , c_text_d      using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_binary     , c_binary      using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_varbinary  , c_varbinary   using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_blob_d     , c_blob_d      using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_set        , c_set         using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
-		{"char(c_enum       , c_enum        using utf8)", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 8, types.UnspecifiedLength},
+		{"char(c_int_d      , c_int_d       using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_bigint_d   , c_bigint_d    using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_float_d    , c_float_d     using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_double_d   , c_double_d    using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_decimal    , c_decimal     using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_datetime   , c_datetime    using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_time_d     , c_time_d      using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_timestamp_d, c_timestamp_d using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_char       , c_char        using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_varchar    , c_varchar     using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_text_d     , c_text_d      using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_binary     , c_binary      using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_varbinary  , c_varbinary   using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_blob_d     , c_blob_d      using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_set        , c_set         using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
+		{"char(c_enum       , c_enum        using utf8)", mysql.TypeVarString, charset.CharsetUTF8, 0, 8, types.UnspecifiedLength},
 
 		{"instr(c_char, c_binary  )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 		{"instr(c_char, c_char    )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
@@ -413,8 +414,8 @@ func (s *testInferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 		{"reverse(c_binary     )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
 		{"reverse(c_varbinary  )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
 		{"reverse(c_blob_d     )", mysql.TypeVarString, charset.CharsetBin, mysql.BinaryFlag, 65535, types.UnspecifiedLength},
-		{"reverse(c_set        )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, types.UnspecifiedLength},
-		{"reverse(c_enum       )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"reverse(c_set        )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 5, types.UnspecifiedLength},
+		{"reverse(c_enum       )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 1, types.UnspecifiedLength},
 
 		{"oct(c_int_d      )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
 		{"oct(c_bigint_d   )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
@@ -727,15 +728,15 @@ func (s *testInferTypeSuite) createTestCase4ArithmeticFuncs() []typeInferTestCas
 
 		{"c_int_d / c_int_d", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
 		{"c_int_d / c_bigint_d", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
-		{"c_int_d / c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, mysql.NotFixedDec},
+		{"c_int_d / c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"c_int_d / c_time_d", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 15, 4},
-		{"c_int_d / c_double_d", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, mysql.NotFixedDec},
+		{"c_int_d / c_double_d", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"c_int_d / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 18, 4},
 		{"c_datetime / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 29, 6}, // TODO: Flen should be 25.
 		{"c_bigint_d / c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 27, 4}, // TODO: Flen should be 28.
-		{"c_double_d / c_decimal", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, mysql.NotFixedDec},
-		{"c_double_d / c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, mysql.NotFixedDec},
-		{"c_double_d / c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, mysql.NotFixedDec},
+		{"c_double_d / c_decimal", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
+		{"c_double_d / c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
+		{"c_double_d / c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 
 		{"c_int_d DIV c_int_d", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"c_uint_d DIV c_uint_d", mysql.TypeLonglong, charset.CharsetBin, mysql.UnsignedFlag | mysql.BinaryFlag, mysql.MaxIntWidth, 0},
@@ -775,7 +776,7 @@ func (s *testInferTypeSuite) createTestCase4ArithmeticFuncs() []typeInferTestCas
 		{"c_bigint_d MOD c_decimal", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 20, 3},
 		{"c_double_d MOD c_decimal", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 		{"c_double_d MOD c_char", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
-		{"c_double_d MOD c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"c_double_d MOD c_enum", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 	}
 }
 
@@ -834,6 +835,7 @@ func (s *testInferTypeSuite) createTestCase4Aggregations() []typeInferTestCase {
 		{"avg(1.2e2)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"avg(c_char)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxRealWidth, types.UnspecifiedLength},
 		{"group_concat(c_int_d)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, 0},
+		{"count(c_decimal)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.NotNullFlag, 21, 0},
 	}
 }
 
@@ -844,6 +846,7 @@ func (s *testInferTypeSuite) createTestCase4InfoFunc() []typeInferTestCase {
 		{"found_rows()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
 		{"database()", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
 		{"current_user()", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
+		{"current_role()", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
 		{"user()", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
 		{"connection_id()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
 		{"version()", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
@@ -1007,20 +1010,20 @@ func (s *testInferTypeSuite) createTestCase4CompareFuncs() []typeInferTestCase {
 		{"isnull(c_set        )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 		{"isnull(c_enum       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 1, 0},
 
-		{"nullif(c_int_d      , 123)", mysql.TypeLong, charset.CharsetBin, mysql.BinaryFlag, 11, 0}, // TODO: tp should be TypeLonglong
+		{"nullif(c_int_d      , 123)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 11, 0},
 		{"nullif(c_bigint_d   , 123)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, 20, 0},
-		{"nullif(c_float_d    , 123)", mysql.TypeFloat, charset.CharsetBin, mysql.BinaryFlag, 12, types.UnspecifiedLength}, // TODO: tp should be TypeDouble
+		{"nullif(c_float_d    , 123)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 12, types.UnspecifiedLength},
 		{"nullif(c_double_d   , 123)", mysql.TypeDouble, charset.CharsetBin, mysql.BinaryFlag, 22, types.UnspecifiedLength},
 		{"nullif(c_decimal    , 123)", mysql.TypeNewDecimal, charset.CharsetBin, mysql.BinaryFlag, 6, 3},
-		{"nullif(c_datetime   , 123)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 22, 2},  // TODO: tp should be TypeVarString, no binary flag
-		{"nullif(c_time_d     , 123)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, 0},  // TODO: tp should be TypeVarString, no binary flag
-		{"nullif(c_timestamp_d, 123)", mysql.TypeTimestamp, charset.CharsetBin, mysql.BinaryFlag, 19, 0}, // TODO: tp should be TypeVarString, no binary flag
-		{"nullif(c_char       , 123)", mysql.TypeString, charset.CharsetUTF8MB4, 0, 20, types.UnspecifiedLength},
-		{"nullif(c_varchar    , 123)", mysql.TypeVarchar, charset.CharsetUTF8MB4, 0, 20, types.UnspecifiedLength},            // TODO: tp should be TypeVarString
-		{"nullif(c_text_d     , 123)", mysql.TypeBlob, charset.CharsetUTF8MB4, 0, 65535, types.UnspecifiedLength},            // TODO: tp should be TypeMediumBlob
-		{"nullif(c_binary     , 123)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},  // TODO: tp should be TypeVarString
-		{"nullif(c_varbinary  , 123)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength}, // TODO: tp should be TypeVarString
-		{"nullif(c_blob_d     , 123)", mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag, 65535, types.UnspecifiedLength}, // TODO: tp should be TypeVarString
+		{"nullif(c_datetime   , 123)", mysql.TypeVarchar, charset.CharsetUTF8MB4, 0, 22, types.UnspecifiedLength},
+		{"nullif(c_time_d     , 123)", mysql.TypeVarchar, charset.CharsetUTF8MB4, 0, 10, types.UnspecifiedLength},
+		{"nullif(c_timestamp_d, 123)", mysql.TypeVarchar, charset.CharsetUTF8MB4, 0, 19, types.UnspecifiedLength},
+		{"nullif(c_char       , 123)", mysql.TypeString, charset.CharsetUTF8MB4, mysql.BinaryFlag, 20, types.UnspecifiedLength},
+		{"nullif(c_varchar    , 123)", mysql.TypeVarchar, charset.CharsetUTF8MB4, mysql.BinaryFlag, 20, types.UnspecifiedLength}, // TODO: tp should be TypeVarString
+		{"nullif(c_text_d     , 123)", mysql.TypeBlob, charset.CharsetUTF8MB4, mysql.BinaryFlag, 65535, types.UnspecifiedLength}, // TODO: tp should be TypeMediumBlob
+		{"nullif(c_binary     , 123)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},      // TODO: tp should be TypeVarString
+		{"nullif(c_varbinary  , 123)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},     // TODO: tp should be TypeVarString
+		{"nullif(c_blob_d     , 123)", mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag, 65535, types.UnspecifiedLength},     // TODO: tp should be TypeVarString
 
 		{"interval(c_int_d, c_int_d, c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"interval(c_int_d, c_float_d, c_double_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
@@ -1125,8 +1128,8 @@ func (s *testInferTypeSuite) createTestCase4Miscellaneous() []typeInferTestCase 
 		{"any_value(c_binary)", mysql.TypeString, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
 		{"any_value(c_varbinary)", mysql.TypeVarchar, charset.CharsetBin, mysql.BinaryFlag, 20, types.UnspecifiedLength},
 		{"any_value(c_blob_d)", mysql.TypeBlob, charset.CharsetBin, mysql.BinaryFlag, 65535, types.UnspecifiedLength},
-		{"any_value(c_set)", mysql.TypeSet, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, types.UnspecifiedLength},
-		{"any_value(c_enum)", mysql.TypeEnum, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"any_value(c_set)", mysql.TypeSet, charset.CharsetUTF8MB4, 0, 5, types.UnspecifiedLength},
+		{"any_value(c_enum)", mysql.TypeEnum, charset.CharsetUTF8MB4, 0, 1, types.UnspecifiedLength},
 	}
 }
 
@@ -1922,7 +1925,7 @@ func (s *testInferTypeSuite) createTestCase4JSONFuncs() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"json_type(c_json)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 51, types.UnspecifiedLength},
 		// TODO: Flen of json_unquote doesn't follow MySQL now.
-		{"json_unquote(c_json)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 0, types.UnspecifiedLength},
+		{"json_unquote(c_json)", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, mysql.MaxFieldVarCharLength, types.UnspecifiedLength},
 		{"json_extract(c_json, '')", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
 		{"json_set(c_json, '', 0)", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},
 		{"json_insert(c_json, '', 0)", mysql.TypeJSON, charset.CharsetUTF8MB4, mysql.BinaryFlag, mysql.MaxBlobWidth, 0},

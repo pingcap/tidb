@@ -73,5 +73,119 @@
         "explain select * from t t1 join t t2 where t1.b = t2.b and t2.b is null"
       ]
     ]
+  },
+  {
+    "name": "TestTiFlashCostModel",
+    "cases": [
+      [
+        "desc select * from t"
+      ],
+      [
+        "desc select /*+ read_from_storage(tikv[t]) */ * from t"
+      ],
+      [
+        "desc select * from t where t.a = 1 or t.a = 2"
+      ],
+      [
+        "set @@session.tidb_isolation_read_engines='tiflash'",
+        "desc select * from t where t.a = 1 or t.a = 2"
+      ]
+    ]
+  },
+  {
+    "name": "TestStraightJoin",
+    "cases": [
+      "explain select straight_join * from t1, t2, t3, t4",
+      "explain select * from t1 straight_join t2 straight_join t3 straight_join t4",
+      "explain select straight_join * from t1, t2, t3, t4 where t1.a=t4.a"
+    ]
+  },
+  {
+    "name": "TestNullCount",
+    "cases": [
+      "explain select * from t where a is null",
+      "explain select * from t use index(idx) where a is null",
+      "explain select * from t where b = 1",
+      "explain select * from t where b < 1"
+    ]
+  },
+  {
+    "name": "TestCorrelatedEstimation",
+    "cases": [
+      "explain select t.c in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t",
+      "explain select (select concat(t1.a, \",\", t1.b) from t t1 where t1.a=t.a and t1.c=t.c) from t"
+    ]
+  },
+  {
+    "name": "TestEmptyTable",
+    "cases": [
+      "select * from t where t.c1 <= 50",
+      "select * from t where c1 in (select c1 from t1)",
+      "select * from t, t1 where t.c1 = t1.c1",
+      "select * from t limit 0"
+    ]
+  },
+  {
+    "name": "TestIndexRead",
+    "cases": [
+      "select count(*) from t group by e",
+      "select count(*) from t where e <= 10 group by e",
+      "select count(*) from t where e <= 50",
+      "select count(*) from t where c > '1' group by b",
+      "select count(*) from t where e = 1 group by b",
+      "select count(*) from t where e > 1 group by b",
+      "select count(e) from t where t.b <= 20",
+      "select count(e) from t where t.b <= 30",
+      "select count(e) from t where t.b <= 40",
+      "select count(e) from t where t.b <= 50",
+      "select count(e) from t where t.b <= 100000000000",
+      "select * from t where t.b <= 40",
+      "select * from t where t.b <= 50",
+      "select * from t where t.b <= 10000000000",
+      // test panic
+      "select * from t where 1 and t.b <= 50",
+      "select * from t where t.b <= 100 order by t.a limit 1",
+      "select * from t where t.b <= 1 order by t.a limit 10",
+      "select * from t use index(b) where b = 1 order by a",
+      // test datetime
+      "select * from t where d < cast('1991-09-05' as datetime)",
+      // test timestamp
+      "select * from t where ts < '1991-09-05'",
+      "select sum(a) from t1 use index(idx) where a = 3 and b = 100000 group by a limit 1"
+    ]
+  },
+  {
+    "name": "TestAnalyze",
+    "cases": [
+      "analyze table t3",
+      // Test analyze full table.
+      "select * from t where t.a <= 2",
+      "select b from t where t.b < 2",
+      "select * from t where t.a = 1 and t.b <= 2",
+      // Test not analyzed table.
+      "select * from t1 where t1.a <= 2",
+      "select * from t1 where t1.a = 1 and t1.b <= 2",
+      // Test analyze single index.
+      "select * from t2 where t2.a <= 2",
+      // Test analyze all index.
+      "analyze table t2 index",
+      // Test partitioned table.
+      "select * from t4 where t4.a <= 2",
+      "select b from t4 where t4.b < 2",
+      "select * from t4 where t4.a = 1 and t4.b <= 2"
+      // TODO: Refine these tests in the future.
+      // "select * from t2 where t2.a = 1 and t2.b <= 2",
+    ]
+  },
+  {
+    "name": "TestIndexEqualUnknown",
+    "cases": [
+      // 7639902 is out of range for the analyzed histogram, and we know from the data writer that for each value
+      // of `a` in the table, there are 6 rows in average. Before this PR, the row count estimation is 150k, which is
+      // far from the real value.
+      "explain select * from t where a = 7639902",
+      // Should choose `primary` index instead of index `b`.
+      "explain select c, b from t where a = 7639902 order by b asc limit 6"
+    ]
   }
 ]

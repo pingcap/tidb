@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/pd/client"
+	"github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -63,12 +63,12 @@ type RawKVClient struct {
 }
 
 // NewRawKVClient creates a client with PD cluster addrs.
-func NewRawKVClient(pdAddrs []string, security config.Security) (*RawKVClient, error) {
+func NewRawKVClient(pdAddrs []string, security config.Security, opts ...pd.ClientOption) (*RawKVClient, error) {
 	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{
 		CAPath:   security.ClusterSSLCA,
 		CertPath: security.ClusterSSLCert,
 		KeyPath:  security.ClusterSSLKey,
-	})
+	}, opts...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -129,7 +129,7 @@ func (c *RawKVClient) BatchGet(keys [][]byte) ([][]byte, error) {
 		tikvRawkvCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
 	}()
 
-	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	resp, err := c.sendBatchReq(bo, keys, tikvrpc.CmdRawBatchGet)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -196,7 +196,7 @@ func (c *RawKVClient) BatchPut(keys, values [][]byte) error {
 			return errors.New("empty value is not supported")
 		}
 	}
-	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	err := c.sendBatchPut(bo, keys, values)
 	return errors.Trace(err)
 }
@@ -230,7 +230,7 @@ func (c *RawKVClient) BatchDelete(keys [][]byte) error {
 		tikvRawkvCmdHistogramWithBatchDelete.Observe(time.Since(start).Seconds())
 	}()
 
-	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	resp, err := c.sendBatchReq(bo, keys, tikvrpc.CmdRawBatchDelete)
 	if err != nil {
 		return errors.Trace(err)
@@ -280,9 +280,9 @@ func (c *RawKVClient) DeleteRange(startKey []byte, endKey []byte) error {
 
 // Scan queries continuous kv pairs in range [startKey, endKey), up to limit pairs.
 // If endKey is empty, it means unbounded.
-// If you want to exclude the startKey or include the endKey, append a '\0' to the key. For example, to scan
+// If you want to exclude the startKey or include the endKey, push a '\0' to the key. For example, to scan
 // (startKey, endKey], you can write:
-// `Scan(append(startKey, '\0'), append(endKey, '\0'), limit)`.
+// `Scan(push(startKey, '\0'), push(endKey, '\0'), limit)`.
 func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
 	defer func() { tikvRawkvCmdHistogramWithRawScan.Observe(time.Since(start).Seconds()) }()
@@ -291,7 +291,7 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
 	}
 
-	for len(keys) < limit {
+	for len(keys) < limit && (len(endKey) == 0 || bytes.Compare(startKey, endKey) < 0) {
 		req := tikvrpc.NewRequest(tikvrpc.CmdRawScan, &kvrpcpb.RawScanRequest{
 			StartKey: startKey,
 			EndKey:   endKey,
@@ -320,9 +320,9 @@ func (c *RawKVClient) Scan(startKey, endKey []byte, limit int) (keys [][]byte, v
 // ReverseScan queries continuous kv pairs in range [endKey, startKey), up to limit pairs.
 // Direction is different from Scan, upper to lower.
 // If endKey is empty, it means unbounded.
-// If you want to include the startKey or exclude the endKey, append a '\0' to the key. For example, to scan
+// If you want to include the startKey or exclude the endKey, push a '\0' to the key. For example, to scan
 // (endKey, startKey], you can write:
-// `ReverseScan(append(startKey, '\0'), append(endKey, '\0'), limit)`.
+// `ReverseScan(push(startKey, '\0'), push(endKey, '\0'), limit)`.
 // It doesn't support Scanning from "", because locating the last Region is not yet implemented.
 func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]byte, values [][]byte, err error) {
 	start := time.Now()
@@ -334,7 +334,7 @@ func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]
 		return nil, nil, errors.Trace(ErrMaxScanLimitExceeded)
 	}
 
-	for len(keys) < limit {
+	for len(keys) < limit && bytes.Compare(startKey, endKey) > 0 {
 		req := tikvrpc.NewRequest(tikvrpc.CmdRawScan, &kvrpcpb.RawScanRequest{
 			StartKey: startKey,
 			EndKey:   endKey,
@@ -362,7 +362,7 @@ func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]
 }
 
 func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*tikvrpc.Response, *KeyLocation, error) {
-	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
 		var loc *KeyLocation
@@ -502,7 +502,7 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 // We can't use sendReq directly, because we need to know the end of the region before we send the request
 // TODO: Is there any better way to avoid duplicating code with func `sendReq` ?
 func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvrpc.Response, []byte, error) {
-	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
 		loc, err := c.regionCache.LocateKey(bo, startKey)
@@ -540,7 +540,7 @@ func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvr
 }
 
 func (c *RawKVClient) sendBatchPut(bo *Backoffer, keys, values [][]byte) error {
-	keyToValue := make(map[string][]byte)
+	keyToValue := make(map[string][]byte, len(keys))
 	for i, key := range keys {
 		keyToValue[string(key)] = values[i]
 	}

@@ -99,7 +99,7 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 		writeError(w, err)
 		return
 	}
-	t1, err := t.Time.GoTime(time.Local)
+	t1, err := t.GoTime(time.Local)
 	if err != nil {
 		writeError(w, err)
 		return

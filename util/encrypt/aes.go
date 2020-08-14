@@ -52,7 +52,6 @@ func (x *ecbEncrypter) CryptBlocks(dst, src []byte) {
 		src = src[x.blockSize:]
 		dst = dst[x.blockSize:]
 	}
-	return
 }
 
 // newECBEncrypter creates an AES encrypter with ecb mode.
@@ -215,7 +214,7 @@ func AESDecryptWithCFB(cryptStr, key []byte, iv []byte) ([]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	cfb := cipher.NewCFBDecrypter(cb, []byte(iv))
+	cfb := cipher.NewCFBDecrypter(cb, iv)
 	dst := make([]byte, len(cryptStr))
 	cfb.XORKeyStream(dst, cryptStr)
 	return dst, nil
@@ -237,6 +236,7 @@ func aesDecrypt(cryptStr []byte, mode cipher.BlockMode) ([]byte, error) {
 }
 
 // aesEncrypt encrypts data using AES.
+// NOTE: if len(str)<cap(str), the memory in str will be modified
 func aesEncrypt(str []byte, mode cipher.BlockMode) ([]byte, error) {
 	blockSize := mode.BlockSize()
 	// The str arguments can be any length, and padding is automatically added to

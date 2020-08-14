@@ -18,7 +18,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/client"
+	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -28,61 +28,61 @@ type codecPDClient struct {
 
 // GetRegion encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
-func (c *codecPDClient) GetRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *codecPDClient) GetRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	encodedKey := codec.EncodeBytes([]byte(nil), key)
-	region, peer, err := c.Client.GetRegion(ctx, encodedKey)
-	return processRegionResult(region, peer, err)
+	region, err := c.Client.GetRegion(ctx, encodedKey)
+	return processRegionResult(region, err)
 }
 
-func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte) (*metapb.Region, *metapb.Peer, error) {
+func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte) (*pd.Region, error) {
 	encodedKey := codec.EncodeBytes([]byte(nil), key)
-	region, peer, err := c.Client.GetPrevRegion(ctx, encodedKey)
-	return processRegionResult(region, peer, err)
+	region, err := c.Client.GetPrevRegion(ctx, encodedKey)
+	return processRegionResult(region, err)
 }
 
 // GetRegionByID encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
-func (c *codecPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*metapb.Region, *metapb.Peer, error) {
-	region, peer, err := c.Client.GetRegionByID(ctx, regionID)
-	return processRegionResult(region, peer, err)
+func (c *codecPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*pd.Region, error) {
+	region, err := c.Client.GetRegionByID(ctx, regionID)
+	return processRegionResult(region, err)
 }
 
-func (c *codecPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+func (c *codecPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*pd.Region, error) {
 	startKey = codec.EncodeBytes([]byte(nil), startKey)
 	if len(endKey) > 0 {
 		endKey = codec.EncodeBytes([]byte(nil), endKey)
 	}
 
-	regions, peers, err := c.Client.ScanRegions(ctx, startKey, endKey, limit)
+	regions, err := c.Client.ScanRegions(ctx, startKey, endKey, limit)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	for _, region := range regions {
 		if region != nil {
-			err = decodeRegionMetaKey(region)
+			err = decodeRegionMetaKeyInPlace(region.Meta)
 			if err != nil {
-				return nil, nil, errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 		}
 	}
-	return regions, peers, nil
+	return regions, nil
 }
 
-func processRegionResult(region *metapb.Region, peer *metapb.Peer, err error) (*metapb.Region, *metapb.Peer, error) {
+func processRegionResult(region *pd.Region, err error) (*pd.Region, error) {
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	if region == nil {
-		return nil, nil, nil
+	if region == nil || region.Meta == nil {
+		return nil, nil
 	}
-	err = decodeRegionMetaKey(region)
+	err = decodeRegionMetaKeyInPlace(region.Meta)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	return region, peer, nil
+	return region, nil
 }
 
-func decodeRegionMetaKey(r *metapb.Region) error {
+func decodeRegionMetaKeyInPlace(r *metapb.Region) error {
 	if len(r.StartKey) != 0 {
 		_, decoded, err := codec.DecodeBytes(r.StartKey, nil)
 		if err != nil {
@@ -98,4 +98,23 @@ func decodeRegionMetaKey(r *metapb.Region) error {
 		r.EndKey = decoded
 	}
 	return nil
+}
+
+func decodeRegionMetaKeyWithShallowCopy(r *metapb.Region) (*metapb.Region, error) {
+	nr := *r
+	if len(r.StartKey) != 0 {
+		_, decoded, err := codec.DecodeBytes(r.StartKey, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		nr.StartKey = decoded
+	}
+	if len(r.EndKey) != 0 {
+		_, decoded, err := codec.DecodeBytes(r.EndKey, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		nr.EndKey = decoded
+	}
+	return &nr, nil
 }

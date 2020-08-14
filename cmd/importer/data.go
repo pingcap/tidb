@@ -72,21 +72,12 @@ func (d *datum) nextInt64() int64 {
 	d.Lock()
 	defer d.Unlock()
 
-	if d.remains <= 0 {
-		d.intValue += d.step
-		d.remains = d.repeats
-	}
 	if d.useRange {
 		d.intValue = mathutil.MinInt64(d.intValue, d.maxIntValue)
 		d.intValue = mathutil.MaxInt64(d.intValue, d.minIntValue)
 	}
 	d.updateRemains()
 	return d.intValue
-}
-
-func (d *datum) nextFloat64() float64 {
-	data := d.nextInt64()
-	return float64(data)
 }
 
 func (d *datum) nextString(n int) string {
@@ -122,10 +113,6 @@ func (d *datum) nextTime() string {
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
 	}
-	if d.remains <= 0 {
-		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
-		d.remains = d.repeats
-	}
 	d.updateRemains()
 	return fmt.Sprintf("%02d:%02d:%02d", d.timeValue.Hour(), d.timeValue.Minute(), d.timeValue.Second())
 }
@@ -137,10 +124,6 @@ func (d *datum) nextDate() string {
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
 	}
-	if d.remains <= 0 {
-		d.timeValue = d.timeValue.AddDate(0, 0, int(d.step))
-		d.remains = d.repeats
-	}
 	d.updateRemains()
 	return fmt.Sprintf("%04d-%02d-%02d", d.timeValue.Year(), d.timeValue.Month(), d.timeValue.Day())
 }
@@ -151,10 +134,6 @@ func (d *datum) nextTimestamp() string {
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	}
-	if d.remains <= 0 {
-		d.timeValue = d.timeValue.Add(time.Duration(d.step) * time.Second)
-		d.remains = d.repeats
 	}
 	d.updateRemains()
 	return fmt.Sprintf("%04d-%02d-%02d %02d:%02d:%02d",
@@ -168,10 +147,6 @@ func (d *datum) nextYear() string {
 
 	if d.timeValue.IsZero() {
 		d.timeValue = time.Now()
-	}
-	if d.remains <= 0 {
-		d.timeValue = d.timeValue.AddDate(int(d.step), 0, 0)
-		d.remains = d.repeats
 	}
 	d.updateRemains()
 	return fmt.Sprintf("%04d", d.timeValue.Year())

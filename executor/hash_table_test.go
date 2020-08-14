@@ -26,35 +26,42 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func (s *pkgTestSuite) TestRowHashMap(c *C) {
-	m := newRowHashMap(0)
-	m.Put(1, chunk.RowPtr{ChkIdx: 1, RowIdx: 1})
-	c.Check(m.Get(1), DeepEquals, []chunk.RowPtr{{ChkIdx: 1, RowIdx: 1}})
+func (s *pkgTestSuite) testHashTables(c *C) {
+	var ht baseHashTable
+	test := func() {
+		ht.Put(1, chunk.RowPtr{ChkIdx: 1, RowIdx: 1})
+		c.Check(ht.Get(1), DeepEquals, []chunk.RowPtr{{ChkIdx: 1, RowIdx: 1}})
 
-	rawData := map[uint64][]chunk.RowPtr{}
-	for i := uint64(0); i < 10; i++ {
-		for j := uint64(0); j < initialEntrySliceLen*i; j++ {
-			rawData[i] = append(rawData[i], chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
-		}
-	}
-	m = newRowHashMap(0)
-	// put all rawData into m vertically
-	for j := uint64(0); j < initialEntrySliceLen*9; j++ {
-		for i := 9; i >= 0; i-- {
-			i := uint64(i)
-			if !(j < initialEntrySliceLen*i) {
-				break
+		rawData := map[uint64][]chunk.RowPtr{}
+		for i := uint64(0); i < 10; i++ {
+			for j := uint64(0); j < initialEntrySliceLen*i; j++ {
+				rawData[i] = append(rawData[i], chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
 			}
-			m.Put(i, rawData[i][j])
 		}
+		// put all rawData into ht vertically
+		for j := uint64(0); j < initialEntrySliceLen*9; j++ {
+			for i := 9; i >= 0; i-- {
+				i := uint64(i)
+				if !(j < initialEntrySliceLen*i) {
+					break
+				}
+				ht.Put(i, rawData[i][j])
+			}
+		}
+		// check
+		totalCount := 0
+		for i := uint64(0); i < 10; i++ {
+			totalCount += len(rawData[i])
+			c.Check(ht.Get(i), DeepEquals, rawData[i])
+		}
+		c.Check(ht.Len(), Equals, uint64(totalCount))
 	}
-	// check
-	totalCount := 0
-	for i := uint64(0); i < 10; i++ {
-		totalCount += len(rawData[i])
-		c.Check(m.Get(i), DeepEquals, rawData[i])
-	}
-	c.Check(m.Len(), Equals, totalCount)
+	// test unsafeHashTable
+	ht = newUnsafeHashTable(0)
+	test()
+	// test ConcurrentMapHashTable
+	ht = newConcurrentMapHashTable()
+	test()
 }
 
 func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
@@ -111,22 +118,30 @@ func (h hashCollision) Sum(b []byte) []byte               { panic("not implement
 func (h hashCollision) Size() int                         { panic("not implemented") }
 func (h hashCollision) BlockSize() int                    { panic("not implemented") }
 
-func (s *pkgTestSuite) TestHashRowContainer(c *C) {
+func (s *pkgTestSerialSuite) TestHashRowContainer(c *C) {
 	hashFunc := func() hash.Hash64 {
 		return fnv.New64()
 	}
-	s.testHashRowContainer(c, hashFunc, false)
-	s.testHashRowContainer(c, hashFunc, true)
+	rowContainer := s.testHashRowContainer(c, hashFunc, false)
+	c.Assert(rowContainer.stat.probeCollision, Equals, 0)
+	// On windows time.Now() is imprecise, the elapse time may equal 0
+	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
+
+	rowContainer = s.testHashRowContainer(c, hashFunc, true)
+	c.Assert(rowContainer.stat.probeCollision, Equals, 0)
+	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
 
 	h := &hashCollision{count: 0}
 	hashFuncCollision := func() hash.Hash64 {
 		return h
 	}
-	s.testHashRowContainer(c, hashFuncCollision, false)
+	rowContainer = s.testHashRowContainer(c, hashFuncCollision, false)
 	c.Assert(h.count > 0, IsTrue)
+	c.Assert(rowContainer.stat.probeCollision > 0, IsTrue)
+	c.Assert(rowContainer.stat.buildTableElapse >= 0, IsTrue)
 }
 
-func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, spill bool) {
+func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, spill bool) *hashRowContainer {
 	sctx := mock.NewContext()
 	var err error
 	numRows := 10
@@ -144,21 +159,20 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	}
 	rowContainer := newHashRowContainer(sctx, 0, hCtx)
 	tracker := rowContainer.GetMemTracker()
-	tracker.SetLabel(innerResultLabel)
+	tracker.SetLabel(buildSideResultLabel)
 	if spill {
-		rowContainer.ActionSpill().Action(tracker)
 		tracker.SetBytesLimit(1)
+		rowContainer.rowContainer.ActionSpillForTest().Action(tracker)
 	}
-	err = rowContainer.PutChunk(chk0)
+	err = rowContainer.PutChunk(chk0, nil)
 	c.Assert(err, IsNil)
-	err = rowContainer.PutChunk(chk1)
+	err = rowContainer.PutChunk(chk1, nil)
 	c.Assert(err, IsNil)
-
-	c.Assert(rowContainer.alreadySpilled(), Equals, spill)
-	c.Assert(rowContainer.alreadySpilledSafe(), Equals, spill)
+	rowContainer.ActionSpill().(*chunk.SpillDiskAction).WaitForTest()
+	c.Assert(rowContainer.alreadySpilledSafeForTest(), Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() == 0, Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() > 0, Equals, !spill)
-	if rowContainer.alreadySpilled() {
+	if rowContainer.alreadySpilledSafeForTest() {
 		c.Assert(rowContainer.GetDiskTracker(), NotNil)
 		c.Assert(rowContainer.GetDiskTracker().BytesConsumed() > 0, Equals, true)
 	}
@@ -171,9 +185,10 @@ func (s *pkgTestSuite) testHashRowContainer(c *C, hashFunc func() hash.Hash64, s
 	}
 	probeCtx.hasNull = make([]bool, 1)
 	probeCtx.hashVals = append(hCtx.hashVals, hashFunc())
-	matched, err := rowContainer.GetMatchedRows(probeRow, probeCtx)
+	matched, _, err := rowContainer.GetMatchedRowsAndPtrs(hCtx.hashVals[1].Sum64(), probeRow, probeCtx)
 	c.Assert(err, IsNil)
 	c.Assert(len(matched), Equals, 2)
 	c.Assert(matched[0].GetDatumRow(colTypes), DeepEquals, chk0.GetRow(1).GetDatumRow(colTypes))
 	c.Assert(matched[1].GetDatumRow(colTypes), DeepEquals, chk1.GetRow(1).GetDatumRow(colTypes))
+	return rowContainer
 }

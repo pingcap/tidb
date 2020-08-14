@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,13 +28,16 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/table"
@@ -61,7 +65,7 @@ PARTITION BY RANGE ( a ) (
 	}
 	tk.MustExec("analyze table t")
 
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	pi := table.Meta().GetPartitionInfo()
@@ -88,7 +92,7 @@ PARTITION BY RANGE ( a ) (
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
 	}
 	tk.MustExec("alter table t analyze partition p0")
-	is = executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is = infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	pi = table.Meta().GetPartitionInfo()
@@ -116,6 +120,35 @@ func (s *testSuite1) TestAnalyzeReplicaReadFollower(c *C) {
 	tk.MustExec("analyze table t")
 }
 
+func (s *testSuite1) TestClusterIndexAnalyze(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_cluster_index_analyze;")
+	tk.MustExec("create database test_cluster_index_analyze;")
+	tk.MustExec("use test_cluster_index_analyze;")
+	tk.MustExec("set @@tidb_enable_clustered_index=1;")
+
+	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
+	}
+	tk.MustExec("analyze table t;")
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t (a varchar(255), b int, c float, primary key(c, a));")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t values (?, ?, ?)", strconv.Itoa(i), i, i)
+	}
+	tk.MustExec("analyze table t;")
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("create table t (a char(10), b decimal(5, 3), c int, primary key(a, c, b));")
+	for i := 0; i < 100; i++ {
+		tk.MustExec("insert into t values (?, ?, ?)", strconv.Itoa(i), i, i)
+	}
+	tk.MustExec("analyze table t;")
+	tk.MustExec("drop table t;")
+}
+
 func (s *testSuite1) TestAnalyzeRestrict(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -138,7 +171,7 @@ func (s *testSuite1) TestAnalyzeParameters(c *C) {
 
 	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
 	tk.MustExec("analyze table t with 30 samples")
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -169,7 +202,7 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	tk.MustExec(fmt.Sprintf("insert into t values ('%s')", value))
 
 	tk.MustExec("analyze table t")
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
@@ -178,27 +211,28 @@ func (s *testSuite1) TestAnalyzeTooLongColumns(c *C) {
 	c.Assert(tbl.Columns[1].TotColSize, Equals, int64(65559))
 }
 
-func (s *testSuite1) TestAnalyzeFastSample(c *C) {
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
+func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
+	var cls cluster.Cluster
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			cls = c
+		}),
 	)
 	c.Assert(err, IsNil)
+	defer store.Close()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
 	executor.RandSeed = 123
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int, index index_b(b))")
-	for i := 0; i < 60; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tblInfo := tbl.Meta()
@@ -206,17 +240,20 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 
 	// construct 5 regions split by {12, 24, 36, 48}
 	splitKeys := generateTableSplitKeyForInt(tid, []int{12, 24, 36, 48})
-	manipulateCluster(cluster, splitKeys)
+	manipulateCluster(cls, splitKeys)
 
-	var pkCol *model.ColumnInfo
+	for i := 0; i < 60; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
+	}
+
+	handleCols := core.BuildHandleColsForAnalyze(tk.Se, tblInfo)
 	var colsInfo []*model.ColumnInfo
 	var indicesInfo []*model.IndexInfo
 	for _, col := range tblInfo.Columns {
-		if tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			pkCol = col
-		} else {
-			colsInfo = append(colsInfo, col)
+		if mysql.HasPriKeyFlag(col.Flag) {
+			continue
 		}
+		colsInfo = append(colsInfo, col)
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
@@ -227,7 +264,7 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	opts[ast.AnalyzeOptNumSamples] = 20
 	mockExec := &executor.AnalyzeTestFastExec{
 		Ctx:             tk.Se.(sessionctx.Context),
-		PKInfo:          pkCol,
+		HandleCols:      handleCols,
 		ColsInfo:        colsInfo,
 		IdxsInfo:        indicesInfo,
 		Concurrency:     1,
@@ -237,32 +274,54 @@ func (s *testSuite1) TestAnalyzeFastSample(c *C) {
 	}
 	err = mockExec.TestFastSample()
 	c.Assert(err, IsNil)
-	vals := make([][]string, 0)
 	c.Assert(len(mockExec.Collectors), Equals, 3)
 	for i := 0; i < 2; i++ {
-		vals = append(vals, make([]string, 0))
-		c.Assert(len(mockExec.Collectors[i].Samples), Equals, 20)
-		for j := 0; j < 20; j++ {
-			s, err := mockExec.Collectors[i].Samples[j].Value.ToString()
+		samples := mockExec.Collectors[i].Samples
+		c.Assert(len(samples), Equals, 20)
+		for j := 1; j < 20; j++ {
+			cmp, err := samples[j].Value.CompareDatum(tk.Se.GetSessionVars().StmtCtx, &samples[j-1].Value)
 			c.Assert(err, IsNil)
-			vals[i] = append(vals[i], s)
+			c.Assert(cmp, Greater, 0)
 		}
 	}
-	c.Assert(fmt.Sprintln(vals), Equals, "[[0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58] [0 4 6 9 10 11 12 14 17 24 25 29 30 34 35 44 52 54 57 58]]\n")
 }
 
-func (s *testSuite1) TestFastAnalyze(c *C) {
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
+func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (bool, error) {
+	for i := 0; i < len(hg.Buckets); i++ {
+		lower, upper := hg.GetLower(i), hg.GetUpper(i)
+		cmp, err := upper.CompareDatum(sc, lower)
+		if cmp < 0 || err != nil {
+			return false, err
+		}
+		if i == 0 {
+			continue
+		}
+		previousUpper := hg.GetUpper(i - 1)
+		cmp, err = lower.CompareDatum(sc, previousUpper)
+		if cmp <= 0 || err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func (s *testFastAnalyze) TestFastAnalyze(c *C) {
+	var cls cluster.Cluster
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			cls = c
+		}),
 	)
 	c.Assert(err, IsNil)
+	defer store.Close()
 	var dom *domain.Domain
 	session.DisableStats4Test()
 	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	dom.SetStatsUpdating(true)
+	defer dom.Close()
 	tk := testkit.NewTestKit(c, store)
 	executor.RandSeed = 123
 
@@ -271,53 +330,53 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	tk.MustExec("create table t(a int primary key, b int, c char(10), index index_b(b))")
 	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
 	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
+	// Should not panic.
+	tk.MustExec("analyze table t")
 	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
 
 	// construct 6 regions split by {10, 20, 30, 40, 50}
 	splitKeys := generateTableSplitKeyForInt(tid, []int{10, 20, 30, 40, 50})
-	manipulateCluster(cluster, splitKeys)
+	manipulateCluster(cls, splitKeys)
 
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "char")`, i*3, i*3))
 	}
 	tk.MustExec("analyze table t with 5 buckets, 6 samples")
 
-	is := executor.GetInfoSchema(tk.Se.(sessionctx.Context))
+	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	tableInfo := table.Meta()
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
-	c.Assert(tbl.String(), Equals, "Table:43 Count:20\n"+
-		"column:1 ndv:20 totColSize:0\n"+
-		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
-		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+
-		"num: 7 lower_bound: 39 upper_bound: 57 repeats: 1\n"+
-		"column:2 ndv:20 totColSize:0\n"+
-		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
-		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+
-		"num: 7 lower_bound: 39 upper_bound: 57 repeats: 1\n"+
-		"column:3 ndv:1 totColSize:72\n"+
-		"num: 20 lower_bound: char upper_bound: char repeats: 18\n"+
-		"index:1 ndv:20\n"+
-		"num: 6 lower_bound: 3 upper_bound: 15 repeats: 1\n"+
-		"num: 7 lower_bound: 18 upper_bound: 33 repeats: 1\n"+
-		"num: 7 lower_bound: 39 upper_bound: 57 repeats: 1")
+	// TODO(tangenta): add stats_meta.row_count assertion.
+	for _, col := range tbl.Columns {
+		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &col.Histogram)
+		c.Assert(err, IsNil)
+		c.Assert(ok, IsTrue)
+	}
+	for _, idx := range tbl.Indices {
+		ok, err := checkHistogram(tk.Se.GetSessionVars().StmtCtx, &idx.Histogram)
+		c.Assert(err, IsNil)
+		c.Assert(ok, IsTrue)
+	}
 
 	// Test CM Sketch built from fast analyze.
 	tk.MustExec("create table t1(a int, b int, index idx(a, b))")
+	// Should not panic.
+	tk.MustExec("analyze table t1")
 	tk.MustExec("insert into t1 values (1,1),(1,1),(1,2),(1,2)")
 	tk.MustExec("analyze table t1")
 	tk.MustQuery("explain select a from t1 where a = 1").Check(testkit.Rows(
-		"IndexReader_6 4.00 root index:IndexScan_5",
-		"└─IndexScan_5 4.00 cop table:t1, index:a, b, range:[1,1], keep order:false"))
+		"IndexReader_6 4.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 4.00 cop[tikv] table:t1, index:idx(a, b) range:[1,1], keep order:false"))
 	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 1").Check(testkit.Rows(
-		"IndexReader_6 2.00 root index:IndexScan_5",
-		"└─IndexScan_5 2.00 cop table:t1, index:a, b, range:[1 1,1 1], keep order:false"))
+		"IndexReader_6 2.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 1,1 1], keep order:false"))
 	tk.MustQuery("explain select a, b from t1 where a = 1 and b = 2").Check(testkit.Rows(
-		"IndexReader_6 2.00 root index:IndexScan_5",
-		"└─IndexScan_5 2.00 cop table:t1, index:a, b, range:[1 2,1 2], keep order:false"))
+		"IndexReader_6 2.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 2.00 cop[tikv] table:t1, index:idx(a, b) range:[1 2,1 2], keep order:false"))
 
 	tk.MustExec("create table t2 (a bigint unsigned, primary key(a))")
 	tk.MustExec("insert into t2 values (0), (18446744073709551615)")
@@ -325,6 +384,36 @@ func (s *testSuite1) TestFastAnalyze(c *C) {
 	tk.MustQuery("show stats_buckets where table_name = 't2'").Check(testkit.Rows(
 		"test t2  a 0 0 1 1 0 0",
 		"test t2  a 0 1 2 1 18446744073709551615 18446744073709551615"))
+}
+
+func (s *testSuite1) TestIssue15993(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT PRIMARY KEY);")
+	tk.MustExec("set @@tidb_enable_fast_analyze=1;")
+	tk.MustExec("ANALYZE TABLE t0 INDEX PRIMARY;")
+}
+
+func (s *testSuite1) TestIssue15751(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT, c1 INT, PRIMARY KEY(c0, c1))")
+	tk.MustExec("INSERT INTO t0 VALUES (0, 0)")
+	tk.MustExec("set @@tidb_enable_fast_analyze=1")
+	tk.MustExec("ANALYZE TABLE t0")
+}
+
+func (s *testSuite1) TestIssue15752(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT)")
+	tk.MustExec("INSERT INTO t0 VALUES (0)")
+	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
+	tk.MustExec("set @@tidb_enable_fast_analyze=1")
+	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
 }
 
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
@@ -360,10 +449,13 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 	// Test analyze incremental with feedback.
 	tk.MustExec("insert into t values (3,3)")
 	oriProbability := statistics.FeedbackProbability.Load()
+	oriMinLogCount := handle.MinLogScanCount
 	defer func() {
 		statistics.FeedbackProbability.Store(oriProbability)
+		handle.MinLogScanCount = oriMinLogCount
 	}()
 	statistics.FeedbackProbability.Store(1)
+	handle.MinLogScanCount = 0
 	is := s.dom.InfoSchema()
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
@@ -391,43 +483,14 @@ func (s *testSuite1) testAnalyzeIncremental(tk *testkit.TestKit, c *C) {
 }
 
 type testFastAnalyze struct {
-	store   kv.Storage
-	dom     *domain.Domain
-	cluster *mocktikv.Cluster
-	cli     *regionProperityClient
-}
-
-func (s *testFastAnalyze) SetUpSuite(c *C) {
-	cli := &regionProperityClient{}
-	hijackClient := func(c tikv.Client) tikv.Client {
-		cli.Client = c
-		return cli
-	}
-	s.cli = cli
-
-	var err error
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(s.cluster)
-	s.store, err = mockstore.NewMockTikvStore(
-		mockstore.WithHijackClient(hijackClient),
-		mockstore.WithCluster(s.cluster),
-	)
-	c.Assert(err, IsNil)
-	s.dom, err = session.BootstrapSession(s.store)
-	c.Assert(err, IsNil)
-}
-
-func (s *testFastAnalyze) TearDownSuite(c *C) {
-	s.dom.Close()
-	s.store.Close()
 }
 
 type regionProperityClient struct {
 	tikv.Client
 	mu struct {
 		sync.Mutex
-		regionID uint64
-		count    int64
+		failedOnce bool
+		count      int64
 	}
 }
 
@@ -437,46 +500,57 @@ func (c *regionProperityClient) SendRequest(ctx context.Context, addr string, re
 		defer c.mu.Unlock()
 		c.mu.count++
 		// Mock failure once.
-		if req.DebugGetRegionProperties().RegionId == c.mu.regionID {
-			c.mu.regionID = 0
+		if !c.mu.failedOnce {
+			c.mu.failedOnce = true
 			return &tikvrpc.Response{}, nil
 		}
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 
-func (c *regionProperityClient) setFailRegion(regionID uint64) {
-	c.mu.Lock()
-	c.mu.regionID = regionID
-	c.mu.Unlock()
-}
-
 func (s *testFastAnalyze) TestFastAnalyzeRetryRowCount(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	cli := &regionProperityClient{}
+	hijackClient := func(c tikv.Client) tikv.Client {
+		cli.Client = c
+		return cli
+	}
+
+	var cls cluster.Cluster
+	store, err := mockstore.NewMockStore(
+		mockstore.WithClusterInspector(func(c cluster.Cluster) {
+			mockstore.BootstrapWithSingleStore(c)
+			cls = c
+		}),
+		mockstore.WithClientHijacker(hijackClient),
+	)
+	c.Assert(err, IsNil)
+	defer store.Close()
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+
+	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key)")
-	c.Assert(s.dom.StatsHandle().Update(s.dom.InfoSchema()), IsNil)
-	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
-	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
-	tblInfo, err := s.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tk.MustExec("drop table if exists retry_row_count")
+	tk.MustExec("create table retry_row_count(a int primary key)")
+	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("retry_row_count"))
 	c.Assert(err, IsNil)
 	tid := tblInfo.Meta().ID
-	// construct 6 regions split by {6, 12, 18, 24, 30}
-	splitKeys := generateTableSplitKeyForInt(tid, []int{6, 12, 18, 24, 30})
-	regionIDs := manipulateCluster(s.cluster, splitKeys)
+	c.Assert(dom.StatsHandle().Update(dom.InfoSchema()), IsNil)
+	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
 	for i := 0; i < 30; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		tk.MustExec(fmt.Sprintf("insert into retry_row_count values (%d)", i))
 	}
-	s.cli.setFailRegion(regionIDs[4])
-	tk.MustExec("analyze table t")
-	// 4 regions will be sampled, and it will retry the last failed region.
-	c.Assert(s.cli.mu.count, Equals, int64(5))
-	row := tk.MustQuery(`show stats_meta where db_name = "test" and table_name = "t"`).Rows()[0]
+	cls.SplitTable(tid, 6)
+	// Flush the region cache first.
+	tk.MustQuery("select * from retry_row_count")
+	tk.MustExec("analyze table retry_row_count")
+	row := tk.MustQuery(`show stats_meta where db_name = "test" and table_name = "retry_row_count"`).Rows()[0]
 	c.Assert(row[5], Equals, "30")
 }
 
-func (s *testSuite1) TestFailedAnalyzeRequest(c *C) {
+func (s *testSuite9) TestFailedAnalyzeRequest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -512,4 +586,89 @@ func (s *testSuite1) TestExtractTopN(c *C) {
 	c.Assert(len(idxStats.CMSketch.TopN()), Equals, 1)
 	item = idxStats.CMSketch.TopN()[0]
 	c.Assert(item.Count, Equals, uint64(11))
+}
+
+func (s *testSuite1) TestHashInTopN(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b float, c decimal(30, 10), d varchar(20))")
+	tk.MustExec(`insert into t values
+				(1, 1.1, 11.1, "0110"),
+				(2, 2.2, 22.2, "0110"),
+				(3, 3.3, 33.3, "0110"),
+				(4, 4.4, 44.4, "0440")`)
+	for i := 0; i < 3; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	// get stats of normal analyze
+	tk.MustExec("analyze table t")
+	is := s.dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	tblStats1 := s.dom.StatsHandle().GetTableStats(tblInfo).Copy()
+	// get stats of fast analyze
+	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
+	tk.MustExec("analyze table t")
+	tblStats2 := s.dom.StatsHandle().GetTableStats(tblInfo).Copy()
+	// check the hash for topn
+	for _, col := range tblInfo.Columns {
+		topn1 := tblStats1.Columns[col.ID].CMSketch.TopNMap()
+		cm2 := tblStats2.Columns[col.ID].CMSketch
+		for h1, topnMetas := range topn1 {
+			for _, topnMeta1 := range topnMetas {
+				count2, exists := cm2.QueryTopN(h1, topnMeta1.GetH2(), topnMeta1.Data)
+				c.Assert(exists, Equals, true)
+				c.Assert(count2, Equals, topnMeta1.Count)
+			}
+		}
+	}
+}
+
+func (s *testSuite1) TestNormalAnalyzeOnCommonHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.MustExec("CREATE TABLE t1 (a int primary key, b int)")
+	tk.MustExec("insert into t1 values(1,1), (2,2), (3,3)")
+	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")
+	tk.MustExec("insert into t2 values(\"111\",1), (\"222\",2), (\"333\",3)")
+	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b), key(c))")
+	tk.MustExec("insert into t3 values(1,1,1), (2,2,2), (3,3,3)")
+
+	tk.MustExec("analyze table t1, t2, t3")
+
+	tk.MustQuery(`show stats_buckets where table_name in ("t1", "t2", "t3")`).Sort().Check(testkit.Rows(
+		"test t1  a 0 0 1 1 1 1",
+		"test t1  a 0 1 2 1 2 2",
+		"test t1  a 0 2 3 1 3 3",
+		"test t1  b 0 0 1 1 1 1",
+		"test t1  b 0 1 2 1 2 2",
+		"test t1  b 0 2 3 1 3 3",
+		"test t2  PRIMARY 1 0 1 1 111 111",
+		"test t2  PRIMARY 1 1 2 1 222 222",
+		"test t2  PRIMARY 1 2 3 1 333 333",
+		"test t2  a 0 0 1 1 111 111",
+		"test t2  a 0 1 2 1 222 222",
+		"test t2  a 0 2 3 1 333 333",
+		"test t2  b 0 0 1 1 1 1",
+		"test t2  b 0 1 2 1 2 2",
+		"test t2  b 0 2 3 1 3 3",
+		"test t3  PRIMARY 1 0 1 1 (1, 1) (1, 1)",
+		"test t3  PRIMARY 1 1 2 1 (2, 2) (2, 2)",
+		"test t3  PRIMARY 1 2 3 1 (3, 3) (3, 3)",
+		"test t3  a 0 0 1 1 1 1",
+		"test t3  a 0 1 2 1 2 2",
+		"test t3  a 0 2 3 1 3 3",
+		"test t3  b 0 0 1 1 1 1",
+		"test t3  b 0 1 2 1 2 2",
+		"test t3  b 0 2 3 1 3 3",
+		"test t3  c 0 0 1 1 1 1",
+		"test t3  c 0 1 2 1 2 2",
+		"test t3  c 0 2 3 1 3 3",
+		"test t3  c 1 0 1 1 1 1",
+		"test t3  c 1 1 2 1 2 2",
+		"test t3  c 1 2 3 1 3 3"))
 }
