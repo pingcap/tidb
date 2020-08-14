@@ -46,17 +46,30 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
+	newExpr, err := rewriteAstExpr(sctx, expr, nil, nil)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return newExpr.Eval(chunk.Row{})
+}
+
+// rewriteAstExpr rewrites ast expression directly.
+func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
 	var is infoschema.InfoSchema
 	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
 	b := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
+	if schema != nil {
+		fakePlan.schema = schema
+		fakePlan.names = names
+	}
 	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
 	if err != nil {
-		return types.Datum{}, err
+		return nil, err
 	}
-	return newExpr.Eval(chunk.Row{})
+	return newExpr, nil
 }
 
 func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {

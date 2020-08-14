@@ -115,13 +115,6 @@ func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionMu.Unlock()
 }
 
-// GetActionOnExceed return the actionOnExceed
-func (t *Tracker) GetActionOnExceed() ActionOnExceed {
-	t.actionMu.Lock()
-	defer t.actionMu.Unlock()
-	return t.actionMu.actionOnExceed
-}
-
 // FallbackOldAndSetNewAction sets the action when memory usage exceeds bytesLimit
 // and set the original action as its fallback.
 func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
@@ -385,6 +378,6 @@ const (
 	LabelForGlobalMemory    int = -12
 	LabelForBuildSideResult int = -13
 	LabelForRowChunks       int = -14
-
-	LabelFor int = -14
+	LabelForStatsCache      int = -15
+	LabelForOuterList       int = -16
 )

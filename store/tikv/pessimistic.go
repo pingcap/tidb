@@ -63,8 +63,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			Op:  pb.Op_PessimisticLock,
 			Key: m.keys[i],
 		}
-		existErr := c.txn.us.GetKeyExistErrInfo(m.keys[i])
-		if existErr != nil {
+		if c.txn.us.HasPresumeKeyNotExists(m.keys[i]) {
 			mut.Assertion = pb.Assertion_NotExist
 		}
 		mutations[i] = mut
@@ -132,11 +131,7 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			// Check already exists error
 			if alreadyExist := keyErr.GetAlreadyExist(); alreadyExist != nil {
 				key := alreadyExist.GetKey()
-				existErrInfo := c.txn.us.GetKeyExistErrInfo(key)
-				if existErrInfo == nil {
-					return errors.Errorf("conn %d, existErr for key:%s should not be nil", c.connID, key)
-				}
-				return existErrInfo.Err()
+				return c.extractKeyExistsErr(key)
 			}
 			if deadlock := keyErr.Deadlock; deadlock != nil {
 				return &ErrDeadlock{Deadlock: deadlock}
@@ -213,10 +208,10 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 	return nil
 }
 
-func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations committerMutations) error {
+func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations CommitterMutations) error {
 	return c.doActionOnMutations(bo, actionPessimisticLock{lockCtx}, mutations)
 }
 
-func (c *twoPhaseCommitter) pessimisticRollbackMutations(bo *Backoffer, mutations committerMutations) error {
+func (c *twoPhaseCommitter) pessimisticRollbackMutations(bo *Backoffer, mutations CommitterMutations) error {
 	return c.doActionOnMutations(bo, actionPessimisticRollback{}, mutations)
 }

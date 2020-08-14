@@ -55,13 +55,13 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/versioninfo"
 	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
-type HTTPHandlerTestSuite struct {
+type basicHTTPHandlerTestSuite struct {
 	*testServerClient
 	server  *Server
 	store   kv.Storage
@@ -69,8 +69,20 @@ type HTTPHandlerTestSuite struct {
 	tidbdrv *TiDBDriver
 }
 
+type HTTPHandlerTestSuite struct {
+	*basicHTTPHandlerTestSuite
+}
+
+type HTTPHandlerTestSerialSuite struct {
+	*basicHTTPHandlerTestSuite
+}
+
 var _ = Suite(&HTTPHandlerTestSuite{
-	testServerClient: newTestServerClient(),
+	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
+})
+
+var _ = SerialSuites(&HTTPHandlerTestSerialSuite{
+	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
 })
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
@@ -339,7 +351,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionsFromMeta(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/server/errGetRegionByIDEmpty"), IsNil)
 }
 
-func (ts *HTTPHandlerTestSuite) startServer(c *C) {
+func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
 	var err error
 	ts.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
@@ -347,7 +359,7 @@ func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 
-	cfg := config.NewConfig()
+	cfg := newTestConfig()
 	cfg.Port = ts.port
 	cfg.Store = "tikv"
 	cfg.Status.StatusPort = ts.statusPort
@@ -360,7 +372,7 @@ func (ts *HTTPHandlerTestSuite) startServer(c *C) {
 	ts.waitUntilServerOnline()
 }
 
-func (ts *HTTPHandlerTestSuite) stopServer(c *C) {
+func (ts *basicHTTPHandlerTestSuite) stopServer(c *C) {
 	if ts.domain != nil {
 		ts.domain.Close()
 	}
@@ -372,7 +384,7 @@ func (ts *HTTPHandlerTestSuite) stopServer(c *C) {
 	}
 }
 
-func (ts *HTTPHandlerTestSuite) prepareData(c *C) {
+func (ts *basicHTTPHandlerTestSuite) prepareData(c *C) {
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
 	defer db.Close()
@@ -551,6 +563,8 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(data), Equals, 0)
 
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
 	dbt.mustExec("use tidb")
 	dbt.mustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 
@@ -1046,7 +1060,7 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 	c.Assert(info.StatusPort, Equals, cfg.Status.StatusPort)
 	c.Assert(info.Lease, Equals, cfg.Lease)
 	c.Assert(info.Version, Equals, mysql.ServerVersion)
-	c.Assert(info.GitHash, Equals, printer.TiDBGitHash)
+	c.Assert(info.GitHash, Equals, versioninfo.TiDBGitHash)
 
 	store := ts.server.newTikvHandlerTool().Store.(kv.Storage)
 	do, err := session.GetDomain(store.(kv.Storage))
@@ -1055,7 +1069,7 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 	c.Assert(info.ID, Equals, ddl.GetID())
 }
 
-func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
+func (ts *HTTPHandlerTestSerialSuite) TestAllServerInfo(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
 	resp, err := ts.fetchStatus("/info/all")
@@ -1084,7 +1098,7 @@ func (ts *HTTPHandlerTestSuite) TestAllServerInfo(c *C) {
 	c.Assert(serverInfo.StatusPort, Equals, cfg.Status.StatusPort)
 	c.Assert(serverInfo.Lease, Equals, cfg.Lease)
 	c.Assert(serverInfo.Version, Equals, mysql.ServerVersion)
-	c.Assert(serverInfo.GitHash, Equals, printer.TiDBGitHash)
+	c.Assert(serverInfo.GitHash, Equals, versioninfo.TiDBGitHash)
 	c.Assert(serverInfo.ID, Equals, ddl.GetID())
 }
 

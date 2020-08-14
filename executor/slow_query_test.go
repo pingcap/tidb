@@ -60,6 +60,7 @@ func (s *testExecSuite) TestParseSlowLogFile(c *C) {
 # Succ: false
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 1;
+use test;
 select * from t;`
 	reader := bufio.NewReader(bytes.NewBufferString(slowLogStr))
 	loc, err := time.LoadLocation("Asia/Shanghai")
@@ -225,7 +226,7 @@ select * from t;`)
 
 func (s *testExecSuite) TestSlowQueryRetriever(c *C) {
 	writeFile := func(file string, data string) {
-		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		c.Assert(err, IsNil)
 		_, err = f.Write([]byte(data))
 		c.Assert(f.Close(), IsNil)
@@ -385,5 +386,6 @@ select 7;`
 			c.Assert(file.file.Name(), Equals, cas.files[i])
 			c.Assert(file.file.Close(), IsNil)
 		}
+		c.Assert(retriever.close(), IsNil)
 	}
 }

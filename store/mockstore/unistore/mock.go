@@ -63,6 +63,7 @@ func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 		cluster:    cluster,
 		path:       path,
 		persistent: persistent,
+		rawHandler: newRawHandler(),
 	}
 	pdClient := newPDClient(pd)
 

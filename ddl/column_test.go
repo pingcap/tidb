@@ -328,11 +328,6 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	job = testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, false, "c5_idx", "c5")
 	testCheckJobDone(c, d, job, true)
 
-	testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c5", true)
-
-	testDropIndex(c, ctx, d, s.dbInfo, tblInfo, "c5_idx")
-	testCheckJobDone(c, d, job, true)
-
 	job = testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c5", false)
 	testCheckJobDone(c, d, job, false)
 
@@ -367,7 +362,7 @@ func (s *testColumnSuite) checkColumnKVExist(ctx sessionctx.Context, t table.Tab
 	}
 	colMap := make(map[int64]*types.FieldType)
 	colMap[col.ID] = &col.FieldType
-	rowMap, err := tablecodec.DecodeRow(data, colMap, ctx.GetSessionVars().Location())
+	rowMap, err := tablecodec.DecodeRowToDatumMap(data, colMap, ctx.GetSessionVars().Location())
 	if err != nil {
 		return errors.Trace(err)
 	}

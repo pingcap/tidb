@@ -19,11 +19,15 @@ import (
 	"math"
 	"math/rand"
 	"sort"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -321,8 +325,9 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 	e := &SplitTableRegionExec{
 		baseExecutor: newBaseExecutor(ctx, nil, nil, 0),
 		tableInfo:    tbInfo,
-		lower:        types.NewDatum(0),
-		upper:        types.NewDatum(100),
+		handleCols:   core.NewIntHandleCols(&expression.Column{RetType: types.NewFieldType(mysql.TypeLonglong)}),
+		lower:        []types.Datum{types.NewDatum(0)},
+		upper:        []types.Datum{types.NewDatum(100)},
 		num:          10,
 	}
 	valueList, err := e.getSplitTableKeys()
@@ -355,6 +360,99 @@ func (s *testSplitIndex) TestSplitTable(c *C) {
 	for _, ca := range cases {
 		// test for minInt64 handle
 		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(ca.value))
+		c.Assert(err, IsNil)
+		idx := searchLessEqualIdx(valueList, key)
+		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))
+	}
+}
+
+func (s *testSplitIndex) TestClusterIndexSplitTable(c *C) {
+	tbInfo := &model.TableInfo{
+		Name:           model.NewCIStr("t"),
+		ID:             1,
+		IsCommonHandle: true,
+		Indices: []*model.IndexInfo{
+			{
+				ID:      1,
+				Primary: true,
+				State:   model.StatePublic,
+				Columns: []*model.IndexColumn{
+					{Offset: 1},
+					{Offset: 2},
+				},
+			},
+		},
+		Columns: []*model.ColumnInfo{
+			{
+				Name:      model.NewCIStr("c0"),
+				ID:        1,
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeDouble),
+			},
+			{
+				Name:      model.NewCIStr("c1"),
+				ID:        2,
+				Offset:    1,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+			{
+				Name:      model.NewCIStr("c2"),
+				ID:        3,
+				Offset:    2,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+		},
+	}
+	defer func(originValue int64) {
+		minRegionStepValue = originValue
+	}(minRegionStepValue)
+	minRegionStepValue = 3
+	ctx := mock.NewContext()
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	e := &SplitTableRegionExec{
+		baseExecutor: newBaseExecutor(ctx, nil, nil),
+		tableInfo:    tbInfo,
+		handleCols:   buildHandleColsForSplit(sc, tbInfo),
+		lower:        types.MakeDatums(1, 0),
+		upper:        types.MakeDatums(1, 100),
+		num:          10,
+	}
+	valueList, err := e.getSplitTableKeys()
+	c.Assert(err, IsNil)
+	c.Assert(len(valueList), Equals, e.num-1)
+
+	cases := []struct {
+		value        []types.Datum
+		lessEqualIdx int
+	}{
+		// For lower-bound and upper-bound, because 0 and 100 are padding with 7 zeros,
+		// the split points are not (i * 10) but approximation.
+		{types.MakeDatums(1, -1), -1},
+		{types.MakeDatums(1, 0), -1},
+		{types.MakeDatums(1, 10), -1},
+		{types.MakeDatums(1, 11), 0},
+		{types.MakeDatums(1, 20), 0},
+		{types.MakeDatums(1, 21), 1},
+
+		{types.MakeDatums(1, 31), 2},
+		{types.MakeDatums(1, 41), 3},
+		{types.MakeDatums(1, 51), 4},
+		{types.MakeDatums(1, 61), 5},
+		{types.MakeDatums(1, 71), 6},
+		{types.MakeDatums(1, 81), 7},
+		{types.MakeDatums(1, 91), 8},
+		{types.MakeDatums(1, 100), 8},
+		{types.MakeDatums(1, 101), 8},
+	}
+
+	recordPrefix := tablecodec.GenTableRecordPrefix(e.tableInfo.ID)
+	for _, ca := range cases {
+		h, err := e.handleCols.BuildHandleByDatums(ca.value)
+		c.Assert(err, IsNil)
+		key := tablecodec.EncodeRecordKey(recordPrefix, h)
 		c.Assert(err, IsNil)
 		idx := searchLessEqualIdx(valueList, key)
 		c.Assert(idx, Equals, ca.lessEqualIdx, Commentf("%#v", ca))

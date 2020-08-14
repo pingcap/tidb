@@ -55,7 +55,9 @@ type PointGetPlan struct {
 	HandleParam        *driver.ParamMarkerExpr
 	IndexValues        []types.Datum
 	IndexValueParams   []*driver.ParamMarkerExpr
-	expr               expression.Expression
+	IdxCols            []*expression.Column
+	IdxColLens         []int
+	AccessConditions   []expression.Expression
 	ctx                sessionctx.Context
 	UnsignedHandle     bool
 	IsTableDual        bool
@@ -92,7 +94,7 @@ func (p *PointGetPlan) attach2Task(...task) task {
 }
 
 // ToPB converts physical plan to tipb executor.
-func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
+func (p *PointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
 	return nil, nil
 }
 
@@ -242,6 +244,9 @@ type BatchPointGetPlan struct {
 	HandleParams     []*driver.ParamMarkerExpr
 	IndexValues      [][]types.Datum
 	IndexValueParams [][]*driver.ParamMarkerExpr
+	AccessConditions []expression.Expression
+	IdxCols          []*expression.Column
+	IdxColLens       []int
 	PartitionColPos  int
 	KeepOrder        bool
 	Desc             bool
@@ -267,7 +272,7 @@ func (p *BatchPointGetPlan) attach2Task(...task) task {
 }
 
 // ToPB converts physical plan to tipb executor.
-func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
+func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
 	return nil, nil
 }
 
@@ -1188,7 +1193,7 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) && tbl.PKIsHandle {
+			if mysql.HasPriKeyFlag(col.Flag) {
 				return &IntHandleCols{col: schema.Columns[i]}
 			}
 		}

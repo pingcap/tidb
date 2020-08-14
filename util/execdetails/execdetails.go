@@ -274,7 +274,7 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats map[string][]*RuntimeStats
+	stats map[string][]*BasicRuntimeStats
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -282,7 +282,7 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	crs.Lock()
 	defer crs.Unlock()
 	crs.stats[address] = append(crs.stats[address],
-		&RuntimeStats{loop: int32(*summary.NumIterations),
+		&BasicRuntimeStats{loop: int32(*summary.NumIterations),
 			consume: int64(*summary.TimeProcessedNs),
 			rows:    int64(*summary.NumProducedRows)})
 }
@@ -366,20 +366,13 @@ func (rrs *ReaderRuntimeStats) String() string {
 	return fmt.Sprintf("rpc num: %v, rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v, proc keys max:%v, p95:%v", size, vMax, vMin, vAvg, vP80, vP95, keyMax, keyP95)
 }
 
-// RuntimeStatsColl collects executors's execution info.
-type RuntimeStatsColl struct {
-	mu          sync.Mutex
-	rootStats   map[int]*RuntimeStats
-	copStats    map[int]*CopRuntimeStats
-	readerStats map[int]*ReaderRuntimeStats
-	//operatorStats map[int]RuntimeInformation
+// RuntimeStats is used to express the executor runtime information.
+type RuntimeStats interface {
+	GetActRows() int64
+	String() string
 }
 
-type RuntimeInformation interface {
-	OperatorInfo() string
-	ActRows() int64
-}
-
+// BasicRuntimeStats is the basic runtime stats.
 type BasicRuntimeStats struct {
 	// executor's Next() called times.
 	loop int32
@@ -389,11 +382,8 @@ type BasicRuntimeStats struct {
 	rows int64
 }
 
-func (e *BasicRuntimeStats) OperatorInfo() string {
-	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
-}
-
-func (e *BasicRuntimeStats) ActRows() int64 {
+// GetActRows implements the RuntimeStats interface.
+func (e *BasicRuntimeStats) GetActRows() int64 {
 	return e.rows
 }
 
@@ -409,65 +399,39 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 	atomic.StoreInt64(&e.rows, rowNum)
 }
 
-// ConcurrencyInfo is used to save the concurrency information of the executor operator
-type ConcurrencyInfo struct {
-	concurrencyName string
-	concurrencyNum  int
+// String implements the RuntimeStats interface.
+func (e *BasicRuntimeStats) String() string {
+	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
 }
 
-// NewConcurrencyInfo creates new executor's concurrencyInfo.
-func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
-	return &ConcurrencyInfo{name, num}
-}
-
-// cacheInfo is used to save the concurrency information of the executor operator
-type cacheInfo struct {
-	hitRatio float64
-	useCache bool
-}
-
-// SetCacheInfo sets the cache information. Only used for apply executor.
-func (e *RuntimeStats) SetCacheInfo(useCache bool, hitRatio float64) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.applyCache = true
-	e.cache.useCache = useCache
-	e.cache.hitRatio = hitRatio
-}
-
-// RuntimeStats collects one executor's execution info.
-type RuntimeStats struct {
-	// executor's Next() called times.
-	loop int32
-	// executor consume time.
-	consume int64
-	// executor return row count.
-	rows int64
-
-	// protect concurrency
-	mu sync.Mutex
-	// executor concurrency information
-	concurrency []*ConcurrencyInfo
-	applyCache  bool
-	cache       cacheInfo
-
-	// additional information for executors
-	additionalInfo string
+// RuntimeStatsColl collects executors's execution info.
+type RuntimeStatsColl struct {
+	mu          sync.Mutex
+	rootStats   map[int]RuntimeStats
+	copStats    map[int]*CopRuntimeStats
+	readerStats map[int]*ReaderRuntimeStats
 }
 
 // NewRuntimeStatsColl creates new executor collector.
 func NewRuntimeStatsColl() *RuntimeStatsColl {
-	return &RuntimeStatsColl{rootStats: make(map[int]*RuntimeStats),
+	return &RuntimeStatsColl{rootStats: make(map[int]RuntimeStats),
 		copStats: make(map[int]*CopRuntimeStats), readerStats: make(map[int]*ReaderRuntimeStats)}
 }
 
+// RegisterStats register execStat for a executor.
+func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
+	e.mu.Lock()
+	e.rootStats[planID] = info
+	e.mu.Unlock()
+}
+
 // GetRootStats gets execStat for a executor.
-func (e *RuntimeStatsColl) GetRootStats(planID int) *RuntimeStats {
+func (e *RuntimeStatsColl) GetRootStats(planID int) RuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	runtimeStats, exists := e.rootStats[planID]
 	if !exists {
-		runtimeStats = &RuntimeStats{}
+		runtimeStats = &BasicRuntimeStats{}
 		e.rootStats[planID] = runtimeStats
 	}
 	return runtimeStats
@@ -479,7 +443,7 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
 	if !ok {
-		copStats = &CopRuntimeStats{stats: make(map[string][]*RuntimeStats)}
+		copStats = &CopRuntimeStats{stats: make(map[string][]*BasicRuntimeStats)}
 		e.copStats[planID] = copStats
 	}
 	return copStats
@@ -525,44 +489,44 @@ func (e *RuntimeStatsColl) GetReaderStats(planID int) *ReaderRuntimeStats {
 	return stats
 }
 
-// Record records executor's execution.
-func (e *RuntimeStats) Record(d time.Duration, rowNum int) {
-	atomic.AddInt32(&e.loop, 1)
-	atomic.AddInt64(&e.consume, int64(d))
-	atomic.AddInt64(&e.rows, int64(rowNum))
+// ConcurrencyInfo is used to save the concurrency information of the executor operator
+type ConcurrencyInfo struct {
+	concurrencyName string
+	concurrencyNum  int
 }
 
-// SetRowNum sets the row num.
-func (e *RuntimeStats) SetRowNum(rowNum int64) {
-	atomic.StoreInt64(&e.rows, rowNum)
+// NewConcurrencyInfo creates new executor's concurrencyInfo.
+func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
+	return &ConcurrencyInfo{name, num}
+}
+
+// RuntimeStatsWithConcurrencyInfo is the BasicRuntimeStats with ConcurrencyInfo.
+type RuntimeStatsWithConcurrencyInfo struct {
+	*BasicRuntimeStats
+
+	// protect concurrency
+	sync.Mutex
+	// executor concurrency information
+	concurrency []*ConcurrencyInfo
 }
 
 // SetConcurrencyInfo sets the concurrency informations.
 // We must clear the concurrencyInfo first when we call the SetConcurrencyInfo.
 // When the num <= 0, it means the exector operator is not executed parallel.
-func (e *RuntimeStats) SetConcurrencyInfo(infos ...*ConcurrencyInfo) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (e *RuntimeStatsWithConcurrencyInfo) SetConcurrencyInfo(infos ...*ConcurrencyInfo) {
+	e.Lock()
+	defer e.Unlock()
 	e.concurrency = e.concurrency[:0]
 	for _, info := range infos {
 		e.concurrency = append(e.concurrency, info)
 	}
 }
 
-// SetAdditionalInfo sets the additional information.
-func (e *RuntimeStats) SetAdditionalInfo(info string) {
-	e.mu.Lock()
-	e.additionalInfo = info
-	e.mu.Unlock()
-}
-
-// GetActRows return rows of CopRuntimeStats.
-func (e *RuntimeStats) GetActRows() int64 {
-	return e.rows
-}
-
-func (e *RuntimeStats) String() string {
-	result := fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
+func (e *RuntimeStatsWithConcurrencyInfo) String() string {
+	var result string
+	if e.BasicRuntimeStats != nil {
+		result = fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
+	}
 	if len(e.concurrency) > 0 {
 		for _, concurrency := range e.concurrency {
 			if concurrency.concurrencyNum > 0 {
@@ -571,16 +535,6 @@ func (e *RuntimeStats) String() string {
 				result += fmt.Sprintf(", %s:OFF", concurrency.concurrencyName)
 			}
 		}
-	}
-	if e.applyCache {
-		if e.cache.useCache {
-			result += fmt.Sprintf(", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100)
-		} else {
-			result += fmt.Sprintf(", cache:OFF")
-		}
-	}
-	if len(e.additionalInfo) > 0 {
-		result += ", " + e.additionalInfo
 	}
 	return result
 }

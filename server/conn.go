@@ -72,7 +72,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
@@ -134,6 +133,10 @@ var (
 	queryDurationHistogramExecute  = metrics.QueryDurationHistogram.WithLabelValues("Execute")
 	queryDurationHistogramSet      = metrics.QueryDurationHistogram.WithLabelValues("Set")
 	queryDurationHistogramGeneral  = metrics.QueryDurationHistogram.WithLabelValues(metrics.LblGeneral)
+
+	disconnectNormal            = metrics.DisconnectionCounter.WithLabelValues(metrics.LblOK)
+	disconnectByClientWithError = metrics.DisconnectionCounter.WithLabelValues(metrics.LblError)
+	disconnectErrorUndetermined = metrics.DisconnectionCounter.WithLabelValues("undetermined")
 )
 
 // newClientConn creates a *clientConn object.
@@ -670,6 +673,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 				zap.String("err", fmt.Sprintf("%v", r)),
 				zap.String("stack", string(buf)),
 			)
+			err := cc.writeError(errors.New(fmt.Sprintf("%v", r)))
+			terror.Log(err)
 			metrics.PanicCounter.WithLabelValues(metrics.LabelSession).Inc()
 		}
 		if atomic.LoadInt32(&cc.status) != connStatusShutdown {
@@ -710,6 +715,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 					}
 				}
 			}
+			disconnectByClientWithError.Inc()
 			return
 		}
 
@@ -721,9 +727,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 		if err = cc.dispatch(ctx, data); err != nil {
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
+				disconnectNormal.Inc()
 				return
 			} else if terror.ErrResultUndetermined.Equal(err) {
 				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
+				disconnectErrorUndetermined.Inc()
 				return
 			} else if terror.ErrCritical.Equal(err) {
 				metrics.CriticalErrorCounter.Add(1)
@@ -900,6 +908,11 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return nil
 	case mysql.ComQuit:
 		return io.EOF
+	case mysql.ComInitDB:
+		if err := cc.useDB(ctx, dataStr); err != nil {
+			return err
+		}
+		return cc.writeOK()
 	case mysql.ComQuery: // Most frequently used command.
 		// For issue 1989
 		// Input payload may end with byte '\0', we didn't find related mysql document about it, but mysql
@@ -910,31 +923,41 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			dataStr = string(hack.String(data))
 		}
 		return cc.handleQuery(ctx, dataStr)
-	case mysql.ComPing:
-		return cc.writeOK()
-	case mysql.ComInitDB:
-		if err := cc.useDB(ctx, dataStr); err != nil {
+	case mysql.ComFieldList:
+		return cc.handleFieldList(dataStr)
+	// ComCreateDB, ComDropDB
+	case mysql.ComRefresh:
+		return cc.handleRefresh(ctx, data[0])
+	case mysql.ComShutdown: // redirect to SQL
+		if err := cc.handleQuery(ctx, "SHUTDOWN"); err != nil {
 			return err
 		}
 		return cc.writeOK()
-	case mysql.ComFieldList:
-		return cc.handleFieldList(dataStr)
+	// ComStatistics, ComProcessInfo, ComConnect, ComProcessKill, ComDebug
+	case mysql.ComPing:
+		return cc.writeOK()
+	// ComTime, ComDelayedInsert
+	case mysql.ComChangeUser:
+		return cc.handleChangeUser(ctx, data)
+	// ComBinlogDump, ComTableDump, ComConnectOut, ComRegisterSlave
 	case mysql.ComStmtPrepare:
 		return cc.handleStmtPrepare(dataStr)
 	case mysql.ComStmtExecute:
 		return cc.handleStmtExecute(ctx, data)
-	case mysql.ComStmtFetch:
-		return cc.handleStmtFetch(ctx, data)
-	case mysql.ComStmtClose:
-		return cc.handleStmtClose(data)
 	case mysql.ComStmtSendLongData:
 		return cc.handleStmtSendLongData(data)
+	case mysql.ComStmtClose:
+		return cc.handleStmtClose(data)
 	case mysql.ComStmtReset:
 		return cc.handleStmtReset(data)
 	case mysql.ComSetOption:
 		return cc.handleSetOption(data)
-	case mysql.ComChangeUser:
-		return cc.handleChangeUser(ctx, data)
+	case mysql.ComStmtFetch:
+		return cc.handleStmtFetch(ctx, data)
+	// ComDaemon, ComBinlogDumpGtid
+	case mysql.ComResetConnection:
+		return cc.handleResetConnection(ctx)
+	// ComEnd
 	default:
 		return mysql.NewErrf(mysql.ErrUnknown, "command %d not supported now", cmd)
 	}
@@ -1297,7 +1320,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	var pointPlans []plannercore.Plan
 	if len(stmts) > 1 {
 		// Only pre-build point plans for multi-statement query
-		pointPlans, err = cc.prefetchPointPlanKeys(stmts)
+		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
 		if err != nil {
 			return err
 		}
@@ -1323,7 +1346,8 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 
 // prefetchPointPlanKeys extracts the point keys in multi-statement query,
 // use BatchGet to get the keys, so the values will be cached in the snapshot cache, save RPC call cost.
-func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore.Plan, error) {
+// For pessimistic transaction, the keys will be batch locked.
+func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode) ([]plannercore.Plan, error) {
 	txn, err := cc.ctx.Txn(false)
 	if err != nil {
 		return nil, err
@@ -1335,10 +1359,14 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 	}
 	vars := cc.ctx.GetSessionVars()
 	if vars.TxnCtx.IsPessimistic {
-		// Pessimistic transaction do not benefit from the prefetch because the keys will be returned by Lock,
-		// we can get the keys from the lock cache.
-		// TODO: In the future we can support pre lock point keys for pessimistic transactions.
-		return nil, nil
+		if vars.IsReadConsistencyTxn() {
+			// TODO: to support READ-COMMITTED, we need to avoid getting new TS for each statement in the query.
+			return nil, nil
+		}
+		if vars.TxnCtx.GetForUpdateTS() != vars.TxnCtx.StartTS {
+			// Do not handle the case that ForUpdateTS is changed for simplicity.
+			return nil, nil
+		}
 	}
 	pointPlans := make([]plannercore.Plan, len(stmts))
 	var idxKeys []kv.Key
@@ -1366,11 +1394,11 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 				}
 				if pp.IndexInfo != nil {
 					executor.ResetUpdateStmtCtx(sc, updateStmt, vars)
-					encoded, err1 := codec.EncodeKey(sc, nil, pp.IndexValues...)
+					idxKey, err1 := executor.EncodeUniqueIndexKey(cc.ctx, pp.TblInfo, pp.IndexInfo, pp.IndexValues, pp.TblInfo.ID)
 					if err1 != nil {
 						return nil, err1
 					}
-					idxKeys = append(idxKeys, tablecodec.EncodeIndexSeekKey(pp.TblInfo.ID, pp.IndexInfo.ID, encoded))
+					idxKeys = append(idxKeys, idxKey)
 				} else {
 					rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(pp.TblInfo.ID, pp.Handle))
 				}
@@ -1381,7 +1409,7 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 		return pointPlans, nil
 	}
 	snapshot := txn.GetSnapshot()
-	idxVals, err1 := snapshot.BatchGet(context.Background(), idxKeys)
+	idxVals, err1 := snapshot.BatchGet(ctx, idxKeys)
 	if err1 != nil {
 		return nil, err1
 	}
@@ -1393,9 +1421,19 @@ func (cc *clientConn) prefetchPointPlanKeys(stmts []ast.StmtNode) ([]plannercore
 		tblID := tablecodec.DecodeTableID(hack.Slice(idxKey))
 		rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tblID, h))
 	}
-	_, err = snapshot.BatchGet(context.Background(), rowKeys)
-	if err != nil {
-		return nil, err
+	if vars.TxnCtx.IsPessimistic {
+		allKeys := append(rowKeys, idxKeys...)
+		err = executor.LockKeys(ctx, cc.ctx, vars.LockWaitTimeout, allKeys...)
+		if err != nil {
+			// suppress the lock error, we are not going to handle it here for simplicity.
+			err = nil
+			logutil.BgLogger().Warn("lock keys error on prefetch", zap.Error(err))
+		}
+	} else {
+		_, err = snapshot.BatchGet(ctx, rowKeys)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return pointPlans, nil
 }
@@ -1731,6 +1769,7 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	data = data[passLen:]
 	dbName, _ := parseNullTermString(data)
 	cc.dbname = string(hack.String(dbName))
+
 	err := cc.ctx.Close()
 	if err != nil {
 		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
@@ -1739,16 +1778,48 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		return err
 	}
+	return cc.handleCommonConnectionReset()
+}
 
+func (cc *clientConn) handleResetConnection(ctx context.Context) error {
+	user := cc.ctx.GetSessionVars().User
+	err := cc.ctx.Close()
+	if err != nil {
+		logutil.Logger(ctx).Debug("close old context failed", zap.Error(err))
+	}
+	var tlsStatePtr *tls.ConnectionState
+	if cc.tlsConn != nil {
+		tlsState := cc.tlsConn.ConnectionState()
+		tlsStatePtr = &tlsState
+	}
+	cc.ctx, err = cc.server.driver.OpenCtx(uint64(cc.connectionID), cc.capability, cc.collation, cc.dbname, tlsStatePtr)
+	if err != nil {
+		return err
+	}
+	if !cc.ctx.AuthWithoutVerification(user) {
+		return errors.New("Could not reset connection")
+	}
+	if cc.dbname != "" { // Restore the current DB
+		err = cc.useDB(context.Background(), cc.dbname)
+		if err != nil {
+			return err
+		}
+	}
+	cc.ctx.SetSessionManager(cc.server)
+
+	return cc.handleCommonConnectionReset()
+}
+
+func (cc *clientConn) handleCommonConnectionReset() error {
 	if plugin.IsEnable(plugin.Audit) {
 		cc.ctx.GetSessionVars().ConnectionInfo = cc.connectInfo()
 	}
 
-	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
 			connInfo := cc.ctx.GetSessionVars().ConnectionInfo
-			err = authPlugin.OnConnectionEvent(context.Background(), plugin.ChangeUser, connInfo)
+			err := authPlugin.OnConnectionEvent(context.Background(), plugin.ChangeUser, connInfo)
 			if err != nil {
 				return err
 			}
@@ -1758,7 +1829,16 @@ func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	if err != nil {
 		return err
 	}
+	return cc.writeOK()
+}
 
+// safe to noop except 0x01 "FLUSH PRIVILEGES"
+func (cc *clientConn) handleRefresh(ctx context.Context, subCommand byte) error {
+	if subCommand == 0x01 {
+		if err := cc.handleQuery(ctx, "FLUSH PRIVILEGES"); err != nil {
+			return err
+		}
+	}
 	return cc.writeOK()
 }
 
@@ -1779,7 +1859,11 @@ func (cc getLastStmtInConn) String() string {
 	case mysql.ComFieldList:
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return queryStrForLog(string(hack.String(data)))
+		sql := string(hack.String(data))
+		if cc.ctx.GetSessionVars().EnableLogDesensitization {
+			sql, _ = parser.NormalizeDigest(sql)
+		}
+		return queryStrForLog(sql)
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return queryStrForLog(cc.preparedStmt2String(stmtID))

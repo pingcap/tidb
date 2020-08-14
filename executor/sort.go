@@ -243,7 +243,14 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 				e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 				e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
 				e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
-				e.spillAction.ResetRowContainer(e.rowChunks)
+				e.spillAction = e.rowChunks.ActionSpill()
+				failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
+					if val.(bool) {
+						e.spillAction = e.rowChunks.ActionSpillForTest()
+						defer e.spillAction.WaitForTest()
+					}
+				})
+				e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 				err = e.rowChunks.Add(chk)
 			}
 			if err != nil {
