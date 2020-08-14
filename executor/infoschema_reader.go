@@ -772,7 +772,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 					"",            // INDEX_COMMENT
 					nil,           // Expression
 					0,             // INDEX_ID
-					"YES",         // Visible
+					"YES",         // IS_VISIBLE
 				)
 				rows = append(rows, record)
 			}
@@ -812,7 +812,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 						idxInfo.Comment, // INDEX_COMMENT
 						expression,      // Expression
 						idxInfo.ID,      // INDEX_ID
-						visible,         // Visible
+						visible,         // IS_VISIBLE
 					)
 					rows = append(rows, record)
 				}
