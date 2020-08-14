@@ -93,7 +93,6 @@ var (
 
 type baseExecutor struct {
 	ctx           sessionctx.Context
-	name          fmt.Stringer
 	id            int
 	schema        *expression.Schema // output schema
 	initCap       int

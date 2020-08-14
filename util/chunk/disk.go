@@ -15,10 +15,10 @@ package chunk
 
 import (
 	"errors"
-	"github.com/pingcap/tidb/util/memory"
 	"io"
 	"io/ioutil"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/parser/terror"
@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/checksum"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // ListInDisk represents a slice of chunks storing in temporary disk.
@@ -44,6 +45,8 @@ type ListInDisk struct {
 	numRowsInDisk int
 }
 
+var defaultChunkListInDiskPath = "chunk.ListInDisk"
+
 // NewListInDisk creates a new ListInDisk with field types.
 func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 	l := &ListInDisk{
@@ -55,7 +58,7 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, "chunk.ListInDisk")
+	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, defaultChunkListInDiskPath+strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
 		return
 	}
