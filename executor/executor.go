@@ -203,11 +203,10 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, name fmt.Stringer, id int, children ...Executor) baseExecutor {
+func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
-		name:         name,
 		id:           id,
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().InitChunkSize,

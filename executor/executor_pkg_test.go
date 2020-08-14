@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var _ = Suite(&testExecSuite{})
@@ -109,7 +108,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 
 	// Compose executor.
 	e := &ShowExec{
-		baseExecutor: newBaseExecutor(sctx, schema, nil, 0),
+		baseExecutor: newBaseExecutor(sctx, schema, 0),
 		Tp:           ast.ShowProcessList,
 	}
 
@@ -278,7 +277,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	dataSource := buildMockDataSource(opt)
 	exec := &SortExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), 0, dataSource),
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.schema,
 	}
@@ -367,7 +366,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	}
 	dataSource = buildMockDataSource(opt)
 	exec = &SortExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), 0, dataSource),
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.schema,
 	}

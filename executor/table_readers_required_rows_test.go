@@ -142,7 +142,7 @@ func buildMockBaseExec(sctx sessionctx.Context) baseExecutor {
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := newBaseExecutor(sctx, schema, nil, 0)
+	baseExec := newBaseExecutor(sctx, schema,0)
 	return baseExec
 }
 
