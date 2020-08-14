@@ -259,6 +259,9 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		start := offset
 		wg.Add(1)
 		ch <- 1
+		if len(log) == 0 {
+			break
+		}
 		go func() {
 			defer wg.Done()
 			e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(sctx, log, start), err}
@@ -270,9 +273,9 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		} else {
 			offset = e.fileLine - len(log)
 		}
-		if e.fileIdx >= len(e.files) {
-			break
-		}
+		//if e.fileIdx >= len(e.files) {
+		//	break
+		//}
 		select {
 		case <-ctx.Done():
 			break
