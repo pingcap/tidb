@@ -437,8 +437,8 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustExec(`insert into t1 values (3,5,"C");`)
 	tk.MustExec(`insert into t1 values (3,6,"D");`)
 	tk.MustQuery(`select stddev_pop(all a) from t1;`).Check(testkit.Rows("1.707825127659933"))
-	tk.MustQuery(`select stddev_pop(a) from t1 group by grp order by grp;`).Check(testkit.Rows("0","0.5","0.816496580927726"))
-	tk.MustQuery(`select sum(a)+count(a)+avg(a)+stddev_pop(a) as sum from t1 group by grp order by grp;`).Check(testkit.Rows("3","10","23.816496580927726"))
+	tk.MustQuery(`select stddev_pop(a) from t1 group by grp order by grp;`).Check(testkit.Rows("0", "0.5", "0.816496580927726"))
+	tk.MustQuery(`select sum(a)+count(a)+avg(a)+stddev_pop(a) as sum from t1 group by grp order by grp;`).Check(testkit.Rows("3", "10", "23.816496580927726"))
 	// test null
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("CREATE TABLE t1 (a int, b int);")
@@ -447,11 +447,11 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustQuery("select stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>"))
 	tk.MustExec("insert into t1 values (1,null);")
 	tk.MustExec("insert into t1 values (2,null);")
-	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>","<nil>"))
+	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "<nil>"))
 	tk.MustExec("insert into t1 values (2,1);")
-	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>","0"))
+	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0"))
 	tk.MustExec("insert into t1 values (3,1);")
-	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>","0","0"))
+	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 }
 
 func (s *testSuiteAgg) TestAggPrune(c *C) {

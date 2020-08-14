@@ -14,11 +14,12 @@
 package aggfuncs
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/set"
-	"math"
 )
 
 type baseStdDevPopAggFunc struct {
@@ -81,7 +82,6 @@ func (e *stdDevPop4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 	}
 	return 0, nil
 }
-
 
 func (e *stdDevPop4Float64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4StdDevPopFloat64)(src), (*partialResult4StdDevPopFloat64)(dst)
