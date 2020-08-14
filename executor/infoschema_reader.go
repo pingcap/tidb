@@ -346,7 +346,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 					"",                    // COMMENT
 					"",                    // INDEX_COMMENT
 					"YES",                 // IS_VISIBLE
-					"NULL",                // Expression
+					nil,                   // Expression
 				)
 				rows = append(rows, record)
 			}
@@ -374,7 +374,8 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 			}
 
 			colName := col.Name.O
-			expression := "NULL"
+			var expression interface{}
+			expression = nil
 			tblCol := table.Columns[col.Offset]
 			if tblCol.Hidden {
 				colName = "NULL"
@@ -769,8 +770,9 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 					pkCol.Name.O,  // COLUMN_NAME
 					nil,           // SUB_PART
 					"",            // INDEX_COMMENT
-					"NULL",        // Expression
+					nil,           // Expression
 					0,             // INDEX_ID
+					"YES",         // Visible
 				)
 				rows = append(rows, record)
 			}
@@ -788,11 +790,16 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 						subPart = col.Length
 					}
 					colName := col.Name.O
-					expression := "NULL"
+					var expression interface{}
+					expression = nil
 					tblCol := tb.Columns[col.Offset]
 					if tblCol.Hidden {
 						colName = "NULL"
 						expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+					}
+					visible := "YES"
+					if idxInfo.Invisible {
+						visible = "NO"
 					}
 					record := types.MakeDatums(
 						schema.Name.O,   // TABLE_SCHEMA
@@ -805,6 +812,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 						idxInfo.Comment, // INDEX_COMMENT
 						expression,      // Expression
 						idxInfo.ID,      // INDEX_ID
+						visible,         // Visible
 					)
 					rows = append(rows, record)
 				}
