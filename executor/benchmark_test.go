@@ -742,8 +742,8 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, us
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
-	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().SetIndexLookupJoinConcurrency(4)
 	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}, rawData: wideString}
 	tc.cols = cols
@@ -809,9 +809,9 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	if testCase.disk {
 		memLimit = 1
 	}
-	t := memory.NewTracker(stringutil.StringerStr("root of prepare4HashJoin"), memLimit)
+	t := memory.NewTracker(-1, memLimit)
 	t.SetActionOnExceed(nil)
-	t2 := disk.NewTracker(stringutil.StringerStr("root of prepare4HashJoin"), -1)
+	t2 := disk.NewTracker(-1, -1)
 	e.ctx.GetSessionVars().StmtCtx.MemTracker = t
 	e.ctx.GetSessionVars().StmtCtx.DiskTracker = t2
 	return e
@@ -1131,8 +1131,8 @@ func defaultIndexJoinTestCase() *indexJoinTestCase {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().SnapshotTS = 1
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
-	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	tc := &indexJoinTestCase{
 		outerRows:       100000,
 		innerRows:       variable.DefMaxChunkSize * 100,
@@ -1446,8 +1446,8 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().SnapshotTS = 1
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
-	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 
 	numInnerRows := numOuterRows*numInnerDup + numInnerRedundant
 	itc := &indexJoinTestCase{
@@ -1607,7 +1607,7 @@ func defaultSortTestCase() *sortCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	tc := &sortCase{rows: 300000, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
 	return tc
 }

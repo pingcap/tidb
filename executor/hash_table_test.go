@@ -15,6 +15,7 @@ package executor
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 	"hash"
 	"hash/fnv"
 
@@ -152,7 +153,7 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	}
 	rowContainer := newHashRowContainer(sctx, 0, hCtx)
 	tracker := rowContainer.GetMemTracker()
-	tracker.SetLabel(buildSideResultLabel)
+	tracker.SetLabel(memory.LabelForBuildSideResult)
 	if spill {
 		tracker.SetBytesLimit(1)
 		rowContainer.rowContainer.ActionSpillForTest().Action(tracker)

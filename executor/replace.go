@@ -45,7 +45,7 @@ func (e *ReplaceExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *ReplaceExec) Open(ctx context.Context) error {
-	e.memTracker = memory.NewTracker(e.name, -1)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	if e.SelectExec != nil {

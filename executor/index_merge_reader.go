@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -389,7 +388,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 			finished:       e.finished,
 			buildTblReader: e.buildFinalTableReader,
 			tblPlans:       e.tblPlans,
-			memTracker:     memory.NewTracker(stringutil.MemoizeStr(func() string { return "TableWorker_" + strconv.Itoa(i) }), -1),
+			memTracker:     memory.NewTracker(i, -1),
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {

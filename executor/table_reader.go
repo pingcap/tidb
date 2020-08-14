@@ -101,7 +101,7 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	e.memTracker = memory.NewTracker(e.name, -1)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	var err error

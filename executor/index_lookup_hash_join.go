@@ -140,7 +140,7 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.memTracker = memory.NewTracker(e.name, -1)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	e.startWorkers(ctx)

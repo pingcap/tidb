@@ -268,7 +268,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
 	opt := mockDataSourceParameters{
 		schema: expression.NewSchema(cas.columns()...),
@@ -304,7 +304,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	err = exec.Close()
 	c.Assert(err, IsNil)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 1)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	c.Assert(err, IsNil)
@@ -334,7 +334,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	err = exec.Close()
 	c.Assert(err, IsNil)
 
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 24000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 24000)
 	dataSource.prepareChunks()
 	err = exec.Open(tmpCtx)
 	c.Assert(err, IsNil)
@@ -356,7 +356,7 @@ func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
 	ctx = mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, 16864*50)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, 16864*50)
 	ctx.GetSessionVars().StmtCtx.MemTracker.Consume(16864 * 45)
 	cas = &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
 	opt = mockDataSourceParameters{

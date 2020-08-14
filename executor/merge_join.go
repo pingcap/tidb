@@ -94,17 +94,17 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 	if t.isInner {
 		t.rowContainer = chunk.NewRowContainer(child.base().retFieldTypes, t.childChunk.Capacity())
 		t.rowContainer.GetMemTracker().AttachTo(exec.memTracker)
-		t.rowContainer.GetMemTracker().SetLabel(innerTableLabel)
+		t.rowContainer.GetMemTracker().SetLabel(memory.LabelForInnerTable)
 		t.rowContainer.GetDiskTracker().AttachTo(exec.diskTracker)
-		t.rowContainer.GetDiskTracker().SetLabel(innerTableLabel)
+		t.rowContainer.GetDiskTracker().SetLabel(memory.LabelForInnerTable)
 		if config.GetGlobalConfig().OOMUseTmpStorage {
 			actionSpill := t.rowContainer.ActionSpill()
 			exec.ctx.GetSessionVars().StmtCtx.MemTracker.SetActionOnExceed(actionSpill)
 		}
-		t.memTracker = memory.NewTracker(innerTableLabel, -1)
+		t.memTracker = memory.NewTracker(memory.LabelForInnerTable, -1)
 	} else {
 		t.filtersSelected = make([]bool, 0, exec.maxChunkSize)
-		t.memTracker = memory.NewTracker(outerTableLabel, -1)
+		t.memTracker = memory.NewTracker(memory.LabelForOuterTable, -1)
 	}
 
 	t.memTracker.AttachTo(exec.memTracker)
@@ -292,9 +292,9 @@ func (e *MergeJoinExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	e.memTracker = memory.NewTracker(e.name, -1)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	e.diskTracker = disk.NewTracker(e.name, -1)
+	e.diskTracker = disk.NewTracker(e.id, -1)
 	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
 	e.innerTable.init(e)

@@ -16,7 +16,7 @@ package chunk
 import (
 	"bufio"
 	"errors"
-	"fmt"
+	"github.com/pingcap/tidb/util/memory"
 	"io"
 	"io/ioutil"
 	"os"
@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 const (
@@ -58,20 +57,18 @@ type ListInDisk struct {
 	numRowsInDisk int
 }
 
-var defaultChunkListInDiskLabel fmt.Stringer = stringutil.StringerStr("chunk.ListInDisk")
-
 // NewListInDisk creates a new ListInDisk with field types.
 func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 	l := &ListInDisk{
 		fieldTypes: fieldTypes,
 		// TODO(fengliyuan): set the quota of disk usage.
-		diskTracker: disk.NewTracker(defaultChunkListInDiskLabel, -1),
+		diskTracker: disk.NewTracker(memory.LabelForChunkListInDisk, -1),
 	}
 	return l
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
+	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, "chunk.ListInDisk")
 	if err != nil {
 		return
 	}

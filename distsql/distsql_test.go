@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -42,7 +41,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []int
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"), -1)).
+		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 	c.Assert(err, IsNil)
 
@@ -440,7 +439,7 @@ func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectRe
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"), -1)).
+		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 
 	/// 4 int64 types.

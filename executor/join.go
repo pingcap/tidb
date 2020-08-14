@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var (
@@ -156,10 +154,10 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 
 	e.prepared = false
-	e.memTracker = memory.NewTracker(e.name, -1)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	e.diskTracker = disk.NewTracker(e.name, -1)
+	e.diskTracker = disk.NewTracker(e.id, -1)
 	e.diskTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.DiskTracker)
 
 	e.closeCh = make(chan struct{})
@@ -245,8 +243,6 @@ func (e *HashJoinExec) wait4BuildSide() (emptyBuild bool, err error) {
 	}
 	return false, nil
 }
-
-var buildSideResultLabel fmt.Stringer = stringutil.StringerStr("hashJoin.buildSideResult")
 
 // fetchBuildSideRows fetches all rows from build side executor, and append them
 // to e.buildSideResult.
@@ -683,9 +679,9 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	var selected []bool
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
-	e.rowContainer.GetMemTracker().SetLabel(buildSideResultLabel)
+	e.rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
-	e.rowContainer.GetDiskTracker().SetLabel(buildSideResultLabel)
+	e.rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
 		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
@@ -778,8 +774,6 @@ func (e *NestedLoopApplyExec) Close() error {
 	return e.outerExec.Close()
 }
 
-var innerListLabel fmt.Stringer = stringutil.StringerStr("innerList")
-
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	err := e.outerExec.Open(ctx)
@@ -792,10 +786,10 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.innerChunk = newFirstChunk(e.innerExec)
 	e.innerList = chunk.NewList(retTypes(e.innerExec), e.initCap, e.maxChunkSize)
 
-	e.memTracker = memory.NewTracker(e.name, -1)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	e.innerList.GetMemTracker().SetLabel(innerListLabel)
+	e.innerList.GetMemTracker().SetLabel(memory.LabelForInnerList)
 	e.innerList.GetMemTracker().AttachTo(e.memTracker)
 
 	if e.canUseCache {

@@ -91,7 +91,7 @@ func (e *ProjectionExec) open(ctx context.Context) error {
 	e.prepared = false
 	e.parentReqRows = int64(e.maxChunkSize)
 
-	e.memTracker = memory.NewTracker(e.name, -1)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	// For now a Projection can not be executed vectorially only because it

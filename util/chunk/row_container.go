@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -60,7 +59,7 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 	rc := &RowContainer{fieldType: fieldType, chunkSize: chunkSize}
 	rc.m.records = li
 	rc.memTracker = li.memTracker
-	rc.diskTracker = disk.NewTracker(stringutil.StringerStr("RowContainer"), -1)
+	rc.diskTracker = disk.NewTracker(memory.LabelForRowContainer, -1)
 	return rc
 }
 

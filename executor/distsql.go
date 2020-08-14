@@ -19,7 +19,6 @@ import (
 	"math"
 	"runtime"
 	"sort"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -291,7 +290,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 	}
 	e.kvRanges = kvRanges
 
-	e.memTracker = memory.NewTracker(e.name, -1)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
@@ -399,7 +398,7 @@ func (e *IndexLookUpExecutor) open(ctx context.Context) error {
 	// instead of in function "Open", because this "IndexLookUpExecutor" may be
 	// constructed by a "IndexLookUpJoin" and "Open" will not be called in that
 	// situation.
-	e.memTracker = memory.NewTracker(e.name, -1)
+	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.finished = make(chan struct{})
@@ -460,7 +459,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 
-	tracker := memory.NewTracker(stringutil.StringerStr("IndexWorker"), -1)
+	tracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	tracker.AttachTo(e.memTracker)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
@@ -536,7 +535,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			keepOrder:       e.keepOrder,
 			handleIdx:       e.handleIdx,
 			checkIndexValue: e.checkIndexValue,
-			memTracker:      memory.NewTracker(stringutil.MemoizeStr(func() string { return "TableWorker_" + strconv.Itoa(workerID) }), -1),
+			memTracker:      memory.NewTracker(workerID, -1),
 		}
 		worker.memTracker.AttachTo(e.memTracker)
 		ctx1, cancel := context.WithCancel(ctx)
