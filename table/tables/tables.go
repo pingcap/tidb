@@ -1010,11 +1010,7 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 	}
 
 	key := t.RecordKey(h)
-	err = txn.Delete(key)
-	if err != nil {
-		return err
-	}
-	return nil
+	return txn.Delete(key)
 }
 
 // removeRowIndices removes all the indices of a row.

@@ -313,8 +313,8 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	}
 	isDelete := len(v) == 0
 	if isDelete {
-		// only need to delete row key.
-		return k[10] == 'r'
+		// lock row and index key.
+		return k[10] == 'r' || k[10] == 'i'
 	}
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
@@ -450,4 +450,8 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 
 func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle kv.Handle) {
 	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle})
+}
+
+func (st *TxnState) GetTransaction() {
+	fmt.Printf("st.Transaction is %T\n", st.Transaction)
 }
