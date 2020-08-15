@@ -40,6 +40,22 @@ type testTableSuite struct {
 	d *ddl
 }
 
+func testTableInfoWith2IndexOnFirstColumn(c *C, d *ddl, name string, num int) *model.TableInfo {
+	normalInfo := testTableInfo(c, d, name, num)
+	idxs := make([]*model.IndexInfo, 0, 2)
+	for i := range idxs {
+		idx := &model.IndexInfo{
+			Name:    model.NewCIStr(fmt.Sprintf("i%d", i+1)),
+			State:   model.StatePublic,
+			Columns: []*model.IndexColumn{{Name: model.NewCIStr("c1")}},
+		}
+		idxs = append(idxs, idx)
+	}
+	normalInfo.Indices = idxs
+	normalInfo.Columns[0].FieldType.Flen = 11
+	return normalInfo
+}
+
 // testTableInfo creates a test table with num int columns and with no index.
 func testTableInfo(c *C, d *ddl, name string, num int) *model.TableInfo {
 	tblInfo := &model.TableInfo{

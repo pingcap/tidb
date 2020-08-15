@@ -347,6 +347,8 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns:
 			err = w.deleteRange(job)
+		case model.ActionModifyColumn:
+			err = w.deleteRange(job)
 		}
 	}
 	switch job.Type {

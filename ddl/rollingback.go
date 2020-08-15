@@ -105,6 +105,32 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 	return convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, occuredErr)
 }
 
+// rollingbackModifyColumn change the modifying-column job into rolling back state.
+// Since modifying column job has two types: normal-type and reorg-type, we should handle it respectively.
+// normal-type has only two states:    None -> Public
+// reorg-type has five states:         None -> Delete-only -> Write-only -> Write-org -> Public
+func rollingbackModifyColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	_, _, oldCol, jp, err := checkModifyColumn(t, job)
+	if err != nil {
+		return ver, err
+	}
+	if !needChangeColumnData(oldCol, jp.newCol) {
+		// normal-type rolling back
+		// TODO: when change null to not null, although state is unchanged with none, the oldCol flag's has been changed to preNullInsertFlag.
+		// TODO: To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
+		return cancelOnlyNotHandledJob(job)
+	}
+	// reorg-type rolling back
+	if jp.changingCol == nil {
+		// The job hasn't been handled and we cancel it directly.
+		job.State = model.JobStateCancelled
+		return ver, errCancelledDDLJob
+	}
+	// The job has been in it's middle state and we roll it back.
+	job.State = model.JobStateRollingback
+	return ver, errCancelledDDLJob
+}
+
 func rollingbackAddColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
 	job.State = model.JobStateRollingback
 	tblInfo, columnInfo, col, _, _, err := checkAddColumn(t, job)
@@ -396,8 +422,9 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		ver, err = rollingbackRenameIndex(t, job)
 	case model.ActionTruncateTable:
 		ver, err = rollingbackTruncateTable(t, job)
-	case model.ActionRebaseAutoID, model.ActionShardRowID,
-		model.ActionModifyColumn, model.ActionAddForeignKey,
+	case model.ActionModifyColumn:
+		ver, err = rollingbackModifyColumn(t, job)
+	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
