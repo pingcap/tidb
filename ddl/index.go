@@ -769,6 +769,15 @@ func checkAlterIndexVisibility(t *meta.Meta, job *model.Job) (*model.TableInfo, 
 	return tblInfo, indexName, invisible, nil
 }
 
+// ReorgIndexWorker use to receive and handle index reorg tasks and return results.
+type ReorgIndexWorker interface {
+	Run(d *ddlCtx)
+	Close()
+	ID() int
+	ResultCh() chan *reorgIndexResult
+	TaskCh() chan *reorgIndexTask
+}
+
 // indexRecord is the record information of an index.
 type indexRecord struct {
 	handle kv.Handle
@@ -777,26 +786,24 @@ type indexRecord struct {
 	skip   bool          // skip indicates that the index key is already exists, we should not add it.
 }
 
-type addIndexWorker struct {
+type baseIndexWorker struct {
 	id        int
 	ddlWorker *worker
 	batchCnt  int
 	sessCtx   sessionctx.Context
 	taskCh    chan *reorgIndexTask
-	resultCh  chan *addIndexResult
-	index     table.Index
+	resultCh  chan *reorgIndexResult
+	indexes   []table.Index
 	table     table.Table
 	closed    bool
 	priority  int
 
 	// The following attributes are used to reduce memory allocation.
-	defaultVals        []types.Datum
-	idxRecords         []*indexRecord
-	rowMap             map[int64]types.Datum
-	rowDecoder         *decoder.RowDecoder
-	idxKeyBufs         [][]byte
-	batchCheckKeys     []kv.Key
-	distinctCheckFlags []bool
+	defaultVals []types.Datum
+	idxRecords  []*indexRecord
+	rowMap      map[int64]types.Datum
+	rowDecoder  *decoder.RowDecoder
+	idxKeyBufs  [][]byte
 }
 
 type reorgIndexTask struct {
@@ -817,73 +824,69 @@ func (r *reorgIndexTask) String() string {
 	return "physicalTableID" + strconv.FormatInt(r.physicalTableID, 10) + "_" + "[" + r.startHandle.String() + "," + r.endHandle.String() + rightParenthesis
 }
 
-type addIndexResult struct {
-	addedCount int
-	scanCount  int
-	nextHandle kv.Handle
-	err        error
+type reorgIndexResult struct {
+	reorgedCount int
+	scanCount    int
+	nextHandle   kv.Handle
+	err          error
 }
 
-// addIndexTaskContext is the context of the batch adding indices.
-// After finishing the batch adding indices, result in addIndexTaskContext will be merged into addIndexResult.
-type addIndexTaskContext struct {
-	nextHandle kv.Handle
-	done       bool
-	addedCount int
-	scanCount  int
+// reorgIndexTaskContext is the context of the batch reorganizing indices.
+// After finishing the batch reorganization, result in reorgIndexTaskContext will be merged into reorgIndexResult.
+type reorgIndexTaskContext struct {
+	nextHandle   kv.Handle
+	done         bool
+	reorgedCount int
+	scanCount    int
 }
 
 // mergeAddIndexCtxToResult merge partial result in taskCtx into result.
-func mergeAddIndexCtxToResult(taskCtx *addIndexTaskContext, result *addIndexResult) {
+func mergeAddIndexCtxToResult(taskCtx *reorgIndexTaskContext, result *reorgIndexResult) {
 	result.nextHandle = taskCtx.nextHandle
-	result.addedCount += taskCtx.addedCount
+	result.reorgedCount += taskCtx.reorgedCount
 	result.scanCount += taskCtx.scanCount
 }
 
-func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column) *addIndexWorker {
-	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-	rowDecoder := decoder.NewRowDecoder(t, decodeColMap)
-	return &addIndexWorker{
-		id:          id,
-		ddlWorker:   worker,
-		batchCnt:    int(variable.GetDDLReorgBatchSize()),
-		sessCtx:     sessCtx,
-		taskCh:      make(chan *reorgIndexTask, 1),
-		resultCh:    make(chan *addIndexResult, 1),
-		index:       index,
-		table:       t,
-		rowDecoder:  rowDecoder,
-		priority:    kv.PriorityLow,
-		defaultVals: make([]types.Datum, len(t.Cols())),
-		rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
-	}
+func (w *baseIndexWorker) ID() int {
+	return w.id
 }
 
-func (w *addIndexWorker) close() {
+func (w *baseIndexWorker) Close() {
 	if !w.closed {
 		w.closed = true
 		close(w.taskCh)
 	}
 }
 
-// getIndexRecord gets index columns values from raw binary value row.
-func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawRecord []byte) (*indexRecord, error) {
-	t := w.table
-	cols := t.Cols()
-	idxInfo := w.index.Meta()
+func (w *baseIndexWorker) ResultCh() chan *reorgIndexResult {
+	return w.resultCh
+}
+
+func (w *baseIndexWorker) TaskCh() chan *reorgIndexTask {
+	return w.taskCh
+}
+
+func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, recordKey []byte, rawRecord []byte) error {
 	sysZone := timeutil.SystemLocation()
 	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, time.UTC, sysZone, w.rowMap)
 	if err != nil {
-		return nil, errors.Trace(errCantDecodeIndex.GenWithStackByArgs(err))
+		return errors.Trace(errCantDecodeIndex.GenWithStackByArgs(err))
 	}
+	return nil
+}
+
+// getIndexRecord gets index columns values use rowDecoder, and generate indexRecord.
+func (w *baseIndexWorker) getIndexRecord(index *table.Index, handle kv.Handle, recordKey []byte) (*indexRecord, error) {
+	cols := w.table.Cols()
+	idxInfo := (*index).Meta()
+	sysZone := timeutil.SystemLocation()
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
+	var err error
 	for j, v := range idxInfo.Columns {
 		col := cols[v.Offset]
 		idxColumnVal, ok := w.rowMap[col.ID]
 		if ok {
 			idxVal[j] = idxColumnVal
-			// Make sure there is no dirty data.
-			delete(w.rowMap, col.ID)
 			continue
 		}
 		idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
@@ -903,21 +906,18 @@ func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawR
 		}
 		idxVal[j] = idxColumnVal
 	}
-	// If there are generated column, rowDecoder will use column value that not in idxInfo.Columns to calculate
-	// the generated value, so we need to clear up the reusing map.
-	w.cleanRowMap()
 	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal}
 	return idxRecord, nil
 }
 
-func (w *addIndexWorker) cleanRowMap() {
+func (w *baseIndexWorker) cleanRowMap() {
 	for id := range w.rowMap {
 		delete(w.rowMap, id)
 	}
 }
 
 // getNextHandle gets next handle of entry that we are going to process.
-func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) (nextHandle kv.Handle) {
+func (w *baseIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) (nextHandle kv.Handle) {
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
 		return w.idxRecords[len(w.idxRecords)-1].handle.Next()
@@ -940,12 +940,12 @@ func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) 
 // 2. Next handle of entry that we need to process.
 // 3. Boolean indicates whether the task is done.
 // 4. error occurs in fetchRowColVals. nil if no error occurs.
-func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*indexRecord, kv.Handle, bool, error) {
+func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*indexRecord, kv.Handle, bool, error) {
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
 
-	// taskDone means that the added handle is out of taskRange.endHandle.
+	// taskDone means that the reorged handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startHandle, taskRange.endHandle, taskRange.endIncluded,
@@ -964,12 +964,22 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 				return false, nil
 			}
 
-			idxRecord, err1 := w.getIndexRecord(handle, recordKey, rawRow)
-			if err1 != nil {
-				return false, errors.Trace(err1)
+			// Decode one row, generate records of this row.
+			err := w.updateRowDecoder(handle, recordKey, rawRow)
+			if err != nil {
+				return false, err
 			}
+			for _, index := range w.indexes { //TODO: BUG, this line pass by value.
+				idxRecord, err1 := w.getIndexRecord(&index, handle, recordKey)
+				if err1 != nil {
+					return false, errors.Trace(err1)
+				}
+				w.idxRecords = append(w.idxRecords, idxRecord)
+			}
+			// If there are generated column, rowDecoder will use column value that not in idxInfo.Columns to calculate
+			// the generated value, so we need to clear up the reusing map.
+			w.cleanRowMap()
 
-			w.idxRecords = append(w.idxRecords, idxRecord)
 			if handle.Equal(taskRange.endHandle) {
 				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
 				taskDone = true
@@ -986,13 +996,47 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInde
 	return w.idxRecords, w.getNextHandle(taskRange, taskDone), taskDone, errors.Trace(err)
 }
 
-func (w *addIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
+func (w *baseIndexWorker) logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
 	if threshold == 0 {
 		threshold = atomic.LoadUint32(&variable.DDLSlowOprThreshold)
 	}
 
 	if elapsed >= time.Duration(threshold)*time.Millisecond {
 		logutil.BgLogger().Info("[ddl] slow operations", zap.Duration("takeTimes", elapsed), zap.String("msg", slowMsg))
+	}
+}
+
+type addIndexWorker struct {
+	baseIndexWorker
+
+	// addIndexWorker only process one index, so use index field for compatibility, same as indexes[0].
+	// TODO: refactor the code and remove it.
+	index table.Index
+
+	batchCheckKeys     []kv.Key
+	distinctCheckFlags []bool
+}
+
+func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column) *addIndexWorker {
+	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+	rowDecoder := decoder.NewRowDecoder(t, decodeColMap)
+	rowMap := make(map[int64]types.Datum, len(decodeColMap))
+	return &addIndexWorker{
+		baseIndexWorker: baseIndexWorker{
+			id:          id,
+			ddlWorker:   worker,
+			batchCnt:    int(variable.GetDDLReorgBatchSize()),
+			sessCtx:     sessCtx,
+			taskCh:      make(chan *reorgIndexTask, 1),
+			resultCh:    make(chan *reorgIndexResult, 1),
+			indexes:     []table.Index{index},
+			table:       t,
+			priority:    kv.PriorityLow,
+			defaultVals: make([]types.Datum, len(t.Cols())),
+			rowMap:      rowMap,
+			rowDecoder:  rowDecoder,
+		},
+		index: index,
 	}
 }
 
@@ -1065,7 +1109,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // backfillIndexInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
-func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx addIndexTaskContext, errInTxn error) {
+func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx reorgIndexTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		if val.(bool) {
 			panic("panic test")
@@ -1074,7 +1118,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
-		taskCtx.addedCount = 0
+		taskCtx.reorgedCount = 0
 		taskCtx.scanCount = 0
 		txn.SetOption(kv.Priority, w.priority)
 
@@ -1115,7 +1159,7 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 
 				return errors.Trace(err)
 			}
-			taskCtx.addedCount++
+			taskCtx.reorgedCount++
 		}
 
 		return nil
@@ -1128,9 +1172,9 @@ func (w *addIndexWorker) backfillIndexInTxn(handleRange reorgIndexTask) (taskCtx
 var addIndexSpeedCounter = metrics.AddIndexTotalCounter.WithLabelValues("speed")
 
 // handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
-func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *addIndexResult {
+func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *reorgIndexResult {
 	handleRange := *task
-	result := &addIndexResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
+	result := &reorgIndexResult{reorgedCount: 0, nextHandle: handleRange.startHandle, err: nil}
 	lastLogCount := 0
 	lastLogTime := time.Now()
 	startTime := lastLogTime
@@ -1152,13 +1196,13 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 			return result
 		}
 
-		addIndexSpeedCounter.Add(float64(taskCtx.addedCount))
+		addIndexSpeedCounter.Add(float64(taskCtx.reorgedCount))
 		mergeAddIndexCtxToResult(&taskCtx, result)
-		w.ddlWorker.reorgCtx.increaseRowCount(int64(taskCtx.addedCount))
+		w.ddlWorker.reorgCtx.increaseRowCount(int64(taskCtx.reorgedCount))
 
 		if num := result.scanCount - lastLogCount; num >= 30000 {
 			lastLogCount = result.scanCount
-			logutil.BgLogger().Info("[ddl] add index worker back fill index", zap.Int("workerID", w.id), zap.Int("addedCount", result.addedCount),
+			logutil.BgLogger().Info("[ddl] add index worker back fill index", zap.Int("workerID", w.id), zap.Int("addedCount", result.reorgedCount),
 				zap.Int("scanCount", result.scanCount), zap.String("nextHandle", toString(taskCtx.nextHandle)), zap.Float64("speed(rows/s)", float64(num)/time.Since(lastLogTime).Seconds()))
 			lastLogTime = time.Now()
 		}
@@ -1169,16 +1213,16 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *ad
 		}
 	}
 	logutil.BgLogger().Info("[ddl] add index worker finish task", zap.Int("workerID", w.id),
-		zap.String("task", task.String()), zap.Int("addedCount", result.addedCount),
+		zap.String("task", task.String()), zap.Int("addedCount", result.reorgedCount),
 		zap.Int("scanCount", result.scanCount), zap.String("nextHandle", toString(result.nextHandle)),
 		zap.String("takeTime", time.Since(startTime).String()))
 	return result
 }
 
-func (w *addIndexWorker) run(d *ddlCtx) {
+func (w *addIndexWorker) Run(d *ddlCtx) {
 	logutil.BgLogger().Info("[ddl] add index worker start", zap.Int("workerID", w.id))
 	defer func() {
-		w.resultCh <- &addIndexResult{err: errReorgPanic}
+		w.resultCh <- &reorgIndexResult{err: errReorgPanic}
 	}()
 	defer util.Recover(metrics.LabelDDL, "addIndexWorker.run", nil, false)
 	for {
@@ -1190,7 +1234,7 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 		logutil.BgLogger().Debug("[ddl] add index worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
 		failpoint.Inject("mockAddIndexErr", func() {
 			if w.id == 0 {
-				result := &addIndexResult{addedCount: 0, nextHandle: nil, err: errors.Errorf("mock add index error")}
+				result := &reorgIndexResult{reorgedCount: 0, nextHandle: nil, err: errors.Errorf("mock add index error")}
 				w.resultCh <- result
 				failpoint.Continue()
 			}
@@ -1204,13 +1248,7 @@ func (w *addIndexWorker) run(d *ddlCtx) {
 	logutil.BgLogger().Info("[ddl] add index worker exit", zap.Int("workerID", w.id))
 }
 
-func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *model.IndexInfo) (map[int64]decoder.Column, error) {
-	cols := t.Cols()
-	indexedCols := make([]*table.Column, len(indexInfo.Columns))
-	for i, v := range indexInfo.Columns {
-		indexedCols[i] = cols[v.Offset]
-	}
-
+func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
 	dbName := model.NewCIStr(sessCtx.GetSessionVars().CurrentDB)
 	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
 	if err != nil {
@@ -1264,13 +1302,13 @@ func decodeHandleRange(keyRange kv.KeyRange) (kv.Handle, kv.Handle, error) {
 	return startHandle, endHandle, nil
 }
 
-func closeAddIndexWorkers(workers []*addIndexWorker) {
+func closeReorgIndexWorkers(workers []ReorgIndexWorker) {
 	for _, worker := range workers {
-		worker.close()
+		worker.Close()
 	}
 }
 
-func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAddedCount *int64, startHandle kv.Handle) (kv.Handle, int64, error) {
+func (w *worker) waitTaskResults(workers []ReorgIndexWorker, taskCnt int, totalAddedCount *int64, startHandle kv.Handle) (kv.Handle, int64, error) {
 	var (
 		addedCount int64
 		nextHandle = startHandle
@@ -1278,7 +1316,7 @@ func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAd
 	)
 	for i := 0; i < taskCnt; i++ {
 		worker := workers[i]
-		result := <-worker.resultCh
+		result := <-worker.ResultCh()
 		if firstErr == nil && result.err != nil {
 			firstErr = result.err
 			// We should wait all working workers exits, any way.
@@ -1286,13 +1324,13 @@ func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAd
 		}
 
 		if result.err != nil {
-			logutil.BgLogger().Warn("[ddl] add index worker failed", zap.Int("workerID", worker.id),
+			logutil.BgLogger().Warn("[ddl] add index worker failed", zap.Int("workerID", worker.ID()),
 				zap.Error(result.err))
 		}
 
 		if firstErr == nil {
-			*totalAddedCount += int64(result.addedCount)
-			addedCount += int64(result.addedCount)
+			*totalAddedCount += int64(result.reorgedCount)
+			addedCount += int64(result.reorgedCount)
 			nextHandle = result.nextHandle
 		}
 	}
@@ -1302,9 +1340,9 @@ func (w *worker) waitTaskResults(workers []*addIndexWorker, taskCnt int, totalAd
 
 // handleReorgTasks sends tasks to workers, and waits for all the running workers to return results,
 // there are taskCnt running workers.
-func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, workers []*addIndexWorker, batchTasks []*reorgIndexTask) error {
+func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, workers []ReorgIndexWorker, batchTasks []*reorgIndexTask) error {
 	for i, task := range batchTasks {
-		workers[i].taskCh <- task
+		workers[i].TaskCh() <- task
 	}
 
 	startHandle := batchTasks[0].startHandle
@@ -1339,7 +1377,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 }
 
 // sendRangeTaskToWorkers sends tasks to workers, and returns remaining kvRanges that is not handled.
-func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []*addIndexWorker, reorgInfo *reorgInfo,
+func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []ReorgIndexWorker, reorgInfo *reorgInfo,
 	totalAddedCount *int64, kvRanges []kv.KeyRange, globalEndHandle kv.Handle) ([]kv.KeyRange, error) {
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
 	physicalTableID := reorgInfo.PhysicalTableID
@@ -1421,7 +1459,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
 	sessCtx := newContext(reorgInfo.d.store)
-	decodeColMap, err := makeupDecodeColMap(sessCtx, t, indexInfo)
+	decodeColMap, err := makeupDecodeColMap(sessCtx, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1435,9 +1473,9 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
-	idxWorkers := make([]*addIndexWorker, 0, workerCnt)
+	idxWorkers := make([]ReorgIndexWorker, 0, workerCnt)
 	defer func() {
-		closeAddIndexWorkers(idxWorkers)
+		closeReorgIndexWorkers(idxWorkers)
 	}()
 
 	for {
@@ -1461,13 +1499,13 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 			idxWorker := newAddIndexWorker(sessCtx, w, i, t, indexInfo, decodeColMap)
 			idxWorker.priority = job.Priority
 			idxWorkers = append(idxWorkers, idxWorker)
-			go idxWorkers[i].run(reorgInfo.d)
+			go idxWorkers[i].Run(reorgInfo.d)
 		}
 		// Shrink the worker size.
 		if len(idxWorkers) > int(workerCnt) {
 			workers := idxWorkers[workerCnt:]
 			idxWorkers = idxWorkers[:workerCnt]
-			closeAddIndexWorkers(workers)
+			closeReorgIndexWorkers(workers)
 		}
 
 		failpoint.Inject("checkIndexWorkerNum", func(val failpoint.Value) {
@@ -1690,4 +1728,295 @@ func indexColumnSliceEqual(a, b []*model.IndexColumn) bool {
 		}
 	}
 	return true
+}
+
+type dropIndexWorker struct {
+	baseIndexWorker
+	indexList []table.Index
+}
+
+func newDropIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column) (*dropIndexWorker, error) {
+	//index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+	indexes := make([]table.Index, 0, len(t.Indices()))
+	rowDecoder := decoder.NewRowDecoder(t, decodeColMap)
+	for _, index := range t.Indices() {
+		if index.Meta().Global {
+			indexes = append(indexes, index)
+			logutil.BgLogger().Info("ddddddd newDropIndexWorker", zap.String("index", index.Meta().Name.O))
+		}
+	}
+	return &dropIndexWorker{
+		baseIndexWorker: baseIndexWorker{
+			id:          id,
+			ddlWorker:   worker,
+			batchCnt:    int(variable.GetDDLReorgBatchSize()),
+			sessCtx:     sessCtx,
+			taskCh:      make(chan *reorgIndexTask, 1),
+			resultCh:    make(chan *reorgIndexResult, 1),
+			indexes:     indexes,
+			table:       t,
+			priority:    kv.PriorityLow,
+			defaultVals: make([]types.Datum, len(t.Cols())),
+			rowMap:      make(map[int64]types.Datum, len(decodeColMap)),
+			rowDecoder:  rowDecoder,
+		},
+	}, nil
+}
+
+func (w *dropIndexWorker) cleanupIndexInTxn(handleRange reorgIndexTask) (taskCtx reorgIndexTaskContext, errInTxn error) {
+	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("panic test")
+		}
+	})
+
+	oprStartTime := time.Now()
+	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
+		taskCtx.reorgedCount = 0
+		taskCtx.scanCount = 0
+		txn.SetOption(kv.Priority, w.priority)
+
+		idxRecords, nextHandle, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		taskCtx.nextHandle = nextHandle
+		taskCtx.done = taskDone
+
+		n := len(w.indexes)
+		for i, idxRecord := range idxRecords {
+			taskCtx.scanCount++
+			err := w.indexes[i%n].Delete(w.sessCtx.GetSessionVars().StmtCtx, txn, idxRecord.vals, idxRecord.handle)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			taskCtx.reorgedCount++
+		}
+		return nil
+	})
+	w.logSlowOperations(time.Since(oprStartTime), "cleanupIndexInTxn", 3000)
+
+	return
+}
+
+// handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
+func (w *dropIndexWorker) handleCleanupTask(d *ddlCtx, task *reorgIndexTask) *reorgIndexResult {
+	handleRange := *task
+	result := &reorgIndexResult{reorgedCount: 0, nextHandle: handleRange.startHandle, err: nil}
+	lastLogCount := 0
+	lastLogTime := time.Now()
+	startTime := lastLogTime
+
+	for {
+		// Give job chance to be canceled, if we not check it here,
+		// if there is panic in w.backfillIndexInTxn we will never cancel the job.
+		// Because reorgIndexTask may run a long time,
+		// we should check whether this ddl job is still runnable.
+		err := w.ddlWorker.isReorgRunnable(d)
+		if err != nil {
+			result.err = err
+			return result
+		}
+
+		taskCtx, err := w.cleanupIndexInTxn(handleRange)
+		if err != nil {
+			result.err = err
+			return result
+		}
+
+		// need modify
+		addIndexSpeedCounter.Add(float64(taskCtx.reorgedCount))
+		mergeAddIndexCtxToResult(&taskCtx, result)
+		w.ddlWorker.reorgCtx.increaseRowCount(int64(taskCtx.reorgedCount))
+
+		// need modify
+		if num := result.scanCount - lastLogCount; num >= 30000 {
+			lastLogCount = result.scanCount
+			logutil.BgLogger().Info("[ddl] drop index worker clean up index", zap.Int("workerID", w.id), zap.Int("reorgedCount", result.reorgedCount),
+				zap.Int("scanCount", result.scanCount), zap.String("nextHandle", toString(taskCtx.nextHandle)), zap.Float64("speed(rows/s)", float64(num)/time.Since(lastLogTime).Seconds()))
+			lastLogTime = time.Now()
+		}
+
+		handleRange.startHandle = taskCtx.nextHandle
+		if taskCtx.done {
+			break
+		}
+	}
+	// need modify
+	logutil.BgLogger().Info("[ddl] drop index worker finish task", zap.Int("workerID", w.id),
+		zap.String("task", task.String()), zap.Int("reorgedCount", result.reorgedCount),
+		zap.Int("scanCount", result.scanCount), zap.String("nextHandle", toString(result.nextHandle)),
+		zap.String("takeTime", time.Since(startTime).String()))
+	return result
+}
+
+func (w *dropIndexWorker) Run(d *ddlCtx) {
+	logutil.BgLogger().Info("[ddl] drop index worker start", zap.Int("workerID", w.id))
+	defer func() {
+		w.resultCh <- &reorgIndexResult{err: errReorgPanic}
+	}()
+	defer util.Recover(metrics.LabelDDL, "dropIndexWorker.run", nil, false)
+	for {
+		task, more := <-w.taskCh
+		if !more {
+			break
+		}
+		logutil.BgLogger().Debug("[ddl] drop index worker got task", zap.Int("workerID", w.id), zap.String("task", task.String()))
+
+		// Dynamic change batch size.
+		w.batchCnt = int(variable.GetDDLReorgBatchSize())
+		result := w.handleCleanupTask(d, task)
+		w.resultCh <- result
+	}
+	logutil.BgLogger().Info("[ddl] add index worker exit", zap.Int("workerID", w.id))
+}
+
+// cleanupPhysicalTableIndex handles the drop partition reorganization state for a non-partitioned table or a partition.
+func (w *worker) cleanupPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
+	job := reorgInfo.Job
+	logutil.BgLogger().Info("[ddl] start to clean up table index of partition", zap.String("job", job.String()), zap.String("reorgInfo", reorgInfo.String()))
+	totalAddedCount := job.GetRowCount()
+
+	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
+	sessCtx := newContext(reorgInfo.d.store)
+	decodeColMap, err := makeupDecodeColMap(sessCtx, t)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := w.isReorgRunnable(reorgInfo.d); err != nil {
+		return errors.Trace(err)
+	}
+	if startHandle == nil && endHandle == nil {
+		return nil
+	}
+
+	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
+	workerCnt := variable.GetDDLReorgWorkerCounter()
+	idxWorkers := make([]ReorgIndexWorker, 0, workerCnt)
+	defer func() {
+		closeReorgIndexWorkers(idxWorkers)
+	}()
+
+	for {
+		kvRanges, err := splitTableRanges(t, reorgInfo.d.store, startHandle, endHandle)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		// For dynamic adjust add index worker number.
+		if err := loadDDLReorgVars(w); err != nil {
+			logutil.BgLogger().Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
+		}
+		workerCnt = variable.GetDDLReorgWorkerCounter()
+		// If only have 1 range, we can only start 1 worker.
+		if len(kvRanges) < int(workerCnt) {
+			workerCnt = int32(len(kvRanges))
+		}
+		// Enlarge the worker size.
+		for i := len(idxWorkers); i < int(workerCnt); i++ {
+			sessCtx := newContext(reorgInfo.d.store)
+			idxWorker, err := newDropIndexWorker(sessCtx, w, i, t, decodeColMap)
+			if err != nil {
+				return err
+			}
+			idxWorker.priority = job.Priority
+			idxWorkers = append(idxWorkers, idxWorker)
+			go idxWorkers[i].Run(reorgInfo.d)
+		}
+		// Shrink the worker size.
+		if len(idxWorkers) > int(workerCnt) {
+			workers := idxWorkers[workerCnt:]
+			idxWorkers = idxWorkers[:workerCnt]
+			closeReorgIndexWorkers(workers)
+		}
+
+		logutil.BgLogger().Info("[ddl] start drop index workers to reorg index", zap.Int("workerCnt", len(idxWorkers)),
+			zap.Int("regionCnt", len(kvRanges)), zap.String("startHandle", toString(startHandle)), zap.String("endHandle", toString(endHandle)))
+		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges, endHandle)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if len(remains) == 0 {
+			break
+		}
+		startHandle, _, err = decodeHandleRange(remains[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// cleanupGlobalIndex handles the drop partition reorganization state to clean up index entries of partitions.
+func (w *worker) cleanupGlobalIndexes(tbl table.PartitionedTable, partitionIDs []int64, reorgInfo *reorgInfo) error {
+	logutil.BgLogger().Info("ddddddd cleanupGlobalIndexes", zap.Int64s("pid", partitionIDs))
+	var err error
+	var finish bool
+	for !finish {
+		p := tbl.GetPartition(reorgInfo.PhysicalTableID)
+		if p == nil {
+			return errCancelledDDLJob.GenWithStack("Can not find partition id %d for table %d", reorgInfo.PhysicalTableID, tbl.Meta().ID)
+		}
+		err = w.cleanupPhysicalTableIndex(p, reorgInfo)
+		if err != nil {
+			break
+		}
+		finish, err = w.updateReorgInfofromPartitions(tbl, reorgInfo, partitionIDs)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return errors.Trace(err)
+}
+
+// updateReorgInfoFromPartitions will find the next partition in partitionIDs according to current reorgInfo.
+// If no more partitions, or table t is not a partitioned table, returns true to
+// indicate that the reorganize work is finished.
+func (w *worker) updateReorgInfofromPartitions(t table.PartitionedTable, reorg *reorgInfo, partitionIDs []int64) (bool, error) {
+	pi := t.Meta().GetPartitionInfo()
+	if pi == nil {
+		return true, nil
+	}
+
+	var pid int64
+	for i, pi := range partitionIDs {
+		if pi == reorg.PhysicalTableID {
+			if i == len(partitionIDs)-1 {
+				return true, nil
+			}
+		}
+		pid = partitionIDs[i+1]
+	}
+
+	failpoint.Inject("mockUpdateCachedSafePoint", func(val failpoint.Value) {
+		if val.(bool) {
+			// 18 is for the logical time.
+			ts := oracle.GetPhysical(time.Now()) << 18
+			s := reorg.d.store.(tikv.Storage)
+			s.UpdateSPCache(uint64(ts), time.Now())
+			time.Sleep(time.Millisecond * 3)
+		}
+	})
+
+	currentVer, err := getValidCurrentVersion(reorg.d.store)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	start, end, err := getTableRange(reorg.d, t.GetPartition(pid), currentVer.Ver, reorg.Job.Priority)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	reorg.StartHandle, reorg.EndHandle, reorg.PhysicalTableID = start, end, pid
+
+	// Write the reorg info to store so the whole reorganize process can recover from panic.
+	err = kv.RunInNewTxn(reorg.d.store, true, func(txn kv.Transaction) error {
+		return errors.Trace(reorg.UpdateReorgMeta(txn, reorg.StartHandle, reorg.EndHandle, reorg.PhysicalTableID))
+	})
+	logutil.BgLogger().Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID),
+		zap.Int64("partitionTableID", pid), zap.String("startHandle", toString(start)),
+		zap.String("endHandle", toString(end)), zap.Error(err))
+	return false, errors.Trace(err)
 }

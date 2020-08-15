@@ -1650,6 +1650,32 @@ func checkDelRangeDone(c *C, ctx sessionctx.Context, idx table.Index) {
 	c.Assert(handles, HasLen, 0, Commentf("take time %v", time.Since(startTime)))
 }
 
+func checkGlobalIndexCleanUpDone(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
+	c.Assert(ctx.NewTxn(context.Background()), IsNil)
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	defer txn.Rollback()
+
+	cnt := 0
+	prefix := tablecodec.EncodeTableIndexPrefix(tblInfo.ID, idxInfo.ID)
+	it, err := txn.Iter(prefix, nil)
+	c.Assert(err, IsNil)
+	for it.Valid() {
+		if !it.Key().HasPrefix(prefix) {
+			break
+		}
+		segs := tablecodec.SplitIndexValue(it.Value())
+		c.Assert(segs.PartitionID, NotNil)
+		_, pi, err := codec.DecodeInt(segs.PartitionID)
+		c.Assert(err, IsNil)
+		c.Assert(pi, Not(Equals), pid)
+		cnt++
+		err = it.Next()
+		c.Assert(err, IsNil)
+	}
+	return cnt
+}
+
 func (s *testDBSuite5) TestAlterPrimaryKey(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table test_add_pk(a int, b int unsigned , c varchar(255) default 'abc', d int as (a+b), e int as (a+1) stored, index idx(b))")

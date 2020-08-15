@@ -815,6 +815,44 @@ func (s *testIntegrationSuite5) TestMultiPartitionDropAndTruncate(c *C) {
 	result.Check(testkit.Rows(`2010`))
 }
 
+func (s *testIntegrationSuite7) TestDropPartitionWithGlobalIndex(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20)
+	);`)
+	t := testGetTableByName(c, s.ctx, "test", "test_global")
+	pid := t.Meta().Partition.Definitions[1].ID
+
+	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b);")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c);")
+	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4)`)
+
+	tk.MustExec("alter table test_global drop partition p2;")
+	result := tk.MustQuery("select * from test_global;")
+	result.Sort().Check(testkit.Rows(`1 1 1`, `2 2 2`))
+
+	t = testGetTableByName(c, s.ctx, "test", "test_global")
+	idxInfo := t.Meta().FindIndexByName("idx_b")
+	c.Assert(idxInfo, NotNil)
+	cnt := checkGlobalIndexCleanUpDone(c, s.ctx, t.Meta(), idxInfo, pid)
+	c.Assert(cnt, Equals, 2)
+
+	idxInfo = t.Meta().FindIndexByName("idx_c")
+	c.Assert(idxInfo, NotNil)
+	cnt = checkGlobalIndexCleanUpDone(c, s.ctx, t.Meta(), idxInfo, pid)
+	c.Assert(cnt, Equals, 2)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = false
+	})
+}
+
 func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

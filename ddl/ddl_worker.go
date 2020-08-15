@@ -616,7 +616,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		ver, err = onDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
-		ver, err = onDropTablePartition(t, job)
+		ver, err = w.onDropTablePartition(d, t, job)
 	case model.ActionTruncateTablePartition:
 		ver, err = onTruncateTablePartition(d, t, job)
 	case model.ActionExchangeTablePartition:
@@ -660,7 +660,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionModifyTableAutoIdCache:
 		ver, err = onModifyTableAutoIDCache(t, job)
 	case model.ActionAddTablePartition:
-		ver, err = onAddTablePartition(d, t, job)
+		ver, err = w.onAddTablePartition(d, t, job)
 	case model.ActionModifyTableCharsetAndCollate:
 		ver, err = onModifyTableCharsetAndCollate(t, job)
 	case model.ActionRecoverTable:

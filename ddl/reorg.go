@@ -491,6 +491,55 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	return &info, nil
 }
 
+func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, partitionIDs []int64) (*reorgInfo, error) {
+	var (
+		start kv.Handle
+		end   kv.Handle
+		pid   int64
+		info  reorgInfo
+	)
+	if job.SnapshotVer == 0 {
+		info.first = true
+		// get the current version for reorganization if we don't have
+		ver, err := getValidCurrentVersion(d.store)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		pid = partitionIDs[0]
+		logutil.BgLogger().Info("ddddddd ", zap.Int64("pid", pid))
+		var tb table.PhysicalTable
+		tb = tbl.(table.PartitionedTable).GetPartition(pid)
+		logutil.BgLogger().Info("ddddddd ", zap.Int64("tblID", tbl.Meta().ID), zap.Bool("tbNotNill", tb != nil))
+		start, end, err = getTableRange(d, tb, ver.Ver, job.Priority)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		logutil.BgLogger().Info("[ddl] job get table range",
+			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
+			zap.String("startHandle", toString(start)), zap.String("endHandle", toString(end)))
+
+		err = t.UpdateDDLReorgHandle(job, start, end, pid)
+		if err != nil {
+			return &info, errors.Trace(err)
+		}
+		// Update info should after data persistent.
+		job.SnapshotVer = ver.Ver
+	} else {
+		var err error
+		start, end, pid, err = t.GetDDLReorgHandle(job, tbl.Meta().IsCommonHandle)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	info.Job = job
+	info.d = d
+	info.StartHandle = start
+	info.EndHandle = end
+	info.PhysicalTableID = pid
+
+	return &info, nil
+}
+
 func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle kv.Handle, physicalTableID int64) error {
 	if startHandle == nil && endHandle == nil {
 		return nil
