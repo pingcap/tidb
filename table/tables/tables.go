@@ -19,7 +19,6 @@ package tables
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -172,9 +171,6 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 func initTableIndices(t *TableCommon) error {
 	tblInfo := t.meta
 	for _, idxInfo := range tblInfo.Indices {
-		if tblInfo.Name.L == "modify-table" {
-			fmt.Println(``)
-		}
 		if idxInfo.State == model.StateNone {
 			return table.ErrIndexStateCantNone.GenWithStackByArgs(idxInfo.Name)
 		}
