@@ -451,7 +451,3 @@ func (s *session) StmtGetMutation(tableID int64) *binlog.TableMutation {
 func (s *session) StmtAddDirtyTableOP(op int, tid int64, handle kv.Handle) {
 	s.txn.dirtyTableOP = append(s.txn.dirtyTableOP, dirtyTableOperation{op, tid, handle})
 }
-
-func (st *TxnState) GetTransaction() {
-	fmt.Printf("st.Transaction is %T\n", st.Transaction)
-}
