@@ -311,10 +311,9 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	if flags.HasPresumeKeyNotExists() {
 		return true
 	}
-	isDelete := len(v) == 0
-	if isDelete {
-		// lock row and index key.
-		return k[10] == 'r' || k[10] == 'i'
+	// lock row key for delete operation.
+	if len(v) == 0 && k[10] == 'r' {
+		return true
 	}
 	if tablecodec.IsUntouchedIndexKValue(k, v) {
 		return false
