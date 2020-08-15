@@ -919,7 +919,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		// Manually set first state.
 		job.SchemaState = model.StatePublic
 	}
-	// In order to skip maintaining the state check in partitionDefinition, TiDB use addingDefinition instead of state field.
+	// In order to skip maintaining the state check in partitionDefinition, TiDB use droppingDefinition instead of state field.
 	// So here using `job.SchemaState` to judge what the stage of this job is.
 	originalState := job.SchemaState
 	switch job.SchemaState {
@@ -935,11 +935,9 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteOnly:
 		// This state is not a real 'DeleteOnly' state, because tidb does not maintaining the state check in partitionDefinition.
-		// Insert this state to confirm all servers can not see the old partitions when job is in the delete reorg state,
-		// so that no new data will be inserted into old partitions when reorganization is running.
+		// Insert this state to confirm all servers can not see the old partitions when reorg is running,
+		// so that no new data will be inserted into old partitions when reorganizing.
 		job.SchemaState = model.StateDeleteReorganization
-		// Initialize SnapshotVer to 0 for later reorganization check.
-		job.SnapshotVer = 0
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteReorganization:
 		oldTblInfo := getTableInfoWithDroppingPartitions(tblInfo)
@@ -957,10 +955,10 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 				// and then run the reorg next time.
 				return ver, errors.Trace(err)
 			}
-			err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+			err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (dropIndexErr error) {
 				defer tidbutil.Recover(metrics.LabelDDL, "onDropTablePartition",
 					func() {
-						addIndexErr = errCancelledDDLJob.GenWithStack("drop partition panic")
+						dropIndexErr = errCancelledDDLJob.GenWithStack("drop partition panic")
 					}, false)
 				return w.cleanupGlobalIndexes(pt, physicalTableIDs, reorgInfo)
 			})

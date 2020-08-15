@@ -803,7 +803,6 @@ type baseIndexWorker struct {
 	idxRecords  []*indexRecord
 	rowMap      map[int64]types.Datum
 	rowDecoder  *decoder.RowDecoder
-	idxKeyBufs  [][]byte
 }
 
 type reorgIndexTask struct {
@@ -840,8 +839,8 @@ type reorgIndexTaskContext struct {
 	scanCount    int
 }
 
-// mergeAddIndexCtxToResult merge partial result in taskCtx into result.
-func mergeAddIndexCtxToResult(taskCtx *reorgIndexTaskContext, result *reorgIndexResult) {
+// mergeReorgIndexCtxToResult merge partial result in taskCtx into result.
+func mergeReorgIndexCtxToResult(taskCtx *reorgIndexTaskContext, result *reorgIndexResult) {
 	result.nextHandle = taskCtx.nextHandle
 	result.reorgedCount += taskCtx.reorgedCount
 	result.scanCount += taskCtx.scanCount
@@ -875,10 +874,9 @@ func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, recordKey []byte, r
 	return nil
 }
 
-// getIndexRecord gets index columns values use rowDecoder, and generate indexRecord.
-func (w *baseIndexWorker) getIndexRecord(index *table.Index, handle kv.Handle, recordKey []byte) (*indexRecord, error) {
+// getIndexRecord gets index columns values use w.rowDecoder, and generate indexRecord.
+func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Handle, recordKey []byte) (*indexRecord, error) {
 	cols := w.table.Cols()
-	idxInfo := (*index).Meta()
 	sysZone := timeutil.SystemLocation()
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	var err error
@@ -934,7 +932,7 @@ func (w *baseIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool)
 	return taskRange.endHandle.Next()
 }
 
-// fetchRowColVals fetch w.batchCnt count rows that need to backfill indices, and build the corresponding indexRecord slice.
+// fetchRowColVals fetch w.batchCnt count records that need to reorganize indices, and build the corresponding indexRecord slice.
 // fetchRowColVals returns:
 // 1. The corresponding indexRecord slice.
 // 2. Next handle of entry that we need to process.
@@ -970,7 +968,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgInd
 				return false, err
 			}
 			for _, index := range w.indexes { //TODO: BUG, this line pass by value.
-				idxRecord, err1 := w.getIndexRecord(&index, handle, recordKey)
+				idxRecord, err1 := w.getIndexRecord(index.Meta(), handle, recordKey)
 				if err1 != nil {
 					return false, errors.Trace(err1)
 				}
@@ -1015,6 +1013,7 @@ type addIndexWorker struct {
 
 	batchCheckKeys     []kv.Key
 	distinctCheckFlags []bool
+	idxKeyBufs         [][]byte
 }
 
 func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column) *addIndexWorker {
@@ -1197,7 +1196,7 @@ func (w *addIndexWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask) *re
 		}
 
 		addIndexSpeedCounter.Add(float64(taskCtx.reorgedCount))
-		mergeAddIndexCtxToResult(&taskCtx, result)
+		mergeReorgIndexCtxToResult(&taskCtx, result)
 		w.ddlWorker.reorgCtx.increaseRowCount(int64(taskCtx.reorgedCount))
 
 		if num := result.scanCount - lastLogCount; num >= 30000 {
@@ -1262,7 +1261,7 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]de
 }
 
 // splitTableRanges uses PD region's key ranges to split the backfilling table key range space,
-// to speed up adding index in table with disperse handle.
+// to speed up reorganizing index in table with disperse handle.
 // The `t` should be a non-partitioned table or a partition.
 func splitTableRanges(t table.PhysicalTable, store kv.Storage, startHandle, endHandle kv.Handle) ([]kv.KeyRange, error) {
 	startRecordKey := t.RecordKey(startHandle)
@@ -1308,11 +1307,11 @@ func closeReorgIndexWorkers(workers []ReorgIndexWorker) {
 	}
 }
 
-func (w *worker) waitTaskResults(workers []ReorgIndexWorker, taskCnt int, totalAddedCount *int64, startHandle kv.Handle) (kv.Handle, int64, error) {
+func (w *worker) waitTaskResults(workers []ReorgIndexWorker, taskCnt int, totalReorgedCount *int64, startHandle kv.Handle) (kv.Handle, int64, error) {
 	var (
-		addedCount int64
-		nextHandle = startHandle
-		firstErr   error
+		reorgedCount int64
+		nextHandle   = startHandle
+		firstErr     error
 	)
 	for i := 0; i < taskCnt; i++ {
 		worker := workers[i]
@@ -1324,23 +1323,23 @@ func (w *worker) waitTaskResults(workers []ReorgIndexWorker, taskCnt int, totalA
 		}
 
 		if result.err != nil {
-			logutil.BgLogger().Warn("[ddl] add index worker failed", zap.Int("workerID", worker.ID()),
+			logutil.BgLogger().Warn("[ddl] reorg index worker failed", zap.Int("workerID", worker.ID()),
 				zap.Error(result.err))
 		}
 
 		if firstErr == nil {
-			*totalAddedCount += int64(result.reorgedCount)
-			addedCount += int64(result.reorgedCount)
+			*totalReorgedCount += int64(result.reorgedCount)
+			reorgedCount += int64(result.reorgedCount)
 			nextHandle = result.nextHandle
 		}
 	}
 
-	return nextHandle, addedCount, errors.Trace(firstErr)
+	return nextHandle, reorgedCount, errors.Trace(firstErr)
 }
 
 // handleReorgTasks sends tasks to workers, and waits for all the running workers to return results,
 // there are taskCnt running workers.
-func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, workers []ReorgIndexWorker, batchTasks []*reorgIndexTask) error {
+func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalReorgedCount *int64, workers []ReorgIndexWorker, batchTasks []*reorgIndexTask) error {
 	for i, task := range batchTasks {
 		workers[i].TaskCh() <- task
 	}
@@ -1348,7 +1347,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	startHandle := batchTasks[0].startHandle
 	taskCnt := len(batchTasks)
 	startTime := time.Now()
-	nextHandle, taskAddedCount, err := w.waitTaskResults(workers, taskCnt, totalAddedCount, startHandle)
+	nextHandle, taskReorgedCount, err := w.waitTaskResults(workers, taskCnt, totalReorgedCount, startHandle)
 	elapsedTime := time.Since(startTime)
 	if err == nil {
 		err = w.isReorgRunnable(reorgInfo.d)
@@ -1360,9 +1359,9 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, nextHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID))
 		})
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
-		logutil.BgLogger().Warn("[ddl] add index worker handle batch tasks failed",
-			zap.Int64("totalAddedCount", *totalAddedCount), zap.String("startHandle", toString(startHandle)),
-			zap.String("nextHandle", toString(nextHandle)), zap.Int64("batchAddedCount", taskAddedCount),
+		logutil.BgLogger().Warn("[ddl] reorg index worker handle batch tasks failed",
+			zap.Int64("totalReorgedCount", *totalReorgedCount), zap.String("startHandle", toString(startHandle)),
+			zap.String("nextHandle", toString(nextHandle)), zap.Int64("batchReorgedCount", taskReorgedCount),
 			zap.String("taskFailedError", err.Error()), zap.String("takeTime", elapsedTime.String()),
 			zap.NamedError("updateHandleError", err1))
 		return errors.Trace(err)
@@ -1371,14 +1370,14 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	w.reorgCtx.setNextHandle(nextHandle)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
-	logutil.BgLogger().Info("[ddl] add index worker handle batch tasks successful", zap.Int64("totalAddedCount", *totalAddedCount), zap.String("startHandle", toString(startHandle)),
-		zap.String("nextHandle", toString(nextHandle)), zap.Int64("batchAddedCount", taskAddedCount), zap.String("takeTime", elapsedTime.String()))
+	logutil.BgLogger().Info("[ddl] reorg index worker handle batch tasks successful", zap.Int64("totalReorgedCount", *totalReorgedCount), zap.String("startHandle", toString(startHandle)),
+		zap.String("nextHandle", toString(nextHandle)), zap.Int64("batchReorgedCount", taskReorgedCount), zap.String("takeTime", elapsedTime.String()))
 	return nil
 }
 
 // sendRangeTaskToWorkers sends tasks to workers, and returns remaining kvRanges that is not handled.
 func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []ReorgIndexWorker, reorgInfo *reorgInfo,
-	totalAddedCount *int64, kvRanges []kv.KeyRange, globalEndHandle kv.Handle) ([]kv.KeyRange, error) {
+	totalReorgedCount *int64, kvRanges []kv.KeyRange, globalEndHandle kv.Handle) ([]kv.KeyRange, error) {
 	batchTasks := make([]*reorgIndexTask, 0, len(workers))
 	physicalTableID := reorgInfo.PhysicalTableID
 
@@ -1406,7 +1405,7 @@ func (w *worker) sendRangeTaskToWorkers(t table.Table, workers []ReorgIndexWorke
 	}
 
 	// Wait tasks finish.
-	err := w.handleReorgTasks(reorgInfo, totalAddedCount, workers, batchTasks)
+	err := w.handleReorgTasks(reorgInfo, totalReorgedCount, workers, batchTasks)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1799,7 +1798,7 @@ func (w *dropIndexWorker) cleanupIndexInTxn(handleRange reorgIndexTask) (taskCtx
 	return
 }
 
-// handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
+// handleBackfillTask clean up range [task.startHandle, task.endHandle) handle's indexes.
 func (w *dropIndexWorker) handleCleanupTask(d *ddlCtx, task *reorgIndexTask) *reorgIndexResult {
 	handleRange := *task
 	result := &reorgIndexResult{reorgedCount: 0, nextHandle: handleRange.startHandle, err: nil}
@@ -1808,8 +1807,7 @@ func (w *dropIndexWorker) handleCleanupTask(d *ddlCtx, task *reorgIndexTask) *re
 	startTime := lastLogTime
 
 	for {
-		// Give job chance to be canceled, if we not check it here,
-		// if there is panic in w.backfillIndexInTxn we will never cancel the job.
+		// Give job chance to be canceled.
 		// Because reorgIndexTask may run a long time,
 		// we should check whether this ddl job is still runnable.
 		err := w.ddlWorker.isReorgRunnable(d)
@@ -1824,12 +1822,9 @@ func (w *dropIndexWorker) handleCleanupTask(d *ddlCtx, task *reorgIndexTask) *re
 			return result
 		}
 
-		// need modify
-		addIndexSpeedCounter.Add(float64(taskCtx.reorgedCount))
-		mergeAddIndexCtxToResult(&taskCtx, result)
+		mergeReorgIndexCtxToResult(&taskCtx, result)
 		w.ddlWorker.reorgCtx.increaseRowCount(int64(taskCtx.reorgedCount))
 
-		// need modify
 		if num := result.scanCount - lastLogCount; num >= 30000 {
 			lastLogCount = result.scanCount
 			logutil.BgLogger().Info("[ddl] drop index worker clean up index", zap.Int("workerID", w.id), zap.Int("reorgedCount", result.reorgedCount),
@@ -1842,7 +1837,6 @@ func (w *dropIndexWorker) handleCleanupTask(d *ddlCtx, task *reorgIndexTask) *re
 			break
 		}
 	}
-	// need modify
 	logutil.BgLogger().Info("[ddl] drop index worker finish task", zap.Int("workerID", w.id),
 		zap.String("task", task.String()), zap.Int("reorgedCount", result.reorgedCount),
 		zap.Int("scanCount", result.scanCount), zap.String("nextHandle", toString(result.nextHandle)),
@@ -1868,14 +1862,14 @@ func (w *dropIndexWorker) Run(d *ddlCtx) {
 		result := w.handleCleanupTask(d, task)
 		w.resultCh <- result
 	}
-	logutil.BgLogger().Info("[ddl] add index worker exit", zap.Int("workerID", w.id))
+	logutil.BgLogger().Info("[ddl] drop index worker exit", zap.Int("workerID", w.id))
 }
 
 // cleanupPhysicalTableIndex handles the drop partition reorganization state for a non-partitioned table or a partition.
 func (w *worker) cleanupPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	logutil.BgLogger().Info("[ddl] start to clean up table index of partition", zap.String("job", job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	totalAddedCount := job.GetRowCount()
+	totalReorgedCount := job.GetRowCount()
 
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
 	sessCtx := newContext(reorgInfo.d.store)
@@ -1904,7 +1898,7 @@ func (w *worker) cleanupPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reo
 			return errors.Trace(err)
 		}
 
-		// For dynamic adjust add index worker number.
+		// For dynamic adjust index worker number.
 		if err := loadDDLReorgVars(w); err != nil {
 			logutil.BgLogger().Error("[ddl] load DDL reorganization variable failed", zap.Error(err))
 		}
@@ -1933,7 +1927,7 @@ func (w *worker) cleanupPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reo
 
 		logutil.BgLogger().Info("[ddl] start drop index workers to reorg index", zap.Int("workerCnt", len(idxWorkers)),
 			zap.Int("regionCnt", len(kvRanges)), zap.String("startHandle", toString(startHandle)), zap.String("endHandle", toString(endHandle)))
-		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalAddedCount, kvRanges, endHandle)
+		remains, err := w.sendRangeTaskToWorkers(t, idxWorkers, reorgInfo, &totalReorgedCount, kvRanges, endHandle)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1951,7 +1945,6 @@ func (w *worker) cleanupPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reo
 
 // cleanupGlobalIndex handles the drop partition reorganization state to clean up index entries of partitions.
 func (w *worker) cleanupGlobalIndexes(tbl table.PartitionedTable, partitionIDs []int64, reorgInfo *reorgInfo) error {
-	logutil.BgLogger().Info("ddddddd cleanupGlobalIndexes", zap.Int64s("pid", partitionIDs))
 	var err error
 	var finish bool
 	for !finish {
@@ -1990,16 +1983,6 @@ func (w *worker) updateReorgInfofromPartitions(t table.PartitionedTable, reorg *
 		}
 		pid = partitionIDs[i+1]
 	}
-
-	failpoint.Inject("mockUpdateCachedSafePoint", func(val failpoint.Value) {
-		if val.(bool) {
-			// 18 is for the logical time.
-			ts := oracle.GetPhysical(time.Now()) << 18
-			s := reorg.d.store.(tikv.Storage)
-			s.UpdateSPCache(uint64(ts), time.Now())
-			time.Sleep(time.Millisecond * 3)
-		}
-	})
 
 	currentVer, err := getValidCurrentVersion(reorg.d.store)
 	if err != nil {
