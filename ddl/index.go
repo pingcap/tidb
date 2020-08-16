@@ -1741,7 +1741,6 @@ func newDropIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t ta
 	for _, index := range t.Indices() {
 		if index.Meta().Global {
 			indexes = append(indexes, index)
-			logutil.BgLogger().Info("ddddddd newDropIndexWorker", zap.String("index", index.Meta().Name.O))
 		}
 	}
 	return &dropIndexWorker{
