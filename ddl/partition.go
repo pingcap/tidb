@@ -861,6 +861,21 @@ func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def 
 	return index, nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
 }
 
+func buildPlacementDropRules(schemaID, tableID int64, partitionIDs []int64) []*placement.RuleOp {
+	rules := make([]*placement.RuleOp, 0, len(partitionIDs))
+	for _, partitionID := range partitionIDs {
+		rules = append(rules, &placement.RuleOp{
+			Action:           placement.RuleOpDel,
+			DeleteByIDPrefix: true,
+			Rule: &placement.Rule{
+				GroupID: placement.RuleDefaultGroupID,
+				ID:      fmt.Sprintf("%d_t%d_p%d", schemaID, tableID, partitionID),
+			},
+		})
+	}
+	return rules
+}
+
 // onDropTablePartition deletes old partition meta.
 func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
@@ -888,6 +903,13 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+	}
+
+	rules := buildPlacementDropRules(job.SchemaID, tblInfo.ID, physicalTableIDs)
+
+	err = infosync.UpdatePlacementRules(nil, rules)
+	if err != nil {
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
 	// Finish this job.

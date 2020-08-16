@@ -307,6 +307,12 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 
 // UpdatePlacementRules is used to notify PD changes of placement rules.
 func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error {
+	failpoint.Inject("skipUpdatePlacementRules", func(val failpoint.Value) {
+		if val.(bool) {
+			rules = rules[:0]
+		}
+	})
+
 	if len(rules) == 0 {
 		return nil
 	}
