@@ -196,7 +196,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (us *UnionScanExec) Close() error {
 	us.cursor4AddRows = 0
 	us.cursor4SnapshotRows = 0
-    return nil
+	return nil
 }
 
 // getOneRow gets one result row from dirty table or child.
