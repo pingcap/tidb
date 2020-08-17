@@ -16,6 +16,7 @@ package executor
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -251,9 +252,9 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 }
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
-	// To limit the num of go routine
 	var wg sync.WaitGroup
 	offset := offset{offset: 0, length: 0}
+	// To limit the num of go routine
 	ch := make(chan int, sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency())
 	defer close(ch)
 	for {
@@ -290,6 +291,12 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 }
 
 func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, offset int) [][]types.Datum {
+	defer func() {
+		if err := recover(); err != nil {
+			err2 := fmt.Errorf("%s", err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err2)
+		}
+	}()
 	var st *slowQueryTuple
 	tz := ctx.GetSessionVars().Location()
 	var data [][]types.Datum
