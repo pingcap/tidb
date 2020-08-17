@@ -423,16 +423,26 @@ func (m *memIndexLookUpReader) getMemRows() ([][]types.Datum, error) {
 		colIDs[col.ID] = i
 	}
 
+	tblInfo := m.table.Meta()
 	colInfos := make([]rowcodec.ColInfo, 0, len(m.columns))
 	for i := range m.columns {
 		col := m.columns[i]
 		colInfos = append(colInfos, rowcodec.ColInfo{
 			ID:         col.ID,
-			IsPKHandle: m.table.Meta().PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
 			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
-	rd := rowcodec.NewByteDecoder(colInfos, []int64{-1}, nil, nil)
+	handleColIDs := []int64{-1}
+	if tblInfo.IsCommonHandle {
+		handleColIDs = handleColIDs[:0]
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		for _, idxCol := range pkIdx.Columns {
+			colID := tblInfo.Columns[idxCol.Offset].ID
+			handleColIDs = append(handleColIDs, colID)
+		}
+	}
+	rd := rowcodec.NewByteDecoder(colInfos, handleColIDs, nil, nil)
 	memTblReader := &memTableReader{
 		ctx:           m.ctx,
 		table:         m.table.Meta(),
