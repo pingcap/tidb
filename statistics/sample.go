@@ -112,7 +112,7 @@ func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc 
 		terror.Log(errors.Trace(err))
 	}
 	for _, item := range rc.Samples {
-		err := c.collect(sc, item.Value)
+		err := c.Collect(sc, item.Value)
 		terror.Log(errors.Trace(err))
 	}
 }
@@ -157,7 +157,9 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	return s
 }
 
-func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) error {
+// Collect collects sample from the result set using Reservoir Sampling algorithm,
+//// and estimates NDVs using FM Sketch during the collecting process
+func (c *SampleCollector) Collect(sc *stmtctx.StatementContext, d types.Datum) error {
 	if !c.IsMerger {
 		if d.IsNull() {
 			c.NullCount++
@@ -273,7 +275,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 					}
 					val.SetBytes(encodedKey)
 				}
-				err = collectors[i].collect(s.Sc, val)
+				err = collectors[i].Collect(s.Sc, val)
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -292,7 +294,7 @@ func RowToDatums(row chunk.Row, fields []*ast.ResultField) []types.Datum {
 }
 
 // ExtractTopN extracts the topn from the CM Sketch.
-func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContext, tp *types.FieldType, timeZone *time.Location) error {
+func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContext, tp *types.FieldType, timeZone *time.Location, isIndex bool) error {
 	if numTop == 0 {
 		return nil
 	}
@@ -308,15 +310,21 @@ func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContex
 	for i := uint32(0); i < helper.actualNumTop; i++ {
 		h1, h2 := murmur3.Sum128(helper.sorted[i].data)
 		realCnt := cms.queryHashValue(h1, h2)
-		// Because the encode of topn is the new encode type. But analyze proto returns the old encode type for a sample datum,
-		// we should decode it and re-encode it to get the correct bytes.
-		d, err := tablecodec.DecodeColumnValue(helper.sorted[i].data, tp, timeZone)
-		if err != nil {
-			return err
-		}
-		data, err := tablecodec.EncodeValue(sc, nil, d)
-		if err != nil {
-			return err
+		var data []byte
+		if !isIndex {
+			// Because the encode of topn is the new encode type. But analyze proto returns the old encode type for a sample datum,
+			// we should decode it and re-encode it to get the correct bytes.
+			d, err := tablecodec.DecodeColumnValue(helper.sorted[i].data, tp, timeZone)
+			if err != nil {
+				return err
+			}
+			data, err = tablecodec.EncodeValue(sc, nil, d)
+			if err != nil {
+				return err
+			}
+		} else {
+			// Index always use old encode type and no need re-encode.
+			data = helper.sorted[i].data
 		}
 		cms.subValue(h1, h2, realCnt)
 		cms.topN[h1] = append(cms.topN[h1], &TopNMeta{h2, data, realCnt})

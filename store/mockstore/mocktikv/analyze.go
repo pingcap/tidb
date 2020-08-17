@@ -51,9 +51,12 @@ func (h *rpcHandler) handleCopAnalyzeRequest(req *coprocessor.Request) *coproces
 		resp.OtherError = err.Error()
 		return resp
 	}
-	if analyzeReq.Tp == tipb.AnalyzeType_TypeIndex {
+	switch analyzeReq.Tp {
+	case tipb.AnalyzeType_TypeIndex:
 		resp, err = h.handleAnalyzeIndexReq(req, analyzeReq)
-	} else {
+	case tipb.AnalyzeType_TypeSampleIndex:
+		resp, err = h.handleAnalyzeSampleIndexReq(req, analyzeReq)
+	default:
 		resp, err = h.handleAnalyzeColumnsReq(req, analyzeReq)
 	}
 	if err != nil {
@@ -123,6 +126,63 @@ func (h *rpcHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 type analyzeColumnsExec struct {
 	tblExec *tableScanExec
 	fields  []*ast.ResultField
+}
+
+func (h *rpcHandler) handleAnalyzeSampleIndexReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (_ *coprocessor.Response, err error) {
+	sc := flagsToStatementContext(analyzeReq.Flags)
+	sc.TimeZone, err = constructTimeZone("", int(analyzeReq.TimeZoneOffset))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ranges, err := h.extractKVRanges(req.Ranges, false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	startTS := req.StartTs
+	if startTS == 0 {
+		startTS = analyzeReq.GetStartTsFallback()
+	}
+	e := &indexScanExec{
+		colsLen:        int(analyzeReq.IdxReq.NumColumns),
+		kvRanges:       ranges,
+		startTS:        startTS,
+		isolationLevel: h.isolationLevel,
+		mvccStore:      h.mvccStore,
+		IndexScan:      &tipb.IndexScan{Desc: false},
+		execDetail:     new(execDetail),
+		hdStatus:       tablecodec.HandleNotNeeded,
+	}
+	ctx := context.TODO()
+	collector := &statistics.SampleCollector{
+		MaxSampleSize: analyzeReq.IdxReq.SampleSize,
+		FMSketch:      statistics.NewFMSketch(int(analyzeReq.IdxReq.SketchSize)),
+		CMSketch:      statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth),
+	}
+	var values [][]byte
+	for {
+		values, err = e.Next(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if values == nil {
+			break
+		}
+		var value []byte
+		for _, val := range values {
+			value = append(value, val...)
+		}
+		err = collector.Collect(sc, types.NewBytesDatum(value))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	colResp := &tipb.AnalyzeIndexResp{Collector: statistics.SampleCollectorToProto(collector)}
+	data, err := proto.Marshal(colResp)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &coprocessor.Response{Data: data}, nil
 }
 
 func (h *rpcHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (_ *coprocessor.Response, err error) {
