@@ -30,12 +30,12 @@ type testSafePointSuite struct {
 	prefix string
 }
 
-var _ = Suite(&testSafePointSuite{})
+var _ = SerialSuites(&testSafePointSuite{})
 
 func (s *testSafePointSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	s.store = NewTestStore(c).(*tikvStore)
-	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
+	s.prefix = fmt.Sprintf("t10_rseek_%d", time.Now().Unix())
 }
 
 func (s *testSafePointSuite) TearDownSuite(c *C) {

@@ -14,12 +14,15 @@
 package tikv
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 type testScanSuite struct {
@@ -29,12 +32,12 @@ type testScanSuite struct {
 	rowNums []int
 }
 
-var _ = Suite(&testScanSuite{})
+var _ = SerialSuites(&testScanSuite{})
 
 func (s *testScanSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	s.store = NewTestStore(c).(*tikvStore)
-	s.prefix = fmt.Sprintf("seek_%d", time.Now().Unix())
+	s.prefix = fmt.Sprintf("t1_rseek_%d", time.Now().Unix())
 	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1, scanBatchSize*3)
 }
 
@@ -66,7 +69,16 @@ func (s *testScanSuite) TestScan(c *C) {
 	check := func(c *C, scan kv.Iterator, rowNum int, keyOnly bool) {
 		for i := 0; i < rowNum; i++ {
 			k := scan.Key()
-			c.Assert([]byte(k), BytesEquals, encodeKey(s.prefix, s08d("key", i)))
+			expectedKey := encodeKey(s.prefix, s08d("key", i))
+			if ok := bytes.Equal(k, expectedKey); !ok {
+				logutil.BgLogger().Error("bytes equal check fail",
+					zap.Int("rowNum", rowNum),
+					zap.Stringer("obtained key", k),
+					zap.Stringer("obtained val", kv.Key(scan.Value())),
+					zap.Stringer("expected", kv.Key(expectedKey)),
+					zap.Bool("keyOnly", keyOnly))
+			}
+			c.Assert([]byte(k), BytesEquals, expectedKey)
 			if !keyOnly {
 				v := scan.Value()
 				c.Assert(v, BytesEquals, valueBytes(i))
