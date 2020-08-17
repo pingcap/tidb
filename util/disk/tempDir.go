@@ -82,7 +82,7 @@ func InitializeTempDir() error {
 		return err
 	}
 
-	// If it exists others files excepts lock file, create a new goroutine to clean them.
+	// If it exists others files except lock file, creates another goroutine to clean them.
 	if len(subDirs) > 1 {
 		go func() {
 			for _, subDir := range subDirs {
