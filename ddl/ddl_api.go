@@ -903,17 +903,16 @@ func checkColumnValueConstraint(col *table.Column, collation string) error {
 	}
 	valueMap := make(map[string]bool, len(col.Elems))
 	ctor := collate.GetCollator(collation)
-	enumlengthlimit := config.GetGlobalConfig().EnableEnumLengthLimit
+	enumLengthLimit := config.GetGlobalConfig().EnableEnumLengthLimit
 	desc, err := charset.GetCharsetDesc(col.Charset)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	for i := range col.Elems {
 		val := string(ctor.Key(col.Elems[i]))
-		if enumlengthlimit {
-			if len(val) > 255 || len(val)*desc.Maxlen > 1020 {
-				return types.ErrTooLongValueInType.GenWithStackByArgs(col.Name)
-			}
+		if enumLengthLimit && (len(val) > 255 || len(val)*desc.Maxlen > 1020) {
+			errMsg := fmt.Sprintf("Too long enumeration/set value for column %s, check enable-enum-length-limit config", col.Name)
+			return types.ErrTooLongValueInType.GenWithStack(errMsg)
 		}
 		if _, ok := valueMap[val]; ok {
 			tpStr := "ENUM"
