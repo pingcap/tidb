@@ -21,6 +21,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // PartitionTableExecutor is a Executor for partitioned table.
@@ -45,6 +46,7 @@ type nextPartitionForTableReader struct {
 func (n nextPartitionForTableReader) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
 	n.exec.table = tbl
 	n.exec.kvRanges = n.exec.kvRanges[:0]
+	updateDAGRequestTableID(ctx, n.exec.dagPB, tbl.Meta().ID, tbl.GetPhysicalID())
 	return n.exec, nil
 }
 
@@ -54,6 +56,7 @@ type nextPartitionForIndexLookUp struct {
 
 func (n nextPartitionForIndexLookUp) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
 	n.exec.table = tbl
+	updateDAGRequestTableID(ctx, n.exec.dagPB, tbl.Meta().ID, tbl.GetPhysicalID())
 	return n.exec, nil
 }
 
@@ -65,6 +68,7 @@ func (n nextPartitionForIndexReader) nextPartition(ctx context.Context, tbl tabl
 	exec := n.exec
 	exec.table = tbl
 	exec.physicalTableID = tbl.GetPhysicalID()
+	updateDAGRequestTableID(ctx, n.exec.dagPB, tbl.Meta().ID, tbl.GetPhysicalID())
 	return exec, nil
 }
 
@@ -75,6 +79,9 @@ type nextPartitionForIndexMerge struct {
 func (n nextPartitionForIndexMerge) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
 	exec := n.exec
 	exec.table = tbl
+	for i := 0; i < len(exec.dagPBs); i++ {
+		updateDAGRequestTableID(ctx, exec.dagPBs[i], tbl.Meta().ID, tbl.GetPhysicalID())
+	}
 	return exec, nil
 }
 
@@ -105,6 +112,33 @@ func nextPartitionWithTrace(ctx context.Context, n nextPartition, tbl table.Phys
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 	return n.nextPartition(ctx, tbl)
+}
+
+// updateDAGRequestTableID update the table ID in the DAG request to partition ID.
+// TiKV only use that table ID for log, but TiFlash use it.
+func updateDAGRequestTableID(ctx context.Context, dag *tipb.DAGRequest, tableID, partitionID int64) {
+	// TiFlash set RootExecutor field and ignore Executors field.
+	if dag.RootExecutor != nil {
+		updateExecutorTableID(ctx, dag.RootExecutor, tableID, partitionID)
+	} else {
+		for i := 0; i < len(dag.Executors); i++ {
+			exec := dag.Executors[i]
+			updateExecutorTableID(ctx, exec, tableID, partitionID)
+		}
+	}
+}
+
+func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, tableID, partitionID int64) {
+	switch exec.Tp {
+	case tipb.ExecType_TypeTableScan:
+		exec.TblScan.TableId = partitionID
+		if tmp := ctx.Value("nextPartitionUpdateDAGReq"); tmp != nil {
+			m := tmp.(map[int64]struct{})
+			m[partitionID] = struct{}{}
+		}
+	case tipb.ExecType_TypeIndexScan:
+		exec.IdxScan.TableId = partitionID
+	}
 }
 
 // Open implements the Executor interface.
