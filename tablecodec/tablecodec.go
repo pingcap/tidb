@@ -454,7 +454,7 @@ func DecodeRowToDatumMap(b []byte, cols map[int64]*types.FieldType, loc *time.Lo
 	return DecodeRowWithMapNew(b, cols, loc, nil)
 }
 
-// DecodeHandleToDatumMap decodes a handle into datums.
+// DecodeHandleToDatumMap decodes a handle into datum map.
 func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 	cols map[int64]*types.FieldType, loc *time.Location, row map[int64]types.Datum) (map[int64]types.Datum, error) {
 	if handle == nil || len(handleColIDs) == 0 {
@@ -476,13 +476,16 @@ func DecodeHandleToDatumMap(handle kv.Handle, handleColIDs []int64,
 			if err != nil {
 				return row, err
 			}
-			row[id] = d
+			if _, exists := row[id]; !exists {
+				row[id] = d
+			}
 			break
 		}
 	}
 	return row, nil
 }
 
+// decodeHandleToDatum decodes a handle to a specific column datum.
 func decodeHandleToDatum(handle kv.Handle, ft *types.FieldType, idx int) (types.Datum, error) {
 	var d types.Datum
 	var err error
@@ -715,11 +718,11 @@ func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
 	return [][]byte{intHandleBytes}, err
 }
 
-func decodeIndexKvNewCollation(key, value []byte, hdStatus HandleStatus, columns []rowcodec.ColInfo) ([][]byte, error) {
+func decodeIndexKvNewCollation(key, value []byte, hdStatus HandleStatus, colLens int, columns []rowcodec.ColInfo) ([][]byte, error) {
 	vLen := len(value)
 	tailLen := int(value[0])
 	restoredVal := value[1 : vLen-tailLen]
-	resultValues, err := decodeRestoredValues(columns, restoredVal)
+	resultValues, err := decodeRestoredValues(columns[:colLens], restoredVal)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -729,7 +732,7 @@ func decodeIndexKvNewCollation(key, value []byte, hdStatus HandleStatus, columns
 
 	if tailLen < 8 {
 		// In non-unique index.
-		_, keySuffix, err := CutIndexKeyNew(key, len(columns))
+		_, keySuffix, err := CutIndexKeyNew(key, colLens)
 		if err != nil {
 			return nil, err
 		}
@@ -806,7 +809,7 @@ func DecodeIndexKV(key, value []byte, colsLen int, hdStatus HandleStatus, column
 		if value[0] <= 1 && value[1] == CommonHandleFlag {
 			return decodeIndexKVUniqueCommonHandle(key, value, colsLen, hdStatus, columns)
 		}
-		return decodeIndexKvNewCollation(key, value, hdStatus, columns)
+		return decodeIndexKvNewCollation(key, value, hdStatus, colsLen, columns)
 	}
 	return decodeIndexKvOldCollation(key, value, colsLen, hdStatus)
 }
@@ -821,7 +824,7 @@ func decodeIndexKVUniqueCommonHandle(key, value []byte, colsLen int, hdStatus Ha
 	if int(handleEndOff) < len(value) {
 		// new collation values.
 		restoredValue := value[handleEndOff:]
-		resultValues, err = decodeRestoredValues(columns, restoredValue)
+		resultValues, err = decodeRestoredValues(columns[:colsLen], restoredValue)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1014,7 +1017,7 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 	}
 	// For string columns, indexes can be created using only the leading part of column values,
 	// using col_name(length) syntax to specify an index prefix length.
-	indexedValues = TruncateIndexValuesIfNeeded(tblInfo, idxInfo, indexedValues)
+	TruncateIndexValues(tblInfo, idxInfo, indexedValues)
 	key = GetIndexKeyBuf(buf, RecordRowKeyLen+len(indexedValues)*9+9)
 	key = appendTableIndexPrefix(key, phyTblID)
 	key = codec.EncodeInt(key, idxInfo.ID)
@@ -1090,37 +1093,37 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 	return idxVal, nil
 }
 
-// TruncateIndexValuesIfNeeded truncates the index values created using only the leading part of column values.
-func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) []types.Datum {
+// TruncateIndexValues truncates the index values created using only the leading part of column values.
+func TruncateIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) {
 	for i := 0; i < len(indexedValues); i++ {
 		v := &indexedValues[i]
-		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
-			ic := idxInfo.Columns[i]
-			colCharset := tblInfo.Columns[ic.Offset].Charset
-			colValue := v.GetBytes()
-			isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
-			origKind := v.Kind()
-			if isUTF8Charset {
-				if ic.Length != types.UnspecifiedLength && utf8.RuneCount(colValue) > ic.Length {
-					rs := bytes.Runes(colValue)
-					truncateStr := string(rs[:ic.Length])
-					// truncate value and limit its length
-					v.SetString(truncateStr, tblInfo.Columns[ic.Offset].Collate)
-					if origKind == types.KindBytes {
-						v.SetBytes(v.GetBytes())
-					}
-				}
-			} else if ic.Length != types.UnspecifiedLength && len(colValue) > ic.Length {
-				// truncate value and limit its length
-				v.SetBytes(colValue[:ic.Length])
-				if origKind == types.KindString {
-					v.SetString(v.GetString(), tblInfo.Columns[ic.Offset].Collate)
-				}
+		idxCol := idxInfo.Columns[i]
+		noPrefixIndex := idxCol.Length == types.UnspecifiedLength
+		if noPrefixIndex {
+			continue
+		}
+		notStringType := v.Kind() != types.KindString && v.Kind() != types.KindBytes
+		if notStringType {
+			continue
+		}
+
+		colInfo := tblInfo.Columns[idxCol.Offset]
+		isUTF8Charset := colInfo.Charset == charset.CharsetUTF8 || colInfo.Charset == charset.CharsetUTF8MB4
+		if isUTF8Charset && utf8.RuneCount(v.GetBytes()) > idxCol.Length {
+			rs := bytes.Runes(v.GetBytes())
+			truncateStr := string(rs[:idxCol.Length])
+			// truncate value and limit its length
+			v.SetString(truncateStr, colInfo.Collate)
+			if v.Kind() == types.KindBytes {
+				v.SetBytes(v.GetBytes())
+			}
+		} else if !isUTF8Charset && len(v.GetBytes()) > idxCol.Length {
+			v.SetBytes(v.GetBytes()[:idxCol.Length])
+			if v.Kind() == types.KindString {
+				v.SetString(v.GetString(), colInfo.Collate)
 			}
 		}
 	}
-
-	return indexedValues
 }
 
 // EncodeHandleInUniqueIndexValue encodes handle in data.
