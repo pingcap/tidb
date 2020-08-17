@@ -140,7 +140,8 @@ func newRistrettoStatsCache(memoryLimit int64) *ristrettoStatsCache {
 	return sc
 }
 
-//BytesConsumed returns the consumed memory usage value in bytes.
+// BytesConsumed returns the consumed memory usage value in bytes.
+// only used by test.
 func (sc *ristrettoStatsCache) BytesConsumed() int64 {
 	var rndTblID int64
 	for {
@@ -149,7 +150,7 @@ func (sc *ristrettoStatsCache) BytesConsumed() int64 {
 			break
 		}
 	}
-	//insert a table memory = 0 to make cache renew the memory
+	// insert a table memory = 0 to make cache renew the memory
 	sc.Insert(&statistics.Table{HistColl: statistics.HistColl{PhysicalID: rndTblID}})
 	sc.Del(rndTblID)
 	time.Sleep(10 * time.Millisecond)
@@ -161,7 +162,7 @@ func (sc *ristrettoStatsCache) GetBytesLimit() int64 {
 	return sc.memTracker.GetBytesLimit()
 }
 
-//GetMutex return the Muetex point
+// GetMutex return the Muetex point
 func (sc *ristrettoStatsCache) GetMutex() *sync.Mutex {
 	return &sc.mu
 }

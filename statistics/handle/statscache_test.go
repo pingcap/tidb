@@ -27,6 +27,8 @@ import (
 
 func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 
 	//set new BytesLimit
@@ -76,6 +78,8 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 
 func (s *testStatsSuite) TestLoadHistWithLimit(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
 	origLease := h.Lease()
@@ -89,7 +93,9 @@ func (s *testStatsSuite) TestLoadHistWithLimit(c *C) {
 	testKit.MustExec("insert into t1 values(1),(2),(3),(4),(5)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t1")
-	h.Clear()
+	clearRW.RUnlock()
+	cleanHandle(c, s.do)
+	clearRW.RLock()
 	h.SetBytesLimit(BytesLimit)
 
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
@@ -113,6 +119,8 @@ func (s *testStatsSuite) TestLoadHistWithLimit(c *C) {
 
 func (s *testStatsSuite) TestLoadHistWithInvalidIndex(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
 	origLease := h.Lease()
@@ -168,6 +176,8 @@ func (s *testStatsSuite) TestLoadHistWithInvalidIndex(c *C) {
 }
 func (s *testStatsSuite) TestManyTableChange(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
 	origLease := h.Lease()
@@ -225,6 +235,8 @@ func (s *testStatsSuite) TestManyTableChange(c *C) {
 }
 func (s *testStatsSuite) TestManyTableChangeWithQuery(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	h := s.do.StatsHandle()
 	origLease := h.Lease()

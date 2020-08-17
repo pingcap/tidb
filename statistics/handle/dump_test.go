@@ -27,6 +27,10 @@ import (
 
 func (s *testStatsSuite) TestConversion(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer func() {
+		clearRW.RUnlock()
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -50,7 +54,10 @@ func (s *testStatsSuite) TestConversion(c *C) {
 	tbl := h.GetTableStats(tableInfo.Meta())
 	assertTableEqual(c, loadTbl, tbl)
 
+	clearRW.RUnlock()
 	cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
@@ -67,6 +74,8 @@ func (s *testStatsSuite) TestConversion(c *C) {
 
 func (s *testStatsSuite) TestDumpPartitions(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -100,7 +109,9 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	h.Clear()
+	clearRW.RUnlock()
+	cleanHandle(c, s.do)
+	clearRW.RLock()
 
 	err = h.LoadStatsFromJSON(s.do.InfoSchema(), jsonTbl)
 	time.Sleep(10 * time.Millisecond)
@@ -114,6 +125,8 @@ PARTITION BY RANGE ( a ) (
 
 func (s *testStatsSuite) TestDumpAlteredTable(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -131,8 +144,10 @@ func (s *testStatsSuite) TestDumpAlteredTable(c *C) {
 }
 
 func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
-	// Just test if we can store and recover the Top N elements stored in database.
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
+	// Just test if we can store and recover the Top N elements stored in database.
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int)")
@@ -174,6 +189,8 @@ func (s *testStatsSuite) TestDumpCMSketchWithTopN(c *C) {
 
 func (s *testStatsSuite) TestDumpPseudoColumns(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, index idx(a))")

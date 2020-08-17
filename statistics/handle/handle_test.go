@@ -16,6 +16,7 @@ package handle_test
 import (
 	"fmt"
 	"math"
+	"sync"
 	"testing"
 	"time"
 	"unsafe"
@@ -36,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
+var clearRW sync.RWMutex
+
 func TestT(t *testing.T) {
 	TestingT(t)
 }
@@ -51,11 +54,17 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
-	do.StatsHandle().Clear()
+	cleanHandle(c, do)
 }
-
+func cleanHandle(c *C, do *domain.Domain) {
+	clearRW.Lock()
+	do.StatsHandle().Clear()
+	clearRW.Unlock()
+}
 func (s *testStatsSuite) TestStatsCache(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -89,7 +98,9 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
+	clearRW.RUnlock()
+	cleanHandle(c, s.do)
+	clearRW.RLock()
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -98,7 +109,9 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	// If the new schema add a column, the table stats can still work.
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
+	clearRW.RUnlock()
+	cleanHandle(c, s.do)
+	clearRW.RLock()
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -107,6 +120,8 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 
 func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int,c3 int)")
@@ -146,7 +161,9 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	// If the new schema drop a column, the table stats can still work.
 	testKit.MustExec("alter table t drop column c2")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
+	clearRW.RUnlock()
+	cleanHandle(c, s.do)
+	clearRW.RLock()
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -159,7 +176,9 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
 
-	do.StatsHandle().Clear()
+	clearRW.RUnlock()
+	cleanHandle(c, s.do)
+	clearRW.RLock()
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -168,6 +187,8 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 }
 
 func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	c.Assert(a.Count, Equals, b.Count)
 	c.Assert(a.ModifyCount, Equals, b.ModifyCount)
 	c.Assert(len(a.Columns), Equals, len(b.Columns))
@@ -193,6 +214,8 @@ func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
 
 func (s *testStatsSuite) TestStatsStoreAndLoad(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -212,7 +235,10 @@ func (s *testStatsSuite) TestStatsStoreAndLoad(c *C) {
 
 	statsTbl1 := do.StatsHandle().GetTableStats(tableInfo)
 
-	do.StatsHandle().Clear()
+	clearRW.RUnlock()
+	cleanHandle(c, s.do)
+	clearRW.RLock()
+
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
 
@@ -224,6 +250,8 @@ func (s *testStatsSuite) TestStatsStoreAndLoad(c *C) {
 
 func (s *testStatsSuite) TestEmptyTable(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int, key cc1(c1), key cc2(c2))")
@@ -242,6 +270,8 @@ func (s *testStatsSuite) TestEmptyTable(c *C) {
 
 func (s *testStatsSuite) TestColumnIDs(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -262,7 +292,10 @@ func (s *testStatsSuite) TestColumnIDs(c *C) {
 	// Drop a column and the offset changed,
 	testKit.MustExec("alter table t drop column c1")
 	is = do.InfoSchema()
-	do.StatsHandle().Clear()
+
+	clearRW.RUnlock()
+	cleanHandle(c, do)
+	clearRW.RLock()
 	do.StatsHandle().Update(is)
 	time.Sleep(10 * time.Millisecond)
 
@@ -277,6 +310,8 @@ func (s *testStatsSuite) TestColumnIDs(c *C) {
 
 func (s *testStatsSuite) TestAvgColLen(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 varchar(100), c3 float, c4 datetime, c5 varchar(100))")
@@ -326,6 +361,8 @@ func (s *testStatsSuite) TestAvgColLen(c *C) {
 }
 
 func (s *testStatsSuite) TestDurationToTS(c *C) {
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	tests := []time.Duration{time.Millisecond, time.Second, time.Minute, time.Hour}
 	for _, t := range tests {
 		ts := handle.DurationToTS(t)
@@ -335,6 +372,8 @@ func (s *testStatsSuite) TestDurationToTS(c *C) {
 
 func (s *testStatsSuite) TestVersion(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
@@ -425,6 +464,8 @@ func (s *testStatsSuite) TestVersion(c *C) {
 
 func (s *testStatsSuite) TestLoadHist(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 varchar(12), c2 char(12))")
@@ -486,6 +527,8 @@ func (s *testStatsSuite) TestLoadHist(c *C) {
 
 func (s *testStatsSuite) TestInitStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
@@ -499,7 +542,9 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	// `Lease` is not 0, so here we just change it.
 	h.SetLease(time.Millisecond)
 
-	h.Clear()
+	clearRW.RUnlock()
+	cleanHandle(c, s.do)
+	clearRW.RLock()
 	c.Assert(h.InitStats(is), IsNil)
 	time.Sleep(10 * time.Millisecond)
 
@@ -508,7 +553,9 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 	c.Assert(cols[1].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x36))
 	c.Assert(cols[2].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x37))
 	c.Assert(cols[3].LastAnalyzePos.GetBytes()[0], Equals, uint8(0x38))
-	h.Clear()
+	clearRW.RUnlock()
+	cleanHandle(c, s.do)
+	clearRW.RLock()
 	c.Assert(h.Update(is), IsNil)
 	time.Sleep(10 * time.Millisecond)
 	table1 := h.GetTableStats(tbl.Meta())
@@ -518,6 +565,8 @@ func (s *testStatsSuite) TestInitStats(c *C) {
 
 func (s *testStatsSuite) TestLoadStats(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
@@ -564,6 +613,8 @@ func (s *testStatsSuite) TestLoadStats(c *C) {
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -578,6 +629,8 @@ func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
 
 func (s *testStatsSuite) TestCorrelation(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(c1 int primary key, c2 int)")

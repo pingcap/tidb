@@ -61,6 +61,8 @@ func (s *testStatsSuite) TestDDLAfterLoad(c *C) {
 
 func (s *testStatsSuite) TestDDLTable(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
@@ -105,6 +107,8 @@ func (s *testStatsSuite) TestDDLTable(c *C) {
 
 func (s *testStatsSuite) TestDDLHistogram(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	do := s.do
 	h := do.StatsHandle()
@@ -192,6 +196,8 @@ func (s *testStatsSuite) TestDDLHistogram(c *C) {
 
 func (s *testStatsSuite) TestDDLPartition(c *C) {
 	defer cleanEnv(c, s.store, s.do)
+	clearRW.RLock()
+	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")

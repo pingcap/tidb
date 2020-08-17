@@ -79,6 +79,7 @@ type Handle struct {
 }
 
 // Clear the statsCache, only for test.
+// this function is not thread safe. can not used with statscache.Update/statscache.LookUp
 func (h *Handle) Clear() {
 	h.mu.Lock()
 	h.statsCache.Clear()
