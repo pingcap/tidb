@@ -1494,13 +1494,23 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	var err1 error
+	var c3idx table.Index
 	for i := range testCases {
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			s.mustExec(tk, c, "alter table test_drop_column add column c3 int")
+			s.mustExec(tk, c, "alter table test_drop_column add index idx_c3(c3)")
+			tt := s.testGetTable(c, "test_drop_column")
+			for _, idx := range tt.Indices() {
+				if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+					c3idx = idx
+					break
+				}
+			}
 		}
 		_, err1 = tk.Exec("alter table test_drop_column drop column c3")
 		var col1 *table.Column
+		var idx1 table.Index
 		t := s.testGetTable(c, "test_drop_column")
 		for _, col := range t.Cols() {
 			if strings.EqualFold(col.Name.L, "c3") {
@@ -1508,16 +1518,28 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 				break
 			}
 		}
+		for _, idx := range t.Indices() {
+			if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+				idx1 = idx
+				break
+			}
+		}
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(col1, NotNil)
 			c.Assert(col1.Name.L, Equals, "c3")
+			c.Assert(idx1, NotNil)
+			c.Assert(idx1.Meta().Name.L, Equals, "idx_c3")
 			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 		} else {
 			c.Assert(col1, IsNil)
+			c.Assert(idx1, IsNil)
 			c.Assert(err1, IsNil)
 			c.Assert(checkErr, NotNil)
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+			// Check index is deleted
+			ctx := s.s.(sessionctx.Context)
+			checkDelRangeDone(c, ctx, c3idx)
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -1579,28 +1601,50 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	var err1 error
+	var c3idx table.Index
 	for i := range testCases {
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			s.mustExec(tk, c, "alter table test_drop_column add column c3 int, add column c4 int")
+			s.mustExec(tk, c, "alter table test_drop_column add index idx_c3(c3)")
+			tt := s.testGetTable(c, "test_drop_column")
+			for _, idx := range tt.Indices() {
+				if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+					c3idx = idx
+					break
+				}
+			}
 		}
 		_, err1 = tk.Exec("alter table test_drop_column drop column c3, drop column c4")
 		t := s.testGetTable(c, "test_drop_column")
 		col3 := table.FindCol(t.Cols(), "c3")
 		col4 := table.FindCol(t.Cols(), "c4")
+		var idx3 table.Index
+		for _, idx := range t.Indices() {
+			if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+				idx3 = idx
+				break
+			}
+		}
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(col3, NotNil)
 			c.Assert(col4, NotNil)
+			c.Assert(idx3, NotNil)
 			c.Assert(col3.Name.L, Equals, "c3")
 			c.Assert(col4.Name.L, Equals, "c4")
+			c.Assert(idx3.Meta().Name.L, Equals, "idx_c3")
 			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 		} else {
 			c.Assert(col3, IsNil)
 			c.Assert(col4, IsNil)
+			c.Assert(idx3, IsNil)
 			c.Assert(err1, IsNil)
 			c.Assert(checkErr, NotNil)
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+			// Check index is deleted
+			ctx := s.s.(sessionctx.Context)
+			checkDelRangeDone(c, ctx, c3idx)
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
