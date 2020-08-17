@@ -283,7 +283,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 					return errors.Trace(err)
 				}
 			}
-			return nil
+			// Do not return, because global indexes entries begin with talbeID.
 		}
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
@@ -316,11 +316,10 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 					return errors.Trace(err)
 				}
 			}
-		} else {
-			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-			return doInsert(s, job.ID, indexID, startKey, endKey, now)
 		}
+		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+		return doInsert(s, job.ID, indexID, startKey, endKey, now)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
 		var indexName interface{}
@@ -337,11 +336,10 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 					return errors.Trace(err)
 				}
 			}
-		} else {
-			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-			return doInsert(s, job.ID, indexID, startKey, endKey, now)
 		}
+		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+		return doInsert(s, job.ID, indexID, startKey, endKey, now)
 	}
 	return nil
 }

@@ -292,6 +292,8 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		var tids []int64
 		if tblInfo.GetPartitionInfo() != nil {
 			tids = getPartitionIDs(tblInfo)
+			// Recover global indexes of partitioned table.
+			tids = append(tids, tblInfo.ID)
 		} else {
 			tids = []int64{tblInfo.ID}
 		}
