@@ -177,6 +177,9 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 //		   Length of value <= 9, use to distinguish from the new encoding.
 //
 func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
+	if c.Meta().Unique {
+		us.CacheIndexName(c.phyTblID, c.Meta().ID, c.Meta().Name.String())
+	}
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {
 		fn(&opt)
@@ -237,11 +240,11 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 		return nil, err
 	}
 	if err != nil || len(value) == 0 {
-		var keyFlags kv.KeyFlags
 		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
-			keyFlags = keyFlags.MarkPresumeKeyNotExists()
+			err = us.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
+		} else {
+			err = us.GetMemBuffer().Set(key, idxVal)
 		}
-		err = us.GetMemBuffer().SetWithFlags(key, keyFlags, idxVal)
 		return nil, err
 	}
 
