@@ -241,6 +241,17 @@ func (h *Handle) EraseTable(ID int64) {
 	h.statsCache.Insert(table.CopyMeta())
 }
 
+// GetAllTableStatsMemUsage get all the mem usage with true table.
+// only used by test.
+func (h *Handle) GetAllTableStatsMemUsage() int64 {
+	data := h.statsCache.GetAll()
+	allUsage := int64(0)
+	for _, t := range data {
+		allUsage += t.MemoryUsage()
+	}
+	return allUsage
+}
+
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)

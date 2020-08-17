@@ -52,6 +52,20 @@ func newstatsCache(maxMemoryLimit int64) *statsCache {
 	return &c
 }
 
+// GetAll get all the tables point.
+func (sc *statsCache) GetAll() []*statistics.Table {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	values := sc.cache.GetAll()
+	tables := make([]*statistics.Table, 0)
+	for _, v := range values {
+		if t, ok := v.(*statistics.Table); ok && t != nil {
+			tables = append(tables, t)
+		}
+	}
+	return tables
+}
+
 // lookupUnsafe get table with id without Lock.
 func (sc *statsCache) lookupUnsafe(id int64) (*statistics.Table, bool) {
 	var key = statsCacheKey(id)
@@ -73,7 +87,7 @@ func (sc *statsCache) Lookup(id int64) (*statistics.Table, bool) {
 // Insert insert a new table to tables and update the cache.
 // if bytesconsumed is more than capacity, remove oldest cache and add metadata of it
 func (sc *statsCache) Insert(table *statistics.Table) {
-	if table == nil{
+	if table == nil {
 		return
 	}
 	var key = statsCacheKey(table.PhysicalID)
