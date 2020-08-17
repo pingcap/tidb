@@ -267,8 +267,19 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		wg.Add(1)
 		ch <- 1
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					err := fmt.Errorf("%s", r)
+					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+				}
+			}()
 			defer wg.Done()
-			e.parsedSlowLogCh <- parsedSlowLog{e.parsedLog(sctx, log, start), err}
+			result, err2 := e.parsedLog(sctx, log, start)
+			if err2 != nil {
+				e.parsedSlowLogCh <- parsedSlowLog{nil, err2}
+			} else {
+				e.parsedSlowLogCh <- parsedSlowLog{result, err}
+			}
 			<-ch
 		}()
 		// Read the next file, offset = 0
@@ -290,16 +301,16 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	wg.Wait()
 }
 
-func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, offset int) [][]types.Datum {
+func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, offset int) (data [][]types.Datum, err error) {
 	defer func() {
-		if err := recover(); err != nil {
-			err2 := fmt.Errorf("%s", err)
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err2)
+		if r := recover(); r != nil {
+			err := fmt.Errorf("%s", r)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}()
 	var st *slowQueryTuple
 	tz := ctx.GetSessionVars().Location()
-	var data [][]types.Datum
+	//var data [][]types.Datum
 	startFlag := false
 	for index, line := range log {
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
@@ -368,7 +379,7 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 			}
 		}
 	}
-	return data
+	return data, nil
 }
 
 type slowQueryTuple struct {
