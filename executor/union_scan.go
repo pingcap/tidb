@@ -197,6 +197,13 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+// Close implements the Executor Close interface.
+func (us *UnionScanExec) Close() error {
+	us.cursor4AddRows = 0
+	us.cursor4SnapshotRows = 0
+    return nil
+}
+
 // getOneRow gets one result row from dirty table or child.
 func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	snapshotRow, err := us.getSnapshotRow(ctx)
