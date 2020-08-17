@@ -356,11 +356,24 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		binlogNewRow = make([]types.Datum, 0, numColsCap)
 	}
 
-	for _, col := range t.WritableCols() {
+	for _, col := range t.Columns {
 		var value types.Datum
+		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+			if col.ChangeStateInfo != nil {
+				// TODO: Check overflow or ignoreTruncate.
+				value, err = table.CastValue(sctx, oldData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+				if err != nil {
+					logutil.BgLogger().Info("update record cast value failed", zap.Any("col", col), zap.Uint64("txnStartTS", txn.StartTS()),
+						zap.String("handle", h.String()), zap.Any("val", oldData[col.DependencyColumnOffset]), zap.Error(err))
+				}
+				oldData = append(oldData, value)
+				touched = append(touched, touched[col.DependencyColumnOffset])
+			}
+			continue
+		}
 		if col.State != model.StatePublic {
 			// If col is in write only or write reorganization state we should keep the oldData.
-			// Because the oldData must be the orignal data(it's changed by other TiDBs.) or the orignal default value.
+			// Because the oldData must be the original data(it's changed by other TiDBs.) or the original default value.
 			// TODO: Use newData directly.
 			value = oldData[col.Offset]
 			if col.ChangeStateInfo != nil {
@@ -369,6 +382,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 				if err != nil {
 					return err
 				}
+				newData[col.Offset] = value
 			}
 		} else {
 			value = newData[col.Offset]
@@ -643,14 +657,18 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	for _, col := range t.WritableCols() {
 		var value types.Datum
-
-		if col.State != model.StatePublic && col.ChangeStateInfo != nil {
+		if col.ChangeStateInfo != nil && col.State != model.StatePublic {
 			// TODO: Check overflow or ignoreTruncate.
 			value, err = table.CastValue(sctx, r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 			if err != nil {
 				return nil, err
 			}
-		} else if col.State != model.StatePublic &&
+			r = append(r, value)
+			row = append(row, value)
+			colIDs = append(colIDs, col.ID)
+			continue
+		}
+		if col.State != model.StatePublic &&
 			// Update call `AddRecord` will already handle the write only column default value.
 			// Only insert should add default value for write only column.
 			!opt.IsUpdate {
@@ -661,6 +679,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			}
 			// add value to `r` for dirty db in transaction.
 			// Otherwise when update will panic cause by get value of column in write only state from dirty db.
+
 			if col.Offset < len(r) {
 				r[col.Offset] = value
 			} else {
@@ -915,6 +934,10 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	err := t.removeRowData(ctx, h)
 	if err != nil {
 		return err
+	}
+	// The table has non-public column and this column is doing the operation of "modify/change column".
+	if len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
+		r = append(r, r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset])
 	}
 	err = t.removeRowIndices(ctx, h, r)
 	if err != nil {

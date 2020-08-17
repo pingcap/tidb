@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -838,15 +839,30 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
 		index:          index,
 		rowDecoder:     rowDecoder,
-		defaultVals:    make([]types.Datum, len(t.Cols())),
+		defaultVals:    make([]types.Datum, len(t.WritableCols())),
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 	}
+}
+
+func (w *addIndexWorker) getIndexChangingColVal(col *table.Column) (_ types.Datum, isDefaultVal bool, err error) {
+	relativeCol := w.table.WritableCols()[col.ChangeStateInfo.DependencyColumnOffset]
+	idxColumnVal, ok := w.rowMap[relativeCol.ID]
+	if ok {
+		return idxColumnVal, false, nil
+	}
+
+	idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
+	if err != nil {
+		return idxColumnVal, false, errors.Trace(err)
+	}
+
+	return idxColumnVal, true, nil
 }
 
 // getIndexRecord gets index columns values from raw binary value row.
 func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawRecord []byte) (*indexRecord, error) {
 	t := w.table
-	cols := t.Cols()
+	cols := t.WritableCols()
 	idxInfo := w.index.Meta()
 	sysZone := timeutil.SystemLocation()
 	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, time.UTC, sysZone, w.rowMap)
@@ -859,16 +875,19 @@ func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawR
 		idxColumnVal, ok := w.rowMap[col.ID]
 		if ok {
 			idxVal[j] = idxColumnVal
-			// Make sure there is no dirty data.
-			delete(w.rowMap, col.ID)
 			continue
 		}
-		idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
+		isDefaultVal := true
+		if col.ChangeStateInfo != nil {
+			idxColumnVal, isDefaultVal, err = w.getIndexChangingColVal(col)
+		} else {
+			idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
+		}
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		if idxColumnVal.Kind() == types.KindMysqlTime {
+		if idxColumnVal.Kind() == types.KindMysqlTime && isDefaultVal {
 			t := idxColumnVal.GetMysqlTime()
 			if t.Type() == mysql.TypeTimestamp && sysZone != time.UTC {
 				err := t.ConvertTimeZone(sysZone, time.UTC)
@@ -1389,7 +1408,8 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 //	4. Wait all these running tasks finished, then continue to step 3, until all tasks is done.
 // The above operations are completed in a transaction.
 // Finally, update the concurrent processing of the total number of rows, and store the completed handle value.
-func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType, indexInfo *model.IndexInfo, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
+func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType backfillWorkerType,
+	indexInfo *model.IndexInfo, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
 	job := reorgInfo.Job
 	totalAddedCount := job.GetRowCount()
 

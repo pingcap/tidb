@@ -548,6 +548,7 @@ type SessionVars struct {
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
+	// EnableChangeColumnType is used to control whether to enable the change column type.
 	EnableChangeColumnType bool
 
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.

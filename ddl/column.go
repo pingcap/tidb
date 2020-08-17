@@ -667,7 +667,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 	if changingCol == nil {
 		changingColPos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
-		newColName := model.NewCIStr(fmt.Sprintf("%s%s", changingColumnPrefix, newCol.Name.O))
+		newColName := model.NewCIStr(fmt.Sprintf("%s%s", changingColumnPrefix, oldCol.Name.O))
 		if mysql.HasPriKeyFlag(oldCol.Flag) {
 			job.State = model.JobStateCancelled
 			msg := "enableChangeColType is true and this column has primary key flag"
@@ -690,7 +690,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 			newIdxInfo.Name = model.NewCIStr(fmt.Sprintf("%s%s", changingIndexPrefix, newIdxInfo.Name.O))
 			newIdxInfo.ID = allocateIndexID(tblInfo)
 			newIdxInfo.Columns[offsets[i]].Name = newColName
-			newIdxInfo.Columns[offsets[i]].Offset = newCol.Offset
+			newIdxInfo.Columns[offsets[i]].Offset = changingCol.Offset
 			changingIdxs = append(changingIdxs, newIdxInfo)
 		}
 		tblInfo.Indices = append(tblInfo.Indices, changingIdxs...)
@@ -699,10 +699,10 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		copy(tblInfo.Indices[len(tblInfo.Indices)-len(changingIdxs):], changingIdxs)
 	}
 
-	return w.doModifyColumnType(d, t, job, dbInfo, tblInfo, changingCol, oldCol, newCol.Name, pos, changingIdxs)
+	return w.doModifyColumnTypeWithData(d, t, job, dbInfo, tblInfo, changingCol, oldCol, newCol.Name, pos, changingIdxs)
 }
 
-func (w *worker) doModifyColumnType(
+func (w *worker) doModifyColumnTypeWithData(
 	d *ddlCtx, t *meta.Meta, job *model.Job,
 	dbInfo *model.DBInfo, tblInfo *model.TableInfo, changingCol, oldCol *model.ColumnInfo,
 	colName model.CIStr, pos *ast.ColumnPosition, changingIdxs []*model.IndexInfo) (ver int64, _ error) {
@@ -788,7 +788,10 @@ func (w *worker) doModifyColumnType(
 		changingCol.Name = colName
 		tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-len(changingIdxs)]
 		// Adjust table column offset.
-		adjustColumnInfoInModifyColumn(job, tblInfo, changingCol, oldCol, pos)
+		if err = adjustColumnInfoInModifyColumn(job, tblInfo, changingCol, oldCol, pos); err != nil {
+			// TODO: Do rollback.
+			return ver, errors.Trace(err)
+		}
 		updateChangingInfo(job, changingCol, changingIdxs, model.StatePublic)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
@@ -907,8 +910,11 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 			if err != nil {
 				return false, errors.Trace(errCantDecodeIndex.GenWithStackByArgs(err))
 			}
+
 			if _, ok := w.rowMap[w.newColInfo.ID]; ok {
 				// The column is already added by update or insert statement, skip it.
+				w.rowRecords = append(w.rowRecords, &rowRecord{handle: handle, key: recordKey, vals: rawRow})
+				w.cleanRowMap()
 				return true, nil
 			}
 
@@ -931,6 +937,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 			}
 
 			w.rowRecords = append(w.rowRecords, &rowRecord{handle: handle, key: recordKey, vals: newRowVal})
+			w.cleanRowMap()
 			if handle.Equal(taskRange.endHandle) {
 				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
 				taskDone = true
@@ -943,7 +950,6 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 		taskDone = true
 	}
 
-	w.cleanRowMap()
 	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
 	return w.rowRecords, w.getNextHandle(taskRange, taskDone), taskDone, errors.Trace(err)
 }
@@ -994,7 +1000,7 @@ func updateChangingInfo(job *model.Job, changingCol *model.ColumnInfo, changingI
 	}
 }
 
-// doModifyColumn updates the column information and reorders all columns.
+// doModifyColumn updates the column information and reorders all columns. It does not support modifying column data.
 func (w *worker) doModifyColumn(
 	t *meta.Meta, job *model.Job, dbInfo *model.DBInfo, tblInfo *model.TableInfo,
 	newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) (ver int64, _ error) {

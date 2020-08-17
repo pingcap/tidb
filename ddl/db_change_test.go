@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"go.uber.org/zap"
@@ -539,8 +540,31 @@ func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdateForAddColumns(c *C) {
 	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnsSQL, sqls, expectQuery)
 }
 
-// TestWriteOnlyForModifyColumn tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
-func (s *serialTestStateChangeSuite) TestWriteOnlyForModifyColumn(c *C) {
+// TestWriteReorgForModifyColumn tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumn(c *C) {
+	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
+	s.testModifyColumn(c, model.StateWriteReorganization, modifyColumnSQL)
+}
+
+// TestWriteReorgForModifyColumnWithoutFirst tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithoutFirst(c *C) {
+	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1"
+	s.testModifyColumn(c, model.StateWriteReorganization, modifyColumnSQL)
+}
+
+// TestWriteReorgForModifyColumnWithoutDefaultVal tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithoutDefaultVal(c *C) {
+	modifyColumnSQL := "alter table tt change column c cc tinyint first"
+	s.testModifyColumn(c, model.StateWriteReorganization, modifyColumnSQL)
+}
+
+// TestDeleteOnlyForModifyColumnWithoutDefaultVal tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *serialTestStateChangeSuite) TestDeleteOnlyForModifyColumnWithoutDefaultVal(c *C) {
+	modifyColumnSQL := "alter table tt change column c cc tinyint first"
+	s.testModifyColumn(c, model.StateDeleteOnly, modifyColumnSQL)
+}
+
+func (s *serialTestStateChangeSuite) testModifyColumn(c *C, state model.SchemaState, modifyColumnSQL string) {
 	enableChangeColumnType := s.se.GetSessionVars().EnableChangeColumnType
 	s.se.GetSessionVars().EnableChangeColumnType = true
 	defer func() {
@@ -557,17 +581,22 @@ func (s *serialTestStateChangeSuite) TestWriteOnlyForModifyColumn(c *C) {
 	c.Assert(err, IsNil)
 	defer s.se.Execute(context.Background(), "drop table tt")
 
+	// sqls := make([]sqlWithErr, 3)
 	sqls := make([]sqlWithErr, 7)
 	sqls[0] = sqlWithErr{"delete from tt where c = 11", nil}
-	sqls[1] = sqlWithErr{"update tt use index(idx2) set a = 'a_update', c = 222 where c = 22", errors.Errorf("[types:1690]constant 222 overflows tinyint")}
+	if state == model.StateWriteReorganization {
+		sqls[1] = sqlWithErr{"update tt use index(idx2) set a = 'a_update', c = 222 where c = 22", errors.Errorf("[types:1690]constant 222 overflows tinyint")}
+		sqls[4] = sqlWithErr{"insert tt set a = 'a_insert', c = 333", errors.Errorf("[types:1690]constant 333 overflows tinyint")}
+	} else {
+		sqls[1] = sqlWithErr{"update tt use index(idx2) set a = 'a_update', c = 2 where c = 22", nil}
+		sqls[4] = sqlWithErr{"insert tt set a = 'a_insert', b = 123, c = 111", nil}
+	}
 	sqls[2] = sqlWithErr{"update tt use index(idx2) set a = 'a_update', c = 2 where c = 22", nil}
 	sqls[3] = sqlWithErr{"update tt use index(idx2) set a = 'a_update_1' where c = 2", nil}
-	sqls[4] = sqlWithErr{"insert tt set a = 'a_insert', c = 333", errors.Errorf("[types:1690]constant 333 overflows tinyint")}
 	sqls[5] = sqlWithErr{"insert tt set a = 'a_insert', c = 111", nil}
 	sqls[6] = sqlWithErr{"insert tt set a = 'a_insert_1'", nil}
-	addColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
-	query := &expectQuery{sql: "select * from tt;", rows: []string{"2 a_update_1 1", "111 a_insert 1", "0 a_insert_1 1"}}
-	s.runTestInSchemaState(c, model.StateWriteReorganization, true, addColumnSQL, sqls, query)
+	query := &expectQuery{sql: "admin check table tt;", rows: nil}
+	s.runTestInSchemaState(c, state, false, modifyColumnSQL, sqls, query)
 }
 
 // TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
@@ -724,7 +753,7 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 		if job.SchemaState != state {
 			return
 		}
-		for _, sqlWithErr := range sqlWithErrs {
+		for i, sqlWithErr := range sqlWithErrs {
 			_, err = se.Execute(context.Background(), sqlWithErr.sql)
 			if !terror.ErrorEqual(err, sqlWithErr.expectErr) {
 				checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err)
@@ -750,6 +779,10 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 		tk.MustExec("use test_db_state")
 		result, err := s.execQuery(tk, expectQuery.sql)
 		c.Assert(err, IsNil)
+		if expectQuery.rows == nil {
+			c.Assert(result, IsNil)
+			return
+		}
 		err = checkResult(result, testkit.Rows(expectQuery.rows...))
 		c.Assert(err, IsNil)
 	}
@@ -760,6 +793,9 @@ func (s *testStateChangeSuiteBase) execQuery(tk *testkit.TestKit, sql string, ar
 	rs, err := tk.Exec(sql, args...)
 	if err != nil {
 		return nil, err
+	}
+	if rs == nil {
+		return nil, nil
 	}
 	result := tk.ResultSetToResult(rs, comment)
 	return result, nil
