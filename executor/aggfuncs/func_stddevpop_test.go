@@ -8,7 +8,7 @@ import (
 
 func (s *testSuite) TestMergePartialResult4Stddevpop(c *C) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncStddevPop, mysql.TypeDouble, 5, 1.4142135623730951,0.816496580927726,1.3169567191065923),
+		buildAggTester(ast.AggFuncStddevPop, mysql.TypeDouble, 5, 1.4142135623730951, 0.816496580927726, 1.3169567191065923),
 	}
 	for _, test := range tests {
 		s.testMergePartialResult(c, test)
