@@ -351,7 +351,7 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 		results:     make(chan *indexMergeJoinResult, numResChkHold),
 		outerResult: chunk.NewList(omw.rowTypes, omw.executor.base().initCap, omw.executor.base().maxChunkSize),
 	}
-	task.memTracker = memory.NewTracker(0, -1)
+	task.memTracker = memory.NewTracker(memory.LabelForSimpleTask, -1)
 	task.memTracker.AttachTo(omw.parentMemTracker)
 
 	omw.increaseBatchSize()

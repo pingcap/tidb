@@ -387,7 +387,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 			finished:       e.finished,
 			buildTblReader: e.buildFinalTableReader,
 			tblPlans:       e.tblPlans,
-			memTracker:     memory.NewTracker(i, -1),
+			memTracker:     memory.NewTracker(memory.LabelForSimpleTask, -1),
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {

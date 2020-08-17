@@ -409,4 +409,6 @@ const (
 	LabelForOuterList int = -16
 	// LabelForApplyCache represents the label of the apply cache
 	LabelForApplyCache int = -17
+	// LabelForSimpleTask represents the label of the simple task
+	LabelForSimpleTask int = -18
 )
