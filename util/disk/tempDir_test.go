@@ -37,7 +37,12 @@ func (s *testDiskSerialSuite) TestRemoveDir(c *check.C) {
 	c.Assert(os.RemoveAll(config.GetGlobalConfig().TempStoragePath), check.IsNil)
 	c.Assert(checkTempDirExist(), check.Equals, false)
 	for i := 0; i < 10; i++ {
-		go CheckAndInitTempDir()
+		go func(c *check.C) {
+			err := CheckAndInitTempDir()
+			if err != nil {
+				c.Assert(err, check.IsNil)
+			}
+		}(c)
 	}
 	err = CheckAndInitTempDir()
 	c.Assert(err, check.IsNil)
