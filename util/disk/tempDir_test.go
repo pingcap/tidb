@@ -42,9 +42,7 @@ func (s *testDiskSerialSuite) TestRemoveDir(c *check.C) {
 		wg.Add(1)
 		go func(c *check.C) {
 			err := CheckAndInitTempDir()
-			if err != nil {
-				c.Assert(err, check.IsNil)
-			}
+			c.Assert(err, check.IsNil)
 			wg.Done()
 		}(c)
 	}
