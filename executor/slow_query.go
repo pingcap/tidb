@@ -211,7 +211,12 @@ func getOneLine(reader *bufio.Reader) ([]byte, error) {
 	return resByte, err
 }
 
-func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, num int) ([]string, error) {
+type offset struct {
+	offset int
+	length int
+}
+
+func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, num int) ([]string, error) {
 	var line string
 	log := make([]string, 0, num)
 	var err error
@@ -226,6 +231,7 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, num int) ([]strin
 					if e.fileIdx >= len(e.files) {
 						return log, nil
 					}
+					offset.length = len(log)
 					reader.Reset(e.files[e.fileIdx].file)
 					continue
 				}
@@ -247,16 +253,16 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, num int) ([]strin
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
 	// To limit the num of go routine
 	var wg sync.WaitGroup
-	offset := 0
+	offset := offset{offset: 0, length: 0}
 	ch := make(chan int, sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency())
 	defer close(ch)
 	for {
-		log, err := e.getBatchLog(reader, logNum)
+		log, err := e.getBatchLog(reader, &offset, logNum)
 		if err != nil {
 			e.parsedSlowLogCh <- parsedSlowLog{nil, err}
 			break
 		}
-		start := offset
+		start := offset.offset
 		wg.Add(1)
 		ch <- 1
 		go func() {
@@ -266,9 +272,10 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		}()
 		// Read the next file, offset = 0
 		if e.fileLine == 0 {
-			offset = 0
+			offset.offset = 0
 		} else {
-			offset = e.fileLine - len(log)
+			offset.offset = e.fileLine - (len(log) - offset.length)
+			offset.length = 0
 		}
 		if e.fileIdx >= len(e.files) {
 			break
