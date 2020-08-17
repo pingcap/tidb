@@ -186,7 +186,7 @@ HashAgg_18	24000.00	root		group by:Column#10, funcs:firstrow(Column#11)->Column#
     └─IndexReader_73	10000.00	root		index:IndexFullScan_72
       └─IndexFullScan_72	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
 select * from information_schema.tidb_indexes where table_name='t4';
-TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	Visible
+TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE
 test	t4	0	PRIMARY	1	a	NULL		NULL	0	YES
 test	t4	1	idx	1	a	NULL		NULL	1	YES
 test	t4	1	idx	2	b	NULL		NULL	1	YES
