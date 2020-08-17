@@ -15,6 +15,7 @@ package disk
 
 import (
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/check"
@@ -36,14 +37,18 @@ func (s *testDiskSerialSuite) TestRemoveDir(c *check.C) {
 	c.Assert(checkTempDirExist(), check.Equals, true)
 	c.Assert(os.RemoveAll(config.GetGlobalConfig().TempStoragePath), check.IsNil)
 	c.Assert(checkTempDirExist(), check.Equals, false)
+	wg := sync.WaitGroup{}
 	for i := 0; i < 10; i++ {
+		wg.Add(1)
 		go func(c *check.C) {
 			err := CheckAndInitTempDir()
 			if err != nil {
 				c.Assert(err, check.IsNil)
 			}
+			wg.Done()
 		}(c)
 	}
+	wg.Wait()
 	err = CheckAndInitTempDir()
 	c.Assert(err, check.IsNil)
 	c.Assert(checkTempDirExist(), check.Equals, true)

@@ -82,16 +82,21 @@ func InitializeTempDir() error {
 		return err
 	}
 
-	for _, subDir := range subDirs {
-		// Do not remove the lock file.
-		if subDir.Name() == lockFile {
-			continue
-		}
-		err = os.RemoveAll(filepath.Join(tempDir, subDir.Name()))
-		if err != nil {
-			log.Warn("Remove temporary file error",
-				zap.String("tempStorageSubDir", filepath.Join(tempDir, subDir.Name())), zap.Error(err))
-		}
+	// If it exists others files excepts lock file, create a new goroutine to clean them.
+	if len(subDirs) > 1 {
+		go func() {
+			for _, subDir := range subDirs {
+				// Do not remove the lock file.
+				if subDir.Name() == lockFile {
+					continue
+				}
+				err := os.RemoveAll(filepath.Join(tempDir, subDir.Name()))
+				if err != nil {
+					log.Warn("Remove temporary file error",
+						zap.String("tempStorageSubDir", filepath.Join(tempDir, subDir.Name())), zap.Error(err))
+				}
+			}
+		}()
 	}
 	return nil
 }
