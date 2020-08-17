@@ -3272,16 +3272,16 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
 	changeColumnValueMsg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
-		enableChangeColType := ctx.GetSessionVars().EnableChangeColumnType
+		tidb_enable_change_column_type := ctx.GetSessionVars().EnableChangeColumnType
 		if len(changeColumnValueMsg) == 0 {
 			return errors.Trace(err)
 		}
 
-		if !enableChangeColType {
-			msg := fmt.Sprintf("%s, and enableChangeColType is false", changeColumnValueMsg)
+		if !tidb_enable_change_column_type {
+			msg := fmt.Sprintf("%s, and tidb_enable_change_column_type is false", changeColumnValueMsg)
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		} else if mysql.HasPriKeyFlag(origin.Flag) {
-			msg := "enableChangeColType is true and this column has primary key flag"
+			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 	}
@@ -3509,10 +3509,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	if ctx.GetSessionVars().EnableChangeColumnType && needChangeColumnData(col.ColumnInfo, newCol.ColumnInfo) {
 		if newCol.IsGenerated() || col.IsGenerated() {
 			// TODO: Make it compatible with MySQL error.
-			msg := fmt.Sprintf("enableChangeColType is true, newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
+			msg := fmt.Sprintf("tidb_enable_change_column_type is true, newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
 			return nil, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		} else if t.Meta().Partition != nil {
-			return nil, errUnsupportedModifyColumn.GenWithStackByArgs("enableChangeColType is true, table is partition table")
+			return nil, errUnsupportedModifyColumn.GenWithStackByArgs("tidb_enable_change_column_type is true, table is partition table")
 		}
 	}
 

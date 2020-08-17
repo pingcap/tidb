@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/testkit"
 	"go.uber.org/zap"
@@ -753,7 +752,7 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 		if job.SchemaState != state {
 			return
 		}
-		for i, sqlWithErr := range sqlWithErrs {
+		for _, sqlWithErr := range sqlWithErrs {
 			_, err = se.Execute(context.Background(), sqlWithErr.sql)
 			if !terror.ErrorEqual(err, sqlWithErr.expectErr) {
 				checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err)
@@ -916,7 +915,7 @@ func (s *serialTestStateChangeSuite) TestParallelAlterModifyColumnAndAddPK(c *C)
 	sql2 := "ALTER TABLE t MODIFY COLUMN b tinyint;"
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
-		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: enableChangeColType is true and this column has primary key flag")
+		c.Assert(err2.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true and this column has primary key flag")
 		_, err := s.se.Execute(context.Background(), "select * from t")
 		c.Assert(err, IsNil)
 	}
