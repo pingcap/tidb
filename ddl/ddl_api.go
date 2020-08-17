@@ -911,7 +911,7 @@ func checkColumnValueConstraint(col *table.Column, collation string) error {
 	for i := range col.Elems {
 		val := string(ctor.Key(col.Elems[i]))
 		if enumLengthLimit && (len(val) > 255 || len(val)*desc.Maxlen > 1020) {
-			errMsg := fmt.Sprintf("Too long enumeration/set value for column %s, check enable-enum-length-limit config", col.Name)
+			errMsg := fmt.Sprintf("Too long enumeration/set value for column %s, check enable-enum-length-limit config.", col.Name)
 			return types.ErrTooLongValueInType.GenWithStack(errMsg)
 		}
 		if _, ok := valueMap[val]; ok {
