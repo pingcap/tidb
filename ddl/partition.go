@@ -899,10 +899,6 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 		physicalTableIDs = removePartitionInfo(tblInfo, partNames)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 	}
 
 	rules := buildPlacementDropRules(job.SchemaID, tblInfo.ID, physicalTableIDs)
@@ -910,6 +906,13 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	err = infosync.UpdatePlacementRules(nil, rules)
 	if err != nil {
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
+	if job.Type != model.ActionAddTablePartition {
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 
 	// Finish this job.
