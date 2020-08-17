@@ -71,6 +71,7 @@ type TableReaderExecutor struct {
 	resultHandler *tableResultHandler
 	feedback      *statistics.QueryFeedback
 	plans         []plannercore.PhysicalPlan
+	tablePlan     plannercore.PhysicalPlan
 
 	memTracker       *memory.Tracker
 	selectResultHook // for testing
@@ -105,9 +106,17 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	var err error
 	if e.corColInFilter {
-		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
-		if err != nil {
-			return err
+		if e.storeType == kv.TiFlash {
+			execs, _, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)
+			if err != nil {
+				return err
+			}
+			e.dagPB.RootExecutor = execs[0]
+		} else {
+			e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if e.runtimeStats != nil {
