@@ -86,9 +86,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
-	if it.req.KeepOrder {
-		it.sendRate = newRateLimit(2 * it.concurrency)
-	} else {
+
+	it.sendRate = newRateLimit(it.concurrency)
+	if !it.req.KeepOrder {
 		it.respChan = make(chan *copResponse, it.concurrency)
 	}
 	if !it.req.Streaming {
@@ -381,8 +381,8 @@ type copIterator struct {
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
 	curr  int
-	// sendRate controls the sending rate of copIteratorTaskSender, if keepOrder,
-	// to prevent all tasks being done (aka. all of the responses are buffered)
+
+	// sendRate controls the sending rate of copIteratorTaskSender
 	sendRate *rateLimit
 
 	// Otherwise, results are stored in respChan.
@@ -419,6 +419,8 @@ type copIteratorWorker struct {
 	memTracker *memory.Tracker
 
 	replicaReadSeed uint32
+
+	sendRate *rateLimit
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -498,6 +500,13 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
+		if worker.respChan != nil {
+			if worker.sendRate == nil {
+				// unreachable code
+				panic("copIteratorWorker's sendRate should be set when KeepOrder equals false")
+			}
+			worker.sendRate.putToken()
+		}
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -533,6 +542,7 @@ func (it *copIterator) open(ctx context.Context) {
 			memTracker: it.memTracker,
 
 			replicaReadSeed: it.replicaReadSeed,
+			sendRate:        it.sendRate,
 		}
 		go worker.run(ctx)
 	}
@@ -550,17 +560,15 @@ func (it *copIterator) open(ctx context.Context) {
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
 	for _, t := range sender.tasks {
-		// If keepOrder, we must control the sending rate to prevent all tasks
+		// we control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
-		// We keep the number of inflight tasks within the number of concurrency * 2.
+		// We keep the number of inflight tasks within the number of concurrency.
 		// It sends one more task if a task has been finished in copIterator.Next.
-		if sender.sendRate != nil {
-			exit := sender.sendRate.getToken(sender.finishCh)
-			if exit {
-				break
-			}
+		exit := sender.sendRate.getToken(sender.finishCh)
+		if exit {
+			break
 		}
-		exit := sender.sendToTaskCh(t)
+		exit = sender.sendToTaskCh(t)
 		if exit {
 			break
 		}
