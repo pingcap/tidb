@@ -59,6 +59,15 @@ const (
 	TiDBMergeJoin = "tidb_smj"
 	// HintSMJ is hint enforce merge join.
 	HintSMJ = "merge_join"
+
+	// TiDBBroadCastJoin indicates applying broadcast join by force.
+	TiDBBroadCastJoin = "tidb_bcj"
+
+	// HintBCJ indicates applying broadcast join by force.
+	HintBCJ = "broadcast_join"
+	// HintBCJPreferLocal specifies the preferred local read table
+	HintBCJPreferLocal = "broadcast_join_local"
+
 	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
 	TiDBIndexNestedLoopJoin = "tidb_inlj"
 	// HintINLJ is hint enforce index nested loop join.
@@ -262,8 +271,8 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
 			p, err = b.buildSelect(ctx, v)
-		case *ast.UnionStmt:
-			p, err = b.buildUnion(ctx, v)
+		case *ast.SetOprStmt:
+			p, err = b.buildSetOpr(ctx, v)
 		case *ast.TableName:
 			p, err = b.buildDataSource(ctx, v, &x.AsName)
 			isTableName = true
@@ -299,8 +308,8 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		return p, nil
 	case *ast.SelectStmt:
 		return b.buildSelect(ctx, x)
-	case *ast.UnionStmt:
-		return b.buildUnion(ctx, x)
+	case *ast.SetOprStmt:
+		return b.buildSetOpr(ctx, x)
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.ResultSetNode(%T) for buildResultSetNode()", x)
 	}
@@ -460,6 +469,19 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 	return nil
 }
 
+func (p *LogicalJoin) getPreferredBCJLocalIndex() (hasPrefer bool, prefer int) {
+	if p.hintInfo == nil {
+		return
+	}
+	if p.hintInfo.ifPreferAsLocalInBCJoin(p.children[0], p.blockOffset) {
+		return true, 0
+	}
+	if p.hintInfo.ifPreferAsLocalInBCJoin(p.children[1], p.blockOffset) {
+		return true, 1
+	}
+	return false, 0
+}
+
 func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 	if hintInfo == nil {
 		return
@@ -469,6 +491,9 @@ func (p *LogicalJoin) setPreferredJoinType(hintInfo *tableHintInfo) {
 	rhsAlias := extractTableAlias(p.children[1], p.blockOffset)
 	if hintInfo.ifPreferMergeJoin(lhsAlias, rhsAlias) {
 		p.preferJoinType |= preferMergeJoin
+	}
+	if hintInfo.ifPreferBroadcastJoin(lhsAlias, rhsAlias) {
+		p.preferJoinType |= preferBCJoin
 	}
 	if hintInfo.ifPreferHashJoin(lhsAlias, rhsAlias) {
 		p.preferJoinType |= preferHashJoin
@@ -1138,8 +1163,156 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 	}
 }
 
-func (b *PlanBuilder) buildUnion(ctx context.Context, union *ast.UnionStmt) (LogicalPlan, error) {
-	distinctSelectPlans, allSelectPlans, err := b.divideUnionSelectPlans(ctx, union.SelectList.Selects)
+func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (LogicalPlan, error) {
+	// Because INTERSECT has higher precedence than UNION and EXCEPT. We build it first.
+	selectPlans := make([]LogicalPlan, 0, len(setOpr.SelectList.Selects))
+	afterSetOprs := make([]*ast.SetOprType, 0, len(setOpr.SelectList.Selects))
+	selects := setOpr.SelectList.Selects
+	for i := 0; i < len(selects); i++ {
+		intersects := []*ast.SelectStmt{selects[i]}
+		for i+1 < len(selects) && *selects[i+1].AfterSetOperator == ast.Intersect {
+			intersects = append(intersects, selects[i+1])
+			i++
+		}
+		selectPlan, afterSetOpr, err := b.buildIntersect(ctx, intersects)
+		if err != nil {
+			return nil, err
+		}
+		selectPlans = append(selectPlans, selectPlan)
+		afterSetOprs = append(afterSetOprs, afterSetOpr)
+	}
+	setOprPlan, err := b.buildExcept(ctx, selectPlans, afterSetOprs)
+	if err != nil {
+		return nil, err
+	}
+
+	oldLen := setOprPlan.Schema().Len()
+
+	for i := 0; i < len(setOpr.SelectList.Selects); i++ {
+		b.handleHelper.popMap()
+	}
+	b.handleHelper.pushMap(nil)
+
+	if setOpr.OrderBy != nil {
+		setOprPlan, err = b.buildSort(ctx, setOprPlan, setOpr.OrderBy.Items, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if setOpr.Limit != nil {
+		setOprPlan, err = b.buildLimit(setOprPlan, setOpr.Limit)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
+	// If there are extra expressions generated from `ORDER BY` clause, generate a `Projection` to remove them.
+	if oldLen != setOprPlan.Schema().Len() {
+		proj := LogicalProjection{Exprs: expression.Column2Exprs(setOprPlan.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
+		proj.SetChildren(setOprPlan)
+		schema := expression.NewSchema(setOprPlan.Schema().Clone().Columns[:oldLen]...)
+		for _, col := range schema.Columns {
+			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
+		}
+		proj.names = setOprPlan.OutputNames()[:oldLen]
+		proj.SetSchema(schema)
+		return proj, nil
+	}
+	return setOprPlan, nil
+}
+
+func (b *PlanBuilder) buildSemiJoinForSetOperator(
+	leftOriginPlan LogicalPlan,
+	rightPlan LogicalPlan,
+	joinType JoinType) (leftPlan LogicalPlan, err error) {
+	leftPlan, err = b.buildDistinct(leftOriginPlan, leftOriginPlan.Schema().Len())
+	if err != nil {
+		return nil, err
+	}
+	joinPlan := LogicalJoin{JoinType: joinType}.Init(b.ctx, b.getSelectOffset())
+	joinPlan.SetChildren(leftPlan, rightPlan)
+	joinPlan.SetSchema(leftPlan.Schema())
+	joinPlan.names = make([]*types.FieldName, leftPlan.Schema().Len())
+	copy(joinPlan.names, leftPlan.OutputNames())
+	for j := 0; j < len(rightPlan.Schema().Columns); j++ {
+		leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
+		if leftCol.RetType.Tp != rightCol.RetType.Tp {
+			return nil, errors.New("set operator doesn't support different column type")
+		}
+		eqCond, err := expression.NewFunction(b.ctx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
+		if err != nil {
+			return nil, err
+		}
+		joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
+	}
+	return joinPlan, nil
+}
+
+// buildIntersect build the set operator for 'intersect'. It is called before buildExcept and buildUnion because of its
+// higher precedence.
+func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []*ast.SelectStmt) (LogicalPlan, *ast.SetOprType, error) {
+	leftPlan, err := b.buildSelect(ctx, selects[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(selects) == 1 {
+		return leftPlan, selects[0].AfterSetOperator, nil
+	}
+
+	columnNums := leftPlan.Schema().Len()
+	for i := 1; i < len(selects); i++ {
+		rightPlan, err := b.buildSelect(ctx, selects[i])
+		if err != nil {
+			return nil, nil, err
+		}
+		if rightPlan.Schema().Len() != columnNums {
+			return nil, nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
+		}
+		leftPlan, err = b.buildSemiJoinForSetOperator(leftPlan, rightPlan, SemiJoin)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return leftPlan, selects[0].AfterSetOperator, nil
+}
+
+// buildExcept build the set operators for 'except', and in this function, it calls buildUnion at the same time. Because
+// Union and except has the same precedence.
+func (b *PlanBuilder) buildExcept(ctx context.Context, selects []LogicalPlan, afterSetOpts []*ast.SetOprType) (LogicalPlan, error) {
+	unionPlans := []LogicalPlan{selects[0]}
+	tmpAfterSetOpts := []*ast.SetOprType{nil}
+	columnNums := selects[0].Schema().Len()
+	for i := 1; i < len(selects); i++ {
+		rightPlan := selects[i]
+		if rightPlan.Schema().Len() != columnNums {
+			return nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
+		}
+		if *afterSetOpts[i] == ast.Except {
+			leftPlan, err := b.buildUnion(ctx, unionPlans, tmpAfterSetOpts)
+			if err != nil {
+				return nil, err
+			}
+			leftPlan, err = b.buildSemiJoinForSetOperator(leftPlan, rightPlan, AntiSemiJoin)
+			if err != nil {
+				return nil, err
+			}
+			unionPlans = []LogicalPlan{leftPlan}
+			tmpAfterSetOpts = []*ast.SetOprType{nil}
+		} else {
+			unionPlans = append(unionPlans, rightPlan)
+			tmpAfterSetOpts = append(tmpAfterSetOpts, afterSetOpts[i])
+		}
+	}
+	return b.buildUnion(ctx, unionPlans, tmpAfterSetOpts)
+}
+
+func (b *PlanBuilder) buildUnion(ctx context.Context, selects []LogicalPlan, afterSetOpts []*ast.SetOprType) (LogicalPlan, error) {
+	if len(selects) == 1 {
+		return selects[0], nil
+	}
+	distinctSelectPlans, allSelectPlans, err := b.divideUnionSelectPlans(ctx, selects, afterSetOpts)
 	if err != nil {
 		return nil, err
 	}
@@ -1162,72 +1335,26 @@ func (b *PlanBuilder) buildUnion(ctx context.Context, union *ast.UnionStmt) (Log
 		unionPlan = unionAllPlan
 	}
 
-	oldLen := unionPlan.Schema().Len()
-
-	for i := 0; i < len(union.SelectList.Selects); i++ {
-		b.handleHelper.popMap()
-	}
-	b.handleHelper.pushMap(nil)
-
-	if union.OrderBy != nil {
-		unionPlan, err = b.buildSort(ctx, unionPlan, union.OrderBy.Items, nil, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if union.Limit != nil {
-		unionPlan, err = b.buildLimit(unionPlan, union.Limit)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// Fix issue #8189 (https://github.com/pingcap/tidb/issues/8189).
-	// If there are extra expressions generated from `ORDER BY` clause, generate a `Projection` to remove them.
-	if oldLen != unionPlan.Schema().Len() {
-		proj := LogicalProjection{Exprs: expression.Column2Exprs(unionPlan.Schema().Columns[:oldLen])}.Init(b.ctx, b.getSelectOffset())
-		proj.SetChildren(unionPlan)
-		schema := expression.NewSchema(unionPlan.Schema().Clone().Columns[:oldLen]...)
-		for _, col := range schema.Columns {
-			col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
-		}
-		proj.names = unionPlan.OutputNames()[:oldLen]
-		proj.SetSchema(schema)
-		return proj, nil
-	}
-
 	return unionPlan, nil
 }
 
 // divideUnionSelectPlans resolves union's select stmts to logical plans.
 // and divide result plans into "union-distinct" and "union-all" parts.
-// divide rule ref: https://dev.mysql.com/doc/refman/5.7/en/union.html
+// divide rule ref:
+//		https://dev.mysql.com/doc/refman/5.7/en/union.html
 // "Mixed UNION types are treated such that a DISTINCT union overrides any ALL union to its left."
-func (b *PlanBuilder) divideUnionSelectPlans(ctx context.Context, selects []*ast.SelectStmt) (distinctSelects []LogicalPlan, allSelects []LogicalPlan, err error) {
-	firstUnionAllIdx, columnNums := 0, -1
-	// The last slot is reserved for appending distinct union outside this function.
-	children := make([]LogicalPlan, len(selects), len(selects)+1)
-	for i := len(selects) - 1; i >= 0; i-- {
-		stmt := selects[i]
-		if firstUnionAllIdx == 0 && stmt.IsAfterUnionDistinct {
+func (b *PlanBuilder) divideUnionSelectPlans(ctx context.Context, selects []LogicalPlan, setOprTypes []*ast.SetOprType) (distinctSelects []LogicalPlan, allSelects []LogicalPlan, err error) {
+	firstUnionAllIdx := 0
+	columnNums := selects[0].Schema().Len()
+	for i := len(selects) - 1; i > 0; i-- {
+		if firstUnionAllIdx == 0 && *setOprTypes[i] != ast.UnionAll {
 			firstUnionAllIdx = i + 1
 		}
-
-		selectPlan, err := b.buildSelect(ctx, stmt)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		if columnNums == -1 {
-			columnNums = selectPlan.Schema().Len()
-		}
-		if selectPlan.Schema().Len() != columnNums {
+		if selects[i].Schema().Len() != columnNums {
 			return nil, nil, ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 		}
-		children[i] = selectPlan
 	}
-	return children[:firstUnionAllIdx], children[firstUnionAllIdx:], nil
+	return selects[:firstUnionAllIdx], selects[firstUnionAllIdx:], nil
 }
 
 func (b *PlanBuilder) buildUnionAll(ctx context.Context, subPlan []LogicalPlan) LogicalPlan {
@@ -1436,7 +1563,6 @@ type havingWindowAndOrderbyExprResolver struct {
 	inWindowFunc bool
 	inWindowSpec bool
 	inExpr       bool
-	orderBy      bool
 	err          error
 	p            LogicalPlan
 	selectFields []*ast.SelectField
@@ -1528,10 +1654,10 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 		a.inWindowSpec = false
 	case *ast.ColumnNameExpr:
 		resolveFieldsFirst := true
-		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.orderBy && a.inExpr) || a.curClause == fieldList {
+		if a.inAggFunc || a.inWindowFunc || a.inWindowSpec || (a.curClause == orderByClause && a.inExpr) || a.curClause == fieldList {
 			resolveFieldsFirst = false
 		}
-		if !a.inAggFunc && !a.orderBy {
+		if !a.inAggFunc && a.curClause != orderByClause {
 			for _, item := range a.gbyItems {
 				if col, ok := item.Expr.(*ast.ColumnNameExpr); ok &&
 					(colMatch(v.Name, col.Name) || colMatch(col.Name, v.Name)) {
@@ -1551,8 +1677,22 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 				return node, false
 			}
 			if index == -1 {
-				if a.orderBy {
+				if a.curClause == orderByClause {
 					index, a.err = a.resolveFromPlan(v, a.p)
+				} else if a.curClause == havingClause && v.Name.Table.L != "" {
+					// For SQLs like:
+					//   select a from t b having b.a;
+					index, a.err = a.resolveFromPlan(v, a.p)
+					if a.err != nil {
+						return node, false
+					}
+					if index != -1 {
+						// For SQLs like:
+						//   select a+1 from t having t.a;
+						newV := v
+						newV.Name = &ast.ColumnName{Name: v.Name.Name}
+						index, a.err = resolveFromSelectFields(newV, a.selectFields, true)
+					}
 				} else {
 					index, a.err = resolveFromSelectFields(v, a.selectFields, true)
 				}
@@ -1624,7 +1764,6 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(sel *ast.SelectStmt, p LogicalPlan
 	}
 	havingAggMapper := extractor.aggMapper
 	extractor.aggMapper = make(map[*ast.AggregateFuncExpr]int)
-	extractor.orderBy = true
 	extractor.inExpr = false
 	// Extract agg funcs from order by clause.
 	if sel.OrderBy != nil {
@@ -2267,11 +2406,11 @@ func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType utilhint.NodeType, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, nodeType, currentLevel)
 	var (
-		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables []hintTableInfo
-		indexHintList, indexMergeHintList                                     []indexHintInfo
-		tiflashTables, tikvTables                                             []hintTableInfo
-		aggHints                                                              aggHintInfo
-		timeRangeHint                                                         ast.HintTimeRange
+		sortMergeTables, INLJTables, INLHJTables, INLMJTables, hashJoinTables, BCTables, BCJPreferLocalTables []hintTableInfo
+		indexHintList, indexMergeHintList                                                                     []indexHintInfo
+		tiflashTables, tikvTables                                                                             []hintTableInfo
+		aggHints                                                                                              aggHintInfo
+		timeRangeHint                                                                                         ast.HintTimeRange
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -2287,6 +2426,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ:
 			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+		case TiDBBroadCastJoin, HintBCJ:
+			BCTables = append(BCTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
+		case HintBCJPreferLocal:
+			BCJPreferLocalTables = append(BCJPreferLocalTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case TiDBIndexNestedLoopJoin, HintINLJ:
 			INLJTables = append(INLJTables, tableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, nodeType, currentLevel)...)
 		case HintINLHJ:
@@ -2360,15 +2503,17 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		}
 	}
 	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
-		sortMergeJoinTables:       sortMergeTables,
-		indexNestedLoopJoinTables: indexNestedLoopJoinTables{INLJTables, INLHJTables, INLMJTables},
-		hashJoinTables:            hashJoinTables,
-		indexHintList:             indexHintList,
-		tiflashTables:             tiflashTables,
-		tikvTables:                tikvTables,
-		aggHints:                  aggHints,
-		indexMergeHintList:        indexMergeHintList,
-		timeRangeHint:             timeRangeHint,
+		sortMergeJoinTables:         sortMergeTables,
+		broadcastJoinTables:         BCTables,
+		broadcastJoinPreferredLocal: BCJPreferLocalTables,
+		indexNestedLoopJoinTables:   indexNestedLoopJoinTables{INLJTables, INLHJTables, INLMJTables},
+		hashJoinTables:              hashJoinTables,
+		indexHintList:               indexHintList,
+		tiflashTables:               tiflashTables,
+		tikvTables:                  tikvTables,
+		aggHints:                    aggHints,
+		indexMergeHintList:          indexMergeHintList,
+		timeRangeHint:               timeRangeHint,
 	})
 }
 
@@ -2380,6 +2525,8 @@ func (b *PlanBuilder) popTableHints() {
 	b.appendUnmatchedJoinHintWarning(HintINLHJ, "", hintInfo.indexNestedLoopJoinTables.inlhjTables)
 	b.appendUnmatchedJoinHintWarning(HintINLMJ, "", hintInfo.indexNestedLoopJoinTables.inlmjTables)
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintBCJ, TiDBBroadCastJoin, hintInfo.broadcastJoinTables)
+	b.appendUnmatchedJoinHintWarning(HintBCJPreferLocal, "", hintInfo.broadcastJoinPreferredLocal)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
 	b.appendUnmatchedStorageHintWarning(hintInfo.tiflashTables, hintInfo.tikvTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
@@ -2695,7 +2842,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
-		b.optFlag = b.optFlag | flagPartitionProcessor
+		// Use the new partition implementation, clean up the code here when it's full implemented.
+		if tryOldPartitionImplementation(b.ctx) {
+			b.optFlag = b.optFlag | flagPartitionProcessor
+		}
+
 		pt := tbl.(table.PartitionedTable)
 		// check partition by name.
 		if len(tn.PartitionNames) > 0 {
@@ -2816,8 +2967,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		TblCols:             make([]*expression.Column, 0, len(columns)),
 		preferPartitions:    make(map[int][]model.CIStr),
 	}.Init(b.ctx, b.getSelectOffset())
-
-	var handleCol *expression.Column
+	var handleCols HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	names := make([]*types.FieldName, 0, len(columns))
 	for i, col := range columns {
@@ -2837,36 +2987,36 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
 		}
-
-		// TODO: The common handle may be multi columns, need to change ds.handleCol to a slice.
-		if col.IsPKHandleColumn(tableInfo) || col.IsCommonHandleColumn(tableInfo) {
-			handleCol = newCol
+		if col.IsPKHandleColumn(tableInfo) {
+			handleCols = &IntHandleCols{col: newCol}
 		}
 		schema.Append(newCol)
 		ds.TblCols = append(ds.TblCols, newCol)
 	}
 	// We append an extra handle column to the schema when the handle
 	// column is not the primary key of "ds".
-	if handleCol == nil {
-		ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
-		handleCol = ds.newExtraHandleSchemaCol()
-		schema.Append(handleCol)
-		names = append(names, &types.FieldName{
-			DBName:      dbName,
-			TblName:     tableInfo.Name,
-			ColName:     model.ExtraHandleName,
-			OrigColName: model.ExtraHandleName,
-		})
-		ds.TblCols = append(ds.TblCols, handleCol)
+	if handleCols == nil {
+		if tableInfo.IsCommonHandle {
+			primaryIdx := tables.FindPrimaryIndex(tableInfo)
+			handleCols = NewCommonHandleCols(b.ctx.GetSessionVars().StmtCtx, tableInfo, primaryIdx, ds.TblCols)
+		} else {
+			extraCol := ds.newExtraHandleSchemaCol()
+			handleCols = &IntHandleCols{col: extraCol}
+			ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
+			schema.Append(extraCol)
+			names = append(names, &types.FieldName{
+				DBName:      dbName,
+				TblName:     tableInfo.Name,
+				ColName:     model.ExtraHandleName,
+				OrigColName: model.ExtraHandleName,
+			})
+			ds.TblCols = append(ds.TblCols, extraCol)
+		}
 	}
-	if handleCol != nil {
-		ds.handleCol = handleCol
-		handleMap := make(map[int64][]*expression.Column)
-		handleMap[tableInfo.ID] = []*expression.Column{handleCol}
-		b.handleHelper.pushMap(handleMap)
-	} else {
-		b.handleHelper.pushMap(nil)
-	}
+	ds.handleCols = handleCols
+	handleMap := make(map[int64][]HandleCols)
+	handleMap[tableInfo.ID] = []HandleCols{handleCols}
+	b.handleHelper.pushMap(handleMap)
 	ds.SetSchema(schema)
 	ds.names = names
 	ds.setPreferredStoreType(b.TableHints())
@@ -2877,7 +3027,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
-		if !path.IsTablePath() {
+		if !path.IsIntHandlePath {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 		}
 	}
@@ -2885,7 +3035,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var result LogicalPlan = ds
 	dirty := tableHasDirtyContent(b.ctx, tableInfo)
 	if dirty {
-		us := LogicalUnionScan{handleCol: handleCol}.Init(b.ctx, b.getSelectOffset())
+		us := LogicalUnionScan{handleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
 		result = us
 	}
@@ -2949,7 +3099,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 	// a stable schema and there is no online DDL on the memory table.
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(tableInfo.Columns))...)
 	names := make([]*types.FieldName, 0, len(tableInfo.Columns))
-	var handleCol *expression.Column
+	var handleCols HandleCols
 	for _, col := range tableInfo.Columns {
 		names = append(names, &types.FieldName{
 			DBName:      dbName,
@@ -2965,14 +3115,14 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			RetType:  &col.FieldType,
 		}
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
-			handleCol = newCol
+			handleCols = &IntHandleCols{col: newCol}
 		}
 		schema.Append(newCol)
 	}
 
-	if handleCol != nil {
-		handleMap := make(map[int64][]*expression.Column)
-		handleMap[tableInfo.ID] = []*expression.Column{handleCol}
+	if handleCols != nil {
+		handleMap := make(map[int64][]HandleCols)
+		handleMap[tableInfo.ID] = []HandleCols{handleCols}
 		b.handleHelper.pushMap(handleMap)
 	} else {
 		b.handleHelper.pushMap(nil)
@@ -3011,6 +3161,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName model.CIStr, table
 			p.Extractor = &SlowQueryExtractor{}
 		case infoschema.TableStorageStats:
 			p.Extractor = &TableStorageStatsExtractor{}
+		case infoschema.TableTiFlashTables, infoschema.TableTiFlashSegments:
+			p.Extractor = &TiFlashSystemTableExtractor{}
 		}
 	}
 	return p, nil
@@ -3218,7 +3370,7 @@ type TblColPosInfo struct {
 	// Start and End represent the ordinal range [Start, End) of the consecutive columns.
 	Start, End int
 	// HandleOrdinal represents the ordinal of the handle column.
-	HandleOrdinal  []int
+	HandleCols     HandleCols
 	IsCommonHandle bool // TODO: fix redesign update join table and remove me!
 }
 
@@ -3255,13 +3407,13 @@ func (c TblColPosInfoSlice) FindHandle(colOrdinal int) (int, bool) {
 		// TODO: fix redesign update join table to fix me.
 		return 0, false
 	}
-	return c[rangeBehindOrdinal-1].HandleOrdinal[0], true
+	return c[rangeBehindOrdinal-1].HandleCols.GetCol(0).Index, true
 }
 
 // buildColumns2Handle builds columns to handle mapping.
 func buildColumns2Handle(
 	names []*types.FieldName,
-	tblID2Handle map[int64][]*expression.Column,
+	tblID2Handle map[int64][]HandleCols,
 	tblID2Table map[int64]table.Table,
 	onlyWritableCol bool,
 ) (TblColPosInfoSlice, error) {
@@ -3275,12 +3427,12 @@ func buildColumns2Handle(
 			tblLen = len(tbl.Cols())
 		}
 		for _, handleCol := range handleCols {
-			offset, err := getTableOffset(names, names[handleCol.Index])
+			offset, err := getTableOffset(names, names[handleCol.GetCol(0).Index])
 			if err != nil {
 				return nil, err
 			}
 			end := offset + tblLen
-			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, []int{handleCol.Index}, tbl.Meta().IsCommonHandle})
+			cols2Handles = append(cols2Handles, TblColPosInfo{tblID, offset, end, handleCol, tbl.Meta().IsCommonHandle})
 			// TODO: fix me for cluster index
 		}
 	}
@@ -3736,15 +3888,15 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	return del, err
 }
 
-func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]*expression.Column, schema *expression.Schema) (map[int64][]*expression.Column, error) {
-	newMap := make(map[int64][]*expression.Column, len(tblID2Handle))
+func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]HandleCols, schema *expression.Schema) (map[int64][]HandleCols, error) {
+	newMap := make(map[int64][]HandleCols, len(tblID2Handle))
 	for i, cols := range tblID2Handle {
 		for _, col := range cols {
 			resolvedCol, err := col.ResolveIndices(schema)
 			if err != nil {
 				return nil, err
 			}
-			newMap[i] = append(newMap[i], resolvedCol.(*expression.Column))
+			newMap[i] = append(newMap[i], resolvedCol)
 		}
 	}
 	return newMap, nil
@@ -3752,9 +3904,9 @@ func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]*expression.Column, 
 
 func (p *Delete) cleanTblID2HandleMap(
 	tablesToDelete map[int64][]*ast.TableName,
-	tblID2Handle map[int64][]*expression.Column,
+	tblID2Handle map[int64][]HandleCols,
 	outputNames []*types.FieldName,
-) map[int64][]*expression.Column {
+) map[int64][]HandleCols {
 	for id, cols := range tblID2Handle {
 		names, ok := tablesToDelete[id]
 		if !ok {
@@ -3762,7 +3914,15 @@ func (p *Delete) cleanTblID2HandleMap(
 			continue
 		}
 		for i := len(cols) - 1; i >= 0; i-- {
-			if !p.matchingDeletingTable(names, outputNames[cols[i].Index]) {
+			hCols := cols[i]
+			var hasMatch bool
+			for j := 0; j < hCols.NumCols(); j++ {
+				if p.matchingDeletingTable(names, outputNames[hCols.GetCol(j).Index]) {
+					hasMatch = true
+					break
+				}
+			}
+			if !hasMatch {
 				cols = append(cols[:i], cols[i+1:]...)
 			}
 		}

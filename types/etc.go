@@ -68,7 +68,7 @@ func IsTypeTime(tp byte) bool {
 func IsTypeNumeric(tp byte) bool {
 	switch tp {
 	case mysql.TypeBit, mysql.TypeTiny, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeNewDecimal,
-		mysql.TypeDecimal, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeShort:
+		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeShort:
 		return true
 	}
 	return false

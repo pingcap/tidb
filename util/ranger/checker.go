@@ -32,8 +32,7 @@ func (c *conditionChecker) check(condition expression.Expression) bool {
 	case *expression.ScalarFunction:
 		return c.checkScalarFunction(x)
 	case *expression.Column:
-		s, _ := condition.(*expression.Column)
-		if s.RetType.EvalType() == types.ETString {
+		if x.RetType.EvalType() == types.ETString {
 			return false
 		}
 		return c.checkColumn(x)

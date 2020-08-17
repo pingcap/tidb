@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
 	kvstore "github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
@@ -274,6 +273,7 @@ func setCPUAffinity() {
 		exit()
 	}
 	runtime.GOMAXPROCS(len(cpu))
+	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 }
 
 func setHeapProfileTracker() {
@@ -418,13 +418,14 @@ func reloadConfig(nc, c *config.Config) {
 		statistics.FeedbackProbability.Store(nc.Performance.FeedbackProbability)
 	}
 	if nc.Performance.QueryFeedbackLimit != c.Performance.QueryFeedbackLimit {
-		handle.MaxQueryFeedbackCount.Store(int64(nc.Performance.QueryFeedbackLimit))
+		statistics.MaxQueryFeedbackCount.Store(int64(nc.Performance.QueryFeedbackLimit))
 	}
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
 	}
 	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
 		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
+		metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 	}
 	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
 		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
@@ -557,6 +558,7 @@ func setGlobalVars() {
 	// We should respect to user's settings in config file.
 	// The default value of MaxProcs is 0, runtime.GOMAXPROCS(0) is no-op.
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
+	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
@@ -565,7 +567,7 @@ func setGlobalVars() {
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
-	handle.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
+	statistics.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
 	ddl.RunWorker = cfg.RunDDL
 	if cfg.SplitTable {

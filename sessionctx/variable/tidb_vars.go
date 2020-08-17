@@ -46,6 +46,7 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	TiDBOptBCJ = "tidb_opt_broadcast_join"
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -204,6 +205,8 @@ const (
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
 	// tidb_opt_copcpu_factor is the CPU cost of processing one expression for one row in coprocessor.
 	TiDBOptCopCPUFactor = "tidb_opt_copcpu_factor"
+	// tidb_opt_tiflash_concurrency_factor is concurrency number of tiflash computation.
+	TiDBOptTiFlashConcurrencyFactor = "tidb_opt_tiflash_concurrency_factor"
 	// tidb_opt_network_factor is the network cost of transferring 1 byte data.
 	TiDBOptNetworkFactor = "tidb_opt_network_factor"
 	// tidb_opt_scan_factor is the IO cost of scanning 1 byte data on TiKV.
@@ -296,6 +299,9 @@ const (
 	// tidb_window_concurrency is used for window parallel executor.
 	// tidb_window_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
+
+	// tidb_enable_parallel_apply is used for parallel apply.
+	TiDBEnableParallelApply = "tidb_enable_parallel_apply"
 
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
@@ -419,7 +425,11 @@ const (
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
 
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
+	// Deprecated: use TiDBLogDesensitization instead.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
+
+	// TiDBLogDesensitization indicates that whether desensitization when log query.
+	TiDBLogDesensitization = "tidb_log_desensitization"
 
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
@@ -446,11 +456,13 @@ const (
 	DefSkipUTF8Check                   = false
 	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
+	DefOptBCJ                          = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
 	DefOptCPUFactor                    = 3.0
 	DefOptCopCPUFactor                 = 3.0
+	DefOptTiFlashConcurrencyFactor     = 24.0
 	DefOptNetworkFactor                = 1.0
 	DefOptScanFactor                   = 1.5
 	DefOptDescScanFactor               = 3.0
@@ -465,7 +477,7 @@ const (
 	DefCurretTS                        = 0
 	DefInitChunkSize                   = 32
 	DefMaxChunkSize                    = 1024
-	DefDMLBatchSize                    = 20000
+	DefDMLBatchSize                    = 0
 	DefMaxPreparedStmtCount            = -1
 	DefWaitTimeout                     = 0
 	DefTiDBMemQuotaHashJoin            = 32 << 30 // 32GB.
@@ -481,7 +493,7 @@ const (
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
-	DefTiDBHashJoinConcurrency         = 5
+	DefTiDBHashJoinConcurrency         = ConcurrencyUnset
 	DefTiDBProjectionConcurrency       = ConcurrencyUnset
 	DefTiDBOptimizerSelectivityLevel   = 0
 	DefTiDBAllowBatchCop               = 1
@@ -519,12 +531,14 @@ const (
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
-	DefTidbEnableCollectExecutionInfo  = false
+	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableClusteredIndex        = false
 	DefTiDBSlowLogMasking              = false
+	DefTiDBLogDesensitization          = false
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
+	DefTiDBEnableParallelApply         = false
 )
 
 // Process global variables.
@@ -547,6 +561,5 @@ var (
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
-	// DefExecutorConcurrency is set to 4 currently to keep test pass easily, we may adjust this in the future.
-	DefExecutorConcurrency = 4
+	DefExecutorConcurrency                = 5
 )

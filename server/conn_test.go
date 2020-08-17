@@ -24,7 +24,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -195,17 +194,19 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Assert(outBuffer.Bytes()[4:], DeepEquals, expected.Bytes())
 }
 
+type dispatchInput struct {
+	com byte
+	in  []byte
+	err error
+	out []byte
+}
+
 func (ts *ConnTestSuite) TestDispatch(c *C) {
 	userData := append([]byte("root"), 0x0, 0x0)
 	userData = append(userData, []byte("test")...)
 	userData = append(userData, 0x0)
 
-	inputs := []struct {
-		com byte
-		in  []byte
-		err error
-		out []byte
-	}{
+	inputs := []dispatchInput{
 		{
 			com: mysql.ComSleep,
 			in:  nil,
@@ -296,9 +297,159 @@ func (ts *ConnTestSuite) TestDispatch(c *C) {
 			err: nil,
 			out: []byte{0x3, 0x0, 0x0, 0xe, 0x0, 0x0, 0x0},
 		},
+		{
+			com: mysql.ComRefresh, // flush privileges
+			in:  []byte{0x01},
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0xf, 0x0, 0x0, 0x0, 0x3, 0x0, 0x0, 0x10, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComRefresh, // flush logs etc
+			in:  []byte{0x02},
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0x11, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComResetConnection,
+			in:  nil,
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0x12, 0x0, 0x0, 0x0},
+		},
 	}
 
-	se, err := session.CreateSession4Test(ts.store)
+	ts.testDispatch(c, inputs, 0)
+}
+
+func (ts *ConnTestSuite) TestDispatchClientProtocol41(c *C) {
+	userData := append([]byte("root"), 0x0, 0x0)
+	userData = append(userData, []byte("test")...)
+	userData = append(userData, 0x0)
+
+	inputs := []dispatchInput{
+		{
+			com: mysql.ComSleep,
+			in:  nil,
+			err: nil,
+			out: nil,
+		},
+		{
+			com: mysql.ComQuit,
+			in:  nil,
+			err: io.EOF,
+			out: nil,
+		},
+		{
+			com: mysql.ComQuery,
+			in:  []byte("do 1"),
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComInitDB,
+			in:  []byte("test"),
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComPing,
+			in:  nil,
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComStmtPrepare,
+			in:  []byte("select 1"),
+			err: nil,
+			out: []byte{
+				0xc, 0x0, 0x0, 0x3, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x18,
+				0x0, 0x0, 0x4, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0, 0x1, 0x31, 0x1, 0x31, 0xc, 0x3f,
+				0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0, 0x0, 0x5, 0x0, 0x0, 0x5, 0xfe,
+				0x0, 0x0, 0x2, 0x0,
+			},
+		},
+		{
+			com: mysql.ComStmtExecute,
+			in:  []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x1, 0x0},
+			err: nil,
+			out: []byte{
+				0x1, 0x0, 0x0, 0x6, 0x1, 0x18, 0x0, 0x0, 0x7, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0,
+				0x1, 0x31, 0x1, 0x31, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0,
+				0x0, 0x5, 0x0, 0x0, 0x8, 0xfe, 0x0, 0x0, 0x42, 0x0,
+			},
+		},
+		{
+			com: mysql.ComStmtFetch,
+			in:  []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{0x5, 0x0, 0x0, 0x9, 0xfe, 0x0, 0x0, 0x82, 0x0},
+		},
+		{
+			com: mysql.ComStmtReset,
+			in:  []byte{0x1, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0xa, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComSetOption,
+			in:  []byte{0x1, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{0x5, 0x0, 0x0, 0xb, 0xfe, 0x0, 0x0, 0x2, 0x0},
+		},
+		{
+			com: mysql.ComStmtClose,
+			in:  []byte{0x1, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{},
+		},
+		{
+			com: mysql.ComFieldList,
+			in:  []byte("t"),
+			err: nil,
+			out: []byte{
+				0x26, 0x0, 0x0, 0xc, 0x3, 0x64, 0x65, 0x66, 0x4, 0x74, 0x65, 0x73, 0x74, 0x1, 0x74,
+				0x1, 0x74, 0x1, 0x61, 0x1, 0x61, 0xc, 0x3f, 0x0, 0xb, 0x0, 0x0, 0x0, 0x3, 0x0, 0x0,
+				0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5, 0x0, 0x0, 0xd, 0xfe,
+				0x0, 0x0, 0x2, 0x0,
+			},
+		},
+		{
+			com: mysql.ComChangeUser,
+			in:  userData,
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0xe, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComRefresh, // flush privileges
+			in:  []byte{0x01},
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0xf, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0, 0x7, 0x0, 0x0, 0x10, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComRefresh, // flush logs etc
+			in:  []byte{0x02},
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0x11, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComResetConnection,
+			in:  nil,
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0x12, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+	}
+
+	ts.testDispatch(c, inputs, mysql.ClientProtocol41)
+}
+
+func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability uint32) {
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	tc := &TiDBContext{
 		Session: se,
@@ -311,11 +462,12 @@ func (ts *ConnTestSuite) TestDispatch(c *C) {
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(ts.store)
-	cfg := config.NewConfig()
-	cfg.Port = 4005
+	cfg := newTestConfig()
+	cfg.Port, cfg.Status.StatusPort = genPorts()
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
+	defer server.Close()
 
 	cc := &clientConn{
 		connectionID: 1,
@@ -324,10 +476,11 @@ func (ts *ConnTestSuite) TestDispatch(c *C) {
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(&outBuffer),
 		},
-		collation: mysql.DefaultCollationID,
-		peerHost:  "localhost",
-		alloc:     arena.NewAllocator(512),
-		ctx:       tc,
+		collation:  mysql.DefaultCollationID,
+		peerHost:   "localhost",
+		alloc:      arena.NewAllocator(512),
+		ctx:        tc,
+		capability: capability,
 	}
 	for _, cs := range inputs {
 		inBytes := append([]byte{cs.com}, cs.in...)
@@ -511,4 +664,16 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	c.Assert(tikv.SnapCacheHitCount(snap), Equals, 4)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 2", "2 2 4", "3 3 4"))
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update prefetch set c = c + 1 where a = 2 and b = 2")
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.PessimisticCacheHit, Equals, 1)
+	err = cc.handleQuery(ctx, query)
+	c.Assert(err, IsNil)
+	txn, err = tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Valid(), IsTrue)
+	c.Assert(tk.Se.GetSessionVars().TxnCtx.PessimisticCacheHit, Equals, 5)
+	tk.MustExec("commit")
+	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
 }

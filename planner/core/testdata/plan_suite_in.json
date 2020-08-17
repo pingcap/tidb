@@ -639,7 +639,8 @@
       "select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1",
       "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
       "select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;",
-      "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;"
+      "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+      "select * from test.tt where a=1 and b=1"
     ]
   }
 ]

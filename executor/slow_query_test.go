@@ -46,6 +46,7 @@ func (s *testExecSuite) TestParseSlowLogFile(c *C) {
 	slowLogStr :=
 		`# Time: 2019-04-28T15:24:04.309074+08:00
 # Txn_start_ts: 405888132465033227
+# User@Host: root[root] @ localhost [127.0.0.1]
 # Query_time: 0.216905
 # Cop_time: 0.38 Process_time: 0.021 Request_count: 1 Total_keys: 637 Processed_keys: 436
 # Is_internal: true
@@ -59,6 +60,7 @@ func (s *testExecSuite) TestParseSlowLogFile(c *C) {
 # Succ: false
 # Plan_digest: 60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4
 # Prev_stmt: update t set i = 1;
+use test;
 select * from t;`
 	reader := bufio.NewReader(bytes.NewBufferString(slowLogStr))
 	loc, err := time.LoadLocation("Asia/Shanghai")
@@ -77,7 +79,7 @@ select * from t;`
 		}
 		recordString += str
 	}
-	expectRecordString := "2019-04-28 15:24:04.309074,405888132465033227,,,0,0.216905,0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,update t set i = 1;,select * from t;"
+	expectRecordString := "2019-04-28 15:24:04.309074,405888132465033227,root,localhost,0,0.216905,0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,0.38,0.021,0,0,0,1,637,0,,,1,42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772,t1:1,t2:2,0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,65536,0,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,update t set i = 1;,select * from t;"
 	c.Assert(expectRecordString, Equals, recordString)
 
 	// fix sql contain '# ' bug
@@ -224,7 +226,7 @@ select * from t;`)
 
 func (s *testExecSuite) TestSlowQueryRetriever(c *C) {
 	writeFile := func(file string, data string) {
-		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		c.Assert(err, IsNil)
 		_, err = f.Write([]byte(data))
 		c.Assert(f.Close(), IsNil)
@@ -384,5 +386,6 @@ select 7;`
 			c.Assert(file.file.Name(), Equals, cas.files[i])
 			c.Assert(file.file.Close(), IsNil)
 		}
+		c.Assert(retriever.close(), IsNil)
 	}
 }

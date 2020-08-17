@@ -90,6 +90,7 @@ var (
 	errUnsupportedOptimizePartition   = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "optimize partition"))
 	errUnsupportedRebuildPartition    = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "rebuild partition"))
 	errUnsupportedRemovePartition     = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "remove partitioning"))
+	errUnsupportedRepairPartition     = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "repair partition"))
 	errUnsupportedExchangePartition   = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "exchange partition"))
 	// ErrGeneratedColumnFunctionIsNotAllowed returns for unsupported functions for generated columns.
 	ErrGeneratedColumnFunctionIsNotAllowed = terror.ClassDDL.New(mysql.ErrGeneratedColumnFunctionIsNotAllowed, mysql.MySQLErrName[mysql.ErrGeneratedColumnFunctionIsNotAllowed])
@@ -222,9 +223,16 @@ var (
 	ErrRowDoesNotMatchPartition = terror.ClassDDL.New(mysql.ErrRowDoesNotMatchPartition, mysql.MySQLErrName[mysql.ErrRowDoesNotMatchPartition])
 	// ErrPartitionExchangeForeignKey is returned when exchanged normal table has foreign keys.
 	ErrPartitionExchangeForeignKey = terror.ClassDDL.New(mysql.ErrPartitionExchangeForeignKey, mysql.MySQLErrName[mysql.ErrPartitionExchangeForeignKey])
-	// ErrCheckNoSuchTable is returned when exchaned normal table is view or sequence.
+	// ErrCheckNoSuchTable is returned when exchanged normal table is view or sequence.
 	ErrCheckNoSuchTable         = terror.ClassDDL.New(mysql.ErrCheckNoSuchTable, mysql.MySQLErrName[mysql.ErrCheckNoSuchTable])
 	errUnsupportedPartitionType = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "partition type of table %s when exchanging partition"))
-	// ErrPartitionExchangeDifferentOption is returned when attribute doesnot match between partition table and normal table.
+	// ErrPartitionExchangeDifferentOption is returned when attribute does not match between partition table and normal table.
 	ErrPartitionExchangeDifferentOption = terror.ClassDDL.New(mysql.ErrPartitionExchangeDifferentOption, mysql.MySQLErrName[mysql.ErrPartitionExchangeDifferentOption])
+	// ErrTableOptionUnionUnsupported is returned when create/alter table with union option.
+	ErrTableOptionUnionUnsupported = terror.ClassDDL.New(mysql.ErrTableOptionUnionUnsupported, mysql.MySQLErrName[mysql.ErrTableOptionUnionUnsupported])
+	// ErrTableOptionInsertMethodUnsupported is returned when create/alter table with insert method option.
+	ErrTableOptionInsertMethodUnsupported = terror.ClassDDL.New(mysql.ErrTableOptionInsertMethodUnsupported, mysql.MySQLErrName[mysql.ErrTableOptionInsertMethodUnsupported])
+
+	// ErrInvalidPlacementSpec is returned when add/alter an invalid placement rule
+	ErrInvalidPlacementSpec = terror.ClassDDL.New(mysql.ErrInvalidPlacementSpec, mysql.MySQLErrName[mysql.ErrInvalidPlacementSpec])
 )

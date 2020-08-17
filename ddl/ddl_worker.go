@@ -76,7 +76,7 @@ type worker struct {
 	id       int32
 	tp       workerType
 	ddlJobCh chan struct{}
-	quitCh   chan struct{}
+	ctx      context.Context
 	wg       sync.WaitGroup
 
 	sessPool        *sessionPool // sessPool is used to new sessions to execute SQL in ddl package.
@@ -85,12 +85,12 @@ type worker struct {
 	logCtx          context.Context
 }
 
-func newWorker(tp workerType, store kv.Storage, sessPool *sessionPool, delRangeMgr delRangeManager) *worker {
+func newWorker(ctx context.Context, tp workerType, sessPool *sessionPool, delRangeMgr delRangeManager) *worker {
 	worker := &worker{
 		id:              atomic.AddInt32(&ddlWorkerID, 1),
 		tp:              tp,
 		ddlJobCh:        make(chan struct{}, 1),
-		quitCh:          make(chan struct{}),
+		ctx:             ctx,
 		reorgCtx:        &reorgCtx{notifyCancelReorgJob: 0},
 		sessPool:        sessPool,
 		delRangeManager: delRangeMgr,
@@ -119,7 +119,6 @@ func (w *worker) String() string {
 
 func (w *worker) close() {
 	startTime := time.Now()
-	close(w.quitCh)
 	w.wg.Wait()
 	logutil.Logger(w.logCtx).Info("[ddl] DDL worker closed", zap.Duration("take time", time.Since(startTime)))
 }
@@ -148,7 +147,7 @@ func (w *worker) start(d *ddlCtx) {
 		case <-ticker.C:
 			logutil.Logger(w.logCtx).Debug("[ddl] wait to check DDL status again", zap.Duration("interval", checkTime))
 		case <-w.ddlJobCh:
-		case <-w.quitCh:
+		case <-w.ctx.Done():
 			return
 		}
 
@@ -215,7 +214,7 @@ func (d *ddl) limitDDLJobs() {
 				tasks = append(tasks, <-d.limitJobCh)
 			}
 			d.addBatchDDLJobs(tasks)
-		case <-d.quitCh:
+		case <-d.ctx.Done():
 			return
 		}
 	}
@@ -346,7 +345,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(job)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns:
 			err = w.deleteRange(job)
 		}
 	}
@@ -421,7 +420,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
 	waitDependencyJobCnt := 0
 	for {
-		if isChanClosed(w.quitCh) {
+		if isChanClosed(w.ctx.Done()) {
 			return nil
 		}
 
@@ -470,7 +469,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// and retry later if the job is not cancelled.
 			schemaVer, runJobErr = w.runDDLJob(d, t, job)
 			if job.IsCancelled() {
-				txn.Discard()
+				txn.Reset()
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
 			}
@@ -481,7 +480,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				// then shouldn't discard the KV modification.
 				// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
 				// Otherwise, we should discard the KV modification when running job.
-				txn.Discard()
+				txn.Reset()
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
@@ -510,7 +509,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
-		w.waitSchemaChanged(nil, d, waitTime, schemaVer, job)
+		ctx, cancel := context.WithTimeout(w.ctx, waitTime)
+		w.waitSchemaChanged(ctx, d, waitTime, schemaVer, job)
+		cancel()
 
 		d.mu.RLock()
 		d.mu.hook.OnJobUpdated(job)
@@ -527,6 +528,9 @@ func skipWriteBinlog(job *model.Job) bool {
 	// ActionUpdateTiFlashReplicaStatus is a TiDB internal DDL,
 	// it's used to update table's TiFlash replica available status.
 	case model.ActionUpdateTiFlashReplicaStatus:
+		return true
+	// It is done without modifying table info, bin log is not needed
+	case model.ActionAlterTableAlterPartition:
 		return true
 	}
 
@@ -669,13 +673,15 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionUnlockTable:
 		ver, err = onUnlockTables(t, job)
 	case model.ActionSetTiFlashReplica:
-		ver, err = onSetTableFlashReplica(t, job)
+		ver, err = w.onSetTableFlashReplica(t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
 		ver, err = onUpdateFlashReplicaStatus(t, job)
 	case model.ActionCreateSequence:
 		ver, err = onCreateSequence(d, t, job)
 	case model.ActionAlterIndexVisibility:
 		ver, err = onAlterIndexVisibility(t, job)
+	case model.ActionAlterTableAlterPartition:
+		ver, err = onAlterTablePartition(t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -750,11 +756,6 @@ func (w *worker) waitSchemaChanged(ctx context.Context, d *ddlCtx, waitTime time
 		return
 	}
 
-	if ctx == nil {
-		var cancelFunc context.CancelFunc
-		ctx, cancelFunc = context.WithTimeout(context.Background(), waitTime)
-		defer cancelFunc()
-	}
 	err = d.schemaSyncer.OwnerUpdateGlobalVersion(ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.Logger(w.logCtx).Info("[ddl] update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
@@ -795,8 +796,7 @@ func (w *worker) waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Durat
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
 		return
 	}
-	// TODO: Make ctx exits when the d is close.
-	ctx, cancelFunc := context.WithTimeout(context.Background(), waitTime)
+	ctx, cancelFunc := context.WithTimeout(w.ctx, waitTime)
 	defer cancelFunc()
 
 	latestSchemaVersion, err := d.schemaSyncer.MustGetGlobalVersion(ctx)
@@ -869,7 +869,7 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 	return schemaVersion, errors.Trace(err)
 }
 
-func isChanClosed(quitCh chan struct{}) bool {
+func isChanClosed(quitCh <-chan struct{}) bool {
 	select {
 	case <-quitCh:
 		return true

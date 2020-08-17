@@ -38,8 +38,8 @@ import (
 type DDLForTest interface {
 	// SetHook sets the hook.
 	SetHook(h Callback)
-	// SetInterceptoror sets the interceptor.
-	SetInterceptoror(h Interceptor)
+	// SetInterceptor sets the interceptor.
+	SetInterceptor(h Interceptor)
 }
 
 // SetHook implements DDL.SetHook interface.
@@ -50,8 +50,8 @@ func (d *ddl) SetHook(h Callback) {
 	d.mu.hook = h
 }
 
-// SetInterceptoror implements DDL.SetInterceptoror interface.
-func (d *ddl) SetInterceptoror(i Interceptor) {
+// SetInterceptor implements DDL.SetInterceptor interface.
+func (d *ddl) SetInterceptor(i Interceptor) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -66,7 +66,7 @@ func (d *ddl) generalWorker() *worker {
 // restartWorkers is like the function of d.start. But it won't initialize the "workers" and create a new worker.
 // It only starts the original workers.
 func (d *ddl) restartWorkers(ctx context.Context) {
-	d.quitCh = make(chan struct{})
+	d.ctx, d.cancel = context.WithCancel(ctx)
 
 	d.wg.Add(1)
 	go d.limitDDLJobs()
@@ -78,7 +78,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 	terror.Log(err)
 	for _, worker := range d.workers {
 		worker.wg.Add(1)
-		worker.quitCh = make(chan struct{})
+		worker.ctx = d.ctx
 		w := worker
 		go w.start(d.ddlCtx)
 		asyncNotify(worker.ddlJobCh)

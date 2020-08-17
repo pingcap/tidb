@@ -24,6 +24,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -790,7 +791,32 @@ func (s *testIntegrationSuite5) TestAlterTableDropPartition(c *C) {
 	tk.MustGetErrCode("alter table t1 drop partition p2", tmysql.ErrOnlyOnRangeListPartition)
 }
 
-func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
+func (s *testIntegrationSuite5) TestMultiPartitionDropAndTruncate(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists employees")
+	tk.MustExec(`create table employees (
+	hired int not null
+	)
+	partition by range( hired ) (
+		partition p1 values less than (1991),
+		partition p2 values less than (1996),
+		partition p3 values less than (2001),
+		partition p4 values less than (2006),
+		partition p5 values less than (2011)
+	);`)
+	tk.MustExec(`INSERT INTO employees VALUES (1990), (1995), (2000), (2005), (2010)`)
+
+	tk.MustExec("alter table employees drop partition p1, p2;")
+	result := tk.MustQuery("select * from employees;")
+	result.Sort().Check(testkit.Rows(`2000`, `2005`, `2010`))
+
+	tk.MustExec("alter table employees truncate partition p3, p4")
+	result = tk.MustQuery("select * from employees;")
+	result.Check(testkit.Rows(`2010`))
+}
+
+func (s *testIntegrationSuite7) TestAlterTableExchangePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists e")
@@ -936,6 +962,9 @@ func (s *testIntegrationSuite4) TestAlterTableExchangePartition(c *C) {
 	tk.MustGetErrCode("alter table e12 exchange partition p0 with table e14", tmysql.ErrPartitionExchangeDifferentOption)
 
 	// test for tiflash replica
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk.MustExec("create table e15 (a int) partition by hash(a) partitions 1;")
 	tk.MustExec("create table e16 (a int)")
 	tk.MustExec("alter table e15 set tiflash replica 1;")
@@ -2175,6 +2204,7 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	tk.MustGetErrCode("alter table t_part optimize partition p0,p1;", tmysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", tmysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part remove partitioning;", tmysql.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t_part repair partition p1;", tmysql.ErrUnsupportedDDLOperation)
 }
 
 func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
@@ -2308,12 +2338,7 @@ func (s *testIntegrationSuite3) TestUnsupportedPartitionManagementDDLs(c *C) {
 		);
 	`)
 
-	_, err := tk.Exec("alter table test_1465 truncate partition p1, p2")
-	c.Assert(err, ErrorMatches, ".*Unsupported multi schema change")
-	_, err = tk.Exec("alter table test_1465 drop partition p1, p2")
-	c.Assert(err, ErrorMatches, ".*Unsupported multi schema change")
-
-	_, err = tk.Exec("alter table test_1465 partition by hash(a)")
+	_, err := tk.Exec("alter table test_1465 partition by hash(a)")
 	c.Assert(err, ErrorMatches, ".*alter table partition is unsupported")
 }
 
@@ -2345,7 +2370,7 @@ func (s *testIntegrationSuite7) TestCommitWhenSchemaChange(c *C) {
 	c.Assert(domain.ErrInfoSchemaChanged.Equal(err), IsTrue)
 
 	// Cover a bug that schema validator does not prevent transaction commit when
-	// the schema has changeed on the partitioned table.
+	// the schema has changed on the partitioned table.
 	// That bug will cause data and index inconsistency!
 	tk.MustExec("admin check table schema_change")
 	tk.MustQuery("select * from schema_change").Check(testkit.Rows())

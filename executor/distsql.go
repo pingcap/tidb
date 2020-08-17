@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -242,10 +243,6 @@ type IndexReaderExecutor struct {
 func (e *IndexReaderExecutor) Close() error {
 	err := e.result.Close()
 	e.result = nil
-	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID().String())
-		copStats.SetRowNum(e.feedback.Actual())
-	}
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
@@ -326,13 +323,15 @@ type IndexLookUpExecutor struct {
 	dagPB   *tipb.DAGRequest
 	startTS uint64
 	// handleIdx is the index of handle, which is only used for case of keeping order.
-	handleIdx    []int
-	handleCols   []*expression.Column
-	tableRequest *tipb.DAGRequest
+	handleIdx       []int
+	handleCols      []*expression.Column
+	primaryKeyIndex *model.IndexInfo
+	tableRequest    *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 	*dataReaderBuilder
 	// All fields above are immutable.
+
 	idxWorkerWg sync.WaitGroup
 	tblWorkerWg sync.WaitGroup
 	finished    chan struct{}
@@ -370,7 +369,6 @@ type IndexLookUpExecutor struct {
 type checkIndexValue struct {
 	idxColTps  []*types.FieldType
 	idxTblCols []*table.Column
-	genExprs   map[model.TableColumnID]expression.Expression
 }
 
 // Open implements the Executor Open interface.
@@ -382,7 +380,13 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return err
 		}
 	}
-	e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	physicalID := getPhysicalTableID(e.table)
+	if e.index.ID == -1 {
+		e.kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, physicalID, e.ranges)
+	} else {
+		e.kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
+	}
 	if err != nil {
 		e.feedback.Invalidate()
 		return err
@@ -500,19 +504,13 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	e.idxWorkerWg.Add(1)
 	go func() {
 		ctx1, cancel := context.WithCancel(ctx)
-		count, err := worker.fetchHandles(ctx1, result)
+		_, err := worker.fetchHandles(ctx1, result)
 		if err != nil {
 			e.feedback.Invalidate()
 		}
 		cancel()
 		if err := result.Close(); err != nil {
 			logutil.Logger(ctx).Error("close Select result failed", zap.Error(err))
-		}
-		if e.runtimeStats != nil {
-			copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[len(e.idxPlans)-1].ExplainID().String())
-			copStats.SetRowNum(int64(count))
-			copStats = e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.tblPlans[0].ExplainID().String())
-			copStats.SetRowNum(int64(count))
 		}
 		e.ctx.StoreQueryFeedback(e.feedback)
 		close(workCh)
@@ -585,10 +583,6 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.finished = nil
 	e.workerStarted = false
 	e.memTracker = nil
-	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.idxPlans[0].ExplainID().String())
-		copStats.SetRowNum(e.feedback.Actual())
-	}
 	return nil
 }
 
@@ -678,7 +672,8 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 			}
 		}
 	}()
-	chk := chunk.NewChunkWithCapacity(w.idxLookup.getRetTpsByHandle(), w.idxLookup.maxChunkSize)
+	retTps := w.idxLookup.getRetTpsByHandle()
+	chk := chunk.NewChunkWithCapacity(retTps, w.idxLookup.maxChunkSize)
 	for {
 		handles, retChunk, scannedKeys, err := w.extractTaskHandles(ctx, chk, result, count)
 		if err != nil {
@@ -856,6 +851,7 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int, isCommon
 		for i, idx := range handleIdx {
 			datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
 		}
+		tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
 		handleEncoded, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, datums...)
 		if err != nil {
 			return nil, err
@@ -895,7 +891,6 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			break
 		}
 
-		tblReaderExec := tableReader.(*TableReaderExecutor)
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle())
@@ -911,23 +906,9 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			idxRow := task.idxRows.GetRow(offset)
 			vals = vals[:0]
 			for i, col := range w.idxTblCols {
-				if col.IsGenerated() && !col.GeneratedStored {
-					expr := w.genExprs[model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}]
-					// Eval the column value
-					val, err := expr.Eval(row)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					val, err = table.CastValue(tblReaderExec.ctx, val, col.ColumnInfo, false, false)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					vals = append(vals, val)
-				} else {
-					vals = append(vals, row.GetDatum(i, &col.FieldType))
-				}
+				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
-			vals = tablecodec.TruncateIndexValuesIfNeeded(tblInfo, w.idxLookup.index, vals)
+			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
 			for i, val := range vals {
 				col := w.idxTblCols[i]
 				tp := &col.FieldType
@@ -1000,7 +981,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		sort.Sort(task)
 	}
 
-	if handleCnt != len(task.rows) {
+	if handleCnt != len(task.rows) && !util.HasCancelled(ctx) {
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
 			for _, row := range task.rows {

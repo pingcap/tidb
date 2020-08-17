@@ -163,17 +163,19 @@ func (t *Tracker) Detach() {
 }
 
 func (t *Tracker) remove(oldChild *Tracker) {
+	found := false
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	for i, child := range t.mu.children {
-		if child != oldChild {
-			continue
+		if child == oldChild {
+			t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
+			found = true
+			break
 		}
-
-		t.Consume(-oldChild.BytesConsumed())
+	}
+	t.mu.Unlock()
+	if found {
 		oldChild.setParent(nil)
-		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
-		break
+		t.Consume(-oldChild.BytesConsumed())
 	}
 }
 
@@ -209,6 +211,9 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 // which means this is a memory release operation. When memory usage of a tracker
 // exceeds its bytesLimit, the tracker calls its action, so does each of its ancestors.
 func (t *Tracker) Consume(bytes int64) {
+	if bytes == 0 {
+		return
+	}
 	var rootExceed *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
