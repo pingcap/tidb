@@ -328,3 +328,17 @@ func (s *testSuite7) TestForUpdateUntouchedIndex(c *C) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 }
+
+// See https://github.com/pingcap/tidb/issues/19136
+func (s *testSuite7) TestForApplyAndUnionScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t ( c_int int, c_str varchar(40), primary key(c_int, c_str) )")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 'amazing almeida'), (2, 'boring bardeen'), (3, 'busy wescoff')")
+	tk.MustQuery("select c_int, (select t1.c_int from t t1 where t1.c_int = 3 and t1.c_int > t.c_int order by t1.c_int limit 1) x from t").Check(testkit.Rows("1 3", "2 3", "3 <nil>"))
+	tk.MustExec("commit")
+	tk.MustQuery("select c_int, (select t1.c_int from t t1 where t1.c_int = 3 and t1.c_int > t.c_int order by t1.c_int limit 1) x from t").Check(testkit.Rows("1 3", "2 3", "3 <nil>"))
+}
