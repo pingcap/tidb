@@ -282,6 +282,12 @@ func setColumnsState(columnInfos []*model.ColumnInfo, state model.SchemaState) {
 	}
 }
 
+func setIndicesState(indexInfos []*model.IndexInfo, state model.SchemaState) {
+	for _, indexInfo := range indexInfos {
+		indexInfo.State = state
+	}
+}
+
 func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
@@ -381,7 +387,7 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 }
 
 func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, colInfos, delCount, err := checkDropColumns(t, job)
+	tblInfo, colInfos, delCount, idxInfos, err := checkDropColumns(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -396,6 +402,7 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
 		setColumnsState(colInfos, model.StateWriteOnly)
+		setIndicesState(idxInfos, model.StateWriteOnly)
 		for _, colInfo := range colInfos {
 			err = checkDropColumnForStatePublic(tblInfo, colInfo)
 			if err != nil {
@@ -407,15 +414,28 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		setColumnsState(colInfos, model.StateDeleteOnly)
+		setIndicesState(idxInfos, model.StateDeleteOnly)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
 		setColumnsState(colInfos, model.StateDeleteReorganization)
+		setIndicesState(idxInfos, model.StateDeleteReorganization)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
+		if len(idxInfos) > 0 {
+			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+			for _, idx := range tblInfo.Indices {
+				if !indexInfoContains(idx.ID, idxInfos) {
+					newIndices = append(newIndices, idx)
+				}
+			}
+			tblInfo.Indices = newIndices
+		}
+
+		indexIDs := indexInfosToIDList(idxInfos)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-delCount]
 		setColumnsState(colInfos, model.StateNone)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
@@ -428,6 +448,7 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
 		}
 	default:
 		err = errInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
@@ -435,11 +456,11 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.ColumnInfo, int, error) {
+func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.ColumnInfo, int, []*model.IndexInfo, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, 0, errors.Trace(err)
+		return nil, nil, 0, nil, errors.Trace(err)
 	}
 
 	var colNames []model.CIStr
@@ -447,12 +468,13 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 	err = job.DecodeArgs(&colNames, &ifExists)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, 0, errors.Trace(err)
+		return nil, nil, 0, nil, errors.Trace(err)
 	}
 
 	newColNames := make([]model.CIStr, 0, len(colNames))
 	colInfos := make([]*model.ColumnInfo, 0, len(colNames))
 	newIfExists := make([]bool, 0, len(colNames))
+	indexInfos := make([]*model.IndexInfo, 0)
 	for i, colName := range colNames {
 		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 		if colInfo == nil || colInfo.Hidden {
@@ -462,18 +484,20 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 				continue
 			}
 			job.State = model.JobStateCancelled
-			return nil, nil, 0, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+			return nil, nil, 0, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 		}
 		if err = isDroppableColumn(tblInfo, colName); err != nil {
 			job.State = model.JobStateCancelled
-			return nil, nil, 0, errors.Trace(err)
+			return nil, nil, 0, nil, errors.Trace(err)
 		}
 		newColNames = append(newColNames, colName)
 		newIfExists = append(newIfExists, ifExists[i])
 		colInfos = append(colInfos, colInfo)
+		idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
+		indexInfos = append(indexInfos, idxInfos...)
 	}
 	job.Args = []interface{}{newColNames, newIfExists}
-	return tblInfo, colInfos, len(colInfos), nil
+	return tblInfo, colInfos, len(colInfos), indexInfos, nil
 }
 
 func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) (err error) {
@@ -498,7 +522,7 @@ func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.Colu
 }
 
 func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	tblInfo, colInfo, err := checkDropColumn(t, job)
+	tblInfo, colInfo, idxInfos, err := checkDropColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -509,6 +533,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// public -> write only
 		job.SchemaState = model.StateWriteOnly
 		colInfo.State = model.StateWriteOnly
+		setIndicesState(idxInfos, model.StateWriteOnly)
 		err = checkDropColumnForStatePublic(tblInfo, colInfo)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -518,15 +543,28 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		colInfo.State = model.StateDeleteOnly
+		setIndicesState(idxInfos, model.StateDeleteOnly)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
 		colInfo.State = model.StateDeleteReorganization
+		setIndicesState(idxInfos, model.StateDeleteReorganization)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
+		if len(idxInfos) > 0 {
+			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+			for _, idx := range tblInfo.Indices {
+				if !indexInfoContains(idx.ID, idxInfos) {
+					newIndices = append(newIndices, idx)
+				}
+			}
+			tblInfo.Indices = newIndices
+		}
+
+		indexIDs := indexInfosToIDList(idxInfos)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
@@ -538,7 +576,9 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 		} else {
+			// We should set related index IDs for job
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
 		}
 	default:
 		err = errInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
@@ -546,30 +586,40 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, error) {
+func checkDropColumn(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.ColumnInfo, []*model.IndexInfo, error) {
 	schemaID := job.SchemaID
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	var colName model.CIStr
 	err = job.DecodeArgs(&colName)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 	if colInfo == nil || colInfo.Hidden {
 		job.State = model.JobStateCancelled
-		return nil, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
+		return nil, nil, nil, ErrCantDropFieldOrKey.GenWithStack("column %s doesn't exist", colName)
 	}
 	if err = isDroppableColumn(tblInfo, colName); err != nil {
 		job.State = model.JobStateCancelled
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
-	return tblInfo, colInfo, nil
+	idxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
+	if len(idxInfos) > 0 {
+		for _, idxInfo := range idxInfos {
+			err = checkDropIndexOnAutoIncrementColumn(tblInfo, idxInfo)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return nil, nil, nil, err
+			}
+		}
+	}
+	return tblInfo, colInfo, idxInfos, nil
 }
 
 func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -829,6 +879,29 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 	return false
 }
 
+func isColumnCanDropWithIndex(colName string, indices []*model.IndexInfo) bool {
+	for _, indexInfo := range indices {
+		if indexInfo.Primary || len(indexInfo.Columns) > 1 {
+			for _, col := range indexInfo.Columns {
+				if col.Name.L == colName {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+func listIndicesWithColumn(colName string, indices []*model.IndexInfo) []*model.IndexInfo {
+	ret := make([]*model.IndexInfo, 0)
+	for _, indexInfo := range indices {
+		if len(indexInfo.Columns) == 1 && colName == indexInfo.Columns[0].Name.L {
+			ret = append(ret, indexInfo)
+		}
+	}
+	return ret
+}
+
 func getColumnForeignKeyInfo(colName string, fkInfos []*model.FKInfo) *model.FKInfo {
 	for _, fkInfo := range fkInfos {
 		for _, col := range fkInfo.Cols {
@@ -938,4 +1011,21 @@ func isVirtualGeneratedColumn(col *model.ColumnInfo) bool {
 		return true
 	}
 	return false
+}
+
+func indexInfoContains(idxID int64, idxInfos []*model.IndexInfo) bool {
+	for _, idxInfo := range idxInfos {
+		if idxID == idxInfo.ID {
+			return true
+		}
+	}
+	return false
+}
+
+func indexInfosToIDList(idxInfos []*model.IndexInfo) []int64 {
+	ids := make([]int64, 0, len(idxInfos))
+	for _, idxInfo := range idxInfos {
+		ids = append(ids, idxInfo.ID)
+	}
+	return ids
 }

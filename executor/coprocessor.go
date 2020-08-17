@@ -76,6 +76,9 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		}
 		totalChunks = append(totalChunks, partChunks...)
 	}
+	if err := e.Close(); err != nil {
+		return h.buildErrorResponse(err)
+	}
 	return h.buildUnaryResponse(totalChunks)
 }
 
@@ -184,6 +187,14 @@ func (h *CoprocessorDAGHandler) buildUnaryResponse(chunks []tipb.Chunk) *coproce
 	selResp := tipb.SelectResponse{
 		Chunks:     chunks,
 		EncodeType: h.dagReq.EncodeType,
+	}
+	if h.dagReq.CollectExecutionSummaries != nil && *h.dagReq.CollectExecutionSummaries {
+		execSummary := make([]*tipb.ExecutorExecutionSummary, len(h.dagReq.Executors))
+		for i := range execSummary {
+			// TODO: Add real executor execution summary information.
+			execSummary[i] = &tipb.ExecutorExecutionSummary{}
+		}
+		selResp.ExecutionSummaries = execSummary
 	}
 	data, err := proto.Marshal(&selResp)
 	if err != nil {

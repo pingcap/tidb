@@ -33,7 +33,7 @@ func (ds *DataSource) PreparePossibleProperties(schema *expression.Schema, child
 	result := make([][]*expression.Column, 0, len(ds.possibleAccessPaths))
 
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath() {
+		if path.IsIntHandlePath {
 			col := ds.getPKIsHandleCol()
 			if col != nil {
 				result = append(result, []*expression.Column{col})

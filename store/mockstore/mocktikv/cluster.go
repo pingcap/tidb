@@ -24,6 +24,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"go.uber.org/atomic"
@@ -275,7 +276,7 @@ func (c *Cluster) GetRegionByID(regionID uint64) (*metapb.Region, *metapb.Peer) 
 }
 
 // ScanRegions returns at most `limit` regions from given `key` and their leaders.
-func (c *Cluster) ScanRegions(startKey, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer) {
+func (c *Cluster) ScanRegions(startKey, endKey []byte, limit int) []*pd.Region {
 	c.RLock()
 	defer c.RUnlock()
 
@@ -307,8 +308,7 @@ func (c *Cluster) ScanRegions(startKey, endKey []byte, limit int) ([]*metapb.Reg
 		regions = regions[:limit]
 	}
 
-	metas := make([]*metapb.Region, 0, len(regions))
-	leaders := make([]*metapb.Peer, 0, len(regions))
+	result := make([]*pd.Region, 0, len(regions))
 	for _, region := range regions {
 		leader := region.leaderPeer()
 		if leader == nil {
@@ -317,11 +317,14 @@ func (c *Cluster) ScanRegions(startKey, endKey []byte, limit int) ([]*metapb.Reg
 			leader = proto.Clone(leader).(*metapb.Peer)
 		}
 
-		metas = append(metas, proto.Clone(region.Meta).(*metapb.Region))
-		leaders = append(leaders, leader)
+		r := &pd.Region{
+			Meta:   proto.Clone(region.Meta).(*metapb.Region),
+			Leader: leader,
+		}
+		result = append(result, r)
 	}
 
-	return metas, leaders
+	return result
 }
 
 // Bootstrap creates the first Region. The Stores should be in the Cluster before
