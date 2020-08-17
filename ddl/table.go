@@ -531,12 +531,13 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.Al
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// The operation of the minus 1 to make sure that the current value doesn't be used,
-	// the next Alloc operation will get this value.
-	// Its behavior is consistent with MySQL.
-	err = tbl.RebaseAutoID(nil, newBase-1, false, tp)
-	if err != nil {
-		return ver, errors.Trace(err)
+	if alloc := tbl.Allocators(nil).Get(tp); alloc != nil {
+		// The next value to allocate is `newBase`.
+		newEnd := newBase - 1
+		err = alloc.Rebase(tblInfo.ID, newEnd, false)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {

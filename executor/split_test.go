@@ -415,7 +415,7 @@ func (s *testSplitIndex) TestClusterIndexSplitTable(c *C) {
 	e := &SplitTableRegionExec{
 		baseExecutor: newBaseExecutor(ctx, nil, nil),
 		tableInfo:    tbInfo,
-		handleCols:   buildHandleCols(sc, tbInfo),
+		handleCols:   buildHandleColsForSplit(sc, tbInfo),
 		lower:        types.MakeDatums(1, 0),
 		upper:        types.MakeDatums(1, 100),
 		num:          10,
