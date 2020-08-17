@@ -90,6 +90,14 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	it.sendRate = newRateLimit(it.concurrency)
 	if !it.req.KeepOrder {
 		it.respChan = make(chan *copResponse, it.concurrency)
+		workersCond := sync.NewCond(&sync.Mutex{})
+		it.actionOnExceed = &taskRateLimitAction{
+			workersCond: workersCond,
+		}
+		it.actionOnExceed.sendRate = it.sendRate
+		if it.memTracker != nil {
+			it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
+		}
 	}
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
@@ -403,6 +411,8 @@ type copIterator struct {
 	closed uint32
 
 	minCommitTSPushed
+
+	actionOnExceed *taskRateLimitAction
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -421,6 +431,8 @@ type copIteratorWorker struct {
 	replicaReadSeed uint32
 
 	sendRate *rateLimit
+
+	actionOnExceed *taskRateLimitAction
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -505,7 +517,18 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 				// unreachable code
 				panic("copIteratorWorker's sendRate should be set when KeepOrder equals false")
 			}
-			worker.sendRate.putToken()
+
+			if worker.actionOnExceed != nil {
+				worker.actionOnExceed.workersCond.L.Lock()
+				// spill one ticket if exceed memory
+				if worker.actionOnExceed.exceed && !worker.actionOnExceed.teared {
+					worker.actionOnExceed.tearedTicket = worker.actionOnExceed.tearedTicket + 1
+					worker.actionOnExceed.teared = true
+				} else {
+					worker.sendRate.putToken()
+				}
+				worker.actionOnExceed.workersCond.L.Unlock()
+			}
 		}
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
@@ -514,6 +537,14 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		case <-worker.finishCh:
 			return
 		default:
+		}
+
+		if worker.actionOnExceed != nil {
+			worker.actionOnExceed.workersCond.L.Lock()
+			if worker.actionOnExceed.exceed {
+				worker.actionOnExceed.workersCond.Wait()
+			}
+			worker.actionOnExceed.workersCond.L.Unlock()
 		}
 	}
 }
@@ -543,6 +574,7 @@ func (it *copIterator) open(ctx context.Context) {
 
 			replicaReadSeed: it.replicaReadSeed,
 			sendRate:        it.sendRate,
+			actionOnExceed:  it.actionOnExceed,
 		}
 		go worker.run(ctx)
 	}
@@ -555,6 +587,11 @@ func (it *copIterator) open(ctx context.Context) {
 	}
 	taskSender.respChan = it.respChan
 	go taskSender.run()
+	if it.actionOnExceed != nil {
+		it.actionOnExceed.workersCond.L.Lock()
+		it.actionOnExceed.taskStarted = true
+		it.actionOnExceed.workersCond.L.Unlock()
+	}
 }
 
 func (sender *copIteratorTaskSender) run() {
@@ -649,6 +686,18 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		if !ok || closed {
 			return nil, nil
 		}
+		if it.actionOnExceed == nil {
+			// unreachable code
+			panic("copIterator's actionOnExceed should be set when keep order equals false")
+		}
+		it.actionOnExceed.workersCond.L.Lock()
+		// The respCh have been drained out
+		if it.actionOnExceed.exceed && len(it.respChan) < 1 {
+			it.actionOnExceed.exceed = false
+			it.actionOnExceed.workersCond.Broadcast()
+			it.actionOnExceed.once = sync.Once{}
+		}
+		it.actionOnExceed.workersCond.L.Unlock()
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
@@ -1183,4 +1232,60 @@ func (it copErrorResponse) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 func (it copErrorResponse) Close() error {
 	return nil
+}
+
+type taskRateLimitAction struct {
+	taskStarted    bool
+	once           sync.Once
+	fallbackAction memory.ActionOnExceed
+	workersCond    *sync.Cond
+	// exceed indicates whether have encountered OOM situation.
+	exceed bool
+	// tearedTicket indicates the count of tickets which have been teared up.
+	tearedTicket uint
+	teared       bool
+	sendRate     *rateLimit
+}
+
+// Action implements ActionOnExceed.Action
+func (e *taskRateLimitAction) Action(t *memory.Tracker) {
+	e.workersCond.L.Lock()
+	defer e.workersCond.L.Unlock()
+	if !e.taskStarted {
+		return
+	}
+	e.once.Do(func() {
+		if e.tearedTicket >= uint(cap(e.sendRate.token)-1) {
+			if e.fallbackAction != nil {
+				logutil.BgLogger().Info("taskRateLimitAction delegate to fallback action",
+					zap.Int64("consumed", t.BytesConsumed()),
+					zap.Int64("quota", t.GetBytesLimit()),
+					zap.Int64("maxConsumed", t.MaxConsumed()),
+					zap.Uint("tearedTicket", e.tearedTicket),
+					zap.Int("ticketTotal", cap(e.sendRate.token)))
+				e.fallbackAction.Action(t)
+				return
+			}
+			// unreachable code
+			panic("TaskRateLimitAction should set fallback action")
+		}
+		logutil.BgLogger().Info("memory exceeds quota, mark taskRateLimitAction exceed signal.",
+			zap.Int64("consumed", t.BytesConsumed()),
+			zap.Int64("quota", t.GetBytesLimit()),
+			zap.Int64("maxConsumed", t.MaxConsumed()),
+			zap.Uint("tearedTicket", e.tearedTicket),
+			zap.Int("ticketTotal", cap(e.sendRate.token)))
+		e.teared = false
+		e.exceed = true
+	})
+}
+
+// SetLogHook implements ActionOnExceed.SetLogHook
+func (e *taskRateLimitAction) SetLogHook(hook func(uint64)) {
+
+}
+
+// SetFallback implements ActionOnExceed.SetFallback
+func (e *taskRateLimitAction) SetFallback(a memory.ActionOnExceed) {
+	e.fallbackAction = a
 }
