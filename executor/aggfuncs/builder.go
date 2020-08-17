@@ -447,7 +447,7 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	}
 }
 
-// buildStdDevPop builds the AggFunc implementation for funcation "STD()/STDDEV()/STDDEV_POP()"
+// buildStdDevPop builds the AggFunc implementation for function "STD()/STDDEV()/STDDEV_POP()"
 func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseStdDevPopAggFunc{
 		varPop4Float64{
