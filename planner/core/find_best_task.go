@@ -62,17 +62,17 @@ var aggFuncFactor = map[string]float64{
 }
 
 // PlanCounterTp is used in hint nth_plan() to indicate which plan to use.
-type PlanCounterTp int8
+type PlanCounterTp int64
 
 // PlanCounterDisabled is the default value of PlanCounterTp, indicating that optimizer needn't force a plan.
 var PlanCounterDisabled PlanCounterTp = -1
 
 // Dec minus PlanCounterTp value by x.
-func (c *PlanCounterTp) Dec(x int8) {
+func (c *PlanCounterTp) Dec(x int64) {
 	if *c <= 0 {
 		return
 	}
-	*c = PlanCounterTp(int8(*c) - x)
+	*c = PlanCounterTp(int64(*c) - x)
 	if *c < 0 {
 		*c = 0
 	}
@@ -260,7 +260,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 
 		cntPlan += curCntPlan
-		planCounter.Dec(int8(curCntPlan))
+		planCounter.Dec(curCntPlan)
 
 		if planCounter.Empty() {
 			bestTask = curTask
@@ -679,6 +679,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				!candidate.path.Index.HasPrefixIndex() &&
 				len(candidate.path.Ranges[0].LowVal) == len(candidate.path.Index.Columns)
 		}
+		if ds.table.Meta().GetPartitionInfo() != nil && !tryOldPartitionImplementation(ds.ctx) {
+			canConvertPointGet = false
+		}
 		if canConvertPointGet {
 			allRangeIsPoint := true
 			for _, ran := range path.Ranges {
@@ -903,8 +906,6 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
 	for i, indexCol := range indexCols {
 		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
-		// We use col.OrigColName instead of col.ColName.
-		// Related issue: https://github.com/pingcap/tidb/issues/9636.
 		if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
 			return true
 		}
@@ -987,6 +988,10 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			cop.doubleReadNeedProj = isNew
 		}
 		cop.keepOrder = true
+		// IndexScan on partition table can't keep order.
+		if ds.tableInfo.GetPartitionInfo() != nil {
+			return invalidTask, nil
+		}
 	}
 	// prop.IsEmpty() would always return true when coming to here,
 	// so we can just use prop.ExpectedCnt as parameter of addPushedDownSelection.
@@ -1365,6 +1370,10 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
+		// TableScan on partition table can't keep order.
+		if ds.tableInfo.GetPartitionInfo() != nil {
+			return invalidTask, nil
+		}
 	}
 	ts.addPushedDownSelection(copTask, ds.stats.ScaleByExpectCnt(prop.ExpectedCnt))
 	if prop.IsFlashOnlyProp() && len(copTask.rootTaskConds) != 0 {
@@ -1476,7 +1485,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 	}
 	rTsk := &rootTask{p: batchPointGetPlan}
 	var cost float64
-	if candidate.path.IsTablePath() {
+	if candidate.path.IsIntHandlePath {
 		for _, ran := range candidate.path.Ranges {
 			batchPointGetPlan.Handles = append(batchPointGetPlan.Handles, kv.IntHandle(ran.LowVal[0].GetInt64()))
 		}
