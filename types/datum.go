@@ -430,9 +430,11 @@ func (d *Datum) GetValue() interface{} {
 
 // SetValueWithDefaultCollation sets any kind of value.
 func (d *Datum) SetValueWithDefaultCollation(val interface{}) {
-	switch x := val.(type) {
-	case nil:
+	if val == nil {
 		d.SetNull()
+		return
+	}
+	switch x := val.(type) {
 	case bool:
 		if x {
 			d.SetInt64(1)
@@ -478,9 +480,11 @@ func (d *Datum) SetValueWithDefaultCollation(val interface{}) {
 
 // SetValue sets any kind of value.
 func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
-	switch x := val.(type) {
-	case nil:
+	if val == nil {
 		d.SetNull()
+		return
+	}
+	switch x := val.(type) {
 	case bool:
 		if x {
 			d.SetInt64(1)
@@ -1469,6 +1473,7 @@ func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
 	case KindString, KindBytes:
 		iVal, err1 := StrToFloat(sc, d.GetString(), false)
 		isZero, err = iVal == 0, err1
+
 	case KindMysqlTime:
 		isZero = d.GetMysqlTime().IsZero()
 	case KindMysqlDuration:
@@ -1482,6 +1487,9 @@ func (d *Datum) ToBool(sc *stmtctx.StatementContext) (int64, error) {
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err1 := d.GetBinaryLiteral().ToInt(sc)
 		isZero, err = val == 0, err1
+	case KindMysqlJSON:
+		val := d.GetMysqlJSON()
+		isZero = val.IsZero()
 	default:
 		return 0, errors.Errorf("cannot convert %v(type %T) to bool", d.GetValue(), d.GetValue())
 	}

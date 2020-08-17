@@ -842,6 +842,8 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		rangeDecidedBy:  outerJoinKeys,
 		KeepOrder:       keepOrder,
 		Desc:            desc,
+		physicalTableID: ds.physicalTableID,
+		isPartition:     ds.isPartition,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if rowCount <= 0 {
@@ -942,14 +944,14 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, ds.blockOffset)
 		ts.schema = is.dataSourceSchema.Clone()
-		if ds.tableInfo.IsCommonHandle {
-			cop.commonHandleCols = ds.commonHandleCols
-		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
-		if cop.keepOrder {
+		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
 			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
 		}
 		cop.tablePlan = ts
+	}
+	if cop.tablePlan != nil && ds.tableInfo.IsCommonHandle {
+		cop.commonHandleCols = ds.commonHandleCols
 	}
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), cop.tablePlan != nil)
 	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
@@ -1574,16 +1576,25 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
-	if p.JoinType != InnerJoin || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 || len(p.OtherConditions) != 0 || len(p.EqualConditions) == 0 {
+	// for left join the global idx must be 1, and for right join the global idx must be 0
+	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin) || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 || len(p.OtherConditions) != 0 || len(p.EqualConditions) == 0 {
 		return nil
 	}
 
 	if hasPrefer, idx := p.getPreferredBCJLocalIndex(); hasPrefer {
+		if (idx == 0 && p.JoinType == RightOuterJoin) || (idx == 1 && p.JoinType == LeftOuterJoin) {
+			return nil
+		}
 		return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1-idx)
 	}
-	results := p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
-	results = append(results, p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)...)
-	return results
+	if p.JoinType == InnerJoin {
+		results := p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
+		results = append(results, p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)...)
+		return results
+	} else if p.JoinType == LeftOuterJoin {
+		return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)
+	}
+	return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
 }
 
 func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.PhysicalProperty, preferredGlobalIndex int) []PhysicalPlan {
