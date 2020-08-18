@@ -16,7 +16,6 @@ package expensivequery
 import (
 	"errors"
 	"fmt"
-	"github.com/pingcap/tidb/util/disk"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -171,7 +171,9 @@ func (eqh *Handle) oomRecord(memUsage uint64) {
 		)
 	}
 
-	disk.CheckAndInitTempDir()
+	if eqh.record.err = disk.CheckAndInitTempDir(); eqh.record.err != nil {
+		return
+	}
 	eqh.oomRecordSQL()
 	eqh.oomRecordProfile()
 
