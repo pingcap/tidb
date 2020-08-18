@@ -83,7 +83,7 @@ select * from t;`
 	c.Assert(err, IsNil)
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().TimeZone = loc
-	rows, err := parseSlowLog(sctx, reader)
+	_, err = parseSlowLog(sctx, reader)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "panic test")
 }
