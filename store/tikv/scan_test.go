@@ -17,10 +17,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -65,7 +67,7 @@ func (s *testScanSuite) beginTxn(c *C) *tikvTxn {
 	return txn.(*tikvTxn)
 }
 
-func (s *testScanSuite) TestScan(c *C) {
+func (s *testScanSuite) TestScan2(c *C) {
 	check := func(c *C, scan kv.Iterator, rowNum int, keyOnly bool) {
 		for i := 0; i < rowNum; i++ {
 			k := scan.Key()
@@ -77,6 +79,26 @@ func (s *testScanSuite) TestScan(c *C) {
 					zap.Stringer("obtained val", kv.Key(scan.Value())),
 					zap.Stringer("expected", kv.Key(expectedKey)),
 					zap.Bool("keyOnly", keyOnly))
+				//skeys, _, err := s.client.Scan([]byte(""), nil, rowNum+1)
+				//c.Assert(err, IsNil)
+				//var ss []string
+				//for _, k := range skeys {
+				//	ss = append(ss, string(k))
+				//}
+
+				tx, err := s.store.Begin()
+				c.Assert(err, IsNil)
+				it, err := tx.Iter(encodeKey(s.prefix, ""), nil)
+				c.Assert(err, IsNil)
+				var ss []string
+				for j := 0; j < rowNum; j++ {
+					_, v, err := codec.DecodeBytes(it.Key(), nil)
+					c.Assert(err, IsNil)
+					vs := strings.TrimPrefix(string(v), s.prefix+"_key")
+					ss = append(ss, vs)
+					it.Next()
+				}
+				logutil.BgLogger().Error("current store all keys --->", zap.Strings("keys", ss))
 			}
 			c.Assert([]byte(k), BytesEquals, expectedKey)
 			if !keyOnly {
