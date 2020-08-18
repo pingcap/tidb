@@ -328,3 +328,28 @@ func (s *testSuite7) TestForUpdateUntouchedIndex(c *C) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 }
+
+func (s *testSuite7) TestUpdateScanningHandles(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int primary key, b int);")
+	tk.MustExec("begin")
+	for i := 2; i < 100000; i++ {
+		tk.MustExec("insert into t values (?, ?)", i, i)
+	}
+	tk.MustExec("commit;")
+
+	tk.MustExec("set tidb_distsql_scan_concurrency = 1;")
+	tk.MustExec("set tidb_index_lookup_join_concurrency = 1;")
+	tk.MustExec("set tidb_projection_concurrency=1;")
+	tk.MustExec("set tidb_init_chunk_size=1;")
+	tk.MustExec("set tidb_max_chunk_size=32;")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("update /*+ INL_JOIN(t1) */ t t1, (select a, b from t) t2 set t1.b = t2.b where t1.a = t2.a + 1000;")
+	result := tk.MustQuery("select a, a-b from t where a > 1000 and a - b != 1000;")
+	c.Assert(result.Rows(), HasLen, 0)
+	tk.MustExec("rollback;")
+}
