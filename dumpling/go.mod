@@ -17,7 +17,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
 	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200730093003-dc8c75cf7ca0
-	github.com/pingcap/tidb-tools v4.0.5-0.20200805025317-02a16e0521cb+incompatible
+	github.com/pingcap/tidb-tools v4.0.5-0.20200817064459-ba61a7376547+incompatible
 	github.com/pkg/errors v0.9.1
 	github.com/soheilhy/cmux v0.1.4
 	github.com/spf13/pflag v1.0.3
