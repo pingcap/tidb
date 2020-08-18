@@ -462,9 +462,12 @@ func newBatchPointGetPlan(
 	names []*types.FieldName, whereColNames []string,
 ) *BatchPointGetPlan {
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
-	partitionColName := getHashPartitionColumnName(ctx, tbl)
-	if tbl.GetPartitionInfo() != nil && partitionColName == nil {
-		return nil
+	var partitionColName *ast.ColumnName
+	if tbl.GetPartitionInfo() != nil {
+		partitionColName = getHashPartitionColumnName(ctx, tbl)
+		if partitionColName == nil {
+			return nil
+		}
 	}
 	if handleCol != nil {
 		var handles = make([]kv.Handle, len(patternInExpr.List))
@@ -606,6 +609,10 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 	if tbl == nil {
 		return nil
 	}
+	// Skip the optimization with partition selection.
+	if len(tblName.PartitionNames) > 0 {
+		return nil
+	}
 
 	for _, col := range tbl.Columns {
 		if col.IsGenerated() || col.State != model.StatePublic {
@@ -734,6 +741,14 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if partitionInfo == nil {
 			return nil
 		}
+		// Take partition selection into consideration.
+		if len(tblName.PartitionNames) > 0 {
+			if !partitionNameInSet(partitionInfo.Name, tblName.PartitionNames) {
+				p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+				p.IsTableDual = true
+				return p
+			}
+		}
 	}
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
@@ -780,6 +795,16 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		return p
 	}
 	return nil
+}
+
+func partitionNameInSet(name model.CIStr, pnames []model.CIStr) bool {
+	for _, pname := range pnames {
+		// Case insensitive, create table partition p0, query using P0 is OK.
+		if name.L == pname.L {
+			return true
+		}
+	}
+	return false
 }
 
 func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
