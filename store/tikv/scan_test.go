@@ -16,11 +16,13 @@ package tikv
 import (
 	"bytes"
 	"context"
+	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"go.uber.org/zap"
 )
 
@@ -36,7 +38,7 @@ var _ = SerialSuites(&testScanSuite{})
 func (s *testScanSuite) SetUpSuite(c *C) {
 	s.OneByOneSuite.SetUpSuite(c)
 	s.store = NewTestStore(c).(*tikvStore)
-	s.recordPrefix = tablecodec.GenTablePrefix(1)
+	s.recordPrefix = tablecodec.GenTableRecordPrefix(1)
 	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1, scanBatchSize*3)
 }
 
@@ -81,7 +83,7 @@ func (s *testScanSuite) TestScan(c *C) {
 			c.Assert([]byte(k), BytesEquals, []byte(expectedKey))
 			if !keyOnly {
 				v := scan.Value()
-				c.Assert(v, BytesEquals, valueBytes(i))
+				c.Assert(v, BytesEquals, genValueBytes(i))
 			}
 			// Because newScan return first item without calling scan.Next() just like go-hbase,
 			// for-loop count will decrease 1.
@@ -96,7 +98,7 @@ func (s *testScanSuite) TestScan(c *C) {
 	for _, rowNum := range s.rowNums {
 		txn := s.beginTxn(c)
 		for i := 0; i < rowNum; i++ {
-			err := txn.Set(tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(i)), valueBytes(i))
+			err := txn.Set(tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(i)), genValueBytes(i))
 			c.Assert(err, IsNil)
 		}
 		err := txn.Commit(context.Background())
@@ -115,7 +117,7 @@ func (s *testScanSuite) TestScan(c *C) {
 		txn2 := s.beginTxn(c)
 		val, err := txn2.Get(context.TODO(), tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(0)))
 		c.Assert(err, IsNil)
-		c.Assert(val, BytesEquals, valueBytes(0))
+		c.Assert(val, BytesEquals, genValueBytes(0))
 		// Test scan without upperBound
 		scan, err := txn2.Iter(s.recordPrefix, nil)
 		c.Assert(err, IsNil)
@@ -147,4 +149,10 @@ func (s *testScanSuite) TestScan(c *C) {
 		c.Assert(err, IsNil)
 		check(c, scan, upperBound, true)
 	}
+}
+
+func genValueBytes(i int) []byte {
+	var res = []byte{rowcodec.CodecVer}
+	res = append(res, []byte(fmt.Sprintf("%d", i))...)
+	return res
 }
