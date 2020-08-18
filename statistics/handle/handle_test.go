@@ -706,3 +706,55 @@ func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
 	c.Assert(statsTbl.ExtendedStats, NotNil)
 	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
 }
+
+func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("insert into t values(1,1,5),(2,2,4),(3,3,3),(4,4,2),(5,5,1)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended").Check(testkit.Rows())
+	tk.MustExec("create statistics s1(correlation) on t(a,b)")
+	tk.MustExec("create statistics s2(correlation) on t(a,c)")
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"2 [1,2] <nil> <nil> 0",
+		"2 [1,3] <nil> <nil> 0",
+	))
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	do.StatsHandle().Update(is)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
+
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"2 [1,2] 1 <nil> 1",
+		"2 [1,3] -1 <nil> 1",
+	))
+	do.StatsHandle().Update(is)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 2)
+	foundS1, foundS2 := false, false
+	for key, item := range statsTbl.ExtendedStats.Stats {
+		c.Assert(key.DB, Equals, "test")
+		switch key.StatsName {
+		case "s1":
+			foundS1 = true
+			c.Assert(item.ScalarVals, Equals, float64(1))
+		case "s2":
+			foundS2 = true
+			c.Assert(item.ScalarVals, Equals, float64(-1))
+		default:
+			c.Assert("Unexpected extended stats in cache", IsNil)
+		}
+	}
+	c.Assert(foundS1 && foundS2, IsTrue)
+}
