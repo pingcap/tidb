@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/url"
 	"os"
 	"os/user"
@@ -95,6 +96,7 @@ type Config struct {
 	TempStoragePath             string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	OOMAction                   string `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery               int64  `toml:"mem-quota-query" json:"mem-quota-query"`
+	MemQuotaStatistic           int64  `toml:"mem-quota-statistic" json:"mem-quota-statistic"`
 	NestedLoopJoinCacheCapacity int64  `toml:"nested-loop-join-cache-capacity" json:"nested-loop-join-cache-capacity"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
@@ -573,6 +575,7 @@ var defaultConf = Config{
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
+	MemQuotaStatistic:            int64(math.MaxInt32),
 	NestedLoopJoinCacheCapacity:  20971520,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,

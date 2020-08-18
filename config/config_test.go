@@ -188,6 +188,7 @@ server-version = "test_version"
 repair-mode = true
 max-server-connections = 200
 mem-quota-query = 10000
+mem-quota-statistic = 10000
 nested-loop-join-cache-capacity = 100
 max-index-length = 3080
 skip-register-to-dashboard = true
@@ -248,6 +249,7 @@ engines = ["tiflash"]
 	c.Assert(conf.RepairMode, Equals, true)
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
+	c.Assert(conf.MemQuotaStatistic, Equals, int64(10000))
 	c.Assert(conf.NestedLoopJoinCacheCapacity, Equals, int64(100))
 	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})

@@ -40,13 +40,13 @@ func (key statsCacheKey) Hash() []byte {
 }
 
 // newstatsCache returns a new statsCahce with capacity maxMemoryLimit(initial 1G)
-func newstatsCache(maxMemoryLimit int64) *statsCache {
+func newstatsCache(memoryLimit int64) *statsCache {
 	// since newstatsCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
-	cache := kvcache.NewSimpleLRUCache(uint(maxMemoryLimit), 0.1, 0)
+	cache := kvcache.NewSimpleLRUCache(uint(memoryLimit), 0.1, 0)
 	c := statsCache{
 		cache:       cache,
-		memCapacity: maxMemoryLimit,
+		memCapacity: memoryLimit,
 		memTracker:  memory.NewTracker(stringutil.StringerStr("statsCache"), -1),
 	}
 	return &c

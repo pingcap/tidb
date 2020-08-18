@@ -56,6 +56,7 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 	newConf.Performance.PseudoEstimateRatio = 123
 	newConf.OOMAction = "panic"
 	newConf.MemQuotaQuery = 123
+	newConf.MemQuotaStatistic = 123
 	newConf.TiKVClient.StoreLimit = 123
 
 	// rejected
@@ -66,7 +67,7 @@ func (s *testConfigSuite) TestMergeConfigItems(c *C) {
 
 	as, rs := MergeConfigItems(oldConf, newConf)
 	c.Assert(len(as), Equals, 10)
-	c.Assert(len(rs), Equals, 3)
+	c.Assert(len(rs), Equals, 4)
 	for _, a := range as {
 		_, ok := dynamicConfigItems[a]
 		c.Assert(ok, IsTrue)

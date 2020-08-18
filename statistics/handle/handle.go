@@ -40,11 +40,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// maxMemoryLimit 1G for statsCache
-	maxMemoryLimit = 1024 * 1024 * 1024
-)
-
 // Handle can update stats info periodically.
 type Handle struct {
 	mu struct {
@@ -83,7 +78,7 @@ func (h *Handle) Clear() {
 	//lock statsCache for race test
 	h.statsCache.mu.Lock()
 	mu := &h.statsCache.mu
-	h.statsCache = newstatsCache(maxMemoryLimit)
+	h.statsCache = newstatsCache(h.mu.ctx.GetSessionVars().MemQuotaStatistic)
 	mu.Unlock()
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
@@ -112,8 +107,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
-	handle.statsCache = newstatsCache(maxMemoryLimit)
-
+	handle.statsCache = newstatsCache(ctx.GetSessionVars().MemQuotaStatistic)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	return handle

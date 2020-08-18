@@ -33,8 +33,10 @@ import (
 )
 
 const (
-	//max histogram(index/column) number
-	maxLoadHistogram = 26215
+	// max histogram(index/column) number
+	defaultTopNnum      = 20
+	defaultBucketsSize  = 256
+	defaultStatDataSize = 50000
 )
 
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
@@ -211,9 +213,10 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables map[
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables map[int64]*statistics.Table) error {
 	// indcies should be load first
 	// is_index = 1 load first
+	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, cm_sketch " +
 		"from mysql.stats_histograms where is_index = 1 " +
-		fmt.Sprintf("order by table_id, hist_id limit %d", maxLoadHistogram)
+		fmt.Sprintf("order by table_id, hist_id limit %d", limitSize)
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -256,9 +259,10 @@ func (h *Handle) initStatsTopN4Chunk(tables map[int64]*statistics.Table, iter *c
 func (h *Handle) initStatsTopN(tables map[int64]*statistics.Table) error {
 	// default topN = 20
 	// 54000 = 26215*20
+	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize) * defaultTopNnum
 	sql := "select HIGH_PRIORITY table_id, hist_id, value, count " +
 		"from mysql.stats_top_n " +
-		fmt.Sprintf("where is_index = 1 order by table_id, hist_id limit %d", maxLoadHistogram*20)
+		fmt.Sprintf("where is_index = 1 order by table_id, hist_id limit %d", limitSize)
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -374,9 +378,10 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, tables map[int64]*statistics
 }
 
 func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (err error) {
+	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize) * defaultBucketsSize
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound," +
 		"upper_bound from mysql.stats_buckets " +
-		fmt.Sprintf("order by is_index^1, table_id, hist_id, bucket_id limit %d", maxLoadHistogram*256)
+		fmt.Sprintf("order by is_index^1, table_id, hist_id, bucket_id limit %d", limitSize)
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -394,7 +399,7 @@ func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (err error
 		if req.NumRows() == 0 {
 			break
 		}
-		isOverload := maxLoadHistogram*256 == req.NumRows()
+		isOverload := limitSize == int64(req.NumRows())
 		initStatsBuckets4Chunk(h.mu.ctx, tables, iter, isOverload)
 	}
 	return nil

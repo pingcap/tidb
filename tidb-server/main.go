@@ -584,6 +584,7 @@ func setGlobalVars() {
 	variable.SysVars[variable.TiDBOptDistinctAggPushDown].Value = variable.BoolToIntStr(cfg.Performance.DistinctAggPushDown)
 
 	variable.SysVars[variable.TIDBMemQuotaQuery].Value = strconv.FormatInt(cfg.MemQuotaQuery, 10)
+	variable.SysVars[variable.TIDBMemQuotaStatistic].Value = strconv.FormatInt(cfg.MemQuotaStatistic, 10)
 	variable.SysVars["lower_case_table_names"].Value = strconv.Itoa(cfg.LowerCaseTableNames)
 	variable.SysVars[variable.LogBin].Value = variable.BoolToIntStr(config.GetGlobalConfig().Binlog.Enable)
 
