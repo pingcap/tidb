@@ -811,12 +811,6 @@
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
-          "seriesOverrides": [
-            {
-              "alias": "pd-side",
-              "transform": "negative-Y"
-            }
-          ],
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
@@ -998,12 +992,6 @@
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
-          "seriesOverrides": [
-            {
-              "alias": "/tikv/",
-              "transform": "negative-Y"
-            }
-          ],
           "spaceLength": 10,
           "stack": false,
           "steppedLine": false,
@@ -1070,7 +1058,7 @@
       "type": "row"
     }
   ],
-  "refresh": false,
+  "refresh": "30s",
   "schemaVersion": 18,
   "style": "dark",
   "tags": [],
