@@ -53,6 +53,7 @@ func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datu
 	rows, err := parseLog(retriever, sctx, reader)
 	return rows, err
 }
+
 func (s *testExecSuite) TestPanic(c *C) {
 	slowLogStr :=
 		`# Time: 2019-04-28T15:24:04.309074+08:00
@@ -79,10 +80,12 @@ select * from t;`
 	}()
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
-	retriever := &slowQueryRetriever{}
-	reader := bufio.NewReader(bytes.NewBufferString(slowLogStr))
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().TimeZone = loc
+	retriever := &slowQueryRetriever{}
+	err = retriever.initialize(sctx)
+	c.Assert(err, IsNil)
+	reader := bufio.NewReader(bytes.NewBufferString(slowLogStr))
 	rows, err := parseLog(retriever, sctx, reader)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
