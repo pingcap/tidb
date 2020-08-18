@@ -31,6 +31,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -66,10 +67,11 @@ import (
 )
 
 var (
-	baseConnID uint32
-	serverPID  int
-	osUser     string
-	osVersion  string
+	baseConnID  uint32
+	serverPID   int
+	osUser      string
+	osVersion   string
+	runInGoTest bool
 )
 
 func init() {
@@ -84,6 +86,7 @@ func init() {
 	if err != nil {
 		osVersion = ""
 	}
+	runInGoTest = flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
 }
 
 var (
@@ -229,7 +232,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.capability |= mysql.ClientSSL
 	}
 
-	if s.cfg.Host != "" && s.cfg.Port != 0 {
+	if s.cfg.Host != "" && (s.cfg.Port != 0 || runInGoTest) {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 		if s.listener, err = net.Listen("tcp", addr); err == nil {
 			logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
@@ -239,12 +242,14 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 					go s.forwardUnixSocketToTCP()
 				}
 			}
+		} else if runInGoTest && s.cfg.Port == 0 {
+			s.cfg.Port = uint(s.listener.Addr().(*net.TCPAddr).Port)
 		}
 	} else if cfg.Socket != "" {
 		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
 			logutil.BgLogger().Info("server is running MySQL protocol", zap.String("socket", cfg.Socket))
 		}
-	} else {
+	} else if !runInGoTest {
 		err = errors.New("Server not configured to listen on either -socket or -host and -port")
 	}
 

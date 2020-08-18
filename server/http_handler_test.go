@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -360,16 +361,22 @@ func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 
 	cfg := newTestConfig()
-	cfg.Port = ts.port
 	cfg.Store = "tikv"
-	cfg.Status.StatusPort = ts.statusPort
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	ts.port = getPortFromTCPAddr(server.listener.Addr())
+	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
 	go server.Run()
 	ts.waitUntilServerOnline()
+}
+
+func getPortFromTCPAddr(addr net.Addr) uint {
+	return uint(addr.(*net.TCPAddr).Port)
 }
 
 func (ts *basicHTTPHandlerTestSuite) stopServer(c *C) {
@@ -441,8 +448,8 @@ func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
 
 func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 	ts.startServer(c)
-	ts.prepareData(c)
 	defer ts.stopServer(c)
+	ts.prepareData(c)
 
 	resp, err := ts.fetchStatus(fmt.Sprintf("/mvcc/key/tidb/test/1"))
 	c.Assert(err, IsNil)
@@ -513,8 +520,8 @@ func (ts *HTTPHandlerTestSuite) TestGetTableMVCC(c *C) {
 
 func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 	ts.startServer(c)
-	ts.prepareData(c)
 	defer ts.stopServer(c)
+	ts.prepareData(c)
 	resp, err := ts.fetchStatus(fmt.Sprintf("/mvcc/key/tidb/test/1234"))
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
@@ -528,8 +535,8 @@ func (ts *HTTPHandlerTestSuite) TestGetMVCCNotFound(c *C) {
 
 func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 	ts.startServer(c)
-	ts.prepareData(c)
 	defer ts.stopServer(c)
+	ts.prepareData(c)
 
 	db, err := sql.Open("mysql", ts.getDSN())
 	c.Assert(err, IsNil, Commentf("Error connecting"))
@@ -697,8 +704,8 @@ func (ts *HTTPHandlerTestSuite) TestTiFlashReplica(c *C) {
 
 func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 	ts.startServer(c)
-	ts.prepareData(c)
 	defer ts.stopServer(c)
+	ts.prepareData(c)
 
 	// column is a structure used for test
 	type column struct {
@@ -761,8 +768,8 @@ func (ts *HTTPHandlerTestSuite) TestDecodeColumnValue(c *C) {
 
 func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 	ts.startServer(c)
-	ts.prepareData(c)
 	defer ts.stopServer(c)
+	ts.prepareData(c)
 
 	// tests for normal index key
 	resp, err := ts.fetchStatus("/mvcc/index/tidb/test/idx1/1?a=1&b=2")
@@ -823,8 +830,8 @@ func (ts *HTTPHandlerTestSuite) TestGetIndexMVCC(c *C) {
 
 func (ts *HTTPHandlerTestSuite) TestGetSettings(c *C) {
 	ts.startServer(c)
-	ts.prepareData(c)
 	defer ts.stopServer(c)
+	ts.prepareData(c)
 	resp, err := ts.fetchStatus("/settings")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
@@ -836,8 +843,8 @@ func (ts *HTTPHandlerTestSuite) TestGetSettings(c *C) {
 
 func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 	ts.startServer(c)
-	ts.prepareData(c)
 	defer ts.stopServer(c)
+	ts.prepareData(c)
 	resp, err := ts.fetchStatus("/schema")
 	c.Assert(err, IsNil)
 	decoder := json.NewDecoder(resp.Body)
@@ -935,8 +942,8 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 
 func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 	ts.startServer(c)
-	ts.prepareData(c)
 	defer ts.stopServer(c)
+	ts.prepareData(c)
 	_, err := ts.fetchStatus("/ddl/history/?limit=3")
 	c.Assert(err, IsNil)
 	_, err = ts.fetchStatus("/ddl/history/?limit=-1")
@@ -962,8 +969,8 @@ func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
 
 func (ts *HTTPHandlerTestSuite) TestPostSettings(c *C) {
 	ts.startServer(c)
-	ts.prepareData(c)
 	defer ts.stopServer(c)
+	ts.prepareData(c)
 	form := make(url.Values)
 	form.Set("log_level", "error")
 	form.Set("tidb_general_log", "1")
@@ -1199,15 +1206,18 @@ func (ts *HTTPHandlerTestSuite) TestFailpointHandler(c *C) {
 
 	// start server without enabling failpoint integration
 	ts.startServer(c)
-	resp, err := ts.fetchStatus("/fail/")
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
-	ts.stopServer(c)
+	func() {
+		defer ts.stopServer(c)
+		resp, err := ts.fetchStatus("/fail/")
+		c.Assert(err, IsNil)
+		c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
+	}()
 
 	// enable failpoint integration and start server
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/enableTestAPI", "return"), IsNil)
 	ts.startServer(c)
-	resp, err = ts.fetchStatus("/fail/")
+	defer ts.stopServer(c)
+	resp, err := ts.fetchStatus("/fail/")
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	b, err := ioutil.ReadAll(resp.Body)
@@ -1221,16 +1231,19 @@ func (ts *HTTPHandlerTestSuite) TestTestHandler(c *C) {
 
 	// start server without enabling failpoint integration
 	ts.startServer(c)
-	resp, err := ts.fetchStatus("/test")
-	c.Assert(err, IsNil)
-	c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
-	ts.stopServer(c)
+	func() {
+		defer ts.stopServer(c)
+		resp, err := ts.fetchStatus("/test")
+		c.Assert(err, IsNil)
+		c.Assert(resp.StatusCode, Equals, http.StatusNotFound)
+	}()
 
 	// enable failpoint integration and start server
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/server/enableTestAPI", "return"), IsNil)
 	ts.startServer(c)
+	defer ts.stopServer(c)
 
-	resp, err = ts.fetchStatus("/test/gc/gc")
+	resp, err := ts.fetchStatus("/test/gc/gc")
 	c.Assert(err, IsNil)
 	resp.Body.Close()
 	c.Assert(resp.StatusCode, Equals, http.StatusBadRequest)
