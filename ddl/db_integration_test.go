@@ -1350,14 +1350,14 @@ func (s *testIntegrationSuite3) TestChangeColumnPosition(c *C) {
 	tk.MustExec("alter table position4 add index t(b)")
 	tk.MustExec("alter table position4 change column b c int first")
 	createSQL := tk.MustQuery("show create table position4").Rows()[0][1]
-	exceptedSQL := []string{
+	expectedSQL := []string{
 		"CREATE TABLE `position4` (",
 		"  `c` int(11) DEFAULT NULL,",
 		"  `a` int(11) DEFAULT NULL,",
 		"  KEY `t` (`c`)",
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	}
-	c.Assert(createSQL, Equals, strings.Join(exceptedSQL, "\n"))
+	c.Assert(createSQL, Equals, strings.Join(expectedSQL, "\n"))
 }
 
 func (s *testIntegrationSuite2) TestAddIndexAfterAddColumn(c *C) {

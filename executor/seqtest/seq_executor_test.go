@@ -285,7 +285,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		d int UNIQUE KEY,
 		index invisible_idx_b (b) invisible,
 		index (d) invisible)`)
-	excepted :=
+	expexted :=
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) DEFAULT NULL,\n" +
 			"  `b` int(11) DEFAULT NULL,\n" +
@@ -296,7 +296,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 			"  UNIQUE KEY `c` (`c`),\n" +
 			"  UNIQUE KEY `d_2` (`d`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	tk.MustQuery("show create table t").Check(testkit.Rows(excepted))
+	tk.MustQuery("show create table t").Check(testkit.Rows(expected))
 	tk.MustExec("drop table t")
 
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
