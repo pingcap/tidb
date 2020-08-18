@@ -68,4 +68,6 @@ require (
 
 replace github.com/zhangjinpeng1987/raft => github.com/NingLin-P/raft v0.0.0-20200818113713-19cc67b2ee50
 
+replace github.com/ngaut/unistore => github.com/NingLin-P/unistore v0.0.0-20200818133649-d01d44bf2f37
+
 go 1.13
