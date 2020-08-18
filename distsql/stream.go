@@ -106,11 +106,15 @@ func (r *streamResult) readDataFromResponse(ctx context.Context, resp kv.Respons
 	}
 	r.feedback.Update(resultSubset.GetStartKey(), stream.OutputCounts)
 	r.partialCount++
-	resultDetail := resultSubset.GetExecDetails()
-	if resultDetail != nil {
-		resultDetail.CopTime = duration
+
+	hasStats, ok := resultSubset.(CopRuntimeStats)
+	if ok {
+		copStats := hasStats.GetCopRuntimeStats()
+		if copStats != nil {
+			copStats.CopTime = duration
+			r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(&copStats.ExecDetails, nil)
+		}
 	}
-	r.ctx.GetSessionVars().StmtCtx.MergeExecDetails(resultDetail, nil)
 	return false, nil
 }
 
