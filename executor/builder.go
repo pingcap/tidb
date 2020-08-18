@@ -2438,6 +2438,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		corColInFilter: b.corColInDistPlan(v.TablePlans),
 		corColInAccess: b.corColInAccess(v.TablePlans[0]),
 		plans:          v.TablePlans,
+		tablePlan:      v.GetTablePlan(),
 		storeType:      v.StoreType,
 	}
 	e.setBatchCop(v)
@@ -2707,6 +2708,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 			e.handleIdx = append(e.handleIdx, handleCol.Index)
 		}
 		e.handleCols = v.CommonHandleCols
+		e.primaryKeyIndex = tables.FindPrimaryIndex(tbl.Meta())
 	}
 	return e, nil
 }
