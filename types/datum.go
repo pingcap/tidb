@@ -428,11 +428,9 @@ func (d *Datum) GetValue() interface{} {
 
 // SetValueWithDefaultCollation sets any kind of value.
 func (d *Datum) SetValueWithDefaultCollation(val interface{}) {
-	if val == nil {
-		d.SetNull()
-		return
-	}
 	switch x := val.(type) {
+	case nil:
+		d.SetNull()
 	case bool:
 		if x {
 			d.SetInt64(1)
@@ -478,11 +476,9 @@ func (d *Datum) SetValueWithDefaultCollation(val interface{}) {
 
 // SetValue sets any kind of value.
 func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
-	if val == nil {
-		d.SetNull()
-		return
-	}
 	switch x := val.(type) {
+	case nil:
+		d.SetNull()
 	case bool:
 		if x {
 			d.SetInt64(1)
