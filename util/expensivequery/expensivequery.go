@@ -14,6 +14,7 @@
 package expensivequery
 
 import (
+	"errors"
 	"fmt"
 	"github.com/pingcap/tidb/util/disk"
 	"os"
@@ -84,7 +85,7 @@ func (eqh *Handle) Run() {
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-			if alert := config.GetGlobalConfig().Performance.ServerMemoryAlarmRatio; (alert == 0 || alert == 1) && eqh.record.err == nil {
+			if eqh.record.err == nil {
 				eqh.oomKillerAlert()
 			}
 		case <-eqh.exitCh:
@@ -118,6 +119,9 @@ func (eqh *Handle) initMemoryUsageAlarmRecord() {
 	}
 	eqh.record.lastRecordTime = time.Time{}
 	eqh.record.tmpDir = config.GetGlobalConfig().TempStoragePath
+	if alert := config.GetGlobalConfig().Performance.ServerMemoryAlarmRatio; alert == 0 || alert == 1 {
+		eqh.record.err = errors.New("close memory usage alarm recorder")
+	}
 }
 
 // If Performance.ServerMemoryQuota is set, use instance memory usage and ServerMemoryQuota * 80% to check oom risk.
