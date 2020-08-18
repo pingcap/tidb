@@ -14,12 +14,10 @@
 package chunk
 
 import (
-	"crypto/aes"
 	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"math/rand"
 	"os"
 	"sync"
 
@@ -70,13 +68,7 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	}
 	var underlying io.WriteCloser = l.disk
 	if config.GetGlobalConfig().Security.RequireSecureTransport {
-		nonce := rand.Uint64()
-		key := make([]byte, aes.BlockSize)
-		rand.Read(key)
-		l.ctrCipher, err = encrypt.NewCtrCipher(key, nonce)
-		if err != nil {
-			return err
-		}
+		l.ctrCipher = encrypt.NewCtrCipher()
 		underlying = encrypt.NewWriter(l.disk, l.ctrCipher)
 	}
 	l.w = checksum.NewWriter(underlying)

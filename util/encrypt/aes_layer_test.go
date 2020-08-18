@@ -16,7 +16,6 @@ package encrypt
 import (
 	"bytes"
 	"io"
-	"math/rand"
 	"os"
 	"testing"
 
@@ -77,16 +76,9 @@ func testReadAtWithCase(c *check.C, testCase readAtTestCase) {
 }
 
 func (s *testAesLayerSuite) TestReadAt(c *check.C) {
-	key := bytes.NewBufferString("0123456789123456").Bytes()
-	nonce := rand.Uint64()
-	ctrCipher1, err := NewCtrCipher(key, nonce)
-	c.Assert(err, check.IsNil)
+	ctrCipher1 := NewCtrCipher()
+	ctrCipher2 := NewCtrCipher()
 
-	key = bytes.NewBufferString("9876543210123456").Bytes()
-	nonce = rand.Uint64()
-	ctrCipher2, err := NewCtrCipher(key, nonce)
-
-	c.Assert(err, check.IsNil)
 	readAtTestCases := []readAtTestCase{
 		{
 			newWriter: func(f *os.File) io.WriteCloser { return NewWriter(f, ctrCipher1) },
@@ -161,12 +153,7 @@ func benchmarkReadAtWithCase(b *testing.B, testCase readAtTestCase) {
 }
 
 func BenchmarkReadAt(b *testing.B) {
-	key := bytes.NewBufferString("0123456789123456").Bytes()
-	nonce := rand.Uint64()
-	ctrCipher, err := NewCtrCipher(key, nonce)
-	if err != nil {
-		b.Fatal(err)
-	}
+	ctrCipher := NewCtrCipher()
 
 	readAtTestCases := []readAtTestCase{
 		{

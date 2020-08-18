@@ -17,37 +17,47 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/binary"
+	"errors"
 	"io"
-	"sync"
+	"math/rand"
 )
 
-const (
-	// blockSize is the encrypt block size in bytes.
-	blockSize = 1024
-	// counterPerBlock represents a encrypt block has 64 aes blocks
-	counterPerBlock = 64
-)
+var errInvalidBlockSize = errors.New("invalid encrypt block size")
 
-var blockBufPool = sync.Pool{
-	New: func() interface{} { return make([]byte, blockSize) },
-}
+// defaultEncryptBlockSize indicates the default encrypt block size in bytes
+const defaultEncryptBlockSize = 1024
 
 // CtrCipher encrypting data using AES in counter mode
 type CtrCipher struct {
 	nonce uint64
 	block cipher.Block
+	// encryptBlockSize indicates the encrypt block size in bytes.
+	encryptBlockSize int64
+	// aesBlockCount indicates the total aes blocks in one encrypt block
+	aesBlockCount int64
 }
 
-// NewCtrCipher return a CtrCipher
-func NewCtrCipher(key []byte, nonce uint64) (ctr *CtrCipher, err error) {
+// NewCtrCipher return a CtrCipher using the default encrypt block size
+func NewCtrCipher() *CtrCipher {
+	ctr, _ := NewCtrCipherWithBlockSize(defaultEncryptBlockSize)
+	return ctr
+}
+
+// NewCtrCipherWithBlockSize return a CtrCipher with the encrypt block size
+func NewCtrCipherWithBlockSize(encryptBlockSize int64) (ctr *CtrCipher, err error) {
+	nonce := rand.Uint64()
+	key := make([]byte, aes.BlockSize)
+	rand.Read(key)
 	var block cipher.Block
-	block, err = aes.NewCipher(key)
-	if err != nil {
-		return
+	block, _ = aes.NewCipher(key)
+	if encryptBlockSize%aes.BlockSize != 0 {
+		return nil, errInvalidBlockSize
 	}
 	ctr = new(CtrCipher)
 	ctr.block = block
 	ctr.nonce = nonce
+	ctr.encryptBlockSize = encryptBlockSize
+	ctr.aesBlockCount = encryptBlockSize / aes.BlockSize
 	return
 }
 
@@ -71,16 +81,19 @@ type Writer struct {
 // NewWriter returns a new Writer which encrypt data using AES before writing to the underlying object.
 func NewWriter(w io.WriteCloser, ctrCipher *CtrCipher) *Writer {
 	writer := &Writer{w: w}
-	writer.buf = make([]byte, blockSize)
+	writer.buf = make([]byte, ctrCipher.encryptBlockSize)
 	writer.cipherStream = ctrCipher.stream(0)
 	return writer
 }
 
 // AvailableSize returns how many bytes are unused in the buffer.
-func (w *Writer) AvailableSize() int { return blockSize - w.n }
+func (w *Writer) AvailableSize() int { return len(w.buf) - w.n }
 
 // Write implements the io.Writer interface.
 func (w *Writer) Write(p []byte) (n int, err error) {
+	if w.err != nil {
+		return n, w.err
+	}
 	for len(p) > w.AvailableSize() && w.err == nil {
 		copiedNum := copy(w.buf[w.n:], p)
 		w.n += copiedNum
@@ -90,9 +103,6 @@ func (w *Writer) Write(p []byte) (n int, err error) {
 		}
 		n += copiedNum
 		p = p[copiedNum:]
-	}
-	if w.err != nil {
-		return n, w.err
 	}
 	copiedNum := copy(w.buf[w.n:], p)
 	w.n += copiedNum
@@ -150,13 +160,11 @@ func (r *Reader) ReadAt(p []byte, off int64) (n int, err error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	offset := off % blockSize
-	counter := (off / blockSize) * counterPerBlock
+	offset := off % r.cipher.encryptBlockSize
+	counter := (off / r.cipher.encryptBlockSize) * r.cipher.aesBlockCount
 	cursor := off - offset
 
-	buf := blockBufPool.Get().([]byte)
-	defer blockBufPool.Put(buf)
-
+	buf := make([]byte, r.cipher.encryptBlockSize)
 	var readNum int
 	cipherStream := r.cipher.stream(uint64(counter))
 	for len(p) > 0 && err == nil {
