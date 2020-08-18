@@ -147,11 +147,11 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datu
 			return nil, true, nil
 		}
 		rows, err := slowLog.rows, slowLog.err
-		if len(rows) == 0 {
-			continue
-		}
 		if err != nil {
 			return nil, false, err
+		}
+		if len(rows) == 0 {
+			continue
 		}
 		if e.table.Name.L == strings.ToLower(infoschema.ClusterTableSlowLog) {
 			rows, err := infoschema.AppendHostInfoToRows(rows)
