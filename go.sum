@@ -37,6 +37,8 @@ github.com/VividCortex/ewma v1.1.1 h1:MnEK4VOv6n0RSY4vtRe3h11qjxL3+t0B8yOL8iMXdc
 github.com/VividCortex/ewma v1.1.1/go.mod h1:2Tkkvm3sRDVXaiyucHiACn4cqf7DpdyLvmxzcbUokwA=
 github.com/Win-Man/parser v0.0.0-20200818111239-20231ec87988 h1:KQk3/fzblJWbyXUu9q1jb1INUP7Gez5nYmeug24tWoE=
 github.com/Win-Man/parser v0.0.0-20200818111239-20231ec87988/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
+github.com/Win-Man/parser v0.0.0-20200818133941-a820ff8368dc h1:0l7wVFQfI0k8Eq++oaBo0FPvMXS+JqHxcXKJmm2vJnQ=
+github.com/Win-Man/parser v0.0.0-20200818133941-a820ff8368dc/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
