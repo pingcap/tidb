@@ -433,7 +433,7 @@ type copIteratorTaskSender struct {
 
 type copResponse struct {
 	pbResp   *coprocessor.Response
-	detail   *execdetails.ExecDetails
+	detail   *CopRuntimeStats
 	startKey kv.Key
 	err      error
 	respSize int64
@@ -455,7 +455,7 @@ func (rs *copResponse) GetStartKey() kv.Key {
 	return rs.startKey
 }
 
-func (rs *copResponse) GetExecDetails() *execdetails.ExecDetails {
+func (rs *copResponse) GetCopRuntimeStats() *CopRuntimeStats {
 	return rs.detail
 }
 
@@ -469,9 +469,6 @@ func (rs *copResponse) MemSize() int64 {
 	rs.respSize += int64(cap(rs.startKey))
 	if rs.detail != nil {
 		rs.respSize += int64(sizeofExecDetails)
-		if rs.detail.CommitDetail != nil {
-			rs.respSize += int64(sizeofCommitDetails)
-		}
 	}
 	if rs.pbResp != nil {
 		// Using a approximate size since it's hard to get a accurate value.
@@ -774,6 +771,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 	req.StoreTp = task.storeType
 	startTime := time.Now()
+	worker.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
 	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {
 		if task.storeType == kv.TiDB {
@@ -839,6 +837,7 @@ type clientHelper struct {
 	*minCommitTSPushed
 	Client
 	resolveLite bool
+	RegionRequestRuntimeStats
 }
 
 // ResolveLocks wraps the ResolveLocks function and store the resolved result.
@@ -846,6 +845,11 @@ func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	var err error
 	var resolvedLocks []uint64
 	var msBeforeTxnExpired int64
+	if ch.Stats != nil {
+		defer func(start time.Time) {
+			recordRegionRequestRuntimeStats(ch.Stats, tikvrpc.CmdResolveLock, time.Since(start))
+		}(time.Now())
+	}
 	if ch.resolveLite {
 		msBeforeTxnExpired, resolvedLocks, err = ch.LockResolver.resolveLocksLite(bo, callerStartTS, locks)
 	} else {
@@ -867,6 +871,7 @@ func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID
 	if len(directStoreAddr) > 0 {
 		sender.storeAddr = directStoreAddr
 	}
+	sender.Stats = ch.Stats
 	req.Context.ResolvedLocks = ch.minCommitTSPushed.Get()
 	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, sType)
 	return resp, ctx, sender.storeAddr, err
@@ -1015,8 +1020,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.startKey = task.ranges.at(0).StartKey
 	}
 	if resp.detail == nil {
-		resp.detail = new(execdetails.ExecDetails)
+		resp.detail = new(CopRuntimeStats)
 	}
+	resp.detail.Stats = worker.Stats
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
 	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
 	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
@@ -1070,6 +1076,12 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	return nil, nil
 }
 
+// CopRuntimeStats contains execution detail information.
+type CopRuntimeStats struct {
+	execdetails.ExecDetails
+	RegionRequestRuntimeStats
+}
+
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
 	errCode := errno.ErrUnknown
 	errMsg := err.Error()
@@ -1093,7 +1105,7 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 		pbResp: &coprocessor.Response{
 			Data: data,
 		},
-		detail: &execdetails.ExecDetails{},
+		detail: &CopRuntimeStats{},
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil

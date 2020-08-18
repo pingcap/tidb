@@ -244,6 +244,7 @@ func (h *Handle) GetAllTableStatsMemUsage() int64 {
 	data := h.statsCache.GetAll()
 	allUsage := int64(0)
 	for _, t := range data {
+=
 		allUsage += t.MemoryUsage()
 	}
 	return allUsage
@@ -923,6 +924,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 	tables := make([]*statistics.Table, 0, len(allTables))
 	for _, tbl := range allTables {
 		t, err := h.extendedStatsFromStorage(reader, tbl.Copy(), tbl.PhysicalID, true)
+
 		if err != nil {
 			return err
 		}

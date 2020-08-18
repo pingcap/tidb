@@ -694,6 +694,38 @@ func (s *testSuite5) TestShowCreateTable(c *C) {
 			"  `a` int(11) DEFAULT nextval(`test`.`seq`)\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
+
+	// TiDB defaults (and only supports) foreign_key_checks=0
+	// This means that the child table can be created before the parent table.
+	// This behavior is required for mysqldump restores.
+	tk.MustExec(`DROP TABLE IF EXISTS parent, child`)
+	tk.MustExec(`CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id))`)
+	tk.MustExec(`CREATE TABLE parent ( id INT NOT NULL PRIMARY KEY auto_increment )`)
+	tk.MustQuery(`show create table child`).Check(testutil.RowsWithSep("|",
+		""+
+			"child CREATE TABLE `child` (\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  `parent_id` int(11) NOT NULL,\n"+
+			"  PRIMARY KEY (`id`),\n"+
+			"  KEY `par_ind` (`parent_id`),\n"+
+			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`)\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
+	// Test Foreign keys + ON DELETE / ON UPDATE
+	tk.MustExec(`DROP TABLE child`)
+	tk.MustExec(`CREATE TABLE child (id INT NOT NULL PRIMARY KEY auto_increment, parent_id INT NOT NULL, INDEX par_ind (parent_id), CONSTRAINT child_ibfk_1 FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE SET NULL ON UPDATE CASCADE)`)
+	tk.MustQuery(`show create table child`).Check(testutil.RowsWithSep("|",
+		""+
+			"child CREATE TABLE `child` (\n"+
+			"  `id` int(11) NOT NULL AUTO_INCREMENT,\n"+
+			"  `parent_id` int(11) NOT NULL,\n"+
+			"  PRIMARY KEY (`id`),\n"+
+			"  KEY `par_ind` (`parent_id`),\n"+
+			"  CONSTRAINT `child_ibfk_1` FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`) ON DELETE SET NULL ON UPDATE CASCADE\n"+
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+	))
+
 }
 
 func (s *testAutoRandomSuite) TestShowCreateTableAutoRandom(c *C) {

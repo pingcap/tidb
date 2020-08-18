@@ -157,9 +157,24 @@ func rollingbackAddColumns(t *meta.Meta, job *model.Job) (ver int64, err error) 
 }
 
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, colInfo, err := checkDropColumn(t, job)
+	tblInfo, colInfo, idxInfos, err := checkDropColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+
+	for _, indexInfo := range idxInfos {
+		switch indexInfo.State {
+		case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
+			// We can not rollback now, so just continue to drop index.
+			// In function isJobRollbackable will let job rollback when state is StateNone.
+			// When there is no index related to the drop column job it is OK, but when there has indices, we should
+			// make sure the job is not rollback.
+			job.State = model.JobStateRunning
+			return ver, nil
+		case model.StatePublic:
+		default:
+			return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+		}
 	}
 
 	// StatePublic means when the job is not running yet.
@@ -175,9 +190,24 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 }
 
 func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, colInfos, _, err := checkDropColumns(t, job)
+	tblInfo, colInfos, _, idxInfos, err := checkDropColumns(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+
+	for _, indexInfo := range idxInfos {
+		switch indexInfo.State {
+		case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
+			// We can not rollback now, so just continue to drop index.
+			// In function isJobRollbackable will let job rollback when state is StateNone.
+			// When there is no index related to the drop columns job it is OK, but when there has indices, we should
+			// make sure the job is not rollback.
+			job.State = model.JobStateRunning
+			return ver, nil
+		case model.StatePublic:
+		default:
+			return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+		}
 	}
 
 	// StatePublic means when the job is not running yet.
@@ -236,12 +266,33 @@ func rollingbackAddIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, isP
 	return
 }
 
-func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, err = getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+func convertAddTablePartitionJob2RollbackJob(t *meta.Meta, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
+	job.State = model.JobStateRollingback
+	addingDefinitions := tblInfo.Partition.AddingDefinitions
+	partNames := make([]string, 0, len(addingDefinitions))
+	for _, pd := range addingDefinitions {
+		partNames = append(partNames, pd.Name.L)
+	}
+	job.Args = []interface{}{partNames}
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	return cancelOnlyNotHandledJob(job)
+	return ver, errors.Trace(otherwiseErr)
+}
+
+func rollingbackAddTablePartition(t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tblInfo, _, addingDefinitions, err := checkAddPartition(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	// addingDefinitions' len = 0 means the job hasn't reached the replica-only state.
+	if len(addingDefinitions) == 0 {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(errCancelledDDLJob)
+	}
+	// addingDefinitions is also in tblInfo, here pass the tblInfo as parameter directly.
+	return convertAddTablePartitionJob2RollbackJob(t, job, errCancelledDDLJob, tblInfo)
 }
 
 func rollingbackDropTableOrView(t *meta.Meta, job *model.Job) error {
