@@ -32,11 +32,8 @@ import (
 	"github.com/pingcap/tidb/util/mock"
 )
 
-func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
-	retriever := &slowQueryRetriever{}
-	// Ignore the error is ok for test.
+func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
 	retriever.parsedSlowLogCh = make(chan parsedSlowLog, 100)
-	terror.Log(retriever.initialize(sctx))
 	ctx := context.Background()
 	//rows, err := retriever.parseSlowLog(ctx, reader, 1024)
 	retriever.parseSlowLog(ctx, sctx, reader, 64)
@@ -45,6 +42,14 @@ func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datu
 	if err == io.EOF {
 		err = nil
 	}
+	return rows, err
+}
+
+func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
+	retriever := &slowQueryRetriever{}
+	// Ignore the error is ok for test.
+	terror.Log(retriever.initialize(sctx))
+	rows, err := parseLog(retriever, sctx, reader)
 	return rows, err
 }
 
@@ -380,11 +385,8 @@ select 7;`
 		comment := Commentf("case id: %v", i)
 		c.Assert(retriever.files, HasLen, len(cas.files), comment)
 		if len(retriever.files) > 0 {
-			ctx := context.Background()
-			retriever.parsedSlowLogCh = make(chan parsedSlowLog, 100)
-			retriever.parseSlowLog(ctx, sctx, bufio.NewReader(retriever.files[0].file), 1024)
-			slowLog := <-retriever.parsedSlowLogCh
-			rows, err := slowLog.rows, slowLog.err
+			reader := bufio.NewReader(retriever.files[0].file)
+			rows, err := parseLog(retriever, sctx, reader)
 			c.Assert(err, IsNil)
 			c.Assert(len(rows), Equals, len(cas.querys), comment)
 			for i, row := range rows {
