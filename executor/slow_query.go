@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -269,7 +270,6 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		go func() {
 			defer wg.Done()
 			result, err := e.parsedLog(sctx, log, &start)
-
 			if err != nil {
 				e.parsedSlowLogCh <- parsedSlowLog{nil, err}
 			} else {
@@ -298,6 +298,11 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 			err = fmt.Errorf("%s", r)
 		}
 	}()
+	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("panic test")
+		}
+	})
 	var st *slowQueryTuple
 	tz := ctx.GetSessionVars().Location()
 	startFlag := false
