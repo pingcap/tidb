@@ -78,12 +78,17 @@ type HTTPHandlerTestSerialSuite struct {
 }
 
 var _ = Suite(&HTTPHandlerTestSuite{
-	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
+	&basicHTTPHandlerTestSuite{},
 })
 
 var _ = SerialSuites(&HTTPHandlerTestSerialSuite{
-	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
+	&basicHTTPHandlerTestSuite{},
 })
+
+func (s *basicHTTPHandlerTestSuite) SetUpSuite(c *C) {
+	s.port, s.statusPort = genPorts()
+	s.statusScheme = "http"
+}
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	sTableID := int64(3)
@@ -934,7 +939,6 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 }
 
 func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
-	ts.port, ts.statusPort = genPorts()
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
