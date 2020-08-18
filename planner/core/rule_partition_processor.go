@@ -381,18 +381,20 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 		return nil, err
 	}
 	result := fullRange(len(pi.Definitions))
-	// Extract the partition column, if the column is not null, it's possible to prune.
-	if col != nil {
-		pruner := rangePruner{
-			lessThan: lessThanDataInt{
-				data:     partExpr.ForRangePruning.LessThan,
-				maxvalue: partExpr.ForRangePruning.MaxValue,
-			},
-			col:    col,
-			partFn: fn,
-		}
-		result = partitionRangeForCNFExpr(ctx, conds, &pruner, result)
+	if col == nil {
+		return result, nil
 	}
+
+	// Extract the partition column, if the column is not null, it's possible to prune.
+	pruner := rangePruner{
+		lessThan: lessThanDataInt{
+			data:     partExpr.ForRangePruning.LessThan,
+			maxvalue: partExpr.ForRangePruning.MaxValue,
+		},
+		col:    col,
+		partFn: fn,
+	}
+	result = partitionRangeForCNFExpr(ctx, conds, &pruner, result)
 	return result, nil
 }
 
@@ -429,16 +431,16 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 			}
 		}
 
-		if _, ok := monotoneIncFuncs[raw.FuncName.L]; ok {
-			fn = raw
-			args := fn.GetArgs()
-			if len(args) > 0 {
-				arg0 := args[0]
-				if c, ok1 := arg0.(*expression.Column); ok1 {
-					col = c
-				}
+		// if _, ok := monotoneIncFuncs[raw.FuncName.L]; ok {
+		fn = raw
+		args := fn.GetArgs()
+		if len(args) > 0 {
+			arg0 := args[0]
+			if c, ok1 := arg0.(*expression.Column); ok1 {
+				col = c
 			}
 		}
+		// }
 	case *expression.Column:
 		col = raw
 	}
@@ -503,6 +505,7 @@ func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expres
 			return 0, 0, true
 		}
 	}
+
 	dataForPrune, ok := p.extractDataForPrune(sctx, expr)
 	if !ok {
 		return 0, 0, false
@@ -611,6 +614,12 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	// Current expression is 'col op const'
 	var constExpr expression.Expression
 	if p.partFn != nil {
+		// If the partition function is not monotone, only EQ condition can be pruning.
+		_, ok := monotoneIncFuncs[p.partFn.FuncName.L]
+		if !ok && ret.op != ast.EQ {
+			return ret, false
+		}
+
 		// If the partition expression is fn(col), change constExpr to fn(constExpr).
 		constExpr = replaceColumnWithConst(p.partFn, con)
 
