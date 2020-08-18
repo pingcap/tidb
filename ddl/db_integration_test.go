@@ -1583,8 +1583,10 @@ func (s *testIntegrationSuite3) TestAlterAlgorithm(c *C) {
 	s.assertAlterErrorExec(tk, c, "alter table t add index idx_b(b), ALGORITHM=INSTANT")
 	s.assertAlterWarnExec(tk, c, "alter table t add index idx_b1(b), ALGORITHM=COPY")
 	tk.MustExec("alter table t add index idx_b2(b), ALGORITHM=INPLACE")
+	tk.MustExec("alter table t add index idx_b3(b), ALGORITHM=DEFAULT")
+	s.assertAlterWarnExec(tk, c, "alter table t drop index idx_b3, ALGORITHM=INPLACE")
 	s.assertAlterWarnExec(tk, c, "alter table t drop index idx_b1, ALGORITHM=COPY")
-	tk.MustExec("alter table t drop index idx_b2, ALGORITHM=INPLACE")
+	tk.MustExec("alter table t drop index idx_b2, ALGORITHM=INSTANT")
 
 	// Test rename
 	s.assertAlterWarnExec(tk, c, "alter table t rename to t1, ALGORITHM=COPY")
