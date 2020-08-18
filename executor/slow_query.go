@@ -578,7 +578,6 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.preprocSubQueryTime, err = strconv.ParseFloat(value, 64)
 	}
 	if err != nil {
-		fmt.Println(errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error"))
 		return valid, errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error")
 	}
 	return valid, err
