@@ -184,6 +184,9 @@ cluster-ssl-cert = ""
 # Path of file that contains X509 key in PEM format for connection with cluster components.
 cluster-ssl-key = ""
 
+# Configurations for encryption at rest.
+encryption = false
+
 [status]
 # If enable status report HTTP service.
 report-status = true

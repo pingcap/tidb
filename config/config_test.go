@@ -253,6 +253,7 @@ engines = ["tiflash"]
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
+	c.Assert(conf.Security.Encryption, Equals, false)
 
 	_, err = f.WriteString(`
 [log.file]
@@ -285,6 +286,15 @@ enable-telemetry = false
 	c.Assert(f.Sync(), IsNil)
 	c.Assert(conf.Load(configFile), IsNil)
 	c.Assert(conf.EnableTelemetry, Equals, false)
+
+	_, err = f.WriteString(`
+[security]
+encryption = true
+`)
+	c.Assert(err, IsNil)
+	c.Assert(f.Sync(), IsNil)
+	c.Assert(conf.Load(configFile), IsNil)
+	c.Assert(conf.Security.Encryption, Equals, true)
 
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
