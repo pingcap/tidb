@@ -923,6 +923,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		}
 		changingCol.Name = colName
+		changingCol.ChangeStateInfo = nil
 		tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-len(changingIdxs)]
 		// Adjust table column offset.
 		if err = adjustColumnInfoInModifyColumn(job, tblInfo, changingCol, oldCol, pos); err != nil {
