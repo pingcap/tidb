@@ -50,6 +50,22 @@ func (s *testClusteredSuite) TestClusteredUnionScan(c *C) {
 	tk.MustExec("rollback")
 }
 
+func (s *testClusteredSuite) TestClusteredUnionScanIndexLookup(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, pk char(10), c int, primary key(pk), key(a));")
+	tk.MustExec("insert into t values (1, '111', 3);")
+
+	tk.MustExec("begin")
+	tk.MustExec("update t set a = a + 1, pk = '222' where a = 1;")
+	sql := "select pk, c from t where a = 2;"
+	tk.HasPlan(sql, "IndexLookUp")
+	tk.MustQuery(sql).Check(testkit.Rows("222 3"))
+
+	tk.MustExec("commit")
+	tk.MustQuery(sql).Check(testkit.Rows("222 3"))
+}
+
 func (s *testClusteredSuite) TestClusteredIndexLookUp(c *C) {
 	tk := s.newTK(c)
 	tk.MustExec("drop table if exists t")
@@ -155,4 +171,13 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 	tk.MustExec("create table t(name varchar(255), b int, primary key(name(2)), index idx(b));")
 	tk.MustExec("insert into t values ('aaa', 1), ('bbb', 1);")
 	tk.MustQuery("select group_concat(name separator '.') from t use index(idx);").Check(testkit.Rows("aaa.bbb"))
+}
+
+func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
+	tk := s.newTK(c)
+	tk.Se.GetSessionVars().RowEncoder.Enable = false
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id varchar(255) primary key, a int, b int, unique index idx(b));")
+	tk.MustExec("insert into t values ('b568004d-afad-11ea-8e4d-d651e3a981b7', 1, -1);")
+	tk.MustQuery("select * from t use index(primary);").Check(testkit.Rows("b568004d-afad-11ea-8e4d-d651e3a981b7 1 -1"))
 }
