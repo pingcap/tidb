@@ -259,6 +259,8 @@ github.com/pingcap/sysutil v0.0.0-20200206130906-2bfa6dc40bcd/go.mod h1:EB/852NM
 github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a/go.mod h1:EB/852NMQ+aRKioCpToQ94Wl7fktV+FNnxf3CX/TTXI=
 github.com/pingcap/tidb-tools v4.0.5-0.20200805025317-02a16e0521cb+incompatible h1:obFDQU7XvnCj8CiaXFP+bWaiQDp15Ueynk8cC0s5Utk=
 github.com/pingcap/tidb-tools v4.0.5-0.20200805025317-02a16e0521cb+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
+github.com/pingcap/tidb-tools v4.0.5-0.20200817064459-ba61a7376547+incompatible h1:KGkKSxJ4t5F3Ys0ox144M5vGWm8NuHkXFyETFtakKW4=
+github.com/pingcap/tidb-tools v4.0.5-0.20200817064459-ba61a7376547+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pkg/errors v0.8.0/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pkg/errors v0.8.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
