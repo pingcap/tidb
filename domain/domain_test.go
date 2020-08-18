@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"math"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 
@@ -87,6 +88,9 @@ func unixSocketAvailable() bool {
 }
 
 func TestInfo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
 	if !unixSocketAvailable() {
 		return
 	}

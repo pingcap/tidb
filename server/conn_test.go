@@ -24,7 +24,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -463,7 +462,7 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(ts.store)
-	cfg := config.NewConfig()
+	cfg := newTestConfig()
 	cfg.Port, cfg.Status.StatusPort = genPorts()
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)

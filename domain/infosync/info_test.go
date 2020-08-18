@@ -21,6 +21,7 @@ import (
 	"os"
 	"path"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -74,6 +75,9 @@ type testSuite struct {
 }
 
 func TestTopology(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	currentID := "test"

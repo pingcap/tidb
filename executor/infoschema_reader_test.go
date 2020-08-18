@@ -559,7 +559,7 @@ type testInfoschemaClusterTableSuite struct {
 
 func (s *testInfoschemaClusterTableSuite) SetUpSuite(c *C) {
 	s.testInfoschemaTableSuiteBase.SetUpSuite(c)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(c, "127.0.0.1:0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 }

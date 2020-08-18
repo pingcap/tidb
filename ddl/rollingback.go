@@ -157,9 +157,24 @@ func rollingbackAddColumns(t *meta.Meta, job *model.Job) (ver int64, err error) 
 }
 
 func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, colInfo, err := checkDropColumn(t, job)
+	tblInfo, colInfo, idxInfos, err := checkDropColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+
+	for _, indexInfo := range idxInfos {
+		switch indexInfo.State {
+		case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
+			// We can not rollback now, so just continue to drop index.
+			// In function isJobRollbackable will let job rollback when state is StateNone.
+			// When there is no index related to the drop column job it is OK, but when there has indices, we should
+			// make sure the job is not rollback.
+			job.State = model.JobStateRunning
+			return ver, nil
+		case model.StatePublic:
+		default:
+			return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+		}
 	}
 
 	// StatePublic means when the job is not running yet.
@@ -175,9 +190,24 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 }
 
 func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, colInfos, _, err := checkDropColumns(t, job)
+	tblInfo, colInfos, _, idxInfos, err := checkDropColumns(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+
+	for _, indexInfo := range idxInfos {
+		switch indexInfo.State {
+		case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
+			// We can not rollback now, so just continue to drop index.
+			// In function isJobRollbackable will let job rollback when state is StateNone.
+			// When there is no index related to the drop columns job it is OK, but when there has indices, we should
+			// make sure the job is not rollback.
+			job.State = model.JobStateRunning
+			return ver, nil
+		case model.StatePublic:
+		default:
+			return ver, ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+		}
 	}
 
 	// StatePublic means when the job is not running yet.
