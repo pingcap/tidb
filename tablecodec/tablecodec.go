@@ -1170,6 +1170,9 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 	}
 	if segs.restoredValues != nil { // new collation
 		resultValues, err = decodeRestoredValues(columns[:colsLen], segs.restoredValues)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if hdStatus == HandleNotNeeded {
 		return resultValues, nil
