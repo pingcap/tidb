@@ -60,6 +60,7 @@ func (s *testDDLAlgorithmSuite) TestFindAlterAlgorithm(c *C) {
 		{ast.AlterTableSpec{Tp: ast.AlterTableAddPartitions}, instantAlgorithm, ast.AlgorithmTypeInstant},
 		{ast.AlterTableSpec{Tp: ast.AlterTableDropPartition}, instantAlgorithm, ast.AlgorithmTypeInstant},
 		{ast.AlterTableSpec{Tp: ast.AlterTableTruncatePartition}, instantAlgorithm, ast.AlgorithmTypeInstant},
+		{ast.AlterTableSpec{Tp: ast.AlterTableExchangePartition}, instantAlgorithm, ast.AlgorithmTypeInstant},
 
 		// TODO: after we support lock a table, change the below case.
 		{ast.AlterTableSpec{Tp: ast.AlterTableLock}, instantAlgorithm, ast.AlgorithmTypeInstant},

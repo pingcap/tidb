@@ -359,25 +359,17 @@ insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
 insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
 desc select * from th where a=-2;
 id	estRows	task	access object	operator info
-TableReader_8	10.00	root		data:Selection_7
-└─Selection_7	10.00	cop[tikv]		eq(test.th.a, -2)
-  └─TableFullScan_6	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
+TableReader_7	10.00	root	partition:all	data:Selection_6
+└─Selection_6	10.00	cop[tikv]		eq(test.th.a, -2)
+  └─TableFullScan_5	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
 desc select * from th;
 id	estRows	task	access object	operator info
-Union_8	30000.00	root		
-├─TableReader_10	10000.00	root		data:TableFullScan_9
-│ └─TableFullScan_9	10000.00	cop[tikv]	table:th, partition:p0	keep order:false, stats:pseudo
-├─TableReader_12	10000.00	root		data:TableFullScan_11
-│ └─TableFullScan_11	10000.00	cop[tikv]	table:th, partition:p1	keep order:false, stats:pseudo
-└─TableReader_14	10000.00	root		data:TableFullScan_13
-  └─TableFullScan_13	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
+TableReader_5	10000.00	root	partition:all	data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
 desc select * from th partition (p2,p1);
 id	estRows	task	access object	operator info
-Union_7	20000.00	root		
-├─TableReader_9	10000.00	root		data:TableFullScan_8
-│ └─TableFullScan_8	10000.00	cop[tikv]	table:th, partition:p1	keep order:false, stats:pseudo
-└─TableReader_11	10000.00	root		data:TableFullScan_10
-  └─TableFullScan_10	10000.00	cop[tikv]	table:th, partition:p2	keep order:false, stats:pseudo
+TableReader_5	10000.00	root	partition:p1,p2	data:TableFullScan_4
+└─TableFullScan_4	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int);
 explain select a != any (select a from t t2) from t t1;

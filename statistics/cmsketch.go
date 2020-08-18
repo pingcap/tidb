@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 // topNThreshold is the minimum ratio of the number of topn elements in CMSketch, 10 means 1 / 10 = 10%.
@@ -60,8 +60,17 @@ func (t *TopNMeta) GetH2() uint64 {
 // NewCMSketch returns a new CM sketch.
 func NewCMSketch(d, w int32) *CMSketch {
 	tbl := make([][]uint32, d)
+	// Background: The Go's memory allocator will ask caller to sweep spans in some scenarios.
+	// This can cause memory allocation request latency unpredictable, if the list of spans which need sweep is too long.
+	// For memory allocation large than 32K, the allocator will never allocate memory from spans list.
+	//
+	// The memory referenced by the CMSketch will never be freed.
+	// If the number of table or index is extremely large, there will be a large amount of spans in global list.
+	// The default value of `d` is 5 and `w` is 2048, if we use a single slice for them the size will be 40K.
+	// This allocation will be handled by mheap and will never have impact on normal allocations.
+	arena := make([]uint32, d*w)
 	for i := range tbl {
-		tbl[i] = make([]uint32, w)
+		tbl[i] = arena[i*int(w) : (i+1)*int(w)]
 	}
 	return &CMSketch{depth: d, width: w, table: tbl}
 }
@@ -169,6 +178,15 @@ func (c *CMSketch) findTopNMeta(h1, h2 uint64, d []byte) *TopNMeta {
 		}
 	}
 	return nil
+}
+
+// MemoryUsage returns the total memory usage of a CMSketch.
+// only calc the hashtable size(CMSketch.table) and the CMSketch.topN
+// data are not tracked because size of CMSketch.topN take little influence
+// We ignore the size of other metadata in CMSketch.
+func (c *CMSketch) MemoryUsage() (sum int64) {
+	sum = int64(c.depth * c.width * 4)
+	return
 }
 
 // queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.

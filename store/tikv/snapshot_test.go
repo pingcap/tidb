@@ -16,6 +16,7 @@ package tikv
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -217,7 +219,7 @@ func (s *testSnapshotSuite) TestSkipLargeTxnLock(c *C) {
 	c.Assert(txn.Set(x, []byte("x")), IsNil)
 	c.Assert(txn.Set(y, []byte("y")), IsNil)
 	ctx := context.Background()
-	bo := NewBackoffer(ctx, PrewriteMaxBackoff)
+	bo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil)
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	committer.lockTTL = 3000
@@ -248,7 +250,7 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 	c.Assert(txn.Set(x, []byte("x")), IsNil)
 	c.Assert(txn.Set(y, []byte("y")), IsNil)
 	ctx := context.Background()
-	bo := NewBackoffer(ctx, PrewriteMaxBackoff)
+	bo := NewBackofferWithVars(ctx, PrewriteMaxBackoff, nil)
 	committer, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
 	committer.lockTTL = 3000
@@ -273,4 +275,46 @@ func (s *testSnapshotSuite) TestPointGetSkipTxnLock(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(value, BytesEquals, []byte("y"))
 	c.Assert(time.Since(start), Less, 500*time.Millisecond)
+}
+
+func (s *testSnapshotSuite) TestSnapshotThreadSafe(c *C) {
+	txn := s.beginTxn(c)
+	key := kv.Key("key_test_snapshot_threadsafe")
+	c.Assert(txn.Set(key, []byte("x")), IsNil)
+	ctx := context.Background()
+	err := txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	snapshot := newTiKVSnapshot(s.store, kv.MaxVersion, 0)
+	var wg sync.WaitGroup
+	wg.Add(5)
+	for i := 0; i < 5; i++ {
+		go func() {
+			for i := 0; i < 30; i++ {
+				_, err := snapshot.Get(ctx, key)
+				c.Assert(err, IsNil)
+				_, err = snapshot.BatchGet(ctx, []kv.Key{key, kv.Key("key_not_exist")})
+				c.Assert(err, IsNil)
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+}
+
+func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
+	reqStats := make(map[tikvrpc.CmdType]*RegionRequestRuntimeStats)
+	recordRegionRequestRuntimeStats(reqStats, tikvrpc.CmdGet, time.Second)
+	recordRegionRequestRuntimeStats(reqStats, tikvrpc.CmdGet, time.Millisecond)
+	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: 0}, 0)
+	snapshot.SetOption(kv.CollectRuntimeStats, &SnapshotRuntimeStats{})
+	snapshot.mergeRegionRequestStats(reqStats)
+	snapshot.mergeRegionRequestStats(reqStats)
+	bo := NewBackofferWithVars(context.Background(), 2000, nil)
+	err := bo.BackoffWithMaxSleep(boTxnLockFast, 30, errors.New("test"))
+	c.Assert(err, IsNil)
+	snapshot.recordBackoffInfo(bo)
+	snapshot.recordBackoffInfo(bo)
+	expect := "Get:{num_rpc:4, total_time:2.002s},txnLockFast_backoff:{num:2, total_time:60 ms}"
+	c.Assert(snapshot.mu.stats.String(), Equals, expect)
 }

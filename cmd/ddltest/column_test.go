@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/table"
@@ -41,7 +42,7 @@ func (s *TestDDLSuite) checkAddColumn(c *C, rowID int64, defaultVal interface{},
 	newInsertCount := int64(0)
 	oldUpdateCount := int64(0)
 	newUpdateCount := int64(0)
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		col1Val := data[0].GetValue()
 		col2Val := data[1].GetValue()
 		col3Val := data[2].GetValue()
@@ -92,7 +93,7 @@ func (s *TestDDLSuite) checkDropColumn(c *C, rowID int64, alterColumn *table.Col
 	}
 	insertCount := int64(0)
 	updateCount := int64(0)
-	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	err = tbl.IterRecords(ctx, tbl.FirstKey(), tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		if reflect.DeepEqual(data[1].GetValue(), data[0].GetValue()) {
 			// Check inserted row.
 			insertCount++

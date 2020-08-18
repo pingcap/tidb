@@ -116,9 +116,8 @@ func onModifySchemaCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 
-	dbInfo, err := t.GetDatabase(job.SchemaID)
+	dbInfo, err := checkSchemaExistAndCancelNotExistJob(t, job)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 

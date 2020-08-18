@@ -35,15 +35,23 @@ func (s *testEvaluatorSuite) TestLike(c *C) {
 		{"aA", "Aa", 0},
 		{"aAb", `Aa%`, 0},
 		{"aAb", "aA_", 1},
+		{"baab", "b_%b", 1},
+		{"baab", "b%_b", 1},
+		{"bab", "b_%b", 1},
+		{"bab", "b%_b", 1},
+		{"bb", "b_%b", 0},
+		{"bb", "b%_b", 0},
+		{"baabccc", "b_%b%", 1},
 	}
 
 	for _, tt := range tests {
+		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
 		fc := funcs[ast.Like]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0)))
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, commentf)
 		r, err := evalBuiltinFuncConcurrent(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
+		c.Assert(err, IsNil, commentf)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match), commentf)
 	}
 }
 
@@ -64,16 +72,24 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		{"áAb", `%ab%`, 1},
 		{"áAb", `%ab`, 1},
 		{"ÀAb", "aA_", 1},
+		{"áééá", "a_%a", 1},
+		{"áééá", "a%_a", 1},
+		{"áéá", "a_%a", 1},
+		{"áéá", "a%_a", 1},
+		{"áá", "a_%a", 0},
+		{"áá", "a%_a", 0},
+		{"áééáííí", "a_%a%", 1},
 	}
 	for _, tt := range tests {
+		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
 		fc := funcs[ast.Like]
 		inputs := s.datumsToConstants(types.MakeDatums(tt.input, tt.pattern, 0))
 		f, err := fc.getFunction(s.ctx, inputs)
-		c.Assert(err, IsNil)
+		c.Assert(err, IsNil, commentf)
 		f.setCollator(collate.GetCollator("utf8mb4_general_ci"))
 		r, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, IsNil)
-		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match))
+		c.Assert(err, IsNil, commentf)
+		c.Assert(r, testutil.DatumEquals, types.NewDatum(tt.match), commentf)
 	}
 }
 

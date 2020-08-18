@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 type dbTestSuite struct{}
@@ -27,13 +28,17 @@ type dbTestSuite struct{}
 var _ = Suite(&dbTestSuite{})
 
 func (ts *dbTestSuite) TestIntegration(c *C) {
+	testleak.BeforeTest()
+	defer testleak.AfterTest(c)()
 	var err error
 	lease := 50 * time.Millisecond
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
+	defer store.Close()
 	session.SetSchemaLease(lease)
-	_, err = session.BootstrapSession(store)
+	domain, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
+	defer domain.Close()
 
 	// for NotifyUpdatePrivilege
 	createRoleSQL := `CREATE ROLE 'test'@'localhost';`

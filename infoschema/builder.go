@@ -56,11 +56,11 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	var oldTableID, newTableID int64
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable, model.ActionRepairTable:
+	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
-	case model.ActionTruncateTable, model.ActionCreateView:
+	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:
@@ -74,7 +74,13 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable {
+		if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
+			diff.Type != model.ActionExchangeTablePartition &&
+			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
+			// For normal node's information schema, repaired table is existed.
+			// For repair node's information schema, repaired table is filtered (couldn't find it in `is`).
+			// So here skip to reserve the allocators when repairing table.
+			diff.Type != model.ActionRepairTable {
 			oldAllocs, _ := b.is.AllocByID(oldTableID)
 			allocs = filterAllocators(diff, oldAllocs)
 		}
@@ -104,6 +110,24 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+	}
+	if diff.AffectedOpts != nil {
+		for _, opt := range diff.AffectedOpts {
+			var err error
+			affectedDiff := &model.SchemaDiff{
+				Version:     diff.Version,
+				Type:        diff.Type,
+				SchemaID:    opt.SchemaID,
+				TableID:     opt.TableID,
+				OldSchemaID: opt.OldSchemaID,
+				OldTableID:  opt.OldTableID,
+			}
+			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tblIDs = append(tblIDs, affectedIDs...)
 		}
 	}
 	return tblIDs, nil
@@ -409,7 +433,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		var tbl table.Table
 		tbl, err := tableFromMeta(allocs, t)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
 		schTbls.tables[t.Name.L] = tbl
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]

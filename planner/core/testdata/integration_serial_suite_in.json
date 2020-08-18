@@ -7,6 +7,17 @@
     ]
   },
   {
+    "name": "TestBroadcastJoin",
+    "cases": [
+      "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
+      "explain select /*+ broadcast_join(fact_t,d1_t,d2_t,d3_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
+      "explain select /*+ broadcast_join(fact_t,d1_t), broadcast_join_local(d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
+      "explain select /*+ broadcast_join(fact_t,d1_t,d2_t,d3_t), broadcast_join_local(d2_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
+      "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k",
+      "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k"
+    ]
+  },
+  {
     "name": "TestReadFromStorageHint",
     "cases": [
       "desc select avg(a) from t",
@@ -31,6 +42,14 @@
       "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
       "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
+    ]
+  },
+  {
+    "name": "TestIsolationReadDoNotFilterSystemDB",
+    "cases": [
+      "desc select * from metrics_schema.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'",
+      "desc select * from information_schema.tables",
+      "desc select * from mysql.stats_meta"
     ]
   },
   {

@@ -71,6 +71,7 @@ type TableReaderExecutor struct {
 	resultHandler *tableResultHandler
 	feedback      *statistics.QueryFeedback
 	plans         []plannercore.PhysicalPlan
+	tablePlan     plannercore.PhysicalPlan
 
 	memTracker       *memory.Tracker
 	selectResultHook // for testing
@@ -105,9 +106,17 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	var err error
 	if e.corColInFilter {
-		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
-		if err != nil {
-			return err
+		if e.storeType == kv.TiFlash {
+			execs, _, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)
+			if err != nil {
+				return err
+			}
+			e.dagPB.RootExecutor = execs[0]
+		} else {
+			e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if e.runtimeStats != nil {
@@ -182,10 +191,6 @@ func (e *TableReaderExecutor) Close() error {
 	if e.resultHandler != nil {
 		err = e.resultHandler.Close()
 	}
-	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID().String())
-		copStats.SetRowNum(e.feedback.Actual())
-	}
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }
@@ -194,7 +199,13 @@ func (e *TableReaderExecutor) Close() error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
-	kvReq, err := builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback).
+	var reqBuilder *distsql.RequestBuilder
+	if e.table.Meta() != nil && e.table.Meta().IsCommonHandle {
+		reqBuilder = builder.SetCommonHandleRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), ranges)
+	} else {
+		reqBuilder = builder.SetTableRanges(getPhysicalTableID(e.table), ranges, e.feedback)
+	}
+	kvReq, err := reqBuilder.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
 		SetDesc(e.desc).
@@ -209,6 +220,7 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 		return nil, err
 	}
 	e.kvRanges = append(e.kvRanges, kvReq.KeyRanges...)
+
 	result, err := e.SelectResult(ctx, e.ctx, kvReq, retTypes(e), e.feedback, getPhysicalPlanIDs(e.plans), e.id)
 	if err != nil {
 		return nil, err

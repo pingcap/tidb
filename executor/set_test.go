@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strconv"
@@ -416,6 +417,55 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "tidb_metric_query_range_duration(9) cannot be smaller than 10 or larger than 216000")
 	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("120"))
+
+	// test for tidb_slow_log_masking
+	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_slow_log_masking = 1")
+	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_slow_log_masking = 0")
+	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
+	_, err = tk.Exec("set session tidb_slow_log_masking = 0")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`select @@session.tidb_slow_log_masking;`)
+	c.Assert(err, NotNil)
+
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
+	c.Assert(tk.ExecToErr("set @@session.tidb_dml_batch_size = -120"), NotNil)
+	c.Assert(tk.ExecToErr("set @@global.tidb_dml_batch_size = 120"), NotNil)
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
+}
+
+func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	testCases := []struct {
+		sessionVarName string
+		minValue       int
+		maxValue       int
+	}{
+		{"auto_increment_increment", 1, 65535},
+		{"auto_increment_offset", 1, 65535},
+	}
+
+	for _, tc := range testCases {
+		name := tc.sessionVarName
+		selectSQL := fmt.Sprintf("select @@%s;", name)
+		validValue := tc.minValue + (tc.maxValue-tc.minValue)/2
+		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, validValue))
+		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", validValue)))
+
+		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, tc.minValue-1))
+		warnMsg := fmt.Sprintf("Warning 1292 Truncated incorrect %s value: '%d'", name, tc.minValue-1)
+		tk.MustQuery("show warnings").Check(testkit.Rows(warnMsg))
+		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", tc.minValue)))
+
+		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, tc.maxValue+1))
+		warnMsg = fmt.Sprintf("Warning 1292 Truncated incorrect %s value: '%d'", name, tc.maxValue+1)
+		tk.MustQuery("show warnings").Check(testkit.Rows(warnMsg))
+		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", tc.maxValue)))
+	}
 }
 
 func (s *testSuite5) TestSetCharset(c *C) {
@@ -525,13 +575,13 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 
-	_, err = tk.Exec("set global tidb_distsql_scan_concurrency=-1;")
+	_, err = tk.Exec("set global tidb_distsql_scan_concurrency=-2;")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency='fff';")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 
-	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency=-1;")
+	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency=-2;")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@tidb_batch_delete='ok';")
@@ -872,6 +922,9 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
 	_, err = tk.Exec("set @@tx_isolation='SERIALIZABLE'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set global allow_auto_random_explicit_insert=on;")
+	tk.MustQuery("select @@global.allow_auto_random_explicit_insert;").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite5) TestSelectGlobalVar(c *C) {
@@ -892,6 +945,96 @@ func (s *testSuite5) TestSelectGlobalVar(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownSystemVar), IsTrue, Commentf("err %v", err))
 	err = tk.ExecToErr("select @@global.invalid")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownSystemVar), IsTrue, Commentf("err %v", err))
+}
+
+func (s *testSuite5) TestSetConcurrency(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// test default value
+	tk.MustQuery("select @@tidb_executor_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.DefExecutorConcurrency)))
+
+	tk.MustQuery("select @@tidb_index_lookup_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_index_lookup_join_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_hash_join_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_hashagg_partial_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_hashagg_final_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_window_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_projection_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_distsql_scan_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.DefDistSQLScanConcurrency)))
+
+	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.DefIndexSerialScanConcurrency)))
+
+	vars := tk.Se.(sessionctx.Context).GetSessionVars()
+	c.Assert(vars.ExecutorConcurrency, Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.IndexLookupConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.IndexLookupJoinConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.HashJoinConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.HashAggPartialConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.HashAggFinalConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.WindowConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.DistSQLScanConcurrency(), Equals, variable.DefDistSQLScanConcurrency)
+
+	c.Assert(vars.IndexSerialScanConcurrency(), Equals, variable.DefIndexSerialScanConcurrency)
+
+	// test setting deprecated variables
+	warnTpl := "Warning 1287 '%s' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead"
+
+	checkSet := func(v string) {
+		tk.MustExec(fmt.Sprintf("set @@%s=1;", v))
+		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", fmt.Sprintf(warnTpl, v)))
+		tk.MustQuery(fmt.Sprintf("select @@%s;", v)).Check(testkit.Rows("1"))
+	}
+
+	checkSet(variable.TiDBIndexLookupConcurrency)
+	c.Assert(vars.IndexLookupConcurrency(), Equals, 1)
+
+	checkSet(variable.TiDBIndexLookupJoinConcurrency)
+	c.Assert(vars.IndexLookupJoinConcurrency(), Equals, 1)
+
+	checkSet(variable.TiDBHashJoinConcurrency)
+	c.Assert(vars.HashJoinConcurrency(), Equals, 1)
+
+	checkSet(variable.TiDBHashAggPartialConcurrency)
+	c.Assert(vars.HashAggPartialConcurrency(), Equals, 1)
+
+	checkSet(variable.TiDBHashAggFinalConcurrency)
+	c.Assert(vars.HashAggFinalConcurrency(), Equals, 1)
+
+	checkSet(variable.TiDBProjectionConcurrency)
+	c.Assert(vars.ProjectionConcurrency(), Equals, 1)
+
+	checkSet(variable.TiDBWindowConcurrency)
+	c.Assert(vars.WindowConcurrency(), Equals, 1)
+
+	tk.MustExec(fmt.Sprintf("set @@%s=1;", variable.TiDBDistSQLScanConcurrency))
+	tk.MustQuery(fmt.Sprintf("select @@%s;", variable.TiDBDistSQLScanConcurrency)).Check(testkit.Rows("1"))
+	c.Assert(vars.DistSQLScanConcurrency(), Equals, 1)
+
+	tk.MustExec("set @@tidb_index_serial_scan_concurrency=4")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows("4"))
+	c.Assert(vars.IndexSerialScanConcurrency(), Equals, 4)
+
+	// test setting deprecated value unset
+	tk.MustExec("set @@tidb_index_lookup_concurrency=-1;")
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency=-1;")
+	tk.MustExec("set @@tidb_hash_join_concurrency=-1;")
+	tk.MustExec("set @@tidb_hashagg_partial_concurrency=-1;")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency=-1;")
+	tk.MustExec("set @@tidb_window_concurrency=-1;")
+	tk.MustExec("set @@tidb_projection_concurrency=-1;")
+
+	c.Assert(vars.IndexLookupConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.IndexLookupJoinConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.HashJoinConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.HashAggPartialConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.HashAggFinalConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.WindowConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
+
+	_, err := tk.Exec("set @@tidb_executor_concurrency=-1;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {

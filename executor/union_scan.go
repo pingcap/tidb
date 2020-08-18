@@ -15,11 +15,13 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -103,8 +105,8 @@ type UnionScanExec struct {
 	conditionsWithVirCol []expression.Expression
 	columns              []*model.ColumnInfo
 	table                table.Table
-	// belowHandleIndex is the handle's position of the below scan plan.
-	belowHandleIndex int
+	// belowHandleCols is the handle's position of the below scan plan.
+	belowHandleCols plannercore.HandleCols
 
 	addedRows           [][]types.Datum
 	cursor4AddRows      int
@@ -145,6 +147,8 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
 	case *IndexLookUpExecutor:
 		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
+	default:
+		err = fmt.Errorf("unexpected union scan children:%T", reader)
 	}
 	if err != nil {
 		return err
@@ -200,6 +204,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 		return nil, err
 	}
 	addedRow := us.getAddedRow()
+
 	var row []types.Datum
 	var isSnapshotRow bool
 	if addedRow == nil {
@@ -244,7 +249,11 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			snapshotHandle := kv.IntHandle(row.GetInt64(us.belowHandleIndex))
+			var snapshotHandle kv.Handle
+			snapshotHandle, err = us.belowHandleCols.BuildHandle(row)
+			if err != nil {
+				return nil, err
+			}
 			if _, ok := us.dirty.deletedRows.Get(snapshotHandle); ok {
 				continue
 			}
@@ -301,15 +310,5 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 			return cmp, nil
 		}
 	}
-	aHandle := a[us.belowHandleIndex].GetInt64()
-	bHandle := b[us.belowHandleIndex].GetInt64()
-	var cmp int
-	if aHandle == bHandle {
-		cmp = 0
-	} else if aHandle > bHandle {
-		cmp = 1
-	} else {
-		cmp = -1
-	}
-	return cmp, nil
+	return us.belowHandleCols.Compare(a, b)
 }

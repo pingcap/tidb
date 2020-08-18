@@ -14,6 +14,7 @@
 package util
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -143,6 +144,16 @@ func CompatibleParseGCTime(value string) (time.Time, error) {
 	return t, err
 }
 
+// HasCancelled checks whether context has be cancelled.
+func HasCancelled(ctx context.Context) (cancel bool) {
+	select {
+	case <-ctx.Done():
+		cancel = true
+	default:
+	}
+	return
+}
+
 const (
 	// syntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
 	syntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
@@ -264,6 +275,42 @@ func MockPkixAttribute(name, value string) pkix.AttributeTypeAndValue {
 		Type:  vs,
 		Value: value,
 	}
+}
+
+// SANType is enum value for GlobalPrivValue.SANs keys.
+type SANType string
+
+const (
+	// URI indicates uri info in SAN.
+	URI = SANType("URI")
+	// DNS indicates dns info in SAN.
+	DNS = SANType("DNS")
+	// IP indicates ip info in SAN.
+	IP = SANType("IP")
+)
+
+var supportSAN = map[SANType]struct{}{
+	URI: {},
+	DNS: {},
+	IP:  {},
+}
+
+// ParseAndCheckSAN parses and check SAN str.
+func ParseAndCheckSAN(san string) (map[SANType][]string, error) {
+	sanMap := make(map[SANType][]string)
+	sans := strings.Split(san, ",")
+	for _, san := range sans {
+		kv := strings.SplitN(san, ":", 2)
+		if len(kv) != 2 {
+			return nil, errors.Errorf("invalid SAN value %s", san)
+		}
+		k, v := SANType(strings.ToUpper(strings.TrimSpace(kv[0]))), strings.TrimSpace(kv[1])
+		if _, s := supportSAN[k]; !s {
+			return nil, errors.Errorf("unsupported SAN key %s, current only support %v", k, supportSAN)
+		}
+		sanMap[k] = append(sanMap[k], v)
+	}
+	return sanMap, nil
 }
 
 // CheckSupportX509NameOneline parses and validate input str is X509_NAME_oneline format

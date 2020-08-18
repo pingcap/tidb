@@ -26,16 +26,17 @@ import (
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	ID            uint64
-	User          string
-	Host          string
-	DB            string
-	Plan          interface{}
-	Time          time.Time
-	Info          string
-	CurTxnStartTS uint64
-	StmtCtx       *stmtctx.StatementContext
-	StatsInfo     func(interface{}) map[string]uint64
+	ID              uint64
+	User            string
+	Host            string
+	DB              string
+	Plan            interface{}
+	PlanExplainRows [][]string
+	Time            time.Time
+	Info            string
+	CurTxnStartTS   uint64
+	StmtCtx         *stmtctx.StatementContext
+	StatsInfo       func(interface{}) map[string]uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
 	MaxExecutionTime uint64

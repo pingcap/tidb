@@ -49,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
 	kvstore "github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
@@ -274,6 +273,7 @@ func setCPUAffinity() {
 		exit()
 	}
 	runtime.GOMAXPROCS(len(cpu))
+	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 }
 
 func setHeapProfileTracker() {
@@ -408,8 +408,8 @@ func reloadConfig(nc, c *config.Config) {
 	// like config.GetGlobalConfig().OOMAction.
 	// These config items will become available naturally after the global config pointer
 	// is updated in function ReloadGlobalConfig.
-	if nc.Performance.MaxMemory != c.Performance.MaxMemory {
-		plannercore.PreparedPlanCacheMaxMemory.Store(nc.Performance.MaxMemory)
+	if nc.Performance.ServerMemoryQuota != c.Performance.ServerMemoryQuota {
+		plannercore.PreparedPlanCacheMaxMemory.Store(nc.Performance.ServerMemoryQuota)
 	}
 	if nc.Performance.CrossJoin != c.Performance.CrossJoin {
 		plannercore.AllowCartesianProduct.Store(nc.Performance.CrossJoin)
@@ -418,13 +418,14 @@ func reloadConfig(nc, c *config.Config) {
 		statistics.FeedbackProbability.Store(nc.Performance.FeedbackProbability)
 	}
 	if nc.Performance.QueryFeedbackLimit != c.Performance.QueryFeedbackLimit {
-		handle.MaxQueryFeedbackCount.Store(int64(nc.Performance.QueryFeedbackLimit))
+		statistics.MaxQueryFeedbackCount.Store(int64(nc.Performance.QueryFeedbackLimit))
 	}
 	if nc.Performance.PseudoEstimateRatio != c.Performance.PseudoEstimateRatio {
 		statistics.RatioOfPseudoEstimate.Store(nc.Performance.PseudoEstimateRatio)
 	}
 	if nc.Performance.MaxProcs != c.Performance.MaxProcs {
 		runtime.GOMAXPROCS(int(nc.Performance.MaxProcs))
+		metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 	}
 	if nc.TiKVClient.StoreLimit != c.TiKVClient.StoreLimit {
 		storeutil.StoreLimit.Store(nc.TiKVClient.StoreLimit)
@@ -549,15 +550,24 @@ func overrideConfig(cfg *config.Config) {
 
 func setGlobalVars() {
 	cfg := config.GetGlobalConfig()
+
+	// Disable automaxprocs log
+	nopLog := func(string, ...interface{}) {}
+	_, err := maxprocs.Set(maxprocs.Logger(nopLog))
+	terror.MustNil(err)
+	// We should respect to user's settings in config file.
+	// The default value of MaxProcs is 0, runtime.GOMAXPROCS(0) is no-op.
+	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
+	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
+
 	ddlLeaseDuration := parseDuration(cfg.Lease)
 	session.SetSchemaLease(ddlLeaseDuration)
-	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
 	domain.RunAutoAnalyze = cfg.Performance.RunAutoAnalyze
 	statistics.FeedbackProbability.Store(cfg.Performance.FeedbackProbability)
-	handle.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
+	statistics.MaxQueryFeedbackCount.Store(int64(cfg.Performance.QueryFeedbackLimit))
 	statistics.RatioOfPseudoEstimate.Store(cfg.Performance.PseudoEstimateRatio)
 	ddl.RunWorker = cfg.RunDDL
 	if cfg.SplitTable {
@@ -566,6 +576,10 @@ func setGlobalVars() {
 	plannercore.AllowCartesianProduct.Store(cfg.Performance.CrossJoin)
 	privileges.SkipWithGrant = cfg.Security.SkipGrantTable
 	kv.TxnTotalSizeLimit = cfg.Performance.TxnTotalSizeLimit
+	if cfg.Performance.TxnEntrySizeLimit > 120*1024*1024 {
+		log.Fatal("cannot set txn entry size limit larger than 120M")
+	}
+	kv.TxnEntrySizeLimit = cfg.Performance.TxnEntrySizeLimit
 
 	priority := mysql.Str2Priority(cfg.Performance.ForcePriority)
 	variable.ForcePriority = int32(priority)
@@ -590,7 +604,7 @@ func setGlobalVars() {
 		if plannercore.PreparedPlanCacheMemoryGuardRatio < 0.0 || plannercore.PreparedPlanCacheMemoryGuardRatio > 1.0 {
 			plannercore.PreparedPlanCacheMemoryGuardRatio = 0.1
 		}
-		plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.MaxMemory)
+		plannercore.PreparedPlanCacheMaxMemory.Store(cfg.Performance.ServerMemoryQuota)
 		total, err := memory.MemTotal()
 		terror.MustNil(err)
 		if plannercore.PreparedPlanCacheMaxMemory.Load() > total || plannercore.PreparedPlanCacheMaxMemory.Load() <= 0 {
@@ -604,13 +618,20 @@ func setGlobalVars() {
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
 	c := config.GetGlobalConfig()
 	executor.GlobalDiskUsageTracker.SetBytesLimit(c.TempStorageQuota)
-	if c.Performance.MaxMemory < 1 {
+	if c.Performance.ServerMemoryQuota < 1 {
 		// If MaxMemory equals 0, it means unlimited
 		executor.GlobalMemoryUsageTracker.SetBytesLimit(-1)
 	} else {
-		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.MaxMemory))
+		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.ServerMemoryQuota))
 	}
 	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
+
+	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
+	if err != nil {
+		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
+			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
+	}
+	tikv.StoreLivenessTimeout = t
 }
 
 func setupLog() {
@@ -619,10 +640,6 @@ func setupLog() {
 	terror.MustNil(err)
 
 	err = logutil.InitLogger(cfg.Log.ToLogConfig())
-	terror.MustNil(err)
-	// Disable automaxprocs log
-	nopLog := func(string, ...interface{}) {}
-	_, err = maxprocs.Set(maxprocs.Logger(nopLog))
 	terror.MustNil(err)
 
 	if len(os.Getenv("GRPC_DEBUG")) > 0 {

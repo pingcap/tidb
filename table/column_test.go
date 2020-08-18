@@ -17,9 +17,12 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -112,18 +115,19 @@ func (t *testTableSuite) TestCheck(c *C) {
 func (t *testTableSuite) TestHandleBadNull(c *C) {
 	col := newCol("a")
 	sc := new(stmtctx.StatementContext)
-	d, err := col.HandleBadNull(types.Datum{}, sc)
+	d := types.Datum{}
+	err := col.HandleBadNull(&d, sc)
 	c.Assert(err, IsNil)
 	cmp, err := d.CompareDatum(sc, &types.Datum{})
 	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)
 
 	col.Flag |= mysql.NotNullFlag
-	d, err = col.HandleBadNull(types.Datum{}, sc)
+	err = col.HandleBadNull(&types.Datum{}, sc)
 	c.Assert(err, NotNil)
 
 	sc.BadNullAsWarning = true
-	d, err = col.HandleBadNull(types.Datum{}, sc)
+	err = col.HandleBadNull(&types.Datum{}, sc)
 	c.Assert(err, IsNil)
 }
 
@@ -286,12 +290,30 @@ func (t *testTableSuite) TestCastValue(c *C) {
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x8c, 0x80}), &colInfoS, false, false)
 	c.Assert(err, NotNil)
 
+	colInfoS.Charset = mysql.UTF8Charset
+	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x8c, 0x80}), &colInfoS, false, true)
+	c.Assert(err, IsNil)
+
 	colInfoS.Charset = mysql.UTF8MB4Charset
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x80}), &colInfoS, false, false)
 	c.Assert(err, NotNil)
+
+	colInfoS.Charset = mysql.UTF8MB4Charset
+	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x80}), &colInfoS, false, true)
+	c.Assert(err, IsNil)
+
+	colInfoS.Charset = charset.CharsetASCII
+	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, false)
+	c.Assert(err, NotNil)
+
+	colInfoS.Charset = charset.CharsetASCII
+	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, true)
+	c.Assert(err, IsNil)
 }
 
 func (t *testTableSuite) TestGetDefaultValue(c *C) {
+	var nilDt types.Datum
+	nilDt.SetNull()
 	ctx := mock.NewContext()
 	zeroTimestamp := types.ZeroTimestamp
 	timestampValue := types.NewTime(types.FromDate(2019, 5, 6, 12, 48, 49, 0), mysql.TypeTimestamp, types.DefaultFsp)
@@ -409,7 +431,28 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 			types.NewIntDatum(0),
 			nil,
 		},
+		{
+			&model.ColumnInfo{
+				FieldType: types.FieldType{
+					Tp:   mysql.TypeLonglong,
+					Flag: mysql.NotNullFlag,
+				},
+				DefaultIsExpr: true,
+				DefaultValue:  "1",
+			},
+			false,
+			nilDt,
+			nil,
+		},
 	}
+
+	exp := expression.EvalAstExpr
+	expression.EvalAstExpr = func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
+		return types.NewIntDatum(1), nil
+	}
+	defer func() {
+		expression.EvalAstExpr = exp
+	}()
 
 	for _, tt := range tests {
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = !tt.strict
@@ -418,7 +461,11 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 			c.Assert(tt.err, NotNil, Commentf("%v", err))
 			continue
 		}
-		c.Assert(val, DeepEquals, tt.val)
+		if tt.colInfo.DefaultIsExpr {
+			c.Assert(val, DeepEquals, types.NewIntDatum(1))
+		} else {
+			c.Assert(val, DeepEquals, tt.val)
+		}
 	}
 
 	for _, tt := range tests {
@@ -428,7 +475,9 @@ func (t *testTableSuite) TestGetDefaultValue(c *C) {
 			c.Assert(tt.err, NotNil, Commentf("%v", err))
 			continue
 		}
-		c.Assert(val, DeepEquals, tt.val)
+		if !tt.colInfo.DefaultIsExpr {
+			c.Assert(val, DeepEquals, tt.val)
+		}
 	}
 }
 

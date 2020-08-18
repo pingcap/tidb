@@ -285,6 +285,22 @@ const (
 	CreateOptRuleBlacklist = `CREATE TABLE IF NOT EXISTS mysql.opt_rule_blacklist (
 		name char(100) NOT NULL
 	);`
+
+	// CreateStatsExtended stores the registered extended statistics.
+	CreateStatsExtended = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
+		stats_name varchar(32) NOT NULL,
+		db varchar(32) NOT NULL,
+		type tinyint(4) NOT NULL,
+		table_id bigint(64) NOT NULL,
+		column_ids varchar(32) NOT NULL,
+		scalar_stats double DEFAULT NULL,
+		blob_stats blob DEFAULT NULL,
+		version bigint(64) unsigned NOT NULL,
+		status tinyint(4) NOT NULL,
+		PRIMARY KEY(stats_name, db),
+		KEY idx_1 (table_id, status, version),
+		KEY idx_2 (status, version)
+	);`
 )
 
 // bootstrap initiates system DB for a store.
@@ -389,6 +405,10 @@ const (
 	version46 = 46
 	// version47 add Source to bindings to indicate the way binding created.
 	version47 = 47
+	// version48 reset all deprecated concurrency related system-variables if they were all default value.
+	version48 = 48
+	// version49 introduces mysql.stats_extended table.
+	version49 = 49
 )
 
 var (
@@ -439,6 +459,8 @@ var (
 		upgradeToVer45,
 		upgradeToVer46,
 		upgradeToVer47,
+		upgradeToVer48,
+		upgradeToVer49,
 	}
 )
 
@@ -1071,6 +1093,61 @@ func upgradeToVer47(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `source` varchar(10) NOT NULL default 'unknown'", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer48(s Session, ver int64) {
+	if ver >= version48 {
+		return
+	}
+	defValues := map[string]string{
+		variable.TiDBIndexLookupConcurrency:     "4",
+		variable.TiDBIndexLookupJoinConcurrency: "4",
+		variable.TiDBHashAggFinalConcurrency:    "4",
+		variable.TiDBHashAggPartialConcurrency:  "4",
+		variable.TiDBWindowConcurrency:          "4",
+		variable.TiDBProjectionConcurrency:      "4",
+		variable.TiDBHashJoinConcurrency:        "5",
+	}
+	names := make([]string, 0, len(defValues))
+	for n := range defValues {
+		names = append(names, n)
+	}
+
+	selectSQL := "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(names, quoteCommaQuote) + "')"
+	ctx := context.Background()
+	rs, err := s.Execute(ctx, selectSQL)
+	terror.MustNil(err)
+	r := rs[0]
+	defer terror.Call(r.Close)
+	req := r.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
+	err = r.Next(ctx, req)
+	for err == nil && req.NumRows() != 0 {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			n := strings.ToLower(row.GetString(0))
+			v := row.GetString(1)
+			if defValue, ok := defValues[n]; !ok || defValue != v {
+				return
+			}
+		}
+		err = r.Next(ctx, req)
+	}
+	terror.MustNil(err)
+
+	mustExecute(s, "BEGIN")
+	v := strconv.Itoa(variable.ConcurrencyUnset)
+	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s'", mysql.SystemDB, mysql.GlobalVariablesTable)
+	for _, name := range names {
+		mustExecute(s, fmt.Sprintf(sql, v, name))
+	}
+	mustExecute(s, "COMMIT")
+}
+
+func upgradeToVer49(s Session, ver int64) {
+	if ver >= version49 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -1134,6 +1211,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateExprPushdownBlacklist)
 	// Create opt_rule_blacklist table.
 	mustExecute(s, CreateOptRuleBlacklist)
+	// Create stats_extended table.
+	mustExecute(s, CreateStatsExtended)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.

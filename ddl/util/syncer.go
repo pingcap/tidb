@@ -72,8 +72,6 @@ type SchemaSyncer interface {
 	Init(ctx context.Context) error
 	// UpdateSelfVersion updates the current version to the self path on etcd.
 	UpdateSelfVersion(ctx context.Context, version int64) error
-	// RemoveSelfVersionPath remove the self path from etcd.
-	RemoveSelfVersionPath() error
 	// OwnerUpdateGlobalVersion updates the latest version to the global path on etcd until updating is successful or the ctx is done.
 	OwnerUpdateGlobalVersion(ctx context.Context, version int64) error
 	// GlobalVersionCh gets the chan for watching global version.
@@ -95,8 +93,8 @@ type SchemaSyncer interface {
 	NotifyCleanExpiredPaths() bool
 	// StartCleanWork starts to clean up tasks.
 	StartCleanWork()
-	// CloseCleanWork ends cleanup tasks.
-	CloseCleanWork()
+	// Close ends SchemaSyncer.
+	Close()
 }
 
 type ownerChecker interface {
@@ -115,17 +113,20 @@ type schemaVersionSyncer struct {
 	// for clean worker
 	ownerChecker              ownerChecker
 	notifyCleanExpiredPathsCh chan struct{}
-	quiteCh                   chan struct{}
+	ctx                       context.Context
+	cancel                    context.CancelFunc
 }
 
 // NewSchemaSyncer creates a new SchemaSyncer.
-func NewSchemaSyncer(etcdCli *clientv3.Client, id string, oc ownerChecker) SchemaSyncer {
+func NewSchemaSyncer(ctx context.Context, etcdCli *clientv3.Client, id string, oc ownerChecker) SchemaSyncer {
+	childCtx, cancelFunc := context.WithCancel(ctx)
 	return &schemaVersionSyncer{
 		etcdCli:                   etcdCli,
 		selfSchemaVerPath:         fmt.Sprintf("%s/%s", DDLAllSchemaVersions, id),
 		ownerChecker:              oc,
 		notifyCleanExpiredPathsCh: make(chan struct{}, 1),
-		quiteCh:                   make(chan struct{}),
+		ctx:                       childCtx,
+		cancel:                    cancelFunc,
 	}
 }
 
@@ -278,8 +279,8 @@ func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx context.Context, vers
 	return errors.Trace(err)
 }
 
-// RemoveSelfVersionPath implements SchemaSyncer.RemoveSelfVersionPath interface.
-func (s *schemaVersionSyncer) RemoveSelfVersionPath() error {
+// removeSelfVersionPath remove the self path from etcd.
+func (s *schemaVersionSyncer) removeSelfVersionPath() error {
 	startTime := time.Now()
 	var err error
 	defer func() {
@@ -432,7 +433,7 @@ func (s *schemaVersionSyncer) StartCleanWork() {
 			}
 
 			for i := 0; i < opDefaultRetryCnt; i++ {
-				childCtx, cancelFunc := context.WithTimeout(context.Background(), opDefaultTimeout)
+				childCtx, cancelFunc := context.WithTimeout(s.ctx, opDefaultTimeout)
 				resp, err := s.etcdCli.Leases(childCtx)
 				cancelFunc()
 				if err != nil {
@@ -445,14 +446,19 @@ func (s *schemaVersionSyncer) StartCleanWork() {
 				}
 				time.Sleep(opRetryInterval)
 			}
-		case <-s.quiteCh:
+		case <-s.ctx.Done():
 			return
 		}
 	}
 }
 
-func (s *schemaVersionSyncer) CloseCleanWork() {
-	close(s.quiteCh)
+func (s *schemaVersionSyncer) Close() {
+	s.cancel()
+
+	err := s.removeSelfVersionPath()
+	if err != nil {
+		logutil.BgLogger().Error("[ddl] remove self version path failed", zap.Error(err))
+	}
 }
 
 func (s *schemaVersionSyncer) NotifyCleanExpiredPaths() bool {
@@ -481,7 +487,7 @@ func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) 
 	for _, lease := range leases {
 		// The DDL owner key uses '%x', so here print it too.
 		leaseID := fmt.Sprintf("%x, %d", lease.ID, lease.ID)
-		childCtx, cancelFunc := context.WithTimeout(context.Background(), opDefaultTimeout)
+		childCtx, cancelFunc := context.WithTimeout(s.ctx, opDefaultTimeout)
 		ttlResp, err := s.etcdCli.TimeToLive(childCtx, lease.ID)
 		cancelFunc()
 		if err != nil {
@@ -498,7 +504,7 @@ func (s *schemaVersionSyncer) doCleanExpirePaths(leases []clientv3.LeaseStatus) 
 		}
 
 		st := time.Now()
-		childCtx, cancelFunc = context.WithTimeout(context.Background(), opDefaultTimeout)
+		childCtx, cancelFunc = context.WithTimeout(s.ctx, opDefaultTimeout)
 		_, err = s.etcdCli.Revoke(childCtx, lease.ID)
 		cancelFunc()
 		if err != nil && terror.ErrorEqual(err, rpctypes.ErrLeaseNotFound) {

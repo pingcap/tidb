@@ -21,10 +21,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -44,15 +46,14 @@ const (
 )
 
 var (
-	tikvBackoffHistogramRPC          = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
-	tikvBackoffHistogramLock         = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
-	tikvBackoffHistogramLockFast     = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
-	tikvBackoffHistogramPD           = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
-	tikvBackoffHistogramRegionMiss   = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
-	tikvBackoffHistogramUpdateLeader = metrics.TiKVBackoffHistogram.WithLabelValues("updateLeader")
-	tikvBackoffHistogramServerBusy   = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
-	tikvBackoffHistogramStaleCmd     = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
-	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
+	tikvBackoffHistogramRPC        = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
+	tikvBackoffHistogramLock       = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
+	tikvBackoffHistogramLockFast   = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
+	tikvBackoffHistogramPD         = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
+	tikvBackoffHistogramRegionMiss = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
+	tikvBackoffHistogramServerBusy = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
+	tikvBackoffHistogramStaleCmd   = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
+	tikvBackoffHistogramEmpty      = metrics.TiKVBackoffHistogram.WithLabelValues("")
 )
 
 func (t backoffType) metric() prometheus.Observer {
@@ -67,8 +68,6 @@ func (t backoffType) metric() prometheus.Observer {
 		return tikvBackoffHistogramPD
 	case BoRegionMiss:
 		return tikvBackoffHistogramRegionMiss
-	case BoUpdateLeader:
-		return tikvBackoffHistogramUpdateLeader
 	case boServerBusy:
 		return tikvBackoffHistogramServerBusy
 	case boStaleCmd:
@@ -134,7 +133,6 @@ const (
 	boTxnLockFast
 	BoPDRPC
 	BoRegionMiss
-	BoUpdateLeader
 	boServerBusy
 	boTxnNotFound
 	boStaleCmd
@@ -158,8 +156,6 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		return NewBackoffFn(2, 500, NoJitter)
 	case boTxnNotFound:
 		return NewBackoffFn(2, 500, NoJitter)
-	case BoUpdateLeader:
-		return NewBackoffFn(1, 10, NoJitter)
 	case boServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
 	case boStaleCmd:
@@ -180,8 +176,6 @@ func (t backoffType) String() string {
 		return "pdRPC"
 	case BoRegionMiss:
 		return "regionMiss"
-	case BoUpdateLeader:
-		return "updateLeader"
 	case boServerBusy:
 		return "serverBusy"
 	case boStaleCmd:
@@ -200,7 +194,7 @@ func (t backoffType) TError() error {
 		return ErrResolveLockTimeout
 	case BoPDRPC:
 		return ErrPDServerTimeout
-	case BoRegionMiss, BoUpdateLeader:
+	case BoRegionMiss:
 		return ErrRegionUnavailable
 	case boServerBusy:
 		return ErrTiKVServerBusy
@@ -261,7 +255,7 @@ type txnStartCtxKeyType struct{}
 // txnStartKey is a key for transaction start_ts info in context.Context.
 var txnStartKey = txnStartCtxKeyType{}
 
-// NewBackoffer creates a Backoffer with maximum sleep time(in ms).
+// NewBackoffer (Deprecated) creates a Backoffer with maximum sleep time(in ms).
 func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
 		ctx:      ctx,
@@ -270,13 +264,18 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	}
 }
 
+// NewBackofferWithVars creates a Backoffer with maximum sleep time(in ms) and kv.Variables.
+func NewBackofferWithVars(ctx context.Context, maxSleep int, vars *kv.Variables) *Backoffer {
+	return NewBackoffer(ctx, maxSleep).withVars(vars)
+}
+
 // NewNoopBackoff create a Backoffer do nothing just return error directly
 func NewNoopBackoff(ctx context.Context) *Backoffer {
 	return &Backoffer{ctx: ctx, noop: true}
 }
 
-// WithVars sets the kv.Variables to the Backoffer and return it.
-func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
+// withVars sets the kv.Variables to the Backoffer and return it.
+func (b *Backoffer) withVars(vars *kv.Variables) *Backoffer {
 	if vars != nil {
 		b.vars = vars
 	}
@@ -291,6 +290,11 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	if span := opentracing.SpanFromContext(b.ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(fmt.Sprintf("tikv.backoff.%s", typ), opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(b.ctx, span1)
+	}
 	return b.BackoffWithMaxSleep(typ, -1, err)
 }
 
@@ -343,8 +347,15 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	}
 	b.backoffTimes[typ]++
 
+	stmtExec := b.ctx.Value(execdetails.StmtExecDetailKey)
+	if stmtExec != nil {
+		detail := stmtExec.(*execdetails.StmtExecDetails)
+		atomic.AddInt64(&detail.BackoffDuration, int64(realSleep)*int64(time.Millisecond))
+		atomic.AddInt64(&detail.BackoffCount, 1)
+	}
+
 	if b.vars != nil && b.vars.Killed != nil {
-		if atomic.CompareAndSwapUint32(b.vars.Killed, 1, 0) {
+		if atomic.LoadUint32(b.vars.Killed) == 1 {
 			return ErrQueryInterrupted
 		}
 	}

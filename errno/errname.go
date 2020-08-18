@@ -887,6 +887,7 @@ var MySQLErrName = map[uint16]string{
 	ErrGeneratedColumnNonPrior:                               "Generated column can refer only to generated columns defined prior to it.",
 	ErrDependentByGeneratedColumn:                            "Column '%s' has a generated column dependency.",
 	ErrGeneratedColumnRefAutoInc:                             "Generated column '%s' cannot refer to auto-increment column.",
+	ErrWarnConflictingHint:                                   "Hint %s is ignored as conflicting/duplicated.",
 	ErrInvalidFieldSize:                                      "Invalid size for column '%s'.",
 	ErrIncorrectType:                                         "Incorrect type for argument %s in function %s.",
 	ErrInvalidJSONData:                                       "Invalid JSON data provided to function %s: %s",
@@ -946,6 +947,7 @@ var MySQLErrName = map[uint16]string{
 	ErrJSONValueOutOfRangeForFuncIndex:                       "Out of range JSON value for CAST for functional index '%s'",
 	ErrFunctionalIndexDataIsTooLong:                          "Data too long for functional index '%s'",
 	ErrFunctionalIndexNotApplicable:                          "Cannot use functional index '%s' due to type or collation conversion",
+	ErrUnsupportedConstraintCheck:                            "%s is not supported",
 
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed:         "Only one DEFAULT partition allowed",
@@ -1069,11 +1071,15 @@ var MySQLErrName = map[uint16]string{
 	ErrMixOfGroupFuncAndFieldsIncompatible: "In aggregated query without GROUP BY, expression #%d of SELECT list contains nonaggregated column '%s'; this is incompatible with sql_mode=only_full_group_by",
 	ErrUnsupportedSecondArgumentType:       "JSON_OBJECTAGG: unsupported second argument type %v",
 	ErrLockExpire:                          "TTL manager has timed out, pessimistic locks may expire, please commit or rollback this transaction",
+	ErrTableOptionUnionUnsupported:         "CREATE/ALTER table with union option is not supported",
+	ErrTableOptionInsertMethodUnsupported:  "CREATE/ALTER table with insert method option is not supported",
 
 	ErrBRIEBackupFailed:  "Backup failed: %s",
 	ErrBRIERestoreFailed: "Restore failed: %s",
 	ErrBRIEImportFailed:  "Import failed: %s",
 	ErrBRIEExportFailed:  "Export failed: %s",
+
+	ErrInvalidPlacementSpec: "Invalid placement policy '%s': %s",
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:        "PD server timeout",

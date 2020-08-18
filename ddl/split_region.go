@@ -16,36 +16,50 @@ package ddl
 import (
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 
-func splitPartitionTableRegion(store kv.SplittableStore, pi *model.PartitionInfo, scatter bool) {
+func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, pi *model.PartitionInfo, scatter bool) {
 	// Max partition count is 4096, should we sample and just choose some of the partition to split?
 	regionIDs := make([]uint64, 0, len(pi.Definitions))
-	for _, def := range pi.Definitions {
-		regionIDs = append(regionIDs, splitRecordRegion(store, def.ID, scatter))
-	}
-	if scatter {
-		waitScatterRegionFinish(store, regionIDs...)
-	}
-}
-
-func splitTableRegion(store kv.SplittableStore, tbInfo *model.TableInfo, scatter bool) {
+	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
+	defer cancel()
 	if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
-		splitPreSplitedTable(store, tbInfo, scatter)
+		for _, def := range pi.Definitions {
+			regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, def.ID, scatter)...)
+		}
 	} else {
-		regionID := splitRecordRegion(store, tbInfo.ID, scatter)
-		if scatter {
-			waitScatterRegionFinish(store, regionID)
+		for _, def := range pi.Definitions {
+			regionIDs = append(regionIDs, splitRecordRegion(ctxWithTimeout, store, def.ID, scatter))
 		}
 	}
+	if scatter {
+		waitScatterRegionFinish(ctxWithTimeout, store, regionIDs...)
+	}
 }
 
-func splitPreSplitedTable(store kv.SplittableStore, tbInfo *model.TableInfo, scatter bool) {
+func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, scatter bool) {
+	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), ctx.GetSessionVars().GetSplitRegionTimeout())
+	defer cancel()
+	var regionIDs []uint64
+	if tbInfo.ShardRowIDBits > 0 && tbInfo.PreSplitRegions > 0 {
+		regionIDs = preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, tbInfo.ID, scatter)
+	} else {
+		regionIDs = append(regionIDs, splitRecordRegion(ctxWithTimeout, store, tbInfo.ID, scatter))
+	}
+	if scatter {
+		waitScatterRegionFinish(ctxWithTimeout, store, regionIDs...)
+	}
+}
+
+func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableStore, tbInfo *model.TableInfo, physicalID int64, scatter bool) []uint64 {
 	// Example:
 	// ShardRowIDBits = 4
 	// PreSplitRegions = 2
@@ -73,27 +87,26 @@ func splitPreSplitedTable(store kv.SplittableStore, tbInfo *model.TableInfo, sca
 	step := int64(1 << (tbInfo.ShardRowIDBits - tbInfo.PreSplitRegions))
 	max := int64(1 << tbInfo.ShardRowIDBits)
 	splitTableKeys := make([][]byte, 0, 1<<(tbInfo.PreSplitRegions))
+	splitTableKeys = append(splitTableKeys, tablecodec.GenTablePrefix(physicalID))
 	for p := step; p < max; p += step {
 		recordID := p << (64 - tbInfo.ShardRowIDBits - 1)
-		recordPrefix := tablecodec.GenTableRecordPrefix(tbInfo.ID)
+		recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
 		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
 		splitTableKeys = append(splitTableKeys, key)
 	}
 	var err error
-	regionIDs, err := store.SplitRegions(context.Background(), splitTableKeys, scatter)
+	regionIDs, err := store.SplitRegions(ctx, splitTableKeys, scatter)
 	if err != nil {
 		logutil.BgLogger().Warn("[ddl] pre split some table regions failed",
 			zap.Stringer("table", tbInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
 	}
 	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter)...)
-	if scatter {
-		waitScatterRegionFinish(store, regionIDs...)
-	}
+	return regionIDs
 }
 
-func splitRecordRegion(store kv.SplittableStore, tableID int64, scatter bool) uint64 {
+func splitRecordRegion(ctx context.Context, store kv.SplittableStore, tableID int64, scatter bool) uint64 {
 	tableStartKey := tablecodec.GenTablePrefix(tableID)
-	regionIDs, err := store.SplitRegions(context.Background(), [][]byte{tableStartKey}, scatter)
+	regionIDs, err := store.SplitRegions(ctx, [][]byte{tableStartKey}, scatter)
 	if err != nil {
 		// It will be automatically split by TiKV later.
 		logutil.BgLogger().Warn("[ddl] split table region failed", zap.Error(err))
@@ -118,11 +131,15 @@ func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatte
 	return regionIDs
 }
 
-func waitScatterRegionFinish(store kv.SplittableStore, regionIDs ...uint64) {
+func waitScatterRegionFinish(ctx context.Context, store kv.SplittableStore, regionIDs ...uint64) {
 	for _, regionID := range regionIDs {
-		err := store.WaitScatterRegionFinish(regionID, 0)
+		err := store.WaitScatterRegionFinish(ctx, regionID, 0)
 		if err != nil {
 			logutil.BgLogger().Warn("[ddl] wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
+			// We don't break for PDError because it may caused by ScatterRegion request failed.
+			if _, ok := errors.Cause(err).(*tikv.PDError); !ok {
+				break
+			}
 		}
 	}
 }

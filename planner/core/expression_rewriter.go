@@ -46,17 +46,30 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
+	newExpr, err := rewriteAstExpr(sctx, expr, nil, nil)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return newExpr.Eval(chunk.Row{})
+}
+
+// rewriteAstExpr rewrites ast expression directly.
+func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
 	var is infoschema.InfoSchema
 	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
 	b := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
+	if schema != nil {
+		fakePlan.schema = schema
+		fakePlan.names = names
+	}
 	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
 	if err != nil {
-		return types.Datum{}, err
+		return nil, err
 	}
-	return newExpr.Eval(chunk.Row{})
+	return newExpr, nil
 }
 
 func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
@@ -695,7 +708,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		return v, true
 	}
 	np = er.popExistsSubPlan(np)
-	if len(ExtractCorrelatedCols(np)) > 0 {
+	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p, er.err = er.b.buildSemiApply(er.p, np, nil, er.asScalar, v.Not)
 		if er.err != nil || !er.asScalar {
 			return v, true
@@ -808,7 +821,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
 	// we can treat it as constant, because the upper LogicalApply cannot be eliminated since current node is a join node),
 	// and don't need to append a scalar value, we can rewrite it to inner join.
-	if er.sctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(extractCorColumnsBySchema(np, er.p.Schema())) == 0 && collFlag {
+	if er.sctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 && collFlag {
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		er.b.optFlag |= flagEliminateAgg
 		er.b.optFlag |= flagEliminateProjection
@@ -854,7 +867,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		return v, true
 	}
 	np = er.b.buildMaxOneRow(np)
-	if len(ExtractCorrelatedCols(np)) > 0 {
+	if len(ExtractCorrelatedCols4LogicalPlan(np)) > 0 {
 		er.p = er.b.buildApplyWithJoinType(er.p, np, LeftOuterJoin)
 		if np.Schema().Len() > 1 {
 			newCols := make([]expression.Expression, 0, np.Schema().Len())
@@ -1073,6 +1086,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 			er.err = err
 			return
 		}
+		f.SetCoercibility(expression.CoercibilityImplicit)
 		er.ctxStackAppend(f, types.EmptyName)
 		return
 	}
@@ -1525,9 +1539,16 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	var function expression.Expression
 	er.ctxStackPop(len(v.Args))
 	if _, ok := expression.DeferredFunctions[v.FnName.L]; er.useCache() && ok {
-		function, er.err = expression.NewFunctionBase(er.sctx, v.FnName.L, &v.Type, args...)
-		c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType().Clone(), DeferredExpr: function}
-		er.ctxStackAppend(c, types.EmptyName)
+		// When the expression is unix_timestamp and the number of argument is not zero,
+		// we deal with it as normal expression.
+		if v.FnName.L == ast.UnixTimestamp && len(v.Args) != 0 {
+			function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
+			er.ctxStackAppend(function, types.EmptyName)
+		} else {
+			function, er.err = expression.NewFunctionBase(er.sctx, v.FnName.L, &v.Type, args...)
+			c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType().Clone(), DeferredExpr: function}
+			er.ctxStackAppend(c, types.EmptyName)
+		}
 	} else {
 		function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
 		er.ctxStackAppend(function, types.EmptyName)
