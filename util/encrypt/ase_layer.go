@@ -38,24 +38,24 @@ type CtrCipher struct {
 }
 
 // NewCtrCipher return a CtrCipher using the default encrypt block size
-func NewCtrCipher() *CtrCipher {
-	ctr, _ := NewCtrCipherWithBlockSize(defaultEncryptBlockSize)
-	return ctr
+func NewCtrCipher() (ctr *CtrCipher, err error) {
+	return NewCtrCipherWithBlockSize(defaultEncryptBlockSize)
 }
 
 // NewCtrCipherWithBlockSize return a CtrCipher with the encrypt block size
 func NewCtrCipherWithBlockSize(encryptBlockSize int64) (ctr *CtrCipher, err error) {
-	nonce := rand.Uint64()
 	key := make([]byte, aes.BlockSize)
 	rand.Read(key)
-	var block cipher.Block
-	block, _ = aes.NewCipher(key)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
 	if encryptBlockSize%aes.BlockSize != 0 {
 		return nil, errInvalidBlockSize
 	}
 	ctr = new(CtrCipher)
 	ctr.block = block
-	ctr.nonce = nonce
+	ctr.nonce = rand.Uint64()
 	ctr.encryptBlockSize = encryptBlockSize
 	ctr.aesBlockCount = encryptBlockSize / aes.BlockSize
 	return

@@ -76,8 +76,10 @@ func testReadAtWithCase(c *check.C, testCase readAtTestCase) {
 }
 
 func (s *testAesLayerSuite) TestReadAt(c *check.C) {
-	ctrCipher1 := NewCtrCipher()
-	ctrCipher2 := NewCtrCipher()
+	ctrCipher1, err := NewCtrCipher()
+	c.Assert(err, check.IsNil)
+	ctrCipher2, err := NewCtrCipher()
+	c.Assert(err, check.IsNil)
 
 	readAtTestCases := []readAtTestCase{
 		{
@@ -153,7 +155,10 @@ func benchmarkReadAtWithCase(b *testing.B, testCase readAtTestCase) {
 }
 
 func BenchmarkReadAt(b *testing.B) {
-	ctrCipher := NewCtrCipher()
+	ctrCipher, err := NewCtrCipher()
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	readAtTestCases := []readAtTestCase{
 		{

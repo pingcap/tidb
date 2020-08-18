@@ -72,7 +72,10 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	}
 	var underlying io.WriteCloser = l.disk
 	if config.GetGlobalConfig().Security.RequireSecureTransport {
-		l.ctrCipher = encrypt.NewCtrCipher()
+		l.ctrCipher, err = encrypt.NewCtrCipher()
+		if err != nil {
+			return
+		}
 		underlying = encrypt.NewWriter(l.disk, l.ctrCipher)
 	}
 	l.w = checksum.NewWriter(underlying)
