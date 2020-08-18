@@ -119,6 +119,9 @@ func (s *testCommitterSuite) TestFailCommitTimeout(c *C) {
 
 // TestFailPrewriteRegionError tests data race does not happen on retries
 func (s *testCommitterSuite) TestFailPrewriteRegionError(c *C) {
+	if israce.RaceEnabled {
+		c.Skip("skip race test")
+	}
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcPrewriteResult", `return("notLeader")`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/mockstore/mocktikv/rpcPrewriteResult"), IsNil)
