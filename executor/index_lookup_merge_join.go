@@ -496,6 +496,9 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		}
 	}
 	imw.innerExec, err = imw.readerBuilder.buildExecutorForIndexJoin(ctx, dLookUpKeys, imw.indexRanges, imw.keyOff2IdxOff, imw.nextColCompareFilters, false)
+	if imw.innerExec != nil {
+		defer terror.Call(imw.innerExec.Close)
+	}
 	if err != nil {
 		return err
 	}
