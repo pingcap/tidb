@@ -269,6 +269,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		go func() {
 			defer wg.Done()
 			result, err := e.parsedLog(sctx, log, &start)
+
 			if err != nil {
 				e.parsedSlowLogCh <- parsedSlowLog{nil, err}
 			} else {
@@ -282,7 +283,6 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		}
 		offset.offset = e.fileLine
 		offset.length = 0
-
 		select {
 		case <-ctx.Done():
 			break
@@ -295,13 +295,11 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, offset *offset) (data [][]types.Datum, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err := fmt.Errorf("%s", r)
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			err = fmt.Errorf("%s", r)
 		}
 	}()
 	var st *slowQueryTuple
 	tz := ctx.GetSessionVars().Location()
-	//var data [][]types.Datum
 	startFlag := false
 	for index, line := range log {
 		if offset.length <= index {
