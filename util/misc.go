@@ -184,6 +184,7 @@ func SyntaxWarn(err error) error {
 	}
 	// It is important for some parser warnings to judge what the error code is and the
 	// syntaxErrorPrefix is not always necessary to append on.
+	// TODO: for some terror parsed from parser, we can return it directly here.
 	if strings.HasSuffix(err.Error(), "Integer display width is deprecated and will be removed in a future release. ") {
 		return parser.ErrWarnDeprecatedIntegerDisplayWidth.GenWithStackByArgs()
 	}
