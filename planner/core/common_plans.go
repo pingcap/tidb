@@ -761,9 +761,9 @@ type analyzeInfo struct {
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	PKInfo   *model.ColumnInfo
-	ColsInfo []*model.ColumnInfo
-	TblInfo  *model.TableInfo
+	HandleCols HandleCols
+	ColsInfo   []*model.ColumnInfo
+	TblInfo    *model.TableInfo
 	analyzeInfo
 }
 
@@ -795,6 +795,9 @@ type LoadData struct {
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
 	IgnoreLines uint64
+
+	ColumnAssignments  []*ast.Assignment
+	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 
 	GenCols InsertGeneratedColumns
 }
@@ -1098,6 +1101,9 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		accessObject = plan.AccessObject()
 		operatorInfo = plan.OperatorInfo(false)
 	} else {
+		if pa, ok := p.(partitionAccesser); ok && e.ctx != nil {
+			accessObject = pa.accessObject(e.ctx)
+		}
 		operatorInfo = p.ExplainInfo()
 	}
 
