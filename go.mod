@@ -66,4 +66,6 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
+replace github.com/zhangjinpeng1987/raft => github.com/NingLin-P/raft v0.0.0-20200818113713-19cc67b2ee50
+
 go 1.13
