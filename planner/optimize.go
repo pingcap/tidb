@@ -345,7 +345,7 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 	}
 
 	v, ok := p.(*plannercore.PointGetPlan)
-	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary == true && v.TblInfo.IsCommonHandle))
+	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle))
 }
 
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement
