@@ -119,7 +119,7 @@ func (eqh *Handle) initMemoryUsageAlarmRecord() {
 	}
 	eqh.record.lastRecordTime = time.Time{}
 	eqh.record.tmpDir = config.GetGlobalConfig().TempStoragePath
-	if alert := config.GetGlobalConfig().Performance.ServerMemoryAlarmRatio; alert == 0 || alert == 1 {
+	if alert := config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio; alert == 0 || alert == 1 {
 		eqh.record.err = errors.New("close memory usage alarm recorder")
 	}
 }
@@ -147,7 +147,7 @@ func (eqh *Handle) oomKillerAlert() {
 	// 1. You have 16G physical memory;
 	// 2. You have 9G live objects;
 	// 3. Go will run GC when memory usage reaches 9G * (1 + GOGC / 100) = 18G, OOM.
-	if float64(memoryUsage) > float64(eqh.record.serverMemoryQuota)*config.GetGlobalConfig().Performance.ServerMemoryAlarmRatio ||
+	if float64(memoryUsage) > float64(eqh.record.serverMemoryQuota)*config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio ||
 		(eqh.record.useInstanceMemory && instanceStats.NextGC > eqh.record.serverMemoryQuota) {
 		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
 		// If the memory is still exceeded, only records once.
