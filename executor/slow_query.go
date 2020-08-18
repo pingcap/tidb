@@ -263,35 +263,26 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			e.parsedSlowLogCh <- parsedSlowLog{nil, err}
 			break
 		}
-		start := offset.offset
+		start := offset
 		wg.Add(1)
 		ch <- 1
 		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					err := fmt.Errorf("%s", r)
-					sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-				}
-			}()
 			defer wg.Done()
-			result, err2 := e.parsedLog(sctx, log, start)
-			if err2 != nil {
-				e.parsedSlowLogCh <- parsedSlowLog{nil, err2}
+			result, err := e.parsedLog(sctx, log, &start)
+			if err != nil {
+				e.parsedSlowLogCh <- parsedSlowLog{nil, err}
 			} else {
 				e.parsedSlowLogCh <- parsedSlowLog{result, err}
 			}
 			<-ch
 		}()
 		// Read the next file, offset = 0
-		if e.fileLine == 0 {
-			offset.offset = 0
-		} else {
-			offset.offset = e.fileLine - (len(log) - offset.length)
-			offset.length = 0
-		}
 		if e.fileIdx >= len(e.files) {
 			break
 		}
+		offset.offset = e.fileLine
+		offset.length = 0
+
 		select {
 		case <-ctx.Done():
 			break
@@ -301,7 +292,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	wg.Wait()
 }
 
-func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, offset int) (data [][]types.Datum, err error) {
+func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, offset *offset) (data [][]types.Datum, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err := fmt.Errorf("%s", r)
@@ -313,9 +304,12 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 	//var data [][]types.Datum
 	startFlag := false
 	for index, line := range log {
+		if offset.length <= index {
+			offset.offset = -offset.length
+		}
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			st = &slowQueryTuple{}
-			valid, err := st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], offset+index+1, e.checker)
+			valid, err := st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], offset.offset+index+1, e.checker)
 			if err != nil {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
@@ -332,7 +326,7 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 					st.prevStmt = line[len(variable.SlowLogPrevStmtPrefix):]
 				} else if strings.HasPrefix(line, variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr) {
 					value := line[len(variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr):]
-					valid, err := st.setFieldValue(tz, variable.SlowLogUserAndHostStr, value, offset+index+1, e.checker)
+					valid, err := st.setFieldValue(tz, variable.SlowLogUserAndHostStr, value, offset.offset+index+1, e.checker)
 					if err != nil {
 						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 						continue
@@ -347,7 +341,7 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 						if strings.HasSuffix(field, ":") {
 							field = field[:len(field)-1]
 						}
-						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], offset+index+1, e.checker)
+						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], offset.offset+index+1, e.checker)
 						if err != nil {
 							ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 							continue
@@ -365,7 +359,7 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 					continue
 				}
 				// Get the sql string, and mark the start flag to false.
-				_, err := st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), offset+index+1, e.checker)
+				_, err := st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), offset.offset+index+1, e.checker)
 				if err != nil {
 					ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 					continue
@@ -584,6 +578,7 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.preprocSubQueryTime, err = strconv.ParseFloat(value, 64)
 	}
 	if err != nil {
+		fmt.Println(errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error"))
 		return valid, errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error")
 	}
 	return valid, err
