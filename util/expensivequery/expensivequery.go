@@ -15,6 +15,7 @@ package expensivequery
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/util/disk"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -104,18 +105,16 @@ type memoryUsageAlarmRecord struct {
 }
 
 func (eqh *Handle) initMemoryUsageAlarmRecord() {
-	if eqh.record.serverMemoryQuota == 0 {
-		if config.GetGlobalConfig().Performance.ServerMemoryQuota != 0 {
-			eqh.record.serverMemoryQuota = config.GetGlobalConfig().Performance.ServerMemoryQuota
-			eqh.record.useInstanceMemory = true
-		} else {
-			eqh.record.serverMemoryQuota, eqh.record.err = memory.MemTotal()
-			if eqh.record.err != nil {
-				logutil.BgLogger().Warn("Get system total memory fail.", zap.Error(eqh.record.err))
-				return
-			}
-			eqh.record.useInstanceMemory = false
+	if config.GetGlobalConfig().Performance.ServerMemoryQuota != 0 {
+		eqh.record.serverMemoryQuota = config.GetGlobalConfig().Performance.ServerMemoryQuota
+		eqh.record.useInstanceMemory = true
+	} else {
+		eqh.record.serverMemoryQuota, eqh.record.err = memory.MemTotal()
+		if eqh.record.err != nil {
+			logutil.BgLogger().Error("Get system total memory fail.", zap.Error(eqh.record.err))
+			return
 		}
+		eqh.record.useInstanceMemory = false
 	}
 	eqh.record.lastRecordTime = time.Time{}
 	eqh.record.tmpDir = config.GetGlobalConfig().TempStoragePath
@@ -132,7 +131,7 @@ func (eqh *Handle) oomKillerAlert() {
 	} else {
 		memoryUsage, eqh.record.err = memory.MemUsed()
 		if eqh.record.err != nil {
-			logutil.BgLogger().Warn("Get system usage memory fail.", zap.Error(eqh.record.err))
+			logutil.BgLogger().Error("Get system usage memory fail.", zap.Error(eqh.record.err))
 			return
 		}
 	}
@@ -141,9 +140,9 @@ func (eqh *Handle) oomKillerAlert() {
 	// Maybe the instance will oom but the HeapAlloc isn't updated after golang GC.
 	// Go's GC don't take the system memory limit into consideration, that means:
 	//
-	// You have 16G physical memory;
-	// You have 9G live objects;
-	// Go will run GC when memory usage reaches 9G * (1 + GOGC / 100) = 18G, OOM.
+	// 1. You have 16G physical memory;
+	// 2. You have 9G live objects;
+	// 3. Go will run GC when memory usage reaches 9G * (1 + GOGC / 100) = 18G, OOM.
 	if float64(memoryUsage) > float64(eqh.record.serverMemoryQuota)*config.GetGlobalConfig().Performance.ServerMemoryAlarmRatio ||
 		(eqh.record.useInstanceMemory && instanceStats.NextGC > eqh.record.serverMemoryQuota) {
 		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
@@ -168,6 +167,7 @@ func (eqh *Handle) oomRecord(memUsage uint64) {
 		)
 	}
 
+	disk.CheckAndInitTempDir()
 	eqh.oomRecordSQL()
 	eqh.oomRecordProfile()
 
@@ -197,7 +197,7 @@ func (eqh *Handle) oomRecordSQL() {
 	}
 	now := time.Now()
 
-	fileName := filepath.Join(eqh.record.tmpDir, "oom_sql"+time.Now().Format(time.RFC3339))
+	fileName := filepath.Join(config.GetGlobalConfig().TempStoragePath, "oom_sql"+time.Now().Format(time.RFC3339))
 	eqh.record.lastLogFileName = append(eqh.record.lastLogFileName, fileName)
 	f, err := os.Create(fileName)
 	if err != nil {
