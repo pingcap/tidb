@@ -244,7 +244,6 @@ func (h *Handle) GetAllTableStatsMemUsage() int64 {
 	data := h.statsCache.GetAll()
 	allUsage := int64(0)
 	for _, t := range data {
-=
 		allUsage += t.MemoryUsage()
 	}
 	return allUsage
