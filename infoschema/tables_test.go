@@ -110,7 +110,7 @@ type testClusterTableSuite struct {
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testTableSuiteBase.SetUpSuite(c)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(c, "127.0.0.1:0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 }
@@ -253,7 +253,6 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 		testkit.Rows("<nil>"))
 
 	tk.MustExec("create user xxx")
-	tk.MustExec("flush privileges")
 
 	// Test for length of enum and set
 	tk.MustExec("drop table if exists t")
@@ -703,6 +702,8 @@ func (s *testClusterTableSuite) TestForClusterServerInfo(c *C) {
 			types: set.NewStringSet("tidb", "tikv", "pd"),
 			addrs: set.NewStringSet(s.listenAddr),
 			names: set.NewStringSet("cpu", "memory", "net", "disk"),
+			// The sysutil package will filter out all disk don't have /dev prefix.
+			skipOnOS: "windows",
 		},
 		{
 			sql:   "select * from information_schema.CLUSTER_SYSTEMINFO;",
@@ -974,10 +975,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t100    \t\n" +
-		"\t├─IndexScan_8 \tcop \t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop \t100    \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t100    \t\n" +
+		"\t├─IndexScan_8 \tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -995,10 +996,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t100    \t\n" +
-		"\t├─IndexScan_8 \tcop \t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop \t100    \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t100    \t\n" +
+		"\t├─IndexScan_8 \tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -1045,10 +1046,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t1000   \t\n" +
-		"\t├─IndexScan_8 \tcop \t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop \t1000   \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t1000   \t\n" +
+		"\t├─IndexScan_8 \tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -1064,10 +1065,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t1000   \t\n" +
-		"\t├─IndexScan_8 \tcop \t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop \t1000   \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t1000   \t\n" +
+		"\t├─IndexScan_8 \tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Unset session variable.
 	tk.MustExec("set session tidb_enable_stmt_summary = ''")
@@ -1143,6 +1144,18 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		AuthUsername: "root",
 		AuthHostname: "%",
 	}, nil, nil)
+}
+
+func (s *testTableSuite) TestIssue18845(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`CREATE USER 'user18845'@'localhost';`)
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "user18845",
+		Hostname:     "localhost",
+		AuthUsername: "user18845",
+		AuthHostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery(`select count(*) from information_schema.columns;`)
 }
 
 // Test statements_summary_history.

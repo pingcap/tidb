@@ -679,8 +679,8 @@ HashAgg_15	2.00	root		group by:Column#3, funcs:firstrow(Column#6)->Column#3
 └─Union_16	2.00	root		
   ├─HashAgg_17	1.00	root		group by:1, funcs:firstrow(0)->Column#6, funcs:firstrow(0)->Column#3
   │ └─TableDual_20	1.00	root		rows:1
-  └─StreamAgg_27	1.00	root		group by:Column#1, funcs:firstrow(Column#1)->Column#6, funcs:firstrow(Column#1)->Column#3
-    └─Projection_32	1.00	root		1->Column#1
+  └─StreamAgg_27	1.00	root		group by:Column#2, funcs:firstrow(Column#2)->Column#6, funcs:firstrow(Column#2)->Column#3
+    └─Projection_32	1.00	root		1->Column#2
       └─TableDual_33	1.00	root		rows:1
 create table t (i int key, j int, unique key (i, j));
 begin;
