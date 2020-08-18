@@ -81,8 +81,8 @@ var _ = Suite(&HTTPHandlerTestSuite{&basicHTTPHandlerTestSuite{}})
 
 var _ = SerialSuites(&HTTPHandlerTestSerialSuite{&basicHTTPHandlerTestSuite{}})
 
-func (s *basicHTTPHandlerTestSuite) SetUpSuite(c *C) {
-	s.testServerClient = newTestServerClient()
+func (ts *basicHTTPHandlerTestSuite) SetUpSuite(c *C) {
+	ts.testServerClient = newTestServerClient()
 }
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
