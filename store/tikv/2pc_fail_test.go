@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/israce"
 )
 
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
