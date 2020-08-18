@@ -4705,10 +4705,9 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 		return ErrCantRemoveAllFields.GenWithStack("can't drop only column %s in table %s",
 			colName, tblInfo.Name)
 	}
-	// We don't support dropping column with index covered now.
-	// We must drop the index first, then drop the column.
-	if isColumnWithIndex(colName.L, tblInfo.Indices) {
-		return errCantDropColWithIndex.GenWithStack("can't drop column %s with index covered now", colName)
+	// We only support dropping column with single-value none Primary Key index covered now.
+	if !isColumnCanDropWithIndex(colName.L, tblInfo.Indices) {
+		return errCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
 	}
 	// Check the column with foreign key.
 	if fkInfo := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
@@ -5253,7 +5252,7 @@ func buildPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error
 			switch spec.Tp {
 			case ast.PlacementAdd:
 				rule.Action = placement.RuleOpAdd
-			case ast.PlacementAlter:
+			case ast.PlacementAlter, ast.PlacementDrop:
 				rule.Action = placement.RuleOpAdd
 
 				// alter will overwrite all things
@@ -5274,10 +5273,15 @@ func buildPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error
 					DeleteByIDPrefix: true,
 					Rule: &placement.Rule{
 						GroupID: placement.RuleDefaultGroupID,
-						// ROLE is useless for PD, prevent two alter statements from overriding each other
+						// ROLE is useless for PD, prevent two alter statements from coexisting
 						Role: rule.Role,
 					},
 				})
+
+				// alter == drop + add new rules
+				if spec.Tp == ast.PlacementDrop {
+					continue
+				}
 			default:
 				err = errors.Errorf("unknown action type: %d", spec.Tp)
 			}
