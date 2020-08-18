@@ -5303,6 +5303,9 @@ func init() {
 func (s *testSerialDBSuite) TestCreateTableWithIntegerLengthWaring(c *C) {
 	// Inject the strict-integer-display-width variable in parser directly.
 	parsertypes.TiDBStrictIntegerDisplayWidth = true
+	defer func() {
+		parsertypes.TiDBStrictIntegerDisplayWidth = false
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -5351,5 +5354,4 @@ func (s *testSerialDBSuite) TestCreateTableWithIntegerLengthWaring(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
-	parsertypes.TiDBStrictIntegerDisplayWidth = false
 }

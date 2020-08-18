@@ -597,7 +597,7 @@ func setGlobalVars() {
 			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
 	}
 	tikv.StoreLivenessTimeout = t
-	parsertypes.TiDBStrictIntegerDisplayWidth = config.GetGlobalConfig().StrictIntegerDisplayWidth
+	parsertypes.TiDBStrictIntegerDisplayWidth = config.GetGlobalConfig().DeprecateIntegerDisplayWidth
 }
 
 func setupLog() {

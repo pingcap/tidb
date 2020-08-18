@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	parsertypes "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -935,4 +936,68 @@ func (s *testSuite5) TestShowClusterConfig(c *C) {
 
 	confErr = fmt.Errorf("something unknown error")
 	c.Assert(tk.QueryToErr("show config"), ErrorMatches, confErr.Error())
+}
+
+func (s *testSerialSuite1) TestShowCreateTableWithIntegerDisplayLengthWarnings(c *C) {
+	parsertypes.TiDBStrictIntegerDisplayWidth = true
+	defer func() {
+		parsertypes.TiDBStrictIntegerDisplayWidth = false
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int(2), b varchar(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int DEFAULT NULL,\n" +
+		"  `b` varchar(2) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint(10), b bigint)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` bigint DEFAULT NULL,\n" +
+		"  `b` bigint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a tinyint(5), b tinyint(2), c tinyint)")
+	// Here it will occur 2 warnings.
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release.",
+		"Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` tinyint DEFAULT NULL,\n" +
+		"  `b` tinyint DEFAULT NULL,\n" +
+		"  `c` tinyint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a smallint(5), b smallint)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` smallint DEFAULT NULL,\n" +
+		"  `b` smallint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a mediumint(5), b mediumint)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` mediumint DEFAULT NULL,\n" +
+		"  `b` mediumint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int1(1), b int2(2), c int3, d int4, e int8)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release.",
+		"Warning 1681 Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` tinyint DEFAULT NULL,\n" +
+		"  `b` smallint DEFAULT NULL,\n" +
+		"  `c` mediumint DEFAULT NULL,\n" +
+		"  `d` int DEFAULT NULL,\n" +
+		"  `e` bigint DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
