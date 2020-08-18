@@ -934,6 +934,7 @@ func (ts *HTTPHandlerTestSuite) TestGetSchema(c *C) {
 }
 
 func (ts *HTTPHandlerTestSuite) TestAllHistory(c *C) {
+	ts.port, ts.statusPort = genPorts()
 	ts.startServer(c)
 	ts.prepareData(c)
 	defer ts.stopServer(c)
