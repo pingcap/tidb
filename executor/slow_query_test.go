@@ -78,15 +78,12 @@ select * from t;`
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/errorMockPanic"), IsNil)
 	}()
+	reader := bufio.NewReader(bytes.NewBufferString(slowLogStr))
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	c.Assert(err, IsNil)
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().TimeZone = loc
-	retriever := &slowQueryRetriever{}
-	err = retriever.initialize(sctx)
-	c.Assert(err, IsNil)
-	reader := bufio.NewReader(bytes.NewBufferString(slowLogStr))
-	rows, err := parseLog(retriever, sctx, reader)
+	rows, err := parseSlowLog(sctx, reader)
 	c.Assert(rows, IsNil)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "panic test")
