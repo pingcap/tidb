@@ -40,7 +40,7 @@ type Handle struct {
 	exitCh chan struct{}
 	sm     atomic.Value
 
-	record oomRecord
+	record memoryUsageAlarmRecord
 }
 
 // NewExpensiveQueryHandle builds a new expensive query handler.
@@ -63,6 +63,7 @@ func (eqh *Handle) Run() {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	sm := eqh.sm.Load().(util.SessionManager)
+	eqh.initMemoryUsageAlarmRecord()
 	for {
 		select {
 		case <-ticker.C:
@@ -82,70 +83,56 @@ func (eqh *Handle) Run() {
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-			eqh.oomKillerAlert()
+			if alert := config.GetGlobalConfig().Performance.ServerMemoryAlarmRatio; (alert == 0 || alert == 1) && eqh.record.err == nil {
+				eqh.oomKillerAlert()
+			}
 		case <-eqh.exitCh:
 			return
 		}
 	}
 }
 
-type oomRecord struct {
-	oomRecordErr      error
-	oomRecordStatus   status // 0 uninitialized, 1 instance memory usage, 2 system memory usage, 3 close the alert.
+type memoryUsageAlarmRecord struct {
+	err               error
+	useInstanceMemory bool // useInstanceMemory indicate whether use instance memory or system memory to alarm oom risk.
 	serverMemoryQuota uint64
-	lastOOMtime       time.Time
+	lastRecordTime    time.Time
 
 	tmpDir              string
 	lastLogFileName     []string
 	lastProfileFileName []string
 }
 
-type status uint32
-
-const (
-	uninitialized status = iota
-	useInstanceMemory
-	useSystemMemory
-	closeAlert
-)
+func (eqh *Handle) initMemoryUsageAlarmRecord() {
+	if eqh.record.serverMemoryQuota == 0 {
+		if config.GetGlobalConfig().Performance.ServerMemoryQuota != 0 {
+			eqh.record.serverMemoryQuota = config.GetGlobalConfig().Performance.ServerMemoryQuota
+			eqh.record.useInstanceMemory = true
+		} else {
+			eqh.record.serverMemoryQuota, eqh.record.err = memory.MemTotal()
+			if eqh.record.err != nil {
+				logutil.BgLogger().Warn("Get system total memory fail.", zap.Error(eqh.record.err))
+				return
+			}
+			eqh.record.useInstanceMemory = false
+		}
+	}
+	eqh.record.lastRecordTime = time.Time{}
+	eqh.record.tmpDir = config.GetGlobalConfig().TempStoragePath
+}
 
 // If Performance.ServerMemoryQuota is set, use instance memory usage and ServerMemoryQuota * 80% to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use system memory usage and total memory * 80% to check oom risk.
 func (eqh *Handle) oomKillerAlert() {
-	if eqh.record.oomRecordErr != nil || eqh.record.oomRecordStatus == closeAlert {
-		return
-	}
-
-	if eqh.record.oomRecordStatus == uninitialized {
-		if alert := config.GetGlobalConfig().Performance.ServerMemoryAlert; alert == 0 || alert == 1 {
-			eqh.record.oomRecordStatus = closeAlert
-			return
-		}
-		if eqh.record.serverMemoryQuota == 0 {
-			if config.GetGlobalConfig().Performance.ServerMemoryQuota != 0 {
-				eqh.record.serverMemoryQuota = config.GetGlobalConfig().Performance.ServerMemoryQuota
-				eqh.record.oomRecordStatus = useInstanceMemory
-			} else {
-				eqh.record.serverMemoryQuota, eqh.record.oomRecordErr = memory.MemTotal()
-				if eqh.record.oomRecordErr != nil {
-					logutil.BgLogger().Warn("Get system total memory fail.", zap.Error(eqh.record.oomRecordErr))
-					return
-				}
-				eqh.record.oomRecordStatus = useSystemMemory
-			}
-		}
-		eqh.record.lastOOMtime = time.Time{}
-	}
-
 	var memoryUsage uint64
 	instanceStats := &runtime.MemStats{}
-	if eqh.record.oomRecordStatus == useInstanceMemory {
+	if eqh.record.useInstanceMemory {
 		runtime.ReadMemStats(instanceStats)
 		memoryUsage = instanceStats.HeapAlloc
 	} else {
-		memoryUsage, eqh.record.oomRecordErr = memory.MemUsed()
-		if eqh.record.oomRecordErr != nil {
-			logutil.BgLogger().Warn("Get system usage memory fail.", zap.Error(eqh.record.oomRecordErr))
+		memoryUsage, eqh.record.err = memory.MemUsed()
+		if eqh.record.err != nil {
+			logutil.BgLogger().Warn("Get system usage memory fail.", zap.Error(eqh.record.err))
 			return
 		}
 	}
@@ -157,32 +144,27 @@ func (eqh *Handle) oomKillerAlert() {
 	// You have 16G physical memory;
 	// You have 9G live objects;
 	// Go will run GC when memory usage reaches 9G * (1 + GOGC / 100) = 18G, OOM.
-	if float64(memoryUsage) > float64(eqh.record.serverMemoryQuota)*config.GetGlobalConfig().Performance.ServerMemoryAlert ||
-		(eqh.record.oomRecordStatus == useInstanceMemory && instanceStats.NextGC > eqh.record.serverMemoryQuota) {
+	if float64(memoryUsage) > float64(eqh.record.serverMemoryQuota)*config.GetGlobalConfig().Performance.ServerMemoryAlarmRatio ||
+		(eqh.record.useInstanceMemory && instanceStats.NextGC > eqh.record.serverMemoryQuota) {
 		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
 		// If the memory is still exceeded, only records once.
-		if time.Since(eqh.record.lastOOMtime) > 10*time.Second {
+		if time.Since(eqh.record.lastRecordTime) > 10*time.Second {
 			eqh.oomRecord(memoryUsage)
 		}
-		eqh.record.lastOOMtime = time.Now()
+		eqh.record.lastRecordTime = time.Now()
 	}
 }
 
 func (eqh *Handle) oomRecord(memUsage uint64) {
-	if eqh.record.tmpDir == "" {
-		eqh.record.tmpDir = config.GetGlobalConfig().TempStoragePath
-		// TODO: Check temp directory is valid.
-	}
-
-	if eqh.record.oomRecordStatus == useSystemMemory {
-		logutil.BgLogger().Warn("The os system now takes a lot of memory, has the risk of OOM",
-			zap.Any("osMemUsage", memUsage),
-			zap.Any("osMemoryTotal", eqh.record.serverMemoryQuota),
-		)
-	} else {
+	if eqh.record.useInstanceMemory {
 		logutil.BgLogger().Warn("The TiDB instance now takes a lot of memory, has the risk of OOM",
 			zap.Any("tidbMemUsage", memUsage),
 			zap.Any("serverMemoryQuota", eqh.record.serverMemoryQuota),
+		)
+	} else {
+		logutil.BgLogger().Warn("The os system now takes a lot of memory, has the risk of OOM",
+			zap.Any("osMemUsage", memUsage),
+			zap.Any("osMemoryTotal", eqh.record.serverMemoryQuota),
 		)
 	}
 

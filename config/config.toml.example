@@ -213,9 +213,9 @@ max-procs = 0
 # Memory size quota for tidb server, 0 means unlimited
 server-memory-quota = 0
 
-# Memory alert scale of memory size quota for tidb server, 0.0 means no alert
-# If the instance's memory usage is more than `server-memory-alert` * `server-memory-quota`, it will records SQLs and mem-profile.
-server-memory-alert = 0.8
+# Memory alarm ratio of memory size quota for tidb server, 0.0 means no alert
+# If the instance's memory usage is more than `memory-usage-alarm-ratio` * `server-memory-quota`, it will records SQLs and mem-profile.
+memory-usage-alarm-ratio = 0.8
 
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000

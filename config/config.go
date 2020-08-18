@@ -372,25 +372,25 @@ type Status struct {
 type Performance struct {
 	MaxProcs uint `toml:"max-procs" json:"max-procs"`
 	// Deprecated: use ServerMemoryQuota instead
-	MaxMemory            uint64  `toml:"max-memory" json:"max-memory"`
-	ServerMemoryQuota    uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
-	ServerMemoryAlert    float64 `toml:"server-memory-alert" json:"server-memory-alert"`
-	StatsLease           string  `toml:"stats-lease" json:"stats-lease"`
-	StmtCountLimit       uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
-	FeedbackProbability  float64 `toml:"feedback-probability" json:"feedback-probability"`
-	QueryFeedbackLimit   uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
-	PseudoEstimateRatio  float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
-	ForcePriority        string  `toml:"force-priority" json:"force-priority"`
-	BindInfoLease        string  `toml:"bind-info-lease" json:"bind-info-lease"`
-	TxnEntrySizeLimit    uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
-	TxnTotalSizeLimit    uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
-	TCPKeepAlive         bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
-	CrossJoin            bool    `toml:"cross-join" json:"cross-join"`
-	RunAutoAnalyze       bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
-	DistinctAggPushDown  bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
-	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
-	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
-	MemProfileInterval   string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
+	MaxMemory              uint64  `toml:"max-memory" json:"max-memory"`
+	ServerMemoryQuota      uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
+	ServerMemoryAlarmRatio float64 `toml:"server-memory-alarm-ratio" json:"server-memory-alarm-ratio"`
+	StatsLease             string  `toml:"stats-lease" json:"stats-lease"`
+	StmtCountLimit         uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
+	FeedbackProbability    float64 `toml:"feedback-probability" json:"feedback-probability"`
+	QueryFeedbackLimit     uint    `toml:"query-feedback-limit" json:"query-feedback-limit"`
+	PseudoEstimateRatio    float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
+	ForcePriority          string  `toml:"force-priority" json:"force-priority"`
+	BindInfoLease          string  `toml:"bind-info-lease" json:"bind-info-lease"`
+	TxnEntrySizeLimit      uint64  `toml:"txn-entry-size-limit" json:"txn-entry-size-limit"`
+	TxnTotalSizeLimit      uint64  `toml:"txn-total-size-limit" json:"txn-total-size-limit"`
+	TCPKeepAlive           bool    `toml:"tcp-keep-alive" json:"tcp-keep-alive"`
+	CrossJoin              bool    `toml:"cross-join" json:"cross-join"`
+	RunAutoAnalyze         bool    `toml:"run-auto-analyze" json:"run-auto-analyze"`
+	DistinctAggPushDown    bool    `toml:"distinct-agg-push-down" json:"agg-push-down-join"`
+	CommitterConcurrency   int     `toml:"committer-concurrency" json:"committer-concurrency"`
+	MaxTxnTTL              uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	MemProfileInterval     string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -616,25 +616,25 @@ var defaultConf = Config{
 		RecordQPSbyDB:   false,
 	},
 	Performance: Performance{
-		MaxMemory:            0,
-		ServerMemoryQuota:    0,
-		ServerMemoryAlert:    0.8,
-		TCPKeepAlive:         true,
-		CrossJoin:            true,
-		StatsLease:           "3s",
-		RunAutoAnalyze:       true,
-		StmtCountLimit:       5000,
-		FeedbackProbability:  0.05,
-		QueryFeedbackLimit:   512,
-		PseudoEstimateRatio:  0.8,
-		ForcePriority:        "NO_PRIORITY",
-		BindInfoLease:        "3s",
-		TxnEntrySizeLimit:    DefTxnEntrySizeLimit,
-		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
-		DistinctAggPushDown:  false,
-		CommitterConcurrency: 16,
-		MaxTxnTTL:            10 * 60 * 1000, // 10min
-		MemProfileInterval:   "1m",
+		MaxMemory:              0,
+		ServerMemoryQuota:      0,
+		ServerMemoryAlarmRatio: 0.8,
+		TCPKeepAlive:           true,
+		CrossJoin:              true,
+		StatsLease:             "3s",
+		RunAutoAnalyze:         true,
+		StmtCountLimit:         5000,
+		FeedbackProbability:    0.05,
+		QueryFeedbackLimit:     512,
+		PseudoEstimateRatio:    0.8,
+		ForcePriority:          "NO_PRIORITY",
+		BindInfoLease:          "3s",
+		TxnEntrySizeLimit:      DefTxnEntrySizeLimit,
+		TxnTotalSizeLimit:      DefTxnTotalSizeLimit,
+		DistinctAggPushDown:    false,
+		CommitterConcurrency:   16,
+		MaxTxnTTL:              10 * 60 * 1000, // 10min
+		MemProfileInterval:     "1m",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
