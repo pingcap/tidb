@@ -205,7 +205,7 @@ func isLogicalRuleDisabled(r logicalOptRule) bool {
 }
 
 func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (PhysicalPlan, float64, error) {
-	if _, err := logic.recursiveDeriveStats(); err != nil {
+	if _, err := logic.recursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}
 

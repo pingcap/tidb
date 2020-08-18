@@ -152,9 +152,8 @@ type StatementContext struct {
 	LockKeysDuration      int64
 	LockKeysCount         int32
 	TblInfo2UnionScan     map[*model.TableInfo]bool
-	TaskID                uint64              // unique ID for an execution of a statement
-	TaskMapBakTS          uint64              // counter for
-	CheckKeyExists        map[string]struct{} // mark the keys needs to check for existence for pessimistic locks.
+	TaskID                uint64 // unique ID for an execution of a statement
+	TaskMapBakTS          uint64 // counter for
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -486,7 +485,6 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()
-	sc.CheckKeyExists = make(map[string]struct{})
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print
