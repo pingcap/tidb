@@ -85,7 +85,7 @@ select * from t;`
 	sctx.GetSessionVars().TimeZone = loc
 	_, err = parseSlowLog(sctx, reader)
 	c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "panic test")
+	c.Assert(err.Error(), Equals, "panic test")
 }
 
 func (s *testExecSuite) TestParseSlowLogFile(c *C) {
