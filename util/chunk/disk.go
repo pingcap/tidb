@@ -58,6 +58,10 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
+	err = disk.CheckAndInitTempDir()
+	if err != nil {
+		return
+	}
 	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
 	if err != nil {
 		return
@@ -176,7 +180,7 @@ func (l *ListInDisk) Close() error {
 	if l.disk != nil {
 		l.diskTracker.Consume(-l.diskTracker.BytesConsumed())
 		terror.Call(l.disk.Close)
-		return os.Remove(l.disk.Name())
+		terror.Log(os.Remove(l.disk.Name()))
 	}
 	return nil
 }

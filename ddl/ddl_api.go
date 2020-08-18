@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	field_types "github.com/pingcap/parser/types"
-	"github.com/pingcap/pd/v4/server/schedule/placement"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -61,16 +61,6 @@ import (
 )
 
 const expressionIndexPrefix = "_V$"
-
-const placementRuleDefaultGroupID = "TiDB_DDL"
-
-const (
-	placementRuleIndexDefault int = iota
-	placementRuleIndexDatabase
-	placementRuleIndexTable
-	placementRuleIndexPartition
-	placementRuleIndexIndex
-)
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
 	dbInfo := &model.DBInfo{Name: schema}
@@ -4715,10 +4705,9 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 		return ErrCantRemoveAllFields.GenWithStack("can't drop only column %s in table %s",
 			colName, tblInfo.Name)
 	}
-	// We don't support dropping column with index covered now.
-	// We must drop the index first, then drop the column.
-	if isColumnWithIndex(colName.L, tblInfo.Indices) {
-		return errCantDropColWithIndex.GenWithStack("can't drop column %s with index covered now", colName)
+	// We only support dropping column with single-value none Primary Key index covered now.
+	if !isColumnCanDropWithIndex(colName.L, tblInfo.Indices) {
+		return errCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
 	}
 	// Check the column with foreign key.
 	if fkInfo := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
@@ -5165,59 +5154,17 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	return errors.Trace(err)
 }
 
-func checkPlacementLabelConstraint(label string) (placement.LabelConstraint, error) {
-	r := placement.LabelConstraint{}
-
-	if len(label) < 4 {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	var op placement.LabelConstraintOp
-	switch label[0] {
-	case '+':
-		op = placement.In
-	case '-':
-		op = placement.NotIn
-	default:
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	kv := strings.Split(label[1:], "=")
-	if len(kv) != 2 {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	key := strings.TrimSpace(kv[0])
-	if key == "" {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	val := strings.TrimSpace(kv[1])
-	if val == "" {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	r.Key = key
-	r.Op = op
-	r.Values = []string{val}
-	return r, nil
-}
-
-func checkPlacementLabelConstraints(rule *placement.Rule, labels []string) error {
-	for _, str := range labels {
-		label, err := checkPlacementLabelConstraint(strings.TrimSpace(str))
-		if err != nil {
-			return err
-		}
-		rule.LabelConstraints = append(rule.LabelConstraints, label)
-	}
-	return nil
-}
-
-func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule, cnstr string) ([]*placement.Rule, error) {
-	cnstr = strings.TrimSpace(cnstr)
+func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas uint64, cnstr string) ([]*placement.RuleOp, error) {
 	var err error
+	cnstr = strings.TrimSpace(cnstr)
+	rules := make([]*placement.RuleOp, 0, 1)
 	if len(cnstr) > 0 && cnstr[0] == '[' {
+		// can not emit REPLICAS with an array label
+		if replicas == 0 {
+			return rules, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
+		}
+		rule.Count = int(replicas)
+
 		constraints := []string{}
 
 		err = json.Unmarshal([]byte(cnstr), &constraints)
@@ -5225,7 +5172,7 @@ func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule,
 			return rules, err
 		}
 
-		err = checkPlacementLabelConstraints(rule, constraints)
+		rule.LabelConstraints, err = placement.CheckLabelConstraints(constraints)
 		if err != nil {
 			return rules, err
 		}
@@ -5238,21 +5185,33 @@ func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule,
 			return rules, err
 		}
 
+		ruleCnt := int(replicas)
 		for labels, cnt := range constraints {
-			newRule := &placement.Rule{}
-			*newRule = *rule
+			newRule := rule.Clone()
 			if cnt <= 0 {
-				err = errors.Errorf("count should be non-positive, but got %d", cnt)
+				err = errors.Errorf("count should be positive, but got %d", cnt)
 				break
 			}
-			// TODO: handle or remove rule.Count in later commits
-			rule.Count -= cnt
+
+			if replicas != 0 {
+				ruleCnt -= cnt
+				if ruleCnt < 0 {
+					err = errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", replicas)
+					break
+				}
+			}
 			newRule.Count = cnt
-			err = checkPlacementLabelConstraints(newRule, strings.Split(strings.TrimSpace(labels), ","))
+
+			newRule.LabelConstraints, err = placement.CheckLabelConstraints(strings.Split(strings.TrimSpace(labels), ","))
 			if err != nil {
 				break
 			}
 			rules = append(rules, newRule)
+		}
+		rule.Count = ruleCnt
+
+		if rule.Count > 0 {
+			rules = append(rules, rule)
 		}
 	} else {
 		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
@@ -5260,8 +5219,8 @@ func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule,
 	return rules, err
 }
 
-func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) {
-	rules := make([]*placement.Rule, 0, len(specs))
+func buildPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error) {
+	rules := make([]*placement.RuleOp, 0, len(specs))
 
 	var err error
 	var sb strings.Builder
@@ -5269,35 +5228,69 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 	for _, spec := range specs {
-		rule := &placement.Rule{
-			GroupID:  placementRuleDefaultGroupID,
-			Count:    int(spec.Replicas),
-			Override: true,
+		rule := &placement.RuleOp{
+			Rule: &placement.Rule{
+				GroupID:  placement.RuleDefaultGroupID,
+				Override: true,
+			},
 		}
 
-		switch spec.Tp {
-		case ast.PlacementAdd:
+		switch spec.Role {
+		case ast.PlacementRoleFollower:
+			rule.Role = placement.Follower
+		case ast.PlacementRoleLeader:
+			rule.Role = placement.Leader
+		case ast.PlacementRoleLearner:
+			rule.Role = placement.Learner
+		case ast.PlacementRoleVoter:
+			rule.Role = placement.Voter
 		default:
-			err = errors.Errorf("unknown action type: %d", spec.Tp)
+			err = errors.Errorf("unknown role: %d", spec.Role)
 		}
 
 		if err == nil {
-			switch spec.Role {
-			case ast.PlacementRoleFollower:
-				rule.Role = placement.Follower
-			case ast.PlacementRoleLeader:
-				rule.Role = placement.Leader
-			case ast.PlacementRoleLearner:
-				rule.Role = placement.Learner
-			case ast.PlacementRoleVoter:
-				rule.Role = placement.Voter
+			switch spec.Tp {
+			case ast.PlacementAdd:
+				rule.Action = placement.RuleOpAdd
+			case ast.PlacementAlter, ast.PlacementDrop:
+				rule.Action = placement.RuleOpAdd
+
+				// alter will overwrite all things
+				// drop all rules that will be overridden
+				newRules := rules[:0]
+
+				for _, r := range rules {
+					if r.Role != rule.Role {
+						newRules = append(newRules, r)
+					}
+				}
+
+				rules = newRules
+
+				// delete previous definitions
+				rules = append(rules, &placement.RuleOp{
+					Action:           placement.RuleOpDel,
+					DeleteByIDPrefix: true,
+					Rule: &placement.Rule{
+						GroupID: placement.RuleDefaultGroupID,
+						// ROLE is useless for PD, prevent two alter statements from coexisting
+						Role: rule.Role,
+					},
+				})
+
+				// alter == drop + add new rules
+				if spec.Tp == ast.PlacementDrop {
+					continue
+				}
 			default:
-				err = errors.Errorf("unknown role: %d", spec.Role)
+				err = errors.Errorf("unknown action type: %d", spec.Tp)
 			}
 		}
 
 		if err == nil {
-			rules, err = checkPlacementSpecConstraint(rules, rule, spec.Constraints)
+			var newRules []*placement.RuleOp
+			newRules, err = buildPlacementSpecReplicasAndConstraint(rule, spec.Replicas, spec.Constraints)
+			rules = append(rules, newRules...)
 		}
 
 		if err != nil {
@@ -5327,7 +5320,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	rules, err := checkPlacementSpecs(spec.PlacementSpecs)
+	rules, err := buildPlacementSpecs(spec.PlacementSpecs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5335,7 +5328,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
 	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
 	for _, rule := range rules {
-		rule.Index = placementRuleIndexPartition
+		rule.Index = placement.RuleIndexPartition
 		rule.StartKeyHex = startKey
 		rule.EndKeyHex = endKey
 	}

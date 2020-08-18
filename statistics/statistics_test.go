@@ -129,7 +129,7 @@ func (s *testStatisticsSuite) SetUpSuite(c *C) {
 		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 2)
 	}
 	sc := new(stmtctx.StatementContext)
-	err := SortSampleItems(sc, samples)
+	samples, err := SortSampleItems(sc, samples)
 	c.Check(err, IsNil)
 	s.samples = samples
 

@@ -23,7 +23,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -53,7 +52,7 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	ds.domain.SetStatsUpdating(true)
 	tidbdrv := NewTiDBDriver(ds.store)
 
-	cfg := config.NewConfig()
+	cfg := newTestConfig()
 	cfg.Port = ds.port
 	cfg.Status.StatusPort = ds.statusPort
 	cfg.Status.ReportStatus = true

@@ -596,7 +596,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	case *ast.BinlogStmt, *ast.FlushStmt, *ast.UseStmt, *ast.BRIEStmt,
 		*ast.BeginStmt, *ast.CommitStmt, *ast.RollbackStmt, *ast.CreateUserStmt, *ast.SetPwdStmt, *ast.AlterInstanceStmt,
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
-		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt:
+		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
+		*ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
 		return b.buildSimple(node.(ast.StmtNode))
 	case ast.DDLNode:
 		return b.buildDDL(ctx, x)
@@ -1083,6 +1084,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		ret = p
 	case ast.AdminResetTelemetryID:
 		return &AdminResetTelemetryID{}, nil
+	case ast.AdminReloadStatistics:
+		return &Simple{Statement: as}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -1984,6 +1987,28 @@ func (b *PlanBuilder) buildSimple(node ast.StmtNode) (Plan, error) {
 		}
 	case *ast.ShutdownStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
+	case *ast.CreateStatisticsStmt:
+		var selectErr, insertErr error
+		user := b.ctx.GetSessionVars().User
+		if user != nil {
+			selectErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE STATISTICS", user.AuthUsername,
+				user.AuthHostname, raw.Table.Name.L)
+			insertErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE STATISTICS", user.AuthUsername,
+				user.AuthHostname, "stats_extended")
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, raw.Table.Schema.L,
+			raw.Table.Name.L, "", selectErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, mysql.SystemDB,
+			"stats_extended", "", insertErr)
+	case *ast.DropStatisticsStmt:
+		var err error
+		user := b.ctx.GetSessionVars().User
+		if user != nil {
+			err = ErrTableaccessDenied.GenWithStackByArgs("DROP STATISTICS", user.AuthUsername,
+				user.AuthHostname, "stats_extended")
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, mysql.SystemDB,
+			"stats_extended", "", err)
 	}
 	return p, nil
 }
@@ -3091,8 +3116,11 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 	if !ok || targetPlan == nil {
 		return &Explain{Format: explainFor.Format}, nil
 	}
-
-	return b.buildExplainPlan(targetPlan, explainFor.Format, processInfo.PlanExplainRows, false, nil)
+	var rows [][]string
+	if explainFor.Format == ast.ExplainFormatROW {
+		rows = processInfo.PlanExplainRows
+	}
+	return b.buildExplainPlan(targetPlan, explainFor.Format, rows, false, nil)
 }
 
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (Plan, error) {
