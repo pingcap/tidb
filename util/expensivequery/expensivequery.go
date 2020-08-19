@@ -153,10 +153,11 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 		(record.isServerMemoryQuotaSetByUser && instanceStats.NextGC > record.serverMemoryQuota) {
 		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
 		// If the memory is still exceeded, only records once.
-		if time.Since(record.lastChangeTime) > 10*time.Second {
+		interval := time.Since(record.lastChangeTime)
+		record.lastChangeTime = time.Now()
+		if interval > 10*time.Second {
 			record.doRecord(memoryUsage, sm)
 		}
-		record.lastChangeTime = time.Now()
 	}
 }
 
@@ -174,7 +175,6 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager
 	if record.err = disk.CheckAndInitTempDir(); record.err != nil {
 		return
 	}
-	record.lastChangeTime = time.Now()
 	record.recordSQL(sm)
 	record.recordProfile()
 
