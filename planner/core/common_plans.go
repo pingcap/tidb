@@ -761,9 +761,9 @@ type analyzeInfo struct {
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	PKInfo   *model.ColumnInfo
-	ColsInfo []*model.ColumnInfo
-	TblInfo  *model.TableInfo
+	HandleCols HandleCols
+	ColsInfo   []*model.ColumnInfo
+	TblInfo    *model.TableInfo
 	analyzeInfo
 }
 
@@ -795,6 +795,9 @@ type LoadData struct {
 	FieldsInfo  *ast.FieldsClause
 	LinesInfo   *ast.LinesClause
 	IgnoreLines uint64
+
+	ColumnAssignments  []*ast.Assignment
+	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 
 	GenCols InsertGeneratedColumns
 }
@@ -1042,7 +1045,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 	if runtimeStatsColl == nil {
 		return
 	}
-	explainID := p.ExplainID().String()
+	explainID := p.ID()
 
 	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 	// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.
@@ -1058,21 +1061,15 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 		analyzeInfo = "time:0ns, loops:0"
 		actRows = "0"
 	}
-	switch p.(type) {
-	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
-		if s := runtimeStatsColl.GetReaderStats(explainID); s != nil && len(s.String()) > 0 {
-			analyzeInfo += ", " + s.String()
-		}
-	}
 
 	memoryInfo = "N/A"
-	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
+	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
 	if memTracker != nil {
 		memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
 	}
 
 	diskInfo = "N/A"
-	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
+	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
 	if diskTracker != nil {
 		diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
 	}
@@ -1098,6 +1095,9 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 		accessObject = plan.AccessObject()
 		operatorInfo = plan.OperatorInfo(false)
 	} else {
+		if pa, ok := p.(partitionAccesser); ok && e.ctx != nil {
+			accessObject = pa.accessObject(e.ctx)
+		}
 		operatorInfo = p.ExplainInfo()
 	}
 

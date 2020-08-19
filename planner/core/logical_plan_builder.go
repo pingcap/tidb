@@ -1238,14 +1238,15 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	copy(joinPlan.names, leftPlan.OutputNames())
 	for j := 0; j < len(rightPlan.Schema().Columns); j++ {
 		leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
-		if leftCol.RetType.Tp != rightCol.RetType.Tp {
-			return nil, errors.New("set operator doesn't support different column type")
-		}
 		eqCond, err := expression.NewFunction(b.ctx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
 		if err != nil {
 			return nil, err
 		}
-		joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
+		if leftCol.RetType.Tp != rightCol.RetType.Tp {
+			joinPlan.OtherConditions = append(joinPlan.OtherConditions, eqCond)
+		} else {
+			joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
+		}
 	}
 	return joinPlan, nil
 }
@@ -2842,7 +2843,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	if tableInfo.GetPartitionInfo() != nil {
-		b.optFlag = b.optFlag | flagPartitionProcessor
+		// Use the new partition implementation, clean up the code here when it's full implemented.
+		if tryOldPartitionImplementation(b.ctx) {
+			b.optFlag = b.optFlag | flagPartitionProcessor
+		}
+
 		pt := tbl.(table.PartitionedTable)
 		// check partition by name.
 		if len(tn.PartitionNames) > 0 {
@@ -3023,7 +3028,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.possibleAccessPaths {
-		if !path.IsTablePath() {
+		if !path.IsIntHandlePath {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 		}
 	}

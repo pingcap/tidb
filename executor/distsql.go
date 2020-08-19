@@ -19,7 +19,6 @@ import (
 	"math"
 	"runtime"
 	"sort"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -43,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -323,13 +321,15 @@ type IndexLookUpExecutor struct {
 	dagPB   *tipb.DAGRequest
 	startTS uint64
 	// handleIdx is the index of handle, which is only used for case of keeping order.
-	handleIdx    []int
-	handleCols   []*expression.Column
-	tableRequest *tipb.DAGRequest
+	handleIdx       []int
+	handleCols      []*expression.Column
+	primaryKeyIndex *model.IndexInfo
+	tableRequest    *tipb.DAGRequest
 	// columns are only required by union scan.
 	columns []*model.ColumnInfo
 	*dataReaderBuilder
 	// All fields above are immutable.
+
 	idxWorkerWg sync.WaitGroup
 	tblWorkerWg sync.WaitGroup
 	finished    chan struct{}
@@ -378,7 +378,13 @@ func (e *IndexLookUpExecutor) Open(ctx context.Context) error {
 			return err
 		}
 	}
-	e.kvRanges, err = distsql.IndexRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, getPhysicalTableID(e.table), e.index.ID, e.ranges, e.feedback)
+	sc := e.ctx.GetSessionVars().StmtCtx
+	physicalID := getPhysicalTableID(e.table)
+	if e.index.ID == -1 {
+		e.kvRanges, err = distsql.CommonHandleRangesToKVRanges(sc, physicalID, e.ranges)
+	} else {
+		e.kvRanges, err = distsql.IndexRangesToKVRanges(sc, physicalID, e.index.ID, e.ranges, e.feedback)
+	}
 	if err != nil {
 		e.feedback.Invalidate()
 		return err
@@ -456,7 +462,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 
-	tracker := memory.NewTracker(stringutil.StringerStr("IndexWorker"), -1)
+	tracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	tracker.AttachTo(e.memTracker)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
@@ -526,7 +532,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			keepOrder:       e.keepOrder,
 			handleIdx:       e.handleIdx,
 			checkIndexValue: e.checkIndexValue,
-			memTracker:      memory.NewTracker(stringutil.MemoizeStr(func() string { return "TableWorker_" + strconv.Itoa(workerID) }), -1),
+			memTracker:      memory.NewTracker(workerID, -1),
 		}
 		worker.memTracker.AttachTo(e.memTracker)
 		ctx1, cancel := context.WithCancel(ctx)
@@ -540,7 +546,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, 0),
 		table:          e.table,
 		dagPB:          e.tableRequest,
 		startTS:        e.startTS,
@@ -843,6 +849,7 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int, isCommon
 		for i, idx := range handleIdx {
 			datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
 		}
+		tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
 		handleEncoded, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, datums...)
 		if err != nil {
 			return nil, err
@@ -899,7 +906,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			for i, col := range w.idxTblCols {
 				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
-			vals = tablecodec.TruncateIndexValuesIfNeeded(tblInfo, w.idxLookup.index, vals)
+			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
 			for i, val := range vals {
 				col := w.idxTblCols[i]
 				tp := &col.FieldType
@@ -1021,10 +1028,10 @@ func GetLackHandles(expectedHandles []kv.Handle, obtainedHandlesMap *kv.HandleMa
 	return diffHandles
 }
 
-func getPhysicalPlanIDs(plans []plannercore.PhysicalPlan) []fmt.Stringer {
-	planIDs := make([]fmt.Stringer, 0, len(plans))
+func getPhysicalPlanIDs(plans []plannercore.PhysicalPlan) []int {
+	planIDs := make([]int, 0, len(plans))
 	for _, p := range plans {
-		planIDs = append(planIDs, p.ExplainID())
+		planIDs = append(planIDs, p.ID())
 	}
 	return planIDs
 }

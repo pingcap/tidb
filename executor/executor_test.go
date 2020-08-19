@@ -17,10 +17,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"math"
 	"net"
 	"os"
-	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -129,6 +129,7 @@ var _ = SerialSuites(&testSplitTable{&baseTestSuite{}})
 var _ = Suite(&testSuiteWithData{baseTestSuite: &baseTestSuite{}})
 var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 var _ = SerialSuites(&testSlowQuery{&baseTestSuite{}})
+var _ = Suite(&partitionTableSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -139,6 +140,7 @@ type testSuiteWithData struct {
 	testData testutil.TestData
 }
 type testSlowQuery struct{ *baseTestSuite }
+type partitionTableSuite struct{ *baseTestSuite }
 
 type baseTestSuite struct {
 	cluster cluster.Cluster
@@ -573,8 +575,7 @@ func checkCases(tests []testCase, ld *executor.LoadDataInfo,
 		}
 		ld.SetMessage()
 		tk.CheckLastMessage(tt.expectedMsg)
-		err := ctx.StmtCommit(nil)
-		c.Assert(err, IsNil)
+		ctx.StmtCommit()
 		txn, err := ctx.Txn(true)
 		c.Assert(err, IsNil)
 		err = txn.Commit(context.Background())
@@ -1129,6 +1130,35 @@ func (s *testSuiteWithData) TestSetOperation(c *C) {
 	tk.MustExec(`insert into t1 values (1),(1),(2),(3),(null)`)
 	tk.MustExec(`insert into t2 values (1),(2),(null),(null)`)
 	tk.MustExec(`insert into t3 values (2),(3)`)
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
+	}
+}
+
+func (s *testSuiteWithData) TestSetOperationOnDiffColType(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t1, t2, t3`)
+	tk.MustExec(`create table t1(a int, b int)`)
+	tk.MustExec(`create table t2(a int, b varchar(20))`)
+	tk.MustExec(`create table t3(a int, b decimal(30,10))`)
+	tk.MustExec(`insert into t1 values (1,1),(1,1),(2,2),(3,3),(null,null)`)
+	tk.MustExec(`insert into t2 values (1,'1'),(2,'2'),(null,null),(null,'3')`)
+	tk.MustExec(`insert into t3 values (2,2.1),(3,3)`)
 
 	var input []string
 	var output []struct {
@@ -4395,6 +4425,7 @@ func (s *testSplitTable) TestClusterIndexSplitTableIntegration(c *C) {
 func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	tk.MustExec("set global tidb_scatter_region = 1")
 	tk.MustExec("drop database if exists cluster_index_regions;")
 	tk.MustExec("create database cluster_index_regions;")
 	tk.MustExec("use cluster_index_regions;")
@@ -4416,6 +4447,19 @@ func (s *testSplitTable) TestClusterIndexShowTableRegion(c *C) {
 	// Check the region start key is int64.
 	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_", tbl.Meta().ID))
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_r_50000", tbl.Meta().ID))
+}
+
+func (s *testSuiteWithData) TestClusterIndexOuterJoinElimination(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`set @@tidb_enable_clustered_index = 1`)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a,b))")
+	rows := tk.MustQuery(`explain select t1.a from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b`).Rows()
+	rowStrs := s.testData.ConvertRowsToStrings(rows)
+	for _, row := range rowStrs {
+		// outer join has been eliminated.
+		c.Assert(strings.Index(row, "Join"), Equals, -1)
+	}
 }
 
 func (s *testSplitTable) TestShowTableRegion(c *C) {
@@ -5583,7 +5627,7 @@ type testClusterTableSuite struct {
 
 func (s *testClusterTableSuite) SetUpSuite(c *C) {
 	s.testSuiteWithCliBase.SetUpSuite(c)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(c, "127.0.0.1:0")
 }
 
 func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server, string) {
@@ -5618,7 +5662,7 @@ func (s *testClusterTableSuite) TearDownSuite(c *C) {
 
 func (s *testClusterTableSuite) TestSlowQuery(c *C) {
 	writeFile := func(file string, data string) {
-		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		c.Assert(err, IsNil)
 		_, err = f.Write([]byte(data))
 		c.Assert(f.Close(), IsNil)
@@ -6041,14 +6085,18 @@ func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
-	newCfg.Log.SlowQueryFile = path.Join(os.TempDir(), "tidb-slow.log")
+
+	f, err := ioutil.TempFile("", "tidb-slow-*.log")
+	c.Assert(err, IsNil)
+	f.Close()
+	newCfg.Log.SlowQueryFile = f.Name()
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		tk.MustExec("set tidb_slow_log_threshold=300;")
 		config.StoreGlobalConfig(originCfg)
 		os.Remove(newCfg.Log.SlowQueryFile)
 	}()
-	err := logutil.InitLogger(newCfg.Log.ToLogConfig())
+	err = logutil.InitLogger(newCfg.Log.ToLogConfig())
 	c.Assert(err, IsNil)
 
 	tk.MustExec("set tidb_slow_log_threshold=0;")

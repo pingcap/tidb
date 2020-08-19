@@ -127,13 +127,15 @@ func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
 
 func (s *partitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.PartitionInfo, partitionNames []model.CIStr) []int {
 	if len(or) == 1 && or[0].start == 0 && or[0].end == len(pi.Definitions) {
-		return []int{FullRange}
+		if len(partitionNames) == 0 {
+			return []int{FullRange}
+		}
 	}
 	ret := make([]int, 0, len(or))
 	for i := 0; i < len(or); i++ {
 		for pos := or[i].start; pos < or[i].end; pos++ {
 			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[pos].Name.L) {
-				return nil
+				continue
 			}
 			ret = append(ret, pos)
 		}
@@ -171,6 +173,10 @@ func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl tabl
 			return nil, nil
 		}
 		return []int{int(idx)}, nil
+	}
+	if len(partitionNames) > 0 {
+		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
+		return s.convertToIntSlice(or, pi, partitionNames), nil
 	}
 	return []int{FullRange}, nil
 }
