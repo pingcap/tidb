@@ -116,6 +116,8 @@ var (
 		"current_user": {}, "elt": {}, "make_set": {}, "repeat": {}, "rpad": {}, "lpad": {},
 		"export_set": {},
 	}
+
+	coerString = []string{"EXPLICIT", "NONE", "IMPLICIT", "SYSCONST", "COERCIBLE", "NUMERIC", "IGNORABLE"}
 )
 
 func checkIllegalMixCollation(funcName string, args []Expression) error {
@@ -138,19 +140,12 @@ func checkIllegalMixCollation(funcName string, args []Expression) error {
 func illegalMixCollationErr(funcName string, args []Expression) error {
 	switch len(args) {
 	case 2:
-		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString(args[0].Coercibility()), args[1].GetType().Collate, coerString(args[1].Coercibility()), funcName)
+		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], funcName)
 	case 3:
-		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString(args[0].Coercibility()), args[1].GetType().Collate, coerString(args[1].Coercibility()), args[0].GetType().Collate, coerString(args[2].Coercibility()), funcName)
+		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], args[0].GetType().Collate, coerString[args[2].Coercibility()], funcName)
 	default:
 		return collate.ErrIllegalMixCollation.GenWithStackByArgs(funcName)
 	}
-}
-
-func coerString(coercibility Coercibility) string {
-	if coercibility == CoercibilityExplicit {
-		return "EXPLICIT"
-	}
-	return "IMPLICIT"
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.

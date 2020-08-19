@@ -192,6 +192,7 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 	return
 }
 
+// inferCollation infer collation, charset, coercibility and check legitimacy
 func inferCollation(exprs ...Expression) (collation, charset string, coercibility Coercibility, legal bool) {
 	firstExplicitCollation := ""
 	coercibility = CoercibilityIgnorable
@@ -221,6 +222,7 @@ func inferCollation(exprs ...Expression) (collation, charset string, coercibilit
 	return collation, charset, coercibility, true
 }
 
+// getBinCollation get binary collation by charset
 func getBinCollation(cs string) string {
 	switch cs {
 	case charset.CharsetUTF8:
