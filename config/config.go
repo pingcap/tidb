@@ -149,7 +149,7 @@ type Config struct {
 	// EnableTelemetry enables the usage data report to PingCAP.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
 	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
-	// server like `zone`/`rack`/`hosts`. Currently, labels won't affect the tidb server especially for some special
+	// server like `zone`/`rack`/`host`. Currently, labels won't affect the tidb server especially for some special
 	// label keys. Now we only have `group` as a special label key.
 	// Note that: 'group' is a special label key which should be automatically set be tidb-operator. We don't suggest
 	// user to set group in labels
