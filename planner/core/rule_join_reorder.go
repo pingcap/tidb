@@ -22,9 +22,9 @@ import (
 )
 
 type leftJoinInnerTab struct {
-	p LogicalPlan
-	eqCond []*expression.ScalarFunction
-	leftCond []expression.Expression
+	p         LogicalPlan
+	eqCond    []*expression.ScalarFunction
+	leftCond  []expression.Expression
 	otherCond []expression.Expression
 }
 
@@ -47,9 +47,9 @@ func extractJoinGroup(p LogicalPlan) (
 
 	if join.JoinType == LeftOuterJoin {
 		tab := &leftJoinInnerTab{
-			p: join.children[1],
-			eqCond: join.EqualConditions,
-			leftCond: join.LeftConditions,
+			p:         join.children[1],
+			eqCond:    join.EqualConditions,
+			leftCond:  join.LeftConditions,
 			otherCond: join.OtherConditions,
 		}
 		leftJoinTabs = append(leftJoinTabs, tab)
@@ -93,7 +93,7 @@ func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan) (LogicalPlan, error) {
 	var err error
 	curJoinGroup, eqEdges, otherConds, leftJoinTabs := extractJoinGroup(p)
-	if len(curJoinGroup) + len(leftJoinTabs) > 1 {
+	if len(curJoinGroup)+len(leftJoinTabs) > 1 {
 		for i := range curJoinGroup {
 			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i])
 			if err != nil {
@@ -164,11 +164,11 @@ func (s *joinReOrderSolver) newLeftJoin(
 		offset = -1
 	}
 	join := LogicalJoin{
-		JoinType: LeftOuterJoin,
+		JoinType:        LeftOuterJoin,
 		EqualConditions: eqCond,
-		LeftConditions: leftCond,
+		LeftConditions:  leftCond,
 		OtherConditions: otherCond,
-		reordered: true,
+		reordered:       true,
 	}.Init(ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
