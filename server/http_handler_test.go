@@ -77,13 +77,13 @@ type HTTPHandlerTestSerialSuite struct {
 	*basicHTTPHandlerTestSuite
 }
 
-var _ = Suite(&HTTPHandlerTestSuite{
-	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
-})
+var _ = Suite(&HTTPHandlerTestSuite{&basicHTTPHandlerTestSuite{}})
 
-var _ = SerialSuites(&HTTPHandlerTestSerialSuite{
-	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
-})
+var _ = SerialSuites(&HTTPHandlerTestSerialSuite{&basicHTTPHandlerTestSuite{}})
+
+func (ts *basicHTTPHandlerTestSuite) SetUpSuite(c *C) {
+	ts.testServerClient = newTestServerClient()
+}
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	sTableID := int64(3)
@@ -359,7 +359,7 @@ func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 
-	cfg := config.NewConfig()
+	cfg := newTestConfig()
 	cfg.Port = ts.port
 	cfg.Store = "tikv"
 	cfg.Status.StatusPort = ts.statusPort

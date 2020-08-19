@@ -584,6 +584,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			for _, idxCol := range pkIdx.Columns {
 				pkDts = append(pkDts, r[tblInfo.Columns[idxCol.Offset].Offset])
 			}
+			tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
 			var handleBytes []byte
 			handleBytes, err = codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, pkDts...)
 			if err != nil {
@@ -1323,7 +1324,13 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 		return true
 	}
 	if col.IsCommonHandleColumn(info) {
-		return true
+		pkIdx := FindPrimaryIndex(info)
+		for _, idxCol := range pkIdx.Columns {
+			if info.Columns[idxCol.Offset].ID != col.ID {
+				continue
+			}
+			return idxCol.Length == types.UnspecifiedLength
+		}
 	}
 	if col.GetDefaultValue() == nil && value.IsNull() {
 		return true
