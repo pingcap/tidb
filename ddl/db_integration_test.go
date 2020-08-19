@@ -1933,6 +1933,16 @@ func (s *testIntegrationSuite5) TestChangingDBCharset(c *C) {
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_general_ci")
 }
 
+func (s *testIntegrationSuite5) TestChangingUppercaseDBCharset(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists TEST_UPPERCASE_DB_CHARSET;")
+	tk.MustExec("create database TEST_UPPERCASE_DB_CHARSET;")
+	tk.MustExec("use TEST_UPPERCASE_DB_CHARSET;")
+
+	tk.MustExec("alter database TEST_UPPERCASE_DB_CHARSET default character set utf8;")
+	tk.MustExec("alter database TEST_UPPERCASE_DB_CHARSET default character set utf8mb4;")
+}
+
 func (s *testIntegrationSuite4) TestDropAutoIncrementIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test")
