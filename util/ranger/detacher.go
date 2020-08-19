@@ -29,16 +29,16 @@ func detachColumnCNFConditions(sctx sessionctx.Context, conditions []expression.
 	for _, cond := range conditions {
 		if sf, ok := cond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
 			dnfItems := expression.FlattenDNFConditions(sf)
-			colulmnDNFItems, hasResidual := detachColumnDNFConditions(sctx, dnfItems, checker)
+			columnDNFItems, hasResidual := detachColumnDNFConditions(sctx, dnfItems, checker)
 			// If this CNF has expression that cannot be resolved as access condition, then the total DNF expression
 			// should be also appended into filter condition.
 			if hasResidual {
 				filterConditions = append(filterConditions, cond)
 			}
-			if len(colulmnDNFItems) == 0 {
+			if len(columnDNFItems) == 0 {
 				continue
 			}
-			rebuildDNF := expression.ComposeDNFCondition(sctx, colulmnDNFItems...)
+			rebuildDNF := expression.ComposeDNFCondition(sctx, columnDNFItems...)
 			accessConditions = append(accessConditions, rebuildDNF)
 			continue
 		}
@@ -445,6 +445,9 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 			length:      types.UnspecifiedLength,
 		}
 		// If we can't use this condition to build range, we can't merge it.
+		// Currently, we assume if every condition in a DNF expression can pass this check, then `Selectivity` must be able to
+		// cover this entire DNF directly without recursively call `Selectivity`. If this doesn't hold in the future, this logic
+		// may cause infinite recursion in `Selectivity`.
 		if !checker.check(dnfItem) {
 			mergedDNFItems = append(mergedDNFItems, dnfItem)
 			continue

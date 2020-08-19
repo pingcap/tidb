@@ -303,6 +303,9 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 
 			selectivity := 0.0
 			for _, cond := range dnfItems {
+				// In selectivity calculation, we don't handle CorrelatedColumn, so we directly skip over it.
+				// Other kinds of `Expression`, i.e., Constant, Column and ScalarFunction all can possibly be built into
+				// ranges and used to calculation selectivity, so we accept them all.
 				_, ok := cond.(*expression.CorrelatedColumn)
 				if ok {
 					continue
