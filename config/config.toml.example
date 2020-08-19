@@ -186,6 +186,7 @@ cluster-ssl-key = ""
 
 # Configurations of the encryption method to use for encrypting the spilled data files.
 # Possible values are "plaintext", "aes128-ctr", if not set, it will be "plaintext" by default.
+# "plaintext" means encryption is disabled.
 spilled-file-encryption-method = "plaintext"
 
 [status]

@@ -290,6 +290,7 @@ func (l *Log) getDisableErrorStack() bool {
 }
 
 // The following constants represents the valid action configurations for Security.SpilledFileEncryptionMethod.
+// "plaintext" means encryption is disabled.
 // NOTE: Although the values is case insensitive, we should use lower-case
 // strings because the configuration value will be transformed to lower-case
 // string and compared with these constants in the further usage.
@@ -300,16 +301,17 @@ const (
 
 // Security is the security section of the config.
 type Security struct {
-	SkipGrantTable              bool     `toml:"skip-grant-table" json:"skip-grant-table"`
-	SSLCA                       string   `toml:"ssl-ca" json:"ssl-ca"`
-	SSLCert                     string   `toml:"ssl-cert" json:"ssl-cert"`
-	SSLKey                      string   `toml:"ssl-key" json:"ssl-key"`
-	RequireSecureTransport      bool     `toml:"require-secure-transport" json:"require-secure-transport"`
-	ClusterSSLCA                string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
-	ClusterSSLCert              string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
-	ClusterSSLKey               string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
-	ClusterVerifyCN             []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
-	SpilledFileEncryptionMethod string   `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
+	SkipGrantTable         bool     `toml:"skip-grant-table" json:"skip-grant-table"`
+	SSLCA                  string   `toml:"ssl-ca" json:"ssl-ca"`
+	SSLCert                string   `toml:"ssl-cert" json:"ssl-cert"`
+	SSLKey                 string   `toml:"ssl-key" json:"ssl-key"`
+	RequireSecureTransport bool     `toml:"require-secure-transport" json:"require-secure-transport"`
+	ClusterSSLCA           string   `toml:"cluster-ssl-ca" json:"cluster-ssl-ca"`
+	ClusterSSLCert         string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
+	ClusterSSLKey          string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
+	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	// If set to "plaintext", the spilled files will not be encrypted.
+	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -917,8 +919,9 @@ func (c *Config) Valid() error {
 
 	// test security
 	c.Security.SpilledFileEncryptionMethod = strings.ToLower(c.Security.SpilledFileEncryptionMethod)
-	if c.Security.SpilledFileEncryptionMethod != SpilledFileEncryptionMethodPlaintext &&
-		c.Security.SpilledFileEncryptionMethod != SpilledFileEncryptionMethodAES128CTR {
+	switch c.Security.SpilledFileEncryptionMethod {
+	case SpilledFileEncryptionMethodPlaintext, SpilledFileEncryptionMethodAES128CTR:
+	default:
 		return fmt.Errorf("unsupported [security]spilled-file-encryption-method %v, TiDB only supports [%v, %v]",
 			c.Security.SpilledFileEncryptionMethod, SpilledFileEncryptionMethodPlaintext, SpilledFileEncryptionMethodAES128CTR)
 	}
