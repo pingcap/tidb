@@ -1020,6 +1020,7 @@ type PhysicalUnionScan struct {
 	HandleCols HandleCols
 }
 
+// ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0)
 	for _, cond := range p.Conditions {
