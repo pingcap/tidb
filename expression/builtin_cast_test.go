@@ -1176,8 +1176,13 @@ func (s *testEvaluatorSuite) TestWrapWithCastAsTypesClasses(c *C) {
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeBit), Index: 0},
-			chunk.MutRowFromDatums([]types.Datum{types.NewDatum(123)}),
-			123, 123, types.NewDecFromInt(123), "123",
+			chunk.MutRowFromDatums([]types.Datum{types.NewMysqlBitDatum([]byte{123})}),
+			123, 123, types.NewDecFromInt(123), "{",
+		},
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeBit), Index: 0},
+			chunk.MutRowFromDatums([]types.Datum{types.NewMysqlBitDatum([]byte{65, 66})}),
+			16706, 16706, types.NewDecFromInt(16706), "AB",
 		},
 		{
 			&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0},
