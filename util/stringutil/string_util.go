@@ -16,6 +16,7 @@ package stringutil
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -323,10 +324,16 @@ func BuildStringFromLabels(labels map[string]string) string {
 	if len(labels) < 1 {
 		return ""
 	}
-	r := new(bytes.Buffer)
-	for k, v := range labels {
-		r.WriteString(fmt.Sprintf("%s=%s,", k, v))
+	s := make([]string, 0, len(labels))
+	for k := range labels {
+		s = append(s, k)
 	}
-	s := r.String()
-	return s[:len(s)-1]
+	sort.Strings(s)
+	r := new(bytes.Buffer)
+	// visit labels by sorted key in order to make sure that result should be consite
+	for _, key := range s {
+		r.WriteString(fmt.Sprintf("%s=%s,", key, labels[key]))
+	}
+	returned := r.String()
+	return returned[:len(returned)-1]
 }
