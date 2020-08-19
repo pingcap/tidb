@@ -155,6 +155,40 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	}
 }
 
+func (ts *HTTPHandlerTestSuite) TestRegionCommonHandleRange(c *C) {
+	sTableID := int64(3)
+	indexValues := []types.Datum{
+		types.NewIntDatum(100),
+		types.NewBytesDatum([]byte("foobar")),
+		types.NewFloat64Datum(-100.25),
+	}
+	expectIndexValues := make([]string, 0, len(indexValues))
+	for _, v := range indexValues {
+		str, err := v.ToString()
+		if err != nil {
+			str = fmt.Sprintf("%d-%v", v.Kind(), v.GetValue())
+		}
+		expectIndexValues = append(expectIndexValues, str)
+	}
+	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.Local}, nil, indexValues...)
+	c.Assert(err, IsNil)
+
+	startKey := tablecodec.EncodeCommonHandleSeekKey(sTableID, encodedValue)
+
+	region := &tikv.KeyLocation{
+		Region:   tikv.RegionVerID{},
+		StartKey: startKey,
+	}
+	r, err := helper.NewRegionFrameRange(region)
+	c.Assert(err, IsNil)
+	c.Assert(r.First.IsRecord, IsTrue)
+	c.Assert(r.First.RecordID, Equals, int64(0))
+	c.Assert(r.First.IndexValues, DeepEquals, expectIndexValues)
+	c.Assert(r.First.IndexName, Equals, "ClusterHandle")
+	c.Assert(r.Last.RecordID, Equals, int64(0))
+	c.Assert(r.Last.IndexValues, IsNil)
+}
+
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	sTableID := int64(15)
 	startKey := tablecodec.GenTableRecordPrefix(sTableID)
@@ -224,7 +258,6 @@ func (ts *HTTPHandlerTestSuite) TestRegionsAPIForClusterIndex(c *C) {
 	c.Assert(len(data.RecordRegions) > 0, IsTrue)
 	// list region
 	for _, region := range data.RecordRegions {
-		fmt.Println(region.ID)
 		resp, err := ts.fetchStatus(fmt.Sprintf("/regions/%d", region.ID))
 		c.Assert(err, IsNil)
 		c.Assert(resp.StatusCode, Equals, http.StatusOK)
@@ -232,10 +265,13 @@ func (ts *HTTPHandlerTestSuite) TestRegionsAPIForClusterIndex(c *C) {
 		var data RegionDetail
 		err = decoder.Decode(&data)
 		c.Assert(err, IsNil)
-		fmt.Println("data.StartKey and EndKey", data.StartKey, data.EndKey)
-		for _, index := range data.Frames {
-			fmt.Println(*index)
+		frameCnt := 0
+		for _, f := range data.Frames {
+			if f.DBName == "tidb" && f.TableName == "t" {
+				frameCnt++
+			}
 		}
+		c.Assert(frameCnt, Equals, 2)
 		c.Assert(resp.Body.Close(), IsNil)
 	}
 }

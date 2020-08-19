@@ -308,19 +308,16 @@ func NewRegionFrameRange(region *tikv.KeyLocation) (idxRange *RegionFrameRange, 
 // returns err when key is illegal.
 func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 	frame = &FrameItem{}
-	fmt.Println("NewFrameItemFromRegionKey", key)
 	frame.TableID, frame.IndexID, frame.IsRecord, err = tablecodec.DecodeKeyHead(key)
 	if err == nil {
 		if frame.IsRecord {
 			var handle kv.Handle
 			_, handle, err = tablecodec.DecodeRecordKey(key)
 			if err == nil {
-				fmt.Println("oriHandle", handle)
 				if handle.IsInt() {
 					frame.RecordID = handle.IntValue()
 				} else {
 					str := handle.String()
-					fmt.Println("handleStr", str)
 					frame.IndexName = "ClusterHandle"
 					frame.IndexValues = strings.Split(str[1:len(str)-1], ", ")
 				}
@@ -378,10 +375,10 @@ func (r *RegionFrameRange) GetRecordFrame(tableID int64, dbName, tableName strin
 			IsRecord:  true,
 		}
 	}
-	if f != nil && isCommonHandle {
-		f.IndexName = "CommonHandle"
+	if f != nil && f.IsRecord && isCommonHandle {
+		f.IndexName = "ClusterHandle"
 	}
-	return nil
+	return
 }
 
 // GetIndexFrame returns the indnex frame of a table. If the table's indices are
