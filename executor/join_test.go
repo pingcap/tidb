@@ -2162,8 +2162,6 @@ func (s *testSuite9) TestIssue18572_3(c *C) {
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinBuildErr"), IsTrue)
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSuite9) TestIssue19112(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -2230,4 +2228,3 @@ func (s *testSuiteJoin3) TestIssue11896(c *C) {
 	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
 		testkit.Rows("1 \x01"))
 }
->>>>>>> 5184a0d... executor: fix the bug: can not join if join keys are type bigint and type bit (#19032)
