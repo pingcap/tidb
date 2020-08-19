@@ -184,7 +184,7 @@ cluster-ssl-cert = ""
 # Path of file that contains X509 key in PEM format for connection with cluster components.
 cluster-ssl-key = ""
 
-# Configurations the encryption method to use for spilling data files.
+# Configurations of the encryption method to use for encrypting the spilled data files.
 # Possible values are "plaintext", "aes128-ctr", if not set, it will be "plaintext" by default.
 spilled-file-encryption-method = "plaintext"
 
