@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // statsCache caches Regions loaded from PD.
@@ -47,7 +46,7 @@ func newstatsCache(memoryLimit int64) *statsCache {
 	c := statsCache{
 		cache:       cache,
 		memCapacity: memoryLimit,
-		memTracker:  memory.NewTracker(stringutil.StringerStr("statsCache"), -1),
+		memTracker:  memory.NewTracker(memory.LabelForStatsCache, -1),
 	}
 	return &c
 }
