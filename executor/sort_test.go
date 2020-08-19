@@ -36,7 +36,6 @@ func (s *testSerialSuite1) testSortInDisk(c *C, removeDir bool) {
 	newConf.OOMUseTmpStorage = true
 	config.StoreGlobalConfig(&newConf)
 	defer config.StoreGlobalConfig(originCfg)
-
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
