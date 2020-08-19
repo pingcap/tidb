@@ -905,6 +905,7 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 	err = infosync.UpdatePlacementRules(nil, rules)
 	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
