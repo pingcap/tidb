@@ -154,7 +154,6 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
 		// If the memory is still exceeded, only records once.
 		if time.Since(record.lastChangeTime) > 10*time.Second {
-			record.lastChangeTime = time.Now()
 			record.doRecord(memoryUsage, sm)
 		}
 		record.lastChangeTime = time.Now()
@@ -175,6 +174,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager
 	if record.err = disk.CheckAndInitTempDir(); record.err != nil {
 		return
 	}
+	record.lastChangeTime = time.Now()
 	record.recordSQL(sm)
 	record.recordProfile()
 
@@ -203,7 +203,6 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 			pinfo = append(pinfo, info)
 		}
 	}
-	now := time.Now()
 
 	fileName := filepath.Join(config.GetGlobalConfig().TempStoragePath, "running_sql"+record.lastChangeTime.Format(time.RFC3339))
 	record.lastLogFileName = append(record.lastLogFileName, fileName)
@@ -227,7 +226,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 		var buf strings.Builder
 		for i, info := range list {
 			buf.WriteString(fmt.Sprintf("SQL %v: \n", i))
-			fields := genLogFields(now.Sub(info.Time), info)
+			fields := genLogFields(record.lastChangeTime.Sub(info.Time), info)
 			for _, field := range fields {
 				switch field.Type {
 				case zapcore.StringType:
@@ -253,7 +252,7 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 		return pinfo[i].Time.Before(pinfo[j].Time)
 	})
 
-	logutil.BgLogger().Info("record SQLs with the most memory usage or time usage successfully", zap.Any("SQLs file path:", fileName))
+	logutil.BgLogger().Info("record SQLs with the most memory usage or time usage successfully", zap.Any("SQLs file path", fileName))
 }
 
 func (record *memoryUsageAlarm) recordProfile() {
@@ -284,7 +283,7 @@ func (record *memoryUsageAlarm) recordProfile() {
 			logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
 			return
 		}
-		logutil.BgLogger().Info(fmt.Sprintf("record %v profile successfully", item.name), zap.Any("Profile file path:", fileName))
+		logutil.BgLogger().Info(fmt.Sprintf("record %v profile successfully", item.name), zap.Any("Profile file path", fileName))
 	}
 }
 
