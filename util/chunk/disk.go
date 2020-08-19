@@ -26,9 +26,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/checksum"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/encrypt"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // ListInDisk represents a slice of chunks storing in temporary disk.
