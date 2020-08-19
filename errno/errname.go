@@ -1080,6 +1080,8 @@ var MySQLErrName = map[uint16]string{
 	ErrBRIEImportFailed:  "Import failed: %s",
 	ErrBRIEExportFailed:  "Export failed: %s",
 
+	ErrInvalidPlacementSpec: "Invalid placement policy '%s': %s",
+
 	// TiKV/PD errors.
 	ErrPDServerTimeout:        "PD server timeout",
 	ErrTiKVServerTimeout:      "TiKV server timeout",

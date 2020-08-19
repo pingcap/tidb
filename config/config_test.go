@@ -38,7 +38,7 @@ func TestT(t *testing.T) {
 	TestingT(t)
 }
 
-func (s *testConfigSuite) TestNullableBoolUnmashal(c *C) {
+func (s *testConfigSuite) TestNullableBoolUnmarshal(c *C) {
 	var nb = nullableBool{false, false}
 	data, err := json.Marshal(nb)
 	c.Assert(err, IsNil)
@@ -481,7 +481,7 @@ func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
 
 	dirPrefix := filepath.Join(os.TempDir(), osUID+"_tidb")
 	for _, test := range tests {
-		tempStorageDir := encodeDefTempStorageDir(test.host, test.statusHost, test.port, test.statusPort)
+		tempStorageDir := encodeDefTempStorageDir(os.TempDir(), test.host, test.statusHost, test.port, test.statusPort)
 		c.Assert(tempStorageDir, Equals, filepath.Join(dirPrefix, test.expect, "tmp-storage"))
 	}
 }

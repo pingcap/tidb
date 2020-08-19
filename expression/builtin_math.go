@@ -1143,6 +1143,7 @@ func (c *convFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err != nil {
 		return nil, err
 	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinConvSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Conv)

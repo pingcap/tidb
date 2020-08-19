@@ -14,9 +14,12 @@
 package infosync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
@@ -30,6 +33,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -262,6 +266,75 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 		break
 	}
 	return progressMap, nil
+}
+
+func doRequest(ctx context.Context, addrs []string, route, method string, body io.Reader) error {
+	var err error
+	var req *http.Request
+	for _, addr := range addrs {
+		var url string
+		if strings.HasPrefix(addr, "http://") {
+			url = fmt.Sprintf("%s%s", addr, route)
+		} else {
+			url = fmt.Sprintf("http://%s%s", addr, route)
+		}
+
+		if ctx != nil {
+			req, err = http.NewRequestWithContext(ctx, method, url, body)
+		} else {
+			req, err = http.NewRequest(method, url, body)
+		}
+		if err != nil {
+			return err
+		}
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		res, err := http.DefaultClient.Do(req)
+		if err == nil {
+			defer terror.Log(res.Body.Close())
+			if res.StatusCode != http.StatusOK {
+				bodyBytes, err := ioutil.ReadAll(res.Body)
+				return errors.Wrapf(err, "%s", bodyBytes)
+			}
+			return nil
+		}
+	}
+	return err
+}
+
+// UpdatePlacementRules is used to notify PD changes of placement rules.
+func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error {
+	if len(rules) == 0 {
+		return nil
+	}
+
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+
+	var addrs []string
+	if is.etcdCli != nil {
+		addrs = is.etcdCli.Endpoints()
+	}
+
+	if len(addrs) == 0 {
+		return errors.Errorf("pd unavailable")
+	}
+
+	b, err := json.Marshal(rules)
+	if err != nil {
+		return err
+	}
+
+	err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
