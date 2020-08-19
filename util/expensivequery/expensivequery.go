@@ -102,7 +102,7 @@ type memoryUsageAlarmRecord struct {
 
 	tmpDir              string
 	lastLogFileName     []string
-	lastProfileFileName []string
+	lastProfileFileName [][]string // heap, goroutine
 }
 
 func (eqh *Handle) initMemoryUsageAlarmRecord() {
@@ -122,6 +122,7 @@ func (eqh *Handle) initMemoryUsageAlarmRecord() {
 	if alert := config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio; alert == 0 || alert == 1 {
 		eqh.record.err = errors.New("close memory usage alarm recorder")
 	}
+	eqh.record.lastProfileFileName = make([][]string, 2)
 }
 
 // If Performance.ServerMemoryQuota is set, use instance memory usage and ServerMemoryQuota * 80% to check oom risk.
@@ -189,7 +190,9 @@ func (eqh *Handle) oomRecord(memUsage uint64) {
 		filename = filename[1:]
 	}
 	tryRemove(eqh.record.lastLogFileName)
-	tryRemove(eqh.record.lastProfileFileName)
+	for i := range eqh.record.lastProfileFileName {
+		tryRemove(eqh.record.lastProfileFileName[i])
+	}
 }
 
 func (eqh *Handle) oomRecordSQL() {
@@ -255,26 +258,39 @@ func (eqh *Handle) oomRecordSQL() {
 }
 
 func (eqh *Handle) oomRecordProfile() {
-	fileName := filepath.Join(eqh.record.tmpDir, "heap.profile"+time.Now().Format(time.RFC3339))
-	eqh.record.lastProfileFileName = append(eqh.record.lastProfileFileName, fileName)
-	f, err := os.Create(fileName)
-	if err != nil {
-		logutil.BgLogger().Error("Create heap profile file fail.", zap.Error(err))
-		return
+	items := []struct {
+		name  string
+		gc    int
+		debug int
+	}{
+		{name: "heap", gc: 1},
+		{name: "goroutine", debug: 2},
 	}
-	defer func() {
-		err := f.Close()
+	for i, item := range items {
+		fileName := filepath.Join(eqh.record.tmpDir, item.name+time.Now().Format(time.RFC3339))
+		eqh.record.lastProfileFileName[i] = append(eqh.record.lastProfileFileName[i], fileName)
+		f, err := os.Create(fileName)
 		if err != nil {
-			logutil.BgLogger().Error("Close heap profile file fail.", zap.Error(err))
+			logutil.BgLogger().Error(fmt.Sprintf("Create %v profile file fail.", item.name), zap.Error(err))
+			return
 		}
-	}()
-	p := rpprof.Lookup("heap")
-	err = p.WriteTo(f, 0)
-	if err != nil {
-		logutil.BgLogger().Error("Write heap profile file fail.", zap.Error(err))
-		return
+		defer func() {
+			err := f.Close()
+			if err != nil {
+				logutil.BgLogger().Error(fmt.Sprintf("Close %v profile file fail.", item.name), zap.Error(err))
+			}
+		}()
+		if item.gc > 0 {
+			runtime.GC()
+		}
+		p := rpprof.Lookup(item.name)
+		err = p.WriteTo(f, item.debug)
+		if err != nil {
+			logutil.BgLogger().Error(fmt.Sprintf("Write %v profile file fail.", item.name), zap.Error(err))
+			return
+		}
+		logutil.BgLogger().Info(fmt.Sprintf("Get %v profile successfully.", item.name), zap.Any("Profile file path:", fileName))
 	}
-	logutil.BgLogger().Info("Get heap profile successfully.", zap.Any("Profile file path:", eqh.record.lastProfileFileName))
 }
 
 // LogOnQueryExceedMemQuota prints a log when memory usage of connID is out of memory quota.
