@@ -1020,6 +1020,14 @@ type PhysicalUnionScan struct {
 	HandleCols HandleCols
 }
 
+func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0)
+	for _, cond := range p.Conditions {
+		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
+	}
+	return corCols
+}
+
 // IsPartition returns true and partition ID if it works on a partition.
 func (p *PhysicalIndexScan) IsPartition() (bool, int64) {
 	return p.isPartition, p.physicalTableID

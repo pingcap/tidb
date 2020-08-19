@@ -15,6 +15,7 @@ package core
 
 import (
 	"math"
+	"fmt"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -415,11 +416,20 @@ type LogicalApply struct {
 // ExtractCorrelatedCols implements LogicalPlan interface.
 func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.LogicalJoin.ExtractCorrelatedCols()
+	f := func(cols []*expression.CorrelatedColumn) []string {
+		colStrs := make([]string, 0, len(cols))
+		for _, c := range cols {
+			colStrs = append(colStrs, c.String())
+		}
+		return colStrs
+	}
+	fmt.Println("LogicalApply Extract Correlated Cols", f(corCols))
 	for i := len(corCols) - 1; i >= 0; i-- {
 		if la.children[0].Schema().Contains(&corCols[i].Column) {
 			corCols = append(corCols[:i], corCols[i+1:]...)
 		}
 	}
+	fmt.Println("LogicalApply Extract Correlated Cols After Check", f(corCols))
 	return corCols
 }
 
