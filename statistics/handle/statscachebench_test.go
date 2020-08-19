@@ -16,7 +16,6 @@ package handle_test
 // This file contains benchmarks of our expression evaluation.
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 
@@ -37,7 +35,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
@@ -211,12 +208,10 @@ func newStoreWithStatsBootstrap() (kv.Storage, *domain.Domain, error) {
 	clearRW.RLock()
 	defer clearRW.RUnlock()
 	store, err := mockstore.NewMockStore()
-
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 	session.SetSchemaLease(0)
-	session.SetStatsLease(time.Second)
 	domain.RunAutoAnalyze = false
 	do, err := session.BootstrapSession(store)
 	do.SetStatsUpdating(true)
@@ -231,7 +226,12 @@ func (s *testStatsSuite) SetUpStatsSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func BenchmarkSelectivityWithCache(b *testing.B) {
+func BenchmarkSelectivityWithCachex(b *testing.B) {
+	BenchmarkSelectivityWithCache(b)
+	BenchmarkSelectivityWithSimpleCache(b)
+	BenchmarkSelectivityWithCacheNolimit(b)
+}
+func BenchmarkSelectivityWithCacheNolimit(b *testing.B) {
 	c := &C{}
 	s := &testStatsSuite{}
 	s.SetUpStatsSuite(c)
@@ -240,23 +240,80 @@ func BenchmarkSelectivityWithCache(b *testing.B) {
 
 	h := s.do.StatsHandle()
 	origLease := h.Lease()
-	h.SetLease(time.Microsecond * 50)
 	defer func() { h.SetLease(origLease) }()
+	s.prepareSelectivity(testKit, c)
 
-	statsTbls := s.prepareSelectivity(testKit, c)
+	file, err := os.Create("cpu.profile")
+	c.Assert(err, IsNil)
+	defer file.Close()
+	pprof.StartCPUProfile(file)
 
-	is := s.do.InfoSchema()
-	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
-	sql := "select * from t where " + exprs
-	comment := Commentf("for %s", exprs)
-	sctx := testKit.Se.(sessionctx.Context)
-	stmts, err := session.Parse(sctx, sql)
-	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
-	c.Assert(stmts, HasLen, 1)
-	err = plannercore.Preprocess(sctx, stmts[0], is)
-	c.Assert(err, IsNil, comment)
-	p, _, err := plannercore.BuildLogicalPlan(context.Background(), sctx, stmts[0], is)
-	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
+	b.Run("SelectivityWithCacheNolimit", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < 100; j++ {
+				id := rand.Int() % 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1 and b < 2 and c > 3 and d < 4 and e > 5", id))
+			}
+			for j := 0; j < 100; j++ {
+				id := rand.Int()%10 + 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1 and b < 2 and c > 3 and d < 4 and e > 5", id))
+			}
+		}
+		b.ReportAllocs()
+	})
+	pprof.StopCPUProfile()
+}
+func BenchmarkSelectivityWithSimpleCache(b *testing.B) {
+	c := &C{}
+	s := &testStatsSuite{}
+	s.SetUpStatsSuite(c)
+	defer s.TearDownSuite(c)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	h := s.do.StatsHandle()
+	limit := int64(51000 * 8 * 10)
+	h.SetBytesLimit(limit)
+	h.SetSimpleCache()
+
+	origLease := h.Lease()
+	defer func() { h.SetLease(origLease) }()
+	s.prepareSelectivity(testKit, c)
+
+	file, err := os.Create("cpu.profile")
+	c.Assert(err, IsNil)
+	defer file.Close()
+	pprof.StartCPUProfile(file)
+
+	b.Run("SelectivityWithSimpleCache", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < 100; j++ {
+				id := rand.Int() % 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1 and b < 2 and c > 3 and d < 4 and e > 5", id))
+			}
+			for j := 0; j < 100; j++ {
+				id := rand.Int()%10 + 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1 and b < 2 and c > 3 and d < 4 and e > 5", id))
+			}
+		}
+		b.ReportAllocs()
+	})
+	pprof.StopCPUProfile()
+}
+func BenchmarkSelectivityWithCache(b *testing.B) {
+	c := &C{}
+	s := &testStatsSuite{}
+	s.SetUpStatsSuite(c)
+	defer s.TearDownSuite(c)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	h := s.do.StatsHandle()
+	limit := int64(51000 * 8 * 10)
+	h.SetBytesLimit(limit)
+	origLease := h.Lease()
+	defer func() { h.SetLease(origLease) }()
+	s.prepareSelectivity(testKit, c)
 
 	file, err := os.Create("cpu.profile")
 	c.Assert(err, IsNil)
@@ -266,46 +323,33 @@ func BenchmarkSelectivityWithCache(b *testing.B) {
 	b.Run("SelectivityWithCache", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			id := rand.Int() % 20
-			_, _, err := statsTbls[id].Selectivity(sctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions, nil)
-			c.Assert(err, IsNil)
+			for j := 0; j < 100; j++ {
+				id := rand.Int() % 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1 and b < 2 and c > 3 and d < 4 and e > 5", id))
+			}
+			for j := 0; j < 100; j++ {
+				id := rand.Int()%10 + 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1 and b < 2 and c > 3 and d < 4 and e > 5", id))
+			}
 		}
 		b.ReportAllocs()
 	})
 	pprof.StopCPUProfile()
 }
-func (s *testStatsSuite) prepareSelectivity(testKit *testkit.TestKit, c *C) []*statistics.Table {
+func (s *testStatsSuite) prepareSelectivity(testKit *testkit.TestKit, c *C) {
 	testKit.MustExec("use test")
 	for i := 0; i < 20; i++ {
 		testKit.MustExec(fmt.Sprintf("drop table if exists t%d", i))
 		//create a table with 5  column,2 index
 		testKit.MustExec(fmt.Sprintf("create table t%d(a int primary key, b int, c int, d int, e int, index idx_cd(c, d), index idx_de(d, e))", i))
 	}
-	is := s.do.InfoSchema()
-	statsTbls := make([]*statistics.Table, 0)
 	for i := 0; i < 20; i++ {
-		tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%d", i)))
-		c.Assert(err, IsNil)
-		tbl := tb.Meta()
-		// mock the statistic table
-		statsTbl := mockStatsTable(tbl, 540)
-		// Set the value of columns' histogram.
-		colValues, err := s.generateIntDatum(1, 54)
-		c.Assert(err, IsNil)
-		for i := 1; i <= 5; i++ {
-			statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
+		for j := 1; j <= 5000; j++ {
+			sql := fmt.Sprintf("insert into t%d values ", i)
+			sql = sql + fmt.Sprintf("(%d,%d,%d,%d,%d)", j, rand.Int()%10, rand.Int()%10, rand.Int()%10, rand.Int()%10)
+			testKit.MustExec(sql)
 		}
-
-		// Set the value of two indices' histograms.
-		idxValues, err := s.generateIntDatum(2, 3)
-		c.Assert(err, IsNil)
-		tp := types.NewFieldType(mysql.TypeBlob)
-		statsTbl.Indices[1] = &statistics.Index{Histogram: *mockStatsHistogram(1, idxValues, 60, tp), Info: tbl.Indices[0]}
-		statsTbl.Indices[2] = &statistics.Index{Histogram: *mockStatsHistogram(2, idxValues, 60, tp), Info: tbl.Indices[1]}
-		statsTbls = append(statsTbls, statsTbl)
 	}
-
-	return statsTbls
 
 }
 
