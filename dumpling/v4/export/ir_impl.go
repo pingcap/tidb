@@ -315,7 +315,7 @@ func splitTableDataIntoChunks(
 	estimatedStep := (max-min)/estimatedChunks + 1
 	cutoff := min
 
-	selectedField, err := buildSelectField(db, dbName, tableName)
+	selectedField, err := buildSelectField(db, dbName, tableName, conf.CompleteInsert)
 	if err != nil {
 		errCh <- withStack(err)
 		return
