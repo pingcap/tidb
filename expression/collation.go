@@ -14,6 +14,8 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"strings"
 
 	"github.com/pingcap/parser/ast"
@@ -214,6 +216,10 @@ func inferCollation(exprs ...Expression) (collation, charset string, coercibilit
 	firstExplicitCollation := ""
 	coercibility = CoercibilityIgnorable
 	for _, arg := range exprs {
+		logutil.BgLogger().Warn("arg", zap.Any("arg", arg))
+		logutil.BgLogger().Warn("arg", zap.Any("coer", arg.Coercibility()))
+		logutil.BgLogger().Warn("arg", zap.Any("charset", arg.GetType().Charset))
+		logutil.BgLogger().Warn("arg", zap.Any("collate", arg.GetType().Collate))
 		if arg.Coercibility() == CoercibilityExplicit {
 			if firstExplicitCollation == "" {
 				firstExplicitCollation = arg.GetType().Collate

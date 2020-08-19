@@ -24,6 +24,8 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"sort"
 	"strings"
 	"sync"
@@ -123,6 +125,8 @@ func checkIllegalMixCollation(funcName string, args []Expression) error {
 		return nil
 	}
 	_, _, coercibility, legal := inferCollation(args...)
+	logutil.BgLogger().Warn("coer", zap.Any("coer", coercibility))
+	logutil.BgLogger().Warn("coer", zap.Bool("legal", legal))
 	if !legal {
 		return illegalMixCollationErr(funcName, args)
 	}
