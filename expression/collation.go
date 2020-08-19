@@ -151,12 +151,18 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 	if !types.IsString(sf.RetType.Tp) {
 		return CoercibilityNumeric
 	}
-	coer := CoercibilityCoercible
+	coer := CoercibilityIgnorable
 	for _, arg := range sf.GetArgs() {
 		if arg.Coercibility() < coer {
 			coer = arg.Coercibility()
 		}
 	}
+
+	// it is weird if a ScalarFunction is CoercibilityNumeric but return string type
+	if coer == CoercibilityNumeric {
+		return CoercibilityCoercible
+	}
+
 	return coer
 }
 
