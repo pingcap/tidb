@@ -49,19 +49,27 @@ type Tracker struct {
 		actionOnExceed ActionOnExceed
 	}
 
+<<<<<<< HEAD
 	label         fmt.Stringer // Label of this "Tracker".
 	bytesConsumed int64        // Consumed bytes.
 	bytesLimit    int64        // bytesLimit <= 0 means no limit.
 	maxConsumed   int64        // max number of bytes consumed during execution.
 	parent        *Tracker     // The parent memory tracker.
 	isGlobal      bool         // isGlobal indicates whether this tracker is global tracker
+=======
+	label         int   // Label of this "Tracker".
+	bytesConsumed int64 // Consumed bytes.
+	bytesLimit    int64 // bytesLimit <= 0 means no limit.
+	maxConsumed   int64 // max number of bytes consumed during execution.
+	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
+>>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 }
 
 // NewTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit <= 0" means no limit.
 // For the common tracker, isGlobal is default as false
-func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
+func NewTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{
 		label:      label,
 		bytesLimit: bytesLimit,
@@ -72,7 +80,7 @@ func NewTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
 }
 
 // NewGlobalTracker creates a global tracker, its isGlobal is default as true
-func NewGlobalTracker(label fmt.Stringer, bytesLimit int64) *Tracker {
+func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{
 		label:      label,
 		bytesLimit: bytesLimit,
@@ -122,12 +130,12 @@ func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
 }
 
 // SetLabel sets the label of a Tracker.
-func (t *Tracker) SetLabel(label fmt.Stringer) {
+func (t *Tracker) SetLabel(label int) {
 	t.label = label
 }
 
 // Label gets the label of a Tracker.
-func (t *Tracker) Label() fmt.Stringer {
+func (t *Tracker) Label() int {
 	return t.label
 }
 
@@ -241,14 +249,27 @@ func (t *Tracker) MaxConsumed() int64 {
 }
 
 // SearchTracker searches the specific tracker under this tracker.
-func (t *Tracker) SearchTracker(label string) *Tracker {
-	if t.label.String() == label {
+func (t *Tracker) SearchTracker(label int) *Tracker {
+	if t.label == label {
 		return t
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, child := range t.mu.children {
 		if result := child.SearchTracker(label); result != nil {
+			return result
+		}
+	}
+	return nil
+}
+
+// SearchTrackerWithoutLock searches the specific tracker under this tracker without lock.
+func (t *Tracker) SearchTrackerWithoutLock(label int) *Tracker {
+	if t.label == label {
+		return t
+	}
+	for _, child := range t.mu.children {
+		if result := child.SearchTrackerWithoutLock(label); result != nil {
 			return result
 		}
 	}
@@ -263,7 +284,7 @@ func (t *Tracker) String() string {
 }
 
 func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
-	fmt.Fprintf(buffer, "%s\"%s\"{\n", indent, t.label)
+	fmt.Fprintf(buffer, "%s\"%d\"{\n", indent, t.label)
 	if t.bytesLimit > 0 {
 		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.BytesToString(t.bytesLimit))
 	}
@@ -333,3 +354,42 @@ func (t *Tracker) DetachFromGlobalTracker() {
 	parent.Consume(-t.BytesConsumed())
 	t.parent = nil
 }
+
+const (
+	// LabelForSQLText represents the label of the SQL Text
+	LabelForSQLText int = -1
+	// LabelForIndexWorker represents the label of the index worker
+	LabelForIndexWorker int = -2
+	// LabelForInnerList represents the label of the inner list
+	LabelForInnerList int = -3
+	// LabelForInnerTable represents the label of the inner table
+	LabelForInnerTable int = -4
+	// LabelForOuterTable represents the label of the outer table
+	LabelForOuterTable int = -5
+	// LabelForCoprocessor represents the label of the coprocessor
+	LabelForCoprocessor int = -6
+	// LabelForChunkList represents the label of the chunk list
+	LabelForChunkList int = -7
+	// LabelForGlobalSimpleLRUCache represents the label of the Global SimpleLRUCache
+	LabelForGlobalSimpleLRUCache int = -8
+	// LabelForChunkListInDisk represents the label of the chunk list in disk
+	LabelForChunkListInDisk int = -9
+	// LabelForRowContainer represents the label of the row container
+	LabelForRowContainer int = -10
+	// LabelForGlobalStorage represents the label of the Global Storage
+	LabelForGlobalStorage int = -11
+	// LabelForGlobalMemory represents the label of the Global Memory
+	LabelForGlobalMemory int = -12
+	// LabelForBuildSideResult represents the label of the BuildSideResult
+	LabelForBuildSideResult int = -13
+	// LabelForRowChunks represents the label of the row chunks
+	LabelForRowChunks int = -14
+	// LabelForStatsCache represents the label of the stats cache
+	LabelForStatsCache int = -15
+	// LabelForOuterList represents the label of the outer list
+	LabelForOuterList int = -16
+	// LabelForApplyCache represents the label of the apply cache
+	LabelForApplyCache int = -17
+	// LabelForSimpleTask represents the label of the simple task
+	LabelForSimpleTask int = -18
+)

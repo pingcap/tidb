@@ -87,6 +87,11 @@ type Handle struct {
 func (h *Handle) Clear() {
 	h.mu.Lock()
 	h.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
+<<<<<<< HEAD
+=======
+	h.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
+	h.statsCache.Unlock()
+>>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
@@ -114,6 +119,10 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
+<<<<<<< HEAD
+=======
+	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
+>>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})

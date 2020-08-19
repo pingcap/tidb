@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -200,9 +199,15 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	se.GetSessionVars().TxnCtx.InfoSchema = is
 	// This is for disable parallel hash agg.
 	// TODO: remove this.
+<<<<<<< HEAD
 	se.GetSessionVars().HashAggPartialConcurrency = 1
 	se.GetSessionVars().HashAggFinalConcurrency = 1
 	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("coprocessor"), -1)
+=======
+	se.GetSessionVars().SetHashAggPartialConcurrency(1)
+	se.GetSessionVars().SetHashAggFinalConcurrency(1)
+	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForCoprocessor, -1)
+>>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 	se.SetSessionManager(s.sm)
 	return se, nil
 }

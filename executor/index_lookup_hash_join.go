@@ -300,7 +300,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 		concurrency := cap(e.joinChkResourceCh)
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])

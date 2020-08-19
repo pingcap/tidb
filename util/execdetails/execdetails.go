@@ -392,27 +392,38 @@ func (e *BasicRuntimeStats) String() string {
 
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
+<<<<<<< HEAD
 	mu          sync.Mutex
 	rootStats   map[string]RuntimeStats
 	copStats    map[string]*CopRuntimeStats
 	readerStats map[string]*ReaderRuntimeStats
+=======
+	mu        sync.Mutex
+	rootStats map[int]RuntimeStats
+	copStats  map[int]*CopRuntimeStats
+>>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 }
 
 // NewRuntimeStatsColl creates new executor collector.
 func NewRuntimeStatsColl() *RuntimeStatsColl {
+<<<<<<< HEAD
 	return &RuntimeStatsColl{rootStats: make(map[string]RuntimeStats),
 		copStats: make(map[string]*CopRuntimeStats), readerStats: make(map[string]*ReaderRuntimeStats)}
+=======
+	return &RuntimeStatsColl{rootStats: make(map[int]RuntimeStats),
+		copStats: make(map[int]*CopRuntimeStats)}
+>>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 }
 
 // RegisterStats register execStat for a executor.
-func (e *RuntimeStatsColl) RegisterStats(planID string, info RuntimeStats) {
+func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 	e.mu.Lock()
 	e.rootStats[planID] = info
 	e.mu.Unlock()
 }
 
 // GetRootStats gets execStat for a executor.
-func (e *RuntimeStatsColl) GetRootStats(planID string) RuntimeStats {
+func (e *RuntimeStatsColl) GetRootStats(planID int) RuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	runtimeStats, exists := e.rootStats[planID]
@@ -424,7 +435,7 @@ func (e *RuntimeStatsColl) GetRootStats(planID string) RuntimeStats {
 }
 
 // GetCopStats gets the CopRuntimeStats specified by planID.
-func (e *RuntimeStatsColl) GetCopStats(planID string) *CopRuntimeStats {
+func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
@@ -436,7 +447,7 @@ func (e *RuntimeStatsColl) GetCopStats(planID string) *CopRuntimeStats {
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tipb.ExecutorExecutionSummary) {
+func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary *tipb.ExecutorExecutionSummary) {
 	copStats := e.GetCopStats(planID)
 	copStats.RecordOneCopTask(address, summary)
 }
@@ -448,7 +459,7 @@ func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, copRespTime time.
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
-func (e *RuntimeStatsColl) ExistsRootStats(planID string) bool {
+func (e *RuntimeStatsColl) ExistsRootStats(planID int) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, exists := e.rootStats[planID]
@@ -456,7 +467,7 @@ func (e *RuntimeStatsColl) ExistsRootStats(planID string) bool {
 }
 
 // ExistsCopStats checks if the planID exists in the copStats collection.
-func (e *RuntimeStatsColl) ExistsCopStats(planID string) bool {
+func (e *RuntimeStatsColl) ExistsCopStats(planID int) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, exists := e.copStats[planID]
