@@ -47,14 +47,13 @@ type RowDecoder struct {
 }
 
 // NewRowDecoder returns a new RowDecoder.
-func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
+func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64]Column) *RowDecoder {
 	tblInfo := tbl.Meta()
 	colFieldMap := make(map[int64]*types.FieldType, len(decodeColMap))
 	for id, col := range decodeColMap {
 		colFieldMap[id] = &col.Col.ColumnInfo.FieldType
 	}
 
-	cols := tbl.Cols()
 	tps := make([]*types.FieldType, len(cols))
 	for _, col := range cols {
 		tps[col.Offset] = &col.FieldType
@@ -145,9 +144,9 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 }
 
 // BuildFullDecodeColMap builds a map that contains [columnID -> struct{*table.Column, expression.Expression}] from all columns.
-func BuildFullDecodeColMap(t table.Table, schema *expression.Schema) map[int64]Column {
-	decodeColMap := make(map[int64]Column, len(t.Cols()))
-	for _, col := range t.Cols() {
+func BuildFullDecodeColMap(cols []*table.Column, schema *expression.Schema) map[int64]Column {
+	decodeColMap := make(map[int64]Column, len(cols))
+	for _, col := range cols {
 		decodeColMap[col.ID] = Column{
 			Col:     col,
 			GenExpr: schema.Columns[col.Offset].VirtualExpr,

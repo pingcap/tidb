@@ -833,7 +833,7 @@ func mergeAddIndexCtxToResult(taskCtx *backfillTaskContext, result *backfillResu
 
 func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, indexInfo *model.IndexInfo, decodeColMap map[int64]decoder.Column) *addIndexWorker {
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-	rowDecoder := decoder.NewRowDecoder(t, decodeColMap)
+	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &addIndexWorker{
 		backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
 		index:          index,
@@ -841,21 +841,6 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		defaultVals:    make([]types.Datum, len(t.WritableCols())),
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 	}
-}
-
-func (w *addIndexWorker) getIndexChangingColVal(col *table.Column) (_ types.Datum, isDefaultVal bool, err error) {
-	relativeCol := w.table.WritableCols()[col.ChangeStateInfo.DependencyColumnOffset]
-	idxColumnVal, ok := w.rowMap[relativeCol.ID]
-	if ok {
-		return idxColumnVal, false, nil
-	}
-
-	idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
-	if err != nil {
-		return idxColumnVal, false, errors.Trace(err)
-	}
-
-	return idxColumnVal, true, nil
 }
 
 // getIndexRecord gets index columns values from raw binary value row.
@@ -878,7 +863,7 @@ func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawR
 		}
 		isDefaultVal := true
 		if col.ChangeStateInfo != nil {
-			idxColumnVal, isDefaultVal, err = w.getIndexChangingColVal(col)
+			idxColumnVal, isDefaultVal, err = tables.GetChangingColVal(w.sessCtx, cols, col, w.rowMap, w.defaultVals)
 		} else {
 			idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
 		}
@@ -1206,13 +1191,13 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller) {
 
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
 	dbName := model.NewCIStr(sessCtx.GetSessionVars().CurrentDB)
-	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, t.Meta(), true)
 	if err != nil {
 		return nil, err
 	}
 	mockSchema := expression.NewSchema(exprCols...)
 
-	decodeColMap := decoder.BuildFullDecodeColMap(t, mockSchema)
+	decodeColMap := decoder.BuildFullDecodeColMap(t.WritableCols(), mockSchema)
 
 	return decodeColMap, nil
 }

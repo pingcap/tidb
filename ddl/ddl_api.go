@@ -3262,12 +3262,12 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
 	changeColumnValueMsg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
-		tidb_enable_change_column_type := ctx.GetSessionVars().EnableChangeColumnType
+		enableChangeColumnType := ctx.GetSessionVars().EnableChangeColumnType
 		if len(changeColumnValueMsg) == 0 {
 			return errors.Trace(err)
 		}
 
-		if !tidb_enable_change_column_type {
+		if !enableChangeColumnType {
 			msg := fmt.Sprintf("%s, and tidb_enable_change_column_type is false", changeColumnValueMsg)
 			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		} else if mysql.HasPriKeyFlag(origin.Flag) {

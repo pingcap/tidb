@@ -383,6 +383,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 					return err
 				}
 				newData[col.Offset] = value
+				touched[col.Offset] = touched[col.DependencyColumnOffset]
 			}
 		} else {
 			value = newData[col.Offset]
@@ -680,7 +681,6 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			}
 			// add value to `r` for dirty db in transaction.
 			// Otherwise when update will panic cause by get value of column in write only state from dirty db.
-
 			if col.Offset < len(r) {
 				r[col.Offset] = value
 			} else {
@@ -689,7 +689,6 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		} else {
 			value = r[col.Offset]
 		}
-
 		if !t.canSkip(col, &value) {
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
@@ -917,12 +916,32 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		if col.IsGenerated() && !col.GeneratedStored {
 			continue
 		}
-		v[i], err = GetColDefaultValue(ctx, col, defaultVals)
+		if col.ChangeStateInfo != nil {
+			v[i], _, err = GetChangingColVal(ctx, cols, col, rowMap, defaultVals)
+		} else {
+			v[i], err = GetColDefaultValue(ctx, col, defaultVals)
+		}
 		if err != nil {
 			return nil, rowMap, err
 		}
 	}
 	return v, rowMap, nil
+}
+
+// GetChangingColVal gets the changing column value when executing "modify/change column" statement.
+func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.Column, rowMap map[int64]types.Datum, defaultVals []types.Datum) (_ types.Datum, isDefaultVal bool, err error) {
+	relativeCol := cols[col.ChangeStateInfo.DependencyColumnOffset]
+	idxColumnVal, ok := rowMap[relativeCol.ID]
+	if ok {
+		return idxColumnVal, false, nil
+	}
+
+	idxColumnVal, err = GetColDefaultValue(ctx, col, defaultVals)
+	if err != nil {
+		return idxColumnVal, false, errors.Trace(err)
+	}
+
+	return idxColumnVal, true, nil
 }
 
 // Row implements table.Table Row interface.

@@ -521,5 +521,11 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustExec("alter table t3 modify column a mediumint")
 	tk.MustExec("admin check table t")
 
-	tk.MustExec("drop table t, t1, t2, t3")
+	// Test PointGet.
+	tk.MustExec("create table t4(a bigint, b int, unique index idx(a));")
+	tk.MustExec("insert into t4 values (1,1),(2,2),(3,3),(4,4),(5,5);")
+	tk.MustExec("alter table t4 modify a bigint unsigned;")
+	tk.MustQuery("select * from t4 where a=1;").Check(testkit.Rows("1 1"))
+
+	tk.MustExec("drop table t, t1, t2, t3, t4")
 }
