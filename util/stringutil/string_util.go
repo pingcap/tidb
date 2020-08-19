@@ -14,6 +14,7 @@
 package stringutil
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -314,4 +315,16 @@ func Escape(str string, sqlMode mysql.SQLMode) string {
 		quote = "`"
 	}
 	return quote + strings.Replace(str, quote, quote+quote, -1) + quote
+}
+
+func BuildStringFromLabels(labels map[string]string) string {
+	if len(labels) < 1 {
+		return ""
+	}
+	r := new(bytes.Buffer)
+	for k, v := range labels {
+		r.WriteString(fmt.Sprintf("%s=%s,", k, v))
+	}
+	s := r.String()
+	return s[:len(s)-1]
 }
