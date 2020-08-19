@@ -42,10 +42,8 @@ func (s *testScanSuite) SetUpSuite(c *C) {
 	s.store = NewTestStore(c).(*tikvStore)
 	s.recordPrefix = tablecodec.GenTableRecordPrefix(1)
 	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1, scanBatchSize*3)
-	ctx := context.Background()
 	// Avoid using async commit logic.
-	ctx = context.WithValue(ctx, sessionctx.ConnID, uint64(0))
-	s.ctx = ctx
+	s.ctx = context.WithValue(context.Background(), sessionctx.ConnID, uint64(0))
 }
 
 func (s *testScanSuite) TearDownSuite(c *C) {
