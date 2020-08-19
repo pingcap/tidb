@@ -172,3 +172,12 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 	tk.MustExec("insert into t values ('aaa', 1), ('bbb', 1);")
 	tk.MustQuery("select group_concat(name separator '.') from t use index(idx);").Check(testkit.Rows("aaa.bbb"))
 }
+
+func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
+	tk := s.newTK(c)
+	tk.Se.GetSessionVars().RowEncoder.Enable = false
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id varchar(255) primary key, a int, b int, unique index idx(b));")
+	tk.MustExec("insert into t values ('b568004d-afad-11ea-8e4d-d651e3a981b7', 1, -1);")
+	tk.MustQuery("select * from t use index(primary);").Check(testkit.Rows("b568004d-afad-11ea-8e4d-d651e3a981b7 1 -1"))
+}
