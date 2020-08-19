@@ -25,11 +25,10 @@
       {
         "SQL": "select * from t1 join t2 on t1.a = t2.b where t1.a = 1",
         "Plan": [
-          "Projection_7 10.00 root  test.t1.a, test.t1.b, test.t1.c, test.t2.a, test.t2.b",
-          "└─HashJoin_9 10.00 root  CARTESIAN inner join",
-          "  ├─Point_Get_10(Build) 1.00 root table:t2, index:b(b) ",
-          "  └─TableReader_12(Probe) 10.00 root  data:TableRangeScan_11",
-          "    └─TableRangeScan_11 10.00 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo"
+          "HashJoin_8 0.00 root  CARTESIAN inner join",
+          "├─Point_Get_12(Build) 1.00 root table:t2, index:b(b) ",
+          "└─TableReader_11(Probe) 1.00 root  data:TableRangeScan_10",
+          "  └─TableRangeScan_10 1.00 cop[tikv] table:t1 range:[1,1], keep order:false"
         ],
         "Res": [
           "1 1 1 111 1"
@@ -40,7 +39,7 @@
         "Plan": [
           "TableReader_7 0.00 root  data:Selection_6",
           "└─Selection_6 0.00 cop[tikv]  eq(test.t1.c, 2), or(and(eq(test.t1.a, 1), eq(test.t1.b, 1)), and(eq(test.t1.a, 2), eq(test.t1.b, 2)))",
-          "  └─TableRangeScan_5 20.00 cop[tikv] table:t1 range:[1,1], [2,2], keep order:false, stats:pseudo"
+          "  └─TableRangeScan_5 2.00 cop[tikv] table:t1 range:[1,1], [2,2], keep order:false"
         ],
         "Res": [
           "2 2 2"
@@ -59,10 +58,10 @@
       {
         "SQL": "select * from t2 where a in ('111','222') union all select a,c from t1 where (a,b) in ((1,1),(2,2))",
         "Plan": [
-          "Union_10 22.00 root  ",
-          "├─Batch_Point_Get_12 2.00 root table:t2, index:PRIMARY(a) keep order:false, desc:false",
-          "└─Projection_13 2.00 root  cast(test.t1.a, varchar(20) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, test.t1.c",
-          "  └─Batch_Point_Get_14 2.00 root table:t1, index:PRIMARY(a, b) keep order:false, desc:false"
+          "Union_10 1.67 root  ",
+          "├─Batch_Point_Get_12 0.01 root table:t2, index:PRIMARY(a) keep order:false, desc:false",
+          "└─Projection_13 1.67 root  cast(test.t1.a, varchar(20) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, test.t1.c",
+          "  └─Batch_Point_Get_14 1.67 root table:t1, index:PRIMARY(a, b) keep order:false, desc:false"
         ],
         "Res": [
           "1 1",
