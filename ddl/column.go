@@ -575,17 +575,17 @@ func (w *worker) onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 			job.SnapshotVer = 0
 			ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
 		case model.StateWriteReorganization:
-			jfirst := false
+			jobFirst := false
 			for _, idxInfo := range ctidxInfos {
 				var first bool
 				// Run reorg job
-				ver, err, first = runAndWaitReorgJob(w, d, t, job, tblInfo, idxInfo, ctidxInfos, ver)
+				ver, first, err = runAndWaitReorgJob(w, d, t, job, tblInfo, idxInfo, ctidxInfos, ver)
 				if err != nil {
 					return ver, errors.Trace(err)
 				}
-				// If first we should update jfirst
-				if !jfirst && first {
-					jfirst = true
+				// If first we should update jobFirst
+				if !jobFirst && first {
+					jobFirst = true
 				}
 				if !first {
 					// Set column index flag.
@@ -594,7 +594,7 @@ func (w *worker) onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 			}
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
-			if jfirst {
+			if jobFirst {
 				return ver, nil
 			}
 			ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)

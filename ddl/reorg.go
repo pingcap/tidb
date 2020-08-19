@@ -500,10 +500,10 @@ func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle k
 	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalTableID))
 }
 
-func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, indexInfos []*model.IndexInfo, ver int64) (int64, error, bool) {
+func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, indexInfos []*model.IndexInfo, ver int64) (int64, bool, error) {
 	tbl, err := getTable(d.store, job.SchemaID, tblInfo)
 	if err != nil {
-		return ver, errors.Trace(err), false
+		return ver, false, errors.Trace(err)
 	}
 	logutil.BgLogger().Info("[ddl] run reorg job 1", zap.String("job", job.String()), zap.Reflect("tbl", tbl))
 
@@ -511,7 +511,7 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 	if err != nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
-		return ver, errors.Trace(err), true
+		return ver, true, errors.Trace(err)
 	}
 	err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onDropColumn",
@@ -523,7 +523,7 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 	if err != nil {
 		if errWaitReorgTimeout.Equal(err) {
 			// if timeout, we should return, check for the owner and re-wait job done.
-			return ver, nil, false
+			return ver, false, nil
 		}
 		if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeIndex.Equal(err) {
 			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
@@ -531,9 +531,9 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 		}
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 		w.reorgCtx.cleanNotifyReorgCancel()
-		return ver, errors.Trace(err), false
+		return ver, false, errors.Trace(err)
 	}
 	// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 	w.reorgCtx.cleanNotifyReorgCancel()
-	return ver, nil, false
+	return ver, false, nil
 }
