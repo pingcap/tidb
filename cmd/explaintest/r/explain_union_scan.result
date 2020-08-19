@@ -12,20 +12,20 @@ begin;
 update city set province_id = 77 where id="06766b3ef41d484d8878606393f1ed0b";
 explain select t1.*, t2.province_id as provinceID, t2.city_name as cityName, t3.description as description from city t1 inner join city t2 on t1.id = t2.id left join city t3 on t1.province_id = t3.province_id where t1.province_id > 1 and t1.province_id < 100 limit 10;
 id	estRows	task	access object	operator info
-Limit_20	10.00	root		offset:0, count:10
-└─HashJoin_22	10.00	root		left outer join, equal:[eq(test.city.province_id, test.city.province_id)]
-  ├─Limit_25(Build)	10.00	root		offset:0, count:10
-  │ └─IndexJoin_38	10.00	root		inner join, inner:UnionScan_37, outer key:test.city.id, inner key:test.city.id
-  │   ├─UnionScan_47(Build)	10.33	root		
-  │   │ └─TableReader_49	10.33	root		data:TableFullScan_48
-  │   │   └─TableFullScan_48	10.33	cop[tikv]	table:t2	keep order:false
-  │   └─UnionScan_37(Probe)	0.97	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100)
-  │     └─IndexLookUp_36	0.97	root		
-  │       ├─IndexRangeScan_33(Build)	1.00	cop[tikv]	table:t1, index:PRIMARY(id)	range: decided by [eq(test.city.id, test.city.id)], keep order:false
-  │       └─Selection_35(Probe)	0.97	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100)
-  │         └─TableRowIDScan_34	1.00	cop[tikv]	table:t1	keep order:false
-  └─UnionScan_57(Probe)	519304.44	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
-    └─TableReader_60	519304.44	root		data:Selection_59
-      └─Selection_59	519304.44	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
-        └─TableFullScan_58	536284.00	cop[tikv]	table:t3	keep order:false
+Limit_21	10.00	root		offset:0, count:10
+└─HashJoin_23	10.00	root		left outer join, equal:[eq(test.city.province_id, test.city.province_id)]
+  ├─Limit_26(Build)	10.00	root		offset:0, count:10
+  │ └─IndexJoin_39	10.00	root		inner join, inner:UnionScan_38, outer key:test.city.id, inner key:test.city.id
+  │   ├─UnionScan_48(Build)	10.33	root		
+  │   │ └─TableReader_50	10.33	root		data:TableFullScan_49
+  │   │   └─TableFullScan_49	10.33	cop[tikv]	table:t2	keep order:false
+  │   └─UnionScan_38(Probe)	0.97	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100)
+  │     └─IndexLookUp_37	0.97	root		
+  │       ├─IndexRangeScan_34(Build)	1.00	cop[tikv]	table:t1, index:PRIMARY(id)	range: decided by [eq(test.city.id, test.city.id)], keep order:false
+  │       └─Selection_36(Probe)	0.97	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100)
+  │         └─TableRowIDScan_35	1.00	cop[tikv]	table:t1	keep order:false
+  └─UnionScan_58(Probe)	519304.44	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
+    └─TableReader_61	519304.44	root		data:Selection_60
+      └─Selection_60	519304.44	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
+        └─TableFullScan_59	536284.00	cop[tikv]	table:t3	keep order:false
 commit;

@@ -243,20 +243,20 @@ UNIQUE KEY org_employee_position_pk (hotel_id,user_id,position_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 explain SELECT d.id, d.ctx, d.name, d.left_value, d.right_value, d.depth, d.leader_id, d.status, d.created_on, d.updated_on FROM org_department AS d LEFT JOIN org_position AS p ON p.department_id = d.id AND p.status = 1000 LEFT JOIN org_employee_position AS ep ON ep.position_id = p.id AND ep.status = 1000 WHERE (d.ctx = 1 AND (ep.user_id = 62 OR d.id = 20 OR d.id = 20) AND d.status = 1000) GROUP BY d.id ORDER BY d.left_value;
 id	estRows	task	access object	operator info
-Sort_10	1.00	root		test.org_department.left_value
-└─HashAgg_15	1.00	root		group by:test.org_department.id, funcs:firstrow(test.org_department.id)->test.org_department.id, funcs:firstrow(test.org_department.ctx)->test.org_department.ctx, funcs:firstrow(test.org_department.name)->test.org_department.name, funcs:firstrow(test.org_department.left_value)->test.org_department.left_value, funcs:firstrow(test.org_department.right_value)->test.org_department.right_value, funcs:firstrow(test.org_department.depth)->test.org_department.depth, funcs:firstrow(test.org_department.leader_id)->test.org_department.leader_id, funcs:firstrow(test.org_department.status)->test.org_department.status, funcs:firstrow(test.org_department.created_on)->test.org_department.created_on, funcs:firstrow(test.org_department.updated_on)->test.org_department.updated_on
-  └─Selection_22	0.01	root		or(eq(test.org_employee_position.user_id, 62), or(eq(test.org_department.id, 20), eq(test.org_department.id, 20)))
-    └─HashJoin_24	0.02	root		left outer join, equal:[eq(test.org_position.id, test.org_employee_position.position_id)]
-      ├─IndexMergeJoin_42(Build)	0.01	root		left outer join, inner:IndexLookUp_40, outer key:test.org_department.id, inner key:test.org_position.department_id
-      │ ├─IndexLookUp_62(Build)	0.01	root		
-      │ │ ├─IndexRangeScan_59(Build)	10.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
-      │ │ └─Selection_61(Probe)	0.01	cop[tikv]		eq(test.org_department.status, 1000)
-      │ │   └─TableRowIDScan_60	10.00	cop[tikv]	table:d	keep order:false, stats:pseudo
-      │ └─IndexLookUp_40(Probe)	1.25	root		
-      │   ├─Selection_38(Build)	1250.00	cop[tikv]		not(isnull(test.org_position.department_id))
-      │   │ └─IndexRangeScan_36	1251.25	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(test.org_position.department_id, test.org_department.id)], keep order:true, stats:pseudo
-      │   └─Selection_39(Probe)	1.25	cop[tikv]		eq(test.org_position.status, 1000)
-      │     └─TableRowIDScan_37	1250.00	cop[tikv]	table:p	keep order:false, stats:pseudo
-      └─TableReader_72(Probe)	9.99	root		data:Selection_71
-        └─Selection_71	9.99	cop[tikv]		eq(test.org_employee_position.status, 1000), not(isnull(test.org_employee_position.position_id))
-          └─TableFullScan_70	10000.00	cop[tikv]	table:ep	keep order:false, stats:pseudo
+Sort_12	1.00	root		test.org_department.left_value
+└─HashAgg_17	1.00	root		group by:test.org_department.id, funcs:firstrow(test.org_department.id)->test.org_department.id, funcs:firstrow(test.org_department.ctx)->test.org_department.ctx, funcs:firstrow(test.org_department.name)->test.org_department.name, funcs:firstrow(test.org_department.left_value)->test.org_department.left_value, funcs:firstrow(test.org_department.right_value)->test.org_department.right_value, funcs:firstrow(test.org_department.depth)->test.org_department.depth, funcs:firstrow(test.org_department.leader_id)->test.org_department.leader_id, funcs:firstrow(test.org_department.status)->test.org_department.status, funcs:firstrow(test.org_department.created_on)->test.org_department.created_on, funcs:firstrow(test.org_department.updated_on)->test.org_department.updated_on
+  └─Selection_24	0.01	root		or(eq(test.org_employee_position.user_id, 62), or(eq(test.org_department.id, 20), eq(test.org_department.id, 20)))
+    └─HashJoin_26	0.02	root		left outer join, equal:[eq(test.org_position.id, test.org_employee_position.position_id)]
+      ├─IndexMergeJoin_44(Build)	0.01	root		left outer join, inner:IndexLookUp_42, outer key:test.org_department.id, inner key:test.org_position.department_id
+      │ ├─IndexLookUp_64(Build)	0.01	root		
+      │ │ ├─IndexRangeScan_61(Build)	10.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
+      │ │ └─Selection_63(Probe)	0.01	cop[tikv]		eq(test.org_department.status, 1000)
+      │ │   └─TableRowIDScan_62	10.00	cop[tikv]	table:d	keep order:false, stats:pseudo
+      │ └─IndexLookUp_42(Probe)	1.25	root		
+      │   ├─Selection_40(Build)	1250.00	cop[tikv]		not(isnull(test.org_position.department_id))
+      │   │ └─IndexRangeScan_38	1251.25	cop[tikv]	table:p, index:org_position_department_id_index(department_id)	range: decided by [eq(test.org_position.department_id, test.org_department.id)], keep order:true, stats:pseudo
+      │   └─Selection_41(Probe)	1.25	cop[tikv]		eq(test.org_position.status, 1000)
+      │     └─TableRowIDScan_39	1250.00	cop[tikv]	table:p	keep order:false, stats:pseudo
+      └─TableReader_74(Probe)	9.99	root		data:Selection_73
+        └─Selection_73	9.99	cop[tikv]		eq(test.org_employee_position.status, 1000), not(isnull(test.org_employee_position.position_id))
+          └─TableFullScan_72	10000.00	cop[tikv]	table:ep	keep order:false, stats:pseudo

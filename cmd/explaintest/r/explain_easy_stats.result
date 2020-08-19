@@ -46,12 +46,12 @@ IndexReader_6	0.00	root		index:IndexRangeScan_5
 └─IndexRangeScan_5	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false
 explain select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	estRows	task	access object	operator info
-HashJoin_22	2481.25	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
-├─TableReader_36(Build)	1985.00	root		data:Selection_35
-│ └─Selection_35	1985.00	cop[tikv]		not(isnull(test.t2.c1))
-│   └─TableFullScan_34	1985.00	cop[tikv]	table:t2	keep order:false
-└─TableReader_33(Probe)	1998.00	root		data:TableRangeScan_32
-  └─TableRangeScan_32	1998.00	cop[tikv]	table:t1	range:(1,+inf], keep order:false
+HashJoin_23	2481.25	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
+├─TableReader_37(Build)	1985.00	root		data:Selection_36
+│ └─Selection_36	1985.00	cop[tikv]		not(isnull(test.t2.c1))
+│   └─TableFullScan_35	1985.00	cop[tikv]	table:t2	keep order:false
+└─TableReader_34(Probe)	1998.00	root		data:TableRangeScan_33
+  └─TableRangeScan_33	1998.00	cop[tikv]	table:t1	range:(1,+inf], keep order:false
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	estRows	task	access object	operator info
 Update_2	N/A	root		N/A
