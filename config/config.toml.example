@@ -447,6 +447,8 @@ allow-expression-index = false
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
 
-# set labels for the tidb server
+# set labels for the tidb server. The labels describe some specific properties for the tidb server
 [labels]
-foo = "bar"
+group = "groupA"
+zone = "zoneA"
+host = "hostA"
