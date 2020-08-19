@@ -894,7 +894,10 @@
       "Join{Join{Join{Join{DataScan(t5)->DataScan(t1)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->DataScan(t3)}(test.t.a,test.t.a)(test.t.a,test.t.a)->DataScan(t4)}(test.t.a,test.t.a)(test.t.a,test.t.a)(test.t.a,test.t.a)->Projection",
       "Join{Join{Join{DataScan(t3)->DataScan(t1)}->Join{DataScan(t2)->DataScan(t4)}}->DataScan(t5)}->Projection",
       "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t3)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->Projection}->Projection",
-      "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(t3)}->Projection}->Projection"
+      "Apply{DataScan(o)->Join{Join{DataScan(t1)->DataScan(t2)}->DataScan(t3)}->Projection}->Projection",
+      "Join{Join{Join{DataScan(t1)->DataScan(t3)}(test.t.a,test.t.a)->DataScan(t4)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->Projection",
+      "Join{Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection->Join{DataScan(t3)->DataScan(t4)}(test.t.a,test.t.a)->Projection}(test.t.a,test.t.a)->Projection",
+      "Join{Join{Join{DataScan(t1)->DataScan(t3)}(test.t.a,test.t.a)->DataScan(t2)}(test.t.a,test.t.a)->DataScan(t4)}(test.t.a,test.t.a)->Projection"
     ]
   },
   {

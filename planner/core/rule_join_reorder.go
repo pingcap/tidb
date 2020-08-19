@@ -15,10 +15,18 @@ package core
 
 import (
 	"context"
+	"sort"
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 )
+
+type leftJoinInnerTab struct {
+	p LogicalPlan
+	eqCond []*expression.ScalarFunction
+	leftCond []expression.Expression
+	otherCond []expression.Expression
+}
 
 // extractJoinGroup extracts all the join nodes connected with continuous
 // InnerJoins to construct a join group. This join group is further used to
@@ -26,14 +34,35 @@ import (
 //
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, LeftJoin(c, d)}.
-func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression.ScalarFunction, otherConds []expression.Expression) {
+func extractJoinGroup(p LogicalPlan) (
+	group []LogicalPlan,
+	eqEdges []*expression.ScalarFunction,
+	otherConds []expression.Expression,
+	leftJoinTabs []*leftJoinInnerTab,
+) {
 	join, isJoin := p.(*LogicalJoin)
-	if !isJoin || join.preferJoinType > uint(0) || join.JoinType != InnerJoin || join.StraightJoin {
-		return []LogicalPlan{p}, nil, nil
+	if !isJoin || join.preferJoinType > uint(0) || (join.JoinType != InnerJoin && join.JoinType != LeftOuterJoin) || join.StraightJoin {
+		return []LogicalPlan{p}, nil, nil, nil
 	}
 
-	lhsGroup, lhsEqualConds, lhsOtherConds := extractJoinGroup(join.children[0])
-	rhsGroup, rhsEqualConds, rhsOtherConds := extractJoinGroup(join.children[1])
+	if join.JoinType == LeftOuterJoin {
+		tab := &leftJoinInnerTab{
+			p: join.children[1],
+			eqCond: join.EqualConditions,
+			leftCond: join.LeftConditions,
+			otherCond: join.OtherConditions,
+		}
+		leftJoinTabs = append(leftJoinTabs, tab)
+		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTabs := extractJoinGroup(join.children[0])
+		group = append(group, lhsGroup...)
+		eqEdges = append(eqEdges, lhsEqualConds...)
+		otherConds = append(otherConds, lhsOtherConds...)
+		leftJoinTabs = append(leftJoinTabs, lhsJoinTabs...)
+		return
+	}
+
+	lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTabs := extractJoinGroup(join.children[0])
+	rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTabs := extractJoinGroup(join.children[1])
 
 	group = append(group, lhsGroup...)
 	group = append(group, rhsGroup...)
@@ -43,7 +72,9 @@ func extractJoinGroup(p LogicalPlan) (group []LogicalPlan, eqEdges []*expression
 	otherConds = append(otherConds, join.OtherConditions...)
 	otherConds = append(otherConds, lhsOtherConds...)
 	otherConds = append(otherConds, rhsOtherConds...)
-	return group, eqEdges, otherConds
+	leftJoinTabs = append(leftJoinTabs, lhsJoinTabs...)
+	leftJoinTabs = append(leftJoinTabs, rhsJoinTabs...)
+	return
 }
 
 type joinReOrderSolver struct {
@@ -61,10 +92,16 @@ func (s *joinReOrderSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
 func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalPlan) (LogicalPlan, error) {
 	var err error
-	curJoinGroup, eqEdges, otherConds := extractJoinGroup(p)
-	if len(curJoinGroup) > 1 {
+	curJoinGroup, eqEdges, otherConds, leftJoinTabs := extractJoinGroup(p)
+	if len(curJoinGroup) + len(leftJoinTabs) > 1 {
 		for i := range curJoinGroup {
 			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i])
+			if err != nil {
+				return nil, err
+			}
+		}
+		for i := range leftJoinTabs {
+			leftJoinTabs[i].p, err = s.optimizeRecursive(ctx, leftJoinTabs[i].p)
 			if err != nil {
 				return nil, err
 			}
@@ -89,6 +126,18 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		if err != nil {
 			return nil, err
 		}
+		sort.Slice(leftJoinTabs, func(i, j int) bool {
+			if len(leftJoinTabs[j].eqCond) > 0 && leftJoinTabs[i].p.Schema().ColumnIndex(leftJoinTabs[j].eqCond[0].GetArgs()[0].(*expression.Column)) >= 0 {
+				return true
+			}
+			if len(leftJoinTabs[i].eqCond) > 0 && len(leftJoinTabs[j].eqCond) == 0 {
+				return true
+			}
+			return false
+		})
+		for _, joinTab := range leftJoinTabs {
+			p = s.newLeftJoin(ctx, p, joinTab.p, joinTab.eqCond, joinTab.leftCond, joinTab.otherCond)
+		}
 		return p, nil
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
@@ -101,6 +150,29 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 	}
 	p.SetChildren(newChildren...)
 	return p, nil
+}
+
+func (s *joinReOrderSolver) newLeftJoin(
+	ctx sessionctx.Context,
+	lChild, rChild LogicalPlan,
+	eqCond []*expression.ScalarFunction,
+	leftCond []expression.Expression,
+	otherCond []expression.Expression,
+) *LogicalJoin {
+	offset := lChild.SelectBlockOffset()
+	if offset != rChild.SelectBlockOffset() {
+		offset = -1
+	}
+	join := LogicalJoin{
+		JoinType: LeftOuterJoin,
+		EqualConditions: eqCond,
+		LeftConditions: leftCond,
+		OtherConditions: otherCond,
+		reordered: true,
+	}.Init(ctx, offset)
+	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
+	join.SetChildren(lChild, rChild)
+	return join
 }
 
 type baseSingleGroupJoinOrderSolver struct {

@@ -603,6 +603,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (Logica
 	// Set join type.
 	switch joinNode.Tp {
 	case ast.LeftJoin:
+		b.optFlag = b.optFlag | flagJoinReOrder
 		// left outer join need to be checked elimination
 		b.optFlag = b.optFlag | flagEliminateOuterJoin
 		joinPlan.JoinType = LeftOuterJoin

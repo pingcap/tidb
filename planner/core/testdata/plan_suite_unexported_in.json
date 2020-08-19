@@ -501,7 +501,10 @@
       "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t5.b < 8",
       "select * from t t1, t t2, t t3, t t4, t t5 where t1.a = t5.a and t5.a = t4.a and t4.a = t3.a and t3.a = t2.a and t2.a = t1.a and t1.a = t3.a and t2.a = t4.a and t3.b = 1 and t4.a = 1",
       "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a)",
-      "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)"
+      "select * from t o where o.b in (select t3.c from t t1, t t2, t t3 where t1.a = t3.a and t2.a = t3.a and t2.a = o.a and t1.a = 1)",
+      "select * from t t1 left join t t2 on t1.a=t2.a join t t3 on t3.a=t1.a left join t t4 on t4.a=t1.a",
+      "select * from (select t1.a, t2.b from t t1 left join t t2 on t1.a=t2.a) t1 join (select t3.b, t4.a from t t3 left join t t4 on t4.a=t3.a) t2 on t1.a= t2.a",
+      "select * from t t1 left join t t2 on t1.a=t2.a join t t3 on t3.a=t1.a left join t t4 on t4.a=t2.a"
     ]
   },
   {

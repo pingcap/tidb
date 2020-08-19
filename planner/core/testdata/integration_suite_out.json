@@ -50,14 +50,15 @@
       {
         "SQL": "explain select * from t t1 left join t t2 on t1.a=t2.a where from_unixtime(t2.b);",
         "Plan": [
-          "HashJoin_7 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "├─Selection_15(Build) 7992.00 root  from_unixtime(cast(test.t.b))",
-          "│ └─TableReader_14 7992.00 root  data:Selection_13",
-          "│   └─Selection_13 7992.00 cop[tikv]  not(isnull(test.t.a))",
-          "│     └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader_11(Probe) 9990.00 root  data:Selection_10",
-          "  └─Selection_10 9990.00 cop[tikv]  not(isnull(test.t.a))",
-          "    └─TableFullScan_9 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Projection_7 9990.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
+          "└─HashJoin_9 9990.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "  ├─Selection_13(Build) 7992.00 root  from_unixtime(cast(test.t.b))",
+          "  │ └─TableReader_12 7992.00 root  data:Selection_11",
+          "  │   └─Selection_11 7992.00 cop[tikv]  not(isnull(test.t.a))",
+          "  │     └─TableFullScan_10 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─TableReader_16(Probe) 9990.00 root  data:Selection_15",
+          "    └─Selection_15 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "      └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -68,12 +69,12 @@
       {
         "SQL": "explain select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.b as date) >= '2019-01-01'",
         "Plan": [
-          "HashJoin_8 10000.00 root  left outer join, equal:[eq(test.t.a, test.t.a)]",
-          "├─TableReader_11(Build) 8000.00 root  data:Selection_10",
-          "│ └─Selection_10 8000.00 cop[tikv]  ge(cast(test.t.b), 2019-01-01 00:00:00.000000)",
-          "│   └─TableFullScan_9 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader_13(Probe) 10000.00 root  data:TableFullScan_12",
-          "  └─TableFullScan_12 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "HashJoin_9 10000.00 root  left outer join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader_12(Build) 8000.00 root  data:Selection_11",
+          "│ └─Selection_11 8000.00 cop[tikv]  ge(cast(test.t.b), 2019-01-01 00:00:00.000000)",
+          "│   └─TableFullScan_10 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader_14(Probe) 10000.00 root  data:TableFullScan_13",
+          "  └─TableFullScan_13 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       }
     ]
