@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 func (s *testSuite1) TestAdminCheckIndexRange(c *C) {
@@ -185,6 +187,49 @@ func (s *testSuite5) TestAdminRecoverIndex(c *C) {
 
 	tk.MustExec("admin check index admin_test c2")
 	tk.MustExec("admin check table admin_test")
+}
+
+func (s *testSuite5) TestClusteredIndexAdminRecoverIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_cluster_index_admin_recover;")
+	tk.MustExec("create database test_cluster_index_admin_recover;")
+	tk.MustExec("use test_cluster_index_admin_recover;")
+	tk.MustExec("set tidb_enable_clustered_index=1;")
+	dbName := model.NewCIStr("test_cluster_index_admin_recover")
+	tblName := model.NewCIStr("t")
+
+	// Test no corruption case.
+	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key(a, c), index idx(b));")
+	tk.MustExec("insert into t values ('1', 2, '3'), ('1', 2, '4'), ('1', 2, '5');")
+	tk.MustQuery("admin recover index t `primary`;").Check(testkit.Rows("0 3"))
+	tk.MustQuery("admin recover index t `idx`;").Check(testkit.Rows("0 3"))
+	tk.MustExec("admin check table t;")
+
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	is := s.domain.InfoSchema()
+	tbl, err := is.TableByName(dbName, tblName)
+	c.Assert(err, IsNil)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.FindIndexByName("idx")
+	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	sc := s.ctx.GetSessionVars().StmtCtx
+
+	// Some index entries are missed.
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	cHandle := testutil.MustNewCommonHandle(c, "1", "3")
+	err = indexOpr.Delete(sc, txn, types.MakeDatums(2), cHandle)
+	c.Assert(err, IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	tk.MustGetErrCode("admin check table t", mysql.ErrAdminCheckTable)
+	tk.MustGetErrCode("admin check index t idx", mysql.ErrAdminCheckTable)
+
+	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx)").Check(testkit.Rows("2"))
+	tk.MustQuery("admin recover index t idx").Check(testkit.Rows("1 3"))
+	tk.MustQuery("SELECT COUNT(*) FROM t USE INDEX(idx)").Check(testkit.Rows("3"))
+	tk.MustExec("admin check table t;")
 }
 
 func (s *testSuite5) TestAdminRecoverPartitionTableIndex(c *C) {

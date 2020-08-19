@@ -396,11 +396,23 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 }
 
 func buildRecoverIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
-	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns))
+	handleLen := 1
+	var pkCols []*model.IndexColumn
+	if tblInfo.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		pkCols = pkIdx.Columns
+		handleLen = len(pkIdx.Columns)
+	}
+	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+handleLen)
 	for _, idxCol := range indexInfo.Columns {
 		columns = append(columns, tblInfo.Columns[idxCol.Offset])
 	}
-
+	if tblInfo.IsCommonHandle {
+		for _, c := range pkCols {
+			columns = append(columns, tblInfo.Columns[c.Offset])
+		}
+		return columns
+	}
 	handleOffset := len(columns)
 	handleColsInfo := &model.ColumnInfo{
 		ID:     model.ExtraHandleID,
