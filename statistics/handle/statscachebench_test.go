@@ -16,15 +16,34 @@ package handle_test
 // This file contains benchmarks of our expression evaluation.
 
 import (
+	"context"
 	"fmt"
+	"math"
 	"math/rand"
+	"os"
+	"runtime/pprof"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/kv"
+	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/mockstore"
+
+	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testleak"
 )
 
 type queryType int8
@@ -188,9 +207,156 @@ func benchmarkStatisticCache(b *testing.B, data *statsCacheTestCase) {
 
 	})
 }
+func newStoreWithStatsBootstrap() (kv.Storage, *domain.Domain, error) {
+	clearRW.RLock()
+	defer clearRW.RUnlock()
+	store, err := mockstore.NewMockStore()
 
-func getRandomTime(r *rand.Rand) types.CoreTime {
-	return types.FromDate(r.Intn(2200), r.Intn(10)+1, r.Intn(20)+1,
-		r.Intn(12), r.Intn(60), r.Intn(60), r.Intn(1000000))
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	session.SetSchemaLease(0)
+	session.SetStatsLease(time.Second)
+	domain.RunAutoAnalyze = false
+	do, err := session.BootstrapSession(store)
+	do.SetStatsUpdating(true)
+	return store, do, errors.Trace(err)
+}
+func (s *testStatsSuite) SetUpStatsSuite(c *C) {
+	testleak.BeforeTest()
+	// Add the hook here to avoid data race.
+	s.registerHook()
+	var err error
+	s.store, s.do, err = newStoreWithStatsBootstrap()
+	c.Assert(err, IsNil)
+}
 
+func BenchmarkSelectivityWithCache(b *testing.B) {
+	c := &C{}
+	s := &testStatsSuite{}
+	s.SetUpStatsSuite(c)
+	defer s.TearDownSuite(c)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	h := s.do.StatsHandle()
+	origLease := h.Lease()
+	h.SetLease(time.Microsecond * 50)
+	defer func() { h.SetLease(origLease) }()
+
+	statsTbls := s.prepareSelectivity(testKit, c)
+
+	is := s.do.InfoSchema()
+	exprs := "a > 1 and b < 2 and c > 3 and d < 4 and e > 5"
+	sql := "select * from t where " + exprs
+	comment := Commentf("for %s", exprs)
+	sctx := testKit.Se.(sessionctx.Context)
+	stmts, err := session.Parse(sctx, sql)
+	c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, exprs))
+	c.Assert(stmts, HasLen, 1)
+	err = plannercore.Preprocess(sctx, stmts[0], is)
+	c.Assert(err, IsNil, comment)
+	p, _, err := plannercore.BuildLogicalPlan(context.Background(), sctx, stmts[0], is)
+	c.Assert(err, IsNil, Commentf("error %v, for building plan, expr %s", err, exprs))
+
+	file, err := os.Create("cpu.profile")
+	c.Assert(err, IsNil)
+	defer file.Close()
+	pprof.StartCPUProfile(file)
+
+	b.Run("SelectivityWithCache", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			id := rand.Int() % 20
+			_, _, err := statsTbls[id].Selectivity(sctx, p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection).Conditions, nil)
+			c.Assert(err, IsNil)
+		}
+		b.ReportAllocs()
+	})
+	pprof.StopCPUProfile()
+}
+func (s *testStatsSuite) prepareSelectivity(testKit *testkit.TestKit, c *C) []*statistics.Table {
+	testKit.MustExec("use test")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(fmt.Sprintf("drop table if exists t%d", i))
+		//create a table with 5  column,2 index
+		testKit.MustExec(fmt.Sprintf("create table t%d(a int primary key, b int, c int, d int, e int, index idx_cd(c, d), index idx_de(d, e))", i))
+	}
+	is := s.do.InfoSchema()
+	statsTbls := make([]*statistics.Table, 0)
+	for i := 0; i < 20; i++ {
+		tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%d", i)))
+		c.Assert(err, IsNil)
+		tbl := tb.Meta()
+		// mock the statistic table
+		statsTbl := mockStatsTable(tbl, 540)
+		// Set the value of columns' histogram.
+		colValues, err := s.generateIntDatum(1, 54)
+		c.Assert(err, IsNil)
+		for i := 1; i <= 5; i++ {
+			statsTbl.Columns[int64(i)] = &statistics.Column{Histogram: *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)), Info: tbl.Columns[i-1]}
+		}
+
+		// Set the value of two indices' histograms.
+		idxValues, err := s.generateIntDatum(2, 3)
+		c.Assert(err, IsNil)
+		tp := types.NewFieldType(mysql.TypeBlob)
+		statsTbl.Indices[1] = &statistics.Index{Histogram: *mockStatsHistogram(1, idxValues, 60, tp), Info: tbl.Indices[0]}
+		statsTbl.Indices[2] = &statistics.Index{Histogram: *mockStatsHistogram(2, idxValues, 60, tp), Info: tbl.Indices[1]}
+		statsTbls = append(statsTbls, statsTbl)
+	}
+
+	return statsTbls
+
+}
+
+// generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
+// If dimension is x, num is y, the total number of datum is y^x. And This slice is sorted.
+func (s *testStatsSuite) generateIntDatum(dimension, num int) ([]types.Datum, error) {
+	length := int(math.Pow(float64(num), float64(dimension)))
+	ret := make([]types.Datum, length)
+	if dimension == 1 {
+		for i := 0; i < num; i++ {
+			ret[i] = types.NewIntDatum(int64(i))
+		}
+	} else {
+		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		// In this way, we can guarantee the datum is in order.
+		for i := 0; i < length; i++ {
+			data := make([]types.Datum, dimension)
+			j := i
+			for k := 0; k < dimension; k++ {
+				data[dimension-k-1].SetInt64(int64(j % num))
+				j = j / num
+			}
+			bytes, err := codec.EncodeKey(sc, nil, data...)
+			if err != nil {
+				return nil, err
+			}
+			ret[i].SetBytes(bytes)
+		}
+	}
+	return ret, nil
+}
+
+// mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.
+func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.FieldType) *statistics.Histogram {
+	ndv := len(values)
+	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv, 0)
+	for i := 0; i < ndv; i++ {
+		histogram.AppendBucket(&values[i], &values[i], repeat*int64(i+1), repeat)
+	}
+	return histogram
+}
+func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
+	histColl := statistics.HistColl{
+		PhysicalID:     tbl.ID,
+		HavePhysicalID: true,
+		Count:          rowCount,
+		Columns:        make(map[int64]*statistics.Column, len(tbl.Columns)),
+		Indices:        make(map[int64]*statistics.Index, len(tbl.Indices)),
+	}
+	statsTbl := &statistics.Table{
+		HistColl: histColl,
+	}
+	return statsTbl
 }
