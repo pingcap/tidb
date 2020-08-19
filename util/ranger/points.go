@@ -249,7 +249,7 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 			op = expr.FuncName.L
 		}
 	}
-	if value.IsNull() {
+	if op != ast.NullEQ && value.IsNull() {
 		return nil
 	}
 
@@ -259,6 +259,11 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	}
 
 	switch op {
+	case ast.NullEQ:
+		if value.IsNull() {
+			return []point{{start: true}, {}} // [null, null]
+		}
+		fallthrough
 	case ast.EQ:
 		startPoint := point{value: value, start: true}
 		endPoint := point{value: value}
@@ -539,7 +544,7 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 
 func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []point {
 	switch op := expr.FuncName.L; op {
-	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE:
+	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
 		return r.buildFormBinOp(expr)
 	case ast.LogicAnd:
 		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
