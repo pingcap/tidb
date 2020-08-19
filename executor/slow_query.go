@@ -370,7 +370,7 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 					continue
 				}
 				// Get the sql string, and mark the start flag to false.
-				_, err := st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), offset.offset+index+1, e.checker)
+				_, err := st.setFieldValue(tz, variable.SlowLogQuerySQLStr, string(hack.Slice(line)), fileLine, e.checker)
 				if err != nil {
 					ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 					continue
