@@ -158,7 +158,7 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 }
 
 // Collect collects sample from the result set using Reservoir Sampling algorithm,
-//// and estimates NDVs using FM Sketch during the collecting process
+// and estimates NDVs using FM Sketch during the collecting process
 func (c *SampleCollector) Collect(sc *stmtctx.StatementContext, d types.Datum) error {
 	if !c.IsMerger {
 		if d.IsNull() {
