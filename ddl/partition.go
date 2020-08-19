@@ -909,17 +909,14 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
-	if job.Type != model.ActionAddTablePartition {
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-	}
-
 	// Finish this job.
 	if job.IsRollingback() {
 		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	} else {
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 	}
 
