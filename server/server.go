@@ -250,7 +250,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
 			logutil.BgLogger().Info("server is running MySQL protocol", zap.String("socket", cfg.Socket))
 		}
-	} else if !(s.cfg.Port == 0 && runInGoTest) {
+	} else {
 		err = errors.New("Server not configured to listen on either -socket or -host and -port")
 	}
 
