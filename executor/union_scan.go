@@ -203,7 +203,7 @@ func (us *UnionScanExec) Close() error {
 	us.cursor4SnapshotRows = 0
 	us.addedRows = us.addedRows[:0]
 	us.snapshotRows = us.snapshotRows[:0]
-    return nil
+	return nil
 }
 
 // getOneRow gets one result row from dirty table or child.
