@@ -36,7 +36,6 @@ import (
 func parseLog(retriever *slowQueryRetriever, sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datum, error) {
 	retriever.parsedSlowLogCh = make(chan parsedSlowLog, 100)
 	ctx := context.Background()
-	//rows, err := retriever.parseSlowLog(ctx, reader, 1024)
 	retriever.parseSlowLog(ctx, sctx, reader, 64)
 	slowLog := <-retriever.parsedSlowLogCh
 	rows, err := slowLog.rows, slowLog.err
@@ -54,7 +53,7 @@ func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datu
 	return rows, err
 }
 
-func (s *testExecSuite) TestPanic(c *C) {
+func (s *testExecSuite) TestParseSlowLogPanic(c *C) {
 	slowLogStr :=
 		`# Time: 2019-04-28T15:24:04.309074+08:00
 # Txn_start_ts: 405888132465033227
@@ -74,9 +73,9 @@ func (s *testExecSuite) TestPanic(c *C) {
 # Prev_stmt: update t set i = 1;
 use test;
 select * from t;`
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/errorMockPanic", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/errorMockParseSlowLogPanic", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/errorMockPanic"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/errorMockParseSlowLogPanic"), IsNil)
 	}()
 	reader := bufio.NewReader(bytes.NewBufferString(slowLogStr))
 	loc, err := time.LoadLocation("Asia/Shanghai")

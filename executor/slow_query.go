@@ -298,7 +298,7 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 			err = fmt.Errorf("%s", r)
 		}
 	}()
-	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
+	failpoint.Inject("errorMockParseSlowLogPanic", func(val failpoint.Value) {
 		if val.(bool) {
 			panic("panic test")
 		}
