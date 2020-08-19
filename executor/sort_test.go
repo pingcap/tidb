@@ -26,23 +26,17 @@ import (
 )
 
 func (s *testSerialSuite1) TestSortInDisk(c *C) {
-<<<<<<< HEAD
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMUseTmpStorage = true
-	config.StoreGlobalConfig(&newConf)
-	defer config.StoreGlobalConfig(originCfg)
-=======
 	s.testSortInDisk(c, false)
 	s.testSortInDisk(c, true)
 }
 
 func (s *testSerialSuite1) testSortInDisk(c *C, removeDir bool) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.OOMUseTmpStorage = true
-	})
->>>>>>> 92513a2... util: create the tmpdir if the directory is removed by mistake. (#18970)
+	originCfg := config.GetGlobalConfig()
+	newConf := *originCfg
+	newConf.OOMUseTmpStorage = true
+	config.StoreGlobalConfig(&newConf)
+	defer config.StoreGlobalConfig(originCfg)
+
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)

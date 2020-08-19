@@ -188,12 +188,8 @@ func (l *ListInDisk) Close() error {
 	if l.disk != nil {
 		l.diskTracker.Consume(-l.diskTracker.BytesConsumed())
 		terror.Call(l.disk.Close)
-<<<<<<< HEAD
 		bufWriterPool.Put(l.bufWriter)
-		return os.Remove(l.disk.Name())
-=======
 		terror.Log(os.Remove(l.disk.Name()))
->>>>>>> 92513a2... util: create the tmpdir if the directory is removed by mistake. (#18970)
 	}
 	return nil
 }
