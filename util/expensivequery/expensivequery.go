@@ -14,7 +14,6 @@
 package expensivequery
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -41,8 +41,6 @@ import (
 type Handle struct {
 	exitCh chan struct{}
 	sm     atomic.Value
-
-	record memoryUsageAlarmRecord
 }
 
 // NewExpensiveQueryHandle builds a new expensive query handler.
@@ -65,7 +63,7 @@ func (eqh *Handle) Run() {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	sm := eqh.sm.Load().(util.SessionManager)
-	eqh.initMemoryUsageAlarmRecord()
+	initMemoryUsageAlarmRecord()
 	for {
 		select {
 		case <-ticker.C:
@@ -85,8 +83,8 @@ func (eqh *Handle) Run() {
 				}
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
-			if eqh.record.err == nil {
-				eqh.oomKillerAlert()
+			if record.err == nil {
+				record.alarm4ExcessiveMemUsage(sm)
 			}
 		case <-eqh.exitCh:
 			return
@@ -94,49 +92,52 @@ func (eqh *Handle) Run() {
 	}
 }
 
-type memoryUsageAlarmRecord struct {
-	err               error
-	useInstanceMemory bool // useInstanceMemory indicate whether use instance memory or system memory to alarm oom risk.
-	serverMemoryQuota uint64
-	lastRecordTime    time.Time
+type memoryUsageAlarm struct {
+	err                          error
+	isServerMemoryQuotaSetByUser bool
+	serverMemoryQuota            uint64
+	lastChangeTime               time.Time
 
 	tmpDir              string
 	lastLogFileName     []string
 	lastProfileFileName [][]string // heap, goroutine
 }
 
-func (eqh *Handle) initMemoryUsageAlarmRecord() {
-	if config.GetGlobalConfig().Performance.ServerMemoryQuota != 0 {
-		eqh.record.serverMemoryQuota = config.GetGlobalConfig().Performance.ServerMemoryQuota
-		eqh.record.useInstanceMemory = true
+var record memoryUsageAlarm
+
+func initMemoryUsageAlarmRecord() {
+	if alert := config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio; alert == 0 || alert == 1 {
+		record.err = errors.New("close memory usage alarm recorder")
+		return
+	}
+	if quota := config.GetGlobalConfig().Performance.ServerMemoryQuota; quota != 0 {
+		record.serverMemoryQuota = quota
+		record.isServerMemoryQuotaSetByUser = true
 	} else {
-		eqh.record.serverMemoryQuota, eqh.record.err = memory.MemTotal()
-		if eqh.record.err != nil {
-			logutil.BgLogger().Error("Get system total memory fail.", zap.Error(eqh.record.err))
+		record.serverMemoryQuota, record.err = memory.MemTotal()
+		if record.err != nil {
+			logutil.BgLogger().Error("get system total memory fail", zap.Error(record.err))
 			return
 		}
-		eqh.record.useInstanceMemory = false
+		record.isServerMemoryQuotaSetByUser = false
 	}
-	eqh.record.lastRecordTime = time.Time{}
-	eqh.record.tmpDir = config.GetGlobalConfig().TempStoragePath
-	if alert := config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio; alert == 0 || alert == 1 {
-		eqh.record.err = errors.New("close memory usage alarm recorder")
-	}
-	eqh.record.lastProfileFileName = make([][]string, 2)
+	record.lastChangeTime = time.Time{}
+	record.tmpDir = config.GetGlobalConfig().TempStoragePath
+	record.lastProfileFileName = make([][]string, 2)
 }
 
-// If Performance.ServerMemoryQuota is set, use instance memory usage and ServerMemoryQuota * 80% to check oom risk.
-// If Performance.ServerMemoryQuota is not set, use system memory usage and total memory * 80% to check oom risk.
-func (eqh *Handle) oomKillerAlert() {
+// If Performance.ServerMemoryQuota is set, use ServerMemoryQuota * 80% to check oom risk.
+// If Performance.ServerMemoryQuota is not set, use system total memory usage * 80% to check oom risk.
+func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
 	var memoryUsage uint64
 	instanceStats := &runtime.MemStats{}
-	if eqh.record.useInstanceMemory {
+	if record.isServerMemoryQuotaSetByUser {
 		runtime.ReadMemStats(instanceStats)
 		memoryUsage = instanceStats.HeapAlloc
 	} else {
-		memoryUsage, eqh.record.err = memory.MemUsed()
-		if eqh.record.err != nil {
-			logutil.BgLogger().Error("Get system usage memory fail.", zap.Error(eqh.record.err))
+		memoryUsage, record.err = memory.MemUsed()
+		if record.err != nil {
+			logutil.BgLogger().Error("get system memory usage fail", zap.Error(record.err))
 			return
 		}
 	}
@@ -148,35 +149,34 @@ func (eqh *Handle) oomKillerAlert() {
 	// 1. You have 16G physical memory;
 	// 2. You have 9G live objects;
 	// 3. Go will run GC when memory usage reaches 9G * (1 + GOGC / 100) = 18G, OOM.
-	if float64(memoryUsage) > float64(eqh.record.serverMemoryQuota)*config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio ||
-		(eqh.record.useInstanceMemory && instanceStats.NextGC > eqh.record.serverMemoryQuota) {
+	if float64(memoryUsage) > float64(record.serverMemoryQuota)*config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio ||
+		(record.isServerMemoryQuotaSetByUser && instanceStats.NextGC > record.serverMemoryQuota) {
 		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
 		// If the memory is still exceeded, only records once.
-		if time.Since(eqh.record.lastRecordTime) > 10*time.Second {
-			eqh.oomRecord(memoryUsage)
+		if time.Since(record.lastChangeTime) > 10*time.Second {
+			record.lastChangeTime = time.Now()
+			record.doRecord(memoryUsage, sm)
 		}
-		eqh.record.lastRecordTime = time.Now()
+		record.lastChangeTime = time.Now()
 	}
 }
 
-func (eqh *Handle) oomRecord(memUsage uint64) {
-	if eqh.record.useInstanceMemory {
-		logutil.BgLogger().Warn("The TiDB instance now takes a lot of memory, has the risk of OOM",
-			zap.Any("tidbMemUsage", memUsage),
-			zap.Any("serverMemoryQuota", eqh.record.serverMemoryQuota),
-		)
-	} else {
-		logutil.BgLogger().Warn("The os system now takes a lot of memory, has the risk of OOM",
-			zap.Any("osMemUsage", memUsage),
-			zap.Any("osMemoryTotal", eqh.record.serverMemoryQuota),
-		)
+func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager) {
+	memType := "os memory"
+	if record.isServerMemoryQuotaSetByUser {
+		memType = "instance memory"
 	}
+	logutil.BgLogger().Warn("the TiDB instance now takes a lot of memory, has the risk of OOM",
+		zap.Any("memType", memType),
+		zap.Any("memUsage", memUsage),
+		zap.Any("memQuota", record.serverMemoryQuota),
+	)
 
-	if eqh.record.err = disk.CheckAndInitTempDir(); eqh.record.err != nil {
+	if record.err = disk.CheckAndInitTempDir(); record.err != nil {
 		return
 	}
-	eqh.oomRecordSQL()
-	eqh.oomRecordProfile()
+	record.recordSQL(sm)
+	record.recordProfile()
 
 	tryRemove := func(filename []string) {
 		// Keep the last 5 files
@@ -185,18 +185,17 @@ func (eqh *Handle) oomRecord(memUsage uint64) {
 		}
 		err := os.Remove(filename[0])
 		if err != nil {
-			logutil.BgLogger().Error("Remove temp files failed.", zap.Error(err))
+			logutil.BgLogger().Error("remove temp files failed", zap.Error(err))
 		}
 		filename = filename[1:]
 	}
-	tryRemove(eqh.record.lastLogFileName)
-	for i := range eqh.record.lastProfileFileName {
-		tryRemove(eqh.record.lastProfileFileName[i])
+	tryRemove(record.lastLogFileName)
+	for i := range record.lastProfileFileName {
+		tryRemove(record.lastProfileFileName[i])
 	}
 }
 
-func (eqh *Handle) oomRecordSQL() {
-	sm := eqh.sm.Load().(util.SessionManager)
+func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
@@ -206,17 +205,17 @@ func (eqh *Handle) oomRecordSQL() {
 	}
 	now := time.Now()
 
-	fileName := filepath.Join(config.GetGlobalConfig().TempStoragePath, "oom_sql"+time.Now().Format(time.RFC3339))
-	eqh.record.lastLogFileName = append(eqh.record.lastLogFileName, fileName)
+	fileName := filepath.Join(config.GetGlobalConfig().TempStoragePath, "running_sql"+record.lastChangeTime.Format(time.RFC3339))
+	record.lastLogFileName = append(record.lastLogFileName, fileName)
 	f, err := os.Create(fileName)
 	if err != nil {
-		logutil.BgLogger().Error("Create oom record file fail.", zap.Error(err))
+		logutil.BgLogger().Error("create oom record file fail", zap.Error(err))
 		return
 	}
 	defer func() {
 		err := f.Close()
 		if err != nil {
-			logutil.BgLogger().Error("Close oom record file fail.", zap.Error(err))
+			logutil.BgLogger().Error("close oom record file fail", zap.Error(err))
 		}
 	}()
 	printTop10 := func(cmp func(i, j int) bool) {
@@ -244,20 +243,20 @@ func (eqh *Handle) oomRecordSQL() {
 		_, err = f.WriteString(buf.String())
 	}
 
-	_, err = f.WriteString("Top 10 memory usage of SQL for OOM analyze\n")
+	_, err = f.WriteString("The 10 SQLs with the most memory usage for OOM analysis\n")
 	printTop10(func(i, j int) bool {
 		return pinfo[i].StmtCtx.MemTracker.MaxConsumed() > pinfo[j].StmtCtx.MemTracker.MaxConsumed()
 	})
 
-	_, err = f.WriteString("Top 10 time usage of SQL for OOM analyze\n")
+	_, err = f.WriteString("The 10 SQLs with the most time usage for OOM analysis\n")
 	printTop10(func(i, j int) bool {
 		return pinfo[i].Time.Before(pinfo[j].Time)
 	})
 
-	logutil.BgLogger().Info("Get oom sql successfully.", zap.Any("SQLs file path:", eqh.record.lastLogFileName))
+	logutil.BgLogger().Info("record SQLs with the most memory usage or time usage successfully", zap.Any("SQLs file path:", fileName))
 }
 
-func (eqh *Handle) oomRecordProfile() {
+func (record *memoryUsageAlarm) recordProfile() {
 	items := []struct {
 		name  string
 		gc    int
@@ -267,17 +266,17 @@ func (eqh *Handle) oomRecordProfile() {
 		{name: "goroutine", debug: 2},
 	}
 	for i, item := range items {
-		fileName := filepath.Join(eqh.record.tmpDir, item.name+time.Now().Format(time.RFC3339))
-		eqh.record.lastProfileFileName[i] = append(eqh.record.lastProfileFileName[i], fileName)
+		fileName := filepath.Join(record.tmpDir, item.name+record.lastChangeTime.Format(time.RFC3339))
+		record.lastProfileFileName[i] = append(record.lastProfileFileName[i], fileName)
 		f, err := os.Create(fileName)
 		if err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("Create %v profile file fail.", item.name), zap.Error(err))
+			logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.name), zap.Error(err))
 			return
 		}
 		defer func() {
 			err := f.Close()
 			if err != nil {
-				logutil.BgLogger().Error(fmt.Sprintf("Close %v profile file fail.", item.name), zap.Error(err))
+				logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.name), zap.Error(err))
 			}
 		}()
 		if item.gc > 0 {
@@ -286,10 +285,10 @@ func (eqh *Handle) oomRecordProfile() {
 		p := rpprof.Lookup(item.name)
 		err = p.WriteTo(f, item.debug)
 		if err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("Write %v profile file fail.", item.name), zap.Error(err))
+			logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.name), zap.Error(err))
 			return
 		}
-		logutil.BgLogger().Info(fmt.Sprintf("Get %v profile successfully.", item.name), zap.Any("Profile file path:", fileName))
+		logutil.BgLogger().Info(fmt.Sprintf("record %v profile successfully", item.name), zap.Any("Profile file path:", fileName))
 	}
 }
 
