@@ -15,10 +15,10 @@ package chunk
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/parser/terror"
@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/checksum"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // ListInDisk represents a slice of chunks storing in temporary disk.
@@ -45,20 +45,24 @@ type ListInDisk struct {
 	numRowsInDisk int
 }
 
-var defaultChunkListInDiskLabel fmt.Stringer = stringutil.StringerStr("chunk.ListInDisk")
+var defaultChunkListInDiskPath = "chunk.ListInDisk"
 
 // NewListInDisk creates a new ListInDisk with field types.
 func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 	l := &ListInDisk{
 		fieldTypes: fieldTypes,
 		// TODO(fengliyuan): set the quota of disk usage.
-		diskTracker: disk.NewTracker(defaultChunkListInDiskLabel, -1),
+		diskTracker: disk.NewTracker(memory.LabelForChunkListInDisk, -1),
 	}
 	return l
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
+	err = disk.CheckAndInitTempDir()
+	if err != nil {
+		return
+	}
+	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, defaultChunkListInDiskPath+strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
 		return
 	}
@@ -176,7 +180,7 @@ func (l *ListInDisk) Close() error {
 	if l.disk != nil {
 		l.diskTracker.Consume(-l.diskTracker.BytesConsumed())
 		terror.Call(l.disk.Close)
-		return os.Remove(l.disk.Name())
+		terror.Log(os.Remove(l.disk.Name()))
 	}
 	return nil
 }
