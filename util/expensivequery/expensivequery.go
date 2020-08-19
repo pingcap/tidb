@@ -259,10 +259,9 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 func (record *memoryUsageAlarm) recordProfile() {
 	items := []struct {
 		name  string
-		gc    int
 		debug int
 	}{
-		{name: "heap", gc: 1},
+		{name: "heap"},
 		{name: "goroutine", debug: 2},
 	}
 	for i, item := range items {
@@ -279,9 +278,6 @@ func (record *memoryUsageAlarm) recordProfile() {
 				logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.name), zap.Error(err))
 			}
 		}()
-		if item.gc > 0 {
-			runtime.GC()
-		}
 		p := rpprof.Lookup(item.name)
 		err = p.WriteTo(f, item.debug)
 		if err != nil {
