@@ -25,7 +25,7 @@ import (
 // because we never block the DML but costs some time to backfill the index data)
 // See https://dev.mysql.com/doc/refman/8.0/en/alter-table.html#alter-table-performance.
 type AlterAlgorithm struct {
-	// supported should store algorithms in the order 'INSTANT, INPLACE, COPY'
+	// supported MUST store algorithms in the order 'INSTANT, INPLACE, COPY'
 	supported []ast.AlgorithmType
 	// If the alter algorithm is not given, the defAlgorithm will be used.
 	defAlgorithm ast.AlgorithmType
