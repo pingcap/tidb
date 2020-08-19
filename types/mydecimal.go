@@ -1227,10 +1227,13 @@ func (d *MyDecimal) WriteBin(precision, frac int, buf []byte) ([]byte, error) {
 		}
 	}
 
-	if fracSize < fracSizeFrom {
+	if fracSize < fracSizeFrom ||
+		(fracSize == fracSizeFrom && (trailingDigits <= trailingDigitsFrom || wordsFrac <= wordsFracFrom)) {
+		if fracSize < fracSizeFrom || (fracSize == fracSizeFrom && trailingDigits < trailingDigitsFrom) || (fracSize == fracSizeFrom && wordsFrac < wordsFracFrom) {
+			err = ErrTruncated
+		}
 		wordsFracFrom = wordsFrac
 		trailingDigitsFrom = trailingDigits
-		err = ErrTruncated
 	} else if fracSize > fracSizeFrom && trailingDigitsFrom > 0 {
 		if wordsFrac == wordsFracFrom {
 			trailingDigitsFrom = trailingDigits
@@ -1301,6 +1304,7 @@ func (d *MyDecimal) ToHashKey() ([]byte, error) {
 		// thus ErrTruncated may be raised, we can ignore it here.
 		err = nil
 	}
+	buf = append(buf, byte(digitsFrac))
 	return buf, err
 }
 
