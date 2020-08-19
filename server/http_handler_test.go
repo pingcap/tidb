@@ -143,7 +143,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	for _, t := range testCases {
 		var f *helper.FrameItem
 		if t.indexID == 0 {
-			f = r.GetRecordFrame(t.tableID, "", "")
+			f = r.GetRecordFrame(t.tableID, "", "", false)
 		} else {
 			f = r.GetIndexFrame(t.tableID, t.indexID, "", "", "")
 		}
@@ -168,7 +168,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithEndNoLimit(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r.First.IsRecord, IsTrue)
 	c.Assert(r.Last.IsRecord, IsTrue)
-	c.Assert(r.GetRecordFrame(300, "", ""), NotNil)
+	c.Assert(r.GetRecordFrame(300, "", "", false), NotNil)
 	c.Assert(r.GetIndexFrame(200, 100, "", "", ""), NotNil)
 }
 
@@ -185,7 +185,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r.First.IsRecord, IsFalse)
 	c.Assert(r.Last.IsRecord, IsTrue)
-	c.Assert(r.GetRecordFrame(3, "", ""), NotNil)
+	c.Assert(r.GetRecordFrame(3, "", "", false), NotNil)
 	c.Assert(r.GetIndexFrame(8, 1, "", "", ""), NotNil)
 }
 
@@ -206,6 +206,37 @@ func (ts *HTTPHandlerTestSuite) TestRegionsAPI(c *C) {
 	// list region
 	for _, region := range data.RecordRegions {
 		c.Assert(ts.regionContainsTable(c, region.ID, data.TableID), IsTrue)
+	}
+}
+
+func (ts *HTTPHandlerTestSuite) TestRegionsAPIForClusterIndex(c *C) {
+	ts.startServer(c)
+	defer ts.stopServer(c)
+	ts.prepareData(c)
+	resp, err := ts.fetchStatus("/tables/tidb/t/regions")
+	c.Assert(err, IsNil)
+	c.Assert(resp.StatusCode, Equals, http.StatusOK)
+	defer resp.Body.Close()
+	decoder := json.NewDecoder(resp.Body)
+	var data TableRegions
+	err = decoder.Decode(&data)
+	c.Assert(err, IsNil)
+	c.Assert(len(data.RecordRegions) > 0, IsTrue)
+	// list region
+	for _, region := range data.RecordRegions {
+		fmt.Println(region.ID)
+		resp, err := ts.fetchStatus(fmt.Sprintf("/regions/%d", region.ID))
+		c.Assert(err, IsNil)
+		c.Assert(resp.StatusCode, Equals, http.StatusOK)
+		decoder := json.NewDecoder(resp.Body)
+		var data RegionDetail
+		err = decoder.Decode(&data)
+		c.Assert(err, IsNil)
+		fmt.Println("data.StartKey and EndKey", data.StartKey, data.EndKey)
+		for _, index := range data.Frames {
+			fmt.Println(*index)
+		}
+		c.Assert(resp.Body.Close(), IsNil)
 	}
 }
 
@@ -422,6 +453,11 @@ partition by range (a)
 	txn2.Exec("insert into tidb.pt values (666, 'def')")
 	err = txn2.Commit()
 	c.Assert(err, IsNil)
+
+	dbt.mustExec("set @@tidb_enable_clustered_index = 1")
+	dbt.mustExec("drop table if exists t")
+	dbt.mustExec("create table t (a double, b varchar(20), c int, primary key(a,b))")
+	dbt.mustExec("insert into t values(1.1,'111',1),(2.2,'222',2)")
 }
 
 func decodeKeyMvcc(closer io.ReadCloser, c *C, valid bool) {
