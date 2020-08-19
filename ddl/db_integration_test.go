@@ -1931,14 +1931,11 @@ func (s *testIntegrationSuite5) TestChangingDBCharset(c *C) {
 
 	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_general_ci")
-}
 
-func (s *testIntegrationSuite5) TestChangingUppercaseDBCharset(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
+	// Test changing charset of schema with uppercase name. See https://github.com/pingcap/tidb/issues/19273.
 	tk.MustExec("drop database if exists TEST_UPPERCASE_DB_CHARSET;")
 	tk.MustExec("create database TEST_UPPERCASE_DB_CHARSET;")
 	tk.MustExec("use TEST_UPPERCASE_DB_CHARSET;")
-
 	tk.MustExec("alter database TEST_UPPERCASE_DB_CHARSET default character set utf8;")
 	tk.MustExec("alter database TEST_UPPERCASE_DB_CHARSET default character set utf8mb4;")
 }
