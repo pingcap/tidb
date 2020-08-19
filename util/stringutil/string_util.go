@@ -317,6 +317,8 @@ func Escape(str string, sqlMode mysql.SQLMode) string {
 	return quote + strings.Replace(str, quote, quote+quote, -1) + quote
 }
 
+// BuildStringFromLabels construct config labels into string by following format:
+// "keyA=valueA,keyB=valueB"
 func BuildStringFromLabels(labels map[string]string) string {
 	if len(labels) < 1 {
 		return ""
