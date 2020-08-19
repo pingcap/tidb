@@ -269,7 +269,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 		ch <- 1
 		go func() {
 			defer wg.Done()
-			result, err := e.parsedLog(sctx, log, &start)
+			result, err := e.parsedLog(sctx, log, start)
 			if err != nil {
 				e.parsedSlowLogCh <- parsedSlowLog{nil, err}
 			} else {
@@ -292,7 +292,7 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	wg.Wait()
 }
 
-func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, offset *offset) (data [][]types.Datum, err error) {
+func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%s", r)
