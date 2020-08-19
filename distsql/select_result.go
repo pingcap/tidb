@@ -386,8 +386,8 @@ func (s *selectResultRuntimeStats) String() string {
 		}
 	}
 	copRPC := s.rpcStat.Stats[tikvrpc.CmdCop]
-	delete(s.rpcStat.Stats, tikvrpc.CmdCop)
-	if copRPC.Count > 0 {
+	if copRPC != nil && copRPC.Count > 0 {
+		delete(s.rpcStat.Stats, tikvrpc.CmdCop)
 		buf.WriteString(", rpc_num: ")
 		buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
 		buf.WriteString(", rpc_time: ")
