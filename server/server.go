@@ -242,8 +242,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 					go s.forwardUnixSocketToTCP()
 				}
 			}
-		} else if runInGoTest && s.cfg.Port == 0 {
-			s.cfg.Port = uint(s.listener.Addr().(*net.TCPAddr).Port)
+			if runInGoTest && s.cfg.Port == 0 {
+				s.cfg.Port = uint(s.listener.Addr().(*net.TCPAddr).Port)
+			}
 		}
 	} else if cfg.Socket != "" {
 		if s.listener, err = net.Listen("unix", cfg.Socket); err == nil {
