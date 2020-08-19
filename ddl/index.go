@@ -589,73 +589,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	dependentHiddenCols := make([]*model.ColumnInfo, 0)
-	for _, indexColumn := range indexInfo.Columns {
-		if tblInfo.Columns[indexColumn.Offset].Hidden {
-			dependentHiddenCols = append(dependentHiddenCols, tblInfo.Columns[indexColumn.Offset])
-		}
-	}
-
-	originalState := indexInfo.State
-	switch indexInfo.State {
-	case model.StatePublic:
-		// public -> write only
-		job.SchemaState = model.StateWriteOnly
-		indexInfo.State = model.StateWriteOnly
-		if len(dependentHiddenCols) > 0 {
-			firstHiddenOffset := dependentHiddenCols[0].Offset
-			for i := 0; i < len(dependentHiddenCols); i++ {
-				tblInfo.Columns[firstHiddenOffset].State = model.StateWriteOnly
-				// Set this column's offset to the last and reset all following columns' offsets.
-				adjustColumnInfoInDropColumn(tblInfo, firstHiddenOffset)
-			}
-		}
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
-	case model.StateWriteOnly:
-		// write only -> delete only
-		job.SchemaState = model.StateDeleteOnly
-		indexInfo.State = model.StateDeleteOnly
-		updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteOnly)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
-	case model.StateDeleteOnly:
-		// delete only -> reorganization
-		job.SchemaState = model.StateDeleteReorganization
-		indexInfo.State = model.StateDeleteReorganization
-		updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteReorganization)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
-	case model.StateDeleteReorganization:
-		// reorganization -> absent
-		newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-		for _, idx := range tblInfo.Indices {
-			if idx.Name.L != indexInfo.Name.L {
-				newIndices = append(newIndices, idx)
-			}
-		}
-		tblInfo.Indices = newIndices
-		// Set column index flag.
-		dropIndexColumnFlag(tblInfo, indexInfo)
-
-		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(dependentHiddenCols)]
-
-		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != model.StateNone)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-
-		// Finish this job.
-		if job.IsRollingback() {
-			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			job.Args[0] = indexInfo.ID
-			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
-			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
-		} else {
-			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, indexInfo.ID, getPartitionIDs(tblInfo))
-		}
-	default:
-		err = ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
-	}
-	return ver, errors.Trace(err)
+	return doDropIndices(t, job, tblInfo, []*model.IndexInfo{indexInfo}, "onDropIndex")
 }
 
 func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, error) {
@@ -1752,12 +1686,12 @@ func doDropIndices(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, index
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 			switch callFrom {
 			case "onDropIndex":
+				// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
+				// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 				job.Args[0] = indexIDs[0]
 			case "onDropColumn":
 				job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
 			}
-			// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
-			// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 			switch callFrom {

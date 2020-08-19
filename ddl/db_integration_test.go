@@ -2372,6 +2372,30 @@ func (s *testIntegrationSuite5) TestDropColumnWithUniqueCompositeIndexWithData(c
 	tk.MustQuery(query).Check(testkit.Rows("idx_abc YES"))
 }
 
+func (s *testIntegrationSuite5) TestDropColumnWithMultiCompositeIndexWithData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	query := queryIndexOnTable("drop_composite_index_test", "t_drop_column_with_comp_idx4")
+	tk.MustExec("create database if not exists drop_composite_index_test")
+	tk.MustExec("use drop_composite_index_test")
+	tk.MustExec("create table t_drop_column_with_comp_idx4(a int, b int, c int, index idx_ab(a, b), index idx_bc(b, c))")
+	defer tk.MustExec("drop table if exists t_drop_column_with_comp_idx4")
+	tk.MustExec("insert into t_drop_column_with_comp_idx4(a, b, c) values(1, 2, 1), (1, 3, 1), (2, 4, 2)")
+	tk.MustExec("alter table t_drop_column_with_comp_idx4 drop column b")
+	tk.MustQuery(query).Check(testkit.Rows("idx_ab YES", "idx_bc YES"))
+}
+
+func (s *testIntegrationSuite5) TestDropColumnWithMultiUniqueCompositeIndexWithData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	query := queryIndexOnTable("drop_composite_index_test", "t_drop_column_with_comp_idx5")
+	tk.MustExec("create database if not exists drop_composite_index_test")
+	tk.MustExec("use drop_composite_index_test")
+	tk.MustExec("create table t_drop_column_with_comp_idx5(a int, b int, c int, unique index idx_abc(a, b, c), index idx_bc(b, c))")
+	defer tk.MustExec("drop table if exists t_drop_column_with_comp_idx5")
+	tk.MustExec("insert into t_drop_column_with_comp_idx5(a, b, c) values(1, 2, 1), (1, 3, 1), (2, 4, 2)")
+	tk.MustGetErrCode("alter table t_drop_column_with_comp_idx5 drop column b", 1062)
+	tk.MustQuery(query).Check(testkit.Rows("idx_abc YES", "idx_bc YES"))
+}
+
 func (s *testIntegrationSuite5) TestDropColumnWithIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
