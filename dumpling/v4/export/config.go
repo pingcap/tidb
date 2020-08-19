@@ -54,6 +54,7 @@ type Config struct {
 	Rows               uint64
 	Where              string
 	FileType           string
+	CompleteInsert     bool
 	EscapeBackslash    bool
 	DumpEmptyDatabase  bool
 	OutputFileTemplate *template.Template

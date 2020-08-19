@@ -133,7 +133,7 @@ func SelectVersion(db *sql.DB) (string, error) {
 }
 
 func SelectAllFromTable(conf *Config, db *sql.Conn, database, table string) (TableDataIR, error) {
-	selectedField, err := buildSelectField(db, database, table)
+	selectedField, err := buildSelectField(db, database, table, conf.CompleteInsert)
 	if err != nil {
 		return nil, err
 	}
@@ -455,7 +455,7 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB) (*sql.Conn, erro
 	return conn, nil
 }
 
-func buildSelectField(db *sql.Conn, dbName, tableName string) (string, error) {
+func buildSelectField(db *sql.Conn, dbName, tableName string, completeInsert bool) (string, error) {
 	query := `SELECT COLUMN_NAME,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=?;`
 	rows, err := db.QueryContext(context.Background(), query, dbName, tableName)
 	if err != nil {
@@ -479,7 +479,7 @@ func buildSelectField(db *sql.Conn, dbName, tableName string) (string, error) {
 		}
 		availableFields = append(availableFields, wrapBackTicks(escapeString(fieldName)))
 	}
-	if hasGenerateColumn {
+	if completeInsert || hasGenerateColumn {
 		return strings.Join(availableFields, ","), nil
 	}
 	return "*", nil
