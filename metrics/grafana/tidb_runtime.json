@@ -1170,7 +1170,7 @@
         "current": {},
         "datasource": "${DS_TEST-CLUSTER}",
         "definition": "label_values(process_start_time_seconds{job=\"tidb\"}, instance)",
-        "hide": 2,
+        "hide": 0,
         "includeAll": true,
         "label": "instance",
         "multi": false,
