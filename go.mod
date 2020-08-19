@@ -23,7 +23,7 @@ require (
 	github.com/klauspost/cpuid v1.2.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20200810072146-7f5bfa3012dd
+	github.com/ngaut/unistore v0.0.0-20200819095413-1b541a57f204
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
@@ -65,9 +65,5 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20180531100431-4c381bd170b4
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
-
-replace github.com/zhangjinpeng1987/raft => github.com/NingLin-P/raft v0.0.0-20200818113713-19cc67b2ee50
-
-replace github.com/ngaut/unistore => github.com/NingLin-P/unistore v0.0.0-20200818133649-d01d44bf2f37
 
 go 1.13
