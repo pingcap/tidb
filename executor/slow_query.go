@@ -292,6 +292,16 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	wg.Wait()
 }
 
+func getLineIndex(offset offset, index int) int {
+	var fileLine int
+	if offset.length <= index {
+		fileLine = index - offset.length + 1
+	} else {
+		fileLine = offset.offset + index + 1
+	}
+	return fileLine
+}
+
 func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -307,12 +317,10 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 	tz := ctx.GetSessionVars().Location()
 	startFlag := false
 	for index, line := range log {
-		if offset.length <= index {
-			offset.offset = -offset.length
-		}
+		fileLine := getLineIndex(offset, index)
 		if !startFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
 			st = &slowQueryTuple{}
-			valid, err := st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], offset.offset+index+1, e.checker)
+			valid, err := st.setFieldValue(tz, variable.SlowLogTimeStr, line[len(variable.SlowLogStartPrefixStr):], fileLine, e.checker)
 			if err != nil {
 				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				continue
@@ -329,7 +337,7 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 					st.prevStmt = line[len(variable.SlowLogPrevStmtPrefix):]
 				} else if strings.HasPrefix(line, variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr) {
 					value := line[len(variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr):]
-					valid, err := st.setFieldValue(tz, variable.SlowLogUserAndHostStr, value, offset.offset+index+1, e.checker)
+					valid, err := st.setFieldValue(tz, variable.SlowLogUserAndHostStr, value, fileLine, e.checker)
 					if err != nil {
 						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 						continue
@@ -344,7 +352,7 @@ func (e *slowQueryRetriever) parsedLog(ctx sessionctx.Context, log []string, off
 						if strings.HasSuffix(field, ":") {
 							field = field[:len(field)-1]
 						}
-						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], offset.offset+index+1, e.checker)
+						valid, err := st.setFieldValue(tz, field, fieldValues[i+1], fileLine, e.checker)
 						if err != nil {
 							ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 							continue
