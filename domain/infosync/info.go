@@ -308,7 +308,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 // UpdatePlacementRules is used to notify PD changes of placement rules.
 func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error {
 	// This function will fail if a PD HTTP API is unavailable.
-	// sadly tests did not have such a mock PD HTTP server
+	// Sadly tests did not have such a mock PD HTTP server.
 	// So lots of related tests will fail.
 	failpoint.Inject("skipUpdatePlacementRules", func(val failpoint.Value) {
 		if val.(bool) {
