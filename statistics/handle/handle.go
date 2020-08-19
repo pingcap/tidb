@@ -78,11 +78,8 @@ type Handle struct {
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
 	h.mu.Lock()
-	//lock statsCache for race test
-	h.statsCache.mu.Lock()
-	mu := &h.statsCache.mu
-	h.statsCache = newstatsCache(h.mu.ctx.GetSessionVars().MemQuotaStatistic)
-	mu.Unlock()
+	h.SetBytesLimit(h.mu.ctx.GetSessionVars().MemQuotaStatistic)
+	h.statsCache.Clear()
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}

@@ -38,7 +38,7 @@ func (key statsCacheKey) Hash() []byte {
 	return buf
 }
 
-// newstatsCache returns a new statsCahce with capacity maxMemoryLimit(initial 1G)
+// newstatsCache returns a new statsCahce with capacity maxMemoryLimit
 func newstatsCache(memoryLimit int64) *statsCache {
 	// since newstatsCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
@@ -49,6 +49,18 @@ func newstatsCache(memoryLimit int64) *statsCache {
 		memTracker:  memory.NewTracker(memory.LabelForStatsCache, -1),
 	}
 	return &c
+}
+
+// Clear clears the statsCache.
+func (sc *statsCache) Clear() {
+	// since newstatsCache controls the memory usage by itself, set the capacity of
+	// the underlying LRUCache to max to close its memory control
+	sc.mu.Lock()
+	cache := kvcache.NewSimpleLRUCache(uint(sc.memCapacity), 0.1, 0)
+	sc.memTracker.ReplaceBytesUsed(0)
+	sc.cache = cache
+	sc.version = 0
+	sc.mu.Unlock()
 }
 
 // GetAll get all the tables point.
