@@ -309,7 +309,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error {
 	// this function will fail if a PD HTTP api is unavailable
 	// sadly tests did not have such a mock PD HTTP server
-	// so lots of related test will fail
+	// So lots of related tests will fail.
 	failpoint.Inject("skipUpdatePlacementRules", func(val failpoint.Value) {
 		if val.(bool) {
 			rules = rules[:0]
