@@ -76,6 +76,26 @@ func convertAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.T
 	return ver, errors.Trace(err)
 }
 
+func convertDropColumnWithCompositeIdxJob2RollbackJob(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, indexInfos []*model.IndexInfo, err error) (int64, error) {
+	job.State = model.JobStateRollingback
+	originalState := indexInfos[0].State
+	setIndicesState(indexInfos, model.StateDeleteOnly)
+	job.SchemaState = model.StateDeleteOnly
+	ver, err1 := updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfos[0].State)
+	if err1 != nil {
+		return ver, errors.Trace(err1)
+	}
+
+	if kv.ErrKeyExists.Equal(err) {
+		if indexInfo != nil {
+			return ver, kv.ErrKeyExists.GenWithStackByArgs("", trimTempCompositeIdxPrefix(indexInfo.Name.O))
+		}
+		return ver, kv.ErrKeyExists.GenWithStackByArgs("", trimTempCompositeIdxPrefix(indexInfos[0].Name.O))
+	}
+
+	return ver, errors.Trace(err)
+}
+
 // convertNotStartAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredErr error) (ver int64, err error) {
@@ -156,13 +176,28 @@ func rollingbackAddColumns(t *meta.Meta, job *model.Job) (ver int64, err error) 
 	return ver, errCancelledDDLJob
 }
 
-func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, colInfo, idxInfos, err := checkDropColumn(t, job)
+func rollingbackDropColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	tblInfo, colInfo, sidxInfos, cidxInfos, err := checkDropColumn(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	for _, indexInfo := range idxInfos {
+	if len(cidxInfos) > 0 && colInfo.State == model.StatePublic {
+		ctidxInfos := getTempCompositeIndices(tblInfo, cidxInfos)
+		switch ctidxInfos[0].State {
+		case model.StateWriteReorganization:
+			if job.SnapshotVer != 0 {
+				logutil.Logger(w.logCtx).Info("[ddl] run the cancelling DDL job", zap.String("job", job.String()))
+				w.reorgCtx.notifyReorgCancel()
+				return w.onDropColumn(d, t, job)
+			}
+			return convertDropColumnWithCompositeIdxJob2RollbackJob(t, job, tblInfo, nil, ctidxInfos, errCancelledDDLJob)
+		case model.StateNone, model.StateDeleteOnly, model.StateWriteOnly:
+			return convertDropColumnWithCompositeIdxJob2RollbackJob(t, job, tblInfo, nil, ctidxInfos, errCancelledDDLJob)
+		}
+	}
+
+	for _, indexInfo := range sidxInfos {
 		switch indexInfo.State {
 		case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
 			// We can not rollback now, so just continue to drop index.
@@ -190,12 +225,12 @@ func rollingbackDropColumn(t *meta.Meta, job *model.Job) (ver int64, err error) 
 }
 
 func rollingbackDropColumns(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	tblInfo, colInfos, _, idxInfos, err := checkDropColumns(t, job)
+	tblInfo, colInfos, _, sidxInfos, _, err := checkDropColumns(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
-	for _, indexInfo := range idxInfos {
+	for _, indexInfo := range sidxInfos {
 		switch indexInfo.State {
 		case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
 			// We can not rollback now, so just continue to drop index.
@@ -381,7 +416,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(t, job)
 	case model.ActionDropColumn:
-		ver, err = rollingbackDropColumn(t, job)
+		ver, err = rollingbackDropColumn(w, d, t, job)
 	case model.ActionDropColumns:
 		ver, err = rollingbackDropColumns(t, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:

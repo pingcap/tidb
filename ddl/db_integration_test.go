@@ -2339,12 +2339,37 @@ func (s *testIntegrationSuite5) TestDropColumnWithCompositeIndex(c *C) {
 	defer tk.MustExec("drop table if exists t_drop_column_with_comp_idx")
 	tk.MustExec("create index idx_bc on t_drop_column_with_comp_idx(b, c)")
 	tk.MustExec("create index idx_b on t_drop_column_with_comp_idx(b)")
-	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
-	tk.MustQuery(query).Check(testkit.Rows("idx_b YES", "idx_bc YES"))
-	tk.MustExec("alter table t_drop_column_with_comp_idx alter index idx_bc invisible")
-	tk.MustExec("alter table t_drop_column_with_comp_idx alter index idx_b invisible")
-	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
-	tk.MustQuery(query).Check(testkit.Rows("idx_b NO", "idx_bc NO"))
+	tk.MustExec("alter table t_drop_column_with_comp_idx drop column b")
+	tk.MustQuery(query).Check(testkit.Rows("idx_bc YES"))
+}
+
+func (s *testIntegrationSuite5) TestDropColumnWithCompositeIndexWithData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	query := queryIndexOnTable("drop_composite_index_test2", "t_drop_column_with_comp_idx2")
+	tk.MustExec("create database if not exists drop_composite_index_test2")
+	tk.MustExec("use drop_composite_index_test2")
+	tk.MustExec("create table t_drop_column_with_comp_idx2(a int, b int, c int)")
+	defer tk.MustExec("drop table if exists t_drop_column_with_comp_idx2")
+	tk.MustExec("create index idx_bc on t_drop_column_with_comp_idx2(b, c)")
+	tk.MustExec("create index idx_b on t_drop_column_with_comp_idx2(b)")
+	tk.MustExec("insert into t_drop_column_with_comp_idx2(a, b, c) values(1, 2, 3)")
+	tk.MustExec("insert into t_drop_column_with_comp_idx2(a, b, c) values(4, 5, 6)")
+	tk.MustExec("alter table t_drop_column_with_comp_idx2 drop column b")
+	tk.MustQuery(query).Check(testkit.Rows("idx_bc YES"))
+}
+
+func (s *testIntegrationSuite5) TestDropColumnWithUniqueCompositeIndexWithData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	query := queryIndexOnTable("drop_composite_index_test", "t_drop_column_with_comp_idx3")
+	tk.MustExec("create database if not exists drop_composite_index_test")
+	tk.MustExec("use drop_composite_index_test")
+	tk.MustExec("create table t_drop_column_with_comp_idx3(a int, b int, c int)")
+	tk.MustExec("alter table t_drop_column_with_comp_idx3 add unique index idx_abc(a, b, c)")
+	tk.MustExec("insert into t_drop_column_with_comp_idx3(a, b, c) values(1, 2, 1)")
+	tk.MustExec("insert into t_drop_column_with_comp_idx3(a, b, c) values(1, 3, 1)")
+	tk.MustExec("insert into t_drop_column_with_comp_idx3(a, b, c) values(2, 4, 2)")
+	tk.MustGetErrCode("alter table t_drop_column_with_comp_idx3 drop column b", 1062)
+	tk.MustQuery(query).Check(testkit.Rows("idx_abc YES"))
 }
 
 func (s *testIntegrationSuite5) TestDropColumnWithIndex(c *C) {
