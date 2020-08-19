@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowcodec"
@@ -31,6 +32,7 @@ type testScanSuite struct {
 	store        *tikvStore
 	recordPrefix []byte
 	rowNums      []int
+	ctx          context.Context
 }
 
 var _ = SerialSuites(&testScanSuite{})
@@ -40,6 +42,10 @@ func (s *testScanSuite) SetUpSuite(c *C) {
 	s.store = NewTestStore(c).(*tikvStore)
 	s.recordPrefix = tablecodec.GenTableRecordPrefix(1)
 	s.rowNums = append(s.rowNums, 1, scanBatchSize, scanBatchSize+1, scanBatchSize*3)
+	ctx := context.Background()
+	// Avoid using async commit logic.
+	ctx = context.WithValue(ctx, sessionctx.ConnID, uint64(0))
+	s.ctx = ctx
 }
 
 func (s *testScanSuite) TearDownSuite(c *C) {
@@ -53,7 +59,7 @@ func (s *testScanSuite) TearDownSuite(c *C) {
 		c.Assert(err, IsNil)
 		scanner.Next()
 	}
-	err = txn.Commit(context.Background())
+	err = txn.Commit(s.ctx)
 	c.Assert(err, IsNil)
 	err = s.store.Close()
 	c.Assert(err, IsNil)
@@ -101,16 +107,16 @@ func (s *testScanSuite) TestScan(c *C) {
 			err := txn.Set(tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(i)), genValueBytes(i))
 			c.Assert(err, IsNil)
 		}
-		err := txn.Commit(context.Background())
+		err := txn.Commit(s.ctx)
 		c.Assert(err, IsNil)
 
 		if rowNum > 123 {
-			_, err = s.store.SplitRegions(context.Background(), [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(123))}, false)
+			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(123))}, false)
 			c.Assert(err, IsNil)
 		}
 
 		if rowNum > 456 {
-			_, err = s.store.SplitRegions(context.Background(), [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(456))}, false)
+			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(456))}, false)
 			c.Assert(err, IsNil)
 		}
 
