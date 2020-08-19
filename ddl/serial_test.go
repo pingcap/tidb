@@ -1351,6 +1351,8 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t6 values (1, 2)")
 	tk.MustQuery("select * from t6").Check(testkit.Rows("1 2"))
 	tk.MustGetErrCode("alter table t6 drop primary key", errno.ErrPKIndexCantBeInvisible)
+	res := tk.MustQuery("show index from t6 where Key_name='PRIMARY';")
+	c.Check(len(res.Rows()), Equals, 1)
 }
 
 func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
