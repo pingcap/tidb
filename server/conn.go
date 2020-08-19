@@ -44,6 +44,7 @@ import (
 	"net"
 	"runtime"
 	"runtime/pprof"
+	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync"
@@ -871,6 +872,16 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			defer pprof.SetGoroutineLabels(ctx)
 			ctx = pprof.WithLabels(ctx, pprof.Labels("sql", label))
 			pprof.SetGoroutineLabels(ctx)
+		}
+	}
+	if trace.IsEnabled() {
+		lc := getLastStmtInConn{cc}
+		sqlType := lc.PProfLabel()
+		if len(sqlType) > 0 {
+			var task *trace.Task
+			ctx, task = trace.NewTask(ctx, sqlType)
+			trace.Log(ctx, "sql", lc.String())
+			defer task.End()
 		}
 	}
 	token := cc.server.getToken()
