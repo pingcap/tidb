@@ -124,16 +124,24 @@ var (
 		charset.CollationBin:     7,
 	}
 
+	// CollationStrictnessGroup group collation by strictness
+	CollationStrictnessGroup = map[string]int{
+		"utf8_general_ci":        1,
+		"utf8mb4_general_ci":     1,
+		charset.CollationASCII:   3,
+		charset.CollationLatin1:  3,
+		charset.CollationUTF8:    3,
+		charset.CollationUTF8MB4: 3,
+		charset.CollationBin:     4,
+	}
+
 	// CollationStrictness indicates the strictness of comparison of the collation. The unequal order in a weak collation also holds in a strict collation.
-	// For example, if a < b in a weak collation(e.g. general_ci), then there must be a < b in a strict collation(e.g. _bin).
-	CollationStrictness = map[string]int{
-		"utf8_general_ci":        0,
-		"utf8mb4_general_ci":     0,
-		charset.CollationASCII:   1,
-		charset.CollationLatin1:  1,
-		charset.CollationUTF8:    1,
-		charset.CollationUTF8MB4: 1,
-		charset.CollationBin:     2,
+	// For example, if a != b in a weak collation(e.g. general_ci), then there must be a != b in a strict collation(e.g. _bin).
+	// collation group id in value is stricter than collation group id in key
+	CollationStrictness = map[int][]int{
+		1: {3, 4},
+		3: {4},
+		4: {},
 	}
 )
 
@@ -145,11 +153,14 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 		return CoercibilityNumeric
 	}
 
-	_, _, coercibility, _ := inferCollation(sf.GetArgs()...)
-	if coercibility == CoercibilityNumeric {
+	_, _, coer, _ := inferCollation(sf.GetArgs()...)
+
+	// it is weird if a ScalarFunction is CoercibilityNumeric but return string type
+	if coer == CoercibilityNumeric {
 		return CoercibilityCoercible
 	}
-	return coercibility
+
+	return coer
 }
 
 func deriveCoercibilityForConstant(c *Constant) Coercibility {
