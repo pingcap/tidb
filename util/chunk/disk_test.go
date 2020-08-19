@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -141,7 +142,7 @@ type listInDiskWriteDisk struct {
 
 func newListInDiskWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWriteDisk, error) {
 	l := listInDiskWriteDisk{*NewListInDisk(fieldTypes)}
-	disk, err := ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
+	disk, err := ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
 		return nil, err
 	}

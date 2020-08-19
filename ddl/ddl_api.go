@@ -5252,7 +5252,7 @@ func buildPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error
 			switch spec.Tp {
 			case ast.PlacementAdd:
 				rule.Action = placement.RuleOpAdd
-			case ast.PlacementAlter:
+			case ast.PlacementAlter, ast.PlacementDrop:
 				rule.Action = placement.RuleOpAdd
 
 				// alter will overwrite all things
@@ -5273,10 +5273,15 @@ func buildPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error
 					DeleteByIDPrefix: true,
 					Rule: &placement.Rule{
 						GroupID: placement.RuleDefaultGroupID,
-						// ROLE is useless for PD, prevent two alter statements from overriding each other
+						// ROLE is useless for PD, prevent two alter statements from coexisting
 						Role: rule.Role,
 					},
 				})
+
+				// alter == drop + add new rules
+				if spec.Tp == ast.PlacementDrop {
+					continue
+				}
 			default:
 				err = errors.Errorf("unknown action type: %d", spec.Tp)
 			}
