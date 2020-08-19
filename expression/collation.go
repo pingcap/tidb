@@ -181,45 +181,40 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 
 // DeriveCollationFromExprs derives collation information from these expressions.
 func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string) {
-	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
-	if ctx != nil && ctx.GetSessionVars() != nil {
-		dstCharset, dstCollation = ctx.GetSessionVars().GetCharsetInfo()
-		if dstCharset == "" || dstCollation == "" {
-			dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
-		}
-	}
 	dstCollation, dstCharset, _, _ = inferCollation(exprs...)
 	return
 }
 
 // inferCollation infer collation, charset, coercibility and check legitimacy
-func inferCollation(exprs ...Expression) (collation, charset string, coercibility Coercibility, legal bool) {
+func inferCollation(exprs ...Expression) (dstCollation, dstCharset string, coercibility Coercibility, legal bool) {
 	firstExplicitCollation := ""
 	coercibility = CoercibilityIgnorable
+	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
 	for _, arg := range exprs {
 		if arg.Coercibility() == CoercibilityExplicit {
 			if firstExplicitCollation == "" {
 				firstExplicitCollation = arg.GetType().Collate
+				coercibility, dstCollation, dstCharset = CoercibilityExplicit, arg.GetType().Collate, arg.GetType().Charset
 			} else if firstExplicitCollation != arg.GetType().Collate {
 				return "", "", CoercibilityIgnorable, false
 			}
 		} else if arg.Coercibility() < coercibility {
-			coercibility, collation, charset = arg.Coercibility(), arg.GetType().Collate, arg.GetType().Charset
-		} else if arg.Coercibility() == coercibility && collation != arg.GetType().Collate {
-			p1 := collationPriority[collation]
+			coercibility, dstCollation, dstCharset = arg.Coercibility(), arg.GetType().Collate, arg.GetType().Charset
+		} else if arg.Coercibility() == coercibility && dstCollation != arg.GetType().Collate {
+			p1 := collationPriority[dstCollation]
 			p2 := collationPriority[arg.GetType().Collate]
 
-			// same priority means this two collation is incompatible
+			// same priority means this two dstCollation is incompatible
 			// it might derive coercibility to CoercibilityNone
 			if p1 == p2 {
-				coercibility, collation, charset = CoercibilityNone, getBinCollation(arg.GetType().Charset), arg.GetType().Charset
+				coercibility, dstCollation, dstCharset = CoercibilityNone, getBinCollation(arg.GetType().Charset), arg.GetType().Charset
 			} else if p1 < p2 {
-				collation, charset = arg.GetType().Collate, arg.GetType().Charset
+				dstCollation, dstCharset = arg.GetType().Collate, arg.GetType().Charset
 			}
 		}
 	}
 
-	return collation, charset, coercibility, true
+	return dstCollation, dstCharset, coercibility, true
 }
 
 // getBinCollation get binary collation by charset
