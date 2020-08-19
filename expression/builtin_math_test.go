@@ -247,30 +247,23 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 	defer testleak.AfterTest(c)()
 
 	tests := []struct {
-<<<<<<< HEAD
 		args   []interface{}
 		expect float64
 		isNil  bool
 		getErr bool
-=======
-		args         []interface{}
-		expect       float64
-		isNil        bool
-		warningCount uint16
->>>>>>> bbc0502... expression: add warnings for logarithm functions (#18668)
 	}{
-		{[]interface{}{nil}, 0, true, 0},
-		{[]interface{}{nil, nil}, 0, true, 0},
-		{[]interface{}{int64(100)}, 4.605170185988092, false, 0},
-		{[]interface{}{float64(100)}, 4.605170185988092, false, 0},
-		{[]interface{}{int64(10), int64(100)}, 2, false, 0},
-		{[]interface{}{float64(10), float64(100)}, 2, false, 0},
-		{[]interface{}{float64(-1)}, 0, true, 1},
-		{[]interface{}{float64(2), float64(-1)}, 0, true, 1},
-		{[]interface{}{float64(-1), float64(2)}, 0, true, 1},
-		{[]interface{}{float64(1), float64(2)}, 0, true, 1},
-		{[]interface{}{float64(0.5), float64(0.25)}, 2, false, 0},
-		{[]interface{}{"abc"}, 0, true, 2},
+		{[]interface{}{nil}, 0, true, false},
+		{[]interface{}{nil, nil}, 0, true, false},
+		{[]interface{}{int64(100)}, 4.605170185988092, false, false},
+		{[]interface{}{float64(100)}, 4.605170185988092, false, false},
+		{[]interface{}{int64(10), int64(100)}, 2, false, false},
+		{[]interface{}{float64(10), float64(100)}, 2, false, false},
+		{[]interface{}{float64(-1)}, 0, true, false},
+		{[]interface{}{float64(2), float64(-1)}, 0, true, false},
+		{[]interface{}{float64(-1), float64(2)}, 0, true, false},
+		{[]interface{}{float64(1), float64(2)}, 0, true, false},
+		{[]interface{}{float64(0.5), float64(0.25)}, 2, false, false},
+		{[]interface{}{"abc"}, 0, true, true},
 	}
 
 	for _, test := range tests {
@@ -278,17 +271,8 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-<<<<<<< HEAD
 		if test.getErr {
 			c.Assert(err, NotNil)
-=======
-		c.Assert(err, IsNil)
-		if test.warningCount > 0 {
-			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
-		}
-		if test.isNil {
-			c.Assert(result.Kind(), Equals, types.KindNull)
->>>>>>> bbc0502... expression: add warnings for logarithm functions (#18668)
 		} else {
 			c.Assert(result.GetFloat64(), Equals, test.expect)
 		}
@@ -302,25 +286,18 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 	defer testleak.AfterTest(c)()
 
 	tests := []struct {
-<<<<<<< HEAD
 		args   interface{}
 		expect float64
 		isNil  bool
 		getErr bool
-=======
-		args         interface{}
-		expect       float64
-		isNil        bool
-		warningCount uint16
->>>>>>> bbc0502... expression: add warnings for logarithm functions (#18668)
 	}{
-		{nil, 0, true, 0},
-		{int64(16), 4, false, 0},
-		{float64(16), 4, false, 0},
-		{int64(5), 2.321928094887362, false, 0},
-		{int64(-1), 0, true, 1},
-		{"4abc", 2, false, 1},
-		{"abc", 0, true, 2},
+		{nil, 0, true, false},
+		{int64(16), 4, false, false},
+		{float64(16), 4, false, false},
+		{int64(5), 2.321928094887362, false, false},
+		{int64(-1), 0, true, false},
+		{"4abc", 2, false, true},
+		{"abc", 0, true, true},
 	}
 
 	for _, test := range tests {
@@ -328,17 +305,8 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-<<<<<<< HEAD
 		if test.getErr {
 			c.Assert(err, NotNil)
-=======
-		c.Assert(err, IsNil)
-		if test.warningCount > 0 {
-			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
-		}
-		if test.isNil {
-			c.Assert(result.Kind(), Equals, types.KindNull)
->>>>>>> bbc0502... expression: add warnings for logarithm functions (#18668)
 		} else {
 			c.Assert(result.GetFloat64(), Equals, test.expect)
 		}
@@ -352,25 +320,18 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 	defer testleak.AfterTest(c)()
 
 	tests := []struct {
-<<<<<<< HEAD
 		args   interface{}
 		expect float64
 		isNil  bool
 		getErr bool
-=======
-		args         interface{}
-		expect       float64
-		isNil        bool
-		warningCount uint16
->>>>>>> bbc0502... expression: add warnings for logarithm functions (#18668)
 	}{
-		{nil, 0, true, 0},
-		{int64(100), 2, false, 0},
-		{float64(100), 2, false, 0},
-		{int64(101), 2.0043213737826426, false, 0},
-		{int64(-1), 0, true, 1},
-		{"100abc", 2, false, 1},
-		{"abc", 0, true, 2},
+		{nil, 0, true, false},
+		{int64(100), 2, false, false},
+		{float64(100), 2, false, false},
+		{int64(101), 2.0043213737826426, false, false},
+		{int64(-1), 0, true, false},
+		{"100abc", 2, false, true},
+		{"abc", 0, true, true},
 	}
 
 	for _, test := range tests {
@@ -378,17 +339,8 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-<<<<<<< HEAD
 		if test.getErr {
 			c.Assert(err, NotNil)
-=======
-		c.Assert(err, IsNil)
-		if test.warningCount > 0 {
-			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
-		}
-		if test.isNil {
-			c.Assert(result.Kind(), Equals, types.KindNull)
->>>>>>> bbc0502... expression: add warnings for logarithm functions (#18668)
 		} else {
 			c.Assert(result.GetFloat64(), Equals, test.expect)
 		}
