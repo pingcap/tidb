@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
