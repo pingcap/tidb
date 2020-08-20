@@ -1082,6 +1082,7 @@ const (
 	ErrTableOptionUnionUnsupported        = 8232
 	ErrTableOptionInsertMethodUnsupported = 8233
 	ErrInvalidPlacementSpec               = 8234
+	ErrCantCreateColumnarTable            = 8235
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout           = 9001

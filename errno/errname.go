@@ -1044,6 +1044,7 @@ var MySQLErrName = map[uint16]string{
 	ErrUnknownAllocatorType:       "Invalid allocator type",
 	ErrAutoRandReadFailed:         "Failed to read auto-random value from storage engine",
 	ErrInvalidIncrementAndOffset:  "Invalid auto_increment settings: auto_increment_increment: %d, auto_increment_offset: %d, both of them must be in range [1..65535]",
+	ErrCantCreateColumnarTable:    "Can't create columnar table '%s': %s",
 
 	ErrWarnOptimizerHintInvalidInteger:  "integer value is out of range in '%s'",
 	ErrWarnOptimizerHintUnsupportedHint: "Optimizer hint %s is not supported by TiDB and is ignored",

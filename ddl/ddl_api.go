@@ -1252,12 +1252,14 @@ func buildTableInfo(
 	cols []*table.Column,
 	constraints []*ast.Constraint,
 	charset string,
-	collate string) (tbInfo *model.TableInfo, err error) {
+	collate string,
+	isColumnar bool) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
-		Name:    tableName,
-		Version: model.CurrLatestTableInfoVersion,
-		Charset: charset,
-		Collate: collate,
+		Name:       tableName,
+		Version:    model.CurrLatestTableInfoVersion,
+		Charset:    charset,
+		Collate:    collate,
+		IsColumnar: isColumnar,
 	}
 	for _, v := range cols {
 		v.ID = allocateColumnID(tbInfo)
@@ -1279,12 +1281,19 @@ func buildTableInfo(
 			tbInfo.ForeignKeys = append(tbInfo.ForeignKeys, fk)
 			continue
 		}
+		if constr.Tp == ast.ConstraintFulltext {
+			sc := ctx.GetSessionVars().StmtCtx
+			sc.AppendWarning(ErrTableCantHandleFt)
+			continue
+		}
 		if constr.Tp == ast.ConstraintPrimaryKey {
 			lastCol, err := checkPKOnGeneratedColumn(tbInfo, constr.Keys)
 			if err != nil {
 				return nil, err
 			}
-			if !config.GetGlobalConfig().AlterPrimaryKey {
+			// Columnar table depends on explicit handles to guarantee consistency, so don't support
+			// altering primary key.
+			if !config.GetGlobalConfig().AlterPrimaryKey || isColumnar {
 				singleIntPK := isSingleIntPK(constr, lastCol)
 				clusteredIdx := ctx.GetSessionVars().EnableClusteredIndex
 				if singleIntPK || clusteredIdx {
@@ -1304,11 +1313,6 @@ func buildTableInfo(
 			}
 		}
 
-		if constr.Tp == ast.ConstraintFulltext {
-			sc := ctx.GetSessionVars().StmtCtx
-			sc.AppendWarning(ErrTableCantHandleFt)
-			continue
-		}
 		// build index info.
 		idxInfo, err := buildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
 		if err != nil {
@@ -1522,8 +1526,12 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 	}
 
 	var tbInfo *model.TableInfo
-	tbInfo, err = buildTableInfo(ctx, s.Table.Name, cols, newConstraints, tableCharset, tableCollate)
+	tbInfo, err = buildTableInfo(ctx, s.Table.Name, cols, newConstraints, tableCharset, tableCollate, isColumnarTable(s.Options))
 	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err = checkColumnarTable(ctx, tbInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1540,6 +1548,38 @@ func buildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCh
 		return nil, errors.Trace(err)
 	}
 	return tbInfo, nil
+}
+
+// isColumnarTable returns true when the engine of the table is TiFlash.
+func isColumnarTable(options []*ast.TableOption) bool {
+	for _, op := range options {
+		// When the engine is TiFlash, the table is columnar.
+		if op.Tp == ast.TableOptionEngine && strings.EqualFold(op.StrValue, kv.TiFlash.Name()) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkColumnarTable checks whether the table info meets requirements of columnar tables
+// which should have a explicit handle key and not have indices.
+func checkColumnarTable(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+	if !tbInfo.IsColumnar {
+		return nil
+	}
+	// Columnar table depends on explicit handles to guarantee consistency, so the primary key must
+	// exist and be handle.
+	if pk := tbInfo.GetPkColInfo(); pk == nil {
+		return ErrCantCreateColumnarTable.GenWithStackByArgs(tbInfo.Name, "must have a primary key")
+	}
+	if !tbInfo.PKIsHandle && !tbInfo.IsCommonHandle {
+		return ErrCantCreateColumnarTable.GenWithStackByArgs(tbInfo.Name, "primary key must be handle, please enable clustered index")
+	}
+	// Columnar table doesn't support indices. Common handle table's index count is 1.
+	if len(tbInfo.Indices) > 1 || (len(tbInfo.Indices) == 1 && !tbInfo.IsCommonHandle) {
+		return ErrCantCreateColumnarTable.GenWithStackByArgs(tbInfo.Name, "indices are not supported")
+	}
+	return nil
 }
 
 func (d *ddl) assignTableID(tbInfo *model.TableInfo) error {
@@ -1792,7 +1832,7 @@ func (d *ddl) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (err err
 		tblCollate = v
 	}
 
-	tbInfo, err := buildTableInfo(ctx, s.ViewName.Name, cols, nil, tblCharset, tblCollate)
+	tbInfo, err := buildTableInfo(ctx, s.ViewName.Name, cols, nil, tblCharset, tblCollate, false)
 	if err != nil {
 		return err
 	}
@@ -5154,7 +5194,7 @@ func (d *ddl) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStm
 		return err
 	}
 	// TiDB describe the sequence within a tableInfo, as a same-level object of a table and view.
-	tbInfo, err := buildTableInfo(ctx, ident.Name, nil, nil, "", "")
+	tbInfo, err := buildTableInfo(ctx, ident.Name, nil, nil, "", "", false)
 	if err != nil {
 		return err
 	}

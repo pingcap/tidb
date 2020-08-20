@@ -1454,3 +1454,49 @@ func (s *testSerialSuite) TestCreateTableNoBlock(c *C) {
 	_, err := tk.Exec("create table t(a int)")
 	c.Assert(err, NotNil)
 }
+
+func (s *testSerialSuite) TestCreateColumnarTable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	canCreate := []string{
+		"create table t (a int primary key, b int) engine = tiflash",          // PkIsHandle
+		"create table t (a int primary key, b int) engine = TiFlash",          // case-insensitivity
+		"create table t (a varchar(255) primary key, b int) engine = tiflash", // clustered index
+	}
+	dropTable := func() { tk.MustExec("drop table if exists t") }
+	for _, enableAlterPK := range []bool{false, true} {
+		if enableAlterPK {
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.AlterPrimaryKey = true
+			})
+		}
+		for _, sql := range canCreate {
+			tk.MustExec(sql)
+			dom := domain.GetDomain(tk.Se)
+			is := dom.InfoSchema()
+			tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+			c.Assert(err, IsNil)
+			c.Assert(tbl.Meta().IsColumnar, IsTrue)
+			dropTable()
+		}
+		if enableAlterPK {
+			config.RestoreFunc()()
+		}
+	}
+
+	// Test must have explicit handle.
+	_, err := tk.Exec("create table t (a int, b int) engine = tiflash")
+	c.Assert(err.Error(), Matches, ".*Can't create columnar table 't': must have a primary key")
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	_, err = tk.Exec("create table t (a varchar(255) primary key, b int) engine = tiflash")
+	c.Assert(err.Error(), Matches, ".*Can't create columnar table 't': primary key must be handle, please enable clustered index")
+	// Test has indices.
+	_, err = tk.Exec("create table t (a int primary key, b int unique) engine = tiflash")
+	c.Assert(err.Error(), Matches, ".*Can't create columnar table 't': indices are not supported")
+	_, err = tk.Exec("create table t (a int primary key, b int, key (b)) engine = tiflash")
+	c.Assert(err.Error(), Matches, ".*Can't create columnar table 't': indices are not supported")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	_, err = tk.Exec("create table t (a varchar(255) primary key, b int unique) engine = tiflash")
+	c.Assert(err.Error(), Matches, ".*Can't create columnar table 't': indices are not supported")
+}
