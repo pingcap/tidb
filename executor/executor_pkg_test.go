@@ -255,12 +255,11 @@ func assertEqualStrings(c *C, got []field, expect []string) {
 }
 
 func (s *testExecSerialSuite) TestSortSpillDisk(c *C) {
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMUseTmpStorage = true
-	newConf.MemQuotaQuery = 1
-	config.StoreGlobalConfig(&newConf)
-	defer config.StoreGlobalConfig(originCfg)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+		conf.MemQuotaQuery = 1
+	})
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
 	defer func() {
