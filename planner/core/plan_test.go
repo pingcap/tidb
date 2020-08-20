@@ -99,14 +99,24 @@ func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
 	tk.MustExec("set tidb_enable_collect_execution_info=1;")
 
 	tk.Se.GetSessionVars().PlanID = 0
+	getPlanTree := func() string {
+		info := tk.Se.ShowProcess()
+		c.Assert(info, NotNil)
+		p, ok := info.Plan.(core.Plan)
+		c.Assert(ok, IsTrue)
+		encodeStr := core.EncodePlan(p)
+		planTree, err := plancodec.DecodePlan(encodeStr)
+		c.Assert(err, IsNil)
+		return planTree
+	}
 	tk.MustExec("select max(a) from t1 where a>0;")
-	info := tk.Se.ShowProcess()
-	c.Assert(info, NotNil)
-	p, ok := info.Plan.(core.Plan)
-	c.Assert(ok, IsTrue)
-	encodeStr := core.EncodePlan(p)
-	planTree, err := plancodec.DecodePlan(encodeStr)
-	c.Assert(err, IsNil)
+	planTree := getPlanTree()
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
+
+	tk.MustExec("insert into t1 values (1,1,1);")
+	planTree = getPlanTree()
+	c.Assert(strings.Contains(planTree, "Insert"), IsTrue)
 	c.Assert(strings.Contains(planTree, "time"), IsTrue)
 	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
 }
@@ -263,6 +273,10 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(2)"))
 
 	tk.MustExec("explain format='hint' select /*+ nth_plan(3) */ * from t where a=1 and b=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
+
+	tk.MustExec("explain format='hint' select /*+ nth_plan(500) */ * from t where a=1 and b=1")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 The parameter of nth_plan() is out of range."))
 

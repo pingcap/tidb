@@ -226,7 +226,7 @@ select * from t;`)
 
 func (s *testExecSuite) TestSlowQueryRetriever(c *C) {
 	writeFile := func(file string, data string) {
-		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 		c.Assert(err, IsNil)
 		_, err = f.Write([]byte(data))
 		c.Assert(f.Close(), IsNil)
@@ -386,5 +386,6 @@ select 7;`
 			c.Assert(file.file.Name(), Equals, cas.files[i])
 			c.Assert(file.file.Close(), IsNil)
 		}
+		c.Assert(retriever.close(), IsNil)
 	}
 }
