@@ -4426,18 +4426,18 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	defer s.cleanEnv(c)
 	var result *testkit.Result
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000002B5F72800000000000A5D3' )")
-	result.Check(testkit.Rows("tableID=43, _tidb_rowid=42451"))
+	result.Check(testkit.Rows(`{"_tidb_rowid": 42451, "tableID": 43}`))
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000325f7205bff199999999999a013131000000000000f9' )")
-	result.Check(testkit.Rows("tableID=50, clusterHandle={1.1, 11}"))
+	result.Check(testkit.Rows(`{"clusterHandle": "{1.1, 11}", "tableID": 50}`))
 
 	result = tk.MustQuery("select tidb_decode_key( '74800000000000019B5F698000000000000001015257303100000000FB013736383232313130FF3900000000000000F8010000000000000000F7' )")
-	result.Check(testkit.Rows("tableID=411, indexID=1, indexValues=RW01,768221109,"))
+	result.Check(testkit.Rows(`{"indexID": 1, "indexValues": "RW01,768221109,", "tableID": 411}`))
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000695F698000000000000001038000000000004E20' )")
-	result.Check(testkit.Rows("tableID=105, indexID=1, indexValues=20000"))
+	result.Check(testkit.Rows(`{"indexID": 1, "indexValues": "20000", "tableID": 105}`))
 
 	// Test invalid record/index key.
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000FF2E5F728000000011FFE1A3000000000000' )")
-	result.Check(testkit.Rows("7480000000000000FF2E5F728000000011FFE1A3000000000000"))
+	result.Check(testkit.Rows("<nil>"))
 	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warns, HasLen, 1)
 	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")

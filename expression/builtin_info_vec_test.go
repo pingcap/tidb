@@ -66,7 +66,7 @@ var vecBuiltinInfoCases = map[string][]vecExprBenchCase{
 	},
 	ast.TiDBDecodeKey: {
 		{
-			retEvalType:   types.ETString,
+			retEvalType:   types.ETJson,
 			childrenTypes: []types.EvalType{types.ETString},
 			geners: []dataGenerator{&tidbKeyGener{
 				inner: newDefaultGener(0, types.ETInt),

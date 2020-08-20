@@ -795,7 +795,7 @@ func decodeKey(ctx sessionctx.Context, s string) map[string]interface{} {
 		return map[string]interface{}{
 			"tableID":     tableID,
 			"indexID":     indexID,
-			"indexValues": indexValues,
+			"indexValues": strings.Join(indexValues, ","),
 		}
 	}
 	// TODO: try to decode other type key.
