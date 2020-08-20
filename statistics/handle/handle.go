@@ -41,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stringutil"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -95,9 +94,7 @@ func (h *Handle) Clear() {
 	h.mu.Lock()
 	h.statsCache.Lock()
 	h.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
-	h.statsCache.memTracker = memory.NewTracker(
-		stringutil.MemoizeStr(func() string { return "statsCache" }),
-		-1)
+	h.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	h.statsCache.Unlock()
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
@@ -126,9 +123,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
-	handle.statsCache.memTracker = memory.NewTracker(
-		stringutil.MemoizeStr(func() string { return "statsCache" }),
-		-1)
+	handle.statsCache.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	handle.statsCache.Store(statsCache{tables: make(map[int64]*statistics.Table)})
@@ -961,4 +956,151 @@ func (h *Handle) ReloadExtendedStatistics() error {
 	// Note that this update may fail when the statsCache.version has been modified by others.
 	h.updateStatsCache(oldCache.update(tables, nil, oldCache.version))
 	return nil
+}
+
+// BuildExtendedStats build extended stats for column groups if needed based on the column samples.
+func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (*statistics.ExtendedStatsColl, error) {
+	sql := fmt.Sprintf("SELECT stats_name, db, type, column_ids FROM mysql.stats_extended WHERE table_id = %d and status in (%d, %d)", tableID, StatsStatusAnalyzed, StatsStatusInited)
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	statsColl := statistics.NewExtendedStatsColl()
+	for _, row := range rows {
+		key := statistics.ExtendedStatsKey{
+			StatsName: row.GetString(0),
+			DB:        row.GetString(1),
+		}
+		item := &statistics.ExtendedStatsItem{Tp: uint8(row.GetInt64(2))}
+		colIDs := row.GetString(3)
+		err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
+		if err != nil {
+			logutil.BgLogger().Error("invalid column_ids in mysql.stats_extended, skip collecting extended stats for this row", zap.String("column_ids", colIDs), zap.Error(err))
+			continue
+		}
+		item = h.fillExtendedStatsItemVals(item, cols, collectors)
+		if item != nil {
+			statsColl.Stats[key] = item
+		}
+	}
+	if len(statsColl.Stats) == 0 {
+		return nil, nil
+	}
+	return statsColl, nil
+}
+
+func (h *Handle) fillExtendedStatsItemVals(item *statistics.ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) *statistics.ExtendedStatsItem {
+	switch item.Tp {
+	case ast.StatsTypeCardinality, ast.StatsTypeDependency:
+		return nil
+	case ast.StatsTypeCorrelation:
+		return h.fillExtStatsCorrVals(item, cols, collectors)
+	}
+	return nil
+}
+
+func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) *statistics.ExtendedStatsItem {
+	colOffsets := make([]int, 0, 2)
+	for _, id := range item.ColIDs {
+		for i, col := range cols {
+			if col.ID == id {
+				colOffsets = append(colOffsets, i)
+				break
+			}
+		}
+	}
+	if len(colOffsets) != 2 {
+		return nil
+	}
+	// samplesX and samplesY are in order of handle, i.e, their SampleItem.Ordinals are in order.
+	samplesX := collectors[colOffsets[0]].Samples
+	// We would modify Ordinal of samplesY, so we make a deep copy.
+	samplesY := statistics.CopySampleItems(collectors[colOffsets[1]].Samples)
+	sampleNum := len(samplesX)
+	if sampleNum == 1 {
+		item.ScalarVals = float64(1)
+		return item
+	}
+	h.mu.Lock()
+	sc := h.mu.ctx.GetSessionVars().StmtCtx
+	h.mu.Unlock()
+	var err error
+	samplesX, err = statistics.SortSampleItems(sc, samplesX)
+	if err != nil {
+		return nil
+	}
+	samplesYInXOrder := make([]*statistics.SampleItem, sampleNum)
+	for i, itemX := range samplesX {
+		itemY := samplesY[itemX.Ordinal]
+		itemY.Ordinal = i
+		samplesYInXOrder[i] = itemY
+	}
+	samplesYInYOrder, err := statistics.SortSampleItems(sc, samplesYInXOrder)
+	if err != nil {
+		return nil
+	}
+	var corrXYSum float64
+	for i := 1; i < sampleNum; i++ {
+		corrXYSum += float64(i) * float64(samplesYInYOrder[i].Ordinal)
+	}
+	// X means the ordinal of the item in original sequence, Y means the oridnal of the item in the
+	// sorted sequence, we know that X and Y value sets are both:
+	// 0, 1, ..., sampleNum-1
+	// we can simply compute sum(X) = sum(Y) =
+	//    (sampleNum-1)*sampleNum / 2
+	// and sum(X^2) = sum(Y^2) =
+	//    (sampleNum-1)*sampleNum*(2*sampleNum-1) / 6
+	// We use "Pearson correlation coefficient" to compute the order correlation of columns,
+	// the formula is based on https://en.wikipedia.org/wiki/Pearson_correlation_coefficient.
+	// Note that (itemsCount*corrX2Sum - corrXSum*corrXSum) would never be zero when sampleNum is larger than 1.
+	itemsCount := float64(sampleNum)
+	corrXSum := (itemsCount - 1) * itemsCount / 2.0
+	corrX2Sum := (itemsCount - 1) * itemsCount * (2*itemsCount - 1) / 6.0
+	item.ScalarVals = (itemsCount*corrXYSum - corrXSum*corrXSum) / (itemsCount*corrX2Sum - corrXSum*corrXSum)
+	return item
+}
+
+// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
+func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
+	if extStats == nil || len(extStats.Stats) == 0 {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	ctx := context.TODO()
+	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	_, err = exec.Execute(ctx, "begin pessimistic")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		err = finishTransaction(ctx, exec, err)
+	}()
+	txn, err := h.mu.ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	version := txn.StartTS()
+	sqls := make([]string, 0, 1+len(extStats.Stats))
+	for key, item := range extStats.Stats {
+		bytes, err := json.Marshal(item.ColIDs)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		strColIDs := string(bytes)
+		switch item.Tp {
+		case ast.StatsTypeCardinality, ast.StatsTypeCorrelation:
+			// If isLoad is true, it's INSERT; otherwise, it's UPDATE.
+			sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_extended values ('%s', '%s', %d, %d, '%s', %f, null, %d, %d)", key.StatsName, key.DB, item.Tp, tableID, strColIDs, item.ScalarVals, version, StatsStatusAnalyzed))
+		case ast.StatsTypeDependency:
+			sqls = append(sqls, fmt.Sprintf("replace into mysql.stats_extended values ('%s', '%s', %d, %d, '%s', null, '%s', %d, %d)", key.StatsName, key.DB, item.Tp, tableID, strColIDs, item.StringVals, version, StatsStatusAnalyzed))
+		}
+	}
+	if !isLoad {
+		sqls = append(sqls, fmt.Sprintf("UPDATE mysql.stats_meta SET version = %d WHERE table_id = %d", version, tableID))
+	}
+	return execSQLs(ctx, exec, sqls)
 }
