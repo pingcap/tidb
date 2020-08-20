@@ -184,7 +184,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionCommonHandleRange(c *C) {
 	c.Assert(r.First.IsRecord, IsTrue)
 	c.Assert(r.First.RecordID, Equals, int64(0))
 	c.Assert(r.First.IndexValues, DeepEquals, expectIndexValues)
-	c.Assert(r.First.IndexName, Equals, "ClusterHandle")
+	c.Assert(r.First.IndexName, Equals, "PRIMARY")
 	c.Assert(r.Last.RecordID, Equals, int64(0))
 	c.Assert(r.Last.IndexValues, IsNil)
 }
@@ -271,7 +271,8 @@ func (ts *HTTPHandlerTestSuite) TestRegionsAPIForClusterIndex(c *C) {
 				frameCnt++
 			}
 		}
-		c.Assert(frameCnt, Equals, 2)
+		// Primary index is as the record frame, so frame count is 1.
+		c.Assert(frameCnt, Equals, 1)
 		c.Assert(resp.Body.Close(), IsNil)
 	}
 }

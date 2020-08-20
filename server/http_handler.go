@@ -552,6 +552,9 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 	pi := curTable.GetPartitionInfo()
 	isCommonHandle := curTable.IsCommonHandle
 	for _, index := range curTable.Indices {
+		if index.Primary && isCommonHandle {
+			continue
+		}
 		if pi != nil {
 			for _, def := range pi.Definitions {
 				if f := r.GetIndexFrame(def.ID, index.ID, dbName, fmt.Sprintf("%s(%s)", tName, def.Name.O), index.Name.String()); f != nil {

@@ -318,7 +318,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 					frame.RecordID = handle.IntValue()
 				} else {
 					str := handle.String()
-					frame.IndexName = "ClusterHandle"
+					frame.IndexName = "PRIMARY"
 					frame.IndexValues = strings.Split(str[1:len(str)-1], ", ")
 				}
 			}
@@ -376,7 +376,7 @@ func (r *RegionFrameRange) GetRecordFrame(tableID int64, dbName, tableName strin
 		}
 	}
 	if f != nil && f.IsRecord && isCommonHandle {
-		f.IndexName = "ClusterHandle"
+		f.IndexName = "PRIMARY"
 	}
 	return
 }
