@@ -288,10 +288,10 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 
 	err = e.innerExecs[id].Open(ctx)
+	defer terror.Call(e.innerExecs[id].Close)
 	if err != nil {
 		return err
 	}
-	defer terror.Call(e.innerExecs[id].Close)
 
 	if e.useCache {
 		// create a new one in this case since it may be in the cache

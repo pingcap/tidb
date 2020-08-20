@@ -845,10 +845,10 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 // fetchAllInners reads all data from the inner table and stores them in a List.
 func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 	err := e.innerExec.Open(ctx)
+	defer terror.Call(e.innerExec.Close)
 	if err != nil {
 		return err
 	}
-	defer terror.Call(e.innerExec.Close)
 
 	if e.canUseCache {
 		// create a new one since it may be in the cache
