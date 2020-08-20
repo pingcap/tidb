@@ -415,7 +415,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 		if !job.Error.Equal(errCancelledDDLJob) {
 			job.Error = job.Error.Class().Synthesize(job.Error.Code(),
-				fmt.Sprintf("DDL job rollback, error msg: %s", job.Error.ToSQLError().Message))
+				fmt.Sprintf("DDL job rollback, error msg: %s", terror.ToSQLError(job.Error).Message))
 		}
 		job.ErrorCount++
 

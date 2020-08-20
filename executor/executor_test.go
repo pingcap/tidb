@@ -6223,7 +6223,7 @@ func (s *testSerialSuite) TestKillTableReader(c *C) {
 		time.Sleep(1 * time.Second)
 		err := tk.QueryToErr("select * from t")
 		c.Assert(err, NotNil)
-		c.Assert(int(errors.Cause(err).(*terror.Error).ToSQLError().Code), Equals, int(executor.ErrQueryInterrupted.Code()))
+		c.Assert(int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code), Equals, int(executor.ErrQueryInterrupted.Code()))
 	}()
 	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 1)
 	wg.Wait()
