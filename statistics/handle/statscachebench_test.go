@@ -222,11 +222,48 @@ func (s *testStatsSuite) SetUpStatsSuite(c *C) {
 }
 
 func BenchmarkSelectivityWithCachex(b *testing.B) {
-	BenchmarkSelectivityWithCache(b)
+	BenchmarkSelectivityWithRistrettoCache(b)
 	BenchmarkSelectivityWithSimpleCache(b)
-	BenchmarkSelectivityWithCacheNolimit(b)
+	BenchmarkSelectivityWithCacheNolimitRistretto(b)
+	BenchmarkSelectivityWithCacheNolimitSimple(b)
+
 }
-func BenchmarkSelectivityWithCacheNolimit(b *testing.B) {
+
+func BenchmarkSelectivityWithCacheNolimitSimple(b *testing.B) {
+	c := &C{}
+	s := &testStatsSuite{}
+	s.SetUpStatsSuite(c)
+	defer s.TearDownSuite(c)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	h := s.do.StatsHandle()
+	origLease := h.Lease()
+	defer func() { h.SetLease(origLease) }()
+	s.prepareSelectivity(testKit, c)
+	h.SetSimpleCache()
+
+	file, err := os.Create("cpu.profile")
+	c.Assert(err, IsNil)
+	defer file.Close()
+	pprof.StartCPUProfile(file)
+
+	b.Run("SelectivityWithCacheNolimitRistretto", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			for j := 0; j < 100; j++ {
+				id := i % 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a = %d and b < 2 and c > 3 and d < 4 and e > 5", id, j))
+			}
+			for j := 0; j < 100; j++ {
+				id := i + 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a = %d and b < 2 and c > 3 and d < 4 and e > 5", id, j))
+			}
+		}
+		b.ReportAllocs()
+	})
+	pprof.StopCPUProfile()
+}
+func BenchmarkSelectivityWithCacheNolimitRistretto(b *testing.B) {
 	c := &C{}
 	s := &testStatsSuite{}
 	s.SetUpStatsSuite(c)
@@ -243,16 +280,16 @@ func BenchmarkSelectivityWithCacheNolimit(b *testing.B) {
 	defer file.Close()
 	pprof.StartCPUProfile(file)
 
-	b.Run("SelectivityWithCacheNolimit", func(b *testing.B) {
+	b.Run("SelectivityWithCacheNolimitRistretto", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			for j := 0; j < 100; j++ {
-				id := rand.Int() % 10
-				testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1 and b < 2 and c > 3 and d < 4 and e > 5", id))
+				id := i % 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a = %d and b < 2 and c > 3 and d < 4 and e > 5", id, j))
 			}
 			for j := 0; j < 100; j++ {
-				id := rand.Int()%10 + 10
-				testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1 and b < 2 and c > 3 and d < 4 and e > 5", id))
+				id := i + 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a = %d and b < 2 and c > 3 and d < 4 and e > 5", id, j))
 			}
 		}
 		b.ReportAllocs()
@@ -284,19 +321,19 @@ func BenchmarkSelectivityWithSimpleCache(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			for j := 0; j < 100; j++ {
-				id := rand.Int() % 10
-				testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1 and b < 2 and c > 3 and d < 4 and e > 5", id))
+				id := i % 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a = %d and b < 2 and c > 3 and d < 4 and e > 5", id, j))
 			}
 			for j := 0; j < 100; j++ {
-				id := rand.Int()%10 + 10
-				testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1 and b < 2 and c > 3 and d < 4 and e > 5", id))
+				id := i + 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a = %d and b < 2 and c > 3 and d < 4 and e > 5", id, j))
 			}
 		}
 		b.ReportAllocs()
 	})
 	pprof.StopCPUProfile()
 }
-func BenchmarkSelectivityWithCache(b *testing.B) {
+func BenchmarkSelectivityWithRistrettoCache(b *testing.B) {
 	c := &C{}
 	s := &testStatsSuite{}
 	s.SetUpStatsSuite(c)
@@ -315,16 +352,16 @@ func BenchmarkSelectivityWithCache(b *testing.B) {
 	defer file.Close()
 	pprof.StartCPUProfile(file)
 
-	b.Run("SelectivityWithCache", func(b *testing.B) {
+	b.Run("SelectivityWithRistrettoCache", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			for j := 0; j < 100; j++ {
-				id := rand.Int() % 10
-				testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1 and b < 2 and c > 3 and d < 4 and e > 5", id))
+				id := i % 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a = %d and b < 2 and c > 3 and d < 4 and e > 5", id, j))
 			}
 			for j := 0; j < 100; j++ {
-				id := rand.Int()%10 + 10
-				testKit.MustQuery(fmt.Sprintf("select * from t%d where a > 1 and b < 2 and c > 3 and d < 4 and e > 5", id))
+				id := i + 10
+				testKit.MustQuery(fmt.Sprintf("select * from t%d where a = %d and b < 2 and c > 3 and d < 4 and e > 5", id, j))
 			}
 		}
 		b.ReportAllocs()
