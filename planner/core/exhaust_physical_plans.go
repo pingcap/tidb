@@ -1576,6 +1576,26 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
+	// Disable broadcast join on partition table for TiFlash.
+	for _, child := range p.children {
+		if ds, isDataSource := child.(*DataSource); isDataSource {
+			if ds.tableInfo.GetPartitionInfo() != nil {
+				return nil
+			}
+		} else {
+			us, isUnionScan := child.(*LogicalUnionScan)
+			if isUnionScan {
+				ds, isDataSource = us.Children()[0].(*DataSource)
+				if !isDataSource {
+					return nil
+				}
+				if ds.tableInfo.GetPartitionInfo() != nil {
+					return nil
+				}
+			}
+		}
+	}
+
 	// for left join the global idx must be 1, and for right join the global idx must be 0
 	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin) || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 || len(p.OtherConditions) != 0 || len(p.EqualConditions) == 0 {
 		return nil
