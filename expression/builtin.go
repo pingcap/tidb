@@ -109,12 +109,12 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 }
 
 var (
-	// allowDeriveNoneFunction is the functions allow two incompatible collations which has same charset derive to CoercibilityNone
+	// allowDeriveNoneFunction stores functions which allow two incompatible collations which have the same charset derive to CoercibilityNone
 	allowDeriveNoneFunction = map[string]struct{}{
-		"concat": {}, "concat_ws": {}, "reverse": {}, "replace": {}, "insert": {}, "lower": {},
-		"upper": {}, "left": {}, "right": {}, "sub_str": {}, "substr_index": {}, "trim": {},
-		"current_user": {}, "elt": {}, "make_set": {}, "repeat": {}, "rpad": {}, "lpad": {},
-		"export_set": {},
+		ast.Concat: {}, ast.ConcatWS: {}, ast.Reverse: {}, ast.Replace: {}, ast.InsertFunc: {}, ast.Lower: {},
+		ast.Upper: {}, ast.Left: {}, ast.Right: {}, ast.Substr: {}, ast.SubstringIndex: {}, ast.Trim: {},
+		ast.CurrentUser: {}, ast.Elt: {}, ast.MakeSet: {}, ast.Repeat: {}, ast.Rpad: {}, ast.Lpad: {},
+		ast.ExportSet: {},
 	}
 
 	coerString = []string{"EXPLICIT", "NONE", "IMPLICIT", "SYSCONST", "COERCIBLE", "NUMERIC", "IGNORABLE"}
@@ -133,7 +133,6 @@ func checkIllegalMixCollation(funcName string, args []Expression) error {
 			return illegalMixCollationErr(funcName, args)
 		}
 	}
-
 	return nil
 }
 

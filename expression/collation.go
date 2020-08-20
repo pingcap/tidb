@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 type collationInfo struct {
@@ -185,7 +186,7 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 	return
 }
 
-// inferCollation infer collation, charset, coercibility and check legitimacy
+// inferCollation infers collation, charset, coercibility and check the legitimacy.
 func inferCollation(exprs ...Expression) (dstCollation, dstCharset string, coercibility Coercibility, legal bool) {
 	firstExplicitCollation := ""
 	coercibility = CoercibilityIgnorable
@@ -204,8 +205,7 @@ func inferCollation(exprs ...Expression) (dstCollation, dstCharset string, coerc
 			p1 := collationPriority[dstCollation]
 			p2 := collationPriority[arg.GetType().Collate]
 
-			// same priority means this two dstCollation is incompatible
-			// it might derive coercibility to CoercibilityNone
+			// same priority means this two collation is incompatible, coercibility might derive to CoercibilityNone
 			if p1 == p2 {
 				coercibility, dstCollation, dstCharset = CoercibilityNone, getBinCollation(arg.GetType().Charset), arg.GetType().Charset
 			} else if p1 < p2 {
@@ -226,5 +226,7 @@ func getBinCollation(cs string) string {
 		return charset.CollationUTF8MB4
 	}
 
-	panic("never reachable")
+	logutil.BgLogger().Error("unexpected charset" + cs)
+	// it must return something, never reachable
+	return ""
 }
