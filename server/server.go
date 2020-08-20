@@ -383,11 +383,7 @@ func (s *Server) onConn(conn *clientConn) {
 	metrics.ConnGauge.Set(float64(connections))
 
 	if plugin.IsEnable(plugin.Audit) {
-<<<<<<< HEAD
 		conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
-=======
-		sessionVars.ConnectionInfo = conn.connectInfo()
->>>>>>> 18b4e2b... schemas: decrease fetchSchemaConcurrency (#18881)
 	}
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
