@@ -43,12 +43,10 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
@@ -448,11 +446,6 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 	}
 	sessCtx := e.ctx.GetSessionVars().StmtCtx
 	e.handleCols = buildHandleColsForRecoverIndex(sessCtx, tblInfo, index.Meta(), e.columns)
-	endKey, err := codec.EncodeKey(sessCtx, nil, types.MaxValueDatum())
-	if err != nil {
-		logutil.BgLogger().Fatal("should never reach here")
-	}
-	e.tableEndKey = tablecodec.EncodeRowKey(e.physicalID, endKey)
 	return e
 }
 
