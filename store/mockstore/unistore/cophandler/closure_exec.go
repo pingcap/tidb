@@ -141,6 +141,10 @@ func newClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closureEx
 		e.unique = idxScan.GetUnique()
 		e.scanCtx.desc = idxScan.Desc
 		e.initIdxScanCtx(idxScan)
+		if dagReq.GetCollectRangeCounts() {
+			e.idxScanCtx.collectNdv = true
+			e.idxScanCtx.previousVals = make([][]byte, e.idxScanCtx.columnLen)
+		}
 	default:
 		panic(fmt.Sprintf("unknown first executor type %s", executors[0].Tp))
 	}
@@ -150,6 +154,7 @@ func newClosureExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest) (*closureEx
 	}
 	if dagReq.GetCollectRangeCounts() {
 		e.counts = make([]int64, len(ranges))
+		e.ndvs = make([]int64, len(ranges))
 	}
 	e.kvRanges = ranges
 	e.scanCtx.chk = chunk.NewChunkWithCapacity(e.fieldTps, 32)
@@ -315,6 +320,8 @@ type closureExecutor struct {
 	processor closureProcessor
 
 	counts []int64
+	ndvs   []int64
+	curNdv int64
 }
 
 type closureProcessor interface {
@@ -339,6 +346,9 @@ type idxScanCtx struct {
 	columnLen        int
 	colInfos         []rowcodec.ColInfo
 	primaryColumnIds []int64
+
+	collectNdv   bool
+	previousVals [][]byte
 }
 
 type aggCtx struct {
@@ -362,6 +372,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 	}
 	dbReader := e.dbReader
 	for i, ran := range e.kvRanges {
+		e.curNdv = 0
 		if e.isPointGetRange(ran) {
 			val, err := dbReader.Get(ran.StartKey, e.startTS)
 			if err != nil {
@@ -372,6 +383,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 			}
 			if e.counts != nil {
 				e.counts[i]++
+				e.ndvs[i] = e.curNdv
 			}
 			err = e.processor.Process(ran.StartKey, val)
 			if err != nil {
@@ -387,6 +399,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 			delta := int64(e.rowCount - oldCnt)
 			if e.counts != nil {
 				e.counts[i] += delta
+				e.ndvs[i] = e.curNdv
 			}
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -591,6 +604,7 @@ func (e *closureExecutor) tableScanProcessCore(key, value []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	e.curNdv++
 	return nil
 }
 
@@ -619,6 +633,15 @@ func (e *indexScanProcessor) Finish() error {
 	return e.scanFinish()
 }
 
+func (isc *idxScanCtx) checkVal(curVals [][]byte) bool {
+	for i := 0; i < isc.columnLen; i++ {
+		if bytes.Compare(isc.previousVals[i], curVals[i]) != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	handleStatus := mapPkStatusToHandleStatus(e.idxScanCtx.pkStatus)
 	restoredCols := make([]rowcodec.ColInfo, 0, len(e.idxScanCtx.colInfos))
@@ -630,6 +653,14 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	values, err := tablecodec.DecodeIndexKV(key, value, e.idxScanCtx.columnLen, handleStatus, restoredCols)
 	if err != nil {
 		return err
+	}
+	if e.idxScanCtx.collectNdv {
+		if len(e.idxScanCtx.previousVals[0]) == 0 || !e.idxScanCtx.checkVal(values) {
+			e.curNdv++
+			for i := 0; i < e.idxScanCtx.columnLen; i++ {
+				e.idxScanCtx.previousVals[i] = append(e.idxScanCtx.previousVals[i][:0], values[i]...)
+			}
+		}
 	}
 	chk := e.scanCtx.chk
 	decoder := codec.NewDecoder(chk, e.sc.TimeZone)

@@ -675,5 +675,5 @@ func (s *testStatisticsSuite) TestIndexRanges(c *C) {
 	ran[0].HighVal[0] = types.NewIntDatum(1000)
 	count, err = tbl.GetRowCountByIndexRanges(sc, 0, ran)
 	c.Assert(err, IsNil)
-	c.Assert(int(count), Equals, 0)
+	c.Assert(int(count), Equals, 3)
 }

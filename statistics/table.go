@@ -489,6 +489,9 @@ func (coll *HistColl) getEqualCondSelectivity(idx *Index, bytes []byte, usedCols
 		}
 		return outOfRangeEQSelectivity(ndv, coll.ModifyCount, int64(idx.TotalRowCount()))
 	}
+	if coverAll && len(idx.Histogram.Buckets) > 0 && idx.Histogram.Buckets[0].NDV > 0 {
+		return idx.Histogram.equalRowCount(val)
+	}
 	return float64(idx.CMSketch.QueryBytes(bytes)) / float64(idx.TotalRowCount())
 }
 

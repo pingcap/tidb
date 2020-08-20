@@ -161,9 +161,9 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 
 var (
 	// MinLogScanCount is the minimum scan count for a feedback to be logged.
-	MinLogScanCount = int64(1000)
+	MinLogScanCount = int64(1)
 	// MinLogErrorRate is the minimum error rate for a feedback to be logged.
-	MinLogErrorRate = 0.5
+	MinLogErrorRate = 0.0
 )
 
 // StoreQueryFeedback merges the feedback into stats collector.
@@ -383,8 +383,17 @@ func (h *Handle) DumpStatsFeedbackToKV() error {
 				err = h.DumpFeedbackToKV(fb)
 			} else {
 				t, ok := h.statsCache.Load().(statsCache).tables[fb.PhysicalID]
-				if ok {
+				if !ok {
+					continue
+				}
+				idx, ok := t.Indices[fb.Hist.ID]
+				if !ok {
+					continue
+				}
+				if idx.StatsVer == statistics.Version1 {
 					err = h.DumpFeedbackForIndex(fb, t)
+				} else {
+					err = h.DumpFeedbackToKV(fb)
 				}
 			}
 			if err != nil {
@@ -427,6 +436,7 @@ func (h *Handle) DumpFeedbackToKV(fb *statistics.QueryFeedback) error {
 // feedback locally on this tidb-server, so it could be used more timely.
 func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 	h.sweepList()
+	logutil.BgLogger().Warn("local feedback update")
 	for _, fbs := range h.feedback.Feedbacks {
 		for _, fb := range fbs {
 			h.mu.Lock()
@@ -442,6 +452,7 @@ func (h *Handle) UpdateStatsByLocalFeedback(is infoschema.InfoSchema) {
 				if !ok || idx.Histogram.Len() == 0 {
 					continue
 				}
+				logutil.BgLogger().Warn("local feedback update index")
 				newIdx := *idx
 				eqFB, ranFB := statistics.SplitFeedbackByQueryType(fb.Feedback)
 				newIdx.CMSketch = statistics.UpdateCMSketch(idx.CMSketch, eqFB)
@@ -1067,6 +1078,7 @@ func (h *Handle) DumpFeedbackForIndex(q *statistics.QueryFeedback, t *statistics
 	}
 	return errors.Trace(h.DumpFeedbackToKV(q))
 }
+
 
 // minAdjustFactor is the minimum adjust factor of each index feedback.
 // We use it to avoid adjusting too much when the assumption of independence failed.

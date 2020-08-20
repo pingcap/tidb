@@ -198,6 +198,7 @@ const (
 		repeats bigint(64) NOT NULL,
 		upper_bound blob NOT NULL,
 		lower_bound blob ,
+      	ndv bigint NOT NULL DEFAULT 0,
 		unique index tbl(table_id, is_index, hist_id, bucket_id)
 	);`
 
@@ -423,6 +424,8 @@ const (
 	version49 = 49
 	// version50 add mysql.schema_index_usage table.
 	version50 = 50
+	// version51 add column ndv for mysql.stats_buckets.
+	version51 = 51
 )
 
 var (
@@ -476,6 +479,7 @@ var (
 		upgradeToVer48,
 		upgradeToVer49,
 		upgradeToVer50,
+		upgradeToVer51,
 	}
 )
 
@@ -1168,6 +1172,13 @@ func upgradeToVer50(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateSchemaIndexUsageTable)
+}
+
+func upgradeToVer51(s Session, ver int64) {
+	if ver >= version51 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `ndv` bigint not null default 0", infoschema.ErrColumnExists)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.

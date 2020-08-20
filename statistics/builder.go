@@ -50,7 +50,7 @@ func (b *SortedBuilder) Hist() *Histogram {
 func (b *SortedBuilder) Iterate(data types.Datum) error {
 	b.Count++
 	if b.Count == 1 {
-		b.hist.AppendBucket(&data, &data, 1, 1)
+		b.hist.AppendBucketWithNDV(&data, &data, 1, 1, 1)
 		b.hist.NDV = 1
 		return nil
 	}
@@ -86,7 +86,7 @@ func (b *SortedBuilder) Iterate(data types.Datum) error {
 		} else {
 			b.lastNumber = b.hist.Buckets[b.bucketIdx].Count
 			b.bucketIdx++
-			b.hist.AppendBucket(&data, &data, b.lastNumber+1, 1)
+			b.hist.AppendBucketWithNDV(&data, &data, b.lastNumber+1, 1, 1)
 		}
 		b.hist.NDV++
 	}

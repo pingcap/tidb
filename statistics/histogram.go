@@ -79,6 +79,7 @@ type Histogram struct {
 type Bucket struct {
 	Count  int64
 	Repeat int64
+	NDV    int64
 }
 
 type scalar struct {
@@ -201,7 +202,14 @@ func (c *Column) AvgColSizeListInDisk(count int64) float64 {
 
 // AppendBucket appends a bucket into `hg`.
 func (hg *Histogram) AppendBucket(lower *types.Datum, upper *types.Datum, count, repeat int64) {
-	hg.Buckets = append(hg.Buckets, Bucket{Count: count, Repeat: repeat})
+	hg.Buckets = append(hg.Buckets, Bucket{Count: count, Repeat: repeat, NDV: 1})
+	hg.Bounds.AppendDatum(0, lower)
+	hg.Bounds.AppendDatum(0, upper)
+}
+
+// AppendBucketWithNDV appends a bucket into `hg` and set value for field `NDV`.
+func (hg *Histogram) AppendBucketWithNDV(lower *types.Datum, upper *types.Datum, count, repeat, ndv int64) {
+	hg.Buckets = append(hg.Buckets, Bucket{Count: count, Repeat: repeat, NDV: ndv})
 	hg.Bounds.AppendDatum(0, lower)
 	hg.Bounds.AppendDatum(0, upper)
 }
@@ -210,7 +218,9 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64) {
 	len := hg.Len()
 	hg.Bounds.TruncateTo(2*len - 1)
 	hg.Bounds.AppendDatum(0, upper)
-	hg.Buckets[len-1] = Bucket{Count: count, Repeat: repeat}
+	hg.Buckets[len-1].Count = count
+	hg.Buckets[len-1].Repeat = repeat
+	hg.Buckets[len-1].NDV++
 }
 
 // DecodeTo decodes the histogram bucket values into `Tp`.
@@ -261,9 +271,13 @@ func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 }
 
 // constants for stats version. These const can be used for solving compatibility issue.
+// If the version number is 0, it means the most original statistics.
 const (
-	CurStatsVersion = Version1
-	Version1        = 1
+	CurStatsVersion = Version2
+	// Version1 added CMSketch.
+	Version1 = 1
+	// Version2 added bucket NDV for index's full analyze.
+	Version2 = 2
 )
 
 // AnalyzeFlag is set when the statistics comes from analyze and has not been modified by feedback.
@@ -302,7 +316,7 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	terror.Log(errors.Trace(err))
 	lowerVal, err := ValueToString(hg.GetLower(bktID), idxCols)
 	terror.Log(errors.Trace(err))
-	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat)
+	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d ndv: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat, hg.Buckets[bktID].NDV)
 }
 
 // ToString gets the string representation for the histogram.
@@ -327,12 +341,18 @@ func (hg *Histogram) equalRowCount(value types.Datum) float64 {
 		if match {
 			return float64(hg.Buckets[index/2].Repeat)
 		}
+		if hg.Buckets[index/2].NDV > 0 {
+			return float64(hg.bucketCount(index/2)) / float64(hg.Buckets[index/2].NDV)
+		}
 		return hg.notNullCount() / float64(hg.NDV)
 	}
 	if match {
 		cmp := chunk.GetCompareFunc(hg.Tp)
 		if cmp(hg.Bounds.GetRow(index), 0, hg.Bounds.GetRow(index+1), 0) == 0 {
 			return float64(hg.Buckets[index/2].Repeat)
+		}
+		if hg.Buckets[index/2].NDV > 0 {
+			return float64(hg.bucketCount(index/2)) / float64(hg.Buckets[index/2].NDV)
 		}
 		return hg.notNullCount() / float64(hg.NDV)
 	}
@@ -410,7 +430,9 @@ func (hg *Histogram) mergeBuckets(bucketIdx int) {
 	curBuck := 0
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, bucketIdx)
 	for i := 0; i+1 <= bucketIdx; i += 2 {
-		hg.Buckets[curBuck] = hg.Buckets[i+1]
+		hg.Buckets[curBuck].NDV = hg.Buckets[i+1].NDV + hg.Buckets[i].NDV
+		hg.Buckets[curBuck].Count = hg.Buckets[i+1].Count
+		hg.Buckets[curBuck].Repeat = hg.Buckets[i+1].Repeat
 		c.AppendDatum(0, hg.GetLower(i))
 		c.AppendDatum(0, hg.GetUpper(i+1))
 		curBuck++
@@ -578,6 +600,7 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 			LowerBound: hg.GetLower(i).GetBytes(),
 			UpperBound: hg.GetUpper(i).GetBytes(),
 			Repeats:    hg.Buckets[i].Repeat,
+			Ndv:        &hg.Buckets[i].NDV,
 		}
 		protoHg.Buckets = append(protoHg.Buckets, bkt)
 	}
@@ -592,7 +615,11 @@ func HistogramFromProto(protoHg *tipb.Histogram) *Histogram {
 	hg := NewHistogram(0, protoHg.Ndv, 0, 0, tp, len(protoHg.Buckets), 0)
 	for _, bucket := range protoHg.Buckets {
 		lower, upper := types.NewBytesDatum(bucket.LowerBound), types.NewBytesDatum(bucket.UpperBound)
-		hg.AppendBucket(&lower, &upper, bucket.Count, bucket.Repeats)
+		if bucket.Ndv != nil {
+			hg.AppendBucketWithNDV(&lower, &upper, bucket.Count, bucket.Repeats, *bucket.Ndv)
+		} else {
+			hg.AppendBucket(&lower, &upper, bucket.Count, bucket.Repeats)
+		}
 	}
 	return hg
 }
@@ -626,6 +653,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 	offset := int64(0)
 	if cmp == 0 {
 		lh.NDV--
+		lh.Buckets[len(lh.Buckets)-1].NDV--
 		lh.updateLastBucket(rh.GetUpper(0), lh.Buckets[lLen-1].Count+rh.Buckets[0].Count, rh.Buckets[0].Repeat)
 		offset = rh.Buckets[0].Count
 		rh.popFirstBucket()
@@ -916,20 +944,20 @@ func (idx *Index) MemoryUsage() (sum int64) {
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
 
-func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCount int64) (float64, error) {
+func (idx *Index) equalRowCount(b []byte, modifyCount int64) float64 {
 	if len(idx.Info.Columns) == 1 {
 		if bytes.Equal(b, nullKeyBytes) {
-			return float64(idx.NullCount), nil
+			return float64(idx.NullCount)
 		}
 	}
 	val := types.NewBytesDatum(b)
 	if idx.NDV > 0 && idx.outOfRange(val) {
-		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount(), nil
+		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 	}
-	if idx.CMSketch != nil {
-		return float64(idx.CMSketch.QueryBytes(b)), nil
+	if idx.CMSketch != nil && (len(idx.Histogram.Buckets) == 0 || idx.Histogram.Buckets[0].NDV == 0) {
+		return float64(idx.CMSketch.QueryBytes(b))
 	}
-	return idx.Histogram.equalRowCount(val), nil
+	return idx.Histogram.equalRowCount(val)
 }
 
 // GetRowCount returns the row count of the given ranges.
@@ -957,10 +985,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 					totalCount += 1
 					continue
 				}
-				count, err := idx.equalRowCount(sc, lb, modifyCount)
-				if err != nil {
-					return 0, err
-				}
+				count := idx.equalRowCount(lb, modifyCount)
 				totalCount += count
 				continue
 			}

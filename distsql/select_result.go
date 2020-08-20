@@ -139,7 +139,8 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		for _, warning := range r.selectResp.Warnings {
 			sc.AppendWarning(terror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
-		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts)
+		logutil.BgLogger().Warn("select resp", zap.Int64s("output cnt", r.selectResp.OutputCounts), zap.Int64s("ndvs", r.selectResp.Ndvs))
+		r.feedback.Update(resultSubset.GetStartKey(), r.selectResp.OutputCounts, r.selectResp.Ndvs)
 		r.partialCount++
 
 		hasStats, ok := resultSubset.(CopRuntimeStats)
