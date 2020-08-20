@@ -444,7 +444,32 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 		table:        t,
 		physicalID:   t.Meta().ID,
 	}
+	e.handleCols = buildHandleColsForRecoverIndex(e.ctx.GetSessionVars().StmtCtx, tblInfo, index.Meta(), e.columns)
 	return e
+}
+
+func buildHandleColsForRecoverIndex(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo, allColInfo []*model.ColumnInfo) plannercore.HandleCols {
+	if !tblInfo.IsCommonHandle {
+		extraColPos := len(allColInfo) - 1
+		intCol := &expression.Column{
+			Index:   extraColPos,
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+		return plannercore.NewIntHandleCols(intCol)
+	}
+	idxCols := idxInfo.Columns
+	handleCols := allColInfo[len(idxCols):] // e.columns layout: idxCols ++ handleCols
+	pkCols := make([]*expression.Column, 0, len(handleCols))
+	for i := 0; i < len(handleCols); i++ {
+		info := handleCols[i]
+		pkCols = append(pkCols, &expression.Column{
+			RetType: &info.FieldType,
+			ID:      info.ID,
+			Index:   i,
+		})
+	}
+	return plannercore.NewCommonHandleCols(sctx, tblInfo, idxInfo, pkCols)
 }
 
 func buildCleanupIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {

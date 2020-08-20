@@ -313,7 +313,6 @@ func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl ta
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	var b distsql.RequestBuilder
 	var builder *distsql.RequestBuilder
 	if !tbl.Meta().IsCommonHandle {

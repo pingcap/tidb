@@ -371,6 +371,7 @@ func (s *testSerialSuite) TestGetTableEndCommonHandle(c *C) {
 	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
 	c.Assert(err, IsNil)
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
+
 	// test empty table
 	checkGetMaxTableRowID(testCtx, s.store, true, nil)
 	tk.MustExec("insert into t values('abc', 1, 10)")

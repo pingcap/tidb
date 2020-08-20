@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -184,6 +183,7 @@ type RecoverIndexExec struct {
 	columns       []*model.ColumnInfo
 	colFieldTypes []*types.FieldType
 	srcChunk      *chunk.Chunk
+	handleCols    plannercore.HandleCols
 
 	// below buf is used to reduce allocations.
 	recoverRows []recoverRows
@@ -349,7 +349,7 @@ type recoverRows struct {
 
 func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult distsql.SelectResult, result *backfillResult) ([]recoverRows, error) {
 	e.recoverRows = e.recoverRows[:0]
-	handleColIndex := len(e.index.Meta().Columns)
+	idxValLen := len(e.index.Meta().Columns)
 	result.scanRowCount = 0
 
 	for {
@@ -366,11 +366,11 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			if result.scanRowCount >= int64(e.batchSize) {
 				return e.recoverRows, nil
 			}
-			handle, err := e.buildHandleFromChunkRow(row, handleColIndex)
+			handle, err := e.handleCols.BuildHandle(row)
 			if err != nil {
 				return nil, err
 			}
-			idxVals := extractIdxVals(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, handleColIndex)
+			idxVals := extractIdxVals(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, idxValLen)
 			e.idxValsBufs[result.scanRowCount] = idxVals
 			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, skip: false})
 			result.scanRowCount++
@@ -379,26 +379,6 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 	}
 
 	return e.recoverRows, nil
-}
-
-func (e *RecoverIndexExec) buildHandleFromChunkRow(row chunk.Row, handleColIndex int) (kv.Handle, error) {
-	tblInfo := e.table.Meta()
-	if !tblInfo.IsCommonHandle {
-		return kv.IntHandle(row.GetInt64(handleColIndex)), nil
-	}
-
-	colInfos := e.columns
-	pkCols := make([]*expression.Column, 0, len(colInfos)-handleColIndex)
-	for i := handleColIndex; i < len(colInfos); i++ {
-		info := colInfos[i]
-		pkCols = append(pkCols, &expression.Column{
-			RetType: &info.FieldType,
-			ID:      info.ID,
-			Index:   i,
-		})
-	}
-	handleCols := plannercore.NewCommonHandleCols(e.ctx.GetSessionVars().StmtCtx, tblInfo, e.index.Meta(), pkCols)
-	return handleCols.BuildHandle(row)
 }
 
 func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) error {
@@ -427,10 +407,11 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 	// 1. unique-key is duplicate and the handle is equal, skip it.
 	// 2. unique-key is duplicate and the handle is not equal, data is not consistent, log it and skip it.
 	// 3. non-unique-key is duplicate, skip it.
+	isCommonHandle := e.table.Meta().IsCommonHandle
 	for i, key := range e.batchKeys {
 		if val, found := values[string(key)]; found {
 			if distinctFlags[i] {
-				handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(val, e.table.Meta().IsCommonHandle)
+				handle, err1 := tablecodec.DecodeHandleInUniqueIndexValue(val, isCommonHandle)
 				if err1 != nil {
 					return err1
 				}
@@ -459,7 +440,8 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 		return result, err
 	}
 
-	if e.index.Meta().Primary && e.table.Meta().IsCommonHandle {
+	recoveringClusteredIndex := e.index.Meta().Primary && e.table.Meta().IsCommonHandle
+	if recoveringClusteredIndex {
 		return result, nil
 	}
 
@@ -595,14 +577,14 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 }
 
 func extractIdxVals(row chunk.Row, idxVals []types.Datum,
-	fieldTypes []*types.FieldType, idxValLength int) []types.Datum {
-	if cap(idxVals) < idxValLength {
-		idxVals = make([]types.Datum, idxValLength)
+	fieldTypes []*types.FieldType, idxValLen int) []types.Datum {
+	if cap(idxVals) < idxValLen {
+		idxVals = make([]types.Datum, idxValLen)
 	} else {
-		idxVals = idxVals[:idxValLength]
+		idxVals = idxVals[:idxValLen]
 	}
 
-	for i := 0; i < idxValLength; i++ {
+	for i := 0; i < idxValLen; i++ {
 		colVal := row.GetDatum(i, fieldTypes[i])
 		colVal.Copy(&idxVals[i])
 	}
