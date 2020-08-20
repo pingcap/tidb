@@ -5155,9 +5155,9 @@ func (s *testDBSuite3) TestCancelDropColumnWithCompositeIndex(c *C) {
 	}{
 		{true, model.JobStateNone, model.StateNone, false, true},
 		// Reorg process
-		{false, model.JobStateRunning, model.StateDeleteOnly, false, false},
-		{true, model.JobStateRunning, model.StateWriteOnly, false, false},
-		{true, model.JobStateRunning, model.StateWriteReorganization, false, true},
+		{false, model.JobStateRunning, ddl.StateCreateIndexDeleteOnly, false, true},
+		{false, model.JobStateRunning, ddl.StateCreateIndexWriteOnly, false, true},
+		{false, model.JobStateRunning, model.StateWriteReorganization, false, true},
 		{false, model.JobStateRunning, model.StateWriteReorganization, true, true},
 		// Delete Column process
 		{false, model.JobStateRunning, model.StateWriteOnly, true, false},
@@ -5295,9 +5295,9 @@ func (s *testDBSuite3) TestCancelDropColumnsWithCompositeIndex(c *C) {
 	}{
 		{true, model.JobStateNone, model.StateNone, false, true},
 		// Reorg process
-		{false, model.JobStateRunning, model.StateDeleteOnly, false, false},
-		{true, model.JobStateRunning, model.StateWriteOnly, false, false},
-		{true, model.JobStateRunning, model.StateWriteReorganization, false, true},
+		{false, model.JobStateRunning, ddl.StateCreateIndexDeleteOnly, false, true},
+		{false, model.JobStateRunning, ddl.StateCreateIndexWriteOnly, false, true},
+		{false, model.JobStateRunning, model.StateWriteReorganization, false, true},
 		{false, model.JobStateRunning, model.StateWriteReorganization, true, true},
 		// Delete Column process
 		{false, model.JobStateRunning, model.StateWriteOnly, true, false},

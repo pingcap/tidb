@@ -40,6 +40,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	StateCreateIndexDeleteOnly model.SchemaState = 0xFE
+	StateCreateIndexWriteOnly  model.SchemaState = 0xFF
+)
+
 // DDLInfo is for DDL information.
 type DDLInfo struct {
 	SchemaVer   int64
@@ -120,7 +125,8 @@ func IsJobRollbackable(job *model.Job) bool {
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable, model.ActionModifyTableAutoIdCache:
 		return job.SchemaState == model.StateNone
 	case model.ActionDropColumn, model.ActionDropColumns:
-		if job.SchemaState == model.StateWriteReorganization {
+		switch job.SchemaState {
+		case model.StateWriteReorganization, StateCreateIndexDeleteOnly, StateCreateIndexWriteOnly:
 			return true
 		}
 		return job.SchemaState == model.StateNone
