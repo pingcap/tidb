@@ -4435,12 +4435,21 @@ func (s *testIntegrationSuite) TestTiDBInternalFunc(c *C) {
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000695F698000000000000001038000000000004E20' )")
 	result.Check(testkit.Rows(`{"indexID": 1, "indexValues": "20000", "tableID": 105}`))
 
+	result = tk.MustQuery(`select tidb_decode_key( 't\\200\\000\\000\\000\\000\\000\\007\\217_r\\200\\000\\000\\000\\000\\010;\\272' )`)
+	result.Check(testkit.Rows(`{"_tidb_rowid": 539578, "tableID": 1935}`))
+
 	// Test invalid record/index key.
 	result = tk.MustQuery("select tidb_decode_key( '7480000000000000FF2E5F728000000011FFE1A3000000000000' )")
-	result.Check(testkit.Rows("<nil>"))
+	result.Check(testkit.Rows(""))
 	warns := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(warns, HasLen, 1)
 	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 7480000000000000FF2E5F728000000011FFE1A3000000000000")
+
+	result = tk.MustQuery(`select tidb_decode_key( 'characters created by cosmic rays\\033\\xff\\n\\' )`)
+	result.Check(testkit.Rows(""))
+	warns = tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+	c.Assert(warns, HasLen, 1)
+	c.Assert(warns[0].Err.Error(), Equals, "invalid record/index key: 63686172616374657273206372656174656420627920636F736D696320726179735C3033335C7866665C6E5C")
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
