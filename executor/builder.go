@@ -2948,12 +2948,20 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	if err != nil {
 		return nil, err
 	}
+	tbInfo := e.table.Meta()
 	if v.IsCommonHandle {
 		kvRanges, err := buildKvRangesForIndexJoin(e.ctx, getPhysicalTableID(e.table), -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 		if err != nil {
 			return nil, err
 		}
-		return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
+		if tbInfo.GetPartitionInfo() == nil {
+			return builder.buildTableReaderFromKvRanges(ctx, e, kvRanges)
+		}
+		e.kvRangeBuilder = kvRangeBuilderFromFunc(func(pid int64) ([]kv.KeyRange, error) {
+			return buildKvRangesForIndexJoin(e.ctx, pid, -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+		})
+		nextPartition := nextPartitionForTableReader{e}
+		return buildPartitionTable(builder.executorBuilder, tbInfo, v.PartitionTable.PruningConds, v.PartitionTable.PartitionNames, e, nextPartition)
 	}
 	handles := make([]kv.Handle, 0, len(lookUpContents))
 	for _, content := range lookUpContents {
@@ -2969,10 +2977,36 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			handles = append(handles, handle)
 		}
 	}
-	return builder.buildTableReaderFromHandles(ctx, e, handles)
+
+	if tbInfo.GetPartitionInfo() == nil {
+		return builder.buildTableReaderFromHandles(ctx, e, handles)
+	}
+	if tryOldPartitionImplementation(builder.ctx) {
+		return builder.buildTableReaderFromHandles(ctx, e, handles)
+	}
+
+	e.kvRangeBuilder = kvRangeBuilderFromHandles(handles)
+	nextPartition := nextPartitionForTableReader{e}
+	return buildPartitionTable(builder.executorBuilder, tbInfo, v.PartitionTable.PruningConds, v.PartitionTable.PartitionNames, e, nextPartition)
 }
 
-func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *TableReaderExecutor, reqBuilderWithRange distsql.RequestBuilder) (Executor, error) {
+type kvRangeBuilderFromFunc func(pid int64) ([]kv.KeyRange, error)
+
+func (h kvRangeBuilderFromFunc) buildKeyRange(pid int64) ([]kv.KeyRange, error) {
+	return h(pid)
+}
+
+type kvRangeBuilderFromHandles []kv.Handle
+
+func (h kvRangeBuilderFromHandles) buildKeyRange(pid int64) ([]kv.KeyRange, error) {
+	handles := []kv.Handle(h)
+	sort.Slice(handles, func(i, j int) bool {
+		return handles[i].Compare(handles[j]) < 0
+	})
+	return distsql.TableHandlesToKVRanges(pid, handles), nil
+}
+
+func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *TableReaderExecutor, reqBuilderWithRange distsql.RequestBuilder) (*TableReaderExecutor, error) {
 	startTS, err := builder.getSnapshotTS()
 	if err != nil {
 		return nil, err
@@ -2999,7 +3033,7 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 	return e, nil
 }
 
-func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle) (Executor, error) {
+func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle) (*TableReaderExecutor, error) {
 	sort.Slice(handles, func(i, j int) bool {
 		return handles[i].Compare(handles[j]) < 0
 	})
