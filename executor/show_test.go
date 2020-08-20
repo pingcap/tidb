@@ -28,6 +28,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
@@ -935,4 +936,39 @@ func (s *testSuite5) TestShowClusterConfig(c *C) {
 
 	confErr = fmt.Errorf("something unknown error")
 	c.Assert(tk.QueryToErr("show config"), ErrorMatches, confErr.Error())
+}
+
+func (s *testSuite5) TestShowVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	var showSQL string
+	for _, v := range variable.SysVars {
+		if v.Scope != variable.ScopeNone {
+			if v.Scope != variable.ScopeGlobal|variable.ScopeSession {
+				if v.Scope == variable.ScopeGlobal {
+					showSQL = "show variables like '" + v.Name + "'"
+					res := tk.MustQuery(showSQL)
+					c.Assert(res, NotNil)
+					rows := res.Rows()
+					c.Assert(0, Equals, len(rows))
+					showSQL = "show global variables like '" + v.Name + "'"
+					res = tk.MustQuery(showSQL)
+					c.Assert(res, NotNil)
+					rows = res.Rows()
+					c.Assert(1, Equals, len(rows))
+				}
+				if v.Scope == variable.ScopeSession {
+					showSQL = "show global variables like '" + v.Name + "'"
+					res := tk.MustQuery(showSQL)
+					c.Assert(res, NotNil)
+					rows := res.Rows()
+					c.Assert(0, Equals, len(rows))
+					showSQL = "show variables like '" + v.Name + "'"
+					res = tk.MustQuery(showSQL)
+					c.Assert(res, NotNil)
+					rows = res.Rows()
+					c.Assert(1, Equals, len(rows))
+				}
+			}
+		}
+	}
 }

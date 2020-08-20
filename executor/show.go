@@ -643,44 +643,31 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 
 func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
-		value         string
-		ok            bool
-		sessionVars   = e.ctx.GetSessionVars()
-		unreachedVars = make([]string, 0, len(variable.SysVars))
+		value       string
+		ok          bool
+		sessionVars = e.ctx.GetSessionVars()
 	)
-	for _, v := range variable.SysVars {
-		if !e.GlobalScope {
-			// For a session scope variable,
-			// 1. try to fetch value from SessionVars.Systems;
-			// 2. if this variable is session-only, fetch value from SysVars
-			//		otherwise, fetch the value from table `mysql.Global_Variables`.
-			value, ok, err = variable.GetSessionOnlySysVars(sessionVars, v.Name)
-		} else {
-			// If the scope of a system variable is ScopeNone,
-			// it's a read-only variable, so we return the default value of it.
-			// Otherwise, we have to fetch the values from table `mysql.Global_Variables` for global variable names.
-			value, ok, err = variable.GetScopeNoneSystemVar(v.Name)
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !ok {
-			unreachedVars = append(unreachedVars, v.Name)
-			continue
-		}
-		e.appendRow([]interface{}{v.Name, value})
-	}
-	if len(unreachedVars) != 0 {
-		systemVars, err := sessionVars.GlobalVarsAccessor.GetAllSysVars()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, varName := range unreachedVars {
-			varValue, ok := systemVars[varName]
-			if !ok {
-				varValue = variable.SysVars[varName].Value
+	if !e.GlobalScope {
+		for _, v := range variable.SysVars {
+			if v.Scope != variable.ScopeGlobal {
+				value, ok, err = variable.GetSessionOnlySysVars(sessionVars, v.Name)
+				if err != err {
+					return errors.Trace(err)
+				}
+				if ok {
+					e.appendRow([]interface{}{v.Name, value})
+				}
 			}
-			e.appendRow([]interface{}{varName, varValue})
+		}
+	} else {
+		for _, v := range variable.SysVars {
+			if v.Scope != variable.ScopeSession {
+				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				e.appendRow([]interface{}{v.Name, value})
+			}
 		}
 	}
 	return nil
