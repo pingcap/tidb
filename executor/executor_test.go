@@ -6158,6 +6158,6 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 		p, ok := info.Plan.(plannercore.Plan)
 		c.Assert(ok, IsTrue)
 		stats := tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(p.ID())
-		c.Assert(stats.String(), Matches, "time.*loops.*BatchGet.*num_rpc.*total_time.*")
+		c.Assert(stats.String(), Matches, "time.*loops.*Get.*num_rpc.*total_time.*")
 	}
 }

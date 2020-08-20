@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
