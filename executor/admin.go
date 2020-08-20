@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -190,6 +189,8 @@ type RecoverIndexExec struct {
 	idxValsBufs [][]types.Datum
 	idxKeyBufs  [][]byte
 	batchKeys   []kv.Key
+	// constants.
+	tableEndKey kv.Key
 }
 
 func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
@@ -259,10 +260,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 		return nil, err
 	}
 	var builder distsql.RequestBuilder
-	builder.KeyRanges, err = buildRecoverIndexKeyRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalID, startHandle)
-	if err != nil {
-		return nil, err
-	}
+	builder.KeyRanges = buildRecoverIndexKeyRanges(e.physicalID, startHandle, e.tableEndKey)
 	kvReq, err := builder.
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
@@ -284,20 +282,15 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	return result, nil
 }
 
-// buildRecoverIndexKeyRanges build a KeyRange [startHandle, *unlimited*).
-func buildRecoverIndexKeyRanges(sc *stmtctx.StatementContext, tid int64, startHandle kv.Handle) ([]kv.KeyRange, error) {
+// buildRecoverIndexKeyRanges build a KeyRange: (startHandle, unlimited).
+func buildRecoverIndexKeyRanges(tid int64, startHandle kv.Handle, tableEndKey kv.Key) []kv.KeyRange {
 	var startKey []byte
 	if startHandle == nil {
 		startKey = tablecodec.EncodeRowKey(tid, []byte{codec.NilFlag})
 	} else {
-		startKey = tablecodec.EncodeRowKey(tid, startHandle.Encoded())
+		startKey = tablecodec.EncodeRowKey(tid, startHandle.Next().Encoded())
 	}
-	high, err := codec.EncodeKey(sc, nil, types.MaxValueDatum())
-	if err != nil {
-		return nil, err
-	}
-	endKey := tablecodec.EncodeRowKey(tid, high)
-	return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
+	return []kv.KeyRange{{StartKey: startKey, EndKey: tableEndKey}}
 }
 
 type backfillResult struct {
@@ -374,7 +367,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			e.idxValsBufs[result.scanRowCount] = idxVals
 			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, skip: false})
 			result.scanRowCount++
-			result.currentHandle = handle.Next()
+			result.currentHandle = handle
 		}
 	}
 
