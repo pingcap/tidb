@@ -254,6 +254,11 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	return tbl
 }
 
+func (h *Handle) SetSimpleCache() {
+	h.sType = SimpleStatsCacheType
+	h.statsCache = newSimpleStatsCache(maxMemoryLimit)
+}
+
 // SetBytesLimit sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
 func (h *Handle) SetBytesLimit(bytesLimit int64) {
 	h.statsCache.SetBytesLimit(bytesLimit)

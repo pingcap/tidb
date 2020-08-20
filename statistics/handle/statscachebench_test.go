@@ -17,28 +17,23 @@ package handle_test
 
 import (
 	"fmt"
-	"math"
 	"math/rand"
 	"os"
 	"runtime/pprof"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 )
@@ -351,56 +346,4 @@ func (s *testStatsSuite) prepareSelectivity(testKit *testkit.TestKit, c *C) {
 		}
 	}
 
-}
-
-// generateIntDatum will generate a datum slice, every dimension is begin from 0, end with num - 1.
-// If dimension is x, num is y, the total number of datum is y^x. And This slice is sorted.
-func (s *testStatsSuite) generateIntDatum(dimension, num int) ([]types.Datum, error) {
-	length := int(math.Pow(float64(num), float64(dimension)))
-	ret := make([]types.Datum, length)
-	if dimension == 1 {
-		for i := 0; i < num; i++ {
-			ret[i] = types.NewIntDatum(int64(i))
-		}
-	} else {
-		sc := &stmtctx.StatementContext{TimeZone: time.Local}
-		// In this way, we can guarantee the datum is in order.
-		for i := 0; i < length; i++ {
-			data := make([]types.Datum, dimension)
-			j := i
-			for k := 0; k < dimension; k++ {
-				data[dimension-k-1].SetInt64(int64(j % num))
-				j = j / num
-			}
-			bytes, err := codec.EncodeKey(sc, nil, data...)
-			if err != nil {
-				return nil, err
-			}
-			ret[i].SetBytes(bytes)
-		}
-	}
-	return ret, nil
-}
-
-// mockStatsHistogram will create a statistics.Histogram, of which the data is uniform distribution.
-func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.FieldType) *statistics.Histogram {
-	ndv := len(values)
-	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv, 0)
-	for i := 0; i < ndv; i++ {
-		histogram.AppendBucket(&values[i], &values[i], repeat*int64(i+1), repeat)
-	}
-	return histogram
-}
-func mockStatsTable(tbl *model.TableInfo, rowCount int64) *statistics.Table {
-	histColl := statistics.HistColl{
-		PhysicalID:     tbl.ID,
-		HavePhysicalID: true,
-		Count:          rowCount,
-		Columns:        make(map[int64]*statistics.Column, len(tbl.Columns)),
-		Indices:        make(map[int64]*statistics.Index, len(tbl.Indices)),
-	}
-	statsTbl := &statistics.Table{
-		HistColl: histColl,
-	}
-	return statsTbl
 }
