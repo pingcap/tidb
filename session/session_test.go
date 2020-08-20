@@ -3233,23 +3233,14 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 
 func (s *testSessionSuite) TestDoDDLJobQuit(c *C) {
 	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use environment
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.MockTiKV))
+	se, err := session.CreateSession(s.store)
 	c.Assert(err, IsNil)
-	session.SetSchemaLease(10 * time.Millisecond)
-	dom, err := session.BootstrapSession(store)
-	c.Assert(err, IsNil)
-	se, err := session.CreateSession(store)
-	c.Assert(err, IsNil)
+	defer se.Close()
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/storeCloseInLoop", `return(2)`), IsNil)
-	go func() {
-		time.Sleep(time.Second)
-		se.Close()
-		dom.Close()
-		store.Close()
-	}()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/storeCloseInLoop", `return`), IsNil)
+
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil)
+	err = s.dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil)
 	c.Assert(err.Error(), Equals, "context canceled")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop"), IsNil)
 }

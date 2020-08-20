@@ -75,9 +75,21 @@ func (s *testStatSuite) TestStat(c *C) {
 
 	ctx := mock.NewContext()
 	ctx.Store = store
-	done := make(chan error, 1)
+	var (
+		history *model.Job
+		err     error
+		done    = make(chan struct{}, 1)
+	)
 	go func() {
-		done <- d.doDDLJob(ctx, job)
+		_ = d.doDDLJob(ctx, job)
+
+		for history == nil {
+			history, err = d.getHistoryDDLJob(job.ID)
+			c.Assert(err, IsNil)
+			time.Sleep(10 * testLease)
+		}
+		c.Assert(history.Error, IsNil)
+		done <- struct{}{}
 	}()
 
 	ticker := time.NewTicker(d.lease * 1)
@@ -87,10 +99,11 @@ LOOP:
 	for {
 		select {
 		case <-ticker.C:
+			d.Stop()
 			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
+			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
-		case err := <-done:
-			c.Assert(err, IsNil)
+		case <-done:
 			// TODO: Get this information from etcd.
 			// m, err := d.Stats(nil)
 			// c.Assert(err, IsNil)
