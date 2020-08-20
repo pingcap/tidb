@@ -719,3 +719,21 @@ func (s *testSuite3) TestExtendedStatsPrivileges(c *C) {
 	c.Assert(err, IsNil)
 	tk.MustExec("drop user 'u1'@'%'")
 }
+
+func (s *testSuite3) TestIssue17247(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user 'issue17247'")
+	tk.MustExec("grant CREATE USER on *.* to 'issue17247'")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "issue17247", Hostname: "%"}, nil, nil), IsTrue)
+	tk1.MustExec("ALTER USER USER() IDENTIFIED BY 'xxx'")
+	tk1.MustExec("ALTER USER CURRENT_USER() IDENTIFIED BY 'yyy'")
+	tk1.MustExec("ALTER USER CURRENT_USER IDENTIFIED BY 'zzz'")
+	tk.MustExec("ALTER USER 'issue17247'@'%' IDENTIFIED BY 'kkk'")
+	tk.MustExec("ALTER USER 'issue17247'@'%' IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
+	// Wrong grammar
+	_, err := tk1.Exec("ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
+	c.Assert(err, NotNil)
+}
