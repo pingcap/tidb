@@ -2405,4 +2405,7 @@ func (s *testIntegrationSuite7) TestAutoIncrementTableOption(c *C) {
 	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
 	tk.MustExec("insert into t values ();")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
+	tk.MustExec("alter table t auto_increment = 18446744073709551614;") // MaxUint64-2
+	tk.MustExec("insert into t values ();")
+	tk.MustGetErrCode("insert into t values ();", mysql.ErrAutoincReadFailed)
 }
