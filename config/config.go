@@ -879,6 +879,10 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("txn-total-size-limit should be less than %d", 10<<30)
 	}
 
+	if c.Performance.MemoryUsageAlarmRatio > 1 || c.Performance.MemoryUsageAlarmRatio < 0 {
+		return fmt.Errorf("memory-usage-alarm-ratio in [Performance] must be NOT less than 0 and more than 1")
+	}
+
 	if c.StmtSummary.MaxStmtCount <= 0 {
 		return fmt.Errorf("max-stmt-count in [stmt-summary] should be greater than 0")
 	}
