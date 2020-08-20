@@ -1582,17 +1582,6 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 			if ds.tableInfo.GetPartitionInfo() != nil {
 				return nil
 			}
-		} else {
-			us, isUnionScan := child.(*LogicalUnionScan)
-			if isUnionScan {
-				ds, isDataSource = us.Children()[0].(*DataSource)
-				if !isDataSource {
-					return nil
-				}
-				if ds.tableInfo.GetPartitionInfo() != nil {
-					return nil
-				}
-			}
 		}
 	}
 
