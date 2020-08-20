@@ -980,7 +980,7 @@ func (s *testGCWorkerSuite) TestStartWithRunGCJobFailures(c *C) {
 
 	for i := 0; i < 3; i++ {
 		select {
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(time.Second):
 			c.Fatal("gc worker failed to handle errors")
 		case s.gcWorker.done <- errors.New("mock error"):
 		}
