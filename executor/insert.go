@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -190,6 +189,13 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
+	}
+
+	if e.collectRuntimeStatsEnabled() {
+		if snapshot := txn.GetSnapshot(); snapshot != nil {
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(kv.CollectRuntimeStats)
+		}
 	}
 
 	// Use BatchGet to fill cache.
