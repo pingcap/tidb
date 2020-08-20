@@ -141,6 +141,7 @@ type StatementContext struct {
 	planNormalized    string
 	planDigest        string
 	LockKeysCount     int32
+	CheckKeyExists    map[string]struct{} // mark the keys needs to check for existence for pessimistic locks.
 	TblInfo2UnionScan map[*model.TableInfo]bool
 }
 
@@ -438,6 +439,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.mu.Unlock()
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
+	sc.CheckKeyExists = make(map[string]struct{})
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print
