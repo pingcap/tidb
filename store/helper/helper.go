@@ -317,9 +317,19 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 				if handle.IsInt() {
 					frame.RecordID = handle.IntValue()
 				} else {
-					str := handle.String()
+					data, err := handle.Data()
+					if err != nil {
+						return nil, err
+					}
 					frame.IndexName = "PRIMARY"
-					frame.IndexValues = strings.Split(str[1:len(str)-1], ", ")
+					frame.IndexValues = make([]string, 0, len(data))
+					for _, datum := range data {
+						str, err := datum.ToString()
+						if err != nil {
+							return nil, err
+						}
+						frame.IndexValues = append(frame.IndexValues, str)
+					}
 				}
 			}
 		} else {
