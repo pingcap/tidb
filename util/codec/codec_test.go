@@ -1017,9 +1017,6 @@ func (s *testCodecSuite) TestHashChunkRow(c *C) {
 		colIdx[i] = i
 	}
 	_, err1 := HashChunkRow(sc, nil, chk.GetRow(0), tps, colIdx)
-	//b2, err2 := HashValues(sc, nil, datums...)
 
 	c.Assert(err1, IsNil)
-	//c.Assert(err2, IsNil)
-	//c.Assert(b1, BytesEquals, b2)
 }
