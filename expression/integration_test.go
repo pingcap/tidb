@@ -5099,7 +5099,25 @@ func (s *testIntegrationSuite) TestIssue19012(c *C) {
 	tk.Se.GetSessionVars().MaxChunkSize = 1
 	tk.Se.GetSessionVars().InitChunkSize = 1
 	rs := tk.MustQuery(`select a.province, a.city, case when sum(s1should_count) = 0 then 0 else sum(s1complete_count)/sum(s1should_count) end as aa from t a where a.province = "江苏省" group by a.province, a.city
-union all 
+union all
 select a.province, a.province city, case when sum(s1should_count) = 0 then 0 else sum(s1complete_count)/sum(s1should_count) end as aa from t a where a.province = "江苏省" group by a.province, a.province;`)
 	rs.Sort().Check(testkit.Rows("江苏省 南京市 9.0000", "江苏省 南通市 9.0000", "江苏省 宿迁市 9.0000", "江苏省 常州市 9.0000", "江苏省 徐州市 -8.0000", "江苏省 扬州市 9.0000", "江苏省 无锡市 6.0000", "江苏省 江苏省 10.0000", "江苏省 泰州市 9.0000", "江苏省 淮安市 9.0000", "江苏省 盐城市 6.0000", "江苏省 苏州市 9.0000", "江苏省 连云港市 9.0000", "江苏省 镇江市 9.0000"))
+}
+
+func (s *testIntegrationSuite) TestIssue18850(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int, b enum('A', 'B'));")
+	tk.MustExec("create table t1(a1 int, b1 enum('B', 'A'));")
+	tk.MustExec("insert into t values (1, 'A');")
+	tk.MustExec("insert into t1 values (1, 'A');")
+	tk.MustQuery("select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
+
+	tk.MustExec("drop table t, t1")
+	tk.MustExec("create table t(a int, b set('A', 'B'));")
+	tk.MustExec("create table t1(a1 int, b1 set('B', 'A'));")
+	tk.MustExec("insert into t values (1, 'A');")
+	tk.MustExec("insert into t1 values (1, 'A');")
+	tk.MustQuery("select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
 }
