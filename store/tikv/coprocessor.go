@@ -504,10 +504,6 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
 		if worker.respChan != nil {
-			if worker.sendRate == nil {
-				// unreachable code
-				panic("copIteratorWorker's sendRate should be set when KeepOrder equals false")
-			}
 			worker.sendRate.putToken()
 		}
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
