@@ -505,7 +505,6 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 	if err != nil {
 		return ver, false, errors.Trace(err)
 	}
-	logutil.BgLogger().Info("[ddl] run reorg job 1", zap.String("job", job.String()), zap.Reflect("tbl", tbl))
 
 	reorgInfo, err := getReorgInfo(d, t, job, tbl)
 	if err != nil || reorgInfo.first {
@@ -513,6 +512,7 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 		// and then run the reorg next time.
 		return ver, true, errors.Trace(err)
 	}
+
 	err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
 		defer util.Recover(metrics.LabelDDL, "onDropColumn",
 			func() {
@@ -520,6 +520,7 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 			}, false)
 		return w.addTableIndex(tbl, indexInfo, reorgInfo)
 	})
+
 	if err != nil {
 		if errWaitReorgTimeout.Equal(err) {
 			// if timeout, we should return, check for the owner and re-wait job done.

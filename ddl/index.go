@@ -1689,7 +1689,7 @@ func doDropIndices(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, index
 				// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 				// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 				job.Args[0] = indexIDs[0]
-			case "onDropColumn":
+			case "onDropColumn", "onDropColumns":
 				job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
 			}
 		} else {
@@ -1697,7 +1697,7 @@ func doDropIndices(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, index
 			switch callFrom {
 			case "onDropIndex":
 				job.Args = append(job.Args, indexIDs[0], getPartitionIDs(tblInfo))
-			case "onDropColumn":
+			case "onDropColumn", "onDropColumns":
 				job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
 			}
 		}

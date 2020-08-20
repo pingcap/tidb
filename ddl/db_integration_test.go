@@ -2432,6 +2432,37 @@ func (s *testIntegrationSuite5) TestDropColumnsWithMultiIndex(c *C) {
 	tk.MustQuery(query).Check(testkit.Rows())
 }
 
+func (s *testIntegrationSuite5) TestDropColumnsWithMultiCompositeIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_columns_with_idx(a int, b int, c int, index idx_1(a,b), index idx_2(b,c), index idx_3(a, c), index idx_4(b))")
+	defer tk.MustExec("drop table if exists t_drop_columns_with_idx")
+	tk.MustExec("alter table t_drop_columns_with_idx drop column b, drop column c")
+	query := queryIndexOnTable("test_db", "t_drop_columns_with_idx")
+	tk.MustQuery(query).Check(testkit.Rows("idx_1 YES", "idx_3 YES"))
+}
+
+func (s *testIntegrationSuite5) TestDropColumnsWithMultiCompositeIndex2(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_columns_with_idx(a int, b int, c int, index idx_1(b,c))")
+	defer tk.MustExec("drop table if exists t_drop_columns_with_idx")
+	tk.MustExec("alter table t_drop_columns_with_idx drop column b, drop column c")
+	query := queryIndexOnTable("test_db", "t_drop_columns_with_idx")
+	tk.MustQuery(query).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite5) TestDropColumnsWithMultiCompositeIndexWithData(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_columns_with_idx(a int, b int, c int, unique index idx_1(b,c), index idx_2(a, c))")
+	defer tk.MustExec("drop table if exists t_drop_columns_with_idx")
+	tk.MustExec("insert into t_drop_columns_with_idx(a, b, c) values (1, 2, 3), (1, 2, 4), (1, 2, 5)")
+	tk.MustGetErrCode("alter table t_drop_columns_with_idx drop column a, drop column c", 1062)
+	query := queryIndexOnTable("test_db", "t_drop_columns_with_idx")
+	tk.MustQuery(query).Check(testkit.Rows("idx_1 YES", "idx_2 YES"))
+}
+
 func (s *testIntegrationSuite7) TestAutoIncrementAllocator(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer config.RestoreFunc()()

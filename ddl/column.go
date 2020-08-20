@@ -397,13 +397,84 @@ func (w *worker) onDropColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		return ver, nil
 	}
 
-	if len(cidxInfos) > 0 {
-		// TODO: Support drop columns with composite indices covered now.
-		job.State = model.JobStateCancelled
-		return ver, errCantDropColWithIndex.GenWithStack("can't drop columns with composite indices covered now")
+	if len(cidxInfos) > 0 && job.IsRollingback() {
+		// Handle the rolling back job.
+		ctidxInfos := getTempCompositeIndices(tblInfo, cidxInfos)
+		if len(ctidxInfos) == 0 {
+			// No indices need to be dropped just finish job
+			// Actually it will not run here, just for defense.
+			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
+			job.Args = append(job.Args, []int64{}, getPartitionIDs(tblInfo))
+			return ver, nil
+		}
+		ver, err = doDropIndices(t, job, tblInfo, ctidxInfos, "onDropColumns")
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
 	}
 
-	originalState := colInfos[0].State
+	colOriginalState := colInfos[0].State
+	// Handle reorg composite indices
+	if len(cidxInfos) > 0 && colOriginalState == model.StatePublic {
+		ctidxInfos, err := getOrCreateTempCompositeIndices(tblInfo, colInfos, cidxInfos)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// On drop columns there may have empty temp composite indices list, so we do not need to
+		// run the add index step, just fall through to drop column and indices
+		if len(ctidxInfos) > 0 {
+			fallThrough := false
+			idxOriginalState := ctidxInfos[0].State
+			switch ctidxInfos[0].State {
+			case model.StateNone:
+				// none -> delete only
+				job.SchemaState = model.StateDeleteOnly
+				setIndicesState(ctidxInfos, model.StateDeleteOnly)
+				ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
+				metrics.AddIndexProgress.Set(0)
+			case model.StateDeleteOnly:
+				// delete only -> write only
+				job.SchemaState = model.StateWriteOnly
+				setIndicesState(ctidxInfos, model.StateWriteOnly)
+				ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
+			case model.StateWriteOnly:
+				// write only -> reorganization
+				job.SchemaState = model.StateWriteReorganization
+				setIndicesState(ctidxInfos, model.StateWriteReorganization)
+				// Initialize SnapshotVer to 0 for later reorganization check.
+				job.SnapshotVer = 0
+				ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
+			case model.StateWriteReorganization:
+				for _, idxInfo := range ctidxInfos {
+					var first bool
+					// Run reorg job
+					ver, first, err = runAndWaitReorgJob(w, d, t, job, tblInfo, idxInfo, ctidxInfos, ver)
+					if err != nil {
+						return ver, errors.Trace(err)
+					}
+					if first {
+						// If we run reorg firstly, we should update the job snapshot version
+						// and then run the reorg next time.
+						return ver, errors.Trace(err)
+					}
+					// Set column index flag.
+					addIndexColumnFlag(tblInfo, idxInfo)
+				}
+				ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
+				if err != nil {
+					return ver, errors.Trace(err)
+				}
+				fallThrough = true
+			default:
+				err = ErrInvalidDDLState.GenWithStackByArgs("index", tblInfo.State)
+			}
+			if !fallThrough {
+				return ver, errors.Trace(err)
+			}
+		}
+	}
+
 	switch colInfos[0].State {
 	case model.StatePublic:
 		// public -> write only
@@ -416,19 +487,19 @@ func (w *worker) onDropColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 				return ver, errors.Trace(err)
 			}
 		}
-		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != colInfos[0].State)
+		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, colOriginalState != colInfos[0].State)
 	case model.StateWriteOnly:
 		// write only -> delete only
 		job.SchemaState = model.StateDeleteOnly
 		setColumnsState(colInfos, model.StateDeleteOnly)
 		setIndicesState(sidxInfos, model.StateDeleteOnly)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, colOriginalState != colInfos[0].State)
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		job.SchemaState = model.StateDeleteReorganization
 		setColumnsState(colInfos, model.StateDeleteReorganization)
 		setIndicesState(sidxInfos, model.StateDeleteReorganization)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, colOriginalState != colInfos[0].State)
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
 		// All reorganization jobs are done, drop this column.
@@ -443,9 +514,29 @@ func (w *worker) onDropColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 		}
 
 		indexIDs := indexInfosToIDList(sidxInfos)
+		if len(cidxInfos) > 0 {
+			ctidxInfos := getTempCompositeIndices(tblInfo, cidxInfos)
+			// Drop origin indices
+			newIndices := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+			for _, idx := range tblInfo.Indices {
+				if !indexInfoContains(idx.ID, cidxInfos) {
+					newIndices = append(newIndices, idx)
+				}
+			}
+			tblInfo.Indices = newIndices
+			if len(ctidxInfos) > 0 {
+				for _, idx := range ctidxInfos {
+					// Rename temp index
+					idx.Name = renameTempCompositeIdxToOrigin(idx, cidxInfos)
+					// Set state to public
+					idx.State = model.StatePublic
+				}
+				indexIDs = append(indexIDs, indexInfosToIDList(cidxInfos)...)
+			}
+		}
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-delCount]
 		setColumnsState(colInfos, model.StateNone)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, colOriginalState != colInfos[0].State)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -549,7 +640,7 @@ func (w *worker) onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	colOriginalState := colInfo.State
 	// Handle reorg composite indices
 	if len(cidxInfos) > 0 && colOriginalState == model.StatePublic {
-		ctidxInfos, err := getOrCreateTempCompositeIndices(tblInfo, colInfo, cidxInfos)
+		ctidxInfos, err := getOrCreateTempCompositeIndices(tblInfo, []*model.ColumnInfo{colInfo}, cidxInfos)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1136,9 +1227,9 @@ const (
 	tempCompositeIndexPrefix = "_CIdx$_"
 )
 
-func getOrCreateTempCompositeIndices(tblInfo *model.TableInfo, colInfo *model.ColumnInfo, idxInfos []*model.IndexInfo) ([]*model.IndexInfo, error) {
+func getOrCreateTempCompositeIndices(tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, idxInfos []*model.IndexInfo) ([]*model.IndexInfo, error) {
 	ctidxInfos := getTempCompositeIndices(tblInfo, idxInfos)
-	if len(ctidxInfos) == len(idxInfos) {
+	if len(ctidxInfos) > 0 {
 		return ctidxInfos, nil
 	}
 	ret := make([]*model.IndexInfo, 0)
@@ -1152,9 +1243,10 @@ func getOrCreateTempCompositeIndices(tblInfo *model.TableInfo, colInfo *model.Co
 			// If we have the index just ignore it.
 			continue
 		}
-		nctidxInfo, err := buildCompositeIndexInfo(ctidxName, idxInfo, colInfo, model.StateNone)
-		if err != nil {
-			return nil, errors.Trace(err)
+		nctidxInfo := buildCompositeIndexInfo(ctidxName, idxInfo, colInfos, model.StateNone)
+		if nctidxInfo == nil {
+			// No need to create temp index and reorg this index
+			continue
 		}
 		nctidxInfo.ID = allocateIndexID(tblInfo)
 		tblInfo.Indices = append(tblInfo.Indices, nctidxInfo)
@@ -1163,20 +1255,20 @@ func getOrCreateTempCompositeIndices(tblInfo *model.TableInfo, colInfo *model.Co
 	return ret, nil
 }
 
-func buildCompositeIndexInfo(idxName model.CIStr, idxInfo *model.IndexInfo, colInfo *model.ColumnInfo, state model.SchemaState) (*model.IndexInfo, error) {
-	// TODO: do we need to check this?
-	if err := checkTooLongIndex(idxName); err != nil {
-		return nil, errors.Trace(err)
-	}
+func buildCompositeIndexInfo(idxName model.CIStr, idxInfo *model.IndexInfo, colInfos []*model.ColumnInfo, state model.SchemaState) *model.IndexInfo {
+	// For now we do not need to check index name length
 	idxColumns := make([]*model.IndexColumn, 0)
 	// Just remove dropped column from origin index columns
 	// We do not need to check the columns here.
 	for _, col := range idxInfo.Columns {
-		if col.Name.L == colInfo.Name.L {
+		if inColumnInfos(col, colInfos) {
 			continue
 		}
-		// TODO: Do we need to reload col.Offset?
 		idxColumns = append(idxColumns, col)
+	}
+	if len(idxColumns) == 0 {
+		// Index no columns, we should just drop this index and no need to reorg.
+		return nil
 	}
 	// Except Name, Columns, State, just copy other fields from origin index info.
 	nidxInfo := &model.IndexInfo{
@@ -1191,7 +1283,16 @@ func buildCompositeIndexInfo(idxName model.CIStr, idxInfo *model.IndexInfo, colI
 		Invisible: idxInfo.Invisible,
 		Global:    idxInfo.Global,
 	}
-	return nidxInfo, nil
+	return nidxInfo
+}
+
+func inColumnInfos(col *model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+	for _, colInfo := range colInfos {
+		if col.Name.L == colInfo.Name.L {
+			return true
+		}
+	}
+	return false
 }
 
 func getTempCompositeIndices(tblInfo *model.TableInfo, idxInfos []*model.IndexInfo) []*model.IndexInfo {
