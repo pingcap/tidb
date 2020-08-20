@@ -154,8 +154,8 @@ type partialResult4GroupConcatDistinct struct {
 	basePartialResult4GroupConcat
 	valSet            set.StringSet
 	encodeBytesBuffer []byte
-	valList           []string
-	joinedValList     []string
+	valList           []string // ordered value set
+	keyList           []string // ordered key set
 }
 
 type groupConcatDistinct struct {
@@ -166,14 +166,14 @@ func (e *groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta i
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
 	p.valSet = set.NewStringSet()
-	p.valList, p.joinedValList = []string{}, []string{}
+	p.valList, p.keyList = []string{}, []string{}
 	return PartialResult(p), 0
 }
 
 func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	p.buffer, p.valSet = nil, set.NewStringSet()
-	p.valList, p.joinedValList = p.valList[:0], p.joinedValList[:0]
+	p.valList, p.keyList = p.valList[:0], p.keyList[:0]
 }
 
 func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -202,7 +202,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		}
 		p.valSet.Insert(joinedVal)
 		p.valList = append(p.valList, p.valsBuf.String())
-		p.joinedValList = append(p.joinedValList, joinedVal)
+		p.keyList = append(p.keyList, joinedVal)
 		// write separator
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
@@ -221,12 +221,12 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 func (e *groupConcatDistinct) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4GroupConcatDistinct)(src), (*partialResult4GroupConcatDistinct)(dst)
 	for i := range p1.valList {
-		if p2.valSet.Exist(p1.joinedValList[i]) {
+		if p2.valSet.Exist(p1.keyList[i]) {
 			continue
 		}
-		p2.valSet.Insert(p1.joinedValList[i])
+		p2.valSet.Insert(p1.keyList[i])
 		p2.valList = append(p2.valList, p1.valList[i])
-		p2.joinedValList = append(p2.joinedValList, p1.joinedValList[i])
+		p2.keyList = append(p2.keyList, p1.keyList[i])
 		// write separator
 		if p2.buffer == nil {
 			p2.buffer = &bytes.Buffer{}

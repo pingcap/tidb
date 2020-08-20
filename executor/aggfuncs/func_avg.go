@@ -192,8 +192,8 @@ func (e *avgPartial4Decimal) MergePartialResult(sctx sessionctx.Context, src, ds
 type partialResult4AvgDistinctDecimal struct {
 	partialResult4AvgDecimal
 	valSet  set.StringSet
-	valList []*types.MyDecimal
-	strList []string
+	valList []*types.MyDecimal // ordered value set
+	keyList []string           // ordered key set
 }
 
 type avgOriginal4DistinctDecimal struct {
@@ -212,7 +212,7 @@ func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p.sum = *types.NewDecFromInt(0)
 	p.count = int64(0)
 	p.valSet = set.NewStringSet()
-	p.valList, p.strList = p.valList[:0], p.strList[:0]
+	p.valList, p.keyList = p.valList[:0], p.keyList[:0]
 }
 
 func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -235,7 +235,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		}
 		p.valSet.Insert(decStr)
 		p.valList = append(p.valList, input)
-		p.strList = append(p.strList, decStr)
+		p.keyList = append(p.keyList, decStr)
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.sum, input, newSum)
 		if err != nil {
@@ -286,12 +286,12 @@ func (e *avgPartial4DistinctDecimal) MergePartialResult(sctx sessionctx.Context,
 		return 0, nil
 	}
 	for i := range p1.valList {
-		if p2.valSet.Exist(p1.strList[i]) {
+		if p2.valSet.Exist(p1.keyList[i]) {
 			continue
 		}
-		p2.valSet.Insert(p1.strList[i])
+		p2.valSet.Insert(p1.keyList[i])
 		p2.valList = append(p2.valList, p1.valList[i])
-		p2.strList = append(p2.strList, p1.strList[i])
+		p2.keyList = append(p2.keyList, p1.keyList[i])
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p2.sum, p1.valList[i], newSum)
 		if err != nil {
@@ -452,7 +452,8 @@ func (e *avgPartial4Float64) MergePartialResult(sctx sessionctx.Context, src, ds
 
 type partialResult4AvgDistinctFloat64 struct {
 	partialResult4AvgFloat64
-	valSet set.Float64Set
+	valSet  set.Float64Set
+	valList []float64 // ordered value set
 }
 
 type avgOriginal4DistinctFloat64 struct {
@@ -471,6 +472,7 @@ func (e *avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.sum = float64(0)
 	p.count = int64(0)
 	p.valSet = set.NewFloat64Set()
+	p.valList = p.valList[:0]
 }
 
 func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -487,6 +489,7 @@ func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Contex
 		p.sum += input
 		p.count++
 		p.valSet.Insert(input)
+		p.valList = append(p.valList, input)
 	}
 	return 0, nil
 }
@@ -514,11 +517,12 @@ func (e *avgPartial4DistinctFloat64) MergePartialResult(sctx sessionctx.Context,
 	if p1.count == 0 {
 		return 0, nil
 	}
-	for f := range p1.valSet {
+	for _, f := range p1.valList {
 		if p2.valSet.Exist(f) {
 			continue
 		}
 		p2.valSet.Insert(f)
+		p2.valList = append(p2.valList, f)
 		p2.sum += f
 		p2.count++
 	}

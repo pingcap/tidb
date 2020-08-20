@@ -118,6 +118,7 @@ type partialResult4VarPopDistinctFloat64 struct {
 	sum      float64
 	variance float64
 	valSet   set.Float64Set
+	valList  []float64 // ordered value set
 }
 
 func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -135,6 +136,7 @@ func (e *varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.sum = 0
 	p.variance = 0
 	p.valSet = set.NewFloat64Set()
+	p.valList = p.valList[:0]
 }
 
 func (e *varPop4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -159,6 +161,7 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 			continue
 		}
 		p.valSet.Insert(input)
+		p.valList = append(p.valList, input)
 		p.count++
 		p.sum += input
 		if p.count > 1 {
@@ -170,11 +173,12 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 
 func (e *varPop4DistinctFloat64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4VarPopDistinctFloat64)(src), (*partialResult4VarPopDistinctFloat64)(dst)
-	for f := range p1.valSet {
+	for _, f := range p1.valList {
 		if p2.valSet.Exist(f) {
 			continue
 		}
 		p2.valSet.Insert(f)
+		p2.valList = append(p2.valList, f)
 		p2.count++
 		p2.sum += f
 		if p2.count > 1 {
