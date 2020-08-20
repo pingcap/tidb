@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -283,7 +284,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 	return result, nil
 }
 
-// buildRecoverIndexKeyRanges build a KeyRange [startHandle, *unlimited*) and set it to request builder.
+// buildRecoverIndexKeyRanges build a KeyRange [startHandle, *unlimited*).
 func buildRecoverIndexKeyRanges(sc *stmtctx.StatementContext, tid int64, startHandle kv.Handle) ([]kv.KeyRange, error) {
 	var startKey []byte
 	if startHandle == nil {
@@ -385,17 +386,19 @@ func (e *RecoverIndexExec) buildHandleFromChunkRow(row chunk.Row, handleColIndex
 	if !tblInfo.IsCommonHandle {
 		return kv.IntHandle(row.GetInt64(handleColIndex)), nil
 	}
+
 	colInfos := e.columns
-	handleData := make([]types.Datum, 0, len(colInfos)-handleColIndex)
+	pkCols := make([]*expression.Column, 0, len(colInfos)-handleColIndex)
 	for i := handleColIndex; i < len(colInfos); i++ {
-		handleData = append(handleData, row.GetDatum(i, &colInfos[i].FieldType))
+		info := colInfos[i]
+		pkCols = append(pkCols, &expression.Column{
+			RetType: &info.FieldType,
+			ID:      info.ID,
+			Index:   i,
+		})
 	}
-	var handleBytes []byte
-	handleBytes, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, handleData...)
-	if err != nil {
-		return nil, err
-	}
-	return kv.NewCommonHandle(handleBytes)
+	handleCols := plannercore.NewCommonHandleCols(e.ctx.GetSessionVars().StmtCtx, tblInfo, e.index.Meta(), pkCols)
+	return handleCols.BuildHandle(row)
 }
 
 func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) error {
