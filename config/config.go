@@ -887,6 +887,22 @@ func (c *Config) Valid() error {
 	return l.UnmarshalText([]byte(c.Log.Level))
 }
 
+// UpdateGlobal updates the global config, and provide a restore function that can be used to restore to the original.
+func UpdateGlobal(f func(conf *Config)) {
+	g := GetGlobalConfig()
+	newConf := *g
+	f(&newConf)
+	StoreGlobalConfig(&newConf)
+}
+
+// RestoreFunc gets a function that restore the config to the current value.
+func RestoreFunc() (restore func()) {
+	g := GetGlobalConfig()
+	return func() {
+		StoreGlobalConfig(g)
+	}
+}
+
 func hasRootPrivilege() bool {
 	return os.Geteuid() == 0
 }
