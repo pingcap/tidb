@@ -59,9 +59,6 @@ type nextPartitionForIndexLookUp struct {
 
 func (n nextPartitionForIndexLookUp) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
 	n.exec.table = tbl
-	if err := updateDAGRequestTableID(ctx, n.exec.dagPB, tbl.Meta().ID, tbl.GetPhysicalID()); err != nil {
-		return nil, err
-	}
 	return n.exec, nil
 }
 
@@ -73,9 +70,6 @@ func (n nextPartitionForIndexReader) nextPartition(ctx context.Context, tbl tabl
 	exec := n.exec
 	exec.table = tbl
 	exec.physicalTableID = tbl.GetPhysicalID()
-	if err := updateDAGRequestTableID(ctx, n.exec.dagPB, tbl.Meta().ID, tbl.GetPhysicalID()); err != nil {
-		return nil, err
-	}
 	return exec, nil
 }
 
@@ -86,11 +80,6 @@ type nextPartitionForIndexMerge struct {
 func (n nextPartitionForIndexMerge) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
 	exec := n.exec
 	exec.table = tbl
-	for i := 0; i < len(exec.dagPBs); i++ {
-		if err := updateDAGRequestTableID(ctx, exec.dagPBs[i], tbl.Meta().ID, tbl.GetPhysicalID()); err != nil {
-			return nil, err
-		}
-	}
 	return exec, nil
 }
 
