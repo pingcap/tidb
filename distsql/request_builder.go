@@ -93,7 +93,7 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 	return builder
 }
 
-// SetAnalyzeRequest sets the request type to "ReqTypeAnalyze" and cosntruct request data.
+// SetAnalyzeRequest sets the request type to "ReqTypeAnalyze" and construct request data.
 func (builder *RequestBuilder) SetAnalyzeRequest(ana *tipb.AnalyzeReq) *RequestBuilder {
 	if builder.err == nil {
 		builder.Request.Tp = kv.ReqTypeAnalyze
@@ -216,7 +216,7 @@ func TableRangesToKVRanges(tid int64, ranges []*ranger.Range, fb *statistics.Que
 			low = kv.Key(low).PrefixNext()
 		}
 		// If this range is split by histogram, then the high val will equal to one bucket's upper bound,
-		// since we need to guarantee each range falls inside the exactly one bucket, `PerfixNext` will make the
+		// since we need to guarantee each range falls inside the exactly one bucket, `PrefixNext` will make the
 		// high value greater than upper bound, so we store the range here.
 		r := &ranger.Range{LowVal: []types.Datum{types.NewBytesDatum(low)},
 			HighVal: []types.Datum{types.NewBytesDatum(high)}}
@@ -314,7 +314,7 @@ func IndexRangesToKVRanges(sc *stmtctx.StatementContext, tid, idxID int64, range
 		}
 		ran.LowVal[0].SetBytes(low)
 		// If this range is split by histogram, then the high val will equal to one bucket's upper bound,
-		// since we need to guarantee each range falls inside the exactly one bucket, `PerfixNext` will make the
+		// since we need to guarantee each range falls inside the exactly one bucket, `PrefixNext` will make the
 		// high value greater than upper bound, so we store the high value here.
 		ran.HighVal[0].SetBytes(high)
 		if !ran.HighExclude {
@@ -346,8 +346,8 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid int64, range
 			low = kv.Key(low).PrefixNext()
 		}
 		ran.LowVal[0].SetBytes(low)
-		startKey := tablecodec.EncodeCommonHandleSeekKey(tid, low)
-		endKey := tablecodec.EncodeCommonHandleSeekKey(tid, high)
+		startKey := tablecodec.EncodeRowKey(tid, low)
+		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	return krs, nil

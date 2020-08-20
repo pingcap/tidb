@@ -15,6 +15,8 @@ package executor_test
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -46,6 +48,22 @@ func (s *testClusteredSuite) TestClusteredUnionScan(c *C) {
 	tk.MustExec("update t set c = 1")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
 	tk.MustExec("rollback")
+}
+
+func (s *testClusteredSuite) TestClusteredUnionScanIndexLookup(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, pk char(10), c int, primary key(pk), key(a));")
+	tk.MustExec("insert into t values (1, '111', 3);")
+
+	tk.MustExec("begin")
+	tk.MustExec("update t set a = a + 1, pk = '222' where a = 1;")
+	sql := "select pk, c from t where a = 2;"
+	tk.HasPlan(sql, "IndexLookUp")
+	tk.MustQuery(sql).Check(testkit.Rows("222 3"))
+
+	tk.MustExec("commit")
+	tk.MustQuery(sql).Check(testkit.Rows("222 3"))
 }
 
 func (s *testClusteredSuite) TestClusteredIndexLookUp(c *C) {
@@ -111,4 +129,66 @@ func (s *testClusteredSuite) TestClusteredBatchPointGet(c *C) {
 	tk.MustExec("insert t values (1, 1, 1), (3, 3, 3), (5, 5, 5)")
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (3, 3), (5, 5))").Check(
 		testkit.Rows("1 1 1", "3 3 3", "5 5 5"))
+}
+
+func (s *testClusteredSuite) TestClusteredInsertIgnoreBatchGetKeyCount(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (a varchar(10) primary key, b int)")
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert ignore t values ('a', 1)")
+	txn, err := tk.Se.Txn(false)
+	c.Assert(err, IsNil)
+	snapSize := tikv.SnapCacheSize(txn.GetSnapshot())
+	c.Assert(snapSize, Equals, 1)
+	tk.MustExec("rollback")
+}
+
+func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
+	tk := s.newTK(c)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(name varchar(255), b int, c int, primary key(name(2)), index idx(b));")
+	tk.MustExec("insert into t(name, b) values('aaaaa', 1), ('bbbbb', 2);")
+	tk.MustExec("admin check table t;")
+
+	tk.MustGetErrCode("insert into t(name, b) values('aaa', 3);", errno.ErrDupEntry)
+	sql := "select * from t use index(primary) where name = 'aaaaa';"
+	tk.HasPlan(sql, "TableReader")
+	tk.HasPlan(sql, "TableRangeScan")
+	tk.MustQuery(sql).Check(testkit.Rows("aaaaa 1 <nil>"))
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(name varchar(255), b int, c char(10), primary key(c(2), name(2)), index idx(b));")
+	tk.MustExec("insert into t values ('aaa', 1, 'aaa'), ('bbb', 1, 'bbb');")
+	tk.MustExec("insert into t values ('aa', 1, 'bbb'), ('bbb', 1, 'ccc');")
+	tk.MustGetErrCode("insert into t values ('aa', 1, 'aa');", errno.ErrDupEntry)
+	tk.MustGetErrCode("insert into t values ('aac', 1, 'aac');", errno.ErrDupEntry)
+	tk.MustGetErrCode("insert into t values ('bb', 1, 'bb');", errno.ErrDupEntry)
+	tk.MustGetErrCode("insert into t values ('bbc', 1, 'bbc');", errno.ErrDupEntry)
+	tk.MustGetErrCode("update t set name = 'aa', c = 'aa' where c = 'ccc'", errno.ErrDupEntry)
+	tk.MustExec("update t set name = 'ccc' where name = 'aa'")
+	tk.MustQuery("select group_concat(name order by name separator '.') from t use index(idx);").
+		Check(testkit.Rows("aaa.bbb.bbb.ccc"))
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(name varchar(255), b int, primary key(name(2)), index idx(b));")
+	tk.MustExec("insert into t values ('aaa', 1), ('bbb', 1);")
+	tk.MustQuery("select group_concat(name order by name separator '.') from t use index(idx);").
+		Check(testkit.Rows("aaa.bbb"))
+
+	tk.MustGetErrCode("update t set name = 'aaaaa' where name = 'bbb'", errno.ErrDupEntry)
+	tk.MustExec("update ignore t set name = 'aaaaa' where name = 'bbb'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '{aa}' for key 'PRIMARY'"))
+	tk.MustExec("admin check table t;")
+}
+
+func (s *testClusteredSuite) TestClusteredWithOldRowFormat(c *C) {
+	tk := s.newTK(c)
+	tk.Se.GetSessionVars().RowEncoder.Enable = false
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(id varchar(255) primary key, a int, b int, unique index idx(b));")
+	tk.MustExec("insert into t values ('b568004d-afad-11ea-8e4d-d651e3a981b7', 1, -1);")
+	tk.MustQuery("select * from t use index(primary);").Check(testkit.Rows("b568004d-afad-11ea-8e4d-d651e3a981b7 1 -1"))
 }
