@@ -1000,7 +1000,7 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 		if spec.Tp == ast.AlterTableRenameTable {
 			p.flag |= inCreateOrDropTable
 			break
-		} else if spec.Tp == ast.AlterTableAddConstraint {
+		if spec.Tp == ast.AlterTableAddConstraint && spec.Constraint.Refer != nil {
 			if spec.Constraint.Refer != nil {
 				table := spec.Constraint.Refer.Table
 				if table.Schema.L == "" && node.Table.Schema.L != "" {
