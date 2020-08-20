@@ -705,7 +705,7 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 	n1 := CalcNeededBatchSize(alloc.base, int64(n), increment, offset, alloc.isUnsigned)
 
 	// Condition alloc.base+n1 > alloc.end will overflow when alloc.base + n1 > MaxInt64. So need this.
-	if math.MaxUint64-uint64(alloc.base) < uint64(n1) {
+	if math.MaxUint64-uint64(alloc.base) <= uint64(n1) {
 		return 0, 0, ErrAutoincReadFailed
 	}
 	// The local rest is not enough for alloc, skip it.
