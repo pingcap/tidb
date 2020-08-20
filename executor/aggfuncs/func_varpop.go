@@ -143,8 +143,8 @@ func (e *varPop4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	varicance := p.variance / float64(p.count)
-	chk.AppendFloat64(e.ordinal, varicance)
+	variance := p.variance / float64(p.count)
+	chk.AppendFloat64(e.ordinal, variance)
 	return nil
 }
 
@@ -163,6 +163,22 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 		p.sum += input
 		if p.count > 1 {
 			p.variance = calculateIntermediate(p.count, p.sum, input, p.variance)
+		}
+	}
+	return 0, nil
+}
+
+func (e *varPop4DistinctFloat64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4VarPopDistinctFloat64)(src), (*partialResult4VarPopDistinctFloat64)(dst)
+	for f := range p1.valSet {
+		if p2.valSet.Exist(f) {
+			continue
+		}
+		p2.valSet.Insert(f)
+		p2.count++
+		p2.sum += f
+		if p2.count > 1 {
+			p2.variance = calculateIntermediate(p2.count, p2.sum, f, p2.variance)
 		}
 	}
 	return 0, nil

@@ -40,7 +40,7 @@ type partialResult4SumDistinctFloat64 struct {
 type partialResult4SumDistinctDecimal struct {
 	val    types.MyDecimal
 	isNull bool
-	valSet set.StringSet
+	valSet set.DecimalSet
 }
 
 type baseSumAggFunc struct {
@@ -289,6 +289,22 @@ func (e *sum4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, p
 	return nil
 }
 
+func (e *sum4DistinctFloat64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4SumDistinctFloat64)(src), (*partialResult4SumDistinctFloat64)(dst)
+	if p1.isNull {
+		return 0, nil
+	}
+	p2.isNull = false
+	for f := range p1.valSet {
+		if p2.valSet.Exist(f) {
+			continue
+		}
+		p2.valSet.Insert(f)
+		p2.val += f
+	}
+	return 0, nil
+}
+
 type sum4DistinctDecimal struct {
 	baseSumAggFunc
 }
@@ -296,14 +312,14 @@ type sum4DistinctDecimal struct {
 func (e *sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
-	p.valSet = set.NewStringSet()
+	p.valSet = set.NewDecimalSet()
 	return PartialResult(p), 0
 }
 
 func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	p.isNull = true
-	p.valSet = set.NewStringSet()
+	p.valSet = set.NewDecimalSet()
 }
 
 func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -324,7 +340,7 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if p.valSet.Exist(decStr) {
 			continue
 		}
-		p.valSet.Insert(decStr)
+		p.valSet.Insert(decStr, input)
 		if p.isNull {
 			p.val = *input
 			p.isNull = false
@@ -347,4 +363,23 @@ func (e *sum4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, p
 	}
 	chk.AppendMyDecimal(e.ordinal, &p.val)
 	return nil
+}
+
+func (e *sum4DistinctDecimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4SumDistinctDecimal)(src), (*partialResult4SumDistinctDecimal)(dst)
+	if p1.isNull {
+		return 0, nil
+	}
+	p2.isNull = false
+	for decStr, dec := range p1.valSet {
+		if p2.valSet.Exist(decStr) {
+			continue
+		}
+		p2.valSet.Insert(decStr, dec)
+		err = types.DecimalAdd(&p2.val, dec, &p2.val)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return 0, nil
 }

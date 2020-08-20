@@ -276,8 +276,14 @@ func buildAvg(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordi
 	case aggregation.Partial2Mode, aggregation.FinalMode:
 		switch aggFuncDesc.RetTp.Tp {
 		case mysql.TypeNewDecimal:
+			if aggFuncDesc.HasDistinct {
+				return &avgPartial4DistinctDecimal{avgOriginal4DistinctDecimal{base}}
+			}
 			return &avgPartial4Decimal{baseAvgDecimal{base}}
 		case mysql.TypeDouble:
+			if aggFuncDesc.HasDistinct {
+				return &avgPartial4DistinctFloat64{avgOriginal4DistinctFloat64{base}}
+			}
 			return &avgPartial4Float64{baseAvgFloat64{base}}
 		}
 	}
