@@ -1337,7 +1337,7 @@ func (r *Region) findElectableStoreID() uint64 {
 		return 0
 	}
 	for _, p := range r.meta.Peers {
-		if !p.IsLearner {
+		if p.Role != metapb.PeerRole_Learner {
 			return p.StoreId
 		}
 	}
