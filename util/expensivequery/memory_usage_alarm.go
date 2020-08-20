@@ -15,8 +15,6 @@ package expensivequery
 
 import (
 	"fmt"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -31,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 type memoryUsageAlarm struct {
