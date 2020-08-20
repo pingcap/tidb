@@ -128,20 +128,20 @@ func nextPartitionWithTrace(ctx context.Context, n nextPartition, tbl table.Phys
 func updateDAGRequestTableID(ctx context.Context, dag *tipb.DAGRequest, tableID, partitionID int64) error {
 	// TiFlash set RootExecutor field and ignore Executors field.
 	if dag.RootExecutor != nil {
-		return updateExecutorTableID(ctx, dag.RootExecutor, tableID, partitionID)
-	} else {
-		for i := 0; i < len(dag.Executors); i++ {
-			exec := dag.Executors[i]
-			err := updateExecutorTableID(ctx, exec, tableID, partitionID)
-			if err != nil {
-				return err
-			}
+		return updateExecutorTableID(ctx, dag.RootExecutor, tableID, partitionID, true)
+	}
+	for i := 0; i < len(dag.Executors); i++ {
+		exec := dag.Executors[i]
+		err := updateExecutorTableID(ctx, exec, tableID, partitionID, false)
+		if err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, tableID, partitionID int64) error {
+func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, tableID, partitionID int64, recursive bool) error {
+	var child *tipb.Executor
 	switch exec.Tp {
 	case tipb.ExecType_TypeTableScan:
 		exec.TblScan.TableId = partitionID
@@ -153,15 +153,15 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, tableID, pa
 	case tipb.ExecType_TypeIndexScan:
 		exec.IdxScan.TableId = partitionID
 	case tipb.ExecType_TypeSelection:
-		return updateExecutorTableID(ctx, exec.Selection.Child, tableID, partitionID)
+		child = exec.Selection.Child
 	case tipb.ExecType_TypeAggregation:
-		return updateExecutorTableID(ctx, exec.Aggregation.Child, tableID, partitionID)
+		child = exec.Aggregation.Child
 	case tipb.ExecType_TypeTopN:
-		return updateExecutorTableID(ctx, exec.TopN.Child, tableID, partitionID)
+		child = exec.TopN.Child
 	case tipb.ExecType_TypeLimit:
-		return updateExecutorTableID(ctx, exec.Limit.Child, tableID, partitionID)
+		child = exec.Limit.Child
 	case tipb.ExecType_TypeStreamAgg:
-		return updateExecutorTableID(ctx, exec.StreamAgg.Child, tableID, partitionID)
+		child = exec.StreamAgg.Child
 	case tipb.ExecType_TypeJoin:
 		// TiFlash currently does not support Join on partition table.
 		// The planner should not generate this kind of plan.
@@ -169,6 +169,9 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, tableID, pa
 		return errors.New("wrong plan, join on partition table is not supported on TiFlash")
 	default:
 		return errors.Trace(fmt.Errorf("unknown new tipb protocol %d", exec.Tp))
+	}
+	if child != nil && recursive {
+		return updateExecutorTableID(ctx, child, tableID, partitionID, recursive)
 	}
 	return nil
 }
