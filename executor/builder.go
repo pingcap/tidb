@@ -2925,8 +2925,8 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	us := builder.buildUnionScanFromReader(reader, v).(*UnionScanExec)
-	err = us.open(ctx)
+	us := builder.buildUnionScanFromReader(reader, v)
+	err = us.Open(ctx)
 	return us, err
 }
 
