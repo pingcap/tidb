@@ -361,6 +361,10 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 // buildMaxMinSliding builds the sliding window AggFunc implementation for function "MAX" and "MIN".
 func buildMaxMinSliding(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
 	base := buildMaxMin(aggFuncDesc, ordinal, isMax)
+	// We don't need to use the sliding window algo when the frame is unbounded
+	if aggFuncDesc.WindowFrameUnBounded {
+		return base
+	}
 	switch aggFunc := base.(type) {
 	case *maxMin4Int:
 		return &maxMin4IntSliding{*aggFunc}

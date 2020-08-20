@@ -39,6 +39,8 @@ type AggFuncDesc struct {
 	OrderByItems []*util.ByItems
 	// IsWindowAggFunc represents the aggregation function signature is used in window function.
 	IsWindowAggFunc bool
+
+	WindowFrameUnBounded bool
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
@@ -51,12 +53,12 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 }
 
 // NewWindowAggFuncDesc creates an aggregation function signature descriptor of the window function.
-func NewWindowAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, hasDistinct bool) (*AggFuncDesc, error) {
+func NewWindowAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, hasDistinct bool, frameUnBounded bool) (*AggFuncDesc, error) {
 	b, err := newBaseFuncDesc(ctx, name, args)
 	if err != nil {
 		return nil, err
 	}
-	return &AggFuncDesc{baseFuncDesc: b, HasDistinct: hasDistinct, IsWindowAggFunc: true}, nil
+	return &AggFuncDesc{baseFuncDesc: b, HasDistinct: hasDistinct, IsWindowAggFunc: true, WindowFrameUnBounded: frameUnBounded}, nil
 }
 
 // String implements the fmt.Stringer interface.

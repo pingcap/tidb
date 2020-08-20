@@ -3218,8 +3218,12 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
 	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
+	frameUnBounded := true
+	if v.Frame.Start != nil && v.Frame.End != nil {
+		frameUnBounded = v.Frame.Start.UnBounded || v.Frame.End.UnBounded
+	}
 	for _, desc := range v.WindowFuncDescs {
-		aggDesc, err := aggregation.NewWindowAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
+		aggDesc, err := aggregation.NewWindowAggFuncDesc(b.ctx, desc.Name, desc.Args, false, frameUnBounded)
 		if err != nil {
 			b.err = err
 			return nil
