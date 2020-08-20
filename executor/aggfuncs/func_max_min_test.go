@@ -86,9 +86,16 @@ func (s *testSuite) TestMaxMin(c *C) {
 
 func (s *testSuite) TestUnBoundedMaxMinBuilder(c *C) {
 	one := expression.NewOne()
+
 	desc, err := aggregation.NewWindowAggFuncDesc(s.ctx, ast.AggFuncMax, []expression.Expression{one}, false, true)
 	c.Assert(err, IsNil)
 	aggFunc := aggfuncs.BuildWindowFunctions(s.ctx, desc, 0, []*expression.Column{{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}})
 	_, ok := aggFunc.(aggfuncs.SlidingWindowAggFunc)
+	c.Assert(ok, IsFalse)
+
+	desc, err = aggregation.NewWindowAggFuncDesc(s.ctx, ast.AggFuncMax, []expression.Expression{one}, false, false)
+	c.Assert(err, IsNil)
+	aggFunc = aggfuncs.BuildWindowFunctions(s.ctx, desc, 0, []*expression.Column{{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}})
+	_, ok = aggFunc.(aggfuncs.SlidingWindowAggFunc)
 	c.Assert(ok, IsTrue)
 }
