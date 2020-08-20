@@ -173,7 +173,7 @@ func (ts *HTTPHandlerTestSuite) TestRegionCommonHandleRange(c *C) {
 	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.Local}, nil, indexValues...)
 	c.Assert(err, IsNil)
 
-	startKey := tablecodec.EncodeCommonHandleSeekKey(sTableID, encodedValue)
+	startKey := tablecodec.EncodeRowKey(sTableID, encodedValue)
 
 	region := &tikv.KeyLocation{
 		Region:   tikv.RegionVerID{},
