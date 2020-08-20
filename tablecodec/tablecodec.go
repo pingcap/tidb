@@ -627,14 +627,6 @@ func EncodeIndexSeekKey(tableID int64, idxID int64, encodedValue []byte) kv.Key 
 	return key
 }
 
-// EncodeCommonHandleSeekKey encodes a common handle value to kv.Key.
-func EncodeCommonHandleSeekKey(tableID int64, encodedValue []byte) kv.Key {
-	key := make([]byte, 0, prefixLen+len(encodedValue))
-	key = appendTableRecordPrefix(key, tableID)
-	key = append(key, encodedValue...)
-	return key
-}
-
 // CutIndexKey cuts encoded index key into colIDs to bytes slices map.
 // The returned value b is the remaining bytes of the key which would be empty if it is unique index or handle data
 // if it is non-unique index.

@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -31,19 +30,17 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []string) (*selectResult, []*types.FieldType) {
+func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []int) (*selectResult, []*types.FieldType) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"), -1)).
+		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 	c.Assert(err, IsNil)
 
@@ -67,12 +64,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []str
 	if planIDs == nil {
 		response, err = Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	} else {
-		var planIDFuncs []fmt.Stringer
-		for i := range planIDs {
-			idx := i
-			planIDFuncs = append(planIDFuncs, stringutil.StringerStr(planIDs[idx]))
-		}
-		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDFuncs, stringutil.StringerStr("root_0"))
+		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDs, 1)
 	}
 
 	c.Assert(err, IsNil)
@@ -135,13 +127,13 @@ func (s *testSuite) TestSelectNormalChunkSize(c *C) {
 }
 
 func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
-	planIDs := []string{"1", "2", "3"}
+	planIDs := []int{1, 2, 3}
 	response, colTypes := s.createSelectNormal(1, 2, c, planIDs)
 	if len(response.copPlanIDs) != len(planIDs) {
 		c.Fatal("invalid copPlanIDs")
 	}
 	for i := range planIDs {
-		if response.copPlanIDs[i].String() != planIDs[i] {
+		if response.copPlanIDs[i] != planIDs[i] {
 			c.Fatal("invalid copPlanIDs")
 		}
 	}
@@ -429,11 +421,6 @@ func (r *mockResultSubset) GetData() []byte { return r.data }
 // GetStartKey implements kv.ResultSubset interface.
 func (r *mockResultSubset) GetStartKey() kv.Key { return nil }
 
-// GetExecDetails implements kv.ResultSubset interface.
-func (r *mockResultSubset) GetExecDetails() *execdetails.ExecDetails {
-	return &execdetails.ExecDetails{}
-}
-
 // MemSize implements kv.ResultSubset interface.
 func (r *mockResultSubset) MemSize() int64 { return int64(cap(r.data)) }
 
@@ -446,7 +433,7 @@ func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectRe
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"), -1)).
+		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 
 	/// 4 int64 types.
