@@ -795,7 +795,7 @@ func (e *SimpleExec) executeAlterUser(s *ast.AlterUserStmt) error {
 
 	failedUsers := make([]string, 0, len(s.Specs))
 	for _, spec := range s.Specs {
-		if spec.User.CurrentUser == true {
+		if spec.User.CurrentUser {
 			user := e.ctx.GetSessionVars().User
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
