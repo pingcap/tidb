@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -77,13 +78,13 @@ type HTTPHandlerTestSerialSuite struct {
 	*basicHTTPHandlerTestSuite
 }
 
-var _ = Suite(&HTTPHandlerTestSuite{
-	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
-})
+var _ = Suite(&HTTPHandlerTestSuite{&basicHTTPHandlerTestSuite{}})
 
-var _ = SerialSuites(&HTTPHandlerTestSerialSuite{
-	&basicHTTPHandlerTestSuite{testServerClient: newTestServerClient()},
-})
+var _ = SerialSuites(&HTTPHandlerTestSerialSuite{&basicHTTPHandlerTestSuite{}})
+
+func (ts *basicHTTPHandlerTestSuite) SetUpSuite(c *C) {
+	ts.testServerClient = newTestServerClient()
+}
 
 func (ts *HTTPHandlerTestSuite) TestRegionIndexRange(c *C) {
 	sTableID := int64(3)
@@ -360,16 +361,22 @@ func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
 	ts.tidbdrv = NewTiDBDriver(ts.store)
 
 	cfg := newTestConfig()
-	cfg.Port = ts.port
 	cfg.Store = "tikv"
-	cfg.Status.StatusPort = ts.statusPort
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	ts.port = getPortFromTCPAddr(server.listener.Addr())
+	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
 	go server.Run()
 	ts.waitUntilServerOnline()
+}
+
+func getPortFromTCPAddr(addr net.Addr) uint {
+	return uint(addr.(*net.TCPAddr).Port)
 }
 
 func (ts *basicHTTPHandlerTestSuite) stopServer(c *C) {
