@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -68,4 +70,20 @@ partition p2 values less than (10))`)
 	tk.MustQuery("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id").Sort().Check(testkit.Rows("4 4 4", "9 9 9"))
 	// Build index reader in index join
 	tk.MustQuery("select /*+ INL_JOIN(p) */ p.id from p, t where p.id = t.id").Check(testkit.Rows("4", "9"))
+}
+
+func (s *partitionTableSuite) TestDAGTableID(c *C) {
+	// This test checks the table ID in the DAG is changed to partition ID in the nextPartition function.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table employees (id int,store_id int not null)partition by hash(store_id) partitions 4;")
+	sql := "select * from test.employees"
+	rs, err := tk.Exec(sql)
+	c.Assert(err, IsNil)
+
+	m := make(map[int64]struct{})
+	ctx := context.WithValue(context.Background(), "nextPartitionUpdateDAGReq", m)
+	tk.ResultSetToResultWithCtx(ctx, rs, Commentf("sql:%s, args:%v", sql))
+	// Check table ID is changed to partition ID for each partition.
+	c.Assert(m, HasLen, 4)
 }
