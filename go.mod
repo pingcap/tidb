@@ -23,7 +23,7 @@ require (
 	github.com/klauspost/cpuid v1.2.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20200810072146-7f5bfa3012dd
+	github.com/ngaut/unistore v0.0.0-20200819095413-1b541a57f204
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
@@ -34,10 +34,10 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20200803054707-ebd5de15093f
+	github.com/pingcap/kvproto v0.0.0-20200810113304-6157337686b1
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
 	github.com/pingcap/parser v0.0.0-20200813083329-a4bff035d3e2
-	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200730093003-dc8c75cf7ca0
+	github.com/pingcap/pd/v4 v4.0.0-rc.2.0.20200814102247-865fbd82a028
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
 	github.com/pingcap/tidb-tools v4.0.1+incompatible
 	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
