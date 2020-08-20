@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"context"
-	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -233,15 +232,9 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
-<<<<<<< HEAD
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, detail *execdetails.ExecDetails, respTime time.Duration) {
 	callee := detail.CalleeAddress
-	if r.rootPlanID == nil || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
-=======
-func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv.CopRuntimeStats, respTime time.Duration) {
-	callee := copStats.CalleeAddress
 	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 		return
 	}
 	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
@@ -251,33 +244,15 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 
 		return
 	}
-<<<<<<< HEAD
-=======
-	if r.stats == nil {
-		stmtCtx := r.ctx.GetSessionVars().StmtCtx
-		id := r.rootPlanID
-		originRuntimeStats := stmtCtx.RuntimeStatsColl.GetRootStats(id)
-		r.stats = &selectResultRuntimeStats{
-			RuntimeStats: originRuntimeStats,
-			backoffSleep: make(map[string]time.Duration),
-			rpcStat:      tikv.NewRegionRequestRuntimeStats(),
-		}
-		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, r.stats)
-	}
-	r.stats.mergeCopRuntimeStats(copStats, respTime)
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 
-	r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID.String(), respTime, detail)
+	r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID, respTime, detail)
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
-<<<<<<< HEAD
-=======
 			// Fixme: Use detail.GetExecutorId() if exist.
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 			planID := r.copPlanIDs[i]
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-				RecordOneCopTask(planID.String(), callee, detail)
+				RecordOneCopTask(planID, callee, detail)
 		}
 	}
 }

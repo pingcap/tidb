@@ -35,23 +35,6 @@ type cacheEntry struct {
 	value Value
 }
 
-<<<<<<< HEAD
-=======
-var (
-	// GlobalLRUMemUsageTracker tracks all the memory usage of SimpleLRUCache
-	GlobalLRUMemUsageTracker *memory.Tracker
-)
-
-const (
-	// ProfileName is the function name in heap profile
-	ProfileName = "github.com/pingcap/tidb/util/kvcache.(*SimpleLRUCache).Put"
-)
-
-func init() {
-	GlobalLRUMemUsageTracker = memory.NewTracker(memory.LabelForGlobalSimpleLRUCache, -1)
-}
-
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.
 type SimpleLRUCache struct {
 	capacity uint

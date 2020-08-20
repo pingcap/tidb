@@ -392,27 +392,16 @@ func (e *BasicRuntimeStats) String() string {
 
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
-<<<<<<< HEAD
 	mu          sync.Mutex
-	rootStats   map[string]RuntimeStats
-	copStats    map[string]*CopRuntimeStats
-	readerStats map[string]*ReaderRuntimeStats
-=======
-	mu        sync.Mutex
-	rootStats map[int]RuntimeStats
-	copStats  map[int]*CopRuntimeStats
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
+	rootStats   map[int]RuntimeStats
+	copStats    map[int]*CopRuntimeStats
+	readerStats map[int]*ReaderRuntimeStats
 }
 
 // NewRuntimeStatsColl creates new executor collector.
 func NewRuntimeStatsColl() *RuntimeStatsColl {
-<<<<<<< HEAD
-	return &RuntimeStatsColl{rootStats: make(map[string]RuntimeStats),
-		copStats: make(map[string]*CopRuntimeStats), readerStats: make(map[string]*ReaderRuntimeStats)}
-=======
 	return &RuntimeStatsColl{rootStats: make(map[int]RuntimeStats),
-		copStats: make(map[int]*CopRuntimeStats)}
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
+		copStats: make(map[int]*CopRuntimeStats), readerStats: make(map[int]*ReaderRuntimeStats)}
 }
 
 // RegisterStats register execStat for a executor.
@@ -453,7 +442,7 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary 
 }
 
 // RecordOneReaderStats records a specific stats for TableReader, IndexReader and IndexLookupReader.
-func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, copRespTime time.Duration, detail *ExecDetails) {
+func (e *RuntimeStatsColl) RecordOneReaderStats(planID int, copRespTime time.Duration, detail *ExecDetails) {
 	readerStats := e.GetReaderStats(planID)
 	readerStats.recordOneCopTask(copRespTime, detail)
 }
@@ -475,7 +464,7 @@ func (e *RuntimeStatsColl) ExistsCopStats(planID int) bool {
 }
 
 // GetReaderStats gets the ReaderRuntimeStats specified by planID.
-func (e *RuntimeStatsColl) GetReaderStats(planID string) *ReaderRuntimeStats {
+func (e *RuntimeStatsColl) GetReaderStats(planID int) *ReaderRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	stats, exists := e.readerStats[planID]

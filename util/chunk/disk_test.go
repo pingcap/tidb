@@ -18,7 +18,6 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -133,82 +132,3 @@ func BenchmarkListInDiskGetRow(b *testing.B) {
 		}
 	}
 }
-<<<<<<< HEAD
-=======
-
-type listInDiskWriteDisk struct {
-	ListInDisk
-}
-
-func newListInDiskWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWriteDisk, error) {
-	l := listInDiskWriteDisk{*NewListInDisk(fieldTypes)}
-	disk, err := ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, strconv.Itoa(l.diskTracker.Label()))
-	if err != nil {
-		return nil, err
-	}
-	l.disk = disk
-	l.w = disk
-	return &l, nil
-}
-
-func (l *listInDiskWriteDisk) GetRow(ptr RowPtr) (row Row, err error) {
-	err = l.flush()
-	if err != nil {
-		return
-	}
-	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
-
-	r := io.NewSectionReader(l.disk, off, l.offWrite-off)
-	format := rowInDisk{numCol: len(l.fieldTypes)}
-	_, err = format.ReadFrom(r)
-	if err != nil {
-		return row, err
-	}
-	row = format.toMutRow(l.fieldTypes).ToRow()
-	return row, err
-}
-
-func checkRow(c *check.C, row1, row2 Row) {
-	c.Assert(row1.GetString(0), check.Equals, row2.GetString(0))
-	c.Assert(row1.GetInt64(1), check.Equals, row2.GetInt64(1))
-	c.Assert(row1.GetString(2), check.Equals, row2.GetString(2))
-	c.Assert(row1.GetInt64(3), check.Equals, row2.GetInt64(3))
-	if !row1.IsNull(4) {
-		c.Assert(row1.GetJSON(4).String(), check.Equals, row2.GetJSON(4).String())
-	}
-}
-
-func (s *testChunkSuite) TestListInDiskWithChecksum(c *check.C) {
-	numChk, numRow := 10, 1000
-	chks, fields := initChunks(numChk, numRow)
-	lChecksum := NewListInDisk(fields)
-	defer lChecksum.Close()
-	lDisk, err := newListInDiskWriteDisk(fields)
-	c.Assert(err, check.IsNil)
-	defer lDisk.Close()
-	for _, chk := range chks {
-		err := lChecksum.Add(chk)
-		c.Assert(err, check.IsNil)
-		err = lDisk.Add(chk)
-		c.Assert(err, check.IsNil)
-	}
-
-	var ptrs []RowPtr
-	for i := 0; i < numChk; i++ {
-		for j := 0; j < numRow; j++ {
-			ptrs = append(ptrs, RowPtr{
-				ChkIdx: uint32(i),
-				RowIdx: uint32(j),
-			})
-		}
-	}
-
-	for _, rowPtr := range ptrs {
-		row1, err := lChecksum.GetRow(rowPtr)
-		c.Assert(err, check.IsNil)
-		row2, err := lDisk.GetRow(rowPtr)
-		c.Assert(err, check.IsNil)
-		checkRow(c, row1, row2)
-	}
-}
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)

@@ -757,22 +757,6 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.innerRows = nil
 
 	e.memTracker = nil
-<<<<<<< HEAD
-=======
-	if e.runtimeStats != nil {
-		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
-		if e.canUseCache {
-			var hitRatio float64
-			if e.cacheAccessCounter > 0 {
-				hitRatio = float64(e.cacheHitCounter) / float64(e.cacheAccessCounter)
-			}
-			runtimeStats.setCacheInfo(true, hitRatio)
-		} else {
-			runtimeStats.setCacheInfo(false, 0)
-		}
-	}
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 	return e.outerExec.Close()
 }
 

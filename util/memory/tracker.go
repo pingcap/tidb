@@ -49,20 +49,12 @@ type Tracker struct {
 		actionOnExceed ActionOnExceed
 	}
 
-<<<<<<< HEAD
-	label         fmt.Stringer // Label of this "Tracker".
-	bytesConsumed int64        // Consumed bytes.
-	bytesLimit    int64        // bytesLimit <= 0 means no limit.
-	maxConsumed   int64        // max number of bytes consumed during execution.
-	parent        *Tracker     // The parent memory tracker.
-	isGlobal      bool         // isGlobal indicates whether this tracker is global tracker
-=======
-	label         int   // Label of this "Tracker".
-	bytesConsumed int64 // Consumed bytes.
-	bytesLimit    int64 // bytesLimit <= 0 means no limit.
-	maxConsumed   int64 // max number of bytes consumed during execution.
-	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
+	label         int      // Label of this "Tracker".
+	bytesConsumed int64    // Consumed bytes.
+	bytesLimit    int64    // bytesLimit <= 0 means no limit.
+	maxConsumed   int64    // max number of bytes consumed during execution.
+	parent        *Tracker // The parent memory tracker.
+	isGlobal      bool     // isGlobal indicates whether this tracker is global tracker
 }
 
 // NewTracker creates a memory tracker.

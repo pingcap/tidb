@@ -16,11 +16,7 @@ package executor
 import (
 	"bytes"
 	"context"
-<<<<<<< HEAD
-	"fmt"
 	"math"
-=======
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 	"sort"
 	"strings"
 	"sync"
@@ -1266,13 +1262,8 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) Exe
 		return nil
 	}
 	e := &ProjectionExec{
-<<<<<<< HEAD
-		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), childExec),
-		numWorkers:       b.ctx.GetSessionVars().ProjectionConcurrency,
-=======
 		baseExecutor:     newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
-		numWorkers:       int64(b.ctx.GetSessionVars().ProjectionConcurrency()),
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
+		numWorkers:       b.ctx.GetSessionVars().ProjectionConcurrency,
 		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
 		calculateNoDelay: v.CalculateNoDelay,
 	}
@@ -1481,19 +1472,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
 				},
 			}
-<<<<<<< HEAD
-=======
-		case strings.ToLower(infoschema.TableStorageStats):
-			return &MemTableReaderExec{
-				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-				table:        v.Table,
-				retriever: &tableStorageStatsRetriever{
-					table:      v.Table,
-					outputCols: v.Columns,
-					extractor:  v.Extractor.(*plannercore.TableStorageStatsExtractor),
-				},
-			}
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 		case strings.ToLower(infoschema.TableDDLJobs):
 			return &DDLJobsReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -1514,17 +1492,11 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 	}
 	tb, _ := b.is.TableByID(v.Table.ID)
 	return &TableScanExec{
-<<<<<<< HEAD
-		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+		baseExecutor:   newBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		t:              tb,
 		columns:        v.Columns,
 		seekHandle:     math.MinInt64,
 		isVirtualTable: !tb.Type().IsNormalTable(),
-=======
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		t:            tb,
-		columns:      v.Columns,
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 	}
 }
 
@@ -1581,13 +1553,8 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 	}
 	tupleJoiner := newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
 		defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil)
-<<<<<<< HEAD
 	e := &NestedLoopApplyExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID(), outerExec, innerExec),
-=======
-	serialExec := &NestedLoopApplyExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), outerExec, innerExec),
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 		innerExec:    innerExec,
 		outerExec:    outerExec,
 		outerFilter:  outerFilter,
@@ -1597,52 +1564,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) *NestedLoopAp
 		outerSchema:  v.OuterSchema,
 	}
 	executorCounterNestedLoopApplyExec.Inc()
-<<<<<<< HEAD
 	return e
-=======
-
-	// try parallel mode
-	if v.Concurrency > 1 {
-		innerExecs := make([]Executor, 0, v.Concurrency)
-		innerFilters := make([]expression.CNFExprs, 0, v.Concurrency)
-		corCols := make([][]*expression.CorrelatedColumn, 0, v.Concurrency)
-		joiners := make([]joiner, 0, v.Concurrency)
-		for i := 0; i < v.Concurrency; i++ {
-			clonedInnerPlan, err := plannercore.SafeClone(innerPlan)
-			if err != nil {
-				b.err = nil
-				return serialExec
-			}
-			corCol := plannercore.ExtractCorColumnsBySchema4PhysicalPlan(clonedInnerPlan, outerPlan.Schema())
-			clonedInnerExec := b.build(clonedInnerPlan)
-			if b.err != nil {
-				b.err = nil
-				return serialExec
-			}
-			innerExecs = append(innerExecs, clonedInnerExec)
-			corCols = append(corCols, corCol)
-			innerFilters = append(innerFilters, innerFilter.Clone())
-			joiners = append(joiners, newJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0,
-				defaultValues, otherConditions, retTypes(leftChild), retTypes(rightChild), nil))
-		}
-
-		allExecs := append([]Executor{outerExec}, innerExecs...)
-
-		return &ParallelNestedLoopApplyExec{
-			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), allExecs...),
-			innerExecs:   innerExecs,
-			outerExec:    outerExec,
-			outerFilter:  outerFilter,
-			innerFilter:  innerFilters,
-			outer:        v.JoinType != plannercore.InnerJoin,
-			joiners:      joiners,
-			corCols:      corCols,
-			concurrency:  v.Concurrency,
-			useCache:     true,
-		}
-	}
-	return serialExec
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 }
 
 func (b *executorBuilder) buildMaxOneRow(v *plannercore.PhysicalMaxOneRow) Executor {
@@ -2846,13 +2768,8 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(ctx context.Contex
 	}
 
 	e := &ProjectionExec{
-<<<<<<< HEAD
-		baseExecutor:     newBaseExecutor(builder.ctx, v.Schema(), v.ExplainID(), childExec),
-		numWorkers:       builder.ctx.GetSessionVars().ProjectionConcurrency,
-=======
 		baseExecutor:     newBaseExecutor(builder.ctx, v.Schema(), v.ID(), childExec),
-		numWorkers:       int64(builder.ctx.GetSessionVars().ProjectionConcurrency()),
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
+		numWorkers:       builder.ctx.GetSessionVars().ProjectionConcurrency,
 		evaluatorSuit:    expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
 		calculateNoDelay: v.CalculateNoDelay,
 	}

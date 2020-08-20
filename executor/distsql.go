@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"runtime"
 	"sort"

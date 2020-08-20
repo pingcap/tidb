@@ -100,32 +100,11 @@ type baseExecutor struct {
 	runtimeStats  *execdetails.BasicRuntimeStats
 }
 
-<<<<<<< HEAD
-=======
-const (
-	// globalPanicStorageExceed represents the panic message when out of storage quota.
-	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
-	// globalPanicMemoryExceed represents the panic message when out of memory limit.
-	globalPanicMemoryExceed string = "Out Of Global Memory Limit!"
-)
-
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 // globalPanicOnExceed panics when GlobalDisTracker storage usage exceeds storage quota.
 type globalPanicOnExceed struct {
 	mutex sync.Mutex // For synchronization.
 }
 
-<<<<<<< HEAD
-=======
-func init() {
-	action := &globalPanicOnExceed{}
-	GlobalMemoryUsageTracker = memory.NewGlobalTracker(memory.LabelForGlobalMemory, -1)
-	GlobalMemoryUsageTracker.SetActionOnExceed(action)
-	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
-	GlobalDiskUsageTracker.SetActionOnExceed(action)
-}
-
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 // SetLogHook sets a hook for PanicOnExceed.
 func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
 
@@ -133,20 +112,7 @@ func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
 func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
-<<<<<<< HEAD
 	panic(globalPanicStorageExceed)
-=======
-	msg := ""
-	switch t.Label() {
-	case memory.LabelForGlobalStorage:
-		msg = globalPanicStorageExceed
-	case memory.LabelForGlobalMemory:
-		msg = globalPanicMemoryExceed
-	default:
-		msg = "Out of Unknown Resource Quota!"
-	}
-	panic(msg)
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 }
 
 // SetFallback sets a fallback action.
@@ -158,7 +124,7 @@ const (
 )
 
 func init() {
-	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(stringutil.StringerStr("GlobalStorageLabel"), -1)
+	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
 	action := &globalPanicOnExceed{}
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 }

@@ -275,14 +275,9 @@ func NewContext() *Context {
 	sctx.sessionVars.InitChunkSize = 2
 	sctx.sessionVars.MaxChunkSize = 32
 	sctx.sessionVars.StmtCtx.TimeZone = time.UTC
-<<<<<<< HEAD
-	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("mock.NewContext"), -1)
-	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(stringutil.StringerStr("mock.NewContext"), -1)
-	sctx.sessionVars.StmtCtx.CheckKeyExists = make(map[string]struct{})
-=======
 	sctx.sessionVars.StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	sctx.sessionVars.StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
+	sctx.sessionVars.StmtCtx.CheckKeyExists = make(map[string]struct{})
 	sctx.sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor()
 	if err := sctx.GetSessionVars().SetSystemVar(variable.MaxAllowedPacket, "67108864"); err != nil {
 		panic(err)

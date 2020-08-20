@@ -36,11 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/stringutil"
-=======
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )

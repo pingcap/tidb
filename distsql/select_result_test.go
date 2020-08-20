@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"context"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -28,13 +27,8 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 	ctx.GetSessionVars().StmtCtx = new(stmtctx.StatementContext)
 	sr := selectResult{ctx: ctx}
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, IsNil)
-<<<<<<< HEAD
-	sr.rootPlanID = copPlan{}
-	sr.updateCopRuntimeStats(context.Background(), &execdetails.ExecDetails{CalleeAddress: "a"}, 0)
-=======
 	sr.rootPlanID = 1234
-	sr.updateCopRuntimeStats(context.Background(), &tikv.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "a"}}, 0)
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
+	sr.updateCopRuntimeStats(context.Background(), &execdetails.ExecDetails{CalleeAddress: "a"}, 0)
 
 	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
 	t := uint64(1)
@@ -44,28 +38,12 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 		},
 	}
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()) != len(sr.copPlanIDs), IsTrue)
-<<<<<<< HEAD
 	sr.updateCopRuntimeStats(context.Background(), &execdetails.ExecDetails{CalleeAddress: "callee"}, 0)
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats("callee"), IsFalse)
-=======
-	sr.updateCopRuntimeStats(context.Background(), &tikv.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "callee"}}, 0)
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234), IsFalse)
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 
 	sr.copPlanIDs = []int{sr.rootPlanID}
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, NotNil)
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()), Equals, len(sr.copPlanIDs))
-<<<<<<< HEAD
 	sr.updateCopRuntimeStats(context.Background(), &execdetails.ExecDetails{CalleeAddress: "callee"}, 0)
-	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats("callee").String(), Equals, "time:1ns, loops:1")
-}
-
-type copPlan struct{}
-
-func (p copPlan) String() string {
-	return "callee"
-=======
-	sr.updateCopRuntimeStats(context.Background(), &tikv.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "callee"}}, 0)
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String(), Equals, "time:1ns, loops:1")
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 }

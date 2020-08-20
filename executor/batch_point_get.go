@@ -78,49 +78,6 @@ func (e *BatchPointGetExec) buildVirtualColumnInfo() {
 
 // Open implements the Executor interface.
 func (e *BatchPointGetExec) Open(context.Context) error {
-<<<<<<< HEAD
-=======
-	e.snapshotTS = e.startTS
-	txnCtx := e.ctx.GetSessionVars().TxnCtx
-	if e.lock {
-		e.snapshotTS = txnCtx.GetForUpdateTS()
-	}
-	txn, err := e.ctx.Txn(false)
-	if err != nil {
-		return err
-	}
-	e.txn = txn
-	var snapshot kv.Snapshot
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() {
-		// We can safely reuse the transaction snapshot if startTS is equal to forUpdateTS.
-		// The snapshot may contains cache that can reduce RPC call.
-		snapshot = txn.GetSnapshot()
-	} else {
-		snapshot, err = e.ctx.GetStore().GetSnapshot(kv.Version{Ver: e.snapshotTS})
-		if err != nil {
-			return err
-		}
-	}
-	if e.runtimeStats != nil {
-		snapshotStats := &tikv.SnapshotRuntimeStats{}
-		e.stats = &pointGetRuntimeStats{
-			BasicRuntimeStats:    e.runtimeStats,
-			SnapshotRuntimeStats: snapshotStats,
-		}
-		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
-	}
-	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
-		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
-	}
-	snapshot.SetOption(kv.TaskID, e.ctx.GetSessionVars().StmtCtx.TaskID)
-	var batchGetter kv.BatchGetter = snapshot
-	if txn.Valid() {
-		batchGetter = kv.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, snapshot)
-	}
-	e.snapshot = snapshot
-	e.batchGetter = batchGetter
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 	return nil
 }
 
@@ -192,7 +149,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		e.snapshot = snapshot
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {

@@ -71,15 +71,7 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-<<<<<<< HEAD
-	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
-=======
-	err = disk.CheckAndInitTempDir()
-	if err != nil {
-		return
-	}
 	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, defaultChunkListInDiskPath+strconv.Itoa(l.diskTracker.Label()))
->>>>>>> a2e2ce6... *: use int instead of fmt.Stringer as executor id (#19207)
 	if err != nil {
 		return
 	}
