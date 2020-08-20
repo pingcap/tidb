@@ -406,9 +406,6 @@ func (s *Server) onConn(conn *clientConn) {
 	if plugin.IsEnable(plugin.Audit) {
 		sessionVars.ConnectionInfo = conn.connectInfo()
 	}
-	type vars struct {
-		killed *uint32
-	}
 	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
