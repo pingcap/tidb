@@ -161,7 +161,9 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, tableID, pa
 	case tipb.ExecType_TypeLimit:
 		child = exec.Limit.Child
 	case tipb.ExecType_TypeStreamAgg:
-		child = exec.StreamAgg.Child
+		if exec.StreamAgg != nil {
+			child = exec.StreamAgg.Child
+		}
 	case tipb.ExecType_TypeJoin:
 		// TiFlash currently does not support Join on partition table.
 		// The planner should not generate this kind of plan.
