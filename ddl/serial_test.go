@@ -130,6 +130,9 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk.MustExec("create table primary_key_test1 (a int, b varchar(10), primary key(a))")
 	tk.MustExec("create table primary_key_test2 (a int, b varchar(10), primary key(b))")
 	tk.MustExec("create table primary_key_test3 (a int, b varchar(10))")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.MustExec("create table primary_key_test4 (a varchar(255), b varchar(10), primary key(a))")
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = true
@@ -144,17 +147,19 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
 
 	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's pkIsHandle is true")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's primary key is handle")
 	tk.MustExec("alter table primary_key_test2 drop primary key")
 	_, err = tk.Exec("alter table primary_key_test3 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:1091]Can't DROP 'PRIMARY'; check that column/key exists")
+	_, err = tk.Exec("alter table primary_key_test4 drop primary key")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's primary key is handle")
 
 	// for "drop index `primary` on ..." syntax
-	tk.MustExec("create table primary_key_test4 (a int, b varchar(10), primary key(a))")
+	tk.MustExec("create table primary_key_test5 (a int, b varchar(10), primary key(a))")
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = false
 	})
-	_, err = tk.Exec("drop index `primary` on primary_key_test4")
+	_, err = tk.Exec("drop index `primary` on primary_key_test5")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 	// for the index name is `primary`
 	tk.MustExec("create table tt(`primary` int);")

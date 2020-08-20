@@ -1125,11 +1125,11 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 }
 
 // checkInvisibleIndexOnPK check if primary key is invisible index.
-// Note: PKIsHandle == true means the table already has a visible primary key,
+// Note: PKIsHandle == true or IsCommonHandle == true means the table already has a visible primary key,
 // we do not need do a check for this case and return directly,
 // because whether primary key is invisible has been check when creating table.
 func checkInvisibleIndexOnPK(tblInfo *model.TableInfo) error {
-	if tblInfo.PKIsHandle {
+	if tblInfo.PKIsHandle || tblInfo.IsCommonHandle {
 		return nil
 	}
 	pk := getPrimaryKey(tblInfo)
@@ -1727,6 +1727,7 @@ func (d *ddl) CreateTableWithInfo(
 			err = nil
 		}
 	} else if actionType == model.ActionCreateTable {
+		// TODO(youjiali1995): set placement rules for columnar tables.
 		d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
@@ -4509,6 +4510,12 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	if err != nil {
 		return errors.Trace(err)
 	}
+	tblInfo := t.Meta()
+
+	// Columnar tables don't support indices.
+	if tblInfo.IsColumnar {
+		return errors.Trace(ErrUnsupportedAddIndexForColumnar)
+	}
 
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
@@ -4538,8 +4545,6 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	if err = checkTooLongIndex(indexName); err != nil {
 		return errors.Trace(err)
 	}
-
-	tblInfo := t.Meta()
 
 	// Build hidden columns if necessary.
 	hiddenCols, err := buildHiddenColumnInfo(ctx, t, indexPartSpecifications, indexName)
@@ -4761,8 +4766,8 @@ func (d *ddl) DropIndex(ctx sessionctx.Context, ti ast.Ident, indexName model.CI
 		if indexInfo == nil && !t.Meta().PKIsHandle {
 			return ErrCantDropFieldOrKey.GenWithStack("Can't DROP 'PRIMARY'; check that column/key exists")
 		}
-		if t.Meta().PKIsHandle {
-			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's pkIsHandle is true")
+		if t.Meta().PKIsHandle || t.Meta().IsCommonHandle {
+			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table's primary key is handle")
 		}
 		if t.Meta().IsCommonHandle {
 			return ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table is using clustered index")

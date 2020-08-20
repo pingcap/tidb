@@ -5350,6 +5350,20 @@ func (s *testSerialDBSuite) TestAddIndexFailOnCaseWhenCanExit(c *C) {
 	tk.MustExec("drop table if exists t")
 }
 
+func (s *testDBSuite2) TestAddIndexForColumnarTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+	tk.MustExec("create table columnar (a int primary key, b int) engine = tiflash")
+	_, err := tk.Exec("alter table columnar add index idx (b)")
+	c.Assert(ddl.ErrUnsupportedAddIndexForColumnar.Equal(err), IsTrue)
+	_, err = tk.Exec("alter table columnar add unique index idx (b)")
+	c.Assert(ddl.ErrUnsupportedAddIndexForColumnar.Equal(err), IsTrue)
+	_, err = tk.Exec("create index idx on columnar (b)")
+	c.Assert(ddl.ErrUnsupportedAddIndexForColumnar.Equal(err), IsTrue)
+	_, err = tk.Exec("create unique index idx on columnar (b)")
+	c.Assert(ddl.ErrUnsupportedAddIndexForColumnar.Equal(err), IsTrue)
+}
+
 func init() {
 	// Make sure it will only be executed once.
 	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)

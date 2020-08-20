@@ -196,8 +196,6 @@ var (
 	ErrInvalidAutoRandom = terror.ClassDDL.New(mysql.ErrInvalidAutoRandom, mysql.MySQLErrName[mysql.ErrInvalidAutoRandom])
 	// ErrUnsupportedConstraintCheck returns when use ADD CONSTRAINT CHECK.
 	ErrUnsupportedConstraintCheck = terror.ClassDDL.New(mysql.ErrUnsupportedConstraintCheck, mysql.MySQLErrName[mysql.ErrUnsupportedConstraintCheck])
-	// ErrCantCreateColumnarTable returns when the table can't meet constraints of columnar tables.
-	ErrCantCreateColumnarTable = terror.ClassDDL.New(mysql.ErrCantCreateColumnarTable, mysql.MySQLErrName[mysql.ErrCantCreateColumnarTable])
 
 	// ErrSequenceRunOut returns when the sequence has been run out.
 	ErrSequenceRunOut = terror.ClassDDL.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])
@@ -237,4 +235,8 @@ var (
 
 	// ErrInvalidPlacementSpec is returned when add/alter an invalid placement rule
 	ErrInvalidPlacementSpec = terror.ClassDDL.New(mysql.ErrInvalidPlacementSpec, mysql.MySQLErrName[mysql.ErrInvalidPlacementSpec])
+
+	// ErrCantCreateColumnarTable returns when the table can't meet constraints of columnar tables.
+	ErrCantCreateColumnarTable        = terror.ClassDDL.New(mysql.ErrCantCreateColumnarTable, mysql.MySQLErrName[mysql.ErrCantCreateColumnarTable])
+	ErrUnsupportedAddIndexForColumnar = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "add index for columnar table"))
 )
