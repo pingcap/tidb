@@ -14,8 +14,12 @@
 package codec
 
 import (
+	"bytes"
 	"encoding/binary"
+	"fmt"
+	"io"
 	"runtime"
+	"strings"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -164,6 +168,53 @@ func DecodeCompactBytes(b []byte) ([]byte, []byte, error) {
 		return nil, nil, errors.Errorf("insufficient bytes to decode value, expected length: %v", n)
 	}
 	return b[n:], b[:n], nil
+}
+
+// DecodeEscapeString decode the raw escape string
+// It takes raw string like `\130\131\132` and return "XYZ"
+// This function is copied from tidb-ctl project
+func DecodeEscapeString(text string) (string, error) {
+	var buf []byte
+	r := bytes.NewBuffer([]byte(text))
+	for {
+		c, err := r.ReadByte()
+		if err != nil {
+			if err != io.EOF {
+				return "", err
+			}
+			break
+		}
+		if c != '\\' {
+			buf = append(buf, c)
+			continue
+		}
+		n := r.Next(1)
+		if len(n) == 0 {
+			return "", io.EOF
+		}
+		// See: https://golang.org/ref/spec#Rune_literals
+		if idx := strings.IndexByte(`abfnrtv\'"`, n[0]); idx != -1 {
+			buf = append(buf, []byte("\a\b\f\n\r\t\v\\'\"")[idx])
+			continue
+		}
+
+		switch n[0] {
+		case 'x':
+			_, err := fmt.Sscanf(string(r.Next(2)), "%02x", &c)
+			if err != nil {
+				return "", err
+			}
+			buf = append(buf, c)
+		default:
+			n = append(n, r.Next(2)...)
+			_, err := fmt.Sscanf(string(n), "%03o", &c)
+			if err != nil {
+				return "", err
+			}
+			buf = append(buf, c)
+		}
+	}
+	return string(buf), nil
 }
 
 // See https://golang.org/src/crypto/cipher/xor.go

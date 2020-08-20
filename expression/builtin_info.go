@@ -767,8 +767,12 @@ func (b *builtinTiDBDecodeKeySig) evalJSON(row chunk.Row) (res json.BinaryJSON, 
 func decodeKey(ctx sessionctx.Context, s string) map[string]interface{} {
 	key, err := hex.DecodeString(s)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
-		return nil
+		escapeString, err := codec.DecodeEscapeString(s)
+		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
+			return nil
+		}
+		key = []byte(escapeString)
 	}
 	// Auto decode byte if needed.
 	_, bs, err := codec.DecodeBytes(key, nil)
