@@ -53,7 +53,7 @@ const (
 	// DefMaxOfMaxIndexLength is the maximum index length(in bytes) for TiDB v3.0.7 and previous version.
 	DefMaxOfMaxIndexLength = 3072 * 4
 	// DefMinQuotaStatistic is the minimum statistic memory quota(in bytes).
-	DefMinQuotaStatistic = 1024 * 1024 * 1024
+	DefMinQuotaStatistic = 1 << 30
 	// DefPort is the default port of TiDB
 	DefPort = 4000
 	// DefStatusPort is the default status port of TiDB
