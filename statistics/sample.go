@@ -46,11 +46,23 @@ type SampleItem struct {
 	Handle kv.Handle
 }
 
-// SortSampleItems sorts a slice of SampleItem.
-func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
-	sorter := sampleItemSorter{items: items, sc: sc}
+// CopySampleItems returns a deep copy of SampleItem slice.
+func CopySampleItems(items []*SampleItem) []*SampleItem {
+	n := make([]*SampleItem, len(items))
+	for i, item := range items {
+		ni := *item
+		n[i] = &ni
+	}
+	return n
+}
+
+// SortSampleItems shallow copies and sorts a slice of SampleItem.
+func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) ([]*SampleItem, error) {
+	sortedItems := make([]*SampleItem, len(items))
+	copy(sortedItems, items)
+	sorter := sampleItemSorter{items: sortedItems, sc: sc}
 	sort.Stable(&sorter)
-	return sorter.err
+	return sortedItems, sorter.err
 }
 
 type sampleItemSorter struct {
