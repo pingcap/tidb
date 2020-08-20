@@ -97,7 +97,8 @@ func DefaultConfig() *Config {
 	}
 }
 
-func (conf *Config) getDSN(db string) string {
+// GetDSN generates DSN from Config
+func (conf *Config) GetDSN(db string) string {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4", conf.User, conf.Password, conf.Host, conf.Port, db)
 	if len(conf.Security.CAPath) > 0 {
 		dsn += "&tls=dumpling-tls-target"

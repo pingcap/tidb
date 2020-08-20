@@ -30,7 +30,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 		}
 	}()
 
-	pool, err := sql.Open("mysql", conf.getDSN(""))
+	pool, err := sql.Open("mysql", conf.GetDSN(""))
 	if err != nil {
 		return withStack(err)
 	}
@@ -107,7 +107,7 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 			"After dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '10m' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n")
 	}
 
-	if newPool, err := resetDBWithSessionParams(pool, conf.getDSN(""), conf.SessionParams); err != nil {
+	if newPool, err := resetDBWithSessionParams(pool, conf.GetDSN(""), conf.SessionParams); err != nil {
 		return withStack(err)
 	} else {
 		pool = newPool
