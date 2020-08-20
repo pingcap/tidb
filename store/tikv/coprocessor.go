@@ -565,8 +565,8 @@ func (sender *copIteratorTaskSender) run() {
 	for _, t := range sender.tasks {
 		// we control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
-		// We keep the number of inflight tasks within the number of 2 * concurrency when Keep Order is true,
-		// if not, the number is the number of concurrency.
+		// We keep the number of inflight tasks within the number of 2 * concurrency when Keep Order is true.
+		// If KeepOrder is false, the number equals the concurrency.
 		// It sends one more task if a task has been finished in copIterator.Next.
 		exit := sender.sendRate.getToken(sender.finishCh)
 		if exit {
