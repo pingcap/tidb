@@ -16,6 +16,7 @@ package aggfuncs
 import (
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -275,6 +276,10 @@ type avgPartial4DistinctDecimal struct {
 	avgOriginal4DistinctDecimal
 }
 
+func (e *avgPartial4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	return 0, terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("avgPartial4DistinctDecimal.UpdatePartialResult should not be called")
+}
+
 func (e *avgPartial4DistinctDecimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4AvgDistinctDecimal)(src), (*partialResult4AvgDistinctDecimal)(dst)
 	if p1.count == 0 {
@@ -296,6 +301,31 @@ func (e *avgPartial4DistinctDecimal) MergePartialResult(sctx sessionctx.Context,
 		p2.count++
 	}
 	return 0, nil
+}
+
+func (e *avgPartial4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4AvgDistinctDecimal)(pr)
+	if p.count == 0 {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	decimalCount := types.NewDecFromInt(p.count)
+	finalResult := new(types.MyDecimal)
+	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, types.DivFracIncr)
+	if err != nil {
+		return err
+	}
+	// Make the decimal be the result of type inferring.
+	frac := e.args[1].GetType().Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err = finalResult.Round(finalResult, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfEven)
+	if err != nil {
+		return err
+	}
+	chk.AppendMyDecimal(e.ordinal, finalResult)
+	return nil
 }
 
 // All the following avg function implementations return the float64 result,
@@ -473,6 +503,10 @@ func (e *avgOriginal4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Co
 
 type avgPartial4DistinctFloat64 struct {
 	avgOriginal4DistinctFloat64
+}
+
+func (e *avgPartial4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	return 0, terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("avgPartial4DistinctFloat64.UpdatePartialResult should not be called")
 }
 
 func (e *avgPartial4DistinctFloat64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
