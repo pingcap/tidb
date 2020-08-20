@@ -24,7 +24,7 @@ type backfillWorkerType byte
 
 const (
 	typeAddIndexWorker     backfillWorkerType = 0
-	typeUpdateColumnWroker backfillWorkerType = 1
+	typeUpdateColumnWorker backfillWorkerType = 1
 )
 
 type backfillWorker struct {

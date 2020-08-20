@@ -861,7 +861,7 @@ func (w *worker) doModifyColumnTypeWithData(
 
 func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to update table row", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
-	return w.writePhysicalTableRecord(t.(table.PhysicalTable), typeUpdateColumnWroker, nil, oldColInfo, colInfo, reorgInfo)
+	return w.writePhysicalTableRecord(t.(table.PhysicalTable), typeUpdateColumnWorker, nil, oldColInfo, colInfo, reorgInfo)
 }
 
 // updateColumnAndIndexes handles the modify column reorganization state for a table.
