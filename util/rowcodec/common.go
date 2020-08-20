@@ -223,7 +223,7 @@ const (
 // IsRowKey determine whether key is row key.
 // this method will be used in unistore.
 func IsRowKey(key []byte) bool {
-	return len(key) == rowKeyLen && key[0] == 't' && key[recordPrefixIdx] == 'r'
+	return len(key) >= rowKeyLen && key[0] == 't' && key[recordPrefixIdx] == 'r'
 }
 
 // IsNewFormat checks whether row data is in new-format.

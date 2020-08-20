@@ -214,6 +214,8 @@ engines = ["tiflash"]
 [labels]
 foo= "bar"
 group= "abc"
+[security]
+spilled-file-encryption-method = "plaintext"
 `)
 
 	c.Assert(err, IsNil)
@@ -259,6 +261,7 @@ group= "abc"
 	c.Assert(len(conf.Labels), Equals, 2)
 	c.Assert(conf.Labels["foo"], Equals, "bar")
 	c.Assert(conf.Labels["group"], Equals, "abc")
+	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
 
 	_, err = f.WriteString(`
 [log.file]
@@ -291,6 +294,15 @@ enable-telemetry = false
 	c.Assert(f.Sync(), IsNil)
 	c.Assert(conf.Load(configFile), IsNil)
 	c.Assert(conf.EnableTelemetry, Equals, false)
+
+	_, err = f.WriteString(`
+[security]
+spilled-file-encryption-method = "aes128-ctr"
+`)
+	c.Assert(err, IsNil)
+	c.Assert(f.Sync(), IsNil)
+	c.Assert(conf.Load(configFile), IsNil)
+	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodAES128CTR)
 
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
@@ -487,7 +499,7 @@ func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
 
 	dirPrefix := filepath.Join(os.TempDir(), osUID+"_tidb")
 	for _, test := range tests {
-		tempStorageDir := encodeDefTempStorageDir(test.host, test.statusHost, test.port, test.statusPort)
+		tempStorageDir := encodeDefTempStorageDir(os.TempDir(), test.host, test.statusHost, test.port, test.statusPort)
 		c.Assert(tempStorageDir, Equals, filepath.Join(dirPrefix, test.expect, "tmp-storage"))
 	}
 }
@@ -524,4 +536,22 @@ func (s *testConfigSuite) TestModifyThroughLDFlags(c *C) {
 	defaultConf.EnableTelemetry = originalEnableTelemetry
 	CheckTableBeforeDrop = originalCheckTableBeforeDrop
 	StoreGlobalConfig(originalGlobalConfig)
+}
+
+func (s *testConfigSuite) TestSecurityValid(c *C) {
+	c1 := NewConfig()
+	tests := []struct {
+		spilledFileEncryptionMethod string
+		valid                       bool
+	}{
+		{"", false},
+		{"Plaintext", true},
+		{"plaintext123", false},
+		{"aes256-ctr", false},
+		{"aes128-ctr", true},
+	}
+	for _, tt := range tests {
+		c1.Security.SpilledFileEncryptionMethod = tt.spilledFileEncryptionMethod
+		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+	}
 }

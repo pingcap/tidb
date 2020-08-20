@@ -709,6 +709,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "INDEX_COMMENT", tp: mysql.TypeVarchar, size: 2048},
 	{name: "Expression", tp: mysql.TypeVarchar, size: 64},
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
 }
 
 var slowQueryCols = []columnInfo{

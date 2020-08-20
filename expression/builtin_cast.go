@@ -28,7 +28,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -1873,7 +1872,7 @@ func WrapWithCastAsString(ctx sessionctx.Context, expr Expression) Expression {
 		argLen = mysql.MaxIntWidth
 	}
 	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.Charset, tp.Collate = charset.GetDefaultCharsetAndCollate()
+	tp.Charset, tp.Collate = expr.CharsetAndCollation(ctx)
 	tp.Flen, tp.Decimal = argLen, types.UnspecifiedLength
 	return BuildCastFunction(ctx, expr, tp)
 }
