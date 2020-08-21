@@ -28,11 +28,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	pd "github.com/tikv/pd/client"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
@@ -1337,7 +1337,7 @@ func (r *Region) findElectableStoreID() uint64 {
 		return 0
 	}
 	for _, p := range r.meta.Peers {
-		if !p.IsLearner {
+		if p.Role != metapb.PeerRole_Learner {
 			return p.StoreId
 		}
 	}
