@@ -151,7 +151,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			continue
 		}
 		if len(row) < len(t.WritableCols()) && addChangingColTimes == 0 {
-			if col := tables.ChangingCol(t.WritableCols(), v.Meta()); col != nil {
+			if col := tables.FindChangingCol(t.WritableCols(), v.Meta()); col != nil {
 				row = append(row, row[col.DependencyColumnOffset])
 				addChangingColTimes++
 			}
