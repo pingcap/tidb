@@ -1,6 +1,7 @@
 package export
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -18,7 +19,7 @@ type Config struct {
 	Host      string
 	User      string
 	Port      int
-	Password  string
+	Password  string `json:"-"`
 	Security  struct {
 		CAPath   string
 		CertPath string
@@ -30,7 +31,7 @@ type Config struct {
 	LogLevel  string
 	LogFile   string
 	LogFormat string
-	Logger    *zap.Logger
+	Logger    *zap.Logger `json:"-"`
 
 	FileSize      uint64
 	StatementSize uint64
@@ -50,14 +51,14 @@ type Config struct {
 	CsvSeparator  string
 	CsvDelimiter  string
 
-	TableFilter        filter.Filter
+	TableFilter        filter.Filter `json:"-"`
 	Rows               uint64
 	Where              string
 	FileType           string
 	CompleteInsert     bool
 	EscapeBackslash    bool
 	DumpEmptyDatabase  bool
-	OutputFileTemplate *template.Template
+	OutputFileTemplate *template.Template `json:"-"`
 	SessionParams      map[string]interface{}
 }
 
@@ -95,6 +96,14 @@ func DefaultConfig() *Config {
 		SessionParams:      make(map[string]interface{}),
 		OutputFileTemplate: tmpl,
 	}
+}
+
+func (config *Config) String() string {
+	cfg, err := json.Marshal(config)
+	if err != nil {
+		log.Error("marshal config to json", zap.Error(err))
+	}
+	return string(cfg)
 }
 
 // GetDSN generates DSN from Config
