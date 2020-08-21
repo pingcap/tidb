@@ -1291,7 +1291,7 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 	return nil
 }
 
-func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model.IndexColumn, tblInfo *model.TableInfo, isPK bool) error {
+func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model.IndexColumn, tblInfo *model.TableInfo) (bool, error) {
 	var (
 		partCols []*model.ColumnInfo
 		err      error
@@ -1302,29 +1302,24 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model
 		// Parse partitioning key, extract the column names in the partitioning key to slice.
 		partCols, err = extractPartitionColumns(partExpr, tblInfo)
 		if err != nil {
-			return err
+			return false, err
 		}
 	} else {
 		partCols = make([]*model.ColumnInfo, 0, len(pi.Columns))
 		for _, col := range pi.Columns {
 			colInfo := getColumnInfoByName(tblInfo, col.L)
 			if colInfo == nil {
-				return infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
+				return false, infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
 			}
 			partCols = append(partCols, colInfo)
 		}
 	}
 
-	// Every unique key on the table must use every column in the table's partitioning expression.(This
+	// In MySQL, every unique key on the table must use every column in the table's partitioning expression.(This
 	// also includes the table's primary key.)
+	// In TiDB, global index will be built when this constraint is not satisfied and EnableGlobalIndex is set.
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
-	if !checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexColumns) {
-		if isPK {
-			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
-		}
-		return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
-	}
-	return nil
+	return checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexColumns), nil
 }
 
 type columnNameExtractor struct {
