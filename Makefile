@@ -69,7 +69,7 @@ VB_FILE =
 VB_FUNC =
 
 
-.PHONY: all build clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest
+.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest
 
 default: server buildsucc
 
@@ -84,9 +84,6 @@ parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
 dev: checklist check test
-
-build:
-	$(GOBUILD)
 
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
