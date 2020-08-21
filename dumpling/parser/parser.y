@@ -9850,7 +9850,7 @@ NumericType:
 		x := types.NewFieldType($1.(byte))
 		x.Flen = $2.(int)
 		if $2.(int) != types.UnspecifiedLength && types.TiDBStrictIntegerDisplayWidth {
-			yylex.AppendError(yylex.Errorf("Integer display width is deprecated and will be removed in a future release."))
+			yylex.AppendError(ErrWarnDeprecatedIntegerDisplayWidth)
 			parser.lastErrorAsWarn()
 		}
 		for _, o := range $3.([]*ast.TypeOpt) {
