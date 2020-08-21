@@ -813,7 +813,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		logutil.SetTag(ctx, "commitTs", commitTS)
 	}
 
-	tryAmend := c.isPessimistic && c.connID > 0 && !c.isAsyncCommit()
+	tryAmend := c.isPessimistic && c.connID > 0 && !c.isAsyncCommit() && c.txn.schemaAmender != nil
 	if !tryAmend {
 		_, _, err = c.checkSchemaValid(ctx, commitTS, c.txn.txnInfoSchema, false)
 		if err != nil {

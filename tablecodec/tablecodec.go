@@ -961,7 +961,7 @@ func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxIn
 	return GenIndexValueNew(sc, tblInfo, idxInfo, containNonBinaryString, distinct, untouched, indexedValues, h, 0)
 }
 
-// GenGlobalIndexValue create index value for both local and global index.
+// GenIndexValueNew create index value for both local and global index.
 func GenIndexValueNew(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, containNonBinaryString bool,
 	distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
 	idxVal := make([]byte, 1)
@@ -1162,6 +1162,9 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 	}
 	if segs.restoredValues != nil { // new collation
 		resultValues, err = decodeRestoredValues(columns[:colsLen], segs.restoredValues)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if hdStatus == HandleNotNeeded {
 		return resultValues, nil
