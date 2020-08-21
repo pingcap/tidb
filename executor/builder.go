@@ -3246,7 +3246,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
 	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
 	frameUnBounded := false
-	if v.Frame.Start != nil && v.Frame.End != nil {
+	if v.Frame != nil && v.Frame.Start != nil && v.Frame.End != nil {
 		frameUnBounded = v.Frame.Start.UnBounded && v.Frame.End.UnBounded
 	}
 	for _, desc := range v.WindowFuncDescs {
