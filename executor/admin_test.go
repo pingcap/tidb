@@ -201,7 +201,7 @@ func (s *testSuite5) TestClusteredIndexAdminRecoverIndex(c *C) {
 	// Test no corruption case.
 	tk.MustExec("create table t (a varchar(255), b int, c char(10), primary key(a, c), index idx(b));")
 	tk.MustExec("insert into t values ('1', 2, '3'), ('1', 2, '4'), ('1', 2, '5');")
-	tk.MustQuery("admin recover index t `primary`;").Check(testkit.Rows("0 3"))
+	tk.MustQuery("admin recover index t `primary`;").Check(testkit.Rows("0 0"))
 	tk.MustQuery("admin recover index t `idx`;").Check(testkit.Rows("0 3"))
 	tk.MustExec("admin check table t;")
 

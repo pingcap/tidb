@@ -463,8 +463,8 @@ func buildHandleColsForRecoverIndex(sctx *stmtctx.StatementContext, tblInfo *mod
 	for i := 0; i < len(tblInfo.Columns); i++ {
 		c := tblInfo.Columns[i]
 		tblCols[i] = &expression.Column{
-			RetType:     &c.FieldType,
-			ID:          c.ID,
+			RetType: &c.FieldType,
+			ID:      c.ID,
 		}
 	}
 	pkIdx := tables.FindPrimaryIndex(tblInfo)

@@ -437,11 +437,6 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 		return result, err
 	}
 
-	recoveringClusteredIndex := e.index.Meta().Primary && e.table.Meta().IsCommonHandle
-	if recoveringClusteredIndex {
-		return result, nil
-	}
-
 	err = e.batchMarkDup(txn, rows)
 	if err != nil {
 		return result, err
@@ -476,6 +471,13 @@ func (e *RecoverIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
+	recoveringClusteredIndex := e.index.Meta().Primary && e.table.Meta().IsCommonHandle
+	if recoveringClusteredIndex {
+		req.AppendInt64(0, 0)
+		req.AppendInt64(1, 0)
+		e.done = true
+		return nil
+	}
 	var totalAddedCnt, totalScanCnt int64
 	var err error
 	if tbl, ok := e.table.(table.PartitionedTable); ok {
