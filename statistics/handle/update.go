@@ -502,28 +502,42 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
-	sql := "select table_id, hist_id, is_index, feedback from mysql.stats_feedback order by table_id, hist_id, is_index"
-	rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
-	if len(rows) == 0 || err != nil {
+	sql := "SELECT distinct table_id from mysql.stats_meta"
+	tables, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+	if err != nil {
 		return errors.Trace(err)
 	}
-
-	var groupedRows [][]chunk.Row
-	preIdx := 0
-	tableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
-	for i := 1; i < len(rows); i++ {
-		row := rows[i]
-		if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex {
-			groupedRows = append(groupedRows, rows[preIdx:i])
-			tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-			preIdx = i
-		}
+	if len(tables) == 0 {
+		return nil
 	}
-	groupedRows = append(groupedRows, rows[preIdx:])
 
-	for _, rows := range groupedRows {
-		if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
+	for _, ptbl := range tables {
+		tbl := ptbl.GetInt64(0)
+		sql = fmt.Sprintf("select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%d order by table_id, hist_id, is_index", tbl)
+		rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+		if err != nil {
 			return errors.Trace(err)
+		}
+		if len(rows) == 0 {
+			continue
+		}
+		var groupedRows [][]chunk.Row
+		preIdx := 0
+		tableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
+		for i := 1; i < len(rows); i++ {
+			row := rows[i]
+			if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex {
+				groupedRows = append(groupedRows, rows[preIdx:i])
+				tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
+				preIdx = i
+			}
+		}
+		groupedRows = append(groupedRows, rows[preIdx:])
+
+		for _, rows := range groupedRows {
+			if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
