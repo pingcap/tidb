@@ -291,7 +291,7 @@ func buildRecoverIndexKeyRanges(sctx *stmtctx.StatementContext, tid int64, start
 	}
 	maxVal, err := codec.EncodeKey(sctx, nil, types.MaxValueDatum())
 	if err != nil {
-		logutil.BgLogger().Fatal("should never reach here")
+		panic("should never reach here")
 	}
 	endKey := tablecodec.EncodeRowKey(tid, maxVal)
 	return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}
