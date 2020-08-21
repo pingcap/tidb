@@ -3245,9 +3245,9 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
 	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
-	frameUnBounded := true
+	frameUnBounded := false
 	if v.Frame.Start != nil && v.Frame.End != nil {
-		frameUnBounded = v.Frame.Start.UnBounded || v.Frame.End.UnBounded
+		frameUnBounded = v.Frame.Start.UnBounded && v.Frame.End.UnBounded
 	}
 	for _, desc := range v.WindowFuncDescs {
 		aggDesc, err := aggregation.NewWindowAggFuncDesc(b.ctx, desc.Name, desc.Args, false, frameUnBounded)
@@ -3262,7 +3262,8 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		resultColIdx++
 	}
 	var processor windowProcessor
-	if v.Frame == nil {
+	// SUM(a) OVER(PARTITION BY b) is same as SUM(a) OVER(PARTITION BY b ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+	if v.Frame == nil || (v.Frame.Type == ast.Rows && frameUnBounded) {
 		processor = &aggWindowProcessor{
 			windowFuncs:    windowFuncs,
 			partialResults: partialResults,
