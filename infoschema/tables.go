@@ -1341,8 +1341,6 @@ func FormatVersion(TiDBVersion string, isDefaultVersion bool) string {
 
 // Member type
 type Member struct {
-	Name       string   `json:"name"`
-	MemberID   int      `json:"member_id"`
 	PeerUrls   []string `json:"peer_urls"`
 	ClientUrls []string `json:"client_urls"`
 }
