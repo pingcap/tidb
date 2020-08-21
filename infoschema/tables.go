@@ -1280,7 +1280,7 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 
 	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
 	var servers []ServerInfo
-	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetStoreServerInfo} {
+	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfoNew, GetStoreServerInfo} {
 		nodes, err := r(ctx)
 		if err != nil {
 			return nil, err
@@ -1337,6 +1337,89 @@ func FormatVersion(TiDBVersion string, isDefaultVersion bool) string {
 	}
 
 	return version
+}
+
+// Member type
+type Member struct {
+	Name       string   `json:"name"`
+	MemberID   string   `json:"member_id"`
+	PeerUrls   []string `json:"peer_urls"`
+	ClientUrls []string `json:"client_urls"`
+}
+
+//GetPDServerInfoNew return all pd server info
+func GetPDServerInfoNew(ctx sessionctx.Context) ([]ServerInfo, error) {
+	store := ctx.GetStore()
+	etcd, ok := store.(tikv.EtcdBackend)
+	if !ok {
+		return nil, errors.Errorf("%T not an etcd backend", store)
+	}
+	var servers []ServerInfo
+	addr := etcd.EtcdAddrs()[0]
+	addr = strings.TrimSpace(addr)
+	url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Members)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	req.Header.Add("PD-Allow-follower-handle", "true")
+	resp, err := util.InternalHTTPClient().Do(req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var MemberList = struct {
+		Members []Member `json:"members"`
+	}{}
+	err = json.NewDecoder(resp.Body).Decode(&MemberList)
+	terror.Log(resp.Body.Close())
+	for _, member := range MemberList.Members {
+		url := fmt.Sprintf("%s%s", member.ClientUrls[0], pdapi.ClusterVersion)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		req.Header.Add("PD-Allow-follower-handle", "true")
+		resp, err := util.InternalHTTPClient().Do(req)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		pdVersion, err := ioutil.ReadAll(resp.Body)
+		terror.Log(resp.Body.Close())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
+		// Get PD git_hash
+		url = fmt.Sprintf("%s%s", member.ClientUrls[0], pdapi.Status)
+		req, err = http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		req.Header.Add("PD-Allow-follower-handle", "true")
+		resp, err = util.InternalHTTPClient().Do(req)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		var content = struct {
+			GitHash        string `json:"git_hash"`
+			StartTimestamp int64  `json:"start_timestamp"`
+		}{}
+		err = json.NewDecoder(resp.Body).Decode(&content)
+		terror.Log(resp.Body.Close())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		servers = append(servers, ServerInfo{
+			ServerType:     "pd",
+			Address:        member.ClientUrls[0][7:],
+			StatusAddr:     member.PeerUrls[0][7:],
+			Version:        version,
+			GitHash:        content.GitHash,
+			StartTimestamp: content.StartTimestamp,
+		})
+	}
+	return servers, nil
 }
 
 // GetPDServerInfo returns all PD nodes information of cluster

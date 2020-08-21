@@ -23,4 +23,5 @@ const (
 	ClusterVersion = "/pd/api/v1/config/cluster-version"
 	Status         = "/pd/api/v1/status"
 	Config         = "/pd/api/v1/config"
+	Members        = "/pd/api/v1/members"
 )
