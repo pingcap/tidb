@@ -14,6 +14,8 @@
 package executor_test
 
 import (
+	"context"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -68,4 +70,35 @@ partition p2 values less than (10))`)
 	tk.MustQuery("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id").Sort().Check(testkit.Rows("4 4 4", "9 9 9"))
 	// Build index reader in index join
 	tk.MustQuery("select /*+ INL_JOIN(p) */ p.id from p, t where p.id = t.id").Check(testkit.Rows("4", "9"))
+}
+
+func (s *partitionTableSuite) TestPartitionUnionScanIndexJoin(c *C) {
+	// For issue https://github.com/pingcap/tidb/issues/19152
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int)) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue)")
+	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int, c_str)) partition by hash (c_int) partitions 4")
+	tk.MustExec("insert into t1 values (10, 'interesting neumann')")
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t2 values (11, 'hopeful hoover');")
+	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */  * from t1 join t2 on t1.c_int = t2.c_int and t1.c_str = t2.c_str where t1.c_int in (10, 11)").Check(testkit.Rows("10 interesting neumann 10 interesting neumann"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1,t2) */  * from t1 join t2 on t1.c_int = t2.c_int and t1.c_str = t2.c_str where t1.c_int in (10, 11)").Check(testkit.Rows("10 interesting neumann 10 interesting neumann"))
+	tk.MustExec("commit")
+}
+
+func (s *partitionTableSuite) TestDAGTableID(c *C) {
+	// This test checks the table ID in the DAG is changed to partition ID in the nextPartition function.
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table employees (id int,store_id int not null)partition by hash(store_id) partitions 4;")
+	sql := "select * from test.employees"
+	rs, err := tk.Exec(sql)
+	c.Assert(err, IsNil)
+
+	m := make(map[int64]struct{})
+	ctx := context.WithValue(context.Background(), "nextPartitionUpdateDAGReq", m)
+	tk.ResultSetToResultWithCtx(ctx, rs, Commentf("sql:%s, args:%v", sql))
+	// Check table ID is changed to partition ID for each partition.
+	c.Assert(m, HasLen, 4)
 }

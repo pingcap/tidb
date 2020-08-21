@@ -300,6 +300,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 			arg.GetType().Collate = v.Collate
 		}
 		sr.stack[len(sr.stack)-1].SetCoercibility(CoercibilityExplicit)
+		sr.stack[len(sr.stack)-1].SetCharsetAndCollation(arg.GetType().Charset, arg.GetType().Collate)
 	default:
 		sr.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
