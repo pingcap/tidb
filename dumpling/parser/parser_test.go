@@ -3589,6 +3589,8 @@ func (s *testParserSuite) TestType(c *C) {
 
 		// for enum and set type
 		{"create table t (c1 enum('a', 'b'), c2 set('a', 'b'))", true, "CREATE TABLE `t` (`c1` ENUM('a','b'),`c2` SET('a','b'))"},
+		{"create table t (c1 enum(0x61, 'b'), c2 set(0x61, 'b'))", true, "CREATE TABLE `t` (`c1` ENUM('a','b'),`c2` SET('a','b'))"},
+		{"create table t (c1 enum(0b01100001, 'b'), c2 set(0b01100001, 'b'))", true, "CREATE TABLE `t` (`c1` ENUM('a','b'),`c2` SET('a','b'))"},
 		{"create table t (c1 enum)", false, ""},
 		{"create table t (c1 set)", false, ""},
 
