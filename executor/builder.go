@@ -3262,8 +3262,11 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		resultColIdx++
 	}
 	var processor windowProcessor
-	// MAX(a) OVER(PARTITION BY b) is same as MAX(a) OVER(PARTITION BY b ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
-	if v.Frame == nil || (v.Frame.Type == ast.Rows && frameUnBounded) {
+	// Without ORDER BY: The default frame includes all partition rows
+	// eg. MAX(a) OVER(PARTITION BY b) is same as MAX(a) OVER(PARTITION BY b ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+	// or MAX(a) OVER(PARTITION BY b RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+	// https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html
+	if v.Frame == nil || (len(v.OrderBy) == 0 && frameUnBounded) {
 		processor = &aggWindowProcessor{
 			windowFuncs:    windowFuncs,
 			partialResults: partialResults,
