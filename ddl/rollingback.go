@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"fmt"
+	"github.com/pingcap/parser/terror"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -414,8 +415,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 			job.Error = toTError(err)
 		}
 		if !job.Error.Equal(errCancelledDDLJob) {
-			job.Error = job.Error.Class().Synthesize(job.Error.Code(),
-				fmt.Sprintf("DDL job rollback, error msg: %s", terror.ToSQLError(job.Error).Message))
+			job.Error = terror.GetErrClass(job.Error).Synthesize(terror.ErrCode(job.Error.Code()),
+				fmt.Sprintf("DDL job rollback, error msg: %s, %d", terror.ToSQLError(job.Error).Message, terror.GetErrClass(job.Error)))
 		}
 		job.ErrorCount++
 
