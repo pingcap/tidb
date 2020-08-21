@@ -328,7 +328,7 @@ func (crs *CopRuntimeStats) String() string {
 type RuntimeStats interface {
 	GetActRows() int64
 	String() string
-	AddConsume(time.Duration)
+	GetBasicRuntimeStats() *BasicRuntimeStats
 }
 
 // BasicRuntimeStats is the basic runtime stats.
@@ -354,8 +354,8 @@ func (e *BasicRuntimeStats) Record(d time.Duration, rowNum int) {
 }
 
 // AddConsume adds executor's consume time.
-func (e *BasicRuntimeStats) AddConsume(d time.Duration) {
-	atomic.AddInt64(&e.consume, int64(d))
+func (e *BasicRuntimeStats) GetBasicRuntimeStats() *BasicRuntimeStats {
+	return e
 }
 
 // SetRowNum sets the row num.
@@ -492,10 +492,12 @@ type RuntimeStatsWithCommit struct {
 func (e *RuntimeStatsWithCommit) String() string {
 	var result string
 	if e.RuntimeStats != nil {
+		basic := e.RuntimeStats.GetBasicRuntimeStats()
+		newBasic := *basic
 		if e.Commit != nil {
-			e.RuntimeStats.AddConsume(e.Commit.PrewriteTime + e.Commit.GetCommitTsTime + e.Commit.CommitTime)
+			newBasic.consume += int64(e.Commit.PrewriteTime + e.Commit.GetCommitTsTime + e.Commit.CommitTime)
 		}
-		result = e.RuntimeStats.String()
+		result = newBasic.String()
 	}
 	if e.Commit == nil {
 		return result
@@ -529,6 +531,10 @@ func (e *RuntimeStatsWithCommit) String() string {
 		}
 		e.Commit.Mu.Unlock()
 		buf.WriteString("}")
+	}
+	if e.Commit.ResolveLockTime > 0 {
+		buf.WriteString(", resolve_lock: ")
+		buf.WriteString(time.Duration(e.Commit.ResolveLockTime).String())
 	}
 
 	prewriteRegionNum := atomic.LoadInt32(&e.Commit.PrewriteRegionNum)
