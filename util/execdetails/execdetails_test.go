@@ -149,8 +149,8 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		RuntimeStats: basicStats,
 		Commit:       commitDetail,
 	}
-	expect := "time:4s, loops:1, prewrite:1s, get_commit_ts:1s, commit:1s, commit_backoff: {time: 1s, type: [backoff1 backoff2 backoff1]}, resolve_lock: 1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2"
+	expect := "time:4s, loops:1, prewrite:1s, get_commit_ts:1s, commit:1s, commit_backoff: {time: 1s, type: [backoff1 backoff2]}, resolve_lock: 1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2"
 	if stats.String() != expect {
-		t.Fatalf("\n%v != \n%v", stats.String(), expect)
+		t.Fatalf("%v != %v", stats.String(), expect)
 	}
 }

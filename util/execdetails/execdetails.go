@@ -524,10 +524,22 @@ func (e *RuntimeStatsWithCommit) String() string {
 	if commitBackoffTime > 0 {
 		buf.WriteString(", commit_backoff: {time: ")
 		buf.WriteString(time.Duration(commitBackoffTime).String())
+		tpMap := make(map[string]struct{})
+		tpArray := []string{}
 		e.Commit.Mu.Lock()
 		if len(e.Commit.Mu.BackoffTypes) > 0 {
+			for _, tp := range e.Commit.Mu.BackoffTypes {
+				tpStr := tp.String()
+				_, ok := tpMap[tpStr]
+				if ok {
+					continue
+				}
+				tpMap[tpStr] = struct{}{}
+				tpArray = append(tpArray, tpStr)
+			}
 			buf.WriteString(", type: ")
-			buf.WriteString(fmt.Sprintf("%v", e.Commit.Mu.BackoffTypes))
+			sort.Strings(tpArray)
+			buf.WriteString(fmt.Sprintf("%v", tpArray))
 		}
 		e.Commit.Mu.Unlock()
 		buf.WriteString("}")
