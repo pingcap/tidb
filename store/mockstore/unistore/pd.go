@@ -20,7 +20,7 @@ import (
 
 	us "github.com/ngaut/unistore/tikv"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	pd "github.com/pingcap/pd/v4/client"
+	pd "github.com/tikv/pd/client"
 	"golang.org/x/net/context"
 )
 
