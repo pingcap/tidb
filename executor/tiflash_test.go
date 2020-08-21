@@ -37,14 +37,14 @@ type tiflashTestSuite struct {
 	ctx *mock.Context
 }
 
-func (s *tiflashTestSuite) SetUpSuite(c *C, tiflashNum int) {
+func (s *tiflashTestSuite) SetUpSuite(c *C) {
 	var err error
 	s.store, err = mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c cluster.Cluster) {
 			mockCluster := c.(*mocktikv.Cluster)
 			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
 			tiflashIdx := 0
-			for tiflashIdx < tiflashNum {
+			for tiflashIdx < 2 {
 				store2 := c.AllocID()
 				peer2 := c.AllocID()
 				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
