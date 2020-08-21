@@ -1361,6 +1361,16 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 	logutil.BgLogger().Info("[ddl] start to add table index", zap.String("job", job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	totalAddedCount := job.GetRowCount()
 
+	if err := w.isReorgRunnable(reorgInfo.d); err != nil {
+		return errors.Trace(err)
+	}
+
+	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
+		}
+	})
+
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
 	sessCtx := newContext(reorgInfo.d.store)
 	decodeColMap, err := makeupDecodeColMap(sessCtx, t, indexInfo)
@@ -1368,6 +1378,13 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
+=======
+	if startHandle == nil && endHandle == nil {
+		return nil
+	}
+
+>>>>>>> 1739f2a... ddl: exit add index on generated column with `case-when` expression parse error (#19330)
 	// variable.ddlReorgWorkerCounter can be modified by system variable "tidb_ddl_reorg_worker_cnt".
 	workerCnt := variable.GetDDLReorgWorkerCounter()
 	idxWorkers := make([]*addIndexWorker, 0, workerCnt)
