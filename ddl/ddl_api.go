@@ -3376,9 +3376,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 	}
 
 	if hasDefaultValue {
-
-		err := checkDefaultValue(ctx, col, true)
-		return errors.Trace(err)
+		return errors.Trace(checkDefaultValue(ctx, col, true))
 	}
 
 	return nil
