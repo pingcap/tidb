@@ -680,10 +680,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		if !ok || closed {
 			return nil, nil
 		}
-		if it.actionOnExceed == nil {
-			// unreachable code
-			panic("copIterator's actionOnExceed should be set when keep order equals false")
-		}
 		it.actionOnExceed.workersCond.L.Lock()
 		// The respCh have been drained out
 		if it.actionOnExceed.exceed && len(it.respChan) < 1 {
@@ -694,6 +690,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		}
 		it.actionOnExceed.workersCond.L.Unlock()
 	} else {
+		// TODO: support OOM Action during keeping order
 		for {
 			if it.curr >= len(it.tasks) {
 				// Resp will be nil if iterator is finishCh.
@@ -1259,18 +1256,14 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 	}
 	e.once.Do(func() {
 		if e.tearedTicket >= uint(cap(e.sendRate.token)-1) {
-			if e.fallbackAction != nil {
-				logutil.BgLogger().Info("taskRateLimitAction delegate to fallback action",
-					zap.Int64("consumed", t.BytesConsumed()),
-					zap.Int64("quota", t.GetBytesLimit()),
-					zap.Int64("maxConsumed", t.MaxConsumed()),
-					zap.Uint("tearedTicket", e.tearedTicket),
-					zap.Int("ticketTotal", cap(e.sendRate.token)))
-				e.fallbackAction.Action(t)
-				return
-			}
-			// unreachable code
-			panic("TaskRateLimitAction should set fallback action")
+			logutil.BgLogger().Info("taskRateLimitAction delegate to fallback action",
+				zap.Int64("consumed", t.BytesConsumed()),
+				zap.Int64("quota", t.GetBytesLimit()),
+				zap.Int64("maxConsumed", t.MaxConsumed()),
+				zap.Uint("tearedTicket", e.tearedTicket),
+				zap.Int("ticketTotal", cap(e.sendRate.token)))
+			e.fallbackAction.Action(t)
+			return
 		}
 		logutil.BgLogger().Info("memory exceeds quota, mark taskRateLimitAction exceed signal.",
 			zap.Int64("consumed", t.BytesConsumed()),
