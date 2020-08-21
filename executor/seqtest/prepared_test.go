@@ -242,12 +242,12 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		_, err = tk.Exec("prepare stmt FROM @SQL")
 		c.Assert(err, IsNil)
 		_, err = tk.Exec("execute stmt")
-		c.Assert(err, IsNul)
+		c.Assert(err, IsNil)
 		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("6"))
 		_, err = tk.Exec("prepare stmt FROM @Sql")
 		c.Assert(err, IsNil)
 		_, err = tk.Exec("execute stmt")
-		c.Assert(err, IsNul)
+		c.Assert(err, IsNil)
 		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("7"))
 
 		// Coverage.
