@@ -226,7 +226,7 @@ func getBinCollation(cs string) string {
 		return charset.CollationUTF8MB4
 	}
 
-	logutil.BgLogger().Error("unexpected charset" + cs)
+	logutil.BgLogger().Error("unexpected charset " + cs)
 	// it must return something, never reachable
-	return ""
+	return charset.CollationUTF8MB4
 }
