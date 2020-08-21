@@ -14,6 +14,7 @@
 package execdetails
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strconv"
@@ -327,6 +328,7 @@ func (crs *CopRuntimeStats) String() string {
 type RuntimeStats interface {
 	GetActRows() int64
 	String() string
+	AddConsume(time.Duration)
 }
 
 // BasicRuntimeStats is the basic runtime stats.
@@ -349,6 +351,11 @@ func (e *BasicRuntimeStats) Record(d time.Duration, rowNum int) {
 	atomic.AddInt32(&e.loop, 1)
 	atomic.AddInt64(&e.consume, int64(d))
 	atomic.AddInt64(&e.rows, int64(rowNum))
+}
+
+// AddConsume adds executor's consume time.
+func (e *BasicRuntimeStats) AddConsume(d time.Duration) {
+	atomic.AddInt64(&e.consume, int64(d))
 }
 
 // SetRowNum sets the row num.
@@ -475,4 +482,71 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 		}
 	}
 	return result
+}
+
+type RuntimeStatsWithCommit struct {
+	RuntimeStats
+	Commit *CommitDetails
+}
+
+func (e *RuntimeStatsWithCommit) String() string {
+	var result string
+	if e.RuntimeStats != nil {
+		if e.Commit != nil {
+			e.RuntimeStats.AddConsume(e.Commit.PrewriteTime + e.Commit.GetCommitTsTime + e.Commit.CommitTime)
+		}
+		result = e.RuntimeStats.String()
+	}
+	if e.Commit == nil {
+		return result
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, len(result)+32))
+	buf.WriteString(result)
+	if e.Commit.PrewriteTime > 0 {
+		buf.WriteString(", prewrite:")
+		buf.WriteString(e.Commit.PrewriteTime.String())
+	}
+	if e.Commit.WaitPrewriteBinlogTime > 0 {
+		buf.WriteString(", wait_prewrite_binlog:")
+		buf.WriteString(e.Commit.WaitPrewriteBinlogTime.String())
+	}
+	if e.Commit.GetCommitTsTime > 0 {
+		buf.WriteString(", get_commit_ts:")
+		buf.WriteString(e.Commit.GetCommitTsTime.String())
+	}
+	if e.Commit.CommitTime > 0 {
+		buf.WriteString(", commit:")
+		buf.WriteString(e.Commit.CommitTime.String())
+	}
+	commitBackoffTime := atomic.LoadInt64(&e.Commit.CommitBackoffTime)
+	if commitBackoffTime > 0 {
+		buf.WriteString(", commit_backoff: {time: ")
+		buf.WriteString(time.Duration(commitBackoffTime).String())
+		e.Commit.Mu.Lock()
+		if len(e.Commit.Mu.BackoffTypes) > 0 {
+			buf.WriteString(", type: ")
+			buf.WriteString(fmt.Sprintf("%v", e.Commit.Mu.BackoffTypes))
+		}
+		e.Commit.Mu.Unlock()
+		buf.WriteString("}")
+	}
+
+	prewriteRegionNum := atomic.LoadInt32(&e.Commit.PrewriteRegionNum)
+	if prewriteRegionNum > 0 {
+		buf.WriteString(", region_num:")
+		buf.WriteString(strconv.FormatInt(int64(prewriteRegionNum), 10))
+	}
+	if e.Commit.WriteKeys > 0 {
+		buf.WriteString(", write_keys:")
+		buf.WriteString(strconv.FormatInt(int64(e.Commit.WriteKeys), 10))
+	}
+	if e.Commit.WriteSize > 0 {
+		buf.WriteString(", write_byte:")
+		buf.WriteString(strconv.FormatInt(int64(e.Commit.WriteSize), 10))
+	}
+	if e.Commit.TxnRetry > 0 {
+		buf.WriteString(", txn_retry:")
+		buf.WriteString(strconv.FormatInt(int64(e.Commit.TxnRetry), 10))
+	}
+	return buf.String()
 }
