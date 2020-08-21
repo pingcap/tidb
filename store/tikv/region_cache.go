@@ -820,7 +820,7 @@ func (c *RegionCache) insertRegionToCache(cachedRegion *Region) {
 	if old != nil {
 		// Don't refresh TiFlash work idx for region. Otherwise, it will always goto a invalid store which
 		// is under transferring regions.
-		cachedRegion.getStore().workTiFlashIdx = old.(*btreeItem).cachedRegion.getStore().workTiFlashIdx
+		cachedRegion.getStore().workTiFlashIdx = atomic.LoadInt32(&old.(*btreeItem).cachedRegion.getStore().workTiFlashIdx)
 		delete(c.mu.regions, old.(*btreeItem).cachedRegion.VerID())
 	}
 	c.mu.regions[cachedRegion.VerID()] = cachedRegion
