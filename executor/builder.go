@@ -3262,7 +3262,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		resultColIdx++
 	}
 	var processor windowProcessor
-	// SUM(a) OVER(PARTITION BY b) is same as SUM(a) OVER(PARTITION BY b ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+	// MAX(a) OVER(PARTITION BY b) is same as MAX(a) OVER(PARTITION BY b ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
 	if v.Frame == nil || (v.Frame.Type == ast.Rows && frameUnBounded) {
 		processor = &aggWindowProcessor{
 			windowFuncs:    windowFuncs,
