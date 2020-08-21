@@ -39,11 +39,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	StateCreateIndexDeleteOnly model.SchemaState = 0xFE
-	StateCreateIndexWriteOnly  model.SchemaState = 0xFF
-)
-
 // adjustColumnInfoInAddColumn is used to set the correct position of column info when adding column.
 // 1. The added column was append at the end of tblInfo.Columns, due to ddl state was not public then.
 //    It should be moved to the correct position when the ddl state to be changed to public.
@@ -434,13 +429,13 @@ func (w *worker) onDropColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 			switch ctidxInfos[0].State {
 			case model.StateNone:
 				// none -> delete only
-				job.SchemaState = StateCreateIndexDeleteOnly
+				job.SchemaState = model.StateCreateIndexDeleteOnly
 				setIndicesState(ctidxInfos, model.StateDeleteOnly)
 				ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
 				metrics.AddIndexProgress.Set(0)
 			case model.StateDeleteOnly:
 				// delete only -> write only
-				job.SchemaState = StateCreateIndexWriteOnly
+				job.SchemaState = model.StateCreateIndexWriteOnly
 				setIndicesState(ctidxInfos, model.StateWriteOnly)
 				ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
 			case model.StateWriteOnly:
@@ -654,13 +649,13 @@ func (w *worker) onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 		switch ctidxInfos[0].State {
 		case model.StateNone:
 			// none -> delete only
-			job.SchemaState = StateCreateIndexDeleteOnly
+			job.SchemaState = model.StateCreateIndexDeleteOnly
 			setIndicesState(ctidxInfos, model.StateDeleteOnly)
 			ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
 			metrics.AddIndexProgress.Set(0)
 		case model.StateDeleteOnly:
 			// delete only -> write only
-			job.SchemaState = StateCreateIndexWriteOnly
+			job.SchemaState = model.StateCreateIndexWriteOnly
 			setIndicesState(ctidxInfos, model.StateWriteOnly)
 			ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
 		case model.StateWriteOnly:
