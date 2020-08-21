@@ -62,6 +62,8 @@ func (s SchemaState) String() string {
 		return "delete reorganization"
 	case StatePublic:
 		return "public"
+	case StateReplicaOnly:
+		return "replica only"
 	default:
 		return "none"
 	}
