@@ -779,10 +779,10 @@ func (e *approxCountDistinctOriginal) UpdatePartialResult(sctx sessionctx.Contex
 		if hasNull {
 			continue
 		}
-		oldBufSize := int64(p.bufSize())
+		oldBufSize := int64(p.bufSize()) * DefUint32Size
 		x := farm.Hash64(encodedBytes)
 		p.InsertHash64(x)
-		newBufSize := int64(p.bufSize())
+		newBufSize := int64(p.bufSize()) * DefUint32Size
 		memDelta += newBufSize - oldBufSize
 	}
 
@@ -815,12 +815,12 @@ func (e *approxCountDistinctPartial2) UpdatePartialResult(sctx sessionctx.Contex
 			continue
 		}
 
-		oldBufSize := int64(p.bufSize())
+		oldBufSize := int64(p.bufSize()) * DefUint32Size
 		err = p.readAndMerge(hack.Slice(input))
 		if err != nil {
 			return memDelta, err
 		}
-		newBufSize := int64(p.bufSize())
+		newBufSize := int64(p.bufSize()) * DefUint32Size
 		memDelta += newBufSize - oldBufSize
 	}
 	return memDelta, nil

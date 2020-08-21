@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -129,19 +130,19 @@ func (p *multiArgsAggTest) messUpChunk(c *chunk.Chunk) {
 	}
 }
 
-type updateMemDeltaGens func(*chunk.Chunk, *types.FieldType) []int64
+type updateMemDeltaGens func(*chunk.Chunk, *types.FieldType) (memDeltas []int64, err error)
 
-func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) []int64 {
-	memDeltas := make([]int64, 0)
+func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		memDeltas = append(memDeltas, int64(0))
 	}
-	return memDeltas
+	return memDeltas, nil
 }
 
-func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) []int64 {
+func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	valSet := set.NewStringSet()
-	memDeltas := make([]int64, 0)
+	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
@@ -154,15 +155,12 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 		case mysql.TypeLonglong:
 			val = strconv.FormatInt(row.GetInt64(0), 10)
 			memDelta = aggfuncs.DefInt64Size
-			break
 		case mysql.TypeFloat:
 			val = strconv.FormatFloat(float64(row.GetFloat32(0)), 'f', 6, 64)
 			memDelta = aggfuncs.DefFloat64Size
-			break
 		case mysql.TypeDouble:
 			val = strconv.FormatFloat(row.GetFloat64(0), 'f', 6, 64)
 			memDelta = aggfuncs.DefFloat64Size
-			break
 		case mysql.TypeNewDecimal:
 			decimal := row.GetMyDecimal(0)
 			hash, err := decimal.ToHashKey()
@@ -172,19 +170,15 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 			}
 			val = string(hack.String(hash))
 			memDelta = int64(len(val))
-			break
 		case mysql.TypeString:
 			val = row.GetString(0)
 			memDelta = int64(len(val))
-			break
 		case mysql.TypeDate:
 			val = row.GetTime(0).String()
 			memDelta = aggfuncs.DefTimeSize
-			break
 		case mysql.TypeDuration:
 			val = strconv.FormatInt(row.GetInt64(0), 10)
 			memDelta = aggfuncs.DefInt64Size
-			break
 		case mysql.TypeJSON:
 			json := row.GetJSON(0)
 			bytes := make([]byte, 0)
@@ -192,7 +186,8 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 			bytes = append(bytes, json.Value...)
 			val = string(bytes)
 			memDelta = int64(len(val))
-			break
+		default:
+			return memDeltas, errors.Errorf("unsupported type - %v", dataType.Tp)
 		}
 		if valSet.Exist(val) {
 			memDeltas = append(memDeltas, int64(0))
@@ -201,7 +196,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 		valSet.Insert(val)
 		memDeltas = append(memDeltas, memDelta)
 	}
-	return memDeltas
+	return memDeltas, nil
 }
 
 type aggMemTest struct {
@@ -548,7 +543,8 @@ func (s *testSuite) testAggMemFunc(c *C, p aggMemTest) {
 	finalPr, memDelta := finalFunc.AllocPartialResult()
 	c.Assert(memDelta, Equals, p.allocMemDelta)
 
-	updateMemDeltas := p.updateMemDeltaGens(srcChk, p.aggTest.dataType)
+	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.aggTest.dataType)
+	c.Assert(err, IsNil)
 	iter := chunk.NewIterator4Chunk(srcChk)
 	i := 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
