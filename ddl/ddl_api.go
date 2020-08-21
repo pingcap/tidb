@@ -928,7 +928,7 @@ func containsColumnOption(colDef *ast.ColumnDef, opTp ast.ColumnOptionType) bool
 	return false
 }
 
-// IsAutoRandomColumnID returns true if the given column ID belongs to a auto_random column.
+// IsAutoRandomColumnID returns true if the given column ID belongs to an auto_random column.
 func IsAutoRandomColumnID(tblInfo *model.TableInfo, colID int64) bool {
 	return tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() && tblInfo.GetPkColInfo().ID == colID
 }
