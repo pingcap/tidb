@@ -1372,6 +1372,9 @@ func GetPDServerInfoNew(ctx sessionctx.Context) ([]ServerInfo, error) {
 	}{}
 	err = json.NewDecoder(resp.Body).Decode(&MemberList)
 	terror.Log(resp.Body.Close())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	for _, member := range MemberList.Members {
 		url := fmt.Sprintf("%s%s", member.ClientUrls[0], pdapi.ClusterVersion)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
