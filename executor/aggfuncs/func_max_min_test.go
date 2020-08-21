@@ -98,6 +98,4 @@ func (s *testSuite) TestUnBoundedMaxMinBuilder(c *C) {
 	aggFunc = aggfuncs.BuildWindowFunctions(s.ctx, desc, 0, []*expression.Column{{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}})
 	_, ok = aggFunc.(aggfuncs.SlidingWindowAggFunc)
 	c.Assert(ok, IsTrue)
-
-
 }
