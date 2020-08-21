@@ -182,12 +182,6 @@ func SyntaxWarn(err error) error {
 	if err == nil {
 		return nil
 	}
-	// It is important for some parser warnings to judge what the error code is and the
-	// syntaxErrorPrefix is not always necessary to append on.
-	// TODO: for some terror parsed from parser, we can return it directly here.
-	if parser.ErrWarnDeprecatedIntegerDisplayWidth.Equal(err) {
-		return parser.ErrWarnDeprecatedIntegerDisplayWidth.GenWithStackByArgs()
-	}
 	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
 }
 
