@@ -1730,6 +1730,8 @@ func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
 
 func (s *testPessimisticSuite) Test19336(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table of exists t`)
 	tk.MustExec(`create table t (a int)`)
 	tk.MustQuery(`select * from t lock in share mode`).Check(testkit.Rows())
 }
