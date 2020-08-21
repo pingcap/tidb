@@ -2,6 +2,7 @@ package executor_test
 
 import (
 	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser"
