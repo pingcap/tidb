@@ -478,6 +478,7 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 	return result
 }
 
+// RuntimeStatsWithCommit is the RuntimeStats with commit detail.
 type RuntimeStatsWithCommit struct {
 	RuntimeStats
 	Commit *CommitDetails
