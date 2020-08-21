@@ -459,18 +459,19 @@ func buildHandleColsForRecoverIndex(sctx *stmtctx.StatementContext, tblInfo *mod
 		}
 		return plannercore.NewIntHandleCols(intCol)
 	}
-	idxCols := idxInfo.Columns
-	handleCols := allColInfo[len(idxCols):] // e.columns layout: idxCols ++ handleCols
-	pkCols := make([]*expression.Column, 0, len(handleCols))
-	for i := 0; i < len(handleCols); i++ {
-		info := handleCols[i]
-		pkCols = append(pkCols, &expression.Column{
-			RetType: &info.FieldType,
-			ID:      info.ID,
-			Index:   i,
-		})
+	tblCols := make([]*expression.Column, len(tblInfo.Columns))
+	for i := 0; i < len(tblInfo.Columns); i++ {
+		c := tblInfo.Columns[i]
+		tblCols[i] = &expression.Column{
+			RetType:     &c.FieldType,
+			ID:          c.ID,
+		}
 	}
-	return plannercore.NewCommonHandleCols(sctx, tblInfo, idxInfo, pkCols)
+	pkIdx := tables.FindPrimaryIndex(tblInfo)
+	for i, c := range pkIdx.Columns {
+		tblCols[c.Offset].Index = len(idxInfo.Columns) + i
+	}
+	return plannercore.NewCommonHandleCols(sctx, tblInfo, pkIdx, tblCols)
 }
 
 func buildCleanupIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
