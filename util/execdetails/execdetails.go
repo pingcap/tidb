@@ -328,7 +328,6 @@ func (crs *CopRuntimeStats) String() string {
 type RuntimeStats interface {
 	GetActRows() int64
 	String() string
-	GetBasicRuntimeStats() *BasicRuntimeStats
 }
 
 // BasicRuntimeStats is the basic runtime stats.
@@ -351,11 +350,6 @@ func (e *BasicRuntimeStats) Record(d time.Duration, rowNum int) {
 	atomic.AddInt32(&e.loop, 1)
 	atomic.AddInt64(&e.consume, int64(d))
 	atomic.AddInt64(&e.rows, int64(rowNum))
-}
-
-// AddConsume adds executor's consume time.
-func (e *BasicRuntimeStats) GetBasicRuntimeStats() *BasicRuntimeStats {
-	return e
 }
 
 // SetRowNum sets the row num.
@@ -492,12 +486,7 @@ type RuntimeStatsWithCommit struct {
 func (e *RuntimeStatsWithCommit) String() string {
 	var result string
 	if e.RuntimeStats != nil {
-		basic := e.RuntimeStats.GetBasicRuntimeStats()
-		newBasic := *basic
-		if e.Commit != nil {
-			newBasic.consume += int64(e.Commit.PrewriteTime + e.Commit.GetCommitTsTime + e.Commit.CommitTime)
-		}
-		result = newBasic.String()
+		result = e.RuntimeStats.String()
 	}
 	if e.Commit == nil {
 		return result
