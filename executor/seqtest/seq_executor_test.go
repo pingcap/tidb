@@ -287,7 +287,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		d int UNIQUE KEY,
 		index (b) invisible,
 		index (d) invisible)`)
-	excepted :=
+	expected :=
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) DEFAULT NULL,\n" +
 			"  `b` int(11) DEFAULT NULL,\n" +
@@ -298,7 +298,12 @@ func (s *seqTestSuite) TestShow(c *C) {
 			"  UNIQUE KEY `c` (`c`),\n" +
 			"  UNIQUE KEY `d_2` (`d`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+<<<<<<< HEAD
 	tk.MustQuery("show create table t").Check(testkit.Rows(excepted))
+=======
+	tk.MustQuery("show create table t").Check(testkit.Rows(expected))
+	tk.MustExec("drop table t")
+>>>>>>> f851898... ddl: improve compatibility for ALTER TABLE algorithms (#19270)
 
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
