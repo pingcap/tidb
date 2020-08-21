@@ -139,7 +139,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 				return "backoff1"
 			}),
 		}},
-		ResolveLockTime:   1000000000, // 10^9 ns = 1s
+		ResolveLockTime:   int64(time.Second),
 		WriteKeys:         3,
 		WriteSize:         66,
 		PrewriteRegionNum: 5,
