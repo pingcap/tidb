@@ -61,18 +61,11 @@ func (s *testDDLAlgorithmSuite) TestFindAlterAlgorithm(c *C) {
 		{ast.AlterTableSpec{Tp: ast.AlterTableOption, Options: []*ast.TableOption{{Tp: ast.TableOptionCollate}}}, supportedInstantAlgorithms, expectedInstantAlgorithms},
 
 		// TODO: after we support migrate the data of partitions, change below cases.
-<<<<<<< HEAD
-		{ast.AlterTableSpec{Tp: ast.AlterTableCoalescePartitions}, instantAlgorithm, ast.AlgorithmTypeInstant},
-		{ast.AlterTableSpec{Tp: ast.AlterTableAddPartitions}, instantAlgorithm, ast.AlgorithmTypeInstant},
-		{ast.AlterTableSpec{Tp: ast.AlterTableDropPartition}, instantAlgorithm, ast.AlgorithmTypeInstant},
-		{ast.AlterTableSpec{Tp: ast.AlterTableTruncatePartition}, instantAlgorithm, ast.AlgorithmTypeInstant},
-=======
 		{ast.AlterTableSpec{Tp: ast.AlterTableCoalescePartitions}, supportedInstantAlgorithms, expectedInstantAlgorithms},
 		{ast.AlterTableSpec{Tp: ast.AlterTableAddPartitions}, supportedInstantAlgorithms, expectedInstantAlgorithms},
 		{ast.AlterTableSpec{Tp: ast.AlterTableDropPartition}, supportedInstantAlgorithms, expectedInstantAlgorithms},
 		{ast.AlterTableSpec{Tp: ast.AlterTableTruncatePartition}, supportedInstantAlgorithms, expectedInstantAlgorithms},
 		{ast.AlterTableSpec{Tp: ast.AlterTableExchangePartition}, supportedInstantAlgorithms, expectedInstantAlgorithms},
->>>>>>> f851898... ddl: improve compatibility for ALTER TABLE algorithms (#19270)
 
 		// TODO: after we support lock a table, change the below case.
 		{ast.AlterTableSpec{Tp: ast.AlterTableLock}, supportedInstantAlgorithms, expectedInstantAlgorithms},
