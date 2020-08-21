@@ -84,7 +84,7 @@ type Domain struct {
 	cancel               context.CancelFunc
 
 	serverID        uint64
-	serverIDSession atomic.Value // with type *concurrency.Session
+	serverIDSession *concurrency.Session
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -751,15 +751,14 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	}
 
 	if do.etcdClient != nil {
-		if err = do.acquireServerID(ctx); err == nil {
-			do.wg.Add(1)
-			go do.serverIDKeeper()
-		} else {
+		err := do.acquireServerID(ctx)
+		if err != nil {
 			logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
 		}
+		do.wg.Add(1)
+		go do.serverIDKeeper(err != nil)
 	} else {
-		// set serverID for standalone deployment to enable 'KILL',
-		//   while `serverID == 0` means serverID is invalid, and 'KILL' is disabled.
+		// set serverID for standalone deployment to enable 'KILL'.
 		atomic.StoreUint64(&do.serverID, serverIDForStandalone)
 	}
 
@@ -1250,31 +1249,44 @@ func (do *Domain) ServerID() uint64 {
 	return atomic.LoadUint64(&do.serverID)
 }
 
-func (do *Domain) getServerIDSession() *concurrency.Session {
-	s, _ := do.serverIDSession.Load().(*concurrency.Session)
-	return s
-}
-
 const (
-	serverIDEtcdPath             = "/tidb/server_id"
-	acquireServerIDRetryCnt      = 100
+	serverIDEtcdPath = "/tidb/server_id"
+	serverIDTTL      = 12 * time.Hour
+	// lostConnectionToPDTimeout       = serverIDTTL / 2                // MUST be shorter than `serverIDTTL`. default to 6 hours.
+	// serverIDTimeToCheckPDConnection = lostConnectionToPDTimeout / 60 // default to 6 minutes.
+
+	lostConnectionToPDTimeout       = 30 * time.Second // test ONLY
+	serverIDTimeToCheckPDConnection = 3 * time.Second  // test ONLY
+
+	refreshServerIDRetryCnt      = 3
 	acquireServerIDRetryInterval = 300 * time.Millisecond
 	acquireServerIDTimeout       = 3 * time.Second
 )
 
-func (do *Domain) acquireServerID(ctx context.Context) error {
-	cfg := config.GetGlobalConfig()
-
-	atomic.StoreUint64(&do.serverID, 0)
+func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Session, error) {
+	if do.serverIDSession != nil {
+		return do.serverIDSession, nil
+	}
 
 	logPrefix := fmt.Sprintf("[acquireServerID] ")
-	session, err := owner.NewSession(ctx, logPrefix, do.etcdClient, owner.NewSessionDefaultRetryCnt, cfg.ServerIDTTL)
+	session, err := owner.NewSession(ctx, logPrefix, do.etcdClient, owner.NewSessionDefaultRetryCnt, int(serverIDTimeToCheckPDConnection.Seconds()))
+	if err != nil {
+		logutil.BgLogger().Error("retrieveServerIDSession fail", zap.Error(err))
+		return nil, err
+	}
+	do.serverIDSession = session
+	return session, nil
+}
+
+func (do *Domain) acquireServerID(ctx context.Context) error {
+	atomic.StoreUint64(&do.serverID, 0)
+
+	session, err := do.retrieveServerIDSession(ctx)
 	if err != nil {
 		return err
 	}
-	do.serverIDSession.Store(session)
 
-	for i := 0; i < acquireServerIDRetryCnt; i++ {
+	for {
 		randServerID := rand.Int63n(int64(util.MaxServerID)) + 1 // get a random serverID: [1, MaxServerID]
 		key := fmt.Sprintf("%s/%v", serverIDEtcdPath, randServerID)
 		cmp := clientv3.Compare(clientv3.CreateRevision(key), "=", 0)
@@ -1283,7 +1295,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 		childCtx, cancel := context.WithTimeout(ctx, acquireServerIDTimeout)
 		txn := do.etcdClient.Txn(childCtx)
 		t := txn.If(cmp)
-		resp, err := t.Then(clientv3.OpPut(key, value, clientv3.WithLease(do.getServerIDSession().Lease()))).Commit()
+		resp, err := t.Then(clientv3.OpPut(key, value, clientv3.WithLease(session.Lease()))).Commit()
 		cancel()
 		if err != nil {
 			return err
@@ -1296,17 +1308,20 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 
 		atomic.StoreUint64(&do.serverID, uint64(randServerID))
 		logutil.BgLogger().Info("acquireServerID", zap.Uint64("serverID", do.ServerID()),
-			zap.String("lease id", strconv.FormatInt(int64(do.getServerIDSession().Lease()), 16)))
+			zap.String("lease id", strconv.FormatInt(int64(session.Lease()), 16)))
 		return nil
 	}
-	logutil.BgLogger().Warn("no serverID available", zap.Int32("retry count", acquireServerIDRetryCnt))
-	return nil
 }
 
 func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
+	session, err := do.retrieveServerIDSession(ctx)
+	if err != nil {
+		return err
+	}
+
 	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, do.ServerID())
 	value := "0"
-	err := ddlutil.PutKVToEtcd(ctx, do.etcdClient, acquireServerIDRetryCnt, key, value, clientv3.WithLease(do.getServerIDSession().Lease()))
+	err = ddlutil.PutKVToEtcd(ctx, do.etcdClient, refreshServerIDRetryCnt, key, value, clientv3.WithLease(session.Lease()))
 	if err != nil {
 		logutil.BgLogger().Error("refreshServerIDTTL fail", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
 	} else {
@@ -1315,11 +1330,7 @@ func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 	return err
 }
 
-func (do *Domain) serverIDKeeper() {
-	cfg := config.GetGlobalConfig()
-	serverIDTimeToCheckPDConnection := time.Duration(cfg.ServerIDTTL) * time.Second / 10
-	lostConnectionTimeout := serverIDTimeToCheckPDConnection * 5
-
+func (do *Domain) serverIDKeeper(isAcquireServerIDFail bool) {
 	defer util.Recover(metrics.LabelDomain, "serverIDKeeper", nil, false)
 	ticker := time.NewTicker(serverIDTimeToCheckPDConnection)
 	defer func() {
@@ -1328,8 +1339,45 @@ func (do *Domain) serverIDKeeper() {
 		logutil.BgLogger().Info("serverIDKeeper exited.")
 	}()
 
-	isLostConnectionToPD := false
-	lastSucceedTimestamp := time.Now()
+	blocker := make(chan struct{}) // just used for blocking the sessionDone() when session is nil.
+	sessionDone := func() <-chan struct{} {
+		if do.serverIDSession == nil {
+			return blocker
+		}
+		return do.serverIDSession.Done()
+	}
+
+	var (
+		isLostConnectionToPD bool
+		lastSucceedTimestamp time.Time
+	)
+
+	onConnectionToPDRestored := func() {
+		logutil.BgLogger().Info("restored connection to PD")
+		isLostConnectionToPD = false
+		lastSucceedTimestamp = time.Now()
+
+		if err := do.info.StoreServerInfo(context.Background()); err != nil {
+			logutil.BgLogger().Error("StoreServerInfo failed", zap.Error(err))
+		}
+	}
+
+	onConnectionToPDLost := func() {
+		logutil.BgLogger().Warn("lost connection to PD")
+		isLostConnectionToPD = true
+
+		// Kill all connections when lost connection to PD,
+		//   to avoid the possibility that another TiDB instance acquires the same serverID and generates a same connection ID.
+		do.InfoSyncer().GetSessionManager().KillAllConnections()
+	}
+
+	if isAcquireServerIDFail {
+		isLostConnectionToPD = true
+	} else {
+		isLostConnectionToPD = false
+		lastSucceedTimestamp = time.Now()
+	}
+
 	for {
 		select {
 		case <-ticker.C:
@@ -1337,30 +1385,18 @@ func (do *Domain) serverIDKeeper() {
 				if err := do.refreshServerIDTTL(context.Background()); err == nil {
 					lastSucceedTimestamp = time.Now()
 				} else {
-					if lostConnectionTimeout > 0 && time.Since(lastSucceedTimestamp) > lostConnectionTimeout {
-						logutil.BgLogger().Warn("lost connection to PD")
-						isLostConnectionToPD = true
-						do.InfoSyncer().GetSessionManager().KillAllConnections()
+					if lostConnectionToPDTimeout > 0 && time.Since(lastSucceedTimestamp) > lostConnectionToPDTimeout {
+						onConnectionToPDLost()
 					}
 				}
-			}
-		case <-do.getServerIDSession().Done():
-			logutil.BgLogger().Info("serverIDSession need restart")
-			ctx := context.Background()
-			if err := do.acquireServerID(ctx); err == nil {
-				logutil.BgLogger().Info("restored connection to PD")
-				isLostConnectionToPD = false
-				lastSucceedTimestamp = time.Now()
-
-				if err1 := do.info.StoreServerInfo(ctx); err1 != nil {
-					logutil.BgLogger().Error("StoreServerInfo failed", zap.Error(err1))
-				}
-
-				logutil.BgLogger().Info("serverIDSession restarted")
 			} else {
-				logutil.BgLogger().Error("acquireServerID in restart failed", zap.Error(err))
-				time.Sleep(acquireServerIDRetryInterval)
+				if err := do.acquireServerID(context.Background()); err == nil {
+					onConnectionToPDRestored()
+				}
 			}
+		case <-sessionDone():
+			logutil.BgLogger().Info("serverIDSession need restart")
+			do.serverIDSession = nil
 		case <-do.exit:
 			return
 		}
