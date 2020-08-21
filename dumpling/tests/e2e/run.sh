@@ -16,10 +16,13 @@ run_sql "drop database if exists $DB_NAME;"
 
 # build data on mysql
 run_sql "create database $DB_NAME;"
-run_sql "create table $DB_NAME.$TABLE_NAME (a int(255));"
+run_sql "create table $DB_NAME.$TABLE_NAME (a int(255), b blob);"
 
 # insert 100 records
-run_sql "insert into $DB_NAME.$TABLE_NAME values $(seq -s, 100 | sed 's/,*$//g' | sed "s/[0-9]*/('1')/g");"
+run_sql "insert into $DB_NAME.$TABLE_NAME (a) values $(seq -s, 100 | sed 's/,*$//g' | sed "s/[0-9]*/('1')/g");"
+
+# insert blob records
+run_sql "insert into $DB_NAME.$TABLE_NAME (b) values (x''),(null),('0'),('1');"
 
 # dumping
 export DUMPLING_TEST_DATABASE=$DB_NAME
