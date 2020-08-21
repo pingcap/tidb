@@ -360,10 +360,6 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) error 
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalLock) PruneColumns(parentUsedCols []*expression.Column) error {
-	if p.Lock != ast.SelectLockForUpdate && p.Lock != ast.SelectLockForUpdateNoWait {
-		return p.baseLogicalPlan.PruneColumns(parentUsedCols)
-	}
-
 	if len(p.partitionedTable) > 0 {
 		// If the children include partitioned tables, do not prune columns.
 		// Because the executor needs the partitioned columns to calculate the lock key.
