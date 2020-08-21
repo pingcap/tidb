@@ -947,26 +947,18 @@ func (s *testSuite5) TestShowVar(c *C) {
 				if v.Scope == variable.ScopeGlobal {
 					showSQL = "show variables like '" + v.Name + "'"
 					res := tk.MustQuery(showSQL)
-					c.Assert(res, NotNil)
-					rows := res.Rows()
-					c.Assert(0, Equals, len(rows))
+					c.Check(res.Rows(), HasLen, 0)
 					showSQL = "show global variables like '" + v.Name + "'"
 					res = tk.MustQuery(showSQL)
-					c.Assert(res, NotNil)
-					rows = res.Rows()
-					c.Assert(1, Equals, len(rows))
+					c.Check(res.Rows(), HasLen, 1)
 				}
 				if v.Scope == variable.ScopeSession {
 					showSQL = "show global variables like '" + v.Name + "'"
 					res := tk.MustQuery(showSQL)
-					c.Assert(res, NotNil)
-					rows := res.Rows()
-					c.Assert(0, Equals, len(rows))
+					c.Check(res.Rows(), HasLen, 0)
 					showSQL = "show variables like '" + v.Name + "'"
 					res = tk.MustQuery(showSQL)
-					c.Assert(res, NotNil)
-					rows = res.Rows()
-					c.Assert(1, Equals, len(rows))
+					c.Check(res.Rows(), HasLen, 1)
 				}
 			}
 		}

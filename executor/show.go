@@ -644,19 +644,16 @@ func (e *ShowExec) fetchShowMasterStatus() error {
 func (e *ShowExec) fetchShowVariables() (err error) {
 	var (
 		value       string
-		ok          bool
 		sessionVars = e.ctx.GetSessionVars()
 	)
 	if !e.GlobalScope {
 		for _, v := range variable.SysVars {
 			if v.Scope != variable.ScopeGlobal {
-				value, ok, err = variable.GetSessionOnlySysVars(sessionVars, v.Name)
+				value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
 				if err != err {
 					return errors.Trace(err)
 				}
-				if ok {
-					e.appendRow([]interface{}{v.Name, value})
-				}
+				e.appendRow([]interface{}{v.Name, value})
 			}
 		}
 	} else {
