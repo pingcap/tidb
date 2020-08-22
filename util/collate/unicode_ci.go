@@ -137,19 +137,17 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 	return buf
 }
 
-func convertUnicode(r rune) (uint64, uint64) {
+// convert rune to weights.
+// `first` represent first 4 uint16 weights of rune
+// `second` represent last 4 uint16 weights of rune if exist, 0 if not
+func convertUnicode(r rune) (first, second uint64) {
 	if r > 0xFFFF {
 		return 0xFFFD, 0
 	}
-
-	sn := mapTable[r]
-	if sn != 0 {
-		if sn == longRune {
-			return longRuneMap[r][0], longRuneMap[r][1]
-		}
-		return sn, 0
+	if mapTable[r] == longRune {
+		return longRuneMap[r][0], longRuneMap[r][1]
 	}
-	return 0, 0
+	return mapTable[r], 0
 }
 
 // Pattern implements Collator interface.
