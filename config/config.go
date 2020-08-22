@@ -148,10 +148,6 @@ type Config struct {
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
 	// EnableTelemetry enables the usage data report to PingCAP.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
-	// ServerIDTTL is the Time-To-Live of serverID in PD.
-	//   ServerID is unique among the TiDB cluster, to make up a global connnection id, and enable the safety of `KILL`.
-	//   See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
-	ServerIDTTL int `toml:"server-id-ttl" json:"server-id-ttl"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -708,7 +704,6 @@ var defaultConf = Config{
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
-	ServerIDTTL:                60 * 60, // 1 hour
 }
 
 var (

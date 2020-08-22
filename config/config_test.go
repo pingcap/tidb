@@ -191,7 +191,6 @@ mem-quota-query = 10000
 nested-loop-join-cache-capacity = 100
 max-index-length = 3080
 skip-register-to-dashboard = true
-server-id-ttl = 1800
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -254,7 +253,6 @@ engines = ["tiflash"]
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
-	c.Assert(conf.ServerIDTTL, Equals, 1800)
 
 	_, err = f.WriteString(`
 [log.file]

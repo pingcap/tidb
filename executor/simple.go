@@ -1087,12 +1087,6 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		return nil
 	}
 
-	if sm.ServerID() == 0 {
-		// `sm.ServerID() == 0` indicates serverID allocation would be not working.
-		// Degrade to behavior as early versions.
-		return e.executeCompatibleKill(ctx, s)
-	}
-
 	connID, isTruncated := util.ParseGlobalConnID(s.ConnectionID)
 	if isTruncated {
 		logutil.BgLogger().Warn("Invalid KILL operation. ConnectionID is truncated to 32 bits", zap.Uint64("connID", s.ConnectionID))
@@ -1112,18 +1106,6 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		sm.Kill(s.ConnectionID, s.Query)
 	}
 
-	return nil
-}
-
-func (e *SimpleExec) executeCompatibleKill(ctx context.Context, s *ast.KillStmt) error {
-	conf := config.GetGlobalConfig()
-	if s.TiDBExtension || conf.CompatibleKillQuery {
-		sm := e.ctx.GetSessionManager()
-		sm.Kill(s.ConnectionID, s.Query)
-	} else {
-		err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead")
-		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-	}
 	return nil
 }
 

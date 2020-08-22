@@ -83,8 +83,9 @@ type Domain struct {
 	statsUpdating        sync2.AtomicInt32
 	cancel               context.CancelFunc
 
-	serverID        uint64
-	serverIDSession *concurrency.Session
+	serverID             uint64
+	serverIDSession      *concurrency.Session
+	isLostConnectionToPD sync2.AtomicInt32 // !0: true, 0: false.
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -1249,18 +1250,29 @@ func (do *Domain) ServerID() uint64 {
 	return atomic.LoadUint64(&do.serverID)
 }
 
+// IsLostConnectionToPD indicates lost connection to PD or not.
+func (do *Domain) IsLostConnectionToPD() bool {
+	return do.isLostConnectionToPD.Get() != 0
+}
+
 const (
 	serverIDEtcdPath = "/tidb/server_id"
-	serverIDTTL      = 12 * time.Hour
-	// lostConnectionToPDTimeout       = serverIDTTL / 2                // MUST be shorter than `serverIDTTL`. default to 6 hours.
-	// serverIDTimeToCheckPDConnection = lostConnectionToPDTimeout / 60 // default to 6 minutes.
+	// serverIDTTL      = 12 * time.Hour
+	// serverIDTimeToCheckPDConnection is the interval that we check connection to PD periodically.
+	// serverIDTimeToCheckPDConnection = 5 * time.Minute
+	// lostConnectionToPDTimeout is the duration that when TiDB cannot connect to PD excceeds this duration,
+	//   we realize that the connection to PD is lost utterly, and server ID acquired before should be released.
+	//   MUST be shorter than `serverIDTTL`.
+	// lostConnectionToPDTimeout = 6 * time.Hour
 
-	lostConnectionToPDTimeout       = 30 * time.Second // test ONLY
-	serverIDTimeToCheckPDConnection = 3 * time.Second  // test ONLY
+	serverIDTTL                     = 60 * time.Second
+	serverIDTimeToCheckPDConnection = 3 * time.Second  // for TEST
+	lostConnectionToPDTimeout       = 30 * time.Second // for TEST
 
-	refreshServerIDRetryCnt      = 3
-	acquireServerIDRetryInterval = 300 * time.Millisecond
-	acquireServerIDTimeout       = 3 * time.Second
+	refreshServerIDRetryCnt        = 3
+	acquireServerIDRetryInterval   = 300 * time.Millisecond
+	acquireServerIDTimeout         = 10 * time.Second
+	retrieveServerIDSessionTimeout = 10 * time.Second
 )
 
 func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Session, error) {
@@ -1268,10 +1280,21 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 		return do.serverIDSession, nil
 	}
 
-	logPrefix := fmt.Sprintf("[acquireServerID] ")
-	session, err := owner.NewSession(ctx, logPrefix, do.etcdClient, owner.NewSessionDefaultRetryCnt, int(serverIDTimeToCheckPDConnection.Seconds()))
+	// `etcdClient.Grant` needs a short timeout, while `etcdClient.KeepAlive` needs a timeout longer than TTL.
+	//   So we separately invoke `etcdClient.Grant` and `concurrency.NewSession` with leaseID.
+	childCtx, cancel := context.WithTimeout(ctx, retrieveServerIDSessionTimeout)
+	resp, err := do.etcdClient.Grant(childCtx, int64(serverIDTTL.Seconds()))
+	cancel()
 	if err != nil {
-		logutil.BgLogger().Error("retrieveServerIDSession fail", zap.Error(err))
+		logutil.BgLogger().Error("retrieveServerIDSession.Grant fail", zap.Error(err))
+		return nil, err
+	}
+	leaseID := resp.ID
+
+	session, err := concurrency.NewSession(do.etcdClient,
+		concurrency.WithLease(leaseID), concurrency.WithContext(ctx))
+	if err != nil {
+		logutil.BgLogger().Error("retrieveServerIDSession.NewSession fail", zap.Error(err))
 		return nil, err
 	}
 	do.serverIDSession = session
@@ -1281,7 +1304,7 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 func (do *Domain) acquireServerID(ctx context.Context) error {
 	atomic.StoreUint64(&do.serverID, 0)
 
-	session, err := do.retrieveServerIDSession(ctx)
+	session, err := do.retrieveServerIDSession(context.Background())
 	if err != nil {
 		return err
 	}
@@ -1314,7 +1337,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 }
 
 func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
-	session, err := do.retrieveServerIDSession(ctx)
+	session, err := do.retrieveServerIDSession(context.Background())
 	if err != nil {
 		return err
 	}
@@ -1325,7 +1348,8 @@ func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 	if err != nil {
 		logutil.BgLogger().Error("refreshServerIDTTL fail", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("refreshServerIDTTL succeed", zap.Uint64("serverID", do.ServerID()))
+		logutil.BgLogger().Info("refreshServerIDTTL succeed", zap.Uint64("serverID", do.ServerID()),
+			zap.String("lease id", strconv.FormatInt(int64(session.Lease()), 16)))
 	}
 	return err
 }
@@ -1347,14 +1371,11 @@ func (do *Domain) serverIDKeeper(isAcquireServerIDFail bool) {
 		return do.serverIDSession.Done()
 	}
 
-	var (
-		isLostConnectionToPD bool
-		lastSucceedTimestamp time.Time
-	)
+	var lastSucceedTimestamp time.Time
 
 	onConnectionToPDRestored := func() {
 		logutil.BgLogger().Info("restored connection to PD")
-		isLostConnectionToPD = false
+		do.isLostConnectionToPD.Set(0)
 		lastSucceedTimestamp = time.Now()
 
 		if err := do.info.StoreServerInfo(context.Background()); err != nil {
@@ -1364,24 +1385,25 @@ func (do *Domain) serverIDKeeper(isAcquireServerIDFail bool) {
 
 	onConnectionToPDLost := func() {
 		logutil.BgLogger().Warn("lost connection to PD")
-		isLostConnectionToPD = true
+		do.isLostConnectionToPD.Set(1)
 
 		// Kill all connections when lost connection to PD,
-		//   to avoid the possibility that another TiDB instance acquires the same serverID and generates a same connection ID.
+		//   to avoid the possibility that another TiDB instance acquires the same serverID and generates a same connection ID,
+		//   which will lead to a wrong connection killed.
 		do.InfoSyncer().GetSessionManager().KillAllConnections()
 	}
 
 	if isAcquireServerIDFail {
-		isLostConnectionToPD = true
+		do.isLostConnectionToPD.Set(1)
 	} else {
-		isLostConnectionToPD = false
+		do.isLostConnectionToPD.Set(0)
 		lastSucceedTimestamp = time.Now()
 	}
 
 	for {
 		select {
 		case <-ticker.C:
-			if !isLostConnectionToPD {
+			if !do.IsLostConnectionToPD() {
 				if err := do.refreshServerIDTTL(context.Background()); err == nil {
 					lastSucceedTimestamp = time.Now()
 				} else {

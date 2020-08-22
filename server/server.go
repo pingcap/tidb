@@ -316,6 +316,11 @@ func (s *Server) Run() error {
 			return errors.Trace(err)
 		}
 
+		if s.dom.IsLostConnectionToPD() {
+			logutil.BgLogger().Warn("reject connection due to lost connection to PD")
+			continue
+		}
+
 		clientConn := s.newConn(conn)
 
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
