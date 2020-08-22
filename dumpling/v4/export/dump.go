@@ -183,15 +183,16 @@ func Dump(pCtx context.Context, conf *Config) (err error) {
 
 	failpoint.Inject("ConsistencyCheck", nil)
 
+	simpleWriter, err := NewSimpleWriter(conf)
+	if err != nil {
+		return err
+	}
 	var writer Writer
 	switch strings.ToLower(conf.FileType) {
 	case "sql":
-		writer, err = NewSimpleWriter(conf)
+		writer = SQLWriter{SimpleWriter: simpleWriter}
 	case "csv":
-		writer, err = NewCsvWriter(conf)
-	}
-	if err != nil {
-		return err
+		writer = CSVWriter{SimpleWriter: simpleWriter}
 	}
 
 	if conf.Sql == "" {

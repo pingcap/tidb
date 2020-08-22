@@ -25,6 +25,7 @@ The following table lists the major parameters of Dumpling.
 | -F or --filesize | The approximate size of the output file. The unit should be explicitly provided (such as `128B`, `64KiB`, `32MiB`, `1.5GiB`) |
 | --filetype| The type of dump file. (sql/csv, default "sql")           |
 | -o or --output | Output directory. The default value is based on time. |
+| --output-filename-template | Output file name templates. See below for details. |
 | -S or --sql | Dump data with given sql. This argument doesn't support concurrent dump |
 | --consistency | Which consistency control to use (default `auto`):<br>`flush`: Use FTWRL (flush tables with read lock)<br>`snapshot`: use a snapshot at a given timestamp<br>`lock`: execute lock tables read for all tables that need to be locked <br>`none`: dump without locking. It cannot guarantee consistency <br>`auto`: `flush` on MySQL, `snapshot` on TiDB |
 | --snapshot | Snapshot position. Valid only when consistency=snapshot. |
@@ -44,3 +45,38 @@ To see more detailed usage, run the flag `-h` or `--help`.
 ## Download
 
 Download the nightly version of Dumpling [here](https://download.pingcap.org/dumpling-nightly-linux-amd64.tar.gz).
+
+## Output filename template
+
+The `--output-filename-template` argument specifies how all files are named, before including the file extensions. It accepts strings in the [Go `text/template` syntax](https://golang.org/pkg/text/template/).
+
+The following fields are available to the template:
+
+* `.DB` — database name
+* `.Table` — table name or object name
+* `.Index` — when a table is split into multiple files, this is the 0-based sequence number indicating which part we are dumping
+
+The database and table names may contain special characters like `/` not acceptable in the file system. Thus, Dumpling also provided a function `fn` to percent-escape these special characters:
+
+* U+0000 to U+001F (control characters)
+* `/`, `\`, `<`, `>`, `:`, `"`, `*`, `?` (invalid Windows path characters)
+* `.` (database/table name separator)
+* `-`, if appeared as part of `-schema`
+
+For instance, using `--output-filename-template '{{fn .Table}}.{{printf "%09d" .Index}}'`, Dumpling will write the table `"db"."tbl:normal"` into files named like `tbl%3Anormal.000000000.sql`, `tbl%3Anormal.000000001.sql`, etc.
+
+Besides the data files, you could also define named templates to replace the file name of the schema files. The default are configuration is:
+
+| Name | Content |
+|------|---------|
+| data | `{{fn .DB}}.{{fn .Table}}.{{.Index}}` |
+| schema | `{{fn .DB}}-schema-create` |
+| table | `{{fn .DB}}.{{fn .Table}}-schema` |
+| event | `{{fn .DB}}.{{fn .Table}}-schema-post` |
+| function | `{{fn .DB}}.{{fn .Table}}-schema-post` |
+| procedure | `{{fn .DB}}.{{fn .Table}}-schema-post` |
+| sequence | `{{fn .DB}}.{{fn .Table}}-schema-sequence` |
+| trigger | `{{fn .DB}}.{{fn .Table}}-schema-triggers` |
+| view | `{{fn .DB}}.{{fn .Table}}-schema-view` |
+
+For instance, using `--output-filename-template '{{define "table"}}{{fn .Table}}.$schema{{end}}{{define "data"}}{{fn .Table}}.{{printf "%09d" .Index}}{{end}}'`, Dumpling will write the schema of the table `"db"."tbl:normal"` into the file `tbl%3Anormal.$schema.sql`, and data into the files like `tbl%3Anormal.000000000.sql`.
