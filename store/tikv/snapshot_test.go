@@ -303,18 +303,18 @@ func (s *testSnapshotSuite) TestSnapshotThreadSafe(c *C) {
 }
 
 func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
-	reqStats := make(map[tikvrpc.CmdType]*RegionRequestRuntimeStats)
-	recordRegionRequestRuntimeStats(reqStats, tikvrpc.CmdGet, time.Second)
-	recordRegionRequestRuntimeStats(reqStats, tikvrpc.CmdGet, time.Millisecond)
+	reqStats := NewRegionRequestRuntimeStats()
+	recordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Second)
+	recordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Millisecond)
 	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: 0}, 0)
 	snapshot.SetOption(kv.CollectRuntimeStats, &SnapshotRuntimeStats{})
-	snapshot.mergeRegionRequestStats(reqStats)
-	snapshot.mergeRegionRequestStats(reqStats)
+	snapshot.mergeRegionRequestStats(reqStats.Stats)
+	snapshot.mergeRegionRequestStats(reqStats.Stats)
 	bo := NewBackofferWithVars(context.Background(), 2000, nil)
 	err := bo.BackoffWithMaxSleep(boTxnLockFast, 30, errors.New("test"))
 	c.Assert(err, IsNil)
 	snapshot.recordBackoffInfo(bo)
 	snapshot.recordBackoffInfo(bo)
 	expect := "Get:{num_rpc:4, total_time:2.002s},txnLockFast_backoff:{num:2, total_time:60 ms}"
-	c.Assert(snapshot.stats.String(), Equals, expect)
+	c.Assert(snapshot.mu.stats.String(), Equals, expect)
 }

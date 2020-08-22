@@ -889,6 +889,7 @@ var MySQLErrName = map[uint16]string{
 	ErrGeneratedColumnRefAutoInc:                             "Generated column '%s' cannot refer to auto-increment column.",
 	ErrWarnConflictingHint:                                   "Hint %s is ignored as conflicting/duplicated.",
 	ErrInvalidFieldSize:                                      "Invalid size for column '%s'.",
+	ErrInvalidArgumentForLogarithm:                           "Invalid argument for logarithm",
 	ErrIncorrectType:                                         "Incorrect type for argument %s in function %s.",
 	ErrInvalidJSONData:                                       "Invalid JSON data provided to function %s: %s",
 	ErrInvalidJSONText:                                       "Invalid JSON text: %-.192s",
@@ -1078,6 +1079,8 @@ var MySQLErrName = map[uint16]string{
 	ErrBRIERestoreFailed: "Restore failed: %s",
 	ErrBRIEImportFailed:  "Import failed: %s",
 	ErrBRIEExportFailed:  "Export failed: %s",
+
+	ErrInvalidPlacementSpec: "Invalid placement policy '%s': %s",
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout:        "PD server timeout",
