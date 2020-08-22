@@ -39,10 +39,11 @@ type Column struct {
 type RowDecoder struct {
 	tbl           table.Table
 	mutRow        chunk.MutRow
-	columns       map[int64]Column
+	colMap        map[int64]Column
 	colTypes      map[int64]*types.FieldType
 	haveGenColumn bool
 	defaultVals   []types.Datum
+	cols          []*table.Column
 	pkCols        []int64
 }
 
@@ -68,9 +69,10 @@ func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64
 	return &RowDecoder{
 		tbl:         tbl,
 		mutRow:      chunk.MutRowFromTypes(tps),
-		columns:     decodeColMap,
+		colMap:      decodeColMap,
 		colTypes:    colFieldMap,
 		defaultVals: make([]types.Datum, len(cols)),
+		cols:        cols,
 		pkCols:      pkCols,
 	}
 }
@@ -90,15 +92,19 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 	if err != nil {
 		return nil, err
 	}
-	for _, dCol := range rd.columns {
+	for _, dCol := range rd.colMap {
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
 		if ok || dCol.GenExpr != nil {
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 			continue
 		}
-		// Get the default value of the column in the generated column expression.
-		val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals)
+		if dCol.Col.ChangeStateInfo != nil {
+			val, _, err = tables.GetChangingColVal(ctx, rd.cols, dCol.Col, row, rd.defaultVals)
+		} else {
+			// Get the default value of the column in the generated column expression.
+			val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -106,13 +112,13 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 	}
 	keys := make([]int, 0)
 	ids := make(map[int]int)
-	for k, col := range rd.columns {
+	for k, col := range rd.colMap {
 		keys = append(keys, col.Col.Offset)
 		ids[col.Col.Offset] = int(k)
 	}
 	sort.Ints(keys)
 	for _, id := range keys {
-		col := rd.columns[int64(ids[id])]
+		col := rd.colMap[int64(ids[id])]
 		if col.GenExpr == nil {
 			continue
 		}

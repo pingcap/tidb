@@ -527,5 +527,10 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustExec("alter table t4 modify a bigint unsigned;")
 	tk.MustQuery("select * from t4 where a=1;").Check(testkit.Rows("1 1"))
 
-	tk.MustExec("drop table t, t1, t2, t3, t4")
+	// Test changing null to not null.
+	tk.MustExec("create table t5(a bigint, b int, unique index idx(a));")
+	tk.MustExec("insert into t5 values (1,1),(2,2),(3,3),(4,4),(5,5);")
+	tk.MustExec("alter table t5 modify a int not null;")
+
+	tk.MustExec("drop table t, t1, t2, t3, t4, t5")
 }

@@ -963,7 +963,6 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 
 			if _, ok := w.rowMap[w.newColInfo.ID]; ok {
 				// The column is already added by update or insert statement, skip it.
-				w.rowRecords = append(w.rowRecords, &rowRecord{handle: handle, key: recordKey, vals: rawRow})
 				w.cleanRowMap()
 				return true, nil
 			}
