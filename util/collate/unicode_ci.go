@@ -140,14 +140,14 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 func convertUnicode(r rune) (uint64, uint64) {
 	if r > 0xFFFF {
 		return 0xFFFD, 0
-	} else {
-		sn := mapTable[r]
-		if sn != 0 {
-			if sn == longRune {
-				return longRuneMap[r][0], longRuneMap[r][1]
-			}
-			return sn, 0
+	}
+
+	sn := mapTable[r]
+	if sn != 0 {
+		if sn == longRune {
+			return longRuneMap[r][0], longRuneMap[r][1]
 		}
+		return sn, 0
 	}
 	return 0, 0
 }
