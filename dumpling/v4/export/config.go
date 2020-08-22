@@ -64,7 +64,6 @@ type Config struct {
 
 func DefaultConfig() *Config {
 	allFilter, _ := filter.Parse([]string{"*.*"})
-	tmpl := template.Must(template.New("filename").Parse("{{.DB}}.{{.Table}}.{{.Index}}"))
 	return &Config{
 		Databases:          nil,
 		Host:               "127.0.0.1",
@@ -94,7 +93,7 @@ func DefaultConfig() *Config {
 		TableFilter:        allFilter,
 		DumpEmptyDatabase:  true,
 		SessionParams:      make(map[string]interface{}),
-		OutputFileTemplate: tmpl,
+		OutputFileTemplate: DefaultOutputFileTemplate,
 	}
 }
 

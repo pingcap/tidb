@@ -1,1 +1,1 @@
-CREATE DATABASE `quo``te-database` /*!40100 DEFAULT CHARACTER SET latin1 */;
+CREATE DATABASE `quo``te/database` /*!40100 DEFAULT CHARACTER SET latin1 */;
