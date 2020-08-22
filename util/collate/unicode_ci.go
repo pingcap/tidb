@@ -33,30 +33,6 @@ const (
 	mbMask = 0x3F // 0011 1111
 )
 
-// return next weight of string. return (0, 0, 0) when string is done
-// `first` represent first 4 weights of rune
-// `second` represent last 4 weights of rune if exist, 0 if not
-// `newIndex` index of string not decoded part
-func next(s string, si int) (first, second uint64, newIndex int) {
-	var r rune
-	for si < len(s) {
-		r, si = decodeRune(s, si)
-		if r > 0xFFFF {
-			return 0xFFFD, 0, si
-		}
-		u := mapTable[r]
-		if u != 0 {
-			if u == longRune {
-				num := longRuneMap[r]
-				return num[0], num[1], si
-			}
-			return u, 0, si
-		}
-	}
-
-	return 0, 0, 0
-}
-
 // decode rune by hand
 func decodeRune(s string, si int) (r rune, newIndex int) {
 	switch b := s[si]; {
@@ -91,12 +67,16 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
 	an, bn := uint64(0), uint64(0)
+	ar, br := rune(0), rune(0)
 	as, bs := uint64(0), uint64(0)
 	ai, bi := 0, 0
 	for {
 		if an == 0 {
 			if as == 0 {
-				an, as, ai = next(a, ai)
+				for an == 0 && ai < len(a) {
+					ar, ai = decodeRune(a, ai)
+					an, as = convertUnicode(ar)
+				}
 			} else {
 				an = as
 				as = 0
@@ -105,7 +85,10 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 
 		if bn == 0 {
 			if bs == 0 {
-				bn, bs, bi = next(b, bi)
+				for bn == 0 && bi < len(b) {
+					br, bi = decodeRune(b, bi)
+					bn, bs = convertUnicode(br)
+				}
 			} else {
 				bn = bs
 				bs = 0
@@ -136,25 +119,37 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 func (uc *unicodeCICollator) Key(str string) []byte {
 	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str)*2)
+	r, si := rune(0), 0
 	sn, ss := uint64(0), uint64(0)
-	si := 0
 
-	for {
-		sn, ss, si = next(str, si)
-		if sn == 0 {
-			return buf
-		}
+	for si < len(str) {
+		r, si = decodeRune(str, si)
+		sn, ss = convertUnicode(r)
 		for sn != 0 {
-			w := sn & 0xFFFF
-			buf = append(buf, byte(w>>8), byte(w))
+			buf = append(buf, byte((sn&0xFF00)>>8), byte(sn))
 			sn >>= 16
 		}
 		for ss != 0 {
-			w := ss & 0xFFFF
-			buf = append(buf, byte(w>>8), byte(w))
+			buf = append(buf, byte((ss&0xFF00)>>8), byte(ss))
 			ss >>= 16
 		}
 	}
+	return buf
+}
+
+func convertUnicode(r rune) (uint64, uint64) {
+	if r > 0xFFFF {
+		return 0xFFFD, 0
+	} else {
+		sn := mapTable[r]
+		if sn != 0 {
+			if sn == longRune {
+				return longRuneMap[r][0], longRuneMap[r][1]
+			}
+			return sn, 0
+		}
+	}
+	return 0, 0
 }
 
 // Pattern implements Collator interface.
