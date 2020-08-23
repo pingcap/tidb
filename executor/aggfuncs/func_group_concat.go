@@ -166,7 +166,6 @@ func (e *groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta i
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
 	p.valSet = set.NewStringSet()
-	p.valList, p.keyList = []string{}, []string{}
 	return PartialResult(p), 0
 }
 
