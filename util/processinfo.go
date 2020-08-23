@@ -208,7 +208,7 @@ func (g *GlobalConnID) NextID() uint64 {
 }
 
 // ParseGlobalConnID parses an uint64 to GlobalConnID.
-//   `isTruncated` indicates whether a 64 bits GlobalConnID is truncated to 32 bits.
+//   `isTruncated` indicates that older versions of the client truncated the 64-bit GlobalConnID to 32-bit.
 func ParseGlobalConnID(id uint64) (g GlobalConnID, isTruncated bool) {
 	if id&0x1 > 0 {
 		if id&0xffffffff_00000000 == 0 {

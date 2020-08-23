@@ -316,7 +316,7 @@ func (s *Server) Run() error {
 			return errors.Trace(err)
 		}
 
-		if s.dom.IsLostConnectionToPD() {
+		if s.dom != nil && s.dom.IsLostConnectionToPD() {
 			logutil.BgLogger().Warn("reject connection due to lost connection to PD")
 			continue
 		}

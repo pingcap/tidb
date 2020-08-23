@@ -509,10 +509,10 @@ func (s *testSuite3) TestKillStmt(c *C) {
 	}
 	tk.Se.SetSessionManager(sm)
 
-	// ZERO serverID
+	// ZERO serverID, treated as truncated.
 	tk.MustExec("kill 1")
 	result := tk.MustQuery("show warnings")
-	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] connectionID' instead"))
+	result.Check(testkit.Rows("Warning 1105 Invalid KILL operation. ConnectionID is truncated to 32 bits. Please use 'KILL [CONNECTION | QUERY] connectionID' instead"))
 
 	// truncated
 	sm.SetServerID(1)
