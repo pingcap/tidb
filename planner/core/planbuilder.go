@@ -594,8 +594,13 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		Name: x.Name,
 	}
 	if x.SQLVar != nil {
+<<<<<<< HEAD
 		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
 			p.SQLText = v
+=======
+		if v, ok := b.ctx.GetSessionVars().Users[strings.ToLower(x.SQLVar.Name)]; ok {
+			p.SQLText = v.GetString()
+>>>>>>> 6831e48... Issue 19371 - Prepare statement with @Var (uppercase in var name fix) (#19373)
 		} else {
 			p.SQLText = "NULL"
 		}
