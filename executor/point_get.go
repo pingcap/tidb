@@ -48,7 +48,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		return nil
 	}
 	e := &PointGetExecutor{
-		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
+		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
@@ -144,7 +144,7 @@ func (e *PointGetExecutor) Open(context.Context) error {
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
