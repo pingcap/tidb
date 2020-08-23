@@ -674,6 +674,23 @@ func BenchmarkWindowFunctionsWithFrame(b *testing.B) {
 	}
 }
 
+func BenchmarkWindowFunctionsAggWindowProcessorAboutFrame(b *testing.B) {
+	b.ReportAllocs()
+	windowFunc := ast.AggFuncMax
+	frame := &core.WindowFrame{Type: ast.Rows, Start: &core.FrameBound{UnBounded: true}, End: &core.FrameBound{UnBounded: true}}
+	cas := defaultWindowTestCase()
+	cas.rows = 10000
+	cas.ndv = 10
+	cas.concurrency = 1
+	cas.dataSourceSorted = false
+	cas.windowFunc = windowFunc
+	cas.numFunc = 1
+	cas.frame = frame
+	b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+		benchmarkWindowExecWithCase(b, cas)
+	})
+}
+
 func baseBenchmarkWindowFunctionsWithSlidingWindow(b *testing.B, frameType ast.FrameType) {
 	b.ReportAllocs()
 	windowFuncs := []struct {
