@@ -1409,12 +1409,12 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 		}
 		s, err = ParseSetValue(target.Elems, uintDatum.GetUint64())
 	}
-
 	if err != nil {
-		return invalidConv(d, target.Tp)
+		logutil.BgLogger().Error("convert to MySQL set failed", zap.Error(err))
+		err = errors.Trace(ErrTruncated)
 	}
 	ret.SetMysqlSet(s, target.Collate)
-	return ret, nil
+	return ret, err
 }
 
 func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldType) (ret Datum, err error) {
