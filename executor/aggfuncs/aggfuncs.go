@@ -99,6 +99,26 @@ var (
 	_ AggFunc = (*jsonObjectAgg)(nil)
 )
 
+const (
+	// DefUint32Size is the size of uint32
+	DefUint32Size = int64(unsafe.Sizeof(uint32(0)))
+	// DefInt64Size is the size of int64
+	DefInt64Size = int64(unsafe.Sizeof(int64(0)))
+	// DefFloat64Size is the size of float64
+	DefFloat64Size = int64(unsafe.Sizeof(float64(0)))
+	// DefTimeSize is the size of time
+	DefTimeSize = int64(16)
+
+	// DefPartialResult4SumFloat64Size is the size of partialResult4SumFloat64
+	DefPartialResult4SumFloat64Size = int64(unsafe.Sizeof(partialResult4SumFloat64{}))
+	// DefPartialResult4SumDecimalSize is the size of partialResult4SumDecimal
+	DefPartialResult4SumDecimalSize = int64(unsafe.Sizeof(partialResult4SumDecimal{}))
+	// DefPartialResult4SumDistinctFloat64Size is the size of partialResult4SumDistinctFloat64
+	DefPartialResult4SumDistinctFloat64Size = int64(unsafe.Sizeof(partialResult4SumDistinctFloat64{}))
+	// DefPartialResult4SumDistinctDecimalSize is the size of partialResult4SumDistinctDecimal
+	DefPartialResult4SumDistinctDecimalSize = int64(unsafe.Sizeof(partialResult4SumDistinctDecimal{}))
+)
+
 // PartialResult represents data structure to store the partial result for the
 // aggregate functions. Here we use unsafe.Pointer to allow the partial result
 // to be any type.
