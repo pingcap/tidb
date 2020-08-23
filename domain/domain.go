@@ -758,9 +758,13 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		err := do.acquireServerID(ctx)
 		if err != nil {
 			logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
+			do.isLostConnectionToPD.Set(1) // will retry in `do.serverIDKeeper`
+		} else {
+			do.isLostConnectionToPD.Set(0)
 		}
+
 		do.wg.Add(1)
-		go do.serverIDKeeper(err != nil)
+		go do.serverIDKeeper()
 	} else {
 		// set serverID for standalone deployment to enable 'KILL'.
 		atomic.StoreUint64(&do.serverID, serverIDForStandalone)
@@ -1260,17 +1264,14 @@ func (do *Domain) IsLostConnectionToPD() bool {
 
 const (
 	serverIDEtcdPath = "/tidb/server_id"
-	// serverIDTTL      = 12 * time.Hour
+	// serverIDTTL should be LONG ENOUGH to avoid barbarically killing an on-going long-run SQL.
+	serverIDTTL = 12 * time.Hour
 	// serverIDTimeToCheckPDConnection is the interval that we check connection to PD periodically.
-	// serverIDTimeToCheckPDConnection = 5 * time.Minute
-	// lostConnectionToPDTimeout is the duration that when TiDB cannot connect to PD excceeds this duration,
-	//   we realize that the connection to PD is lost utterly, and server ID acquired before should be released.
-	//   MUST be shorter than `serverIDTTL`.
-	// lostConnectionToPDTimeout = 6 * time.Hour
-
-	serverIDTTL                     = 60 * time.Second
-	serverIDTimeToCheckPDConnection = 3 * time.Second  // for TEST
-	lostConnectionToPDTimeout       = 30 * time.Second // for TEST
+	serverIDTimeToCheckPDConnection = 5 * time.Minute
+	// lostConnectionToPDTimeout is the duration that when TiDB cannot connect to PD excceeds this limit,
+	//   we realize the connection to PD is lost utterly, and server ID acquired before should be released.
+	//   Must be SHORTER than `serverIDTTL`.
+	lostConnectionToPDTimeout = 6 * time.Hour
 
 	refreshServerIDRetryCnt        = 3
 	acquireServerIDRetryInterval   = 300 * time.Millisecond
@@ -1283,7 +1284,8 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 		return do.serverIDSession, nil
 	}
 
-	// `etcdClient.Grant` needs a short timeout, while `etcdClient.KeepAlive` needs a timeout longer than TTL.
+	// `etcdClient.Grant` needs a shortterm timeout, to avoid blocking if connection to PD lost,
+	//   while `etcdClient.KeepAlive` should be longterm.
 	//   So we separately invoke `etcdClient.Grant` and `concurrency.NewSession` with leaseID.
 	childCtx, cancel := context.WithTimeout(ctx, retrieveServerIDSessionTimeout)
 	resp, err := do.etcdClient.Grant(childCtx, int64(serverIDTTL.Seconds()))
@@ -1295,7 +1297,7 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 	leaseID := resp.ID
 
 	session, err := concurrency.NewSession(do.etcdClient,
-		concurrency.WithLease(leaseID), concurrency.WithContext(ctx))
+		concurrency.WithLease(leaseID), concurrency.WithContext(context.Background()))
 	if err != nil {
 		logutil.BgLogger().Error("retrieveServerIDSession.NewSession fail", zap.Error(err))
 		return nil, err
@@ -1307,7 +1309,7 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 func (do *Domain) acquireServerID(ctx context.Context) error {
 	atomic.StoreUint64(&do.serverID, 0)
 
-	session, err := do.retrieveServerIDSession(context.Background())
+	session, err := do.retrieveServerIDSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -1340,7 +1342,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 }
 
 func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
-	session, err := do.retrieveServerIDSession(context.Background())
+	session, err := do.retrieveServerIDSession(ctx)
 	if err != nil {
 		return err
 	}
@@ -1357,7 +1359,7 @@ func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 	return err
 }
 
-func (do *Domain) serverIDKeeper(isAcquireServerIDFail bool) {
+func (do *Domain) serverIDKeeper() {
 	defer util.Recover(metrics.LabelDomain, "serverIDKeeper", nil, false)
 	ticker := time.NewTicker(serverIDTimeToCheckPDConnection)
 	defer func() {
@@ -1396,13 +1398,6 @@ func (do *Domain) serverIDKeeper(isAcquireServerIDFail bool) {
 		do.InfoSyncer().GetSessionManager().KillAllConnections()
 	}
 
-	if isAcquireServerIDFail {
-		do.isLostConnectionToPD.Set(1)
-	} else {
-		do.isLostConnectionToPD.Set(0)
-		lastSucceedTimestamp = time.Now()
-	}
-
 	for {
 		select {
 		case <-ticker.C:
@@ -1420,6 +1415,9 @@ func (do *Domain) serverIDKeeper(isAcquireServerIDFail bool) {
 				}
 			}
 		case <-sessionDone():
+			// inform that TTL of `serverID` is expired. See https://godoc.org/github.com/coreos/etcd/clientv3/concurrency#Session.Done
+			//   Should be in `IsLostConnectionToPD` state, as `lostConnectionToPDTimeout` is shorter than `serverIDTTL`.
+			//   So just set `do.serverIDSession = nil` to restart `serverID` session in `retrieveServerIDSession()`.
 			logutil.BgLogger().Info("serverIDSession need restart")
 			do.serverIDSession = nil
 		case <-do.exit:
