@@ -686,7 +686,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			it.actionOnExceed.exceed = false
 			it.actionOnExceed.workersCond.Broadcast()
 			it.actionOnExceed.once = sync.Once{}
-			logutil.BgLogger().Info("taskRateLimitAction Broadcast")
+			logutil.BgLogger().Debug("taskRateLimitAction Broadcast")
 		}
 		it.actionOnExceed.workersCond.L.Unlock()
 	} else {
