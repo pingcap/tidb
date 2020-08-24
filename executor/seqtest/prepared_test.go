@@ -24,13 +24,9 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/kvcache"
->>>>>>> 57e43bd... planner: workaround the panic of command EXECUTE when printing an expensive query log (#19316)
 	"github.com/pingcap/tidb/util/testkit"
 	dto "github.com/prometheus/client_model/go"
 )
