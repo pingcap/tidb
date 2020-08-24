@@ -191,6 +191,7 @@ mem-quota-query = 10000
 nested-loop-join-cache-capacity = 100
 max-index-length = 3080
 skip-register-to-dashboard = true
+deprecate-integer-display-length = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -262,6 +263,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.Labels["foo"], Equals, "bar")
 	c.Assert(conf.Labels["group"], Equals, "abc")
 	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
+	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
 
 	_, err = f.WriteString(`
 [log.file]

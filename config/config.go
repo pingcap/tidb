@@ -156,6 +156,8 @@ type Config struct {
 	Labels map[string]string `toml:"labels" json:"labels"`
 	// EnableGlobalIndex enables creating global index.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
+	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
+	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -729,6 +731,7 @@ var defaultConf = Config{
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
+	DeprecateIntegerDisplayWidth: false,
 }
 
 var (

@@ -119,6 +119,10 @@ skip-register-to-dashboard = false
 # See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
 enable-telemetry = true
 
+# deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
+# a warning like `Integer display width is deprecated and will be removed in a future release`.
+deprecate-integer-display-length = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
