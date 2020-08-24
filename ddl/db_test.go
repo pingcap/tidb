@@ -5276,7 +5276,6 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 	tk.MustExec("admin check table t1")
 }
 
-
 // TestCancelDropColumn tests cancel ddl job which type is drop column and column covered by composite index.
 func (s *testDBSuite3) TestCancelDropColumnWithCompositeIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)

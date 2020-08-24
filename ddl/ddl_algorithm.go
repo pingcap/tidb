@@ -84,6 +84,9 @@ func ResolveAlterAlgorithm(alterSpec *ast.AlterTableSpec, specify ast.AlgorithmT
 	}
 }
 
+// ResolveDropColumnsAlgorithm resolves the algorithm for Drop Column
+// If drop column need reorg indices, it must be use inplace algorithm, if not it must be use instance algorithm.
+// In this function check spec.Tp is not needed. This function is called from ddl.DropColumn or ddl.DropColumns function.
 func ResolveDropColumnsAlgorithm(ctx sessionctx.Context, tblInfo *model.TableInfo, colNames []model.CIStr, specs []*ast.AlterTableSpec) error {
 	needReorg := checkDropColumnsNeedReorg(tblInfo, colNames)
 	for _, spec := range specs {
