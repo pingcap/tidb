@@ -2533,10 +2533,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	return exec
 }
 
-func (b *executorBuilder) buildPartitionTableForTiFlash(tblInfo *model.TableInfo, filter []expression.Expression, names []model.CIStr) {
-
-}
-
 func buildPartitionTable(b *executorBuilder, tblInfo *model.TableInfo, filter []expression.Expression, names []model.CIStr, e Executor, n nextPartition) (Executor, error) {
 	tmp, _ := b.is.TableByID(tblInfo.ID)
 	tbl := tmp.(table.PartitionedTable)
