@@ -122,7 +122,7 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts := etcd.EtcdAddrs()
+	pdHosts, _ := etcd.EtcdAddrs()
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
@@ -623,7 +623,7 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 	if !ok {
 		return errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts := etcd.EtcdAddrs()
+	pdHosts, _ := etcd.EtcdAddrs()
 	if len(pdHosts) == 0 {
 		return errors.New("pd unavailable")
 	}
@@ -707,7 +707,7 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts := etcd.EtcdAddrs()
+	pdHosts, _ := etcd.EtcdAddrs()
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
@@ -740,7 +740,7 @@ func (h *Helper) GetPDAddr() ([]string, error) {
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
-	pdAddrs = etcd.EtcdAddrs()
+	pdAddrs, _ = etcd.EtcdAddrs()
 	if len(pdAddrs) == 0 {
 		return nil, errors.New("pd unavailable")
 	}

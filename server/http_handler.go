@@ -1085,7 +1085,7 @@ func (h tableHandler) getPDAddr() ([]string, error) {
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
-	pdAddrs = etcd.EtcdAddrs()
+	pdAddrs, _ = etcd.EtcdAddrs()
 	if len(pdAddrs) < 0 {
 		return nil, errors.New("pd unavailable")
 	}

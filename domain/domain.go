@@ -672,7 +672,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
 	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
-		if addrs := ebd.EtcdAddrs(); addrs != nil {
+		if addrs, _ := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
 			// silence etcd warn log, when domain closed, it won't randomly print warn log
 			// see details at the issue https://github.com/pingcap/tidb/issues/15479

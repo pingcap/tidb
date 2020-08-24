@@ -133,7 +133,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 
 // EtcdBackend is used for judging a storage is a real TiKV.
 type EtcdBackend interface {
-	EtcdAddrs() []string
+	EtcdAddrs() ([]string, error)
 	TLSConfig() *tls.Config
 	StartGCWorker() error
 }
@@ -235,15 +235,15 @@ func (s *tikvStore) IsLatchEnabled() bool {
 	return s.txnLatches != nil
 }
 
-func (s *tikvStore) EtcdAddrs() []string {
+func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	s.etcdAddrs = s.etcdAddrs[0:0]
 	pdClient := s.GetRegionCache().PDClient()
 	if pdClient == nil {
-		return nil
+		return nil, errors.New("pd unavailable")
 	}
 	members, err := pdClient.GetMemberInfo(context.Background())
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	for _, member := range members {
 		u, err := url.Parse(member.ClientUrls[0])
@@ -252,7 +252,7 @@ func (s *tikvStore) EtcdAddrs() []string {
 		}
 		s.etcdAddrs = append(s.etcdAddrs, u.Host)
 	}
-	return s.etcdAddrs
+	return s.etcdAddrs, nil
 }
 
 func (s *tikvStore) TLSConfig() *tls.Config {
