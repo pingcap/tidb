@@ -191,6 +191,7 @@ mem-quota-query = 10000
 nested-loop-join-cache-capacity = 100
 max-index-length = 3080
 skip-register-to-dashboard = true
+deprecate-integer-display-length = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -256,6 +257,7 @@ data-encryption-method = "plaintext"
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
 	c.Assert(conf.Security.DataEncryptionMethod, Equals, DataEncryptionMethodPlaintext)
+	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
 
 	_, err = f.WriteString(`
 [log.file]
