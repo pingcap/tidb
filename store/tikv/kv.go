@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math/rand"
+	"net/url"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -235,6 +236,22 @@ func (s *tikvStore) IsLatchEnabled() bool {
 }
 
 func (s *tikvStore) EtcdAddrs() []string {
+	s.etcdAddrs = s.etcdAddrs[0:0]
+	pdClient := s.GetRegionCache().PDClient()
+	if pdClient == nil {
+		return nil
+	}
+	members, err := pdClient.GetMemberInfo(context.Background())
+	if err != nil {
+		return nil
+	}
+	for _, member := range members {
+		u, err := url.Parse(member.ClientUrls[0])
+		if err != nil {
+			continue
+		}
+		s.etcdAddrs = append(s.etcdAddrs, u.Host)
+	}
 	return s.etcdAddrs
 }
 

@@ -1339,12 +1339,6 @@ func FormatVersion(TiDBVersion string, isDefaultVersion bool) string {
 	return version
 }
 
-// Member type
-type Member struct {
-	PeerUrls   []string `json:"peer_urls"`
-	ClientUrls []string `json:"client_urls"`
-}
-
 // GetPDServerInfo return all pd server info
 func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	store := ctx.GetStore()
@@ -1353,28 +1347,9 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
 	var servers []ServerInfo
-	addr := etcd.EtcdAddrs()[0]
-	addr = strings.TrimSpace(addr)
-	url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Members)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	req.Header.Add("PD-Allow-follower-handle", "true")
-	resp, err := util.InternalHTTPClient().Do(req)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	var MemberList = struct {
-		Members []Member `json:"members"`
-	}{}
-	err = json.NewDecoder(resp.Body).Decode(&MemberList)
-	terror.Log(resp.Body.Close())
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for _, member := range MemberList.Members {
-		url := fmt.Sprintf("%s%s", member.ClientUrls[0], pdapi.ClusterVersion)
+	members := etcd.EtcdAddrs()
+	for _, member := range members {
+		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), member, pdapi.ClusterVersion)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1391,7 +1366,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
 		// Get PD git_hash
-		url = fmt.Sprintf("%s%s", member.ClientUrls[0], pdapi.Status)
+		url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), member, pdapi.Status)
 		req, err = http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1413,8 +1388,8 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 
 		servers = append(servers, ServerInfo{
 			ServerType:     "pd",
-			Address:        member.ClientUrls[0][7:],
-			StatusAddr:     member.PeerUrls[0][7:],
+			Address:        member,
+			StatusAddr:     member,
 			Version:        version,
 			GitHash:        content.GitHash,
 			StartTimestamp: content.StartTimestamp,
