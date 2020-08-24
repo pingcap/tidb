@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	dto "github.com/prometheus/client_model/go"
@@ -799,7 +798,6 @@ func (s *seqTestSuite) TestPreparedIssue17419(c *C) {
 	var err error
 	tk1.Se, err = session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
-	tk1.GetConnectionID()
 
 	query := "select * from test.t"
 	stmtID, _, _, err := tk1.Se.PrepareStmt(query)
@@ -811,7 +809,7 @@ func (s *seqTestSuite) TestPreparedIssue17419(c *C) {
 	tk1.Se.SetSessionManager(sm)
 	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
 
-	rs, err := tk1.Se.ExecutePreparedStmt(ctx, stmtID, []types.Datum{})
+	rs, err := tk1.Se.ExecutePreparedStmt(ctx, stmtID)
 	c.Assert(err, IsNil)
 	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1", "2", "3"))
 	tk1.Se.SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
