@@ -69,4 +69,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/parser v0.0.0-20200813083329-a4bff035d3e2 => github.com/blacktear23/parser v0.0.0-20200820102144-71a747a59629
+replace github.com/pingcap/parser v0.0.0-20200821073936-cf85e80665c4 => github.com/blacktear23/parser v0.0.0-20200824084825-0b9c81ed3307
