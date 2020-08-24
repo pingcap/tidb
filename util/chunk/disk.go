@@ -71,8 +71,8 @@ func (l *ListInDisk) initDiskFile() (err error) {
 		return
 	}
 	var underlying io.WriteCloser = l.disk
-	if config.GetGlobalConfig().Security.SpilledFileEncryptionMethod != config.SpilledFileEncryptionMethodPlaintext {
-		// The possible values of SpilledFileEncryptionMethod are "plaintext", "aes128-ctr"
+	if config.GetGlobalConfig().Security.DataEncryptionMethod != config.DataEncryptionMethodPlaintext {
+		// The possible values of DataEncryptionMethod are "plaintext", "aes128-ctr"
 		l.ctrCipher, err = encrypt.NewCtrCipher()
 		if err != nil {
 			return

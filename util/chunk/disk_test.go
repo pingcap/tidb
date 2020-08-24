@@ -215,7 +215,7 @@ func testListInDisk(c *check.C) {
 func (s *testChunkSuite) TestListInDiskWithChecksum(c *check.C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
+		conf.Security.DataEncryptionMethod = config.DataEncryptionMethodPlaintext
 	})
 	testListInDisk(c)
 
@@ -224,7 +224,7 @@ func (s *testChunkSuite) TestListInDiskWithChecksum(c *check.C) {
 func (s *testChunkSuite) TestListInDiskWithChecksumAndEncrypt(c *check.C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
+		conf.Security.DataEncryptionMethod = config.DataEncryptionMethodAES128CTR
 	})
 	testListInDisk(c)
 }

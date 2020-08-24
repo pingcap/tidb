@@ -212,7 +212,7 @@ allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
 [security]
-spilled-file-encryption-method = "plaintext"
+data-encryption-method = "plaintext"
 `)
 
 	c.Assert(err, IsNil)
@@ -255,7 +255,7 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
-	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
+	c.Assert(conf.Security.DataEncryptionMethod, Equals, DataEncryptionMethodPlaintext)
 
 	_, err = f.WriteString(`
 [log.file]
@@ -291,12 +291,12 @@ enable-telemetry = false
 
 	_, err = f.WriteString(`
 [security]
-spilled-file-encryption-method = "aes128-ctr"
+data-encryption-method = "aes128-ctr"
 `)
 	c.Assert(err, IsNil)
 	c.Assert(f.Sync(), IsNil)
 	c.Assert(conf.Load(configFile), IsNil)
-	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodAES128CTR)
+	c.Assert(conf.Security.DataEncryptionMethod, Equals, DataEncryptionMethodAES128CTR)
 
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
@@ -535,8 +535,8 @@ func (s *testConfigSuite) TestModifyThroughLDFlags(c *C) {
 func (s *testConfigSuite) TestSecurityValid(c *C) {
 	c1 := NewConfig()
 	tests := []struct {
-		spilledFileEncryptionMethod string
-		valid                       bool
+		dataEncryptionMethod string
+		valid                bool
 	}{
 		{"", false},
 		{"Plaintext", true},
@@ -545,7 +545,7 @@ func (s *testConfigSuite) TestSecurityValid(c *C) {
 		{"aes128-ctr", true},
 	}
 	for _, tt := range tests {
-		c1.Security.SpilledFileEncryptionMethod = tt.spilledFileEncryptionMethod
+		c1.Security.DataEncryptionMethod = tt.dataEncryptionMethod
 		c.Assert(c1.Valid() == nil, Equals, tt.valid)
 	}
 }
