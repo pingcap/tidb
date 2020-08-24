@@ -5963,7 +5963,22 @@ func (s *testSplitTable) TestKillTableReader(c *C) {
 	wg.Wait()
 }
 
+<<<<<<< HEAD
 func (s *testSuite) TestIssue19372(c *C) {
+=======
+func (s *testSuite) TestPrevStmtDesensitization(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.Se.GetSessionVars().EnableLogDesensitization = true
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1),(2)")
+	c.Assert(tk.Se.GetSessionVars().PrevStmt.String(), Equals, "insert into t values ( ? ) , ( ? )")
+}
+
+func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
+>>>>>>> 9620b71... executor: fix log desensitization bug in prestmt (#19392)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2;")
