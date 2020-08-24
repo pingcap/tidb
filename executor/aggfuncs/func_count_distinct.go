@@ -32,6 +32,23 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
+const (
+	// DefPartialResult4CountDistinctIntSize is the size of partialResult4CountDistinctInt
+	DefPartialResult4CountDistinctIntSize = int64(unsafe.Sizeof(partialResult4CountDistinctInt{}))
+	// DefPartialResult4CountDistinctRealSize is the size of partialResult4CountDistinctReal
+	DefPartialResult4CountDistinctRealSize = int64(unsafe.Sizeof(partialResult4CountDistinctReal{}))
+	// DefPartialResult4CountDistinctDecimalSize is the size of partialResult4CountDistinctDecimal
+	DefPartialResult4CountDistinctDecimalSize = int64(unsafe.Sizeof(partialResult4CountDistinctDecimal{}))
+	// DefPartialResult4CountDistinctDurationSize is the size of partialResult4CountDistinctDuration
+	DefPartialResult4CountDistinctDurationSize = int64(unsafe.Sizeof(partialResult4CountDistinctDuration{}))
+	// DefPartialResult4CountDistinctStringSize is the size of partialResult4CountDistinctString
+	DefPartialResult4CountDistinctStringSize = int64(unsafe.Sizeof(partialResult4CountDistinctString{}))
+	// DefPartialResult4CountWithDistinctSize is the size of partialResult4CountWithDistinct
+	DefPartialResult4CountWithDistinctSize = int64(unsafe.Sizeof(partialResult4CountWithDistinct{}))
+	// DefPartialResult4ApproxCountDistinctSize is the size of partialResult4ApproxCountDistinct
+	DefPartialResult4ApproxCountDistinctSize = int64(unsafe.Sizeof(partialResult4ApproxCountDistinct{}))
+)
+
 type partialResult4CountDistinctInt struct {
 	valSet set.Int64Set
 }

@@ -14,6 +14,8 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
@@ -21,6 +23,17 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
+)
+
+const (
+	// DefPartialResult4AvgDecimalSize is the size of partialResult4AvgDecimal
+	DefPartialResult4AvgDecimalSize = int64(unsafe.Sizeof(partialResult4AvgDecimal{}))
+	// DefPartialResult4AvgDistinctDecimalSize is the size of partialResult4AvgDistinctDecimal
+	DefPartialResult4AvgDistinctDecimalSize = int64(unsafe.Sizeof(partialResult4AvgDistinctDecimal{}))
+	// DefPartialResult4AvgFloat64Size is the size of partialResult4AvgFloat64
+	DefPartialResult4AvgFloat64Size = int64(unsafe.Sizeof(partialResult4AvgFloat64{}))
+	// DefPartialResult4AvgDistinctFloat64Size is the size of partialResult4AvgDistinctFloat64
+	DefPartialResult4AvgDistinctFloat64Size = int64(unsafe.Sizeof(partialResult4AvgDistinctFloat64{}))
 )
 
 // All the following avg function implementations return the decimal result,
