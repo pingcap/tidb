@@ -189,3 +189,21 @@ create table t(a int, b int, index idx_ab(a, b));
 explain select a, b from t where a in (1) order by b;
 explain select a, b from t where a = 1 order by b;
 drop table if exists t;
+<<<<<<< HEAD
+=======
+
+# https://github.com/pingcap/tidb/issues/11903
+create table t(a int, b int);
+explain select a, b from (select a, b, avg(b) over (partition by a)as avg_b from t) as tt where a > 10 and b < 10 and a > avg_b;
+drop table if exists t;
+
+create table t(a int, b int);
+explain format="dot" select * from t where a < 2;
+drop table if exists t;
+
+# select / update should choose same access path for table t.
+create table t(a binary(16) not null, b varchar(2) default null, c varchar(100) default 'aaaa', key (a,b));
+explain select * from t where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+explain update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+drop table if exists t;
+>>>>>>> bb675c0... types: check KindNull / KindMinNotNull / KindMaxValue when comparing datums (#19259)
