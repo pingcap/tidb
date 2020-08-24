@@ -86,11 +86,14 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		// Make sure that there is at least one worker.
 		it.concurrency = 1
 	}
+
 	if it.req.KeepOrder {
 		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
+		it.sendRate = newRateLimit(it.concurrency)
 	}
+
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	}
@@ -381,8 +384,8 @@ type copIterator struct {
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
 	curr  int
-	// sendRate controls the sending rate of copIteratorTaskSender, if keepOrder,
-	// to prevent all tasks being done (aka. all of the responses are buffered)
+
+	// sendRate controls the sending rate of copIteratorTaskSender
 	sendRate *rateLimit
 
 	// Otherwise, results are stored in respChan.
@@ -419,6 +422,8 @@ type copIteratorWorker struct {
 	memTracker *memory.Tracker
 
 	replicaReadSeed uint32
+
+	sendRate *rateLimit
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -433,7 +438,7 @@ type copIteratorTaskSender struct {
 
 type copResponse struct {
 	pbResp   *coprocessor.Response
-	detail   *execdetails.ExecDetails
+	detail   *CopRuntimeStats
 	startKey kv.Key
 	err      error
 	respSize int64
@@ -455,7 +460,7 @@ func (rs *copResponse) GetStartKey() kv.Key {
 	return rs.startKey
 }
 
-func (rs *copResponse) GetExecDetails() *execdetails.ExecDetails {
+func (rs *copResponse) GetCopRuntimeStats() *CopRuntimeStats {
 	return rs.detail
 }
 
@@ -469,9 +474,6 @@ func (rs *copResponse) MemSize() int64 {
 	rs.respSize += int64(cap(rs.startKey))
 	if rs.detail != nil {
 		rs.respSize += int64(sizeofExecDetails)
-		if rs.detail.CommitDetail != nil {
-			rs.respSize += int64(sizeofCommitDetails)
-		}
 	}
 	if rs.pbResp != nil {
 		// Using a approximate size since it's hard to get a accurate value.
@@ -498,6 +500,9 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
+		if worker.respChan != nil {
+			worker.sendRate.putToken()
+		}
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -533,6 +538,7 @@ func (it *copIterator) open(ctx context.Context) {
 			memTracker: it.memTracker,
 
 			replicaReadSeed: it.replicaReadSeed,
+			sendRate:        it.sendRate,
 		}
 		go worker.run(ctx)
 	}
@@ -550,17 +556,16 @@ func (it *copIterator) open(ctx context.Context) {
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
 	for _, t := range sender.tasks {
-		// If keepOrder, we must control the sending rate to prevent all tasks
+		// we control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
-		// We keep the number of inflight tasks within the number of concurrency * 2.
+		// We keep the number of inflight tasks within the number of 2 * concurrency when Keep Order is true.
+		// If KeepOrder is false, the number equals the concurrency.
 		// It sends one more task if a task has been finished in copIterator.Next.
-		if sender.sendRate != nil {
-			exit := sender.sendRate.getToken(sender.finishCh)
-			if exit {
-				break
-			}
+		exit := sender.sendRate.getToken(sender.finishCh)
+		if exit {
+			break
 		}
-		exit := sender.sendToTaskCh(t)
+		exit = sender.sendToTaskCh(t)
 		if exit {
 			break
 		}
@@ -774,6 +779,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 	req.StoreTp = task.storeType
 	startTime := time.Now()
+	worker.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
 	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {
 		if task.storeType == kv.TiDB {
@@ -839,7 +845,7 @@ type clientHelper struct {
 	*minCommitTSPushed
 	Client
 	resolveLite bool
-	stats       map[tikvrpc.CmdType]*RegionRequestRuntimeStats
+	RegionRequestRuntimeStats
 }
 
 // ResolveLocks wraps the ResolveLocks function and store the resolved result.
@@ -847,9 +853,9 @@ func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	var err error
 	var resolvedLocks []uint64
 	var msBeforeTxnExpired int64
-	if ch.stats != nil {
+	if ch.Stats != nil {
 		defer func(start time.Time) {
-			recordRegionRequestRuntimeStats(ch.stats, tikvrpc.CmdResolveLock, time.Since(start))
+			recordRegionRequestRuntimeStats(ch.Stats, tikvrpc.CmdResolveLock, time.Since(start))
 		}(time.Now())
 	}
 	if ch.resolveLite {
@@ -873,7 +879,7 @@ func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID
 	if len(directStoreAddr) > 0 {
 		sender.storeAddr = directStoreAddr
 	}
-	sender.stats = ch.stats
+	sender.Stats = ch.Stats
 	req.Context.ResolvedLocks = ch.minCommitTSPushed.Get()
 	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, sType)
 	return resp, ctx, sender.storeAddr, err
@@ -1022,8 +1028,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.startKey = task.ranges.at(0).StartKey
 	}
 	if resp.detail == nil {
-		resp.detail = new(execdetails.ExecDetails)
+		resp.detail = new(CopRuntimeStats)
 	}
+	resp.detail.Stats = worker.Stats
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
 	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
 	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
@@ -1077,6 +1084,12 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	return nil, nil
 }
 
+// CopRuntimeStats contains execution detail information.
+type CopRuntimeStats struct {
+	execdetails.ExecDetails
+	RegionRequestRuntimeStats
+}
+
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
 	errCode := errno.ErrUnknown
 	errMsg := err.Error()
@@ -1100,7 +1113,7 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 		pbResp: &coprocessor.Response{
 			Data: data,
 		},
-		detail: &execdetails.ExecDetails{},
+		detail: &CopRuntimeStats{},
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil
