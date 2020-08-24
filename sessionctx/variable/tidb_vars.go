@@ -14,6 +14,7 @@
 package variable
 
 import (
+	"math"
 	"os"
 
 	"github.com/pingcap/parser/mysql"
@@ -45,6 +46,7 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	TiDBOptBCJ = "tidb_opt_broadcast_join"
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -90,7 +92,8 @@ const (
 
 	// The following session variables controls the memory quota during query execution.
 	// "tidb_mem_quota_query":				control the memory quota of a query.
-	TIDBMemQuotaQuery = "tidb_mem_quota_query" // Bytes.
+	TIDBMemQuotaQuery               = "tidb_mem_quota_query" // Bytes.
+	TIDBNestedLoopJoinCacheCapacity = "tidb_nested_loop_join_cache_capacity"
 	// TODO: remove them below sometime, it should have only one Quota(TIDBMemQuotaQuery).
 	TIDBMemQuotaHashJoin          = "tidb_mem_quota_hashjoin"          // Bytes.
 	TIDBMemQuotaMergeJoin         = "tidb_mem_quota_mergejoin"         // Bytes.
@@ -171,6 +174,9 @@ const (
 
 	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
 	TiDBFoundInPlanCache = "last_plan_from_cache"
+
+	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
+	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -183,6 +189,7 @@ const (
 	// A distsql scan task can be a table scan or a index scan, which may be distributed to many TiKV nodes.
 	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
+	// tidb_distsql_scan_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
 	// tidb_opt_insubquery_to_join_and_agg is used to enable/disable the optimizer rule of rewriting IN subquery.
@@ -198,6 +205,8 @@ const (
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
 	// tidb_opt_copcpu_factor is the CPU cost of processing one expression for one row in coprocessor.
 	TiDBOptCopCPUFactor = "tidb_opt_copcpu_factor"
+	// tidb_opt_tiflash_concurrency_factor is concurrency number of tiflash computation.
+	TiDBOptTiFlashConcurrencyFactor = "tidb_opt_tiflash_concurrency_factor"
 	// tidb_opt_network_factor is the network cost of transferring 1 byte data.
 	TiDBOptNetworkFactor = "tidb_opt_network_factor"
 	// tidb_opt_scan_factor is the IO cost of scanning 1 byte data on TiKV.
@@ -231,11 +240,13 @@ const (
 	// in many TiKV nodes, we executes multiple concurrent index lookup tasks concurrently to reduce the time
 	// waiting for a task to finish.
 	// Set this value higher may reduce the latency but consumes more system resource.
+	// tidb_index_lookup_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBIndexLookupConcurrency = "tidb_index_lookup_concurrency"
 
 	// tidb_index_lookup_join_concurrency is used for index lookup join executor.
 	// IndexLookUpJoin starts "tidb_index_lookup_join_concurrency" inner workers
 	// to fetch inner rows and join the matched (outer, inner) row pairs.
+	// tidb_index_lookup_join_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBIndexLookupJoinConcurrency = "tidb_index_lookup_join_concurrency"
 
 	// tidb_index_serial_scan_concurrency is used for controlling the concurrency of index scan operation
@@ -260,24 +271,37 @@ const (
 	// the input string values are valid, we can skip the check.
 	TiDBSkipUTF8Check = "tidb_skip_utf8_check"
 
+	// tidb_skip_ascii_check skips the ASCII validate process
+	// old tidb may already have fields with invalid ASCII bytes
+	// disable ASCII validate can guarantee a safe replication
+	TiDBSkipASCIICheck = "tidb_skip_ascii_check"
+
 	// tidb_hash_join_concurrency is used for hash join executor.
 	// The hash join outer executor starts multiple concurrent join workers to probe the hash table.
+	// tidb_hash_join_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBHashJoinConcurrency = "tidb_hash_join_concurrency"
 
 	// tidb_projection_concurrency is used for projection operator.
 	// This variable controls the worker number of projection operator.
+	// tidb_projection_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBProjectionConcurrency = "tidb_projection_concurrency"
 
 	// tidb_hashagg_partial_concurrency is used for hash agg executor.
 	// The hash agg executor starts multiple concurrent partial workers to do partial aggregate works.
+	// tidb_hashagg_partial_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBHashAggPartialConcurrency = "tidb_hashagg_partial_concurrency"
 
 	// tidb_hashagg_final_concurrency is used for hash agg executor.
 	// The hash agg executor starts multiple concurrent final workers to do final aggregate works.
+	// tidb_hashagg_final_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBHashAggFinalConcurrency = "tidb_hashagg_final_concurrency"
 
 	// tidb_window_concurrency is used for window parallel executor.
+	// tidb_window_concurrency is deprecated, use tidb_executor_concurrency instead.
 	TiDBWindowConcurrency = "tidb_window_concurrency"
+
+	// tidb_enable_parallel_apply is used for parallel apply.
+	TiDBEnableParallelApply = "tidb_enable_parallel_apply"
 
 	// tidb_backoff_lock_fast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
@@ -393,13 +417,34 @@ const (
 
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
+
+	// DefExecutorConcurrency is used for controlling the concurrency of all types of executors.
+	TiDBExecutorConcurrency = "tidb_executor_concurrency"
+
+	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
+	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
+
+	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
+	// Deprecated: use TiDBLogDesensitization instead.
+	TiDBSlowLogMasking = "tidb_slow_log_masking"
+
+	// TiDBLogDesensitization indicates that whether desensitization when log query.
+	TiDBLogDesensitization = "tidb_log_desensitization"
+
+	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
+	TiDBShardAllocateStep = "tidb_shard_allocate_step"
+	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
+	TiDBEnableTelemetry = "tidb_enable_telemetry"
+
+	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
+	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
 )
 
 // Default TiDB system variable values.
 const (
 	DefHostname                        = "localhost"
-	DefIndexLookupConcurrency          = 4
-	DefIndexLookupJoinConcurrency      = 4
+	DefIndexLookupConcurrency          = ConcurrencyUnset
+	DefIndexLookupJoinConcurrency      = ConcurrencyUnset
 	DefIndexSerialScanConcurrency      = 1
 	DefIndexJoinBatchSize              = 25000
 	DefIndexLookupSize                 = 20000
@@ -412,12 +457,15 @@ const (
 	DefAutoIncrementOffset             = 1
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
+	DefSkipASCIICheck                  = false
 	DefOptAggPushDown                  = false
+	DefOptBCJ                          = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
 	DefOptCPUFactor                    = 3.0
 	DefOptCopCPUFactor                 = 3.0
+	DefOptTiFlashConcurrencyFactor     = 24.0
 	DefOptNetworkFactor                = 1.0
 	DefOptScanFactor                   = 1.5
 	DefOptDescScanFactor               = 3.0
@@ -432,7 +480,7 @@ const (
 	DefCurretTS                        = 0
 	DefInitChunkSize                   = 32
 	DefMaxChunkSize                    = 1024
-	DefDMLBatchSize                    = 20000
+	DefDMLBatchSize                    = 0
 	DefMaxPreparedStmtCount            = -1
 	DefWaitTimeout                     = 0
 	DefTiDBMemQuotaHashJoin            = 32 << 30 // 32GB.
@@ -448,10 +496,10 @@ const (
 	DefTiDBRetryLimit                  = 10
 	DefTiDBDisableTxnAutoRetry         = true
 	DefTiDBConstraintCheckInPlace      = false
-	DefTiDBHashJoinConcurrency         = 5
-	DefTiDBProjectionConcurrency       = 4
+	DefTiDBHashJoinConcurrency         = ConcurrencyUnset
+	DefTiDBProjectionConcurrency       = ConcurrencyUnset
 	DefTiDBOptimizerSelectivityLevel   = 0
-	DefTiDBAllowBatchCop               = 0
+	DefTiDBAllowBatchCop               = 1
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -459,9 +507,9 @@ const (
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
-	DefTiDBHashAggPartialConcurrency   = 4
-	DefTiDBHashAggFinalConcurrency     = 4
-	DefTiDBWindowConcurrency           = 4
+	DefTiDBHashAggPartialConcurrency   = ConcurrencyUnset
+	DefTiDBHashAggFinalConcurrency     = ConcurrencyUnset
+	DefTiDBWindowConcurrency           = ConcurrencyUnset
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
@@ -486,7 +534,15 @@ const (
 	DefTiDBMetricSchemaStep            = 60 // 60s
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
-	DefTidbEnableCollectExecutionInfo  = false
+	DefTiDBEnableCollectExecutionInfo  = true
+	DefTiDBAllowAutoRandExplicitInsert = false
+	DefTiDBEnableClusteredIndex        = false
+	DefTiDBSlowLogMasking              = false
+	DefTiDBLogDesensitization          = false
+	DefTiDBShardAllocateStep           = math.MaxInt64
+	DefTiDBEnableTelemetry             = true
+	DefTiDBEnableParallelApply         = false
+	DefTiDBEnableAmendPessimisticTxn   = true
 )
 
 // Process global variables.
@@ -509,4 +565,5 @@ var (
 	ExpensiveQueryTimeThreshold    uint64 = DefTiDBExpensiveQueryTimeThreshold
 	MinExpensiveQueryTimeThreshold uint64 = 10 //10s
 	CapturePlanBaseline                   = serverGlobalVariable{globalVal: "0"}
+	DefExecutorConcurrency                = 5
 )

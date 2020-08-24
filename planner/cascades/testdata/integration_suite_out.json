@@ -79,7 +79,7 @@
       {
         "SQL": "select b from t order by b",
         "Plan": [
-          "Sort_11 10000.00 root  test.t.b:asc",
+          "Sort_11 10000.00 root  test.t.b",
           "└─TableReader_9 10000.00 root  data:TableFullScan_10",
           "  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -95,7 +95,7 @@
         "Plan": [
           "Projection_7 10000.00 root  test.t.b",
           "└─Projection_12 10000.00 root  test.t.b, test.t.a",
-          "  └─Sort_8 10000.00 root  Column#4:asc",
+          "  └─Sort_8 10000.00 root  Column#4",
           "    └─Projection_13 10000.00 root  test.t.b, test.t.a, plus(test.t.a, test.t.b)->Column#4",
           "      └─Projection_9 10000.00 root  test.t.b, test.t.a",
           "        └─TableReader_10 10000.00 root  data:TableFullScan_11",
@@ -113,7 +113,7 @@
         "Plan": [
           "Projection_7 10000.00 root  test.t.b",
           "└─Projection_12 10000.00 root  test.t.b, test.t.a",
-          "  └─Sort_8 10000.00 root  test.t.b:asc, Column#4:asc, test.t.a:asc",
+          "  └─Sort_8 10000.00 root  test.t.b, Column#4, test.t.a",
           "    └─Projection_13 10000.00 root  test.t.b, test.t.a, plus(test.t.a, test.t.b)->Column#4",
           "      └─Projection_9 10000.00 root  test.t.b, test.t.a",
           "        └─TableReader_10 10000.00 root  data:TableFullScan_11",
@@ -134,10 +134,10 @@
       {
         "SQL": "select sum(a) from t",
         "Plan": [
-          "HashAgg_12 1.00 root  funcs:sum(Column#4)->Column#3",
-          "└─TableReader_13 1.00 root  data:HashAgg_14",
-          "  └─HashAgg_14 1.00 cop[tikv]  funcs:sum(test.t.a)->Column#4",
-          "    └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "HashAgg_14 1.00 root  funcs:sum(Column#4)->Column#3",
+          "└─TableReader_15 1.00 root  data:HashAgg_16",
+          "  └─HashAgg_16 1.00 cop[tikv]  funcs:sum(test.t.a)->Column#4",
+          "    └─TableFullScan_13 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "10"
@@ -158,12 +158,12 @@
       {
         "SQL": "select b, avg(a) from t group by b order by b",
         "Plan": [
-          "Projection_10 8000.00 root  test.t.b, Column#3",
-          "└─Sort_19 8000.00 root  test.t.b:asc",
-          "  └─HashAgg_12 8000.00 root  group by:Column#9, funcs:avg(Column#7)->Column#3, funcs:firstrow(Column#8)->test.t.b",
-          "    └─Projection_15 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#7, test.t.b, test.t.b",
-          "      └─TableReader_13 10000.00 root  data:TableFullScan_14",
-          "        └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Projection_12 8000.00 root  test.t.b, Column#3",
+          "└─Sort_21 8000.00 root  test.t.b",
+          "  └─HashAgg_18 8000.00 root  group by:test.t.b, funcs:avg(Column#4, Column#5)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
+          "    └─TableReader_19 8000.00 root  data:HashAgg_20",
+          "      └─HashAgg_20 8000.00 cop[tikv]  group by:test.t.b, funcs:count(test.t.a)->Column#4, funcs:sum(test.t.a)->Column#5",
+          "        └─TableFullScan_17 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "11 1.0000",
@@ -175,12 +175,12 @@
       {
         "SQL": "select b, sum(a) from t group by b order by b",
         "Plan": [
-          "Projection_10 8000.00 root  test.t.b, Column#3",
-          "└─Sort_19 8000.00 root  test.t.b:asc",
-          "  └─HashAgg_16 8000.00 root  group by:test.t.b, funcs:sum(Column#4)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
-          "    └─TableReader_17 8000.00 root  data:HashAgg_18",
-          "      └─HashAgg_18 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(test.t.a)->Column#4",
-          "        └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Projection_12 8000.00 root  test.t.b, Column#3",
+          "└─Sort_21 8000.00 root  test.t.b",
+          "  └─HashAgg_18 8000.00 root  group by:test.t.b, funcs:sum(Column#4)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
+          "    └─TableReader_19 8000.00 root  data:HashAgg_20",
+          "      └─HashAgg_20 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(test.t.a)->Column#4",
+          "        └─TableFullScan_17 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "11 1",
@@ -192,14 +192,14 @@
       {
         "SQL": "select b, avg(a) from t group by b having sum(a) > 1 order by b",
         "Plan": [
-          "Projection_12 6400.00 root  test.t.b, Column#3",
-          "└─Projection_14 6400.00 root  test.t.b, Column#3, Column#4",
-          "  └─Sort_27 6400.00 root  test.t.b:asc",
-          "    └─Selection_26 6400.00 root  gt(Column#4, 1)",
-          "      └─HashAgg_17 8000.00 root  group by:Column#14, funcs:avg(Column#11)->Column#3, funcs:sum(Column#12)->Column#4, funcs:firstrow(Column#13)->test.t.b",
+          "Projection_14 6400.00 root  test.t.b, Column#3",
+          "└─Projection_16 6400.00 root  test.t.b, Column#3, Column#4",
+          "  └─Sort_29 6400.00 root  test.t.b",
+          "    └─Selection_28 6400.00 root  gt(Column#4, 1)",
+          "      └─HashAgg_19 8000.00 root  group by:test.t.b, funcs:avg(Column#11)->Column#3, funcs:sum(Column#12)->Column#4, funcs:firstrow(test.t.b)->test.t.b",
           "        └─Projection_20 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#11, cast(test.t.a, decimal(65,0) BINARY)->Column#12, test.t.b, test.t.b",
-          "          └─TableReader_18 10000.00 root  data:TableFullScan_19",
-          "            └─TableFullScan_19 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "          └─TableReader_21 10000.00 root  data:TableFullScan_22",
+          "            └─TableFullScan_22 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "22 2.0000",
@@ -210,10 +210,10 @@
       {
         "SQL": "select max(a+b) from t",
         "Plan": [
-          "HashAgg_31 1.00 root  funcs:max(Column#4)->Column#3",
-          "└─TableReader_32 1.00 root  data:HashAgg_33",
-          "  └─HashAgg_33 1.00 cop[tikv]  funcs:max(plus(test.t.a, test.t.b))->Column#4",
-          "    └─TableFullScan_29 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "HashAgg_68 1.00 root  funcs:max(Column#4)->Column#3",
+          "└─TableReader_69 1.00 root  data:HashAgg_70",
+          "  └─HashAgg_70 1.00 cop[tikv]  funcs:max(plus(test.t.a, test.t.b))->Column#4",
+          "    └─TableFullScan_41 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "48"
@@ -237,13 +237,13 @@
       {
         "SQL": "select b, sum(a) from t group by b having b > 1 order by b",
         "Plan": [
-          "Projection_14 6400.00 root  test.t.b, Column#3",
-          "└─Sort_24 6400.00 root  test.t.b:asc",
-          "  └─HashAgg_21 6400.00 root  group by:test.t.b, funcs:sum(Column#4)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
-          "    └─TableReader_22 6400.00 root  data:HashAgg_23",
-          "      └─HashAgg_23 6400.00 cop[tikv]  group by:test.t.b, funcs:sum(test.t.a)->Column#4",
-          "        └─Selection_18 8000.00 cop[tikv]  gt(test.t.b, 1)",
-          "          └─TableFullScan_19 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Projection_16 6400.00 root  test.t.b, Column#3",
+          "└─Sort_26 6400.00 root  test.t.b",
+          "  └─HashAgg_23 6400.00 root  group by:test.t.b, funcs:sum(Column#4)->Column#3, funcs:firstrow(test.t.b)->test.t.b",
+          "    └─TableReader_24 6400.00 root  data:HashAgg_25",
+          "      └─HashAgg_25 6400.00 cop[tikv]  group by:test.t.b, funcs:sum(test.t.a)->Column#4",
+          "        └─Selection_21 8000.00 cop[tikv]  gt(test.t.b, 1)",
+          "          └─TableFullScan_22 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "11 1",
@@ -255,13 +255,13 @@
       {
         "SQL": "select c, sum(a) from (select a+b as c, a from t) t1 group by c having c > 1 order by c",
         "Plan": [
-          "Projection_18 6400.00 root  Column#3, Column#4",
-          "└─Sort_30 6400.00 root  Column#3:asc",
-          "  └─HashAgg_26 6400.00 root  group by:Column#7, funcs:sum(Column#8)->Column#4, funcs:firstrow(Column#7)->Column#3",
-          "    └─TableReader_27 6400.00 root  data:HashAgg_28",
-          "      └─HashAgg_28 6400.00 cop[tikv]  group by:plus(test.t.a, test.t.b), funcs:sum(test.t.a)->Column#8",
-          "        └─Selection_23 8000.00 cop[tikv]  gt(plus(test.t.a, test.t.b), 1)",
-          "          └─TableFullScan_24 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Projection_23 6400.00 root  Column#3, Column#4",
+          "└─Sort_35 6400.00 root  Column#3",
+          "  └─HashAgg_32 6400.00 root  group by:Column#7, funcs:sum(Column#8)->Column#4, funcs:firstrow(Column#7)->Column#3",
+          "    └─TableReader_33 6400.00 root  data:HashAgg_34",
+          "      └─HashAgg_34 6400.00 cop[tikv]  group by:plus(test.t.a, test.t.b), funcs:sum(test.t.a)->Column#8",
+          "        └─Selection_28 8000.00 cop[tikv]  gt(plus(test.t.a, test.t.b), 1)",
+          "          └─TableFullScan_29 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "12 1",
@@ -286,10 +286,10 @@
       {
         "SQL": "select avg(a.b) from t a left join t b on a.a = b.a",
         "Plan": [
-          "HashAgg_14 1.00 root  funcs:avg(Column#6, Column#7)->Column#5",
-          "└─TableReader_15 1.00 root  data:HashAgg_16",
-          "  └─HashAgg_16 1.00 cop[tikv]  funcs:count(test.t.b)->Column#6, funcs:sum(test.t.b)->Column#7",
-          "    └─TableFullScan_12 10000.00 cop[tikv] table:a keep order:false, stats:pseudo"
+          "HashAgg_16 1.00 root  funcs:avg(Column#6, Column#7)->Column#5",
+          "└─TableReader_17 1.00 root  data:HashAgg_18",
+          "  └─HashAgg_18 1.00 cop[tikv]  funcs:count(test.t.b)->Column#6, funcs:sum(test.t.b)->Column#7",
+          "    └─TableFullScan_15 10000.00 cop[tikv] table:a keep order:false, stats:pseudo"
         ],
         "Result": [
           "27.5000"
@@ -367,10 +367,10 @@
       {
         "SQL": "select sum(case when a > 0 and a <= 1000 then b else 0 end) from t",
         "Plan": [
-          "HashAgg_16 1.00 root  funcs:sum(Column#4)->Column#3",
-          "└─TableReader_17 1.00 root  data:HashAgg_18",
-          "  └─HashAgg_18 1.00 cop[tikv]  funcs:sum(test.t.b)->Column#4",
-          "    └─TableRangeScan_14 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
+          "HashAgg_18 1.00 root  funcs:sum(Column#4)->Column#3",
+          "└─TableReader_19 1.00 root  data:HashAgg_20",
+          "  └─HashAgg_20 1.00 cop[tikv]  funcs:sum(test.t.b)->Column#4",
+          "    └─TableRangeScan_17 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
         ],
         "Result": [
           "110"
@@ -379,10 +379,10 @@
       {
         "SQL": "select sum(case when a > 0 then (case when a <= 1000 then b end) else 0 end) from t",
         "Plan": [
-          "HashAgg_19 1.00 root  funcs:sum(Column#4)->Column#3",
-          "└─TableReader_20 1.00 root  data:HashAgg_21",
-          "  └─HashAgg_21 1.00 cop[tikv]  funcs:sum(test.t.b)->Column#4",
-          "    └─TableRangeScan_17 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
+          "HashAgg_21 1.00 root  funcs:sum(Column#4)->Column#3",
+          "└─TableReader_22 1.00 root  data:HashAgg_23",
+          "  └─HashAgg_23 1.00 cop[tikv]  funcs:sum(test.t.b)->Column#4",
+          "    └─TableRangeScan_20 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
         ],
         "Result": [
           "110"
@@ -391,10 +391,10 @@
       {
         "SQL": "select sum(case when a <= 0 or a > 1000 then 0.0 else b end) from t",
         "Plan": [
-          "HashAgg_16 1.00 root  funcs:sum(Column#4)->Column#3",
-          "└─TableReader_17 1.00 root  data:HashAgg_18",
-          "  └─HashAgg_18 1.00 cop[tikv]  funcs:sum(cast(test.t.b))->Column#4",
-          "    └─TableRangeScan_14 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
+          "HashAgg_18 1.00 root  funcs:sum(Column#4)->Column#3",
+          "└─TableReader_19 1.00 root  data:HashAgg_20",
+          "  └─HashAgg_20 1.00 cop[tikv]  funcs:sum(cast(test.t.b))->Column#4",
+          "    └─TableRangeScan_17 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
         ],
         "Result": [
           "110.0"
@@ -436,11 +436,22 @@
         ]
       },
       {
+        "SQL": "select approx_count_distinct(case when a > 0 and a <= 1000 then b end) from t",
+        "Plan": [
+          "HashAgg_10 1.00 root  funcs:approx_count_distinct(test.t.b)->Column#3",
+          "└─TableReader_11 250.00 root  data:TableRangeScan_12",
+          "  └─TableRangeScan_12 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "4"
+        ]
+      },
+      {
         "SQL": "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b",
         "Plan": [
           "Projection_13 8000.00 root  Column#3, Column#4, Column#5, test.t.b, Column#6, Column#7, Column#8, Column#9, Column#10",
           "└─Projection_15 8000.00 root  if(isnull(test.t.b), 0, 1)->Column#3, cast(test.t.b, decimal(65,0) BINARY)->Column#4, cast(test.t.b, decimal(65,4) BINARY)->Column#5, test.t.b, cast(test.t.b, int(11))->Column#6, cast(test.t.b, int(11))->Column#7, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 18446744073709551615)->Column#8, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#9, ifnull(cast(test.t.b, bigint(21) UNSIGNED BINARY), 0)->Column#10, cast(test.t.b, decimal(65,0) BINARY)->Column#4, if(isnull(test.t.b), 0, 1)->Column#3",
-          "  └─Sort_22 8000.00 root  test.t.b:asc",
+          "  └─Sort_22 8000.00 root  test.t.b",
           "    └─TableReader_19 8000.00 root  data:Selection_20",
           "      └─Selection_20 8000.00 cop[tikv]  ge(cast(test.t.b), 0), ge(if(isnull(test.t.b), 0, 1), 0)",
           "        └─TableFullScan_21 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -451,6 +462,22 @@
           "1 33 33.0000 33 33 33 33 33 33",
           "1 44 44.0000 44 44 44 44 44 44"
         ]
+      },
+      {
+        "SQL": "select group_concat(a, b), min(b), avg(a / b), a from t group by (a+b), a order by a",
+        "Plan": [
+          "Sort_15 8000.00 root  test.t.a",
+          "└─HashAgg_11 8000.00 root  group by:Column#9, test.t.a, funcs:group_concat(Column#6, Column#7 separator \",\")->Column#3, funcs:min(test.t.b)->Column#4, funcs:avg(Column#8)->Column#5, funcs:firstrow(test.t.a)->test.t.a",
+          "  └─Projection_12 10000.00 root  cast(test.t.a, var_string(20))->Column#6, cast(test.t.b, var_string(20))->Column#7, test.t.b, div(cast(test.t.a, decimal(20,0) BINARY), cast(test.t.b, decimal(20,0) BINARY))->Column#8, test.t.a, plus(test.t.a, test.t.b)->Column#9, test.t.a",
+          "    └─TableReader_13 10000.00 root  data:TableFullScan_14",
+          "      └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "111 11 0.09090909 1",
+          "222 22 0.09090909 2",
+          "333 33 0.09090909 3",
+          "444 44 0.09090909 4"
+        ]
       }
     ]
   },
@@ -460,11 +487,11 @@
       {
         "SQL": "select /*+ HASH_AGG() */ avg(distinct a) from t;",
         "Plan": [
-          "HashAgg_12 1.00 root  funcs:avg(distinct Column#8)->Column#5",
-          "└─Projection_15 8000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#8",
-          "  └─TableReader_13 8000.00 root  data:HashAgg_14",
-          "    └─HashAgg_14 8000.00 cop[tikv]  group by:test.t.a, ",
-          "      └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "HashAgg_16 1.00 root  funcs:avg(distinct Column#7)->Column#5",
+          "└─Projection_17 8000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#7",
+          "  └─TableReader_18 8000.00 root  data:HashAgg_19",
+          "    └─HashAgg_19 8000.00 cop[tikv]  group by:test.t.a, ",
+          "      └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "1.5000"
@@ -474,9 +501,9 @@
         "SQL": "select /*+ HASH_AGG() */ a, count(distinct a) from t;",
         "Plan": [
           "Projection_8 1.00 root  test.t.a, Column#5",
-          "└─HashAgg_12 1.00 root  funcs:count(distinct test.t.a)->Column#5, funcs:firstrow(Column#7)->test.t.a",
+          "└─HashAgg_12 1.00 root  funcs:count(distinct test.t.a)->Column#5, funcs:firstrow(Column#6)->test.t.a",
           "  └─TableReader_13 8000.00 root  data:HashAgg_14",
-          "    └─HashAgg_14 8000.00 cop[tikv]  group by:test.t.a, funcs:firstrow(test.t.a)->Column#7",
+          "    └─HashAgg_14 8000.00 cop[tikv]  group by:test.t.a, funcs:firstrow(test.t.a)->Column#6",
           "      └─TableFullScan_11 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -486,11 +513,11 @@
       {
         "SQL": "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
         "Plan": [
-          "Projection_8 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
-          "└─HashAgg_13 8000.00 root  group by:test.t.c, funcs:avg(Column#11, Column#12)->Column#5, funcs:count(distinct test.t.a, test.t.b)->Column#6, funcs:count(distinct test.t.a)->Column#7, funcs:count(distinct test.t.c)->Column#8, funcs:sum(Column#13)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
-          "  └─TableReader_14 8000.00 root  data:HashAgg_15",
-          "    └─HashAgg_15 8000.00 cop[tikv]  group by:test.t.a, test.t.b, test.t.c, funcs:count(test.t.b)->Column#11, funcs:sum(test.t.b)->Column#12, funcs:sum(test.t.b)->Column#13",
-          "      └─TableFullScan_11 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Projection_10 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
+          "└─HashAgg_15 8000.00 root  group by:test.t.c, funcs:avg(Column#10, Column#11)->Column#5, funcs:count(distinct test.t.a, test.t.b)->Column#6, funcs:count(distinct test.t.a)->Column#7, funcs:count(distinct test.t.c)->Column#8, funcs:sum(Column#12)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
+          "  └─TableReader_16 8000.00 root  data:HashAgg_17",
+          "    └─HashAgg_17 8000.00 cop[tikv]  group by:test.t.a, test.t.b, test.t.c, funcs:count(test.t.b)->Column#10, funcs:sum(test.t.b)->Column#11, funcs:sum(test.t.b)->Column#12",
+          "      └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "1.0000 1 1.0000 1 1 1 1",
@@ -570,10 +597,10 @@
       {
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;",
         "Plan": [
-          "HashAgg_6 1.00 root  funcs:avg(distinct Column#7)->Column#5",
-          "└─Projection_9 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#7",
-          "  └─TableReader_7 10000.00 root  data:TableFullScan_8",
-          "    └─TableFullScan_8 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "HashAgg_8 1.00 root  funcs:avg(distinct Column#6)->Column#5",
+          "└─Projection_9 10000.00 root  cast(test.t.a, decimal(65,4) BINARY)->Column#6",
+          "  └─TableReader_10 10000.00 root  data:TableFullScan_11",
+          "    └─TableFullScan_11 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "1.5000"
@@ -594,11 +621,11 @@
       {
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
         "Plan": [
-          "Projection_6 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
-          "└─HashAgg_7 8000.00 root  group by:Column#18, funcs:avg(Column#11)->Column#5, funcs:count(distinct Column#12, Column#13)->Column#6, funcs:count(distinct Column#14)->Column#7, funcs:count(distinct Column#15)->Column#8, funcs:sum(Column#16)->Column#9, funcs:firstrow(Column#17)->test.t.c",
-          "  └─Projection_10 10000.00 root  cast(test.t.b, decimal(65,4) BINARY)->Column#11, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(65,0) BINARY)->Column#16, test.t.c, test.t.c",
-          "    └─TableReader_8 10000.00 root  data:TableFullScan_9",
-          "      └─TableFullScan_9 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Projection_8 8000.00 root  Column#5, test.t.c, Column#5, Column#6, Column#7, Column#8, Column#9",
+          "└─HashAgg_9 8000.00 root  group by:test.t.c, funcs:avg(Column#10)->Column#5, funcs:count(distinct test.t.a, test.t.b)->Column#6, funcs:count(distinct test.t.a)->Column#7, funcs:count(distinct test.t.c)->Column#8, funcs:sum(Column#11)->Column#9, funcs:firstrow(test.t.c)->test.t.c",
+          "  └─Projection_10 10000.00 root  cast(test.t.b, decimal(65,4) BINARY)->Column#10, test.t.a, test.t.b, test.t.a, test.t.c, cast(test.t.b, decimal(65,0) BINARY)->Column#11, test.t.c, test.t.c",
+          "    └─TableReader_11 10000.00 root  data:TableFullScan_12",
+          "      └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
           "1.0000 1 1.0000 1 1 1 1",
@@ -687,9 +714,9 @@
       {
         "SQL": "select b from t order by b limit 3",
         "Plan": [
-          "TopN_9 3.00 root  test.t.b:asc, offset:0, count:3",
+          "TopN_9 3.00 root  test.t.b, offset:0, count:3",
           "└─TableReader_11 3.00 root  data:TopN_12",
-          "  └─TopN_12 3.00 cop[tikv]  test.t.b:asc, offset:0, count:3",
+          "  └─TopN_12 3.00 cop[tikv]  test.t.b, offset:0, count:3",
           "    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -713,7 +740,7 @@
       {
         "SQL": "select * from ((select a as aa from t t1) union all (select b as aa from t t2)) as t3 order by aa",
         "Plan": [
-          "Sort_23 20000.00 root  Column#5:asc",
+          "Sort_23 20000.00 root  Column#5",
           "└─Union_16 20000.00 root  ",
           "  ├─Projection_17 10000.00 root  test.t.a",
           "  │ └─TableReader_18 10000.00 root  data:TableFullScan_19",
@@ -736,8 +763,8 @@
       {
         "SQL": "select a, b, lag(a,1) over (order by b) from t order by b",
         "Plan": [
-          "Window_10 10000.00 root  lag(test.t.a, 1)->Column#4 over(order by test.t.b asc)",
-          "└─Sort_15 10000.00 root  test.t.b:asc",
+          "Window_10 10000.00 root  lag(test.t.a, 1)->Column#4 over(order by test.t.b)",
+          "└─Sort_15 10000.00 root  test.t.b",
           "  └─TableReader_13 10000.00 root  data:TableFullScan_14",
           "    └─TableFullScan_14 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -752,10 +779,10 @@
         "SQL": "select * from (select a+1 as c, a+b as d from t) as t1 order by c+d limit 10",
         "Plan": [
           "Projection_22 10.00 root  plus(test.t.a, 1)->Column#3, plus(test.t.a, test.t.b)->Column#4",
-          "└─TopN_23 10.00 root  Column#5:asc, offset:0, count:10",
+          "└─TopN_23 10.00 root  Column#5, offset:0, count:10",
           "  └─Projection_25 10.00 root  test.t.a, test.t.b, plus(plus(test.t.a, 1), plus(test.t.a, test.t.b))->Column#5",
           "    └─TableReader_26 10.00 root  data:TopN_27",
-          "      └─TopN_27 10.00 cop[tikv]  plus(plus(test.t.a, 1), plus(test.t.a, test.t.b)):asc, offset:0, count:10",
+          "      └─TopN_27 10.00 cop[tikv]  plus(plus(test.t.a, 1), plus(test.t.a, test.t.b)), offset:0, count:10",
           "        └─TableFullScan_28 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
@@ -995,25 +1022,25 @@
       {
         "SQL": "select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2",
         "Plan": [
-          "Projection_28 1.00 root  Column#3, test.t1.a, test.t1.b",
-          "└─Apply_30 1.00 root  CARTESIAN left outer join",
-          "  ├─Apply_32(Build) 1.00 root  CARTESIAN left outer join",
-          "  │ ├─HashAgg_37(Build) 1.00 root  funcs:sum(Column#8)->Column#3, funcs:firstrow(Column#9)->test.t2.a, funcs:firstrow(Column#10)->test.t2.b",
-          "  │ │ └─TableReader_38 1.00 root  data:HashAgg_39",
-          "  │ │   └─HashAgg_39 1.00 cop[tikv]  funcs:sum(test.t2.a)->Column#8, funcs:firstrow(test.t2.a)->Column#9, funcs:firstrow(test.t2.b)->Column#10",
-          "  │ │     └─TableFullScan_35 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  │ └─MaxOneRow_40(Probe) 1.00 root  ",
-          "  │   └─Limit_41 1.00 root  offset:0, count:1",
-          "  │     └─TableReader_42 1.00 root  data:Limit_43",
-          "  │       └─Limit_43 1.00 cop[tikv]  offset:0, count:1",
-          "  │         └─Selection_44 1.00 cop[tikv]  eq(test.t1.a, test.t2.a)",
-          "  │           └─TableFullScan_45 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─MaxOneRow_46(Probe) 1.00 root  ",
-          "    └─Limit_47 1.00 root  offset:0, count:1",
-          "      └─TableReader_48 1.00 root  data:Limit_49",
-          "        └─Limit_49 1.00 cop[tikv]  offset:0, count:1",
-          "          └─Selection_50 1.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
-          "            └─TableFullScan_51 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "Projection_30 1.00 root  Column#3, test.t1.a, test.t1.b",
+          "└─Apply_32 1.00 root  CARTESIAN left outer join",
+          "  ├─Apply_34(Build) 1.00 root  CARTESIAN left outer join",
+          "  │ ├─HashAgg_39(Build) 1.00 root  funcs:sum(Column#8)->Column#3, funcs:firstrow(Column#9)->test.t2.a, funcs:firstrow(Column#10)->test.t2.b",
+          "  │ │ └─TableReader_40 1.00 root  data:HashAgg_41",
+          "  │ │   └─HashAgg_41 1.00 cop[tikv]  funcs:sum(test.t2.a)->Column#8, funcs:firstrow(test.t2.a)->Column#9, funcs:firstrow(test.t2.b)->Column#10",
+          "  │ │     └─TableFullScan_38 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  │ └─MaxOneRow_42(Probe) 1.00 root  ",
+          "  │   └─Limit_43 1.00 root  offset:0, count:1",
+          "  │     └─TableReader_44 1.00 root  data:Limit_45",
+          "  │       └─Limit_45 1.00 cop[tikv]  offset:0, count:1",
+          "  │         └─Selection_46 1.00 cop[tikv]  eq(test.t1.a, test.t2.a)",
+          "  │           └─TableFullScan_47 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─MaxOneRow_48(Probe) 1.00 root  ",
+          "    └─Limit_49 1.00 root  offset:0, count:1",
+          "      └─TableReader_50 1.00 root  data:Limit_51",
+          "        └─Limit_51 1.00 cop[tikv]  offset:0, count:1",
+          "          └─Selection_52 1.00 cop[tikv]  eq(test.t1.b, test.t2.b)",
+          "            └─TableFullScan_53 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "6 1 11"
@@ -1083,9 +1110,9 @@
       {
         "SQL": "select b from (select b from t order by b limit 10 offset 10) as t1 order by b limit 10 offset 5",
         "Plan": [
-          "TopN_14 5.00 root  test.t.b:asc, offset:15, count:5",
+          "TopN_14 5.00 root  test.t.b, offset:15, count:5",
           "└─TableReader_16 20.00 root  data:TopN_17",
-          "  └─TopN_17 20.00 cop[tikv]  test.t.b:asc, offset:0, count:20",
+          "  └─TopN_17 20.00 cop[tikv]  test.t.b, offset:0, count:20",
           "    └─TableFullScan_19 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": null
@@ -1093,9 +1120,9 @@
       {
         "SQL": "select b from (select b from t order by b limit 10 offset 2) as t1 order by b limit 3 offset 5",
         "Plan": [
-          "TopN_14 3.00 root  test.t.b:asc, offset:7, count:3",
+          "TopN_14 3.00 root  test.t.b, offset:7, count:3",
           "└─TableReader_16 10.00 root  data:TopN_17",
-          "  └─TopN_17 10.00 cop[tikv]  test.t.b:asc, offset:0, count:10",
+          "  └─TopN_17 10.00 cop[tikv]  test.t.b, offset:0, count:10",
           "    └─TableFullScan_19 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": null
@@ -1111,9 +1138,9 @@
         "SQL": "select a from (select a from t where b > 2 order by a, b limit 3 offset 1) as t1 order by a limit 2 offset 1",
         "Plan": [
           "Projection_22 2.00 root  test.t.a",
-          "└─TopN_23 2.00 root  test.t.a:asc, test.t.b:asc, offset:2, count:2",
+          "└─TopN_23 2.00 root  test.t.a, test.t.b, offset:2, count:2",
           "  └─TableReader_25 4.00 root  data:TopN_26",
-          "    └─TopN_26 4.00 cop[tikv]  test.t.a:asc, test.t.b:asc, offset:0, count:4",
+          "    └─TopN_26 4.00 cop[tikv]  test.t.a, test.t.b, offset:0, count:4",
           "      └─Selection_28 8000.00 cop[tikv]  gt(test.t.b, 2)",
           "        └─TableFullScan_29 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -1126,7 +1153,7 @@
         "SQL": "select * from (select * from t order by a limit 3) as t1 order by a, b limit 5",
         "Plan": [
           "Limit_14 3.00 root  offset:0, count:5",
-          "└─Sort_26 3.00 root  test.t.a:asc, test.t.b:asc",
+          "└─Sort_26 3.00 root  test.t.a, test.t.b",
           "  └─Limit_16 3.00 root  offset:0, count:3",
           "    └─TableReader_22 3.00 root  data:Limit_23",
           "      └─Limit_23 3.00 cop[tikv]  offset:0, count:3",
@@ -1146,10 +1173,16 @@
       {
         "SQL": "select * from pt1",
         "Plan": [
-          "TableReader_5 10000.00 root  data:TableFullScan_6",
+          "TableReader_5 10000.00 root partition:all data:TableFullScan_6",
           "└─TableFullScan_6 10000.00 cop[tikv] table:pt1 keep order:false, stats:pseudo"
         ],
-        "Result": null
+        "Result": [
+          "4 40",
+          "1 10",
+          "5 50",
+          "2 20",
+          "3 30"
+        ]
       }
     ]
   },

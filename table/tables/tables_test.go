@@ -15,6 +15,7 @@ package tables_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
 	. "github.com/pingcap/check"
@@ -54,7 +55,7 @@ type testSuite struct {
 
 func (ts *testSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Check(err, IsNil)
 	ts.store = store
 	ts.dom, err = session.BootstrapSession(store)
@@ -119,9 +120,9 @@ func (ts *testSuite) TestBasic(c *C) {
 	_, err = tb.AddRecord(ctx, types.MakeDatums(2, "abc"))
 	c.Assert(err, NotNil)
 
-	c.Assert(tb.UpdateRecord(ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}), IsNil)
+	c.Assert(tb.UpdateRecord(context.Background(), ctx, rid, types.MakeDatums(1, "abc"), types.MakeDatums(1, "cba"), []bool{false, true}), IsNil)
 
-	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+	tb.IterRecords(ctx, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		return true, nil
 	})
 
@@ -320,7 +321,7 @@ func (ts *testSuite) TestUnsignedPK(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(len(row), Equals, 2)
 	c.Assert(row[0].Kind(), Equals, types.KindUint64)
-	c.Assert(ts.se.StmtCommit(nil), IsNil)
+	ts.se.StmtCommit()
 	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Commit(context.Background()), IsNil)
@@ -336,7 +337,7 @@ func (ts *testSuite) TestIterRecords(c *C) {
 	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tIter"))
 	c.Assert(err, IsNil)
 	totalCount := 0
-	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(h int64, rec []types.Datum, cols []*table.Column) (bool, error) {
+	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
 		totalCount++
 		c.Assert(rec[0].IsNull(), IsFalse)
 		return true, nil
@@ -395,6 +396,23 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (ts *testSuite) TestShardRowIDBitsStep(c *C) {
+	tk := testkit.NewTestKit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists shard_t;")
+	tk.MustExec("create table shard_t (a int) shard_row_id_bits = 15;")
+	tk.MustExec("set @@tidb_shard_allocate_step=3;")
+	tk.MustExec("insert into shard_t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11);")
+	rows := tk.MustQuery("select _tidb_rowid from shard_t;").Rows()
+	shards := make(map[int]struct{})
+	for _, row := range rows {
+		id, err := strconv.ParseUint(row[0].(string), 10, 64)
+		c.Assert(err, IsNil)
+		shards[int(id>>48)] = struct{}{}
+	}
+	c.Assert(len(shards), Equals, 4)
+}
+
 func (ts *testSuite) TestHiddenColumn(c *C) {
 	tk := testkit.NewTestKit(c, ts.store)
 	tk.MustExec("DROP DATABASE IF EXISTS test_hidden;")
@@ -414,6 +432,7 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	tc.VisibleColumns = nil
 	tc.WritableColumns = nil
 	tc.HiddenColumns = nil
+	tc.FullHiddenColsAndVisibleColumns = nil
 
 	// Basic test
 	cols := tb.VisibleCols()
@@ -428,6 +447,17 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 	c.Assert(table.FindCol(hiddenCols, "c"), IsNil)
 	c.Assert(table.FindCol(hiddenCols, "d"), NotNil)
 	c.Assert(table.FindCol(hiddenCols, "e"), IsNil)
+	colInfo[1].State = model.StateDeleteOnly
+	colInfo[2].State = model.StateDeleteOnly
+	fullHiddenColsAndVisibleColumns := tb.FullHiddenColsAndVisibleCols()
+	c.Assert(table.FindCol(fullHiddenColsAndVisibleColumns, "a"), NotNil)
+	c.Assert(table.FindCol(fullHiddenColsAndVisibleColumns, "b"), NotNil)
+	c.Assert(table.FindCol(fullHiddenColsAndVisibleColumns, "c"), IsNil)
+	c.Assert(table.FindCol(fullHiddenColsAndVisibleColumns, "d"), NotNil)
+	c.Assert(table.FindCol(fullHiddenColsAndVisibleColumns, "e"), NotNil)
+	// Reset schema states.
+	colInfo[1].State = model.StatePublic
+	colInfo[2].State = model.StatePublic
 
 	// Test show create table
 	tk.MustQuery("show create table t;").Check(testkit.Rows(
@@ -546,4 +576,43 @@ func (ts *testSuite) TestHiddenColumn(c *C) {
 		"d|int(11)|YES||<nil>|STORED GENERATED",
 		"e|int(11)|YES||<nil>|",
 		"f|tinyint(4)|YES||<nil>|VIRTUAL GENERATED"))
+}
+
+func (ts *testSuite) TestAddRecordWithCtx(c *C) {
+	ts.se.Execute(context.Background(), "DROP TABLE IF EXISTS test.tRecord")
+	_, err := ts.se.Execute(context.Background(), "CREATE TABLE test.tRecord (a bigint unsigned primary key, b varchar(255))")
+	c.Assert(err, IsNil)
+	tb, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tRecord"))
+	c.Assert(err, IsNil)
+	defer ts.se.Execute(context.Background(), "DROP TABLE test.tRecord")
+
+	c.Assert(ts.se.NewTxn(context.Background()), IsNil)
+	_, err = ts.se.Txn(true)
+	c.Assert(err, IsNil)
+	recordCtx := tables.NewCommonAddRecordCtx(len(tb.Cols()))
+	tables.SetAddRecordCtx(ts.se, recordCtx)
+	defer tables.ClearAddRecordCtx(ts.se)
+
+	records := [][]types.Datum{types.MakeDatums(uint64(1), "abc"), types.MakeDatums(uint64(2), "abcd")}
+	for _, r := range records {
+		rid, err := tb.AddRecord(ts.se, r)
+		c.Assert(err, IsNil)
+		row, err := tb.Row(ts.se, rid)
+		c.Assert(err, IsNil)
+		c.Assert(len(row), Equals, len(r))
+		c.Assert(row[0].Kind(), Equals, types.KindUint64)
+	}
+
+	i := 0
+	err = tb.IterRecords(ts.se, tb.FirstKey(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
+		i++
+		return true, nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(i, Equals, len(records))
+
+	ts.se.StmtCommit()
+	txn, err := ts.se.Txn(true)
+	c.Assert(err, IsNil)
+	c.Assert(txn.Commit(context.Background()), IsNil)
 }

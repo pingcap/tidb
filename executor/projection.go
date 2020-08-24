@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -306,12 +307,16 @@ func (e *ProjectionExec) Close() error {
 			e.drainOutputCh(w.outputCh)
 		}
 	}
-	if e.runtimeStats != nil {
-		if e.isUnparallelExec() {
-			e.runtimeStats.SetConcurrencyInfo("Concurrency", 0)
-		} else {
-			e.runtimeStats.SetConcurrencyInfo("Concurrency", int(e.numWorkers))
+	if e.baseExecutor.runtimeStats != nil {
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{
+			BasicRuntimeStats: e.runtimeStats,
 		}
+		if e.isUnparallelExec() {
+			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
+		} else {
+			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", int(e.numWorkers)))
+		}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	return e.baseExecutor.Close()
 }

@@ -47,7 +47,7 @@ func (*testSuite) TestT(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
 	}()
 
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -250,7 +250,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
 	}()
 
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -407,7 +407,7 @@ func (*testSuite) TestUnsignedAutoid(c *C) {
 // TestConcurrentAlloc is used for the test that
 // multiple allocators allocate ID with the same table ID concurrently.
 func (*testSuite) TestConcurrentAlloc(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	autoid.SetStep(100)
@@ -494,7 +494,7 @@ func (*testSuite) TestConcurrentAlloc(c *C) {
 // TestRollbackAlloc tests that when the allocation transaction commit failed,
 // the local variable base and end doesn't change.
 func (*testSuite) TestRollbackAlloc(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	dbID := int64(1)
@@ -536,7 +536,7 @@ func (*testSuite) TestNextStep(c *C) {
 
 func BenchmarkAllocator_Alloc(b *testing.B) {
 	b.StopTimer()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return
 	}
@@ -567,7 +567,7 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 
 func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
 	b.StopTimer()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return
 	}
@@ -622,7 +622,7 @@ func BenchmarkAllocator_Seek(b *testing.B) {
 }
 
 func (*testSuite) TestSequenceAutoid(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -743,7 +743,7 @@ func (*testSuite) TestSequenceAutoid(c *C) {
 }
 
 func (*testSuite) TestConcurrentAllocSequence(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 
@@ -824,4 +824,55 @@ func (*testSuite) TestConcurrentAllocSequence(c *C) {
 	close(errCh)
 	err = <-errCh
 	c.Assert(err, IsNil)
+}
+
+// Fix a computation logic bug in allocator computation.
+func (*testSuite) TestAllocComputationIssue(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDCustomize", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDCustomize"), IsNil)
+	}()
+
+	store, err := mockstore.NewMockStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+
+	err = kv.RunInNewTxn(store, false, func(txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
+		c.Assert(err, IsNil)
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
+		c.Assert(err, IsNil)
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
+		c.Assert(err, IsNil)
+		return nil
+	})
+	c.Assert(err, IsNil)
+
+	// Since the test here is applicable to any type of allocators, autoid.RowIDAllocType is chosen.
+	unsignedAlloc := autoid.NewAllocator(store, 1, true, autoid.RowIDAllocType)
+	c.Assert(unsignedAlloc, NotNil)
+	signedAlloc := autoid.NewAllocator(store, 1, false, autoid.RowIDAllocType)
+	c.Assert(signedAlloc, NotNil)
+
+	// the next valid two value must be 13 & 16, batch size = 6.
+	err = unsignedAlloc.Rebase(1, 10, false)
+	c.Assert(err, IsNil)
+	// the next valid two value must be 10 & 13, batch size = 6.
+	err = signedAlloc.Rebase(2, 7, false)
+	c.Assert(err, IsNil)
+	// Simulate the rest cache is not enough for next batch, assuming 10 & 13, batch size = 4.
+	autoid.TestModifyBaseAndEndInjection(unsignedAlloc, 9, 9)
+	// Simulate the rest cache is not enough for next batch, assuming 10 & 13, batch size = 4.
+	autoid.TestModifyBaseAndEndInjection(signedAlloc, 4, 6)
+
+	// Here will recompute the new allocator batch size base on new base = 10, which will get 6.
+	min, max, err := unsignedAlloc.Alloc(1, 2, 3, 1)
+	c.Assert(err, IsNil)
+	c.Assert(min, Equals, int64(10))
+	c.Assert(max, Equals, int64(16))
+	min, max, err = signedAlloc.Alloc(2, 2, 3, 1)
+	c.Assert(err, IsNil)
+	c.Assert(min, Equals, int64(7))
+	c.Assert(max, Equals, int64(13))
 }

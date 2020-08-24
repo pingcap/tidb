@@ -38,7 +38,7 @@ type extractorSuite struct {
 }
 
 func (s *extractorSuite) SetUpSuite(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	c.Assert(store, NotNil)
 

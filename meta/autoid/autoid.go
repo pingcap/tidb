@@ -61,6 +61,9 @@ const RowIDBitLength = 64
 // DefaultAutoRandomBits is the default value of auto sharding.
 const DefaultAutoRandomBits = 5
 
+// MaxAutoRandomBits is the max value of auto sharding.
+const MaxAutoRandomBits = 15
+
 // Test needs to change it, so it's a variable.
 var step = int64(30000)
 
@@ -370,6 +373,11 @@ func (alloc *allocator) GetType() AllocatorType {
 
 // NextStep return new auto id step according to previous step and consuming time.
 func NextStep(curStep int64, consumeDur time.Duration) int64 {
+	failpoint.Inject("mockAutoIDCustomize", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(3)
+		}
+	})
 	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(step)
@@ -419,10 +427,14 @@ func NewSequenceAllocator(store kv.Storage, dbID int64, info *model.SequenceInfo
 func NewAllocatorsFromTblInfo(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
 	dbID := tblInfo.GetDBID(schemaID)
-	if tblInfo.AutoIdCache > 0 {
-		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, CustomAutoIncCacheOption(tblInfo.AutoIdCache)))
-	} else {
-		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType))
+	hasRowID := !tblInfo.PKIsHandle && !tblInfo.IsCommonHandle
+	hasAutoIncID := tblInfo.GetAutoIncrementColInfo() != nil
+	if hasRowID || hasAutoIncID {
+		if tblInfo.AutoIdCache > 0 {
+			allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType, CustomAutoIncCacheOption(tblInfo.AutoIdCache)))
+		} else {
+			allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoIncColUnsigned(), RowIDAllocType))
+		}
 	}
 	if tblInfo.ContainsAutoRandomBits() {
 		allocs = append(allocs, NewAllocator(store, dbID, tblInfo.IsAutoRandomBitColUnsigned(), AutoRandomType))
@@ -637,20 +649,18 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 			consumeDur := startTime.Sub(alloc.lastAllocTime)
 			nextStep = NextStep(alloc.step, consumeDur)
 		}
-		// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
-		if nextStep <= n1 {
-			nextStep = mathutil.MinInt64(n1*2, maxStep)
-		}
-		// Store the step for non-customized-step allocator to calculate next dynamic step.
-		if !alloc.customStep {
-			alloc.step = nextStep
-		}
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
 			newBase, err1 = getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
 			if err1 != nil {
 				return err1
+			}
+			// CalcNeededBatchSize calculates the total batch size needed on global base.
+			n1 = CalcNeededBatchSize(newBase, int64(n), increment, offset, alloc.isUnsigned)
+			// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
+			if nextStep < n1 {
+				nextStep = n1
 			}
 			tmpStep := mathutil.MinInt64(math.MaxInt64-newBase, nextStep)
 			// The global rest is not enough for alloc.
@@ -663,6 +673,10 @@ func (alloc *allocator) alloc4Signed(tableID int64, n uint64, increment, offset 
 		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err != nil {
 			return 0, 0, err
+		}
+		// Store the step for non-customized-step allocator to calculate next dynamic step.
+		if !alloc.customStep {
+			alloc.step = nextStep
 		}
 		alloc.lastAllocTime = time.Now()
 		if newBase == math.MaxInt64 {
@@ -704,20 +718,18 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 			consumeDur := startTime.Sub(alloc.lastAllocTime)
 			nextStep = NextStep(alloc.step, consumeDur)
 		}
-		// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
-		if nextStep <= n1 {
-			nextStep = mathutil.MinInt64(n1*2, maxStep)
-		}
-		// Store the step for non-customized-step allocator to calculate next dynamic step.
-		if !alloc.customStep {
-			alloc.step = nextStep
-		}
 		err := kv.RunInNewTxn(alloc.store, true, func(txn kv.Transaction) error {
 			m := meta.NewMeta(txn)
 			var err1 error
 			newBase, err1 = getAutoIDByAllocType(m, alloc.dbID, tableID, alloc.allocType)
 			if err1 != nil {
 				return err1
+			}
+			// CalcNeededBatchSize calculates the total batch size needed on new base.
+			n1 = CalcNeededBatchSize(newBase, int64(n), increment, offset, alloc.isUnsigned)
+			// Although the step is customized by user, we still need to make sure nextStep is big enough for insert batch.
+			if nextStep < n1 {
+				nextStep = n1
 			}
 			tmpStep := int64(mathutil.MinUint64(math.MaxUint64-uint64(newBase), uint64(nextStep)))
 			// The global rest is not enough for alloc.
@@ -730,6 +742,10 @@ func (alloc *allocator) alloc4Unsigned(tableID int64, n uint64, increment, offse
 		metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 		if err != nil {
 			return 0, 0, err
+		}
+		// Store the step for non-customized-step allocator to calculate next dynamic step.
+		if !alloc.customStep {
+			alloc.step = nextStep
 		}
 		alloc.lastAllocTime = time.Now()
 		if uint64(newBase) == math.MaxUint64 {
@@ -893,9 +909,23 @@ func DecodeCmpUintToInt(u uint64) int64 {
 	return int64(u ^ signMask)
 }
 
+// TestModifyBaseAndEndInjection exported for testing modifying the base and end.
+func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
+	alloc.(*allocator).mu.Lock()
+	alloc.(*allocator).base = base
+	alloc.(*allocator).end = end
+	alloc.(*allocator).mu.Unlock()
+}
+
 // AutoRandomIDLayout is used to calculate the bits length of different section in auto_random id.
-// Layout(64 bits):
-// [zero_padding] [sign_bit] [shard_bits] [incremental_bits]
+// The primary key with auto_random can only be `bigint` column, the total layout length of auto random is 64 bits.
+// These are two type of layout:
+// 1. Signed bigint:
+//   | [sign_bit] | [shard_bits] | [incremental_bits] |
+//   sign_bit(1 fixed) + shard_bits(15 max) + incremental_bits(the rest) = total_layout_bits(64 fixed)
+// 2. Unsigned bigint:
+//   | [shard_bits] | [incremental_bits] |
+//   shard_bits(15 max) + incremental_bits(the rest) = total_layout_bits(64 fixed)
 // Please always use NewAutoRandomIDLayout() to instantiate.
 type AutoRandomIDLayout struct {
 	FieldType *types.FieldType
@@ -908,22 +938,24 @@ type AutoRandomIDLayout struct {
 
 // NewAutoRandomIDLayout create an instance of AutoRandomIDLayout.
 func NewAutoRandomIDLayout(fieldType *types.FieldType, shardBits uint64) *AutoRandomIDLayout {
-	layout := &AutoRandomIDLayout{
-		FieldType: fieldType,
-		ShardBits: shardBits,
+	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
+	incrementalBits := typeBitsLength - shardBits
+	hasSignBit := !mysql.HasUnsignedFlag(fieldType.Flag)
+	if hasSignBit {
+		incrementalBits -= 1
 	}
-	layout.TypeBitsLength = uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
-	layout.HasSignBit = !mysql.HasUnsignedFlag(fieldType.Flag)
-	layout.IncrementalBits = layout.TypeBitsLength - shardBits
-	if layout.HasSignBit {
-		layout.IncrementalBits -= 1
+	return &AutoRandomIDLayout{
+		FieldType:       fieldType,
+		ShardBits:       shardBits,
+		TypeBitsLength:  typeBitsLength,
+		IncrementalBits: incrementalBits,
+		HasSignBit:      hasSignBit,
 	}
-	return layout
 }
 
 // IncrementalBitsCapacity returns the max capacity of incremental section of the current layout.
 func (l *AutoRandomIDLayout) IncrementalBitsCapacity() uint64 {
-	return uint64(math.Pow(2, float64(l.IncrementalBits)) - 1)
+	return uint64(math.Pow(2, float64(l.IncrementalBits))) - 1
 }
 
 // IncrementalMask returns 00..0[11..1], where [xxx] is the incremental section of the current layout.

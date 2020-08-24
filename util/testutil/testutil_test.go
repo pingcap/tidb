@@ -26,9 +26,9 @@ func TestT(t *testing.T) {
 }
 
 var _ = Suite(&testTestUtilSuite{})
+var _ = Suite(&testCommonHandleSuite{})
 
-type testTestUtilSuite struct {
-}
+type testTestUtilSuite struct{}
 
 func (s *testTestUtilSuite) TestCompareUnorderedString(c *C) {
 	defer testleak.AfterTest(c)()
@@ -48,4 +48,25 @@ func (s *testTestUtilSuite) TestCompareUnorderedString(c *C) {
 	for _, t := range tbl {
 		c.Assert(CompareUnorderedStringSlice(t.a, t.b), Equals, t.r)
 	}
+}
+
+type testCommonHandleSuite struct {
+	CommonHandleSuite
+	expectedIsCommonHandle bool
+}
+
+func (s *testCommonHandleSuite) TestCommonHandleSuiteRerun(c *C) {
+	c.Assert(s.IsCommonHandle, Equals, s.expectedIsCommonHandle)
+	hd := s.NewHandle().Int(1).Build()
+	if s.expectedIsCommonHandle {
+		c.Assert(hd.IsInt(), IsFalse)
+	} else {
+		c.Assert(hd.IsInt(), IsTrue)
+	}
+	s.expectedIsCommonHandle = true
+	s.RerunWithCommonHandleEnabled(c, s.TestCommonHandleSuiteRerun)
+}
+
+func (s *testCommonHandleSuite) TestCommonHandleSuiteInitState(c *C) {
+	c.Assert(s.IsCommonHandle, IsFalse)
 }

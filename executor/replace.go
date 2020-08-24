@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -132,7 +131,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 	}
 
 	// No duplicated rows now, insert the row.
-	_, err = e.addRecord(ctx, r.row)
+	err = e.addRecord(ctx, r.row)
 	if err != nil {
 		return err
 	}
@@ -154,12 +153,11 @@ func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r 
 			}
 			return false, false, err
 		}
-
-		handle, err := tables.DecodeHandleInUniqueIndexValue(val)
+		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 		if err != nil {
 			return false, true, err
 		}
-		rowUnchanged, err := e.removeRow(ctx, txn, kv.IntHandle(handle), r)
+		rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
 		if err != nil {
 			return false, true, err
 		}
@@ -192,6 +190,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	if err != nil {
 		return err
 	}
+	txnSize := txn.Size()
 
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
@@ -206,7 +205,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			return err
 		}
 	}
-	e.memTracker.Consume(int64(txn.Size()))
+	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
 }
 

@@ -55,6 +55,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildVarPop(aggFuncDesc, ordinal)
 	case ast.AggFuncJsonObjectAgg:
 		return buildJSONObjectAgg(aggFuncDesc, ordinal)
+	case ast.AggFuncApproxCountDistinct:
+		return buildApproxCountDistinct(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -87,6 +89,39 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
+}
+
+func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseApproxCountDistinct{baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}}
+
+	// In partition table, union need to compute partial result into partial result.
+	// We can detect and handle this case by checking whether return type is string.
+
+	switch aggFuncDesc.RetTp.Tp {
+	case mysql.TypeLonglong:
+		switch aggFuncDesc.Mode {
+		case aggregation.CompleteMode:
+			return &approxCountDistinctOriginal{base}
+		case aggregation.Partial1Mode:
+			return &approxCountDistinctPartial1{approxCountDistinctOriginal{base}}
+		case aggregation.Partial2Mode:
+			return &approxCountDistinctPartial2{approxCountDistinctPartial1{approxCountDistinctOriginal{base}}}
+		case aggregation.FinalMode:
+			return &approxCountDistinctFinal{approxCountDistinctPartial2{approxCountDistinctPartial1{approxCountDistinctOriginal{base}}}}
+		}
+	case mysql.TypeString:
+		switch aggFuncDesc.Mode {
+		case aggregation.CompleteMode, aggregation.Partial1Mode:
+			return &approxCountDistinctPartial1{approxCountDistinctOriginal{base}}
+		case aggregation.Partial2Mode, aggregation.FinalMode:
+			return &approxCountDistinctPartial2{approxCountDistinctPartial1{approxCountDistinctOriginal{base}}}
+		}
+	}
+
+	return nil
 }
 
 // buildCount builds the AggFunc implementation for function "COUNT".

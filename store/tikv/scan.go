@@ -86,7 +86,7 @@ func (s *Scanner) Value() []byte {
 
 // Next return next element.
 func (s *Scanner) Next() error {
-	bo := NewBackoffer(context.WithValue(context.Background(), txnStartKey, s.snapshot.version.Ver), scannerNextMaxBackoff)
+	bo := NewBackofferWithVars(context.WithValue(context.Background(), txnStartKey, s.snapshot.version.Ver), scannerNextMaxBackoff, s.snapshot.vars)
 	if !s.valid {
 		return errors.New("scanner iterator is invalid")
 	}
@@ -185,20 +185,25 @@ func (s *Scanner) getData(bo *Backoffer) error {
 				reqStartKey = loc.StartKey
 			}
 		}
-
 		sreq := &pb.ScanRequest{
-			StartKey: s.nextStartKey,
-			EndKey:   reqEndKey,
-			Limit:    uint32(s.batchSize),
-			Version:  s.startTS(),
-			KeyOnly:  s.snapshot.keyOnly,
+			Context: &pb.Context{
+				Priority:       s.snapshot.priority,
+				NotFillCache:   s.snapshot.notFillCache,
+				IsolationLevel: pbIsolationLevel(s.snapshot.isolationLevel),
+			},
+			StartKey:   s.nextStartKey,
+			EndKey:     reqEndKey,
+			Limit:      uint32(s.batchSize),
+			Version:    s.startTS(),
+			KeyOnly:    s.snapshot.keyOnly,
+			SampleStep: s.snapshot.sampleStep,
 		}
 		if s.reverse {
 			sreq.StartKey = s.nextEndKey
 			sreq.EndKey = reqStartKey
 			sreq.Reverse = true
 		}
-		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.replicaRead, s.snapshot.replicaReadSeed, pb.Context{
+		req := tikvrpc.NewReplicaReadRequest(tikvrpc.CmdScan, sreq, s.snapshot.replicaRead, &s.snapshot.replicaReadSeed, pb.Context{
 			Priority:     s.snapshot.priority,
 			NotFillCache: s.snapshot.notFillCache,
 			TaskId:       s.snapshot.taskID,
@@ -233,7 +238,7 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		kvPairs := cmdScanResp.Pairs
 		// Check if kvPair contains error, it should be a Lock.
 		for _, pair := range kvPairs {
-			if keyErr := pair.GetError(); keyErr != nil {
+			if keyErr := pair.GetError(); keyErr != nil && len(pair.Key) == 0 {
 				lock, err := extractLockFromKeyErr(keyErr)
 				if err != nil {
 					return errors.Trace(err)

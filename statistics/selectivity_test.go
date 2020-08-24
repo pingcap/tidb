@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
@@ -49,7 +50,7 @@ import (
 
 const eps = 1e-9
 
-var _ = Suite(&testStatsSuite{})
+var _ = SerialSuites(&testStatsSuite{})
 
 type testStatsSuite struct {
 	store    kv.Storage
@@ -122,7 +123,7 @@ func (h *logHook) Check(e zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.Chec
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -369,6 +370,34 @@ func getRange(start, end int64) []*ranger.Range {
 	return []*ranger.Range{ran}
 }
 
+func (s *testStatsSuite) TestOutOfRangeEQEstimation(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int)")
+	for i := 0; i < 1000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/4)) // 0 ~ 249
+	}
+	testKit.MustExec("analyze table t")
+
+	h := s.do.StatsHandle()
+	table, err := s.do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	statsTbl := h.GetTableStats(table.Meta())
+	sc := &stmtctx.StatementContext{}
+	col := statsTbl.Columns[table.Meta().Columns[0].ID]
+	count, err := col.GetColumnRowCount(sc, getRange(250, 250), 0, false)
+	c.Assert(err, IsNil)
+	c.Assert(count, Equals, float64(0))
+
+	for i := 0; i < 8; i++ {
+		count, err := col.GetColumnRowCount(sc, getRange(250, 250), int64(i+1), false)
+		c.Assert(err, IsNil)
+		c.Assert(count, Equals, math.Min(float64(i+1), 4)) // estRows must be less than modifyCnt
+	}
+}
+
 func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 	defer cleanEnv(c, s.store, s.do)
 	testKit := testkit.NewTestKit(c, s.store)
@@ -395,15 +424,15 @@ func (s *testStatsSuite) TestEstimationForUnknownValues(c *C) {
 	colID := table.Meta().Columns[0].ID
 	count, err := statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(30, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 2.0)
+	c.Assert(count, Equals, 0.2)
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, 30))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 4.2)
+	c.Assert(count, Equals, 2.4000000000000004)
 
 	count, err = statsTbl.GetRowCountByColumnRanges(sc, colID, getRange(9, math.MaxInt64))
 	c.Assert(err, IsNil)
-	c.Assert(count, Equals, 4.2)
+	c.Assert(count, Equals, 2.4000000000000004)
 
 	idxID := table.Meta().Indices[0].ID
 	count, err = statsTbl.GetRowCountByIndexRanges(sc, idxID, getRange(30, 30))
@@ -610,4 +639,31 @@ func (s *testStatsSuite) TestSelectivityGreedyAlgo(c *C) {
 	usedSets = statistics.GetUsableSetsByGreedy(nodes)
 	c.Assert(len(usedSets), Equals, 1)
 	c.Assert(usedSets[0].ID, Equals, int64(1))
+}
+
+func (s *testStatsSuite) TestCollationColumnEstimate(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a varchar(20) collate utf8mb4_general_ci)")
+	tk.MustExec("insert into t values('aaa'), ('bbb'), ('AAA'), ('BBB')")
+	h := s.do.StatsHandle()
+	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
+	tk.MustExec("analyze table t")
+	tk.MustExec("explain select * from t where a = 'aaa'")
+	c.Assert(h.LoadNeededHistograms(), IsNil)
+	var (
+		input  []string
+		output [][]string
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i := 0; i < len(input); i++ {
+		s.testData.OnRecord(func() {
+			output[i] = s.testData.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+		})
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
+	}
 }

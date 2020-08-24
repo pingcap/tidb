@@ -26,27 +26,12 @@ import (
 // Handle "ignore_plan_cache()" hint
 // If there are multiple hints, only one will take effect
 func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
-	switch node.(type) {
-	case *ast.SelectStmt:
-		for _, hints := range (node.(*ast.SelectStmt)).TableHints {
-			if hints.HintName.L == HintIgnorePlanCache {
-				return false
-			}
-		}
-	case *ast.DeleteStmt:
-		for _, hints := range (node.(*ast.DeleteStmt)).TableHints {
-			if hints.HintName.L == HintIgnorePlanCache {
-				return false
-			}
-		}
-	case *ast.UpdateStmt:
-		for _, hints := range (node.(*ast.UpdateStmt)).TableHints {
-			if hints.HintName.L == HintIgnorePlanCache {
-				return false
-			}
-		}
-	case *ast.InsertStmt:
-	default:
+	_, isSelect := node.(*ast.SelectStmt)
+	_, isUpdate := node.(*ast.UpdateStmt)
+	_, isInsert := node.(*ast.InsertStmt)
+	_, isDelete := node.(*ast.DeleteStmt)
+	_, isSetOpr := node.(*ast.SetOprStmt)
+	if !(isSelect || isUpdate || isInsert || isDelete || isSetOpr) {
 		return false
 	}
 	checker := cacheableChecker{
@@ -70,6 +55,27 @@ type cacheableChecker struct {
 // Enter implements Visitor interface.
 func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
+	case *ast.SelectStmt:
+		for _, hints := range node.TableHints {
+			if hints.HintName.L == HintIgnorePlanCache {
+				checker.cacheable = false
+				return in, true
+			}
+		}
+	case *ast.DeleteStmt:
+		for _, hints := range node.TableHints {
+			if hints.HintName.L == HintIgnorePlanCache {
+				checker.cacheable = false
+				return in, true
+			}
+		}
+	case *ast.UpdateStmt:
+		for _, hints := range node.TableHints {
+			if hints.HintName.L == HintIgnorePlanCache {
+				checker.cacheable = false
+				return in, true
+			}
+		}
 	case *ast.VariableExpr, *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
 		checker.cacheable = false
 		return in, true

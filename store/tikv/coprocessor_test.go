@@ -31,13 +31,13 @@ var _ = Suite(&testCoprocessorSuite{})
 func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	cluster := mocktikv.NewCluster()
+	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	_, regionIDs, _ := mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 
-	bo := NewBackoffer(context.Background(), 3000)
+	bo := NewBackofferWithVars(context.Background(), 3000, nil)
 
 	req := &kv.Request{}
 	flashReq := &kv.Request{}
@@ -148,13 +148,13 @@ func (s *testCoprocessorSuite) TestBuildTasks(c *C) {
 func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	cluster := mocktikv.NewCluster()
+	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	mocktikv.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
 
-	bo := NewBackoffer(context.Background(), 3000)
+	bo := NewBackofferWithVars(context.Background(), 3000, nil)
 
 	ranges, err := SplitRegionRanges(bo, cache, buildKeyRanges("a", "c"))
 	c.Assert(err, IsNil)
@@ -201,12 +201,12 @@ func (s *testCoprocessorSuite) TestSplitRegionRanges(c *C) {
 func (s *testCoprocessorSuite) TestRebuild(c *C) {
 	// nil --- 'm' --- nil
 	// <-  0  -> <- 1 ->
-	cluster := mocktikv.NewCluster()
+	cluster := mocktikv.NewCluster(mocktikv.MustNewMVCCStore())
 	storeID, regionIDs, peerIDs := mocktikv.BootstrapWithMultiRegions(cluster, []byte("m"))
 	pdCli := &codecPDClient{mocktikv.NewPDClient(cluster)}
 	cache := NewRegionCache(pdCli)
 	defer cache.Close()
-	bo := NewBackoffer(context.Background(), 3000)
+	bo := NewBackofferWithVars(context.Background(), 3000, nil)
 
 	req := &kv.Request{}
 	tasks, err := buildCopTasks(bo, cache, buildCopRanges("a", "z"), req)

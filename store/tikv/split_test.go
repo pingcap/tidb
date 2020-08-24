@@ -32,16 +32,23 @@ type testSplitSuite struct {
 var _ = Suite(&testSplitSuite{})
 
 func (s *testSplitSuite) SetUpTest(c *C) {
-	cluster := mocktikv.NewCluster()
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	c.Assert(err, IsNil)
 	mocktikv.BootstrapWithSingleStore(cluster)
 	s.cluster = cluster
-	client, pdClient, err := mocktikv.NewTiKVAndPDClient(cluster, nil, "")
+	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 
-	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
-	c.Check(err, IsNil)
+	// TODO: make this possible
+	// store, err := mockstore.NewMockStore(
+	// 	mockstore.WithClusterInspector(func(c cluster.Cluster) {
+	// 		mockstore.BootstrapWithSingleStore(c)
+	// 		s.cluster = c
+	// 	}),
+	// )
+	// c.Assert(err, IsNil)
 	s.store = store.(*tikvStore)
-	s.bo = NewBackoffer(context.Background(), 5000)
+	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
 func (s *testSplitSuite) begin(c *C) *tikvTxn {

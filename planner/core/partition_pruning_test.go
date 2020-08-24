@@ -142,7 +142,8 @@ func prepareTestCtx(c *C, createTable string, partitionExpr string) *testCtx {
 	sctx := mock.NewContext()
 	tblInfo, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
 	c.Assert(err, IsNil)
-	columns, names := expression.ColumnInfos2ColumnsAndNames(sctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Columns)
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(sctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Columns, tblInfo)
+	c.Assert(err, IsNil)
 	schema := expression.NewSchema(columns...)
 
 	col, fn, err := makePartitionByFnCol(sctx, columns, names, partitionExpr)
@@ -285,7 +286,7 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2VarChar(c *C) {
 		lessThan[i] = tmp[0]
 	}
 
-	prunner := &rangeColumnPruner{lessThan, tc.columns[0], true}
+	prunner := &rangeColumnsPruner{lessThan, tc.columns[0], true}
 	cases := []struct {
 		input  string
 		result partitionRangeOR
@@ -333,7 +334,7 @@ func (s *testPartitionPruningSuite) TestPartitionRangePrunner2Date(c *C) {
 		lessThan[i] = tmp[0]
 	}
 
-	prunner := &rangeColumnPruner{lessThan, tc.columns[0], false}
+	prunner := &rangeColumnsPruner{lessThan, tc.columns[0], false}
 	cases := []struct {
 		input  string
 		result partitionRangeOR

@@ -1164,8 +1164,13 @@ with the correct -1/0/+1 result
                 7E F2 04 C7 2D FB 2D
 */
 func (d *MyDecimal) ToBin(precision, frac int) ([]byte, error) {
+	return d.WriteBin(precision, frac, []byte{})
+}
+
+// WriteBin encode and write the binary encoded to target buffer
+func (d *MyDecimal) WriteBin(precision, frac int, buf []byte) ([]byte, error) {
 	if precision > digitsPerWord*maxWordBufLen || precision < 0 || frac > mysql.MaxDecimalScale || frac < 0 {
-		return nil, ErrBadNumber
+		return buf, ErrBadNumber
 	}
 	var err error
 	var mask int32
@@ -1185,7 +1190,13 @@ func (d *MyDecimal) ToBin(precision, frac int) ([]byte, error) {
 	fracSizeFrom := wordsFracFrom*wordSize + dig2bytes[trailingDigitsFrom]
 	originIntSize := intSize
 	originFracSize := fracSize
-	bin := make([]byte, intSize+fracSize)
+	bufLen := len(buf)
+	if bufLen+intSize+fracSize <= cap(buf) {
+		buf = buf[:bufLen+intSize+fracSize]
+	} else {
+		buf = append(buf, make([]byte, intSize+fracSize)...)
+	}
+	bin := buf[bufLen:]
 	binIdx := 0
 	wordIdxFrom, digitsIntFrom := d.removeLeadingZeros()
 	if digitsIntFrom+fracSizeFrom == 0 {
@@ -1216,10 +1227,13 @@ func (d *MyDecimal) ToBin(precision, frac int) ([]byte, error) {
 		}
 	}
 
-	if fracSize < fracSizeFrom {
+	if fracSize < fracSizeFrom ||
+		(fracSize == fracSizeFrom && (trailingDigits <= trailingDigitsFrom || wordsFrac <= wordsFracFrom)) {
+		if fracSize < fracSizeFrom || (fracSize == fracSizeFrom && trailingDigits < trailingDigitsFrom) || (fracSize == fracSizeFrom && wordsFrac < wordsFracFrom) {
+			err = ErrTruncated
+		}
 		wordsFracFrom = wordsFrac
 		trailingDigitsFrom = trailingDigits
-		err = ErrTruncated
 	} else if fracSize > fracSizeFrom && trailingDigitsFrom > 0 {
 		if wordsFrac == wordsFracFrom {
 			trailingDigitsFrom = trailingDigits
@@ -1270,7 +1284,7 @@ func (d *MyDecimal) ToBin(precision, frac int) ([]byte, error) {
 		}
 	}
 	bin[0] ^= 0x80
-	return bin, err
+	return buf, err
 }
 
 // ToHashKey removes the leading and trailing zeros and generates a hash key.
@@ -1290,6 +1304,7 @@ func (d *MyDecimal) ToHashKey() ([]byte, error) {
 		// thus ErrTruncated may be raised, we can ignore it here.
 		err = nil
 	}
+	buf = append(buf, byte(digitsFrac))
 	return buf, err
 }
 

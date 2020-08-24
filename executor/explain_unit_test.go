@@ -65,7 +65,7 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	schema := expression.NewSchema(getColumns()...)
-	baseExec := newBaseExecutor(ctx, schema, nil)
+	baseExec := newBaseExecutor(ctx, schema, 0)
 	explainExec := &ExplainExec{
 		baseExecutor: baseExec,
 		explain:      nil,

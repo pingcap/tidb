@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -384,6 +385,19 @@ func (s *testPrivilegeSuite) TestShowGrants(c *C) {
 	c.Assert(gs, HasLen, 3)
 }
 
+func (s *testPrivilegeSuite) TestShowColumnGrants(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `USE test`)
+	mustExec(c, se, `CREATE USER 'column'@'%'`)
+	mustExec(c, se, `CREATE TABLE column_table (a int, b int, c int)`)
+	mustExec(c, se, `GRANT Select(a),Update(a,b),Insert(c) ON test.column_table TO  'column'@'%'`)
+
+	pc := privilege.GetPrivilegeManager(se)
+	gs, err := pc.ShowGrants(se, &auth.UserIdentity{Username: "column", Hostname: "%"}, nil)
+	c.Assert(err, IsNil)
+	c.Assert(strings.Join(gs, " "), Equals, "GRANT USAGE ON *.* TO 'column'@'%' GRANT Select(a), Insert(c), Update(a, b) ON test.column_table TO 'column'@'%'")
+}
+
 func (s *testPrivilegeSuite) TestDropTablePriv(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	ctx, _ := se.(sessionctx.Context)
@@ -489,6 +503,8 @@ func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
 	mustExec(c, se, `CREATE USER 'r13_broken_user'@'localhost'require issuer '/C=US/ST=California/L=San Francisco/O=PingCAP/OU=TiDB/CN=TiDB admin'
 		subject '/C=ZH/ST=Beijing/L=Haidian/O=PingCAP.Inc/OU=TiDB/CN=tester1'`)
 	mustExec(c, se, "UPDATE mysql.global_priv set priv = 'abc' where `user` = 'r13_broken_user' and `host` = 'localhost'")
+	mustExec(c, se, `CREATE USER 'r14_san_only_pass'@'localhost' require san 'URI:spiffe://mesh.pingcap.com/ns/timesh/sa/me1'`)
+	mustExec(c, se, `CREATE USER 'r15_san_only_fail'@'localhost' require san 'URI:spiffe://mesh.pingcap.com/ns/timesh/sa/me2'`)
 	mustExec(c, se, "flush privileges")
 
 	defer func() {
@@ -506,6 +522,8 @@ func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
 		mustExec(c, se, "drop user 'r11_cipher_only'@'localhost'")
 		mustExec(c, se, "drop user 'r12_old_tidb_user'@'localhost'")
 		mustExec(c, se, "drop user 'r13_broken_user'@'localhost'")
+		mustExec(c, se, "drop user 'r14_san_only_pass'@'localhost'")
+		mustExec(c, se, "drop user 'r15_san_only_fail'@'localhost'")
 	}()
 
 	// test without ssl or ca
@@ -553,12 +571,17 @@ func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
 				util.MockPkixAttribute(util.CommonName, "tester1"),
 			},
 		},
-		tls.TLS_AES_128_GCM_SHA256)
+		tls.TLS_AES_128_GCM_SHA256, func(c *x509.Certificate) {
+			var url url.URL
+			url.UnmarshalBinary([]byte("spiffe://mesh.pingcap.com/ns/timesh/sa/me1"))
+			c.URIs = append(c.URIs, &url)
+		})
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r1", Hostname: "localhost"}, nil, nil), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r2", Hostname: "localhost"}, nil, nil), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r3", Hostname: "localhost"}, nil, nil), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r4", Hostname: "localhost"}, nil, nil), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r5", Hostname: "localhost"}, nil, nil), IsTrue)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r14_san_only_pass", Hostname: "localhost"}, nil, nil), IsTrue)
 
 	// test require but give nothing
 	se.GetSessionVars().TLSConnectionState = nil
@@ -673,15 +696,22 @@ func (s *testPrivilegeSuite) TestCheckCertBasedAuth(c *C) {
 		tls.TLS_AES_128_GCM_SHA256)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r10_issuer_disorder", Hostname: "localhost"}, nil, nil), IsFalse)
 
+	// test mismatch san
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "r15_san_only_fail", Hostname: "localhost"}, nil, nil), IsFalse)
+
 	// test old data and broken data
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r12_old_tidb_user", Hostname: "localhost"}, nil, nil), IsTrue)
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "r13_broken_user", Hostname: "localhost"}, nil, nil), IsFalse)
 
 }
 
-func connectionState(issuer, subject pkix.Name, cipher uint16) *tls.ConnectionState {
+func connectionState(issuer, subject pkix.Name, cipher uint16, opt ...func(c *x509.Certificate)) *tls.ConnectionState {
+	cert := &x509.Certificate{Issuer: issuer, Subject: subject}
+	for _, o := range opt {
+		o(cert)
+	}
 	return &tls.ConnectionState{
-		VerifiedChains: [][]*x509.Certificate{{{Issuer: issuer, Subject: subject}}},
+		VerifiedChains: [][]*x509.Certificate{{cert}},
 		CipherSuite:    cipher,
 	}
 }
@@ -880,7 +910,7 @@ func (s *testPrivilegeSuite) TestAnalyzeTable(c *C) {
 	c.Assert(err.Error(), Equals, "[planner:1142]INSERT command denied to user 'anobody'@'%' for table 't1'")
 
 	_, err = se.Execute(context.Background(), "select * from t1")
-	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'anobody'@'localhost' for table 't1'")
+	c.Assert(err.Error(), Equals, "[planner:1142]SELECT command denied to user 'anobody'@'%' for table 't1'")
 
 	// try again after SELECT privilege granted
 	c.Assert(se.Auth(&auth.UserIdentity{Username: "asuper", Hostname: "localhost", AuthUsername: "asuper", AuthHostname: "%"}, nil, nil), IsTrue)
@@ -1056,7 +1086,7 @@ func mustExec(c *C, se session.Session, sql string) {
 }
 
 func newStore(c *C, dbPath string) (*domain.Domain, kv.Storage) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	c.Assert(err, IsNil)

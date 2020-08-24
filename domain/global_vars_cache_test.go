@@ -39,7 +39,7 @@ func (gvcSuite *testGVCSuite) TestSimple(c *C) {
 	defer testleak.AfterTest(c)()
 	testleak.BeforeTest()
 
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	ddlLease := 50 * time.Millisecond
@@ -173,7 +173,7 @@ func (gvcSuite *testGVCSuite) TestCheckEnableStmtSummary(c *C) {
 	defer testleak.AfterTest(c)()
 	testleak.BeforeTest()
 
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	ddlLease := 50 * time.Millisecond

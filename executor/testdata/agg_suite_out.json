@@ -4,7 +4,7 @@
     "Cases": [
       [
         "Projection_10 10000.00 root  test.t.i",
-        "└─Sort_4 10000.00 root  Column#3:asc",
+        "└─Sort_4 10000.00 root  Column#3",
         "  └─Projection_11 10000.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
         "    └─TableReader_8 10000.00 root  data:TableFullScan_7",
         "      └─TableFullScan_7 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
@@ -22,10 +22,10 @@
       ],
       [
         "Projection_15 2.00 root  test.t.i",
-        "└─TopN_7 2.00 root  Column#3:asc, offset:0, count:2",
+        "└─TopN_7 2.00 root  Column#3, offset:0, count:2",
         "  └─Projection_16 2.00 root  test.t.i, plus(test.t.i, 1)->Column#3",
         "    └─TableReader_12 2.00 root  data:TopN_11",
-        "      └─TopN_11 2.00 cop[tikv]  plus(test.t.i, 1):asc, offset:0, count:2",
+        "      └─TopN_11 2.00 cop[tikv]  plus(test.t.i, 1), offset:0, count:2",
         "        └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
       ],
       [

@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // Key is the interface that every key in LRU Cache should implement.
@@ -47,7 +46,7 @@ const (
 )
 
 func init() {
-	GlobalLRUMemUsageTracker = memory.NewTracker(stringutil.StringerStr("GlobalSimpleLRUCache"), -1)
+	GlobalLRUMemUsageTracker = memory.NewTracker(memory.LabelForGlobalSimpleLRUCache, -1)
 }
 
 // SimpleLRUCache is a simple least recently used cache, not thread-safe, use it carefully.
@@ -198,4 +197,16 @@ func (l *SimpleLRUCache) SetCapacity(capacity uint) error {
 		l.size--
 	}
 	return nil
+}
+
+// RemoveOldest removes the oldest element from the cache.
+func (l *SimpleLRUCache) RemoveOldest() (key Key, value Value, ok bool) {
+	if l.size > 0 {
+		ele := l.cache.Back()
+		l.cache.Remove(ele)
+		delete(l.elements, string(ele.Value.(*cacheEntry).key.Hash()))
+		l.size--
+		return ele.Value.(*cacheEntry).key, ele.Value.(*cacheEntry).value, true
+	}
+	return nil, nil, false
 }

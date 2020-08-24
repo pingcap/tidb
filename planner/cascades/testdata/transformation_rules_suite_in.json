@@ -9,6 +9,7 @@
       "select b, @i:=@i+1 as ii from (select a, b, @i:=0 from t as t1) as t2 where @i < 10 and a > 10",
       "select a, max(b) from t group by a having a > 1",
       "select a, avg(b) from t group by a having a > 1 and max(b) > 10",
+      "select a, approx_count_distinct(b) from t group by a having a > 1 and max(b) > 10",
       "select t1.a, t1.b, t2.b from t t1, t t2 where t1.a = t2.a and t2.b = t1.b and t1.a > 10 and t2.b > 10 and t1.a > t2.b",
       "select t1.a, t1.b from t t1, t t2 where t1.a = t2.a and t1.a = 10 and t2.a = 5",
       "select a, f from t where f > 1",
@@ -180,6 +181,7 @@
       "select sum(case when a > 10 then 0 else c end) from t",
       "select sum(case when a > 10 then 2 else 1 end) from t",
       "select count(DISTINCT case when a > 10 then null else c end) from t",
+      "select approx_count_distinct(case when a > 10 then null else c end) from t",
       "select sum(DISTINCT case when a > 10 then c else 0 end) from t",
       "select case when c > 10 then c end from t",
       "select count(case when a > 10 then c end), c from t",
@@ -204,6 +206,15 @@
     "name": "TestDecorrelate",
     "cases": [
       "select a from t t1 where exists (select 1 from t t2 where t1.a = t2.b)"
+    ]
+  },
+  {
+    "name": "TestInjectProj",
+    "cases": [
+      "select * from t order by (a+b) limit 10",
+      "select max(a), min(b), avg(c) from t group by a+b",
+      "select max(a), min(b), avg(a / b) from t group by a",
+      "select max(a), min(b), avg(a / b) from t group by (a+b)"
     ]
   }
 ]

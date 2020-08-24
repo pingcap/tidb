@@ -10,16 +10,17 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// +build !windows
 
 package owner_test
 
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"testing"
 	"time"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	. "github.com/pingcap/tidb/ddl"
@@ -33,6 +34,10 @@ import (
 )
 
 const testLease = 5 * time.Millisecond
+
+func TestT(t *testing.T) {
+	TestingT(t)
+}
 
 func checkOwner(d DDL, fbVal bool) (isOwner bool) {
 	manager := d.OwnerManager()
@@ -48,10 +53,11 @@ func checkOwner(d DDL, fbVal bool) (isOwner bool) {
 	return
 }
 
-// Ignore this test on the windows platform, because calling unix socket with address in
-// host:port format fails on windows.
 func TestSingle(t *testing.T) {
-	store, err := mockstore.NewMockTikvStore()
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,13 +112,16 @@ func TestSingle(t *testing.T) {
 }
 
 func TestCluster(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
 	tmpTTL := 3
 	orignalTTL := owner.ManagerSessionTTL
 	owner.ManagerSessionTTL = tmpTTL
 	defer func() {
 		owner.ManagerSessionTTL = orignalTTL
 	}()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		t.Fatal(err)
 	}

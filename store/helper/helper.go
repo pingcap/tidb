@@ -22,6 +22,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
+	log "github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -57,13 +59,13 @@ func NewHelper(store tikv.Storage) *Helper {
 
 // GetMvccByEncodedKey get the MVCC value by the specific encoded key.
 func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
-	kvResp, err := h.Store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
+	kvResp, err := h.Store.SendReq(tikv.NewBackofferWithVars(context.Background(), 500, nil), tikvReq, keyLocation.Region, time.Minute)
 	if err != nil {
 		logutil.BgLogger().Info("get MVCC by encoded key failed",
 			zap.Stringer("encodeKey", encodedKey),
@@ -200,7 +202,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
-		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
+		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
 		if err != nil {
 			logutil.BgLogger().Error("locate region failed", zap.Error(err))
 			continue
@@ -239,20 +241,20 @@ func (h *Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *Re
 func findRangeInTable(hotRange *RegionFrameRange, db *model.DBInfo, tbl *model.TableInfo) *FrameItem {
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
-		return findRangeInPhysicalTable(hotRange, tbl.ID, db.Name.O, tbl.Name.O, tbl.Indices)
+		return findRangeInPhysicalTable(hotRange, tbl.ID, db.Name.O, tbl.Name.O, tbl.Indices, tbl.IsCommonHandle)
 	}
 
 	for _, def := range pi.Definitions {
 		tablePartition := fmt.Sprintf("%s(%s)", tbl.Name.O, def.Name)
-		if f := findRangeInPhysicalTable(hotRange, def.ID, db.Name.O, tablePartition, tbl.Indices); f != nil {
+		if f := findRangeInPhysicalTable(hotRange, def.ID, db.Name.O, tablePartition, tbl.Indices, tbl.IsCommonHandle); f != nil {
 			return f
 		}
 	}
 	return nil
 }
 
-func findRangeInPhysicalTable(hotRange *RegionFrameRange, physicalID int64, dbName, tblName string, indices []*model.IndexInfo) *FrameItem {
-	if f := hotRange.GetRecordFrame(physicalID, dbName, tblName); f != nil {
+func findRangeInPhysicalTable(hotRange *RegionFrameRange, physicalID int64, dbName, tblName string, indices []*model.IndexInfo, isCommonHandle bool) *FrameItem {
+	if f := hotRange.GetRecordFrame(physicalID, dbName, tblName, isCommonHandle); f != nil {
 		return f
 	}
 	for _, idx := range indices {
@@ -312,7 +314,23 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 			var handle kv.Handle
 			_, handle, err = tablecodec.DecodeRecordKey(key)
 			if err == nil {
-				frame.RecordID = handle.IntValue()
+				if handle.IsInt() {
+					frame.RecordID = handle.IntValue()
+				} else {
+					data, err := handle.Data()
+					if err != nil {
+						return nil, err
+					}
+					frame.IndexName = "PRIMARY"
+					frame.IndexValues = make([]string, 0, len(data))
+					for _, datum := range data {
+						str, err := datum.ToString()
+						if err != nil {
+							return nil, err
+						}
+						frame.IndexValues = append(frame.IndexValues, str)
+					}
+				}
 			}
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
@@ -352,25 +370,25 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 
 // GetRecordFrame returns the record frame of a table. If the table's records
 // are not covered by this frame range, it returns nil.
-func (r *RegionFrameRange) GetRecordFrame(tableID int64, dbName, tableName string) *FrameItem {
+func (r *RegionFrameRange) GetRecordFrame(tableID int64, dbName, tableName string, isCommonHandle bool) (f *FrameItem) {
 	if tableID == r.First.TableID && r.First.IsRecord {
 		r.First.DBName, r.First.TableName = dbName, tableName
-		return r.First
-	}
-	if tableID == r.Last.TableID && r.Last.IsRecord {
+		f = r.First
+	} else if tableID == r.Last.TableID && r.Last.IsRecord {
 		r.Last.DBName, r.Last.TableName = dbName, tableName
-		return r.Last
-	}
-
-	if tableID >= r.First.TableID && tableID < r.Last.TableID {
-		return &FrameItem{
+		f = r.Last
+	} else if tableID >= r.First.TableID && tableID < r.Last.TableID {
+		f = &FrameItem{
 			DBName:    dbName,
 			TableName: tableName,
 			TableID:   tableID,
 			IsRecord:  true,
 		}
 	}
-	return nil
+	if f != nil && f.IsRecord && isCommonHandle {
+		f.IndexName = "PRIMARY"
+	}
+	return
 }
 
 // GetIndexFrame returns the indnex frame of a table. If the table's indices are
@@ -729,4 +747,62 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 		return nil, errors.Trace(err)
 	}
 	return &storesStat, nil
+}
+
+// GetPDAddr return the PD Address.
+func (h *Helper) GetPDAddr() ([]string, error) {
+	var pdAddrs []string
+	etcd, ok := h.Store.(tikv.EtcdBackend)
+	if !ok {
+		return nil, errors.New("not implemented")
+	}
+	pdAddrs = etcd.EtcdAddrs()
+	if len(pdAddrs) == 0 {
+		return nil, errors.New("pd unavailable")
+	}
+	return pdAddrs, nil
+}
+
+// PDRegionStats is the json response from PD.
+type PDRegionStats struct {
+	Count            int            `json:"count"`
+	EmptyCount       int            `json:"empty_count"`
+	StorageSize      int64          `json:"storage_size"`
+	StorageKeys      int64          `json:"storage_keys"`
+	StoreLeaderCount map[uint64]int `json:"store_leader_count"`
+	StorePeerCount   map[uint64]int `json:"store_peer_count"`
+}
+
+// GetPDRegionStats get the RegionStats by tableID.
+func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return err
+	}
+
+	startKey := tablecodec.EncodeTablePrefix(tableID)
+	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+	startKey = codec.EncodeBytes([]byte{}, startKey)
+	endKey = codec.EncodeBytes([]byte{}, endKey)
+
+	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+		url.QueryEscape(string(startKey)),
+		url.QueryEscape(string(endKey)))
+
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			log.Error(err)
+		}
+	}()
+
+	dec := json.NewDecoder(resp.Body)
+
+	return dec.Decode(stats)
 }

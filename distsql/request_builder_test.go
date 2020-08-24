@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -57,8 +56,8 @@ type testSuite struct {
 func (s *testSuite) SetUpSuite(c *C) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = &stmtctx.StatementContext{
-		MemTracker:  memory.NewTracker(stringutil.StringerStr("testSuite"), -1),
-		DiskTracker: disk.NewTracker(stringutil.StringerStr("testSuite"), -1),
+		MemTracker:  memory.NewTracker(-1, -1),
+		DiskTracker: disk.NewTracker(-1, -1),
 	}
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{
@@ -315,7 +314,7 @@ func (s *testSuite) TestRequestBuilder1(c *C) {
 		Cacheable:      true,
 		KeepOrder:      false,
 		Desc:           false,
-		Concurrency:    15,
+		Concurrency:    variable.DefDistSQLScanConcurrency,
 		IsolationLevel: 0,
 		Priority:       0,
 		NotFillCache:   false,
@@ -391,7 +390,7 @@ func (s *testSuite) TestRequestBuilder2(c *C) {
 		Cacheable:      true,
 		KeepOrder:      false,
 		Desc:           false,
-		Concurrency:    15,
+		Concurrency:    variable.DefDistSQLScanConcurrency,
 		IsolationLevel: 0,
 		Priority:       0,
 		NotFillCache:   false,
@@ -438,7 +437,7 @@ func (s *testSuite) TestRequestBuilder3(c *C) {
 		Cacheable:      true,
 		KeepOrder:      false,
 		Desc:           false,
-		Concurrency:    15,
+		Concurrency:    variable.DefDistSQLScanConcurrency,
 		IsolationLevel: 0,
 		Priority:       0,
 		NotFillCache:   false,
@@ -485,7 +484,7 @@ func (s *testSuite) TestRequestBuilder4(c *C) {
 		Cacheable:      true,
 		KeepOrder:      false,
 		Desc:           false,
-		Concurrency:    15,
+		Concurrency:    variable.DefDistSQLScanConcurrency,
 		IsolationLevel: 0,
 		Priority:       0,
 		Streaming:      true,
@@ -613,7 +612,7 @@ func (s *testSuite) TestRequestBuilder8(c *C) {
 		Tp:             0,
 		StartTs:        0x0,
 		Data:           []uint8(nil),
-		Concurrency:    15,
+		Concurrency:    variable.DefDistSQLScanConcurrency,
 		IsolationLevel: 0,
 		Priority:       0,
 		MemTracker:     (*memory.Tracker)(nil),

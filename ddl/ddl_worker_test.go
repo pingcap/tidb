@@ -33,12 +33,15 @@ import (
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 var _ = Suite(&testDDLSuite{})
 var _ = Suite(&testDDLSerialSuite{})
 
-type testDDLSuite struct{}
+type testDDLSuite struct {
+	testutil.CommonHandleSuite
+}
 type testDDLSerialSuite struct{}
 
 const testLease = 5 * time.Millisecond
@@ -48,9 +51,6 @@ func (s *testDDLSerialSuite) SetUpSuite(c *C) {
 
 	// We hope that this test is serially executed. So put it here.
 	s.testRunWorker(c)
-}
-
-func (s *testDDLSuite) TearDownSuite(c *C) {
 }
 
 func (s *testDDLSuite) TestCheckOwner(c *C) {
@@ -488,6 +488,13 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 
 		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 46}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAlterIndexVisibility, jobIDs: []int64{firstID + 47}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 47)}, cancelState: model.StatePublic},
+
+		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 53}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionExchangeTablePartition, jobIDs: []int64{firstID + 54}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 54)}, cancelState: model.StatePublic},
+
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 59}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 60}, cancelRetErrs: noErrs, cancelState: model.StateReplicaOnly},
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 61}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -829,7 +836,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 
 	// test truncate table partition failed caused by canceled.
 	test = &tests[24]
-	truncateTblPartitionArgs := []interface{}{partitionTblInfo.Partition.Definitions[0].ID}
+	truncateTblPartitionArgs := []interface{}{[]int64{partitionTblInfo.Partition.Definitions[0].ID}}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, partitionTblInfo.ID, test.act, truncateTblPartitionArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, partitionTblInfo.ID)
@@ -986,6 +993,58 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, tblInfo.ID)
 	c.Assert(checkIdxVisibility(changedTable, indexName, true), IsTrue)
+
+	// test exchange partition failed caused by canceled
+	pt := testTableInfoWithPartition(c, d, "pt", 5)
+	nt := testTableInfo(c, d, "nt", 5)
+	testCreateTable(c, ctx, d, dbInfo, pt)
+	testCreateTable(c, ctx, d, dbInfo, nt)
+
+	updateTest(&tests[43])
+	defID := pt.Partition.Definitions[0].ID
+	exchangeTablePartition := []interface{}{defID, dbInfo.ID, pt.ID, "p0", true}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, nt.ID, test.act, exchangeTablePartition, &test.cancelState)
+	c.Check(checkErr, IsNil)
+	changedNtTable := testGetTable(c, d, dbInfo.ID, nt.ID)
+	changedPtTable := testGetTable(c, d, dbInfo.ID, pt.ID)
+	c.Assert(changedNtTable.Meta().ID == nt.ID, IsTrue)
+	c.Assert(changedPtTable.Meta().Partition.Definitions[0].ID == pt.Partition.Definitions[0].ID, IsTrue)
+
+	// cancel exchange partition successfully
+	updateTest(&tests[44])
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, nt.ID, test.act, exchangeTablePartition)
+	c.Check(checkErr, IsNil)
+	changedNtTable = testGetTable(c, d, dbInfo.ID, pt.Partition.Definitions[0].ID)
+	changedPtTable = testGetTable(c, d, dbInfo.ID, pt.ID)
+	c.Assert(changedNtTable.Meta().ID == nt.ID, IsFalse)
+	c.Assert(changedPtTable.Meta().Partition.Definitions[0].ID == nt.ID, IsTrue)
+
+	// Cancel add table partition.
+	baseTableInfo := testTableInfoWithPartitionLessThan(c, d, "empty_table", 5, "1000")
+	testCreateTable(c, ctx, d, dbInfo, baseTableInfo)
+
+	cancelState = model.StateNone
+	updateTest(&tests[45])
+	addedPartInfo := testAddedNewTablePartitionInfo(c, d, baseTableInfo, "p1", "maxvalue")
+	addPartitionArgs := []interface{}{addedPartInfo}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs, &cancelState)
+	c.Check(checkErr, IsNil)
+	baseTable := testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(len(baseTable.Meta().Partition.Definitions), Equals, 1)
+
+	updateTest(&tests[46])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs, &cancelState)
+	c.Check(checkErr, IsNil)
+	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(len(baseTable.Meta().Partition.Definitions), Equals, 1)
+
+	updateTest(&tests[47])
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs)
+	c.Check(checkErr, IsNil)
+	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(len(baseTable.Meta().Partition.Definitions), Equals, 2)
+	c.Assert(baseTable.Meta().Partition.Definitions[1].ID, Equals, addedPartInfo.Definitions[0].ID)
+	c.Assert(baseTable.Meta().Partition.Definitions[1].LessThan[0], Equals, addedPartInfo.Definitions[0].LessThan[0])
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
