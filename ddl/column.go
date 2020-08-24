@@ -407,7 +407,7 @@ func (w *worker) onDropColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 			job.Args = append(job.Args, []int64{}, getPartitionIDs(tblInfo))
 			return ver, nil
 		}
-		ver, err = doDropIndices(t, job, tblInfo, ctidxInfos, "onDropColumns")
+		ver, err = doDropIndices(t, job, tblInfo, ctidxInfos)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -636,7 +636,7 @@ func (w *worker) onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 	if len(cidxInfos) > 0 && job.IsRollingback() {
 		// Handle the rolling back job.
 		ctidxInfos := getTempCompositeIndices(tblInfo, cidxInfos)
-		ver, err = doDropIndices(t, job, tblInfo, ctidxInfos, "onDropColumn")
+		ver, err = doDropIndices(t, job, tblInfo, ctidxInfos)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

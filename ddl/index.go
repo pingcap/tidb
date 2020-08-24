@@ -591,7 +591,7 @@ func onDropIndex(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		return ver, errors.Trace(err)
 	}
 
-	return doDropIndices(t, job, tblInfo, []*model.IndexInfo{indexInfo}, "onDropIndex")
+	return doDropIndices(t, job, tblInfo, []*model.IndexInfo{indexInfo})
 }
 
 func checkDropIndex(t *meta.Meta, job *model.Job) (*model.TableInfo, *model.IndexInfo, error) {
@@ -1627,7 +1627,7 @@ func indexColumnSliceEqual(a, b []*model.IndexColumn) bool {
 	return true
 }
 
-func doDropIndices(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfos []*model.IndexInfo, callFrom string) (ver int64, err error) {
+func doDropIndices(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfos []*model.IndexInfo) (ver int64, err error) {
 	dependentHiddenCols := make([]*model.ColumnInfo, 0)
 	for _, indexInfo := range indexInfos {
 		for _, indexColumn := range indexInfo.Columns {
@@ -1693,20 +1693,20 @@ func doDropIndices(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, index
 		// Finish this job.
 		if job.IsRollingback() {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-			switch callFrom {
-			case "onDropIndex":
+			switch job.Type {
+			case model.ActionDropIndex, model.ActionDropPrimaryKey, model.ActionAddIndex, model.ActionAddPrimaryKey:
 				// the partition ids were append by convertAddIdxJob2RollbackJob, it is weird, but for the compatibility,
 				// we should keep appending the partitions in the convertAddIdxJob2RollbackJob.
 				job.Args[0] = indexIDs[0]
-			case "onDropColumn", "onDropColumns":
+			case model.ActionDropColumn, model.ActionDropColumns:
 				job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
 			}
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			switch callFrom {
-			case "onDropIndex":
+			switch job.Type {
+			case model.ActionDropIndex, model.ActionDropPrimaryKey:
 				job.Args = append(job.Args, indexIDs[0], getPartitionIDs(tblInfo))
-			case "onDropColumn", "onDropColumns":
+			case model.ActionDropColumn, model.ActionDropColumns:
 				job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
 			}
 		}
