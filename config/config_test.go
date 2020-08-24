@@ -212,6 +212,9 @@ history-size=100
 allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
+[labels]
+foo= "bar"
+group= "abc"
 [security]
 spilled-file-encryption-method = "plaintext"
 `)
@@ -256,6 +259,9 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
+	c.Assert(len(conf.Labels), Equals, 2)
+	c.Assert(conf.Labels["foo"], Equals, "bar")
+	c.Assert(conf.Labels["group"], Equals, "abc")
 	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
 	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
 
