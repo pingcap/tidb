@@ -16,6 +16,7 @@ package ddl
 import (
 	"context"
 	"reflect"
+	"strings"
 	"sync"
 
 	. "github.com/pingcap/check"
@@ -1195,4 +1196,69 @@ func (s *testColumnSuite) TestFieldCase(c *C) {
 	}
 	err := checkDuplicateColumn(colObjects)
 	c.Assert(err.Error(), Equals, infoschema.ErrColumnExists.GenWithStackByArgs("Field").Error())
+}
+
+func (s *testColumnSuite) TestCheckDropColumnsNeedReorg(c *C) {
+	createTable := func(tblName string, cols []string, idxes []string) *model.TableInfo {
+		ret := &model.TableInfo{
+			Name: model.NewCIStr(tblName),
+		}
+		colInfos := []*model.ColumnInfo{}
+		for _, col := range cols {
+			colInfos = append(colInfos, &model.ColumnInfo{
+				Name: model.NewCIStr(col),
+			})
+		}
+		ret.Columns = colInfos
+		idxInfos := []*model.IndexInfo{}
+		for _, idx := range idxes {
+			cidx := strings.ReplaceAll(idx, "(", ":")
+			cidx = strings.ReplaceAll(cidx, ")", "")
+			parts := strings.Split(cidx, ":")
+			if len(parts) != 2 {
+				continue
+			}
+			idxName := strings.TrimSpace(parts[0])
+			icols := strings.Split(strings.TrimSpace(parts[1]), ",")
+			idxCols := []*model.IndexColumn{}
+			for _, icol := range icols {
+				idxCols = append(idxCols, &model.IndexColumn{
+					Name: model.NewCIStr(strings.TrimSpace(icol)),
+				})
+			}
+			idxInfos = append(idxInfos, &model.IndexInfo{
+				Name:    model.NewCIStr(idxName),
+				Columns: idxCols,
+			})
+		}
+		ret.Indices = idxInfos
+		return ret
+	}
+	var (
+		tblInfo  *model.TableInfo
+		colNames []model.CIStr
+	)
+	tblInfo = createTable("t", []string{"c1", "c2", "c3"}, []string{"idx1(c1, c2)", "idx2(c2)"})
+	colNames = []model.CIStr{
+		model.NewCIStr("c2"),
+	}
+	c.Assert(checkDropColumnsNeedReorg(tblInfo, colNames), IsTrue)
+
+	colNames = []model.CIStr{
+		model.NewCIStr("c1"),
+		model.NewCIStr("c2"),
+	}
+	c.Assert(checkDropColumnsNeedReorg(tblInfo, colNames), IsFalse)
+
+	tblInfo = createTable("t", []string{"c1", "c2", "c3"}, []string{"idx1(c1)", "idx2(c2)"})
+	colNames = []model.CIStr{
+		model.NewCIStr("c2"),
+	}
+	c.Assert(checkDropColumnsNeedReorg(tblInfo, colNames), IsFalse)
+
+	tblInfo = createTable("t", []string{"c1", "c2", "c3"}, []string{})
+	colNames = []model.CIStr{
+		model.NewCIStr("c2"),
+	}
+	c.Assert(checkDropColumnsNeedReorg(tblInfo, colNames), IsFalse)
 }

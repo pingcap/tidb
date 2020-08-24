@@ -41,7 +41,6 @@ func (s *testDDLAlgorithmSuite) TestFindAlterAlgorithm(c *C) {
 	testCases := []testCase{
 		{ast.AlterTableSpec{Tp: ast.AlterTableAddConstraint}, inplaceAlgorithm, ast.AlgorithmTypeInplace},
 		{ast.AlterTableSpec{Tp: ast.AlterTableAddColumns}, instantAlgorithm, ast.AlgorithmTypeInstant},
-		{ast.AlterTableSpec{Tp: ast.AlterTableDropColumn}, instantAlgorithm, ast.AlgorithmTypeInstant},
 		{ast.AlterTableSpec{Tp: ast.AlterTableDropPrimaryKey}, instantAlgorithm, ast.AlgorithmTypeInstant},
 		{ast.AlterTableSpec{Tp: ast.AlterTableDropIndex}, instantAlgorithm, ast.AlgorithmTypeInstant},
 		{ast.AlterTableSpec{Tp: ast.AlterTableDropForeignKey}, instantAlgorithm, ast.AlgorithmTypeInstant},

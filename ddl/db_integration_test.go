@@ -2460,6 +2460,42 @@ func (s *testIntegrationSuite5) TestDropColumnsWithMultiCompositeIndexWithData(c
 	tk.MustQuery(query).Check(testkit.Rows("idx_1 YES", "idx_2 YES"))
 }
 
+func (s *testIntegrationSuite7) TestDropColumnWithAlgorithm(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_column_with_algo(a int, b int, c int, index idx1(b, c), index idx2(a, c))")
+	tk.MustGetErrCode("alter table t_drop_column_with_algo drop column c, ALGORITHM=INSTANT", errno.ErrAlterOperationNotSupportedReason)
+	tk.MustExec("alter table t_drop_column_with_algo drop column c, ALGORITHM=INPLACE")
+}
+
+func (s *testIntegrationSuite7) TestDropColumnsWithAlgorithm(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_columns_with_algo(a int, b int, c int, index idx1(b, c), index idx2(a))")
+	tk.MustGetErrCode("alter table t_drop_columns_with_algo drop column a, drop column c, ALGORITHM=INSTANT", errno.ErrAlterOperationNotSupportedReason)
+	tk.MustExec("alter table t_drop_columns_with_algo drop column c, drop column b, ALGORITHM=INSTANT")
+}
+
+func (s *testIntegrationSuite7) TestDropColumnWithAlgorithmCopy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_column_with_algo1(a int, b int, c int, d int, index idx1(b), index idx2(a))")
+	s.assertAlterWarnExec(tk, c, "alter table t_drop_column_with_algo1 drop column a, ALGORITHM=COPY")
+}
+
+func (s *testIntegrationSuite7) TestDropColumnsWithAlgorithmCopy(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_columns_with_algo2(a int, b int, c int, d int, index idx1(b), index idx2(a))")
+	sql := "alter table t_drop_columns_with_algo2 drop column b, drop column c, ALGORITHM=COPY"
+	_, err := tk.Exec(sql)
+	c.Assert(err, IsNil)
+	st := tk.Se.GetSessionVars().StmtCtx
+	// We will get 2 warnings when drop 2 columns
+	c.Assert(st.WarningCount(), Equals, uint16(2))
+	c.Assert(ddl.ErrAlterOperationNotSupported.Equal(st.GetWarnings()[0].Err), IsTrue, Commentf("error:%v", err))
+}
+
 func (s *testIntegrationSuite7) TestAutoIncrementAllocator(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer config.RestoreFunc()()

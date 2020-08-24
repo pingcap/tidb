@@ -17,6 +17,8 @@ import (
 	"fmt"
 
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 )
 
 // AlterAlgorithm is used to store supported alter algorithm.
@@ -64,7 +66,36 @@ func ResolveAlterAlgorithm(alterSpec *ast.AlterTableSpec, specify ast.AlgorithmT
 	// For now, TiDB only support inplace algorithm and instant algorithm.
 	case ast.AlterTableAddConstraint:
 		return getProperAlgorithm(specify, inplaceAlgorithm)
+	case ast.AlterTableDropColumn:
+		// For drop column we should check it in DropColumn or DropColumns function
+		return specify, nil
 	default:
 		return getProperAlgorithm(specify, instantAlgorithm)
 	}
+}
+
+func ResolveDropColumnsAlgorithm(ctx sessionctx.Context, tblInfo *model.TableInfo, colNames []model.CIStr, specs []*ast.AlterTableSpec) error {
+	needReorg := checkDropColumnsNeedReorg(tblInfo, colNames)
+	for _, spec := range specs {
+		var (
+			algorithm ast.AlgorithmType
+			err       error
+		)
+		if needReorg {
+			// If need reorg, drop column will add index first, so just support INPLACE Algorithm
+			algorithm, err = getProperAlgorithm(spec.Algorithm, inplaceAlgorithm)
+		} else {
+			algorithm, err = getProperAlgorithm(spec.Algorithm, instantAlgorithm)
+		}
+		if err != nil {
+			if spec.Algorithm != ast.AlgorithmTypeCopy {
+				return err
+			}
+			// For the compatibility, we return warning instead of error when the algorithm is COPY,
+			// because the COPY ALGORITHM is not supported in TiDB.
+			ctx.GetSessionVars().StmtCtx.AppendError(err)
+		}
+		spec.Algorithm = algorithm
+	}
+	return nil
 }

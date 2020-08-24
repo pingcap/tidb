@@ -573,7 +573,7 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 	colInfos := make([]*model.ColumnInfo, 0, len(colNames))
 	newIfExists := make([]bool, 0, len(colNames))
 	sIndexInfos := make([]*model.IndexInfo, 0)
-	cIndexInfos := make([]*model.IndexInfo, 0)
+	cIndexInfos := make(map[int64]*model.IndexInfo)
 	for i, colName := range colNames {
 		colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
 		if colInfo == nil || colInfo.Hidden {
@@ -594,10 +594,16 @@ func checkDropColumns(t *meta.Meta, job *model.Job) (*model.TableInfo, []*model.
 		colInfos = append(colInfos, colInfo)
 		sidxInfos, cidxInfos := listIndicesWithColumn(colName.L, tblInfo.Indices)
 		sIndexInfos = append(sIndexInfos, sidxInfos...)
-		cIndexInfos = append(cIndexInfos, cidxInfos...)
+		for _, cidxInfo := range cidxInfos {
+			cIndexInfos[cidxInfo.ID] = cidxInfo
+		}
+	}
+	rcIdxInfos := make([]*model.IndexInfo, 0, len(cIndexInfos))
+	for _, idxInfo := range cIndexInfos {
+		rcIdxInfos = append(rcIdxInfos, idxInfo)
 	}
 	job.Args = []interface{}{newColNames, newIfExists}
-	return tblInfo, colInfos, len(colInfos), sIndexInfos, cIndexInfos, nil
+	return tblInfo, colInfos, len(colInfos), sIndexInfos, rcIdxInfos, nil
 }
 
 func checkDropColumnForStatePublic(tblInfo *model.TableInfo, colInfo *model.ColumnInfo) (err error) {
@@ -1325,4 +1331,40 @@ func renameTempCompositeIdxToOrigin(idx *model.IndexInfo, cidxInfos []*model.Ind
 
 func trimTempCompositeIdxPrefix(name string) string {
 	return strings.TrimPrefix(name, tempCompositeIndexPrefix)
+}
+
+func inColumnNames(col *model.IndexColumn, colNames []model.CIStr) bool {
+	for _, colName := range colNames {
+		if colName.L == col.Name.L {
+			return true
+		}
+	}
+	return false
+}
+
+func checkDropColumnsNeedReorg(tblInfo *model.TableInfo, colNames []model.CIStr) bool {
+	cidxInfos := make(map[int64]*model.IndexInfo)
+	for _, colName := range colNames {
+		_, cidxList := listIndicesWithColumn(colName.L, tblInfo.Indices)
+		for _, cidx := range cidxList {
+			cidxInfos[cidx.ID] = cidx
+		}
+	}
+	if len(cidxInfos) == 0 {
+		return false
+	}
+	needReorgs := 0
+	for _, idxInfo := range cidxInfos {
+		idxColumns := 0
+		for _, col := range idxInfo.Columns {
+			if inColumnNames(col, colNames) {
+				continue
+			}
+			idxColumns++
+		}
+		if idxColumns > 0 {
+			needReorgs++
+		}
+	}
+	return needReorgs > 0
 }

@@ -3040,6 +3040,12 @@ func (d *ddl) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTa
 	}
 	colName := spec.OldColumnName.Name
 
+	// Check Drop Column algorithm
+	err = ResolveDropColumnsAlgorithm(ctx, t.Meta(), []model.CIStr{colName}, []*ast.AlterTableSpec{spec})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -3106,6 +3112,12 @@ func (d *ddl) DropColumns(ctx sessionctx.Context, ti ast.Ident, specs []*ast.Alt
 	if len(tblInfo.Columns) == len(colNames) {
 		return ErrCantRemoveAllFields.GenWithStack("can't drop all columns in table %s",
 			tblInfo.Name)
+	}
+
+	// Check Drop Columns algorithm
+	err = ResolveDropColumnsAlgorithm(ctx, tblInfo, colNames, specs)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	job := &model.Job{
