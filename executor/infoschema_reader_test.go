@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -527,6 +528,8 @@ func (s *testInfoschemaTableSuite) TestForServersInfo(c *C) {
 	c.Assert(result.Rows()[0][4], Equals, info.Lease)
 	c.Assert(result.Rows()[0][5], Equals, info.Version)
 	c.Assert(result.Rows()[0][6], Equals, info.GitHash)
+	c.Assert(result.Rows()[0][7], Equals, info.BinlogStatus)
+	c.Assert(result.Rows()[0][8], Equals, stringutil.BuildStringFromLabels(info.Labels))
 }
 
 func (s *testInfoschemaTableSuite) TestForTableTiFlashReplica(c *C) {
