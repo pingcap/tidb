@@ -235,6 +235,19 @@ func (s *seqTestSuite) TestPrepared(c *C) {
 		c.Assert(err, IsNil)
 		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("5"))
 
+		// issue 19371
+		tk.MustExec("SET @sql = 'update prepare1 set a=a+1';")
+		_, err = tk.Exec("prepare stmt FROM @SQL")
+		c.Assert(err, IsNil)
+		_, err = tk.Exec("execute stmt")
+		c.Assert(err, IsNil)
+		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("6"))
+		_, err = tk.Exec("prepare stmt FROM @Sql")
+		c.Assert(err, IsNil)
+		_, err = tk.Exec("execute stmt")
+		c.Assert(err, IsNil)
+		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("7"))
+
 		// Coverage.
 		exec := &executor.ExecuteExec{}
 		exec.Next(ctx, nil)
