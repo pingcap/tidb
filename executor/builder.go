@@ -2490,6 +2490,40 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return ret
 	}
 
+	if v.StoreType == kv.TiFlash {
+		tmp, _ := b.is.TableByID(ts.Table.ID)
+		tbl := tmp.(table.PartitionedTable)
+		partitions, err := partitionPruning(b.ctx, tbl, v.PartitionTable.PruningConds, v.PartitionTable.PartitionNames)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		partsExecutor := make([]Executor, 0, len(partitions))
+		for _, part := range partitions {
+			exec, err := buildNoRangeTableReader(b, v)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+			exec.ranges = ts.Ranges
+			nexec, err := nextPartitionForTableReader{exec: exec}.nextPartition(context.Background(), part)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+			partsExecutor = append(partsExecutor, nexec)
+		}
+		if len(partsExecutor) == 0 {
+			return &TableDualExec{baseExecutor: *ret.base()}
+		}
+		if len(partsExecutor) == 1 {
+			return partsExecutor[0]
+		}
+		return &UnionExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), partsExecutor...),
+		}
+	}
+
 	nextPartition := nextPartitionForTableReader{ret}
 	exec, err := buildPartitionTable(b, ts.Table, v.PartitionTable.PruningConds, v.PartitionTable.PartitionNames, ret, nextPartition)
 	if err != nil {
@@ -2497,6 +2531,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return nil
 	}
 	return exec
+}
+
+func (b *executorBuilder) buildPartitionTableForTiFlash(tblInfo *model.TableInfo, filter []expression.Expression, names []model.CIStr) {
+
 }
 
 func buildPartitionTable(b *executorBuilder, tblInfo *model.TableInfo, filter []expression.Expression, names []model.CIStr, e Executor, n nextPartition) (Executor, error) {
