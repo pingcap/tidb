@@ -853,7 +853,7 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 		v, strMin string
 		t         types.Time
 	)
-	// If any invalid time is found, leastTime will use the string comprasion res
+	// If any invalid time is found, leastTime will use the string comprasion result
 	strMin, isNull, err = b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return strMin, isNull, err
@@ -869,13 +869,16 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 		if types.CompareString(v, strMin, b.collation) < 0 {
 			strMin = v
 		}
+		// Invalid time found, no need to do time comprasion any more
+		if findInvalidTime {
+			continue
+		}
 		t, err = types.ParseDatetime(sc, v)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
-			} else if !findInvalidTime {
-				findInvalidTime = true
 			}
+			findInvalidTime = true
 		}
 		if t.Compare(min) < 0 {
 			min = t
