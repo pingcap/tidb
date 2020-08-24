@@ -296,7 +296,7 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 	select {
 	case task = <-e.resultCh:
 	case <-ctx.Done():
-		return nil, nil
+		return nil, ctx.Err()
 	}
 	if task == nil {
 		return nil, nil
@@ -308,7 +308,7 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 			return nil, err
 		}
 	case <-ctx.Done():
-		return nil, nil
+		return nil, ctx.Err()
 	}
 
 	e.task = task
@@ -545,6 +545,9 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, rowIdx int)
 			if terror.ErrorEqual(err, types.ErrOverflow) {
 				return nil, nil
 			}
+			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.Tp == mysql.TypeSet || innerColType.Tp == mysql.TypeEnum) {
+				return nil, nil
+			}
 			return nil, err
 		}
 		cmp, err := outerValue.CompareDatum(sc, &innerValue)
@@ -606,6 +609,14 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
+<<<<<<< HEAD
+=======
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+>>>>>>> f5fa3e7... executor: fix index join error when join key is ENUM or SET (#19235)
 		err := Next(ctx, innerExec, iw.executorChk)
 		if err != nil {
 			return err
