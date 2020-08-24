@@ -1257,20 +1257,13 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 	e.once.Do(func() {
 		if e.tearedTicket >= uint(cap(e.sendRate.token)-1) {
 			logutil.BgLogger().Info("taskRateLimitAction delegate to fallback action",
-				zap.Int64("consumed", t.BytesConsumed()),
-				zap.Int64("quota", t.GetBytesLimit()),
-				zap.Int64("maxConsumed", t.MaxConsumed()),
-				zap.Uint("tearedTicket", e.tearedTicket),
 				zap.Int("ticketTotal", cap(e.sendRate.token)))
 			e.fallbackAction.Action(t)
 			return
 		}
-		logutil.BgLogger().Info("memory exceeds quota, mark taskRateLimitAction exceed signal.",
+		logutil.BgLogger().Info("taskRateLimitAction exceed signal.",
 			zap.Int64("consumed", t.BytesConsumed()),
-			zap.Int64("quota", t.GetBytesLimit()),
-			zap.Int64("maxConsumed", t.MaxConsumed()),
-			zap.Uint("tearedTicket", e.tearedTicket),
-			zap.Int("ticketTotal", cap(e.sendRate.token)))
+			zap.Uint("tearedTicket", e.tearedTicket))
 		e.teared = false
 		e.exceed = true
 	})
