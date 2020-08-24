@@ -18,7 +18,9 @@ import (
 	"strconv"
 	"testing"
 	"time"
+	"unsafe"
 
+	"github.com/dgryski/go-farm"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/set"
@@ -136,6 +139,38 @@ func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		memDeltas = append(memDeltas, int64(0))
+	}
+	return memDeltas, nil
+}
+
+func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, 0)
+
+	buf := make([]byte, 8)
+	p := aggfuncs.NewPartialResult4ApproxCountDistinct()
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		oldBufSize := p.BufLen()
+		switch dataType.Tp {
+		case mysql.TypeLonglong:
+			val := row.GetInt64(0)
+			*(*int64)(unsafe.Pointer(&buf[0])) = val
+		case mysql.TypeString:
+			val := row.GetString(0)
+			buf = codec.EncodeCompactBytes(buf, hack.Slice(val))
+		default:
+			return memDeltas, errors.Errorf("unsupported type - %v", dataType.Tp)
+		}
+
+		x := farm.Hash64(buf)
+		p.InsertHash64(x)
+		newBufSize := p.BufLen()
+		memDelta := newBufSize - oldBufSize
+		memDeltas = append(memDeltas, memDelta)
 	}
 	return memDeltas, nil
 }

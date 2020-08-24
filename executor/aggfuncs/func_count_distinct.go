@@ -499,6 +499,10 @@ func (p *partialResult4ApproxCountDistinct) InsertHash64(x uint64) {
 	p.insertHash(approxCountDistinctHashValue(x))
 }
 
+func (p *partialResult4ApproxCountDistinct) BufLen() int64 {
+	return int64(len(p.buf)) * DefUint32Size
+}
+
 func (p *partialResult4ApproxCountDistinct) alloc(newSizeDegree uint8) {
 	p.size = 0
 	p.skipDegree = 0
@@ -779,11 +783,11 @@ func (e *approxCountDistinctOriginal) UpdatePartialResult(sctx sessionctx.Contex
 		if hasNull {
 			continue
 		}
-		oldBufSize := int64(len(p.buf)) * DefUint32Size
+		oldBufLen := p.BufLen()
 		x := farm.Hash64(encodedBytes)
 		p.InsertHash64(x)
-		newBufSize := int64(len(p.buf)) * DefUint32Size
-		memDelta += newBufSize - oldBufSize
+		newBufLen := p.BufLen()
+		memDelta += newBufLen - oldBufLen
 	}
 
 	return memDelta, nil
@@ -815,13 +819,13 @@ func (e *approxCountDistinctPartial2) UpdatePartialResult(sctx sessionctx.Contex
 			continue
 		}
 
-		oldBufSize := int64(len(p.buf)) * DefUint32Size
+		oldBufLen := p.BufLen()
 		err = p.readAndMerge(hack.Slice(input))
 		if err != nil {
 			return memDelta, err
 		}
-		newBufSize := int64(len(p.buf)) * DefUint32Size
-		memDelta += newBufSize - oldBufSize
+		newBufLen := p.BufLen()
+		memDelta += newBufLen - oldBufLen
 	}
 	return memDelta, nil
 }
