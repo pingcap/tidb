@@ -988,7 +988,7 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		Name: x.Name,
 	}
 	if x.SQLVar != nil {
-		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
+		if v, ok := b.ctx.GetSessionVars().Users[strings.ToLower(x.SQLVar.Name)]; ok {
 			p.SQLText = v.GetString()
 		} else {
 			p.SQLText = "NULL"
@@ -3116,8 +3116,11 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 	if !ok || targetPlan == nil {
 		return &Explain{Format: explainFor.Format}, nil
 	}
-
-	return b.buildExplainPlan(targetPlan, explainFor.Format, processInfo.PlanExplainRows, false, nil)
+	var rows [][]string
+	if explainFor.Format == ast.ExplainFormatROW {
+		rows = processInfo.PlanExplainRows
+	}
+	return b.buildExplainPlan(targetPlan, explainFor.Format, rows, false, nil)
 }
 
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (Plan, error) {
