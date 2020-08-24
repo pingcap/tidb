@@ -547,7 +547,6 @@ func (r *builder) buildFromNot(inputExpr expression.Expression) []point {
 		endPoint := point{value: types.MaxValueDatum()}
 		return []point{startPoint, endPoint}
 	}
-
 	return nil
 }
 
