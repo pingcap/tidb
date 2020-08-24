@@ -811,12 +811,14 @@ func (b *builtinTruncateIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 		if result.IsNull(i) {
 			continue
 		}
-		// math.Pow10(d) == INF if d > 308
-		if buf64s[i] < -308 {
-			i64s[i] = 0
-		} else {
-			shift := int64(math.Pow10(int(-buf64s[i])))
-			i64s[i] = i64s[i] / shift * shift
+		if buf64s[i] < 0 {
+			// math.Pow10(d) == INF if d > 308
+			if buf64s[i] < -308 {
+				i64s[i] = 0
+			} else {
+				shift := int64(math.Pow10(int(-buf64s[i])))
+				i64s[i] = i64s[i] / shift * shift
+			}
 		}
 	}
 	return nil
@@ -853,12 +855,15 @@ func (b *builtinTruncateUintSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		if result.IsNull(i) {
 			continue
 		}
-		// math.Pow10(d) == INF if d > 308
-		if buf64s[i] < -308 {
-			i64s[i] = 0
-		} else {
-			shift := uint64(math.Pow10(int(-buf64s[i])))
-			i64s[i] = int64(uint64(i64s[i]) / shift * shift)
+
+		if buf64s[i] < 0 {
+			// math.Pow10(d) == INF if d > 308
+			if buf64s[i] < -308 {
+				i64s[i] = 0
+			} else {
+				shift := uint64(math.Pow10(int(-buf64s[i])))
+				i64s[i] = int64(uint64(i64s[i]) / shift * shift)
+			}
 		}
 	}
 	return nil
