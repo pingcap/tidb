@@ -294,7 +294,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 
 		res, err := http.DefaultClient.Do(req)
 		if err == nil {
-			defer terror.Log(res.Body.Close())
+			defer terror.Call(res.Body.Close)
 			if res.StatusCode != http.StatusOK {
 				bodyBytes, err := ioutil.ReadAll(res.Body)
 				return errors.Wrapf(err, "%s", bodyBytes)
@@ -320,10 +320,7 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error 
 		return nil
 	}
 
-	var addrs []string
-	if is.etcdCli != nil {
-		addrs = is.etcdCli.Endpoints()
-	}
+	addrs := is.etcdCli.Endpoints()
 
 	if len(addrs) == 0 {
 		return errors.Errorf("pd unavailable")
