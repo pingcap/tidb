@@ -17,6 +17,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 )
 
+// Error is used to desensitize error message.
 func Error(err error, desensitize bool) error {
 	if !desensitize {
 		return err
