@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/format"
@@ -43,9 +42,7 @@ var _ = Suite(&testPlanSuite{})
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
-	failpoint.Enable("github.com/pingcap/tidb/domain/infosync/skipUpdatePlacementRules", "return(true)")
 	TestingT(t)
-	failpoint.Disable("github.com/pingcap/tidb/domain/infosync/skipUpdatePlacementRules")
 }
 
 type testPlanSuite struct {

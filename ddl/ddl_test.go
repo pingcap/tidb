@@ -20,7 +20,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -104,9 +103,7 @@ func TestT(t *testing.T) {
 	})
 
 	testleak.BeforeTest()
-	failpoint.Enable("github.com/pingcap/tidb/domain/infosync/skipUpdatePlacementRules", "return(true)")
 	TestingT(t)
-	failpoint.Disable("github.com/pingcap/tidb/domain/infosync/skipUpdatePlacementRules")
 	testleak.AfterTestT(t)()
 }
 
