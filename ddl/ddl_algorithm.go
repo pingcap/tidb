@@ -27,6 +27,7 @@ import (
 // because we never block the DML but costs some time to backfill the index data)
 // See https://dev.mysql.com/doc/refman/8.0/en/alter-table.html#alter-table-performance.
 type AlterAlgorithm struct {
+	// supported MUST store algorithms in the order 'INSTANT, INPLACE, COPY'
 	supported []ast.AlgorithmType
 	// If the alter algorithm is not given, the defAlgorithm will be used.
 	defAlgorithm ast.AlgorithmType
@@ -49,18 +50,27 @@ func getProperAlgorithm(specify ast.AlgorithmType, algorithm *AlterAlgorithm) (a
 		return algorithm.defAlgorithm, nil
 	}
 
+	r := ast.AlgorithmTypeDefault
+
 	for _, a := range algorithm.supported {
-		if specify == a {
-			return specify, nil
+		if specify <= a {
+			r = a
+			break
 		}
 	}
 
-	return algorithm.defAlgorithm, ErrAlterOperationNotSupported.GenWithStackByArgs(fmt.Sprintf("ALGORITHM=%s", specify), fmt.Sprintf("Cannot alter table by %s", specify), fmt.Sprintf("ALGORITHM=%s", algorithm.defAlgorithm))
+	var err error
+	if specify != r {
+		err = ErrAlterOperationNotSupported.GenWithStackByArgs(fmt.Sprintf("ALGORITHM=%s", specify), fmt.Sprintf("Cannot alter table by %s", specify), fmt.Sprintf("ALGORITHM=%s", algorithm.defAlgorithm))
+	}
+	return r, err
 }
 
 // ResolveAlterAlgorithm resolves the algorithm of the alterSpec.
-// If specify algorithm is not supported by the alter action, errAlterOperationNotSupported will be returned.
 // If specify is the ast.AlterAlgorithmDefault, then the default algorithm of the alter action will be returned.
+// If specify algorithm is not supported by the alter action, it will try to find a better algorithm in the order `INSTANT > INPLACE > COPY`, errAlterOperationNotSupported will be returned.
+// E.g. INSTANT may be returned if specify=INPLACE
+// If failed to choose any valid algorithm, AlgorithmTypeDefault and errAlterOperationNotSupported will be returned
 func ResolveAlterAlgorithm(alterSpec *ast.AlterTableSpec, specify ast.AlgorithmType) (ast.AlgorithmType, error) {
 	switch alterSpec.Tp {
 	// For now, TiDB only support inplace algorithm and instant algorithm.

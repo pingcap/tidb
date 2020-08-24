@@ -526,7 +526,7 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 		return d, nil
 	}
 	tblInfo := e.Table.Meta()
-	if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() && column.ID == tblInfo.GetPkColInfo().ID {
+	if ddl.IsAutoRandomColumnID(tblInfo, column.ID) {
 		d, err := e.adjustAutoRandomDatum(ctx, datum, hasValue, column)
 		if err != nil {
 			return types.Datum{}, err

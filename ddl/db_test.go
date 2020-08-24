@@ -50,10 +50,12 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -1805,6 +1807,141 @@ func (s *testDBSuite4) TestAddIndexWithDupCols(c *C) {
 	c.Check(errors.Cause(err2).(*terror.Error).Equal(err), Equals, true)
 
 	tk.MustExec("drop table test_add_index_with_dup")
+}
+
+// checkGlobalIndexRow reads one record from global index and check. Only support int handle.
+func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo,
+	pid int64, idxVals []types.Datum, rowVals []types.Datum) {
+	ctx.NewTxn(context.Background())
+	txn, err := ctx.Txn(true)
+	sc := ctx.GetSessionVars().StmtCtx
+	c.Assert(err, IsNil)
+
+	tblColMap := make(map[int64]*types.FieldType, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		tblColMap[col.ID] = &col.FieldType
+	}
+	idxColInfos := make([]rowcodec.ColInfo, 0, len(indexInfo.Columns))
+	for _, idxCol := range indexInfo.Columns {
+		col := tblInfo.Columns[idxCol.Offset]
+		idxColInfos = append(idxColInfos, rowcodec.ColInfo{
+			ID:         col.ID,
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
+		})
+	}
+
+	// Check local index entry does not exist.
+	localPrefix := tablecodec.EncodeTableIndexPrefix(pid, indexInfo.ID)
+	it, err := txn.Iter(localPrefix, nil)
+	c.Assert(err, IsNil)
+	// no local index entry.
+	c.Assert(it.Valid() && it.Key().HasPrefix(localPrefix), IsFalse)
+	it.Close()
+
+	// Check global index entry.
+	encodedValue, err := codec.EncodeKey(sc, nil, idxVals...)
+	c.Assert(err, IsNil)
+	key := tablecodec.EncodeIndexSeekKey(tblInfo.ID, indexInfo.ID, encodedValue)
+	c.Assert(err, IsNil)
+	value, err := txn.Get(context.Background(), key)
+	c.Assert(err, IsNil)
+	colVals, err := tablecodec.DecodeIndexKV(key, value, len(indexInfo.Columns),
+		tablecodec.HandleDefault, idxColInfos)
+	c.Assert(err, IsNil)
+	c.Assert(colVals, HasLen, len(idxVals)+2)
+	for i, val := range idxVals {
+		_, d, err := codec.DecodeOne(colVals[i])
+		c.Assert(err, IsNil)
+		c.Assert(d, DeepEquals, val)
+	}
+	_, d, err := codec.DecodeOne(colVals[len(idxVals)+1]) //pid
+	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64(), Equals, pid)
+
+	_, d, err = codec.DecodeOne(colVals[len(idxVals)]) //handle
+	c.Assert(err, IsNil)
+	h := kv.IntHandle(d.GetInt64())
+	rowKey := tablecodec.EncodeRowKey(pid, h.Encoded())
+	rowValue, err := txn.Get(context.Background(), rowKey)
+	c.Assert(err, IsNil)
+	rowValueDatums, err := tablecodec.DecodeRowToDatumMap(rowValue, tblColMap, time.UTC)
+	c.Assert(err, IsNil)
+	c.Assert(rowValueDatums, NotNil)
+	for i, val := range rowVals {
+		c.Assert(rowValueDatums[tblInfo.Columns[i].ID], DeepEquals, val)
+	}
+}
+
+func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table test_t1 (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("insert test_t1 values (1, 1)")
+	tk.MustExec("alter table test_t1 add unique index p_a (a);")
+	tk.MustExec("insert test_t1 values (2, 11)")
+	t := s.testGetTable(c, "test_t1")
+	tblInfo := t.Meta()
+	indexInfo := tblInfo.FindIndexByName("p_a")
+	c.Assert(indexInfo, NotNil)
+	c.Assert(indexInfo.Global, IsTrue)
+
+	ctx := s.s.(sessionctx.Context)
+	ctx.NewTxn(context.Background())
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+
+	// check row 1
+	pid := tblInfo.Partition.Definitions[0].ID
+	idxVals := []types.Datum{types.NewDatum(1)}
+	rowVals := []types.Datum{types.NewDatum(1), types.NewDatum(1)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	// check row 2
+	pid = tblInfo.Partition.Definitions[1].ID
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
+	txn.Commit(context.Background())
+
+	// Test add global Primary Key index
+	tk.MustExec("create table test_t2 (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("insert test_t2 values (1, 1)")
+	tk.MustExec("alter table test_t2 add primary key (a);")
+	tk.MustExec("insert test_t2 values (2, 11)")
+	t = s.testGetTable(c, "test_t2")
+	tblInfo = t.Meta()
+	indexInfo = t.Meta().FindIndexByName("primary")
+	c.Assert(indexInfo, NotNil)
+	c.Assert(indexInfo.Global, IsTrue)
+
+	ctx.NewTxn(context.Background())
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+
+	// check row 1
+	pid = tblInfo.Partition.Definitions[0].ID
+	idxVals = []types.Datum{types.NewDatum(1)}
+	rowVals = []types.Datum{types.NewDatum(1), types.NewDatum(1)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	// check row 2
+	pid = tblInfo.Partition.Definitions[1].ID
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	txn.Commit(context.Background())
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = false
+	})
 }
 
 func (s *testDBSuite) showColumns(tk *testkit.TestKit, c *C, tableName string) [][]interface{} {
@@ -5139,6 +5276,7 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 	tk.MustExec("admin check table t1")
 }
 
+
 // TestCancelDropColumn tests cancel ddl job which type is drop column and column covered by composite index.
 func (s *testDBSuite3) TestCancelDropColumnWithCompositeIndex(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -5416,6 +5554,23 @@ func (s *testDBSuite3) TestCancelDropColumnsWithCompositeIndex(c *C) {
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	s.mustExec(tk, c, "alter table test_drop_column add column c3 int, add column c4 int")
 	s.mustExec(tk, c, "alter table test_drop_column drop column c3, drop column c4")
+}
+
+// TestAddIndexFailOnCaseWhenCanExit is used to close #19325.
+func (s *testSerialDBSuite) TestAddIndexFailOnCaseWhenCanExit(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	_, err := tk.Exec("alter table t add index idx(b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: job.ErrCount:512, mock unknown type: ast.whenClause.")
+	tk.MustExec("drop table if exists t")
 }
 
 func init() {
