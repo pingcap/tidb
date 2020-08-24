@@ -425,7 +425,7 @@ func GetCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 	if isAllStr || cmpEvalType.IsStringKind() || (strFound && argTp == types.ETReal) {
 		argTp = types.ETString
 	}
-	// According to MySQL's offical document, though greatest and least functions doesn't
+	// According to MySQL's official document, though greatest and least functions doesn't
 	// hace any special explanation for time type comparing, they actually will be handled
 	// with some special treatment. We have to mark it as a ETDatetime type so that the
 	// subsequent logic can processe the comparing correctly.
@@ -869,16 +869,13 @@ func (b *builtinLeastTimeSig) evalString(row chunk.Row) (res string, isNull bool
 		if types.CompareString(v, strMin, b.collation) < 0 {
 			strMin = v
 		}
-		// Invalid time found, no need to do time comprasion any more
-		if findInvalidTime {
-			continue
-		}
 		t, err = types.ParseDatetime(sc, v)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return v, true, err
+			} else if !findInvalidTime {
+				findInvalidTime = true
 			}
-			findInvalidTime = true
 		}
 		if t.Compare(min) < 0 {
 			min = t
