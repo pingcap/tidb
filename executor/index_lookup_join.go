@@ -609,14 +609,11 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	innerResult.GetMemTracker().SetLabel(innerResultLabel)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
-<<<<<<< HEAD
-=======
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
->>>>>>> f5fa3e7... executor: fix index join error when join key is ENUM or SET (#19235)
 		err := Next(ctx, innerExec, iw.executorChk)
 		if err != nil {
 			return err

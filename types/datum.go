@@ -14,7 +14,6 @@
 package types
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -1294,12 +1293,7 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
-<<<<<<< HEAD
-		logutil.Logger(context.Background()).Error("convert to MySQL enum failed", zap.Error(err))
-		err = errors.Trace(ErrTruncated)
-=======
 		err = errors.Wrap(ErrTruncated, "convert to MySQL enum failed: "+err.Error())
->>>>>>> f5fa3e7... executor: fix index join error when join key is ENUM or SET (#19235)
 	}
 	ret.SetValue(e)
 	return ret, err
@@ -1326,13 +1320,8 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 	if err != nil {
 		err = errors.Wrap(ErrTruncated, "convert to MySQL set failed: "+err.Error())
 	}
-<<<<<<< HEAD
 	ret.SetValue(s)
-	return ret, nil
-=======
-	ret.SetMysqlSet(s, target.Collate)
 	return ret, err
->>>>>>> f5fa3e7... executor: fix index join error when join key is ENUM or SET (#19235)
 }
 
 func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldType) (ret Datum, err error) {
