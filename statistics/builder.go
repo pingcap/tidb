@@ -110,7 +110,7 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	samples := collector.Samples
-	err := SortSampleItems(sc, samples)
+	samples, err := SortSampleItems(sc, samples)
 	if err != nil {
 		return nil, err
 	}

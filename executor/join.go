@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var (
@@ -142,7 +141,7 @@ func (e *HashJoinExec) Close() error {
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
 		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
 		if e.rowContainer != nil {
 			runtimeStats.setHashStat(e.rowContainer.stat)
@@ -248,8 +247,6 @@ func (e *HashJoinExec) wait4BuildSide() (emptyBuild bool, err error) {
 	}
 	return false, nil
 }
-
-var buildSideResultLabel fmt.Stringer = stringutil.StringerStr("hashJoin.buildSideResult")
 
 // fetchBuildSideRows fetches all rows from build side executor, and append them
 // to e.buildSideResult.
@@ -687,9 +684,9 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	var selected []bool
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
-	e.rowContainer.GetMemTracker().SetLabel(buildSideResultLabel)
+	e.rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
-	e.rowContainer.GetDiskTracker().SetLabel(buildSideResultLabel)
+	e.rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
 		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
@@ -770,7 +767,7 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.canUseCache {
 			var hitRatio float64
 			if e.cacheAccessCounter > 0 {
@@ -783,8 +780,6 @@ func (e *NestedLoopApplyExec) Close() error {
 	}
 	return e.outerExec.Close()
 }
-
-var innerListLabel fmt.Stringer = stringutil.StringerStr("innerList")
 
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
@@ -801,7 +796,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	e.innerList.GetMemTracker().SetLabel(innerListLabel)
+	e.innerList.GetMemTracker().SetLabel(memory.LabelForInnerList)
 	e.innerList.GetMemTracker().AttachTo(e.memTracker)
 
 	if e.canUseCache {

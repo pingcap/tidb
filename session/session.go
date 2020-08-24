@@ -427,7 +427,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
-	s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+	if s.GetSessionVars().EnableAmendPessimisticTxn {
+		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+	}
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -1948,7 +1950,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version49
+	currentBootstrapVersion = version50
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2091,6 +2093,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBLogDesensitization,
 	variable.TiDBEnableTelemetry,
 	variable.TiDBShardAllocateStep,
+	variable.TiDBEnableAmendPessimisticTxn,
 }
 
 var (

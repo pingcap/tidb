@@ -1035,6 +1035,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			arg.GetType().Collate = v.Collate
 		}
 		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
+		er.ctxStack[len(er.ctxStack)-1].SetCharsetAndCollation(arg.GetType().Charset, arg.GetType().Collate)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
