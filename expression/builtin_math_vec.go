@@ -803,11 +803,18 @@ func (b *builtinTruncateIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return nil
+	}
+
 	for i := 0; i < len(i64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		if buf64s[i] < 0 {
+		// math.Pow10(d) == INF if d > 308
+		if buf64s[i] < -308 {
+			i64s[i] = 0
+		} else {
 			shift := int64(math.Pow10(int(-buf64s[i])))
 			i64s[i] = i64s[i] / shift * shift
 		}
@@ -838,11 +845,18 @@ func (b *builtinTruncateUintSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return nil
+	}
+
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		if buf64s[i] < 0 {
+		// math.Pow10(d) == INF if d > 308
+		if buf64s[i] < -308 {
+			i64s[i] = 0
+		} else {
 			shift := uint64(math.Pow10(int(-buf64s[i])))
 			i64s[i] = int64(uint64(i64s[i]) / shift * shift)
 		}
