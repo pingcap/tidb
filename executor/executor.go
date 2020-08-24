@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -94,7 +93,7 @@ var (
 
 type baseExecutor struct {
 	ctx           sessionctx.Context
-	id            fmt.Stringer
+	id            int
 	schema        *expression.Schema // output schema
 	initCap       int
 	maxChunkSize  int
@@ -104,10 +103,6 @@ type baseExecutor struct {
 }
 
 const (
-	// globalStorageLabel represents the label of the GlobalDiskUsageTracker
-	globalStorageLabel string = "GlobalStorageLabel"
-	// globalMemoryLabel represents the label of the GlobalMemoryUsageTracker
-	globalMemoryLabel string = "GlobalMemoryLabel"
 	// globalPanicStorageExceed represents the panic message when out of storage quota.
 	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
 	// globalPanicMemoryExceed represents the panic message when out of memory limit.
@@ -121,9 +116,9 @@ type globalPanicOnExceed struct {
 
 func init() {
 	action := &globalPanicOnExceed{}
-	GlobalMemoryUsageTracker = memory.NewGlobalTracker(stringutil.StringerStr(globalMemoryLabel), -1)
+	GlobalMemoryUsageTracker = memory.NewGlobalTracker(memory.LabelForGlobalMemory, -1)
 	GlobalMemoryUsageTracker.SetActionOnExceed(action)
-	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(stringutil.StringerStr(globalStorageLabel), -1)
+	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 }
 
@@ -135,10 +130,10 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 	msg := ""
-	switch t.Label().String() {
-	case globalStorageLabel:
+	switch t.Label() {
+	case memory.LabelForGlobalStorage:
 		msg = globalPanicStorageExceed
-	case globalMemoryLabel:
+	case memory.LabelForGlobalMemory:
 		msg = globalPanicMemoryExceed
 	default:
 		msg = "Out of Unknown Resource Quota!"
@@ -207,7 +202,7 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.Stringer, children ...Executor) baseExecutor {
+func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
@@ -217,9 +212,9 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		if e.id != nil {
+		if e.id > 0 {
 			e.runtimeStats = &execdetails.BasicRuntimeStats{}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id.String(), e.runtimeStats)
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, e.runtimeStats)
 		}
 	}
 	if schema != nil {
@@ -1521,8 +1516,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
-		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
-		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
+		MemTracker:  memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
+		DiskTracker: disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:      stmtctx.AllocateTaskID(),
 	}
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)
