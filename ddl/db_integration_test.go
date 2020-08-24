@@ -460,6 +460,8 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrDupFieldName)
 	sql = "create table test_error_code1 (c1 int, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int)"
 	tk.MustGetErrCode(sql, errno.ErrTooLongIdent)
+	sql = "create table test_error_code1 (c1 int, `_tidb_rowid` int)"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
 	sql = "create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int)"
 	tk.MustGetErrCode(sql, errno.ErrTooLongIdent)
 	sql = "create table test_error_code1 (c1 int, c2 int, key aa (c1, c2), key aa (c1))"
@@ -532,6 +534,8 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	sql = "alter table test_comment comment 'test comment'"
 	tk.MustGetErrCode(sql, errno.ErrNoSuchTable)
 	sql = "alter table test_error_code_succ add column `a ` int ;"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
+	sql = "alter table test_error_code_succ add column `_tidb_rowid` int ;"
 	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
 	tk.MustExec("create table test_on_update (c1 int, c2 int);")
 	sql = "alter table test_on_update add column c3 int on update current_timestamp;"

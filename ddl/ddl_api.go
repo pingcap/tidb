@@ -384,6 +384,10 @@ func buildColumnAndConstraint(
 	tblCharset string,
 	tblCollate string,
 ) (*table.Column, []*ast.Constraint, error) {
+	if colName := colDef.Name.Name.L; colName == "_tidb_rowid" {
+		return nil, nil, ErrWrongColumnName.GenWithStackByArgs(colName)
+	}
+
 	// specifiedCollate refers to the last collate specified in colDef.Options.
 	chs, coll, err := getCharsetAndCollateInColumnDef(colDef)
 	if err != nil {
