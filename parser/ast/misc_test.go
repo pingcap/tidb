@@ -259,6 +259,7 @@ func (ts *testMiscSuite) TestTableOptimizerHintRestore(c *C) {
 		{"STREAM_AGG(@sel1)", "STREAM_AGG(@`sel1`)"},
 		{"AGG_TO_COP()", "AGG_TO_COP()"},
 		{"AGG_TO_COP(@sel_1)", "AGG_TO_COP(@`sel_1`)"},
+		{"TOPN_TO_COP()", "TOPN_TO_COP()"},
 		{"NO_INDEX_MERGE()", "NO_INDEX_MERGE()"},
 		{"NO_INDEX_MERGE(@sel1)", "NO_INDEX_MERGE(@`sel1`)"},
 		{"READ_CONSISTENT_REPLICA()", "READ_CONSISTENT_REPLICA()"},
