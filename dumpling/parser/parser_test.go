@@ -3567,6 +3567,16 @@ func (s *testParserSuite) TestOptimizerHints(c *C) {
 	c.Assert(hints, HasLen, 2)
 	c.Assert(hints[0].HintName.L, Equals, "read_consistent_replica")
 	c.Assert(hints[1].HintName.L, Equals, "read_consistent_replica")
+
+	// Test TOPN_TO_COP
+	stmt, _, err = parser.Parse("select /*+ TOPN_TO_COP(), topn_to_cop() */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	c.Assert(err, IsNil)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	c.Assert(hints, HasLen, 2)
+	c.Assert(hints[0].HintName.L, Equals, "topn_to_cop")
+	c.Assert(hints[1].HintName.L, Equals, "topn_to_cop")
 }
 
 func (s *testParserSuite) TestType(c *C) {
