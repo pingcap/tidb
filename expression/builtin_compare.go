@@ -412,9 +412,23 @@ func GetCmpTp4MinMax(args []Expression) (argTp types.EvalType) {
 		lft = rft
 	}
 	argTp = cmpEvalType
+	// As you can see in https://dev.mysql.com/doc/refman/8.0/en/type-conversion.html and
+	// https://dev.mysql.com/doc/refman/8.0/en/comparison-operators.html#function_least,
+	// the default arguments comparing rules of them are different. However, the
+	// `getBaseCmpType` is written by following the former rules of conversion.
+	// To make it compatible with greatest and least functions, we use a tricky way
+	// to cover this situation. For example, if `getBaseCmpType` returns a real type
+	// while a string is also be found, it means we should follow the last rule from
+	// https://dev.mysql.com/doc/refman/8.0/en/comparison-operators.html#function_least
+	// to compare them as string types.
+	// For more details, you can check this pr: https://github.com/pingcap/tidb/pull/17997
 	if isAllStr || cmpEvalType.IsStringKind() || (strFound && argTp == types.ETReal) {
 		argTp = types.ETString
 	}
+	// According to MySQL's offical document, though greatest and least functions doesn't
+	// hace any special explanation for time type comparing, they actually will be handled
+	// with some special treatment. We have to mark it as a ETDatetime type so that the
+	// subsequent logic can processe the comparing correctly.
 	if datetimeFound {
 		argTp = types.ETDatetime
 	}

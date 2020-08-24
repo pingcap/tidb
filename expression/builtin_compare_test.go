@@ -313,7 +313,7 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			[]interface{}{errors.New("must error"), 123},
 			nil, nil, false, true,
 		},
-		// Some test cases from issue: https://github.com/pingcap/tidb/issues/17994
+		// Some test cases from this issue: https://github.com/pingcap/tidb/issues/17994
 		// int, string and time
 		{
 			[]interface{}{12345, "invalid_time", tm},
