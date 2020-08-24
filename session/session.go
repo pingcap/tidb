@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/desensitize"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
@@ -471,6 +472,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
 		} else {
+			err = desensitize.Error(err, s.sessionVars.EnableLogDesensitization)
 			logutil.Logger(ctx).Warn("can not retry txn",
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
@@ -480,13 +482,13 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 				zap.Int64("tidb_retry_limit", s.sessionVars.RetryLimit),
 				zap.Bool("tidb_disable_txn_auto_retry", s.sessionVars.DisableTxnAutoRetry))
 		}
-
 	}
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
 	s.recordOnTransactionExecution(err, counter, duration)
 
 	if err != nil {
+		err = desensitize.Error(err, s.sessionVars.EnableLogDesensitization)
 		logutil.Logger(ctx).Warn("commit failed",
 			zap.String("finished txn", s.txn.GoString()),
 			zap.Error(err))
@@ -1217,6 +1219,11 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			}
 		}
 	}
+
+	if err != nil {
+		err = desensitize.Error(err, sessVars.EnableLogDesensitization)
+	}
+
 	if rs != nil {
 		return &execStmtResult{
 			RecordSet: rs,
