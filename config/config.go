@@ -154,6 +154,8 @@ type Config struct {
 	// Note that: 'group' is a special label key which should be automatically set by tidb-operator. We don't suggest
 	// users to set 'group' in labels.
 	Labels map[string]string `toml:"labels" json:"labels"`
+	// EnableGlobalIndex enables creating global index.
+	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -723,6 +725,7 @@ var defaultConf = Config{
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
 	Labels:                     make(map[string]string),
+	EnableGlobalIndex:          false,
 	Security: Security{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},

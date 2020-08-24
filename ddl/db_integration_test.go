@@ -1350,14 +1350,14 @@ func (s *testIntegrationSuite3) TestChangeColumnPosition(c *C) {
 	tk.MustExec("alter table position4 add index t(b)")
 	tk.MustExec("alter table position4 change column b c int first")
 	createSQL := tk.MustQuery("show create table position4").Rows()[0][1]
-	exceptedSQL := []string{
+	expectedSQL := []string{
 		"CREATE TABLE `position4` (",
 		"  `c` int(11) DEFAULT NULL,",
 		"  `a` int(11) DEFAULT NULL,",
 		"  KEY `t` (`c`)",
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	}
-	c.Assert(createSQL, Equals, strings.Join(exceptedSQL, "\n"))
+	c.Assert(createSQL, Equals, strings.Join(expectedSQL, "\n"))
 }
 
 func (s *testIntegrationSuite2) TestAddIndexAfterAddColumn(c *C) {
@@ -1575,7 +1575,7 @@ func (s *testIntegrationSuite3) TestAlterAlgorithm(c *C) {
 		PARTITION p2 VALUES LESS THAN (16),
 		PARTITION p3 VALUES LESS THAN (21)
 	)`)
-	s.assertAlterErrorExec(tk, c, "alter table t modify column a bigint, ALGORITHM=INPLACE;")
+	s.assertAlterWarnExec(tk, c, "alter table t modify column a bigint, ALGORITHM=INPLACE;")
 	tk.MustExec("alter table t modify column a bigint, ALGORITHM=INPLACE, ALGORITHM=INSTANT;")
 	tk.MustExec("alter table t modify column a bigint, ALGORITHM=DEFAULT;")
 
@@ -1583,43 +1583,44 @@ func (s *testIntegrationSuite3) TestAlterAlgorithm(c *C) {
 	s.assertAlterErrorExec(tk, c, "alter table t add index idx_b(b), ALGORITHM=INSTANT")
 	s.assertAlterWarnExec(tk, c, "alter table t add index idx_b1(b), ALGORITHM=COPY")
 	tk.MustExec("alter table t add index idx_b2(b), ALGORITHM=INPLACE")
-	s.assertAlterErrorExec(tk, c, "alter table t drop index idx_b, ALGORITHM=INPLACE")
+	tk.MustExec("alter table t add index idx_b3(b), ALGORITHM=DEFAULT")
+	s.assertAlterWarnExec(tk, c, "alter table t drop index idx_b3, ALGORITHM=INPLACE")
 	s.assertAlterWarnExec(tk, c, "alter table t drop index idx_b1, ALGORITHM=COPY")
 	tk.MustExec("alter table t drop index idx_b2, ALGORITHM=INSTANT")
 
 	// Test rename
 	s.assertAlterWarnExec(tk, c, "alter table t rename to t1, ALGORITHM=COPY")
-	s.assertAlterErrorExec(tk, c, "alter table t1 rename to t, ALGORITHM=INPLACE")
-	tk.MustExec("alter table t1 rename to t, ALGORITHM=INSTANT")
+	s.assertAlterWarnExec(tk, c, "alter table t1 rename to t2, ALGORITHM=INPLACE")
+	tk.MustExec("alter table t2 rename to t, ALGORITHM=INSTANT")
 	tk.MustExec("alter table t rename to t1, ALGORITHM=DEFAULT")
 	tk.MustExec("alter table t1 rename to t")
 
 	// Test rename index
 	s.assertAlterWarnExec(tk, c, "alter table t rename index idx_c to idx_c1, ALGORITHM=COPY")
-	s.assertAlterErrorExec(tk, c, "alter table t rename index idx_c1 to idx_c, ALGORITHM=INPLACE")
-	tk.MustExec("alter table t rename index idx_c1 to idx_c, ALGORITHM=INSTANT")
+	s.assertAlterWarnExec(tk, c, "alter table t rename index idx_c1 to idx_c2, ALGORITHM=INPLACE")
+	tk.MustExec("alter table t rename index idx_c2 to idx_c, ALGORITHM=INSTANT")
 	tk.MustExec("alter table t rename index idx_c to idx_c1, ALGORITHM=DEFAULT")
 
 	// partition.
 	s.assertAlterWarnExec(tk, c, "alter table t ALGORITHM=COPY, truncate partition p1")
-	s.assertAlterErrorExec(tk, c, "alter table t ALGORITHM=INPLACE, truncate partition p2")
+	s.assertAlterWarnExec(tk, c, "alter table t ALGORITHM=INPLACE, truncate partition p2")
 	tk.MustExec("alter table t ALGORITHM=INSTANT, truncate partition p3")
 
 	s.assertAlterWarnExec(tk, c, "alter table t add partition (partition p4 values less than (2002)), ALGORITHM=COPY")
-	s.assertAlterErrorExec(tk, c, "alter table t add partition (partition p5 values less than (3002)), ALGORITHM=INPLACE")
+	s.assertAlterWarnExec(tk, c, "alter table t add partition (partition p5 values less than (3002)), ALGORITHM=INPLACE")
 	tk.MustExec("alter table t add partition (partition p6 values less than (4002)), ALGORITHM=INSTANT")
 
 	s.assertAlterWarnExec(tk, c, "alter table t ALGORITHM=COPY, drop partition p4")
-	s.assertAlterErrorExec(tk, c, "alter table t ALGORITHM=INPLACE, drop partition p5")
+	s.assertAlterWarnExec(tk, c, "alter table t ALGORITHM=INPLACE, drop partition p5")
 	tk.MustExec("alter table t ALGORITHM=INSTANT, drop partition p6")
 
 	// Table options
 	s.assertAlterWarnExec(tk, c, "alter table t comment = 'test', ALGORITHM=COPY")
-	s.assertAlterErrorExec(tk, c, "alter table t comment = 'test', ALGORITHM=INPLACE")
+	s.assertAlterWarnExec(tk, c, "alter table t comment = 'test', ALGORITHM=INPLACE")
 	tk.MustExec("alter table t comment = 'test', ALGORITHM=INSTANT")
 
 	s.assertAlterWarnExec(tk, c, "alter table t default charset = utf8mb4, ALGORITHM=COPY")
-	s.assertAlterErrorExec(tk, c, "alter table t default charset = utf8mb4, ALGORITHM=INPLACE")
+	s.assertAlterWarnExec(tk, c, "alter table t default charset = utf8mb4, ALGORITHM=INPLACE")
 	tk.MustExec("alter table t default charset = utf8mb4, ALGORITHM=INSTANT")
 }
 

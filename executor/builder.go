@@ -2925,9 +2925,11 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
-	us := builder.buildUnionScanFromReader(reader, v).(*UnionScanExec)
-	err = us.open(ctx)
-	return us, err
+	ret := builder.buildUnionScanFromReader(reader, v)
+	if us, ok := ret.(*UnionScanExec); ok {
+		err = us.open(ctx)
+	}
+	return ret, err
 }
 
 func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader,
