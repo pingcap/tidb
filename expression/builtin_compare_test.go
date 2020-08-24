@@ -274,6 +274,10 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			int64(4), int64(1), false, false,
 		},
 		{
+			[]interface{}{1.4, 2.93, 1.3, 5.9},
+			float64(5.9), float64(1.3), false, false,
+		},
+		{
 			[]interface{}{"a", "b", "c"},
 			"c", "a", false, false,
 		},
@@ -294,16 +298,8 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 			curTimeWithFspString, curTimeString, false, false,
 		},
 		{
-			[]interface{}{tm, "invalid_time_a", "invalid_time_b", tmWithFsp},
+			[]interface{}{tm, "invalid_time", tmWithFsp},
 			curTimeWithFspString, curTimeString, false, false,
-		},
-		{
-			[]interface{}{"invalid_time_a", "invalid_time_b"},
-			"invalid_time_b", "invalid_time_a", false, false,
-		},
-		{
-			[]interface{}{tm, "invalid_time", nil, tmWithFsp},
-			nil, nil, true, false,
 		},
 		{
 			[]interface{}{duration, "123"},
@@ -316,6 +312,27 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 		{
 			[]interface{}{errors.New("must error"), 123},
 			nil, nil, false, true,
+		},
+		// Some test cases from issue: https://github.com/pingcap/tidb/issues/17994
+		// int, string and time
+		{
+			[]interface{}{12345, "invalid_time", tm},
+			curTimeString, "12345", false, false,
+		},
+		// int and string
+		{
+			[]interface{}{12345, "invalid_time"},
+			"invalid_time", "12345", false, false,
+		},
+		// int and time
+		{
+			[]interface{}{12345, tm},
+			curTimeString, "12345", false, false,
+		},
+		// string and time
+		{
+			[]interface{}{"invalid_time", tm},
+			curTimeString, curTimeString, false, false,
 		},
 	} {
 		f0, err := newFunctionForTest(s.ctx, ast.Greatest, s.primitiveValsToConstants(t.args)...)
