@@ -24,7 +24,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -103,10 +103,6 @@ type mockPDClient struct {
 	sync.RWMutex
 	client pd.Client
 	stop   bool
-}
-
-func (c *mockPDClient) ConfigClient() pd.ConfigClient {
-	return nil
 }
 
 func (c *mockPDClient) enable() {
