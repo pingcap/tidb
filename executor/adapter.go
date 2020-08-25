@@ -543,8 +543,13 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		seVars := sctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
+		var lockKeyStats *execdetails.LockKeysDetails
+		ctx = context.WithValue(ctx, execdetails.LockKeyDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
 		err = txn.LockKeys(ctx, lockCtx, keys...)
+		if lockKeyStats != nil {
+			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
+		}
 		if err == nil {
 			return nil
 		}

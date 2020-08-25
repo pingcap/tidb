@@ -51,6 +51,7 @@ type ExecDetails struct {
 	TotalKeys        int64
 	ProcessedKeys    int64
 	CommitDetail     *CommitDetails
+	LockKeysDetail   *LockKeysDetails
 }
 
 type stmtExecDetailKeyType struct{}
@@ -86,10 +87,27 @@ type CommitDetails struct {
 	TxnRetry          int
 }
 
-type LockKeyStats struct {
-	TotalTime time.Duration
-	RegionNum int32
-	LockKeys  int32
+type LockKeysDetails struct {
+	TotalTime       time.Duration
+	RegionNum       int32
+	LockKeys        int32
+	ResolveLockTime int64
+	BackoffTime     int64
+	Mu              struct {
+		sync.Mutex
+		BackoffTypes []fmt.Stringer
+	}
+	RetryCount int
+}
+
+func (ld *LockKeysDetails) Merge(lockKey *LockKeysDetails) {
+	ld.TotalTime += lockKey.TotalTime
+	ld.RegionNum += lockKey.RegionNum
+	ld.LockKeys += lockKey.LockKeys
+	ld.ResolveLockTime += lockKey.ResolveLockTime
+	ld.BackoffTime += lockKey.BackoffTime
+	ld.Mu.BackoffTypes = append(ld.Mu.BackoffTypes, lockKey.Mu.BackoffTypes...)
+	ld.RetryCount++
 }
 
 const (
