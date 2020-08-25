@@ -322,11 +322,11 @@ func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, ke
 	if isNot == 1 {
 		if keepNull {
 			// Range is {[0, 0]}
-			startPoint2 := point{start: true}
-			startPoint2.value.SetInt64(0)
-			endPoint2 := point{}
-			endPoint2.value.SetInt64(0)
-			return []point{startPoint2, endPoint2}
+			startPoint := point{start: true}
+			startPoint.value.SetInt64(0)
+			endPoint := point{}
+			endPoint.value.SetInt64(0)
+			return []point{startPoint, endPoint}
 		}
 		// NOT TRUE range is {[null null] [0, 0]}
 		startPoint1 := point{start: true}
