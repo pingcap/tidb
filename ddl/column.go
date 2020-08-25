@@ -921,10 +921,7 @@ type updateColumnWorker struct {
 	rowRecords []*rowRecord
 	rowDecoder *decoder.RowDecoder
 
-	rowMap             map[int64]types.Datum
-	idxKeyBufs         [][]byte
-	batchCheckKeys     []kv.Key
-	distinctCheckFlags []bool
+	rowMap map[int64]types.Datum
 }
 
 func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, oldCol, newCol *model.ColumnInfo, decodeColMap map[int64]decoder.Column) *updateColumnWorker {

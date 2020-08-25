@@ -861,17 +861,12 @@ func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawR
 			idxVal[j] = idxColumnVal
 			continue
 		}
-		isDefaultVal := true
-		if col.ChangeStateInfo != nil {
-			idxColumnVal, isDefaultVal, err = tables.GetChangingColVal(w.sessCtx, cols, col, w.rowMap, w.defaultVals)
-		} else {
-			idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
-		}
+		idxColumnVal, err = tables.GetColDefaultValue(w.sessCtx, col, w.defaultVals)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		if idxColumnVal.Kind() == types.KindMysqlTime && isDefaultVal {
+		if idxColumnVal.Kind() == types.KindMysqlTime {
 			t := idxColumnVal.GetMysqlTime()
 			if t.Type() == mysql.TypeTimestamp && sysZone != time.UTC {
 				err := t.ConvertTimeZone(sysZone, time.UTC)
@@ -1126,12 +1121,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask, bf 
 			return result
 		}
 
-		var taskCtx backfillTaskContext
-		if worker, ok := bf.(*addIndexWorker); ok {
-			taskCtx, err = worker.BackfillDataInTxn(handleRange)
-		} else if worker, ok := bf.(*updateColumnWorker); ok {
-			taskCtx, err = worker.BackfillDataInTxn(handleRange)
-		}
+		taskCtx, err := bf.BackfillDataInTxn(handleRange)
 		if err != nil {
 			result.err = err
 			return result
@@ -1399,6 +1389,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
 	sessCtx := newContext(reorgInfo.d.store)
+	sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 	decodeColMap, err := makeupDecodeColMap(sessCtx, t)
 	if err != nil {
 		return errors.Trace(err)
