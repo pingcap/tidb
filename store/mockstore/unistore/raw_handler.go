@@ -110,20 +110,39 @@ func (h *rawHandler) RawScan(_ context.Context, req *kvrpcpb.RawScanRequest) (*k
 	defer h.mu.RUnlock()
 	it := h.store.NewIterator()
 	var pairs []*kvrpcpb.KvPair
-	for it.Seek(req.StartKey); it.Valid(); it.Next() {
-		if len(pairs) >= int(req.Limit) {
-			break
+	if !req.Reverse {
+		for it.Seek(req.StartKey); it.Valid(); it.Next() {
+			if len(pairs) >= int(req.Limit) {
+				break
+			}
+			if len(req.EndKey) > 0 && bytes.Compare(it.Key(), req.EndKey) >= 0 {
+				break
+			}
+			pairs = h.appendPair(pairs, it)
 		}
-		if bytes.Compare(it.Key(), req.EndKey) >= 0 {
-			break
+	} else {
+		for it.SeekForPrev(req.StartKey); it.Valid(); it.Prev() {
+			if bytes.Equal(it.Key(), req.StartKey) {
+				continue
+			}
+			if len(pairs) >= int(req.Limit) {
+				break
+			}
+			if bytes.Compare(it.Key(), req.EndKey) < 0 {
+				break
+			}
+			pairs = h.appendPair(pairs, it)
 		}
-		pair := &kvrpcpb.KvPair{
-			Key:   safeCopy(it.Key()),
-			Value: safeCopy(it.Value()),
-		}
-		pairs = append(pairs, pair)
 	}
 	return &kvrpcpb.RawScanResponse{Kvs: pairs}, nil
+}
+
+func (h *rawHandler) appendPair(pairs []*kvrpcpb.KvPair, it *lockstore.Iterator) []*kvrpcpb.KvPair {
+	pair := &kvrpcpb.KvPair{
+		Key:   safeCopy(it.Key()),
+		Value: safeCopy(it.Value()),
+	}
+	return append(pairs, pair)
 }
 
 func safeCopy(val []byte) []byte {

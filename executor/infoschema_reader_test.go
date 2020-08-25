@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -527,9 +528,14 @@ func (s *testInfoschemaTableSuite) TestForServersInfo(c *C) {
 	c.Assert(result.Rows()[0][4], Equals, info.Lease)
 	c.Assert(result.Rows()[0][5], Equals, info.Version)
 	c.Assert(result.Rows()[0][6], Equals, info.GitHash)
+	c.Assert(result.Rows()[0][7], Equals, info.BinlogStatus)
+	c.Assert(result.Rows()[0][8], Equals, stringutil.BuildStringFromLabels(info.Labels))
 }
 
 func (s *testInfoschemaTableSuite) TestForTableTiFlashReplica(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk := testkit.NewTestKit(c, s.store)
 	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")
@@ -556,7 +562,7 @@ type testInfoschemaClusterTableSuite struct {
 
 func (s *testInfoschemaClusterTableSuite) SetUpSuite(c *C) {
 	s.testInfoschemaTableSuiteBase.SetUpSuite(c)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(c, "127.0.0.1:0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 }

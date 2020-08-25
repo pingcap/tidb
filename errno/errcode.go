@@ -884,6 +884,7 @@ const (
 	ErrErrorLast                                                    = 1863
 	ErrMaxExecTimeExceeded                                          = 1907
 	ErrInvalidFieldSize                                             = 3013
+	ErrInvalidArgumentForLogarithm                                  = 3020
 	ErrIncorrectType                                                = 3064
 	ErrInvalidJSONData                                              = 3069
 	ErrGeneratedColumnFunctionIsNotAllowed                          = 3102
@@ -1080,6 +1081,7 @@ const (
 	ErrUnsupportedConstraintCheck         = 8231
 	ErrTableOptionUnionUnsupported        = 8232
 	ErrTableOptionInsertMethodUnsupported = 8233
+	ErrInvalidPlacementSpec               = 8234
 
 	// TiKV/PD errors.
 	ErrPDServerTimeout        = 9001

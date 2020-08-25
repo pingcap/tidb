@@ -761,9 +761,9 @@ type analyzeInfo struct {
 
 // AnalyzeColumnsTask is used for analyze columns.
 type AnalyzeColumnsTask struct {
-	PKInfo   *model.ColumnInfo
-	ColsInfo []*model.ColumnInfo
-	TblInfo  *model.TableInfo
+	HandleCols HandleCols
+	ColsInfo   []*model.ColumnInfo
+	TblInfo    *model.TableInfo
 	analyzeInfo
 }
 
@@ -1045,7 +1045,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 	if runtimeStatsColl == nil {
 		return
 	}
-	explainID := p.ExplainID().String()
+	explainID := p.ID()
 
 	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 	// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.
@@ -1061,21 +1061,15 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 		analyzeInfo = "time:0ns, loops:0"
 		actRows = "0"
 	}
-	switch p.(type) {
-	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
-		if s := runtimeStatsColl.GetReaderStats(explainID); s != nil && len(s.String()) > 0 {
-			analyzeInfo += ", " + s.String()
-		}
-	}
 
 	memoryInfo = "N/A"
-	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
+	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
 	if memTracker != nil {
 		memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
 	}
 
 	diskInfo = "N/A"
-	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
+	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
 	if diskTracker != nil {
 		diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
 	}
@@ -1203,12 +1197,22 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
 	case *PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*PhysicalTableScan)
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
+		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
+		if !isPointRange {
+			return false, nil
+		}
+		pkLength := 1
+		if tableScan.Table.IsCommonHandle {
+			pkIdx := tables.FindPrimaryIndex(tableScan.Table)
+			pkLength = len(pkIdx.Columns)
+		}
+		return len(tableScan.Ranges[0].LowVal) == pkLength, nil
 	case *PointGetPlan:
 		// If the PointGetPlan needs to read data using unique index (double read), we
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
 		// and the data and index would be inconsistent!
-		return v.IndexInfo == nil, nil
+		isPointGet := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
+		return isPointGet, nil
 	default:
 		return false, nil
 	}

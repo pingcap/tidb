@@ -105,11 +105,19 @@ func (c *index) checkContainNonBinaryString() bool {
 
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+	// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
+	var prefix kv.Key
+	if indexInfo.Global {
+		// In glabal index of partition table, prefix start with tblInfo.ID.
+		prefix = tablecodec.EncodeTableIndexPrefix(tblInfo.ID, indexInfo.ID)
+	} else {
+		// Otherwise, start with physicalID.
+		prefix = tablecodec.EncodeTableIndexPrefix(physicalID, indexInfo.ID)
+	}
 	index := &index{
-		idxInfo: indexInfo,
-		tblInfo: tblInfo,
-		// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
-		prefix:   tablecodec.EncodeTableIndexPrefix(physicalID, indexInfo.ID),
+		idxInfo:  indexInfo,
+		tblInfo:  tblInfo,
+		prefix:   prefix,
 		phyTblID: physicalID,
 	}
 	index.containNonBinaryString = index.checkContainNonBinaryString()
@@ -124,101 +132,54 @@ func (c *index) Meta() *model.IndexInfo {
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
 func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
-	return tablecodec.GenIndexKey(sc, c.tblInfo, c.idxInfo, c.phyTblID, indexedValues, h, buf)
+	idxTblID := c.phyTblID
+	if c.idxInfo.Global {
+		idxTblID = c.tblInfo.ID
+	}
+	return tablecodec.GenIndexKey(sc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
 }
 
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
 // Value layout:
-//		+--With Restore Data(for indices on string columns)
-//		|  |
-//		|  +--Non Unique (TailLen = len(PaddingData) + len(Flag), TailLen < 8 always)
-//		|  |  |
-//		|  |  +--Without Untouched Flag:
-//		|  |  |
-//		|  |  |  Layout: TailLen |      RestoreData  |      PaddingData
-//		|  |  |  Length: 1       | size(RestoreData) | size(paddingData)
-//		|  |  |
-//		|  |  |  The length >= 10 always because of padding.
-//		|  |  |
-//		|  |  +--With Untouched Flag:
-//		|  |
-//		|  |     Layout: TailLen |    RestoreData    |      PaddingData  | Flag
-//		|  |     Length: 1       | size(RestoreData) | size(paddingData) |  1
-//		|  |
-//		|  |     The length >= 11 always because of padding.
-//		|  |
-//		|  +--Unique Common Handle
-//		|  |  |
-//		|  |  +--Without Untouched Flag:
-//		|  |  |
-//		|  |  |  Layout: 0x00 | CHandle Flag | CHandle Len | CHandle       | RestoreData
-//		|  |  |  Length: 1    | 1            | 2           | size(CHandle) | size(RestoreData)
-//		|  |  |
-//		|  |  |  The length > 10 always because of CHandle size.
-//		|  |  |
-//		|  |  +--With Untouched Flag:
-//		|  |
-//		|  |     Layout: 0x01 | CHandle Flag | CHandle Len | CHandle       | RestoreData       | Flag
-//		|  |     Length: 1    | 1            | 2           | size(CHandle) | size(RestoreData) | 1
-//		|  |
-//		|  |     The length > 10 always because of CHandle size.
-//		|  |
-//		|  +--Unique Integer Handle (TailLen = len(Handle) + len(Flag), TailLen == 8 || TailLen == 9)
-//		|     |
-//		|     +--Without Untouched Flag:
-//		|     |
-//		|     |  Layout: 0x08 |    RestoreData    |  Handle
-//		|     |  Length: 1    | size(RestoreData) |   8
-//		|     |
-//		|     |  The length >= 10 always since size(RestoreData) > 0.
-//		|     |
-//		|     +--With Untouched Flag:
+//		+--New Encoding (with restore data, or common handle, or index is global)
 //		|
-//		|        Layout: 0x09 |      RestoreData  |  Handle  | Flag
-//		|        Length: 1    | size(RestoreData) |   8      | 1
+//		|  Layout: TailLen | Options      | Padding      | [IntHandle] | [UntouchedFlag]
+//		|  Length:   1     | len(options) | len(padding) |    8        |     1
 //		|
-//		|   	 The length >= 11 always since size(RestoreData) > 0.
+//		|  TailLen:       len(padding) + len(IntHandle) + len(UntouchedFlag)
+//		|  Options:       Encode some value for new features, such as common handle, new collations or global index.
+//		|                 See below for more information.
+//		|  Padding:       Ensure length of value always >= 10. (or >= 11 if UntouchedFlag exists.)
+//		|  IntHandle:     Only exists when table use int handles and index is unique.
+//		|  UntouchedFlag: Only exists when index is untouched.
 //		|
-//		+--Without Restore Data
+//		|  Layout of Options:
 //		|
-//		+--Non Unique
-//		|  |
-//		|  +--Without Untouched Flag:
-//		|  |
-//		|  |  Layout: '0'
-//		|  |  Length:  1
-//		|  |
-//		|  +--With Untouched Flag:
+//		|     Segment:             Common Handle                 |     Global Index      | New Collation
+// 		|     Layout:  CHandle Flag | CHandle Len | CHandle      | PidFlag | PartitionID | restoreData
+//		|     Length:     1         | 2           | len(CHandle) |    1    |    8        | len(restoreData)
 //		|
-//		|     Layout: Flag
-//		|     Length:  1
-//		+--Unique Common Handle
-//		|  |
-//		|  +--Without Untouched Flag:
-//		|  |
-//		|  |  Layout: 0x00 | CHandle Flag | CHandle Len | CHandle
-//      |  |  Length: 1    | 1            | 2           | size(CHandle)
-//		|  |
-//		|  +--With Untouched Flag:
+//		|     Common Handle Segment: Exists when unique index used common handles.
+//		|     Global Index Segment:  Exists when index is global.
+//		|     New Collation Segment: Exists when new collation is used and index contains non-binary string.
 //		|
-//		|     Layout: 0x01 | CHandle Flag | CHandle Len | CHandle       | Flag
-//		|     Length: 1    | 1            | 2           | size(CHandle) | 1
-//		|
-//		+--Unique Integer Handle
-//		|  |
-//		|  +--Without Untouched Flag:
-//		|  |
-//		|  |  Layout: Handle
-//		|  |  Length:   8
-//		|  |
-//		|  +--With Untouched Flag:
-//		|
-//		|     Layout: Handle | Flag
-//		|     Length:   8    |  1
-//		+
+//		+--Old Encoding (without restore data, integer handle, local)
+//
+//		   Layout: [Handle] | [UntouchedFlag]
+//		   Length:   8      |     1
+//
+//		   Handle:        Only exists in unique index.
+//		   UntouchedFlag: Only exists when index is untouched.
+//
+//		   If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
+//		   Length of value <= 9, use to distinguish from the new encoding.
+//
 func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
+	if c.Meta().Unique {
+		us.CacheIndexName(c.phyTblID, c.Meta().ID, c.Meta().Name.String())
+	}
 	var opt table.CreateIdxOpt
 	for _, fn := range opts {
 		fn(&opt)
@@ -248,8 +209,8 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 
 	// save the key buffer to reuse.
 	writeBufs.IndexKeyBuf = key
-	idxVal, err := tablecodec.GenIndexValue(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo,
-		c.containNonBinaryString, distinct, opt.Untouched, indexedValues, h)
+	idxVal, err := tablecodec.GenIndexValueNew(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo,
+		c.containNonBinaryString, distinct, opt.Untouched, indexedValues, h, c.phyTblID)
 	if err != nil {
 		return nil, err
 	}
@@ -279,11 +240,11 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 		return nil, err
 	}
 	if err != nil || len(value) == 0 {
-		var keyFlags kv.KeyFlags
 		if sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil {
-			keyFlags = keyFlags.MarkPresumeKeyNotExists()
+			err = us.GetMemBuffer().SetWithFlags(key, idxVal, kv.SetPresumeKeyNotExists)
+		} else {
+			err = us.GetMemBuffer().Set(key, idxVal)
 		}
-		err = us.GetMemBuffer().SetWithFlags(key, keyFlags, idxVal)
 		return nil, err
 	}
 
