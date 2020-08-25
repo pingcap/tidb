@@ -19,6 +19,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -331,7 +332,40 @@ func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
 	tk.MustExec("create table ctwl_db1.pt1 like ctwl_db.pt1;")
 	tk.MustQuery("select * from ctwl_db1.pt1").Check(testkit.Rows())
 
+	// Test create table like for partition table.
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("drop table if exists partition_t;")
+	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 like partition_t")
+	re := tk.MustQuery("show table t1 regions")
+	rows := re.Rows()
+	c.Assert(len(rows), Equals, 3)
+	tbl := testGetTableByName(c, tk.Se, "test", "t1")
+	partitionDef := tbl.Meta().GetPartitionInfo().Definitions
+	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[0].ID))
+	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
+	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
+
+	// Test pre-split table region when create table like.
+	tk.MustExec("drop table if exists t_pre")
+	tk.MustExec("create table t_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 like t_pre")
+	re = tk.MustQuery("show table t2 regions")
+	rows = re.Rows()
+	// Table t2 which create like t_pre should have 4 regions now.
+	c.Assert(len(rows), Equals, 4)
+	tbl = testGetTableByName(c, tk.Se, "test", "t2")
+	c.Assert(rows[1][1], Equals, fmt.Sprintf("t_%d_r_2305843009213693952", tbl.Meta().ID))
+	c.Assert(rows[2][1], Equals, fmt.Sprintf("t_%d_r_4611686018427387904", tbl.Meta().ID))
+	c.Assert(rows[3][1], Equals, fmt.Sprintf("t_%d_r_6917529027641081856", tbl.Meta().ID))
+	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, 0)
+
 	// for failure cases
+	tk.MustExec("use ctwl_db")
 	failSQL := fmt.Sprintf("create table t1 like test_not_exist.t")
 	tk.MustGetErrCode(failSQL, mysql.ErrNoSuchTable)
 	failSQL = fmt.Sprintf("create table t1 like test.t_not_exist")
