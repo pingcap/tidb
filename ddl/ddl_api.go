@@ -384,7 +384,7 @@ func buildColumnAndConstraint(
 	tblCharset string,
 	tblCollate string,
 ) (*table.Column, []*ast.Constraint, error) {
-	if colName := colDef.Name.Name.L; colName == "_tidb_rowid" {
+	if colName := colDef.Name.Name.L; colName == model.ExtraHandleName.L {
 		return nil, nil, ErrWrongColumnName.GenWithStackByArgs(colName)
 	}
 
