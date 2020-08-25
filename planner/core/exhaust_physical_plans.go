@@ -827,9 +827,10 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	desc bool,
 	rowCount float64,
 ) task {
-	// If ds.tableInfo.Partition != nil && !ds.isPartition, it means the data source is a partition table reader.
+	// If `ds.tableInfo.Partition != nil && !tryOldPartitionImplementation(ds.ctx)`,
+	// it means the data source is a partition table reader.
 	// If the inner task need to keep order, the partition table reader can't satisfy it.
-	if keepOrder && ds.tableInfo.Partition != nil && !ds.isPartition {
+	if keepOrder && ds.tableInfo.Partition != nil && !tryOldPartitionImplementation(ds.ctx) {
 		return nil
 	}
 	var ranges []*ranger.Range
@@ -925,9 +926,10 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	rowCount float64,
 	maxOneRow bool,
 ) task {
-	// If ds.tableInfo.Partition != nil && !ds.isPartition, it means the data source is a partition table reader.
+	// If `ds.tableInfo.Partition != nil && !tryOldPartitionImplementation(ds.ctx)`,
+	// it means the data source is a partition table reader.
 	// If the inner task need to keep order, the partition table reader can't satisfy it.
-	if keepOrder && ds.tableInfo.Partition != nil && !ds.isPartition {
+	if keepOrder && ds.tableInfo.Partition != nil && !tryOldPartitionImplementation(ds.ctx) {
 		return nil
 	}
 	is := PhysicalIndexScan{
