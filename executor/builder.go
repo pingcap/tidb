@@ -913,6 +913,16 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 		}
 		return x
 	}
+	// If reader is union, it means a partitiont table and we should transfer as above.
+	if x, ok := reader.(*UnionExec); ok {
+		for i, child := range x.children {
+			x.children[i] = b.buildUnionScanFromReader(child, v)
+			if b.err != nil {
+				return nil
+			}
+		}
+		return x
+	}
 
 	return b.buildUnionScanFromReader(reader, v)
 }
