@@ -118,6 +118,7 @@ type Session interface {
 	SetSessionManager(util.SessionManager)
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
+	AuthWithoutVerification(user *auth.UserIdentity) bool
 	ShowProcess() *util.ProcessInfo
 	// PrepareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
@@ -426,7 +427,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
-	s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+	if s.GetSessionVars().EnableAmendPessimisticTxn {
+		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+	}
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -653,11 +656,15 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
+				sql := sqlForLog(st.GetTextToLog())
+				if !sessVars.EnableLogDesensitization {
+					sql += sessVars.PreparedParams.String()
+				}
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i),
-					zap.String("sql", sqlForLog(st.OriginText())+sessVars.PreparedParams.String()))
+					zap.String("sql", sql))
 			} else {
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -1609,6 +1616,38 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 	return false
 }
 
+// AuthWithoutVerification is required by the ResetConnection RPC
+func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
+	pm := privilege.GetPrivilegeManager(s)
+
+	// Check IP or localhost.
+	var success bool
+	user.AuthUsername, user.AuthHostname, success = pm.GetAuthWithoutVerification(user.Username, user.Hostname)
+	if success {
+		s.sessionVars.User = user
+		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+		return true
+	} else if user.Hostname == variable.DefHostname {
+		return false
+	}
+
+	// Check Hostname.
+	for _, addr := range getHostByIP(user.Hostname) {
+		u, h, success := pm.GetAuthWithoutVerification(user.Username, addr)
+		if success {
+			s.sessionVars.User = &auth.UserIdentity{
+				Username:     user.Username,
+				Hostname:     addr,
+				AuthUsername: u,
+				AuthHostname: h,
+			}
+			s.sessionVars.ActiveRoles = pm.GetDefaultRoles(u, h)
+			return true
+		}
+	}
+	return false
+}
+
 func getHostByIP(ip string) []string {
 	if ip == "127.0.0.1" {
 		return []string{variable.DefHostname}
@@ -1915,7 +1954,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version48
+	currentBootstrapVersion = version50
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2058,6 +2097,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBLogDesensitization,
 	variable.TiDBEnableTelemetry,
 	variable.TiDBShardAllocateStep,
+	variable.TiDBEnableAmendPessimisticTxn,
 }
 
 var (

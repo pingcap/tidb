@@ -706,6 +706,9 @@ type SessionVars struct {
 
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
+
+	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
+	EnableAmendPessimisticTxn bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -801,6 +804,7 @@ func NewSessionVars() *SessionVars {
 		EnableParallelApply:         DefTiDBEnableParallelApply,
 		EnableLogDesensitization:    DefTiDBLogDesensitization,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
+		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1324,7 +1328,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.TxnMode = strings.ToUpper(val)
 	case TiDBRowFormatVersion:
 		formatVersion := int(tidbOptInt64(val, DefTiDBRowFormatV1))
-		if formatVersion == DefTiDBRowFormatV2 {
+		if formatVersion == DefTiDBRowFormatV1 {
+			s.RowEncoder.Enable = false
+		} else if formatVersion == DefTiDBRowFormatV2 {
 			s.RowEncoder.Enable = true
 		}
 	case TiDBLowResolutionTSO:
@@ -1420,6 +1426,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableLogDesensitization = TiDBOptOn(val)
 	case TiDBShardAllocateStep:
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
+	case TiDBEnableAmendPessimisticTxn:
+		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

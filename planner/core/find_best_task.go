@@ -62,17 +62,17 @@ var aggFuncFactor = map[string]float64{
 }
 
 // PlanCounterTp is used in hint nth_plan() to indicate which plan to use.
-type PlanCounterTp int8
+type PlanCounterTp int64
 
 // PlanCounterDisabled is the default value of PlanCounterTp, indicating that optimizer needn't force a plan.
 var PlanCounterDisabled PlanCounterTp = -1
 
 // Dec minus PlanCounterTp value by x.
-func (c *PlanCounterTp) Dec(x int8) {
+func (c *PlanCounterTp) Dec(x int64) {
 	if *c <= 0 {
 		return
 	}
-	*c = PlanCounterTp(int8(*c) - x)
+	*c = PlanCounterTp(int64(*c) - x)
 	if *c < 0 {
 		*c = 0
 	}
@@ -260,7 +260,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 
 		cntPlan += curCntPlan
-		planCounter.Dec(int8(curCntPlan))
+		planCounter.Dec(curCntPlan)
 
 		if planCounter.Empty() {
 			bestTask = curTask
@@ -767,8 +767,12 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 	}
-	cop.partitionTable.pruningConds = ds.allConds
-	cop.partitionTable.partitionNames = ds.partitionNames
+	cop.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+	}
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
 		var partialCost, rowCount float64
@@ -875,7 +879,6 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	if err != nil {
 		return nil, 0, err
 	}
-	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
@@ -906,8 +909,6 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
 	for i, indexCol := range indexCols {
 		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
-		// We use col.OrigColName instead of col.ColName.
-		// Related issue: https://github.com/pingcap/tidb/issues/9636.
 		if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
 			return true
 		}
@@ -963,8 +964,12 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
 	}
-	cop.partitionTable.pruningConds = ds.allConds
-	cop.partitionTable.partitionNames = ds.partitionNames
+	cop.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+	}
 	if !candidate.isSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
@@ -975,7 +980,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		cop.tablePlan = ts
 	}
 	cop.cst = cost
@@ -1367,8 +1371,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		tblColHists:       ds.TblColHists,
 		cst:               cost,
 	}
-	copTask.partitionTable.pruningConds = ds.allConds
-	copTask.partitionTable.partitionNames = ds.partitionNames
+	copTask.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+	}
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true

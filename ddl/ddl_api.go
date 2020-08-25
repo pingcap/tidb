@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	field_types "github.com/pingcap/parser/types"
-	"github.com/pingcap/pd/v4/server/schedule/placement"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -61,16 +61,6 @@ import (
 )
 
 const expressionIndexPrefix = "_V$"
-
-const placementRuleDefaultGroupID = "TiDB_DDL"
-
-const (
-	placementRuleIndexDefault int = iota
-	placementRuleIndexDatabase
-	placementRuleIndexTable
-	placementRuleIndexPartition
-	placementRuleIndexIndex
-)
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
 	dbInfo := &model.DBInfo{Name: schema}
@@ -394,6 +384,10 @@ func buildColumnAndConstraint(
 	tblCharset string,
 	tblCollate string,
 ) (*table.Column, []*ast.Constraint, error) {
+	if colName := colDef.Name.Name.L; colName == model.ExtraHandleName.L {
+		return nil, nil, ErrWrongColumnName.GenWithStackByArgs(colName)
+	}
+
 	// specifiedCollate refers to the last collate specified in colDef.Options.
 	chs, coll, err := getCharsetAndCollateInColumnDef(colDef)
 	if err != nil {
@@ -936,6 +930,11 @@ func containsColumnOption(colDef *ast.ColumnDef, opTp ast.ColumnOptionType) bool
 		}
 	}
 	return false
+}
+
+// IsAutoRandomColumnID returns true if the given column ID belongs to an auto_random column.
+func IsAutoRandomColumnID(tblInfo *model.TableInfo, colID int64) bool {
+	return tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() && tblInfo.GetPkColInfo().ID == colID
 }
 
 func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
@@ -2141,11 +2140,11 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 	for _, spec := range validSpecs {
 		resolvedAlgorithm, err := ResolveAlterAlgorithm(spec, algorithm)
 		if err != nil {
-			if algorithm != ast.AlgorithmTypeCopy {
+			// If TiDB failed to choose a better algorithm, report the error
+			if resolvedAlgorithm == ast.AlgorithmTypeDefault {
 				return nil, errors.Trace(err)
 			}
-			// For the compatibility, we return warning instead of error when the algorithm is COPY,
-			// because the COPY ALGORITHM is not supported in TiDB.
+			// For the compatibility, we return warning instead of error when a better algorithm is chosed by TiDB
 			ctx.GetSessionVars().StmtCtx.AppendError(err)
 		}
 
@@ -3407,6 +3406,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name)
 	}
 	newColName := specNewColumn.Name.Name
+	if newColName.L == model.ExtraHandleName.L {
+		return nil, ErrWrongColumnName.GenWithStackByArgs(newColName.L)
+	}
 	// If we want to rename the column name, we need to check whether it already exists.
 	if newColName.L != originalColName.L {
 		c := table.FindCol(t.Cols(), newColName.L)
@@ -3665,6 +3667,9 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	if oldColName.L == newColName.L {
 		return nil
 	}
+	if newColName.L == model.ExtraHandleName.L {
+		return ErrWrongColumnName.GenWithStackByArgs(newColName.L)
+	}
 
 	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
 	if err != nil {
@@ -3773,6 +3778,9 @@ func (d *ddl) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Alt
 		}
 		setNoDefaultValueFlag(col, false)
 	} else {
+		if IsAutoRandomColumnID(t.Meta(), col.ID) {
+			return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
+		}
 		hasDefaultValue, err := setDefaultValue(ctx, col, specNewColumn.Options[0])
 		if err != nil {
 			return errors.Trace(err)
@@ -4305,6 +4313,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
+	// For same reason, decide whether index is global here.
 	indexColumns, err := buildIndexColumns(tblInfo.Columns, indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
@@ -4313,9 +4322,18 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		return err
 	}
 
+	global := false
 	if tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo, true); err != nil {
+		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
+		if err != nil {
 			return err
+		}
+		if !ck {
+			if !config.GetGlobalConfig().EnableGlobalIndex {
+				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
+			}
+			//index columns does not contain all partition columns, must set global
+			global = true
 		}
 	}
 
@@ -4332,7 +4350,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddPrimaryKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode},
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 
@@ -4470,13 +4488,24 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	// to job queue, the fail path logic is super fast.
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
+	// For same reason, decide whether index is global here.
 	indexColumns, err := buildIndexColumns(append(tblInfo.Columns, hiddenCols...), indexPartSpecifications)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	global := false
 	if unique && tblInfo.GetPartitionInfo() != nil {
-		if err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo, false); err != nil {
+		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
+		if err != nil {
 			return err
+		}
+		if !ck {
+			if !config.GetGlobalConfig().EnableGlobalIndex {
+				return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
+			}
+			//index columns does not contain all partition columns, must set global
+			global = true
 		}
 	}
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
@@ -4489,7 +4518,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols},
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
 		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 
@@ -4718,10 +4747,9 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName model.CIStr) error {
 		return ErrCantRemoveAllFields.GenWithStack("can't drop only column %s in table %s",
 			colName, tblInfo.Name)
 	}
-	// We don't support dropping column with index covered now.
-	// We must drop the index first, then drop the column.
-	if isColumnWithIndex(colName.L, tblInfo.Indices) {
-		return errCantDropColWithIndex.GenWithStack("can't drop column %s with index covered now", colName)
+	// We only support dropping column with single-value none Primary Key index covered now.
+	if !isColumnCanDropWithIndex(colName.L, tblInfo.Indices) {
+		return errCantDropColWithIndex.GenWithStack("can't drop column %s with composite index covered or Primary Key covered now", colName)
 	}
 	// Check the column with foreign key.
 	if fkInfo := getColumnForeignKeyInfo(colName.L, tblInfo.ForeignKeys); fkInfo != nil {
@@ -5168,59 +5196,17 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	return errors.Trace(err)
 }
 
-func checkPlacementLabelConstraint(label string) (placement.LabelConstraint, error) {
-	r := placement.LabelConstraint{}
-
-	if len(label) < 4 {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	var op placement.LabelConstraintOp
-	switch label[0] {
-	case '+':
-		op = placement.In
-	case '-':
-		op = placement.NotIn
-	default:
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	kv := strings.Split(label[1:], "=")
-	if len(kv) != 2 {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	key := strings.TrimSpace(kv[0])
-	if key == "" {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	val := strings.TrimSpace(kv[1])
-	if val == "" {
-		return r, errors.Errorf("label constraint should be in format '{+|-}key=value', but got '%s'", label)
-	}
-
-	r.Key = key
-	r.Op = op
-	r.Values = []string{val}
-	return r, nil
-}
-
-func checkPlacementLabelConstraints(rule *placement.Rule, labels []string) error {
-	for _, str := range labels {
-		label, err := checkPlacementLabelConstraint(strings.TrimSpace(str))
-		if err != nil {
-			return err
-		}
-		rule.LabelConstraints = append(rule.LabelConstraints, label)
-	}
-	return nil
-}
-
-func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule, cnstr string) ([]*placement.Rule, error) {
-	cnstr = strings.TrimSpace(cnstr)
+func buildPlacementSpecReplicasAndConstraint(rule *placement.RuleOp, replicas uint64, cnstr string) ([]*placement.RuleOp, error) {
 	var err error
+	cnstr = strings.TrimSpace(cnstr)
+	rules := make([]*placement.RuleOp, 0, 1)
 	if len(cnstr) > 0 && cnstr[0] == '[' {
+		// can not emit REPLICAS with an array label
+		if replicas == 0 {
+			return rules, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
+		}
+		rule.Count = int(replicas)
+
 		constraints := []string{}
 
 		err = json.Unmarshal([]byte(cnstr), &constraints)
@@ -5228,7 +5214,7 @@ func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule,
 			return rules, err
 		}
 
-		err = checkPlacementLabelConstraints(rule, constraints)
+		rule.LabelConstraints, err = placement.CheckLabelConstraints(constraints)
 		if err != nil {
 			return rules, err
 		}
@@ -5241,21 +5227,33 @@ func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule,
 			return rules, err
 		}
 
+		ruleCnt := int(replicas)
 		for labels, cnt := range constraints {
-			newRule := &placement.Rule{}
-			*newRule = *rule
+			newRule := rule.Clone()
 			if cnt <= 0 {
-				err = errors.Errorf("count should be non-positive, but got %d", cnt)
+				err = errors.Errorf("count should be positive, but got %d", cnt)
 				break
 			}
-			// TODO: handle or remove rule.Count in later commits
-			rule.Count -= cnt
+
+			if replicas != 0 {
+				ruleCnt -= cnt
+				if ruleCnt < 0 {
+					err = errors.Errorf("REPLICAS should be larger or equal to the number of total replicas, but got %d", replicas)
+					break
+				}
+			}
 			newRule.Count = cnt
-			err = checkPlacementLabelConstraints(newRule, strings.Split(strings.TrimSpace(labels), ","))
+
+			newRule.LabelConstraints, err = placement.CheckLabelConstraints(strings.Split(strings.TrimSpace(labels), ","))
 			if err != nil {
 				break
 			}
 			rules = append(rules, newRule)
+		}
+		rule.Count = ruleCnt
+
+		if rule.Count > 0 {
+			rules = append(rules, rule)
 		}
 	} else {
 		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
@@ -5263,8 +5261,8 @@ func checkPlacementSpecConstraint(rules []*placement.Rule, rule *placement.Rule,
 	return rules, err
 }
 
-func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) {
-	rules := make([]*placement.Rule, 0, len(specs))
+func buildPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.RuleOp, error) {
+	rules := make([]*placement.RuleOp, 0, len(specs))
 
 	var err error
 	var sb strings.Builder
@@ -5272,35 +5270,69 @@ func checkPlacementSpecs(specs []*ast.PlacementSpec) ([]*placement.Rule, error) 
 	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 	for _, spec := range specs {
-		rule := &placement.Rule{
-			GroupID:  placementRuleDefaultGroupID,
-			Count:    int(spec.Replicas),
-			Override: true,
+		rule := &placement.RuleOp{
+			Rule: &placement.Rule{
+				GroupID:  placement.RuleDefaultGroupID,
+				Override: true,
+			},
 		}
 
-		switch spec.Tp {
-		case ast.PlacementAdd:
+		switch spec.Role {
+		case ast.PlacementRoleFollower:
+			rule.Role = placement.Follower
+		case ast.PlacementRoleLeader:
+			rule.Role = placement.Leader
+		case ast.PlacementRoleLearner:
+			rule.Role = placement.Learner
+		case ast.PlacementRoleVoter:
+			rule.Role = placement.Voter
 		default:
-			err = errors.Errorf("unknown action type: %d", spec.Tp)
+			err = errors.Errorf("unknown role: %d", spec.Role)
 		}
 
 		if err == nil {
-			switch spec.Role {
-			case ast.PlacementRoleFollower:
-				rule.Role = placement.Follower
-			case ast.PlacementRoleLeader:
-				rule.Role = placement.Leader
-			case ast.PlacementRoleLearner:
-				rule.Role = placement.Learner
-			case ast.PlacementRoleVoter:
-				rule.Role = placement.Voter
+			switch spec.Tp {
+			case ast.PlacementAdd:
+				rule.Action = placement.RuleOpAdd
+			case ast.PlacementAlter, ast.PlacementDrop:
+				rule.Action = placement.RuleOpAdd
+
+				// alter will overwrite all things
+				// drop all rules that will be overridden
+				newRules := rules[:0]
+
+				for _, r := range rules {
+					if r.Role != rule.Role {
+						newRules = append(newRules, r)
+					}
+				}
+
+				rules = newRules
+
+				// delete previous definitions
+				rules = append(rules, &placement.RuleOp{
+					Action:           placement.RuleOpDel,
+					DeleteByIDPrefix: true,
+					Rule: &placement.Rule{
+						GroupID: placement.RuleDefaultGroupID,
+						// ROLE is useless for PD, prevent two alter statements from coexisting
+						Role: rule.Role,
+					},
+				})
+
+				// alter == drop + add new rules
+				if spec.Tp == ast.PlacementDrop {
+					continue
+				}
 			default:
-				err = errors.Errorf("unknown role: %d", spec.Role)
+				err = errors.Errorf("unknown action type: %d", spec.Tp)
 			}
 		}
 
 		if err == nil {
-			rules, err = checkPlacementSpecConstraint(rules, rule, spec.Constraints)
+			var newRules []*placement.RuleOp
+			newRules, err = buildPlacementSpecReplicasAndConstraint(rule, spec.Replicas, spec.Constraints)
+			rules = append(rules, newRules...)
 		}
 
 		if err != nil {
@@ -5330,7 +5362,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 		return errors.Trace(err)
 	}
 
-	rules, err := checkPlacementSpecs(spec.PlacementSpecs)
+	rules, err := buildPlacementSpecs(spec.PlacementSpecs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5338,7 +5370,7 @@ func (d *ddl) AlterTablePartition(ctx sessionctx.Context, ident ast.Ident, spec 
 	startKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID)))
 	endKey := hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(partitionID+1)))
 	for _, rule := range rules {
-		rule.Index = placementRuleIndexPartition
+		rule.Index = placement.RuleIndexPartition
 		rule.StartKeyHex = startKey
 		rule.EndKeyHex = endKey
 	}

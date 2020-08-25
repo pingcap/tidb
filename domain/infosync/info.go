@@ -32,8 +32,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/pd/v4/server/schedule/placement"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -99,13 +99,14 @@ type InfoSyncer struct {
 // It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
 type ServerInfo struct {
 	ServerVersionInfo
-	ID             string `json:"ddl_id"`
-	IP             string `json:"ip"`
-	Port           uint   `json:"listening_port"`
-	StatusPort     uint   `json:"status_port"`
-	Lease          string `json:"lease"`
-	BinlogStatus   string `json:"binlog_status"`
-	StartTimestamp int64  `json:"start_timestamp"`
+	ID             string            `json:"ddl_id"`
+	IP             string            `json:"ip"`
+	Port           uint              `json:"listening_port"`
+	StatusPort     uint              `json:"status_port"`
+	Lease          string            `json:"lease"`
+	BinlogStatus   string            `json:"binlog_status"`
+	StartTimestamp int64             `json:"start_timestamp"`
+	Labels         map[string]string `json:"labels"`
 }
 
 // ServerVersionInfo is the server version and git_hash.
@@ -293,7 +294,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 
 		res, err := http.DefaultClient.Do(req)
 		if err == nil {
-			defer terror.Log(res.Body.Close())
+			defer terror.Call(res.Body.Close)
 			if res.StatusCode != http.StatusOK {
 				bodyBytes, err := ioutil.ReadAll(res.Body)
 				return errors.Wrapf(err, "%s", bodyBytes)
@@ -305,16 +306,21 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 }
 
 // UpdatePlacementRules is used to notify PD changes of placement rules.
-func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) error {
+func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error {
+	if len(rules) == 0 {
+		return nil
+	}
+
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return err
 	}
 
-	var addrs []string
-	if is.etcdCli != nil {
-		addrs = is.etcdCli.Endpoints()
+	if is.etcdCli == nil {
+		return nil
 	}
+
+	addrs := is.etcdCli.Endpoints()
 
 	if len(addrs) == 0 {
 		return errors.Errorf("pd unavailable")
@@ -325,7 +331,7 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.Rule) error {
 		return err
 	}
 
-	err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules"), http.MethodPost, bytes.NewReader(b))
+	err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
@@ -373,9 +379,10 @@ func (is *InfoSyncer) RemoveServerInfo() {
 
 type topologyInfo struct {
 	ServerVersionInfo
-	StatusPort     uint   `json:"status_port"`
-	DeployPath     string `json:"deploy_path"`
-	StartTimestamp int64  `json:"start_timestamp"`
+	StatusPort     uint              `json:"status_port"`
+	DeployPath     string            `json:"deploy_path"`
+	StartTimestamp int64             `json:"start_timestamp"`
+	Labels         map[string]string `json:"labels"`
 }
 
 func (is *InfoSyncer) getTopologyInfo() topologyInfo {
@@ -392,6 +399,7 @@ func (is *InfoSyncer) getTopologyInfo() topologyInfo {
 		StatusPort:     is.info.StatusPort,
 		DeployPath:     dir,
 		StartTimestamp: is.info.StartTimestamp,
+		Labels:         is.info.Labels,
 	}
 }
 
@@ -680,6 +688,7 @@ func getServerInfo(id string) *ServerInfo {
 		Lease:          cfg.Lease,
 		BinlogStatus:   binloginfo.GetStatus().String(),
 		StartTimestamp: time.Now().Unix(),
+		Labels:         cfg.Labels,
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
@@ -687,6 +696,9 @@ func getServerInfo(id string) *ServerInfo {
 	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {
 			info.StartTimestamp = 1282967700000
+			info.Labels = map[string]string{
+				"foo": "bar",
+			}
 		}
 	})
 
