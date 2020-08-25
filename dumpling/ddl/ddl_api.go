@@ -384,6 +384,10 @@ func buildColumnAndConstraint(
 	tblCharset string,
 	tblCollate string,
 ) (*table.Column, []*ast.Constraint, error) {
+	if colName := colDef.Name.Name.L; colName == model.ExtraHandleName.L {
+		return nil, nil, ErrWrongColumnName.GenWithStackByArgs(colName)
+	}
+
 	// specifiedCollate refers to the last collate specified in colDef.Options.
 	chs, coll, err := getCharsetAndCollateInColumnDef(colDef)
 	if err != nil {
@@ -3400,6 +3404,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name)
 	}
 	newColName := specNewColumn.Name.Name
+	if newColName.L == model.ExtraHandleName.L {
+		return nil, ErrWrongColumnName.GenWithStackByArgs(newColName.L)
+	}
 	// If we want to rename the column name, we need to check whether it already exists.
 	if newColName.L != originalColName.L {
 		c := table.FindCol(t.Cols(), newColName.L)
@@ -3656,6 +3663,9 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	newColName := spec.NewColumnName.Name
 	if oldColName.L == newColName.L {
 		return nil
+	}
+	if newColName.L == model.ExtraHandleName.L {
+		return ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
 
 	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)
