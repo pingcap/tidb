@@ -1213,6 +1213,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 				if c.ID == cInfo.ID {
 					found = true
 					ts.HandleIdx = append(ts.HandleIdx, i)
+					break
 				}
 			}
 			if !found {
