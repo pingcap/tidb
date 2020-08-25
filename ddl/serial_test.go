@@ -135,6 +135,14 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 		config.StoreGlobalConfig(&newCfg)
 	}()
 
+	_, err = tk.Exec("alter table primary_key_test2 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	// We can't add a primary key when the table's pk_is_handle is true.
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(b)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+
 	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:206]Unsupported drop primary key when the table's pkIsHandle is true")
 	tk.MustExec("alter table primary_key_test2 drop primary key")
@@ -630,6 +638,27 @@ func (s *testSerialSuite) TestRecoverTableByTableName(c *C) {
 	tk.MustExec("recover table t_recover")
 	tk.MustExec("insert into t_recover values (10)")
 	tk.MustQuery("select * from t_recover;").Check(testkit.Rows("1", "7", "8", "9", "10"))
+
+	tk.MustExec("drop database if exists Test2")
+	tk.MustExec("create database Test2")
+	tk.MustExec("use Test2")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1),(2)")
+	tk.MustExec("drop table t")
+	tk.MustExec("recover table t")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database if exists Test3")
+	tk.MustExec("create database Test3")
+	tk.MustExec("use Test3")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("drop table t")
+	tk.MustExec("drop database Test3")
+	tk.MustExec("use Test2")
+	tk.MustExec("recover table t")
+	tk.MustExec("insert into t values (3)")
+	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2", "3"))
 
 	gcEnable, err := gcutil.CheckGCEnable(tk.Se)
 	c.Assert(err, IsNil)

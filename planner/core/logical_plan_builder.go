@@ -1891,6 +1891,16 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *as
 
 	if sel.OrderBy != nil {
 		for offset, item := range sel.OrderBy.Items {
+			if colName, ok := item.Expr.(*ast.ColumnNameExpr); ok {
+				index, err := resolveFromSelectFields(colName, sel.Fields.Fields, false)
+				if err != nil {
+					return err
+				}
+				// If the ByItem is in fields list, it has been checked already in above.
+				if index >= 0 {
+					continue
+				}
+			}
 			checkExprInGroupBy(p, item.Expr, offset, ErrExprInOrderBy, gbyCols, gbyExprs, notInGbyCols)
 		}
 	}
@@ -2154,6 +2164,7 @@ func (b *PlanBuilder) popTableHints() {
 	b.appendUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.indexNestedLoopJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.sortMergeJoinTables)
 	b.appendUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.hashJoinTables)
+	b.appendUnmatchedStorageHintWarning(hintInfo.tiflashTables, hintInfo.tikvTables)
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
 }
 
@@ -2178,6 +2189,18 @@ func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAl
 	}
 	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s or %s. Maybe you can use the table alias name",
 		strings.Join(unMatchedTables, ", "), restore2JoinHint(joinType, hintTables), restore2JoinHint(joinTypeAlias, hintTables))
+	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
+}
+
+func (b *PlanBuilder) appendUnmatchedStorageHintWarning(tiflashTables, tikvTables []hintTableInfo) {
+	unMatchedTiFlashTables := extractUnmatchedTables(tiflashTables)
+	unMatchedTiKVTables := extractUnmatchedTables(tikvTables)
+	if len(unMatchedTiFlashTables)+len(unMatchedTiKVTables) == 0 {
+		return
+	}
+	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s. Maybe you can use the table alias name",
+		strings.Join(append(unMatchedTiFlashTables, unMatchedTiKVTables...), ", "),
+		restore2StorageHint(tiflashTables, tikvTables))
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
@@ -2423,7 +2446,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	tableInfo := tbl.Meta()
 	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", b.ctx.GetSessionVars().User.Username, b.ctx.GetSessionVars().User.Hostname, tableInfo.Name.L)
+		authErr = ErrTableaccessDenied.FastGenByArgs("SELECT", b.ctx.GetSessionVars().User.AuthUsername, b.ctx.GetSessionVars().User.AuthHostname, tableInfo.Name.L)
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName.L, tableInfo.Name.L, "", authErr)
 
@@ -3450,6 +3473,9 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 
 func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
 	for _, windowFuncExpr := range windowFuncExprs {
+		if strings.ToLower(windowFuncExpr.F) == ast.AggFuncGroupConcat {
+			return ErrNotSupportedYet.GenWithStackByArgs("group_concat as window function")
+		}
 		args, err := b.buildArgs4WindowFunc(ctx, p, windowFuncExpr.Args, windowAggMap)
 		if err != nil {
 			return err

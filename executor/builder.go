@@ -97,8 +97,6 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildChange(v)
 	case *plannercore.CheckTable:
 		return b.buildCheckTable(v)
-	case *plannercore.CheckIndex:
-		return b.buildCheckIndex(v)
 	case *plannercore.RecoverIndex:
 		return b.buildRecoverIndex(v)
 	case *plannercore.CleanupIndex:
@@ -304,26 +302,6 @@ func (b *executorBuilder) buildShowSlow(v *plannercore.ShowSlow) Executor {
 	return e
 }
 
-func (b *executorBuilder) buildCheckIndex(v *plannercore.CheckIndex) Executor {
-	readerExec, err := buildNoRangeIndexLookUpReader(b, v.IndexLookUpReader)
-	if err != nil {
-		b.err = err
-		return nil
-	}
-
-	buildIndexLookUpChecker(b, v.IndexLookUpReader, readerExec)
-
-	e := &CheckIndexExec{
-		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
-		dbName:       v.DBName,
-		tableName:    readerExec.table.Meta().Name.L,
-		idxName:      v.IdxName,
-		is:           b.is,
-		src:          readerExec,
-	}
-	return e
-}
-
 // buildIndexLookUpChecker builds check information to IndexLookUpReader.
 func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.PhysicalIndexLookUpReader,
 	readerExec *IndexLookUpExecutor) {
@@ -377,6 +355,7 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 		srcs:         readerExecs,
 		exitCh:       make(chan struct{}),
 		retCh:        make(chan error, len(readerExecs)),
+		checkIndex:   v.CheckIndex,
 	}
 	return e
 }
@@ -464,6 +443,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executo
 		idxCols:      buildCleanupIndexCols(tblInfo, index.Meta()),
 		index:        index,
 		table:        t,
+		physicalID:   t.Meta().ID,
 		batchSize:    20000,
 	}
 	return e
@@ -1884,7 +1864,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	} else {
 		e.feedback = statistics.NewQueryFeedback(getPhysicalTableID(tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
-	collect := (b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil) || e.feedback.CollectFeedback(len(ts.Ranges))
+	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
 	if !collect {
 		e.feedback.Invalidate()
 	}
@@ -1949,7 +1929,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	} else {
 		e.feedback = statistics.NewQueryFeedback(e.physicalTableID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
-	collect := (b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil) || e.feedback.CollectFeedback(len(is.Ranges))
+	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
 	if !collect {
 		e.feedback.Invalidate()
 	}
@@ -2025,10 +2005,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	} else {
 		e.feedback = statistics.NewQueryFeedback(getPhysicalTableID(tbl), is.Hist, int64(is.StatsCount()), is.Desc)
 	}
-	// do not collect the feedback for table request.
+	// Do not collect the feedback for table request.
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
-	collectIndex := (b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil) || e.feedback.CollectFeedback(len(is.Ranges))
+	collectIndex := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
 	if !collectIndex {
 		e.feedback.Invalidate()
 	}

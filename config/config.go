@@ -421,7 +421,7 @@ var defaultConf = Config{
 		RunAutoAnalyze:      true,
 		StmtCountLimit:      5000,
 		FeedbackProbability: 0.05,
-		QueryFeedbackLimit:  1024,
+		QueryFeedbackLimit:  512,
 		PseudoEstimateRatio: 0.8,
 		ForcePriority:       "NO_PRIORITY",
 		BindInfoLease:       "3s",

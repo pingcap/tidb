@@ -565,6 +565,9 @@ func partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression, 
 			args := op.GetArgs()
 			newRange := partitionRangeForOrExpr(sctx, args[0], args[1], lessThan, col, partFn)
 			return result.intersection(newRange)
+		} else if op.FuncName.L == ast.In {
+			newRange := partitionRangeForInExpr(sctx, op.GetArgs(), lessThan, col, partFn)
+			return result.intersection(newRange)
 		}
 	}
 
@@ -585,6 +588,39 @@ func partitionRangeForOrExpr(sctx sessionctx.Context, expr1, expr2 expression.Ex
 	tmp1 := partitionRangeForExpr(sctx, expr1, lessThan, col, partFn, fullRange(lessThan.length()))
 	tmp2 := partitionRangeForExpr(sctx, expr2, lessThan, col, partFn, fullRange(lessThan.length()))
 	return tmp1.union(tmp2)
+}
+
+func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expression,
+	lessThan lessThanData, partCol *expression.Column, partFn *expression.ScalarFunction) partitionRangeOR {
+	col, ok := args[0].(*expression.Column)
+	if !ok || col.ID != partCol.ID {
+		return fullRange(lessThan.length())
+	}
+
+	var result partitionRangeOR
+	unsigned := mysql.HasUnsignedFlag(col.RetType.Flag)
+	for i := 1; i < len(args); i++ {
+		constExpr, ok := args[i].(*expression.Constant)
+		if !ok {
+			return fullRange(lessThan.length())
+		}
+		switch constExpr.Value.Kind() {
+		case types.KindInt64, types.KindUint64:
+		case types.KindNull:
+			result = append(result, partitionRange{0, 1})
+			continue
+		default:
+			return fullRange(lessThan.length())
+		}
+		val, err := constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return fullRange(lessThan.length())
+		}
+
+		start, end := pruneUseBinarySearch(lessThan, dataForPrune{op: ast.EQ, c: val}, unsigned)
+		result = append(result, partitionRange{start, end})
+	}
+	return result.simplify()
 }
 
 // monotoneIncFuncs are those functions that for any x y, if x > y => f(x) > f(y)

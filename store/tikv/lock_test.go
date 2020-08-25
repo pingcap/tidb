@@ -58,6 +58,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	c.Assert(err, IsNil)
 	tpc, err := newTwoPhaseCommitterWithInit(txn, 0)
 	c.Assert(err, IsNil)
+	tpc.primaryKey = primaryKey
 	if bytes.Equal(key, primaryKey) {
 		tpc.keys = [][]byte{primaryKey}
 	} else {

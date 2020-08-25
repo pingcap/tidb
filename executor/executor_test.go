@@ -2026,6 +2026,16 @@ func (s *testSuite) TestSplitRegionTimeout(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout", `return(true)`), IsNil)
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout"), IsNil)
+
+	// Test pre-split with timeout.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout", `return(true)`), IsNil)
+	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	start := time.Now()
+	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 5;")
+	c.Assert(time.Since(start).Seconds(), Less, 10.0)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout"), IsNil)
 }
 
 func (s *testSuite) TestRow(c *C) {
@@ -4123,6 +4133,24 @@ func (s *testSuite) TestShowTableRegion(c *C) {
 	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
 	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
 
+	// Test split partition region when add new partition.
+	tk.MustExec("drop table if exists partition_t;")
+	tk.MustExec(`create table partition_t (a int, b int,index(a)) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20),
+		PARTITION p2 VALUES LESS THAN (30));`)
+	tk.MustExec(`alter table partition_t add partition ( partition p3 values less than (40), partition p4 values less than (50) );`)
+	re = tk.MustQuery("show table partition_t regions")
+	rows = re.Rows()
+	c.Assert(len(rows), Equals, 5)
+	tbl = testGetTableByName(c, tk.Se, "test", "partition_t")
+	partitionDef = tbl.Meta().GetPartitionInfo().Definitions
+	c.Assert(rows[0][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[0].ID))
+	c.Assert(rows[1][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[1].ID))
+	c.Assert(rows[2][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[2].ID))
+	c.Assert(rows[3][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[3].ID))
+	c.Assert(rows[4][1], Matches, fmt.Sprintf("t_%d_.*", partitionDef[4].ID))
+
 	// Test pre-split table region when create table.
 	tk.MustExec("drop table if exists t_pre")
 	tk.MustExec("create table t_pre (a int, b int) shard_row_id_bits = 2 pre_split_regions=2;")
@@ -4492,4 +4520,28 @@ func (s *testSuite1) TestIssue15718(c *C) {
 	tk.MustExec("CREATE TABLE t0(c0 FLOAT);")
 	tk.MustExec("INSERT INTO t0(c0) VALUES (NULL);")
 	tk.MustQuery("SELECT * FROM t0 WHERE NOT(0 OR t0.c0);").Check(testkit.Rows())
+}
+
+func (s *testSuite) TestKillTableReader(c *C) {
+	var retry = "github.com/pingcap/tidb/store/tikv/mockRetrySendReqToRegion"
+	defer func() {
+		c.Assert(failpoint.Disable(retry), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1),(2),(3)")
+	tk.MustExec("set @@tidb_distsql_scan_concurrency=1")
+	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 0)
+	c.Assert(failpoint.Enable(retry, `return(true)`), IsNil)
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		c.Assert(int(errors.Cause(tk.QueryToErr("select * from t")).(*terror.Error).ToSQLError().Code), Equals, int(executor.ErrQueryInterrupted.Code()))
+	}()
+	time.Sleep(1 * time.Second)
+	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 1)
+	wg.Wait()
 }
