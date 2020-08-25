@@ -1978,8 +1978,8 @@ func (b *builtinTruncateIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if d >= 0 {
 		return x, false, nil
 	}
-	// math.Pow10(d) == INF if d > 308
-	if d < -308 {
+	// -MinInt = MinInt, special case
+	if d == mathutil.MinInt {
 		return 0, false, nil
 	}
 	shift := int64(math.Pow10(int(-d)))
@@ -2015,8 +2015,8 @@ func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if d >= 0 {
 		return x, false, nil
 	}
-	// math.Pow10(d) == INF if d > 308
-	if d < -308 {
+	// -MinInt = MinInt, special case
+	if d == mathutil.MinInt {
 		return 0, false, nil
 	}
 	shift := uint64(math.Pow10(int(-d)))

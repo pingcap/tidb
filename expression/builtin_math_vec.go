@@ -812,8 +812,8 @@ func (b *builtinTruncateIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 			continue
 		}
 		if buf64s[i] < 0 {
-			// math.Pow10(d) == INF if d > 308
-			if buf64s[i] < -308 {
+			// -MinInt = MinInt, special case
+			if buf64s[i] == mathutil.MinInt {
 				i64s[i] = 0
 			} else {
 				shift := int64(math.Pow10(int(-buf64s[i])))
@@ -857,8 +857,8 @@ func (b *builtinTruncateUintSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 		}
 
 		if buf64s[i] < 0 {
-			// math.Pow10(d) == INF if d > 308
-			if buf64s[i] < -308 {
+			// -MinInt = MinInt, special case
+			if buf64s[i] == mathutil.MinInt {
 				i64s[i] = 0
 			} else {
 				shift := uint64(math.Pow10(int(-buf64s[i])))
