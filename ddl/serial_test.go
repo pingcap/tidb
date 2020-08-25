@@ -1005,6 +1005,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertDefault("create table t (a bigint auto_random(2) primary key default 5)")
 	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
 		assertDefault("alter table t modify column a bigint auto_random default 3")
+		assertDefault("alter table t alter column a set default 3")
 	})
 
 	// Overflow data type max length.
