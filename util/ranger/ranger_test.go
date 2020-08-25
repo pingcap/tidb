@@ -1073,6 +1073,23 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			resultStr:   "[[1,1] [2,2] [3,3]]",
 			length:      types.UnspecifiedLength,
 		},
+		// test cases for nulleq
+		{
+			colPos:      0,
+			exprStr:     "a <=> 1",
+			accessConds: "[nulleq(test.t.a, 1)]",
+			filterConds: "",
+			resultStr:   "[[1,1]]",
+			length:      types.UnspecifiedLength,
+		},
+		{
+			colPos:      0,
+			exprStr:     "a <=> null",
+			accessConds: "[nulleq(test.t.a, <nil>)]",
+			filterConds: "",
+			resultStr:   "[[NULL,NULL]]",
+			length:      types.UnspecifiedLength,
+		},
 	}
 
 	ctx := context.Background()
@@ -1189,6 +1206,38 @@ func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
 			output[i].SQL = tt
 			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testRangerSuite) TestCompIndexDNFMatch(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int, key(a,b,c));")
+	testKit.MustExec("insert into t values(1,2,2)")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }

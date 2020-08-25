@@ -47,13 +47,14 @@ import (
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
-	"github.com/pingcap/tidb/util/testutil"
+	. "github.com/pingcap/tidb/util/testutil"
 )
 
 // Make it serial because config is modified in test cases.
 var _ = SerialSuites(&testSerialSuite{})
 
 type testSerialSuite struct {
+	CommonHandleSuite
 	store   kv.Storage
 	cluster cluster.Cluster
 	dom     *domain.Domain
@@ -62,12 +63,10 @@ type testSerialSuite struct {
 func (s *testSerialSuite) SetUpSuite(c *C) {
 	session.SetSchemaLease(200 * time.Millisecond)
 	session.DisableStats4Test()
-
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	// Test for add/drop primary key.
-	newCfg.AlterPrimaryKey = false
-	config.StoreGlobalConfig(&newCfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		// Test for add/drop primary key.
+		conf.AlterPrimaryKey = false
+	})
 
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 
@@ -95,15 +94,14 @@ func (s *testSerialSuite) TearDownSuite(c *C) {
 
 func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	originalMaxIndexLen := cfg.MaxIndexLength
-	newCfg.MaxIndexLength = config.DefMaxOfMaxIndexLength
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		newCfg.MaxIndexLength = originalMaxIndexLen
-		config.StoreGlobalConfig(&newCfg)
-	}()
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.MaxIndexLength = config.DefMaxOfMaxIndexLength
+	})
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("drop table if exists t1;")
 
 	tk.MustExec("create table t (c1 varchar(3073), index(c1)) charset = ascii;")
 	tk.MustExec(fmt.Sprintf("create table t1 (c1 varchar(%d), index(c1)) charset = ascii;", config.DefMaxOfMaxIndexLength))
@@ -132,15 +130,18 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk.MustExec("create table primary_key_test1 (a int, b varchar(10), primary key(a))")
 	tk.MustExec("create table primary_key_test2 (a int, b varchar(10), primary key(b))")
 	tk.MustExec("create table primary_key_test3 (a int, b varchar(10))")
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	orignalAlterPrimaryKey := newCfg.AlterPrimaryKey
-	newCfg.AlterPrimaryKey = true
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		newCfg.AlterPrimaryKey = orignalAlterPrimaryKey
-		config.StoreGlobalConfig(&newCfg)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
+
+	_, err = tk.Exec("alter table primary_key_test2 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	// We can't add a primary key when the table's pk_is_handle is true.
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(a)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
+	_, err = tk.Exec("alter table primary_key_test1 add primary key(b)")
+	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
 
 	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's pkIsHandle is true")
@@ -150,8 +151,9 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 
 	// for "drop index `primary` on ..." syntax
 	tk.MustExec("create table primary_key_test4 (a int, b varchar(10), primary key(a))")
-	newCfg.AlterPrimaryKey = false
-	config.StoreGlobalConfig(&newCfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
 	_, err = tk.Exec("drop index `primary` on primary_key_test4")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 	// for the index name is `primary`
@@ -203,23 +205,23 @@ func (s *testSerialSuite) TestMultiRegionGetTableEndHandle(c *C) {
 	// Split the table.
 	s.cluster.SplitTable(tblID, 100)
 
-	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
+	maxHandle, emptyTable := getMaxTableHandle(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(999))
+	c.Assert(maxHandle, Equals, kv.IntHandle(999))
 
 	tk.MustExec("insert into t values(10000, 1000)")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(10000))
+	c.Assert(maxHandle, Equals, kv.IntHandle(10000))
 
 	tk.MustExec("insert into t values(-1, 1000)")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
 	c.Assert(emptyTable, IsFalse)
-	c.Assert(maxID, Equals, int64(10000))
+	c.Assert(maxHandle, Equals, kv.IntHandle(10000))
 }
 
 func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
-	// TestGetTableEndHandle test ddl.GetTableMaxRowID method, which will return the max row id of the table.
+	// TestGetTableEndHandle test ddl.GetTableMaxHandle method, which will return the max row id of the table.
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_get_endhandle")
 	tk.MustExec("create database test_get_endhandle")
@@ -234,20 +236,20 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 
 	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
 	// test empty table
-	checkGetMaxTableRowID(testCtx, s.store, true, int64(math.MaxInt64))
+	checkGetMaxTableRowID(testCtx, s.store, true, nil)
 
 	tk.MustExec("insert into t values(-1, 1)")
-	checkGetMaxTableRowID(testCtx, s.store, false, int64(-1))
+	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(-1))
 
 	tk.MustExec("insert into t values(9223372036854775806, 1)")
-	checkGetMaxTableRowID(testCtx, s.store, false, int64(9223372036854775806))
+	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(9223372036854775806))
 
 	tk.MustExec("insert into t values(9223372036854775807, 1)")
-	checkGetMaxTableRowID(testCtx, s.store, false, int64(9223372036854775807))
+	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(9223372036854775807))
 
 	tk.MustExec("insert into t values(10, 1)")
 	tk.MustExec("insert into t values(102149142, 1)")
-	checkGetMaxTableRowID(testCtx, s.store, false, int64(9223372036854775807))
+	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(9223372036854775807))
 
 	tk.MustExec("create table t1(a bigint PRIMARY KEY, b int)")
 
@@ -262,7 +264,7 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	is = s.dom.InfoSchema()
 	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
-	checkGetMaxTableRowID(testCtx, s.store, false, int64(999))
+	checkGetMaxTableRowID(testCtx, s.store, false, kv.IntHandle(999))
 
 	// Test PK is not handle
 	tk.MustExec("create table t2(a varchar(255))")
@@ -270,7 +272,7 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	is = s.dom.InfoSchema()
 	testCtx.tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
-	checkGetMaxTableRowID(testCtx, s.store, true, int64(math.MaxInt64))
+	checkGetMaxTableRowID(testCtx, s.store, true, nil)
 
 	builder.Reset()
 	fmt.Fprintf(&builder, "insert into t2 values ")
@@ -281,33 +283,120 @@ func (s *testSerialSuite) TestGetTableEndHandle(c *C) {
 	tk.MustExec(sql[:len(sql)-1])
 
 	result := tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable := getMaxTableRowID(testCtx, s.store)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	maxHandle, emptyTable := getMaxTableHandle(testCtx, s.store)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec("insert into t2 values(100000)")
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64-1))
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec(fmt.Sprintf("insert into t2 values(%v)", math.MaxInt64))
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	c.Assert(emptyTable, IsFalse)
 
 	tk.MustExec("insert into t2 values(100)")
 	result = tk.MustQuery("select MAX(_tidb_rowid) from t2")
-	maxID, emptyTable = getMaxTableRowID(testCtx, s.store)
-	result.Check(testkit.Rows(fmt.Sprintf("%v", maxID)))
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	result.Check(testkit.Rows(fmt.Sprintf("%v", maxHandle.IntValue())))
 	c.Assert(emptyTable, IsFalse)
+}
+
+func (s *testSerialSuite) TestMultiRegionGetTableEndCommonHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_get_endhandle")
+	tk.MustExec("create database test_get_endhandle")
+	tk.MustExec("use test_get_endhandle")
+	tk.MustExec("set @@tidb_enable_clustered_index = true")
+
+	tk.MustExec("create table t(a varchar(20), b int, c float, d bigint, primary key (a, b, c))")
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "insert into t values ")
+	for i := 0; i < 1000; i++ {
+		fmt.Fprintf(&builder, "('%v', %v, %v, %v),", i, i, i, i)
+	}
+	sql := builder.String()
+	tk.MustExec(sql[:len(sql)-1])
+
+	// Get table ID for split.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblID := tbl.Meta().ID
+
+	d := s.dom.DDL()
+	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
+
+	// Split the table.
+	s.cluster.SplitTable(tblID, 100)
+
+	maxHandle, emptyTable := getMaxTableHandle(testCtx, s.store)
+	c.Assert(emptyTable, IsFalse)
+	c.Assert(maxHandle, HandleEquals, MustNewCommonHandle(c, "999", 999, 999))
+
+	tk.MustExec("insert into t values('a', 1, 1, 1)")
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	c.Assert(emptyTable, IsFalse)
+	c.Assert(maxHandle, HandleEquals, MustNewCommonHandle(c, "a", 1, 1))
+
+	tk.MustExec("insert into t values('0000', 1, 1, 1)")
+	maxHandle, emptyTable = getMaxTableHandle(testCtx, s.store)
+	c.Assert(emptyTable, IsFalse)
+	c.Assert(maxHandle, HandleEquals, MustNewCommonHandle(c, "a", 1, 1))
+}
+
+func (s *testSerialSuite) TestGetTableEndCommonHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_get_endhandle")
+	tk.MustExec("create database test_get_endhandle")
+	tk.MustExec("use test_get_endhandle")
+	tk.MustExec("set @@tidb_enable_clustered_index = true")
+
+	tk.MustExec("create table t(a varchar(15), b bigint, c int, primary key (a, b))")
+	tk.MustExec("create table t1(a varchar(15), b bigint, c int, primary key (a(2), b))")
+
+	is := s.dom.InfoSchema()
+	d := s.dom.DDL()
+	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	testCtx := newTestMaxTableRowIDContext(c, d, tbl)
+
+	// test empty table
+	checkGetMaxTableRowID(testCtx, s.store, true, nil)
+	tk.MustExec("insert into t values('abc', 1, 10)")
+	expectedHandle := MustNewCommonHandle(c, "abc", 1)
+	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
+	tk.MustExec("insert into t values('abchzzzzzzzz', 1, 10)")
+	expectedHandle = MustNewCommonHandle(c, "abchzzzzzzzz", 1)
+	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
+	tk.MustExec("insert into t values('a', 1, 10)")
+	tk.MustExec("insert into t values('ab', 1, 10)")
+	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
+
+	// Test MaxTableRowID with prefixed primary key.
+	tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	is = s.dom.InfoSchema()
+	d = s.dom.DDL()
+	testCtx = newTestMaxTableRowIDContext(c, d, tbl)
+	checkGetMaxTableRowID(testCtx, s.store, true, nil)
+	tk.MustExec("insert into t1 values('abccccc', 1, 10)")
+	expectedHandle = MustNewCommonHandle(c, "ab", 1)
+	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
+	tk.MustExec("insert into t1 values('azzzz', 1, 10)")
+	expectedHandle = MustNewCommonHandle(c, "az", 1)
+	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
 }
 
 func (s *testSerialSuite) TestCreateTableWithLike(c *C) {
@@ -814,13 +903,10 @@ func (s *testSerialSuite) TestTableLocksEnable(c *C) {
 	tk.MustExec("create table t1 (a int)")
 
 	// Test for enable table lock config.
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	newCfg.EnableTableLock = false
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		config.StoreGlobalConfig(cfg)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = false
+	})
 
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
@@ -832,6 +918,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	defer tk.MustExec("drop database if exists auto_random_db")
 	tk.MustExec("use auto_random_db")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	assertInvalidAutoRandomErr := func(sql string, errMsg string, args ...interface{}) {
 		_, err := tk.Exec(sql)
@@ -842,16 +929,19 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertPKIsNotHandle := func(sql, errCol string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomPKisNotHandleErrMsg, errCol)
 	}
-	assertExperimentDisabled := func(sql string) {
-		assertInvalidAutoRandomErr(sql, autoid.AutoRandomExperimentalDisabledErrMsg)
-	}
 	assertAlterValue := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterErrMsg)
+	}
+	assertDecreaseBitErr := func(sql string) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomDecreaseBitErrMsg)
 	}
 	assertWithAutoInc := func(sql string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 	}
-	assertOverflow := func(sql, colName string, autoRandBits uint64) {
+	assertOverflow := func(sql, colName string, maxAutoRandBits, actualAutoRandBits uint64) {
+		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, maxAutoRandBits, actualAutoRandBits, colName)
+	}
+	assertMaxOverflow := func(sql, colName string, autoRandBits uint64) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOverflowErrMsg, autoid.MaxAutoRandomBits, autoRandBits, colName)
 	}
 	assertModifyColType := func(sql string) {
@@ -874,8 +964,8 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		tk.MustExec("drop table t")
 	}
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	// Only bigint column can set auto_random
 	assertBigIntOnly("create table t (a char primary key auto_random(3), b int)", "char")
@@ -893,6 +983,17 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertPKIsNotHandle("create table t (a bigint auto_random(3), b bigint, primary key (a, b))", "a")
 	assertPKIsNotHandle("create table t (a bigint auto_random(3), b int, c char, primary key (a, c))", "a")
 
+	// PKIsNotHandle: table is created when alter-primary-key = true.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
+	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key, b int)", "a")
+	assertPKIsNotHandle("create table t (a bigint auto_random(3) primary key, b int)", "a")
+	assertPKIsNotHandle("create table t (a int, b bigint auto_random(3) primary key)", "b")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+
 	// Can not set auto_random along with auto_increment.
 	assertWithAutoInc("create table t (a bigint auto_random(3) primary key auto_increment)")
 	assertWithAutoInc("create table t (a bigint primary key auto_increment auto_random(3))")
@@ -904,11 +1005,16 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertDefault("create table t (a bigint auto_random(2) primary key default 5)")
 	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
 		assertDefault("alter table t modify column a bigint auto_random default 3")
+		assertDefault("alter table t alter column a set default 3")
 	})
 
 	// Overflow data type max length.
-	assertOverflow("create table t (a bigint auto_random(64) primary key)", "a", 64)
-	assertOverflow("create table t (a bigint auto_random(16) primary key)", "a", 16)
+	assertMaxOverflow("create table t (a bigint auto_random(64) primary key)", "a", 64)
+	assertMaxOverflow("create table t (a bigint auto_random(16) primary key)", "a", 16)
+	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
+		assertMaxOverflow("alter table t modify a bigint auto_random(64)", "a", 64)
+		assertMaxOverflow("alter table t modify a bigint auto_random(16)", "a", 16)
+	})
 
 	assertNonPositive("create table t (a bigint auto_random(0) primary key)")
 	tk.MustGetErrMsg("create table t (a bigint auto_random(-1) primary key)",
@@ -921,6 +1027,13 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	mustExecAndDrop("create table t (a bigint primary key auto_random(4))")
 	mustExecAndDrop("create table t (a bigint auto_random(4), primary key (a))")
 
+	// Increase auto_random bits.
+	mustExecAndDrop("create table t (a bigint auto_random(5) primary key)", func() {
+		tk.MustExec("alter table t modify a bigint auto_random(8)")
+		tk.MustExec("alter table t modify a bigint auto_random(10)")
+		tk.MustExec("alter table t modify a bigint auto_random(12)")
+	})
+
 	// Auto_random can occur multiple times like other column attributes.
 	mustExecAndDrop("create table t (a bigint auto_random(3) auto_random(2) primary key)")
 	mustExecAndDrop("create table t (a bigint, b bigint auto_random(3) primary key auto_random(2))")
@@ -929,6 +1042,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	// Add/drop the auto_random attribute is not allowed.
 	mustExecAndDrop("create table t (a bigint auto_random(3) primary key)", func() {
 		assertAlterValue("alter table t modify column a bigint")
+		assertAlterValue("alter table t modify column a bigint auto_random(0)")
 		assertAlterValue("alter table t change column a b bigint")
 	})
 	mustExecAndDrop("create table t (a bigint, b char, c bigint auto_random(3), primary key(c))", func() {
@@ -937,17 +1051,45 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	})
 	mustExecAndDrop("create table t (a bigint primary key)", func() {
 		assertAlterValue("alter table t modify column a bigint auto_random(3)")
-		assertAlterValue("alter table t change column a b bigint auto_random(3)")
 	})
+	mustExecAndDrop("create table t (a bigint, b bigint, primary key(a, b))", func() {
+		assertAlterValue("alter table t modify column a bigint auto_random(3)")
+		assertAlterValue("alter table t modify column b bigint auto_random(3)")
+	})
+
+	// Decrease auto_random bits is not allowed.
+	mustExecAndDrop("create table t (a bigint auto_random(10) primary key)", func() {
+		assertDecreaseBitErr("alter table t modify column a bigint auto_random(6)")
+	})
+	mustExecAndDrop("create table t (a bigint auto_random(10) primary key)", func() {
+		assertDecreaseBitErr("alter table t modify column a bigint auto_random(1)")
+	})
+
+	originStep := autoid.GetStep()
+	autoid.SetStep(1)
+	// Increase auto_random bits but it will overlap with incremental bits.
+	mustExecAndDrop("create table t (a bigint unsigned auto_random(5) primary key)", func() {
+		const alterTryCnt, rebaseOffset = 3, 1
+		insertSQL := fmt.Sprintf("insert into t values (%d)", ((1<<(64-10))-1)-rebaseOffset-alterTryCnt)
+		tk.MustExec(insertSQL)
+		// Try to rebase to 0..0011..1111 (54 `1`s).
+		tk.MustExec("alter table t modify a bigint unsigned auto_random(6)")
+		tk.MustExec("alter table t modify a bigint unsigned auto_random(10)")
+		assertOverflow("alter table t modify a bigint unsigned auto_random(11)", "a", 10, 11)
+	})
+	autoid.SetStep(originStep)
 
 	// Modifying the field type of a auto_random column is not allowed.
 	// Here the throw error is `ERROR 8200 (HY000): Unsupported modify column: length 11 is less than origin 20`,
 	// instead of `ERROR 8216 (HY000): Invalid auto random: modifying the auto_random column type is not supported`
 	// Because the origin column is `bigint`, it can not change to any other column type in TiDB limitation.
-	mustExecAndDrop("create table t (a bigint primary key auto_random(3))", func() {
+	mustExecAndDrop("create table t (a bigint primary key auto_random(3), b int)", func() {
 		assertModifyColType("alter table t modify column a int auto_random(3)")
 		assertModifyColType("alter table t modify column a mediumint auto_random(3)")
 		assertModifyColType("alter table t modify column a smallint auto_random(3)")
+		tk.MustExec("alter table t modify column b int")
+		tk.MustExec("alter table t modify column b bigint")
+		tk.MustExec("alter table t modify column a bigint auto_random(3)")
 	})
 
 	// Test show warnings when create auto_random table.
@@ -955,12 +1097,13 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		mustExecAndDrop(sql, func() {
 			note := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, times)
 			result := fmt.Sprintf("Note|1105|%s", note)
-			tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", result))
+			tk.MustQuery("show warnings").Check(RowsWithSep("|", result))
 			c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
 		})
 	}
 	assertShowWarningCorrect("create table t (a bigint auto_random(15) primary key)", 281474976710655)
 	assertShowWarningCorrect("create table t (a bigint unsigned auto_random(15) primary key)", 562949953421311)
+	assertShowWarningCorrect("create table t (a bigint auto_random(1) primary key)", 4611686018427387903)
 
 	// Test insert into auto_random column explicitly is not allowed by default.
 	assertExplicitInsertDisallowed := func(sql string) {
@@ -978,10 +1121,40 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 		tk.MustExec("insert into t values(3)")
 		tk.MustExec("insert into t values()")
 	})
+}
 
-	// Disallow using it when allow-auto-random is not enabled.
-	config.GetGlobalConfig().Experimental.AllowAutoRandom = false
-	assertExperimentDisabled("create table auto_random_table (a int primary key auto_random(3))")
+func (s *testSerialSuite) TestAutoRandomExchangePartition(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists auto_random_db")
+	defer tk.MustExec("drop database if exists auto_random_db")
+
+	ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer ConfigTestUtils.RestoreAutoRandomTestConfig()
+
+	tk.MustExec("use auto_random_db")
+
+	tk.MustExec("drop table if exists e1, e2, e3, e4;")
+
+	tk.MustExec("create table e1 (a bigint primary key auto_random(3)) partition by hash(a) partitions 1;")
+
+	tk.MustExec("create table e2 (a bigint primary key);")
+	tk.MustGetErrCode("alter table e1 exchange partition p0 with table e2;", errno.ErrTablesDifferentMetadata)
+
+	tk.MustExec("create table e3 (a bigint primary key auto_random(2));")
+	tk.MustGetErrCode("alter table e1 exchange partition p0 with table e3;", errno.ErrTablesDifferentMetadata)
+	tk.MustExec("insert into e1 values (), (), ()")
+
+	tk.MustExec("create table e4 (a bigint primary key auto_random(3));")
+	tk.MustExec("insert into e4 values ()")
+	tk.MustExec("alter table e1 exchange partition p0 with table e4;")
+
+	tk.MustQuery("select count(*) from e1").Check(testkit.Rows("1"))
+	tk.MustExec("insert into e1 values ()")
+	tk.MustQuery("select count(*) from e1").Check(testkit.Rows("2"))
+
+	tk.MustQuery("select count(*) from e4").Check(testkit.Rows("3"))
+	tk.MustExec("insert into e4 values ()")
+	tk.MustQuery("select count(*) from e4").Check(testkit.Rows("4"))
 }
 
 func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
@@ -991,8 +1164,8 @@ func (s *testSerialSuite) TestAutoRandomIncBitsIncrementAndOffset(c *C) {
 	tk.MustExec("use auto_random_db")
 	tk.MustExec("drop table if exists t")
 
-	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
-	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
+	ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer ConfigTestUtils.RestoreAutoRandomTestConfig()
 
 	recreateTable := func() {
 		tk.MustExec("drop table if exists t")
@@ -1055,21 +1228,26 @@ func (s *testSerialSuite) TestModifyingColumn4NewCollations(c *C) {
 	// Column collation can be changed as long as there is no index defined.
 	tk.MustExec("alter table t modify b varchar(10) collate utf8_general_ci")
 	tk.MustExec("alter table t modify c varchar(10) collate utf8_bin")
+	tk.MustExec("alter table t modify c varchar(10) collate utf8_unicode_ci")
 	tk.MustExec("alter table t charset utf8 collate utf8_general_ci")
 	tk.MustExec("alter table t convert to charset utf8 collate utf8_bin")
+	tk.MustExec("alter table t convert to charset utf8 collate utf8_unicode_ci")
 	tk.MustExec("alter table t convert to charset utf8 collate utf8_general_ci")
+	tk.MustExec("alter table t modify b varchar(10) collate utf8_unicode_ci")
 	tk.MustExec("alter table t modify b varchar(10) collate utf8_bin")
 
 	tk.MustExec("alter table t add index b_idx(b)")
 	tk.MustExec("alter table t add index c_idx(c)")
 	tk.MustGetErrMsg("alter table t modify b varchar(10) collate utf8_general_ci", "[ddl:8200]Unsupported modifying collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
 	tk.MustGetErrMsg("alter table t modify c varchar(10) collate utf8_bin", "[ddl:8200]Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_bin' when index is defined on it.")
+	tk.MustGetErrMsg("alter table t modify c varchar(10) collate utf8_unicode_ci", "[ddl:8200]Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_unicode_ci' when index is defined on it.")
 	tk.MustGetErrMsg("alter table t convert to charset utf8 collate utf8_general_ci", "[ddl:8200]Unsupported converting collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
 	// Change to a compatible collation is allowed.
 	tk.MustExec("alter table t modify c varchar(10) collate utf8mb4_general_ci")
 	// Change the default collation of table is allowed.
 	tk.MustExec("alter table t collate utf8mb4_general_ci")
 	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_unicode_ci")
 	// Change the default collation of database is allowed.
 	tk.MustExec("alter database dct charset utf8mb4 collate utf8mb4_general_ci")
 }
@@ -1083,27 +1261,27 @@ func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
 		tk.MustGetErrMsg(sql, fmt.Sprintf("[ddl:1273]Unsupported collation when new collation is enabled: '%s'", coll))
 	}
 	// Test default collation of database.
-	mustGetUnsupportedCollation("create database ucd charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
-	mustGetUnsupportedCollation("create database ucd charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("create database ucd charset utf8mb4 collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
+	mustGetUnsupportedCollation("create database ucd charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
 	tk.MustExec("create database ucd")
-	mustGetUnsupportedCollation("alter database ucd charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
-	mustGetUnsupportedCollation("alter database ucd collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("alter database ucd charset utf8mb4 collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
+	mustGetUnsupportedCollation("alter database ucd collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
 
 	// Test default collation of table.
 	tk.MustExec("use ucd")
-	mustGetUnsupportedCollation("create table t(a varchar(20)) charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
-	mustGetUnsupportedCollation("create table t(a varchar(20)) collate utf8_unicode_ci", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("create table t(a varchar(20)) charset utf8mb4 collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
+	mustGetUnsupportedCollation("create table t(a varchar(20)) collate utf8_roman_ci", "utf8_roman_ci")
 	tk.MustExec("create table t(a varchar(20)) collate utf8mb4_general_ci")
-	mustGetUnsupportedCollation("alter table t default collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
-	mustGetUnsupportedCollation("alter table t convert to charset utf8mb4 collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
+	mustGetUnsupportedCollation("alter table t default collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
+	mustGetUnsupportedCollation("alter table t convert to charset utf8mb4 collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
 
 	// Test collation of columns.
-	mustGetUnsupportedCollation("create table t1(a varchar(20)) collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
-	mustGetUnsupportedCollation("create table t1(a varchar(20)) charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("create table t1(a varchar(20)) collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
+	mustGetUnsupportedCollation("create table t1(a varchar(20)) charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
 	tk.MustExec("create table t1(a varchar(20))")
-	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
-	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
-	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_unicode_ci", "utf8_unicode_ci")
+	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) collate utf8mb4_roman_ci", "utf8mb4_roman_ci")
+	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
+	mustGetUnsupportedCollation("alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci", "utf8_roman_ci")
 
 	// TODO(bb7133): fix the following cases by setting charset from collate firstly.
 	// mustGetUnsupportedCollation("create database ucd collate utf8mb4_unicode_ci", errMsgUnsupportedUnicodeCI)
@@ -1124,7 +1302,6 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t values (1, 2)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
 	// 2. Drop invisible index
-	tk.MustGetErrMsg("alter table t drop column a", "[ddl:8200]can't drop column a with index covered now")
 	tk.MustExec("alter table t drop index a")
 	tk.MustQuery(showIndexes).Check(testkit.Rows())
 	tk.MustExec("insert into t values (3, 4)")
@@ -1150,15 +1327,10 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t values (11, 12)")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6", "7 8", "9 10", "11 12"))
 
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	orignalAlterPrimaryKey := newCfg.AlterPrimaryKey
-	newCfg.AlterPrimaryKey = true
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		newCfg.AlterPrimaryKey = orignalAlterPrimaryKey
-		config.StoreGlobalConfig(&newCfg)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
 
 	// Limitation: Primary key cannot be invisible index
 	tk.MustGetErrCode("create table t1 (a int, primary key (a) invisible)", errno.ErrPKIndexCantBeInvisible)
@@ -1218,7 +1390,9 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
 
-	config.GetGlobalConfig().AlterPrimaryKey = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
 	tk.MustExec("CREATE TABLE t5 (a varchar(255) primary key, b int)")
 	tk.MustExec("CREATE TABLE t6 (a int, b int, c int, primary key (a, b))")
 	is = domain.GetDomain(ctx).InfoSchema()
@@ -1228,7 +1402,9 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t6"))
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
-	config.GetGlobalConfig().AlterPrimaryKey = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
 
 	tk.MustExec("CREATE TABLE t21 like t2")
 	tk.MustExec("CREATE TABLE t31 like t3")

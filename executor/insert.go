@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -61,6 +60,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	if err != nil {
 		return err
 	}
+	txnSize := txn.Size()
 	sessVars.StmtCtx.AddRecordRows(uint64(len(rows)))
 	// If you use the IGNORE keyword, duplicate-key error that occurs while executing the INSERT statement are ignored.
 	// For example, without IGNORE, a row that duplicates an existing UNIQUE index or PRIMARY KEY value in
@@ -82,8 +82,14 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	} else {
 		for i, row := range rows {
 			var err error
-			if i == 0 {
-				err = e.addRecordWithAutoIDHint(ctx, row, len(rows))
+			sizeHintStep := int(sessVars.ShardAllocateStep)
+			if i%sizeHintStep == 0 {
+				sizeHint := sizeHintStep
+				remain := len(rows) - i
+				if sizeHint > remain {
+					sizeHint = remain
+				}
+				err = e.addRecordWithAutoIDHint(ctx, row, sizeHint)
 			} else {
 				err = e.addRecord(ctx, row)
 			}
@@ -92,7 +98,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			}
 		}
 	}
-	e.memTracker.Consume(int64(txn.Size()))
+	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
 }
 
@@ -133,7 +139,7 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 	for _, r := range rows {
 		for _, uk := range r.uniqueKeys {
 			if val, found := values[string(uk.newKV.key)]; found {
-				handle, err := tables.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
+				handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 				if err != nil {
 					return err
 				}
@@ -186,6 +192,13 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		return err
 	}
 
+	if e.collectRuntimeStatsEnabled() {
+		if snapshot := txn.GetSnapshot(); snapshot != nil {
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(kv.CollectRuntimeStats)
+		}
+	}
+
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
 	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
@@ -216,7 +229,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				return err
 			}
-			handle, err := tables.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
+			handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 			if err != nil {
 				return err
 			}

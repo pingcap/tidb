@@ -18,6 +18,7 @@ import (
 	"crypto/tls"
 	"math"
 	"net"
+	"runtime"
 	"testing"
 	"time"
 
@@ -87,6 +88,9 @@ func unixSocketAvailable() bool {
 }
 
 func TestInfo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
 	if !unixSocketAvailable() {
 		return
 	}
@@ -314,24 +318,24 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(err, IsNil)
 	ts := ver.Ver
 
-	succ := dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ := dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed", `return(true)`), IsNil)
 	err = dom.Reload()
 	c.Assert(err, NotNil)
-	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 	time.Sleep(ddlLease)
 
 	ver, err = store.CurrentVersion()
 	c.Assert(err, IsNil)
 	ts = ver.Ver
-	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultUnknown)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/domain/ErrorMockReloadFailed"), IsNil)
 	err = dom.Reload()
 	c.Assert(err, IsNil)
-	succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
+	_, succ = dom.SchemaValidator.Check(ts, schemaVer, nil)
 	c.Assert(succ, Equals, ResultSucc)
 
 	// For slow query.
@@ -396,7 +400,7 @@ func (*testSuite) TestT(c *C) {
 		SchemaOutOfDateRetryInterval = originalRetryInterval
 	}()
 	dom.SchemaValidator.Stop()
-	err = schemaChecker.Check(uint64(123456))
+	_, err = schemaChecker.Check(uint64(123456))
 	c.Assert(err.Error(), Equals, ErrInfoSchemaExpired.Error())
 	dom.SchemaValidator.Reset()
 

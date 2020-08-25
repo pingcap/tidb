@@ -1285,12 +1285,12 @@
       },
       {
         "SQL": "select /*+ HASH_AGG(@sel_1), STREAM_AGG(@sel_2) */ count(*) from t t1 where t1.a < (select count(*) from t t2 where t1.a > t2.a)",
-        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->StreamAgg)->StreamAgg->Sel([not(isnull(Column#25))])}->HashAgg",
+        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->StreamAgg)->StreamAgg}->HashAgg",
         "Hints": "use_index(@`sel_1` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), stream_agg(@`sel_2`), hash_agg(@`sel_1`)"
       },
       {
         "SQL": "select /*+ STREAM_AGG(@sel_1), HASH_AGG(@qb) */ count(*) from t t1 where t1.a < (select /*+ QB_NAME(qb) */ count(*) from t t2 where t1.a > t2.a)",
-        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->HashAgg)->HashAgg->Sel([not(isnull(Column#25))])}->StreamAgg",
+        "Plan": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]]->Sel([gt(test.t.a, test.t.a)])->HashAgg)->HashAgg}->StreamAgg",
         "Hints": "use_index(@`sel_1` `test`.`t1` `f`), use_index(@`sel_2` `test`.`t2` `f`), hash_agg(@`sel_2`), stream_agg(@`sel_1`)"
       },
       {
@@ -1775,13 +1775,10 @@
       {
         "SQL": "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;",
         "Plan": [
-          "HashAgg_10 1.00 root  funcs:group_concat(Column#6 order by Column#7 desc separator \"++\")->Column#4, funcs:group_concat(Column#8 order by Column#9 desc, Column#10 separator \"--\")->Column#5",
-          "└─Projection_23 20000.00 root  cast(test.ptest.name, var_string(20))->Column#6, test.ptest.name, cast(test.ptest.id, var_string(20))->Column#8, test.ptest.name, test.ptest.id",
-          "  └─PartitionUnion_13 20000.00 root  ",
-          "    ├─TableReader_15 10000.00 root  data:TableFullScan_14",
-          "    │ └─TableFullScan_14 10000.00 cop[tikv] table:ptest, partition:p0 keep order:false, stats:pseudo",
-          "    └─TableReader_17 10000.00 root  data:TableFullScan_16",
-          "      └─TableFullScan_16 10000.00 cop[tikv] table:ptest, partition:p1 keep order:false, stats:pseudo"
+          "HashAgg_5 1.00 root  funcs:group_concat(Column#6 order by Column#7 desc separator \"++\")->Column#4, funcs:group_concat(Column#8 order by Column#9 desc, Column#10 separator \"--\")->Column#5",
+          "└─Projection_18 10000.00 root  cast(test.ptest.name, var_string(20))->Column#6, test.ptest.name, cast(test.ptest.id, var_string(20))->Column#8, test.ptest.name, test.ptest.id",
+          "  └─TableReader_11 10000.00 root partition:all data:TableFullScan_10",
+          "    └─TableFullScan_10 10000.00 cop[tikv] table:ptest keep order:false, stats:pseudo"
         ],
         "Result": [
           "500++200++30++20++20++10 3--3--1--1--2--1"
@@ -1802,13 +1799,10 @@
       {
         "SQL": "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;",
         "Plan": [
-          "StreamAgg_9 1.00 root  funcs:group_concat(distinct Column#5 order by Column#6 desc separator \",\")->Column#4",
-          "└─Projection_20 20000.00 root  cast(test.ptest.name, var_string(20))->Column#5, test.ptest.name",
-          "  └─PartitionUnion_15 20000.00 root  ",
-          "    ├─TableReader_17 10000.00 root  data:TableFullScan_16",
-          "    │ └─TableFullScan_16 10000.00 cop[tikv] table:ptest, partition:p0 keep order:false, stats:pseudo",
-          "    └─TableReader_19 10000.00 root  data:TableFullScan_18",
-          "      └─TableFullScan_18 10000.00 cop[tikv] table:ptest, partition:p1 keep order:false, stats:pseudo"
+          "HashAgg_5 1.00 root  funcs:group_concat(distinct Column#5 order by Column#6 desc separator \",\")->Column#4",
+          "└─Projection_9 10000.00 root  cast(test.ptest.name, var_string(20))->Column#5, test.ptest.name",
+          "  └─TableReader_8 10000.00 root partition:all data:TableFullScan_7",
+          "    └─TableFullScan_7 10000.00 cop[tikv] table:ptest keep order:false, stats:pseudo"
         ],
         "Result": [
           "500,200,30,20,10"
@@ -2073,6 +2067,55 @@
       {
         "SQL": "select /*+ inl_hash_join(test.t1) */ * from test.t2 join test.t1 on test.t2.a = test.t1.a",
         "Plan": "IndexHashJoin{IndexReader(Index(t2.idx_a)[[-inf,+inf]])->IndexReader(Index(t1.idx_a)[[NULL,+inf]]->Sel([not(isnull(test.t1.a))]))}(test.t2.a,test.t1.a)"
+      }
+    ]
+  },
+  {
+    "Name": "TestNthPlanHintWithExplain",
+    "Cases": [
+      {
+        "SQL": "select /*+nth_plan(1)*/ * from test.tt where a=1 and b=1",
+        "Plan": [
+          "TableReader_7 0.01 root  data:Selection_6",
+          "└─Selection_6 0.01 cop[tikv]  eq(test.tt.a, 1), eq(test.tt.b, 1)",
+          "  └─TableFullScan_5 10000.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+        "Plan": [
+          "IndexLookUp_11 0.01 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+nth_plan(3)*/ * from test.tt where a=1 and b=1;",
+        "Plan": [
+          "IndexLookUp_15 0.01 root  ",
+          "├─IndexRangeScan_12(Build) 10.00 cop[tikv] table:tt, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_14(Probe) 0.01 cop[tikv]  eq(test.tt.a, 1)",
+          "  └─TableRowIDScan_13 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select /*+nth_plan(2)*/ * from test.tt where a=1 and b=1;",
+        "Plan": [
+          "IndexLookUp_11 0.01 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from test.tt where a=1 and b=1",
+        "Plan": [
+          "IndexLookUp_11 0.01 root  ",
+          "├─IndexRangeScan_8(Build) 10.00 cop[tikv] table:tt, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.tt.b, 1)",
+          "  └─TableRowIDScan_9 10.00 cop[tikv] table:tt keep order:false, stats:pseudo"
+        ]
       }
     ]
   }

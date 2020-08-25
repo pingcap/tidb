@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
@@ -45,8 +47,8 @@ import (
 )
 
 var (
-	transactionDurationInternalRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblRollback)
-	transactionDurationGeneralRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblRollback)
+	transactionDurationPessimisticRollback = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblRollback)
+	transactionDurationOptimisticRollback  = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblRollback)
 )
 
 // SimpleExec represents simple statement executor.
@@ -139,6 +141,12 @@ func (e *SimpleExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		err = e.executeSetDefaultRole(x)
 	case *ast.ShutdownStmt:
 		err = e.executeShutdown(x)
+	case *ast.CreateStatisticsStmt:
+		err = e.executeCreateStatistics(x)
+	case *ast.DropStatisticsStmt:
+		err = e.executeDropStatistics(x)
+	case *ast.AdminStmt:
+		err = e.executeAdminReloadStatistics(x)
 	}
 	e.done = true
 	return err
@@ -523,6 +531,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	if !exists {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbname)
 	}
+	e.ctx.GetSessionVars().CurrentDBChanged = dbname.O != e.ctx.GetSessionVars().CurrentDB
 	e.ctx.GetSessionVars().CurrentDB = dbname.O
 	// character_set_database is the character set used by the default database.
 	// The server sets this variable whenever the default database changes.
@@ -649,10 +658,10 @@ func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	}
 	if txn.Valid() {
 		duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
-		if sessVars.InRestrictedSQL {
-			transactionDurationInternalRollback.Observe(duration)
+		if sessVars.TxnCtx.IsPessimistic {
+			transactionDurationPessimisticRollback.Observe(duration)
 		} else {
-			transactionDurationGeneralRollback.Observe(duration)
+			transactionDurationOptimisticRollback.Observe(duration)
 		}
 		sessVars.TxnCtx.ClearDelta()
 		return txn.Rollback()
@@ -1169,4 +1178,61 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func (e *SimpleExec) executeCreateStatistics(s *ast.CreateStatisticsStmt) (err error) {
+	// Not support Cardinality and Dependency statistics type for now.
+	if s.StatsType == ast.StatsTypeCardinality || s.StatsType == ast.StatsTypeDependency {
+		return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("Cardinality and Dependency statistics types are not supported")
+	}
+	if _, ok := e.is.SchemaByName(s.Table.Schema); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema)
+	}
+	t, err := e.is.TableByName(s.Table.Schema, s.Table.Name)
+	if err != nil {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(s.Table.Schema, s.Table.Name)
+	}
+	tblInfo := t.Meta()
+	colIDs := make([]int64, 0, 2)
+	// Check whether columns exist.
+	for _, colName := range s.Columns {
+		col := table.FindCol(t.VisibleCols(), colName.Name.L)
+		if col == nil {
+			return terror.ClassDDL.New(mysql.ErrKeyColumnDoesNotExits, mysql.MySQLErrName[mysql.ErrKeyColumnDoesNotExits]).GenWithStack("column does not exist: %s", colName.Name.L)
+		}
+		if s.StatsType == ast.StatsTypeCorrelation && tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag) {
+			warn := errors.New("No need to create correlation statistics on the integer primary key column")
+			e.ctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+			return nil
+		}
+		colIDs = append(colIDs, col.ID)
+	}
+	if len(colIDs) != 2 && (s.StatsType == ast.StatsTypeCorrelation || s.StatsType == ast.StatsTypeDependency) {
+		return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("Only support Correlation and Dependency statistics types on 2 columns")
+	}
+	if len(colIDs) < 1 && s.StatsType == ast.StatsTypeCardinality {
+		return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("Only support Cardinality statistics type on at least 2 columns")
+	}
+	// TODO: check whether covering index exists for cardinality / dependency types.
+
+	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
+	// because locking in Handle can guarantee the correctness of `version` in system tables.
+	return domain.GetDomain(e.ctx).StatsHandle().InsertExtendedStats(s.StatsName, s.Table.Schema.L, colIDs, int(s.StatsType), tblInfo.ID, s.IfNotExists)
+}
+
+func (e *SimpleExec) executeDropStatistics(s *ast.DropStatisticsStmt) error {
+	db := e.ctx.GetSessionVars().CurrentDB
+	if db == "" {
+		return core.ErrNoDB
+	}
+	// Call utilities of statistics.Handle to modify system tables instead of doing DML directly,
+	// because locking in Handle can guarantee the correctness of `version` in system tables.
+	return domain.GetDomain(e.ctx).StatsHandle().MarkExtendedStatsDeleted(s.StatsName, db, -1)
+}
+
+func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
+	if s.Tp != ast.AdminReloadStatistics {
+		return terror.ClassOptimizer.New(mysql.ErrInternal, mysql.MySQLErrName[mysql.ErrInternal]).GenWithStack("This AdminStmt is not ADMIN RELOAD STATISTICS")
+	}
+	return domain.GetDomain(e.ctx).StatsHandle().ReloadExtendedStatistics()
 }

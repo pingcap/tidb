@@ -63,8 +63,19 @@ func compilePatternGeneralCI(pattern string, escape byte) (patWeights []uint16, 
 				}
 			}
 		case '_':
-			tp = stringutil.PatOne
+			// %_ => _%
+			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
+				tp = stringutil.PatAny
+				r = '%'
+				patWeights[patLen-1], patTypes[patLen-1] = '_', stringutil.PatOne
+			} else {
+				tp = stringutil.PatOne
+			}
 		case '%':
+			// %% => %
+			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
+				continue
+			}
 			tp = stringutil.PatAny
 		default:
 			tp = stringutil.PatMatch
