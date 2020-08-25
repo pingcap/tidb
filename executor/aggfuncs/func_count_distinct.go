@@ -516,7 +516,7 @@ func (p *partialResult4ApproxCountDistinct) InsertHash64(x uint64) {
 	p.insertHash(approxCountDistinctHashValue(x))
 }
 
-func (p *partialResult4ApproxCountDistinct) BufLen() int64 {
+func (p *partialResult4ApproxCountDistinct) MemUsage() int64 {
 	return int64(len(p.buf)) * DefUint32Size
 }
 
@@ -800,11 +800,11 @@ func (e *approxCountDistinctOriginal) UpdatePartialResult(sctx sessionctx.Contex
 		if hasNull {
 			continue
 		}
-		oldBufLen := p.BufLen()
+		oldMemUsage := p.MemUsage()
 		x := farm.Hash64(encodedBytes)
 		p.InsertHash64(x)
-		newBufLen := p.BufLen()
-		memDelta += newBufLen - oldBufLen
+		newMemUsage := p.MemUsage()
+		memDelta += newMemUsage - oldMemUsage
 	}
 
 	return memDelta, nil
@@ -836,13 +836,13 @@ func (e *approxCountDistinctPartial2) UpdatePartialResult(sctx sessionctx.Contex
 			continue
 		}
 
-		oldBufLen := p.BufLen()
+		oldMemUsage := p.MemUsage()
 		err = p.readAndMerge(hack.Slice(input))
 		if err != nil {
 			return memDelta, err
 		}
-		newBufLen := p.BufLen()
-		memDelta += newBufLen - oldBufLen
+		newMemUsage := p.MemUsage()
+		memDelta += newMemUsage - oldMemUsage
 	}
 	return memDelta, nil
 }

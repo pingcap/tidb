@@ -154,7 +154,7 @@ func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.
 			memDeltas = append(memDeltas, int64(0))
 			continue
 		}
-		oldBufSize := p.BufLen()
+		oldMemUsage := p.MemUsage()
 		switch dataType.Tp {
 		case mysql.TypeLonglong:
 			val := row.GetInt64(0)
@@ -168,8 +168,8 @@ func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.
 
 		x := farm.Hash64(buf)
 		p.InsertHash64(x)
-		newBufSize := p.BufLen()
-		memDelta := newBufSize - oldBufSize
+		newMemUsage := p.MemUsage()
+		memDelta := newMemUsage - oldMemUsage
 		memDeltas = append(memDeltas, memDelta)
 	}
 	return memDeltas, nil
