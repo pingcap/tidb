@@ -170,7 +170,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 			ret = append(ret, used[i])
 		}
 	}
-	return used, datchedResult.RemainedConds, nil
+	return ret, datchedResult.RemainedConds, nil
 }
 
 func (s *partitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.PartitionInfo, partitionNames []model.CIStr) []int {
