@@ -237,7 +237,7 @@ func (s *tikvStore) IsLatchEnabled() bool {
 
 func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	ctx := context.Background()
-	bo := NewBackofferWithVars(ctx, 3, nil)
+	bo := NewBackofferWithVars(ctx, GetMemberInfoBackoff, nil)
 	s.etcdAddrs = s.etcdAddrs[0:0]
 	pdClient := s.GetRegionCache().PDClient()
 	if pdClient == nil {
