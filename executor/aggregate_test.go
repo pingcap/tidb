@@ -876,7 +876,7 @@ func (s *testSuite) TestIssue15958(c *C) {
 	tk.MustQuery(`select avg(y) from t`).Check(testkit.Rows("2023.3333"))
 }
 
-func (s *testSuiteAgg) TestIssue17216(c *C) {
+func (s *testSuite) TestIssue17216(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
