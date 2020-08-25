@@ -403,7 +403,7 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(sessionctx.Context)
-	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost", AuthHostname: "localhost"}
 	tk.MustExec(alterUserSQL)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("1")))
