@@ -530,7 +530,7 @@ func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.E
 	return expression.NewFunctionInternal(ctx, funcName, sf.GetType(), args...)
 }
 
-// UnionRanges sorts `ranges`, union adjacent ones if possible.
+// UnionPartitionRanges sorts `ranges`, union adjacent ones if possible.
 // For two intervals [a, b], [c, d], we have guaranteed that a <= c. If b >= c. Then two intervals are overlapped.
 // And this two can be merged as [a, max(b, d)].
 // Otherwise they aren't overlapped.

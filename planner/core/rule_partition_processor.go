@@ -194,16 +194,15 @@ func (s *partitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.Pa
 func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
 	if len(used) == 1 && used[0] == -1 {
 		return fullRange(len(pi.Definitions))
-	} else {
-		ret := make(partitionRangeOR, len(used))
-		for _, i := range used {
-			ret = append(ret, partitionRange{i, i + 1})
-		}
-		return ret
 	}
+	ret := make(partitionRangeOR, len(used))
+	for _, i := range used {
+		ret = append(ret, partitionRange{i, i + 1})
+	}
+	return ret
 }
 
-func (s *partitionProcessor) PruneHashPartition(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
+func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
 	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
 	used, _, err := s.findUsedPartitions(ctx, tbl, partitionNames, conds, columns, names)
 	if err != nil {
@@ -223,31 +222,6 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
 	tableDual.schema = ds.Schema()
 	return tableDual, nil
-}
-
-func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
-	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
-	pi := tbl.Meta().Partition
-	pe, err := generateHashPartitionExpr(ctx, pi, columns, names)
-	if err != nil {
-		return nil, err
-	}
-	val, ok, hasConflict := expression.FastLocateHashPartition(ctx, conds, pe)
-	if hasConflict {
-		return nil, nil
-	}
-	if ok {
-		idx := math.Abs(val % int64(pi.Num))
-		if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
-			return nil, nil
-		}
-		return []int{int(idx)}, nil
-	}
-	if len(partitionNames) > 0 {
-		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
-		return s.convertToIntSlice(or, pi, partitionNames), nil
-	}
-	return []int{FullRange}, nil
 }
 
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
