@@ -108,16 +108,6 @@ func (s *testScanSuite) TestScan(c *C) {
 		err := txn.Commit(s.ctx)
 		c.Assert(err, IsNil)
 
-		if rowNum > 123 {
-			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(123))}, false)
-			c.Assert(err, IsNil)
-		}
-
-		if rowNum > 456 {
-			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(456))}, false)
-			c.Assert(err, IsNil)
-		}
-
 		txn2 := s.beginTxn(c)
 		val, err := txn2.Get(context.TODO(), tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(0)))
 		c.Assert(err, IsNil)
