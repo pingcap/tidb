@@ -766,7 +766,9 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// we can't construct index merge join.
 	if us == nil {
 		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt, maxOneRow)
-		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+		if innerTask2 != nil {
+			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+		}
 	}
 	return joins
 }
@@ -831,6 +833,10 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		ranges = ranger.FullRange()
 	} else {
 		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
+	}
+	// If the inner task need to keep order, then only range partition supports it.
+	if keepOrder && ds.tableInfo.Partition != nil && ds.tableInfo.Partition.Type != model.PartitionTypeRange {
+		return nil
 	}
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -918,6 +924,10 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	rowCount float64,
 	maxOneRow bool,
 ) task {
+	// If the inner task need to keep order, then only range partition supports it.
+	if keepOrder && ds.tableInfo.Partition != nil && ds.tableInfo.Partition.Type != model.PartitionTypeRange {
+		return nil
+	}
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
