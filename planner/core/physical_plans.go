@@ -513,6 +513,16 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
 func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
+	copyColumn := make([]*model.ColumnInfo, len(columns))
+	copy(copyColumn, columns)
+	var extraColumn *expression.Column
+	var extraColumnModel *model.ColumnInfo
+	if schema.Columns[len(schema.Columns)-1].ID == model.ExtraHandleID {
+		extraColumn = schema.Columns[len(schema.Columns)-1]
+		extraColumnModel = copyColumn[len(copyColumn)-1]
+		schema.Columns = schema.Columns[:len(schema.Columns)-1]
+		copyColumn = copyColumn[:len(copyColumn)-1]
+	}
 	schemaColumns := schema.Columns
 	for _, col := range schemaColumns {
 		if col.VirtualExpr == nil {
@@ -523,11 +533,15 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 		for _, baseCol := range baseCols {
 			if !schema.Contains(baseCol) {
 				schema.Columns = append(schema.Columns, baseCol)
-				columns = append(columns, FindColumnInfoByID(colsInfo, baseCol.ID))
+				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID))
 			}
 		}
 	}
-	return columns
+	if extraColumn != nil {
+		schema.Columns = append(schema.Columns, extraColumn)
+		copyColumn = append(copyColumn, extraColumnModel)
+	}
+	return copyColumn
 }
 
 //SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
@@ -1020,6 +1034,15 @@ type PhysicalUnionScan struct {
 	Conditions []expression.Expression
 
 	HandleCols HandleCols
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0)
+	for _, cond := range p.Conditions {
+		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
+	}
+	return corCols
 }
 
 // IsPartition returns true and partition ID if it works on a partition.
