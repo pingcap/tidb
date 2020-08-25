@@ -834,8 +834,8 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	} else {
 		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
 	}
-	// If the inner task need to keep order, then only range partition supports it.
-	if keepOrder && ds.tableInfo.Partition != nil && ds.tableInfo.Partition.Type != model.PartitionTypeRange {
+	// If the inner task need to keep order, the partition table reader can't satisfy it.
+	if keepOrder && ds.tableInfo.Partition != nil {
 		return nil
 	}
 	ts := PhysicalTableScan{
@@ -924,8 +924,8 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	rowCount float64,
 	maxOneRow bool,
 ) task {
-	// If the inner task need to keep order, then only range partition supports it.
-	if keepOrder && ds.tableInfo.Partition != nil && ds.tableInfo.Partition.Type != model.PartitionTypeRange {
+	// If the inner task need to keep order, the partition table reader can't satisfy it.
+	if keepOrder && ds.tableInfo.Partition != nil {
 		return nil
 	}
 	is := PhysicalIndexScan{
