@@ -95,7 +95,8 @@ func (s *testSuiteWithData) TestIndexJoinOnSinglePartitionTable(c *C) {
 		sql := "select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
 		rows := s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-		c.Assert(strings.Index(rows[0], "IndexMergeJoin"), Equals, 0)
+		// Partition table can't be inner side of index merge join, because it can't keep order.
+		c.Assert(strings.Index(rows[0], "IndexMergeJoin"), Equals, -1)
 
 		sql = "select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
 		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
