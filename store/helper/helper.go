@@ -122,9 +122,9 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts, _ := etcd.EtcdAddrs()
-	if len(pdHosts) == 0 {
-		return nil, errors.New("pd unavailable")
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
 	}
 	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+rw, nil)
 	if err != nil {
@@ -623,9 +623,9 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 	if !ok {
 		return errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts, _ := etcd.EtcdAddrs()
-	if len(pdHosts) == 0 {
-		return errors.New("pd unavailable")
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return err
 	}
 
 	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+pdHosts[0]+uri))
@@ -707,9 +707,9 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts, _ := etcd.EtcdAddrs()
-	if len(pdHosts) == 0 {
-		return nil, errors.New("pd unavailable")
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
 	}
 	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+pdapi.Stores, nil)
 	if err != nil {
@@ -735,14 +735,13 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 
 // GetPDAddr return the PD Address.
 func (h *Helper) GetPDAddr() ([]string, error) {
-	var pdAddrs []string
 	etcd, ok := h.Store.(tikv.EtcdBackend)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
-	pdAddrs, _ = etcd.EtcdAddrs()
-	if len(pdAddrs) == 0 {
-		return nil, errors.New("pd unavailable")
+	pdAddrs, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
 	}
 	return pdAddrs, nil
 }

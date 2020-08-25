@@ -236,12 +236,19 @@ func (s *tikvStore) IsLatchEnabled() bool {
 }
 
 func (s *tikvStore) EtcdAddrs() ([]string, error) {
+	ctx := context.Background()
+	bo := NewBackofferWithVars(ctx, 3, nil)
 	s.etcdAddrs = s.etcdAddrs[0:0]
 	pdClient := s.GetRegionCache().PDClient()
 	if pdClient == nil {
 		return nil, errors.New("pd unavailable")
 	}
-	members, err := pdClient.GetMemberInfo(context.Background())
+	members, err := pdClient.GetMemberInfo(ctx)
+	if err != nil {
+		err = bo.Backoff(BoRegionMiss, errors.New(err.Error()))
+	} else {
+		err = bo.Backoff(BoRegionMiss, errors.New("GetMemberInfo Timeout"))
+	}
 	if err != nil {
 		return nil, err
 	}

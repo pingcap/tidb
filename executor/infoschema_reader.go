@@ -1862,37 +1862,39 @@ type tiflashInstanceInfo struct {
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
 	store := sctx.GetStore()
 	if etcd, ok := store.(tikv.EtcdBackend); ok {
-		if addrs, _ := etcd.EtcdAddrs(); addrs != nil {
-			domainFromCtx := domain.GetDomain(sctx)
-			if domainFromCtx != nil {
-				cli := domainFromCtx.GetEtcdClient()
-				prefix := "/tiflash/cluster/http_port/"
-				kv := clientv3.NewKV(cli)
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				resp, err := kv.Get(ctx, prefix, clientv3.WithPrefix())
-				cancel()
-				if err != nil {
-					return errors.Trace(err)
-				}
-				for _, ev := range resp.Kvs {
-					id := string(ev.Key)[len(prefix):]
-					if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
-						continue
+		if addrs, err := etcd.EtcdAddrs(); err != nil {
+			if addrs != nil {
+				domainFromCtx := domain.GetDomain(sctx)
+				if domainFromCtx != nil {
+					cli := domainFromCtx.GetEtcdClient()
+					prefix := "/tiflash/cluster/http_port/"
+					kv := clientv3.NewKV(cli)
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					resp, err := kv.Get(ctx, prefix, clientv3.WithPrefix())
+					cancel()
+					if err != nil {
+						return errors.Trace(err)
 					}
-					// TODO: Support https in tiflash
-					url := fmt.Sprintf("http://%s", ev.Value)
-					e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
-						id:  id,
-						url: url,
-					})
-					e.instanceCount += 1
+					for _, ev := range resp.Kvs {
+						id := string(ev.Key)[len(prefix):]
+						if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
+							continue
+						}
+						// TODO: Support https in tiflash
+						url := fmt.Sprintf("http://%s", ev.Value)
+						e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
+							id:  id,
+							url: url,
+						})
+						e.instanceCount += 1
+					}
+					e.initialized = true
+					return nil
 				}
-				e.initialized = true
-				return nil
+				return errors.Errorf("Etcd client not found")
 			}
-			return errors.Errorf("Etcd client not found")
+			return errors.Errorf("Etcd addrs not found")
 		}
-		return errors.Errorf("Etcd addrs not found")
 	}
 	return errors.Errorf("%T not an etcd backend", store)
 }
