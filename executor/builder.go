@@ -2601,6 +2601,10 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 		return ret
 	}
 
+	if is.Index.Global {
+		return ret
+	}
+
 	nextPartition := nextPartitionForIndexReader{exec: ret}
 	exec, err := buildPartitionTable(b, is.Table, v.PartitionTable.PruningConds, v.PartitionTable.PartitionNames, ret, nextPartition)
 	if err != nil {
