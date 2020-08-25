@@ -276,5 +276,5 @@ func (s *testValidatorSuite) TestForeignKey(c *C) {
 
 	s.runSQL(c, "ALTER TABLE test.t ADD CONSTRAINT fk FOREIGN KEY (c3) REFERENCES t (c1)", false, nil)
 
-	s.runSQL(c, "ALTER TABLE test.t ADD CONSTRAINT fk FOREIGN KEY t3(c3) REFERENCES t (c1)", false, nil)
+	s.runSQL(c, "ALTER TABLE test.t ADD CONSTRAINT fk FOREIGN KEY (c4) REFERENCES test2.t(c1)", false, nil)
 }
