@@ -477,9 +477,9 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
 			zap.String("startHandle", toString(start)), zap.String("endHandle", toString(end)))
 
-		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
+		if _, _err_ := failpoint.Eval(_curpkg_("errorUpdateReorgHandle")); _err_ == nil {
 			return &info, errors.New("occur an error when update reorg handle")
-		})
+		}
 		err = t.UpdateDDLReorgHandle(job, start, end, pid)
 		if err != nil {
 			return &info, errors.Trace(err)
@@ -510,7 +510,7 @@ func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle k
 	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalTableID))
 }
 
-func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, indexInfos []*model.IndexInfo, ver int64) (int64, bool, error) {
+func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfos []*model.IndexInfo, ver int64) (int64, bool, error) {
 	tbl, err := getTable(d.store, job.SchemaID, tblInfo)
 	if err != nil {
 		return ver, false, errors.Trace(err)
@@ -524,21 +524,29 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 	}
 
 	err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
+		var currentIdx *model.IndexInfo
 		defer util.Recover(metrics.LabelDDL, "onDropColumn",
 			func() {
-				addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
+				addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` indices `%v` panic", tblInfo.Name, currentIdx.Name)
 			}, false)
-		return w.addTableIndex(tbl, indexInfo, reorgInfo)
+		for _, idxInfo := range indexInfos {
+			currentIdx = idxInfo
+			idxErr := w.addTableIndex(tbl, idxInfo, reorgInfo)
+			if idxErr != nil {
+				return errors.Trace(idxErr)
+			}
+		}
+		return nil
 	})
 
 	if err != nil {
 		if errWaitReorgTimeout.Equal(err) {
 			// if timeout, we should return, check for the owner and re-wait job done.
-			return ver, false, nil
+			return ver, false, err
 		}
 		if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeIndex.Equal(err) {
 			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-			ver, err = convertDropColumnWithCompositeIdxJob2RollbackJob(t, job, tblInfo, indexInfo, indexInfos, err)
+			ver, err = convertDropColumnWithCompositeIdxJob2RollbackJob(t, job, tblInfo, nil, indexInfos, err)
 		}
 		// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 		w.reorgCtx.cleanNotifyReorgCancel()

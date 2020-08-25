@@ -2371,9 +2371,7 @@ func (s *testIntegrationSuite5) TestDropColumnWithUniqueCompositeIndexWithData(c
 	tk.MustExec("use drop_composite_index_test")
 	tk.MustExec("create table t_drop_column_with_comp_idx3(a int, b int, c int)")
 	tk.MustExec("alter table t_drop_column_with_comp_idx3 add unique index idx_abc(a, b, c)")
-	tk.MustExec("insert into t_drop_column_with_comp_idx3(a, b, c) values(1, 2, 1)")
-	tk.MustExec("insert into t_drop_column_with_comp_idx3(a, b, c) values(1, 3, 1)")
-	tk.MustExec("insert into t_drop_column_with_comp_idx3(a, b, c) values(2, 4, 2)")
+	tk.MustExec("insert into t_drop_column_with_comp_idx3(a, b, c) values(1, 2, 1), (1, 3, 1), (2, 4, 2)")
 	tk.MustGetErrCode("alter table t_drop_column_with_comp_idx3 drop column b", 1062)
 	tk.MustQuery(query).Check(testkit.Rows("idx_abc YES"))
 }
@@ -2395,9 +2393,7 @@ func (s *testIntegrationSuite5) TestDropColumnWithMultiUniqueCompositeIndexWithD
 	tk.MustExec("create database if not exists drop_composite_index_test")
 	tk.MustExec("use drop_composite_index_test")
 	tk.MustExec("create table t_drop_column_with_comp_idx5(a int, b int, c int, unique index idx_abc(a, b, c), index idx_bc(b, c))")
-	tk.MustExec("insert into t_drop_column_with_comp_idx5(a, b, c) values(1, 2, 1)")
-	tk.MustExec("insert into t_drop_column_with_comp_idx5(a, b, c) values(1, 3, 1)")
-	tk.MustExec("insert into t_drop_column_with_comp_idx5(a, b, c) values(2, 4, 2)")
+	tk.MustExec("insert into t_drop_column_with_comp_idx5(a, b, c) values(1, 2, 1), (1, 3, 1), (2, 4, 2)")
 	tk.MustGetErrCode("alter table t_drop_column_with_comp_idx5 drop column b", 1062)
 	tk.MustQuery(query).Check(testkit.Rows("idx_abc YES", "idx_bc YES"))
 }

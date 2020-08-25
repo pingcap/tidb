@@ -446,21 +446,27 @@ func (w *worker) onDropColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int
 				job.SnapshotVer = 0
 				ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
 			case model.StateWriteReorganization:
+				var first bool
+				// Run reorg job
+				ver, first, err = runAndWaitReorgJob(w, d, t, job, tblInfo, ctidxInfos, ver)
+				if err != nil {
+					if errWaitReorgTimeout.Equal(err) {
+						return ver, nil
+					}
+					return ver, errors.Trace(err)
+				}
+
+				if first {
+					// If we run reorg firstly, we should update the job snapshot version
+					// and then run the reorg next time.
+					return ver, nil
+				}
+
+				// Set column index flag.
 				for _, idxInfo := range ctidxInfos {
-					var first bool
-					// Run reorg job
-					ver, first, err = runAndWaitReorgJob(w, d, t, job, tblInfo, idxInfo, ctidxInfos, ver)
-					if err != nil {
-						return ver, errors.Trace(err)
-					}
-					if first {
-						// If we run reorg firstly, we should update the job snapshot version
-						// and then run the reorg next time.
-						return ver, errors.Trace(err)
-					}
-					// Set column index flag.
 					addIndexColumnFlag(tblInfo, idxInfo)
 				}
+
 				ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
 				if err != nil {
 					return ver, errors.Trace(err)
@@ -672,21 +678,27 @@ func (w *worker) onDropColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int6
 			job.SnapshotVer = 0
 			ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
 		case model.StateWriteReorganization:
+			var first bool
+			// Run reorg job
+			ver, first, err = runAndWaitReorgJob(w, d, t, job, tblInfo, ctidxInfos, ver)
+			if err != nil {
+				if errWaitReorgTimeout.Equal(err) {
+					return ver, nil
+				}
+				return ver, errors.Trace(err)
+			}
+
+			if first {
+				// If we run reorg firstly, we should update the job snapshot version
+				// and then run the reorg next time.
+				return ver, nil
+			}
+
+			// Set column index flag.
 			for _, idxInfo := range ctidxInfos {
-				var first bool
-				// Run reorg job
-				ver, first, err = runAndWaitReorgJob(w, d, t, job, tblInfo, idxInfo, ctidxInfos, ver)
-				if err != nil {
-					return ver, errors.Trace(err)
-				}
-				if first {
-					// If we run reorg firstly, we should update the job snapshot version
-					// and then run the reorg next time.
-					return ver, errors.Trace(err)
-				}
-				// Set column index flag.
 				addIndexColumnFlag(tblInfo, idxInfo)
 			}
+
 			ver, err = updateVersionAndTableInfo(t, job, tblInfo, idxOriginalState != ctidxInfos[0].State)
 			if err != nil {
 				return ver, errors.Trace(err)
