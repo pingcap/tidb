@@ -61,7 +61,7 @@ func (s *testValidatorSuite) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
-func (s *testValidatorSuite) runSql(c *C, sql string, inPrepare bool, terr error) {
+func (s *testValidatorSuite) runSQL(c *C, sql string, inPrepare bool, terr error) {
 	stmts, err1 := session.Parse(s.ctx, sql)
 	c.Assert(err1, IsNil)
 	c.Assert(stmts, HasLen, 1)
@@ -262,19 +262,19 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 	c.Assert(err, IsNil)
 
 	for _, tt := range tests {
-		s.runSql(c, tt.sql, tt.inPrepare, tt.err)
+		s.runSQL(c, tt.sql, tt.inPrepare, tt.err)
 	}
 }
 
 func (s *testValidatorSuite) TestForeignKey(c *C) {
 	defer testleak.AfterTest(c)()
 
-	s.runSql(c, "ALTER TABLE test.t ADD CONSTRAINT fk FOREIGN KEY (c2) REFERENCES t (c1)", false, nil)
+	s.runSQL(c, "ALTER TABLE test.t ADD CONSTRAINT fk FOREIGN KEY (c2) REFERENCES t (c1)", false, nil)
 
 	_, err := s.se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
 
-	s.runSql(c, "ALTER TABLE test.t ADD CONSTRAINT fk FOREIGN KEY (c3) REFERENCES t (c1)", false, nil)
+	s.runSQL(c, "ALTER TABLE test.t ADD CONSTRAINT fk FOREIGN KEY (c3) REFERENCES t (c1)", false, nil)
 
-	s.runSql(c, "ALTER TABLE test.t ADD CONSTRAINT fk FOREIGN KEY t3(c3) REFERENCES t (c1)", false, nil)
+	s.runSQL(c, "ALTER TABLE test.t ADD CONSTRAINT fk FOREIGN KEY t3(c3) REFERENCES t (c1)", false, nil)
 }
