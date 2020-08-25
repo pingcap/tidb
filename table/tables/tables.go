@@ -665,7 +665,11 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			if err != nil {
 				return nil, err
 			}
-			r = append(r, value)
+			if len(r) < len(t.WritableCols()) {
+				r = append(r, value)
+			} else {
+				r[col.Offset] = value
+			}
 			row = append(row, value)
 			colIDs = append(colIDs, col.ID)
 			continue
@@ -933,6 +937,15 @@ func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.
 	relativeCol := cols[col.ChangeStateInfo.DependencyColumnOffset]
 	idxColumnVal, ok := rowMap[relativeCol.ID]
 	if ok {
+		// It needs cast values here when filling back column or index values in "modify/change column" statement.
+		if ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
+			return idxColumnVal, false, nil
+		}
+		idxColumnVal, err := table.CastValue(ctx, rowMap[relativeCol.ID], col.ColumnInfo, false, false)
+		// TODO: Consider sql_mode and the error msg(encounter this error check whether to rollback).
+		if err != nil {
+			return idxColumnVal, false, errors.Trace(err)
+		}
 		return idxColumnVal, false, nil
 	}
 

@@ -555,15 +555,56 @@ func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumn(c *C) {
 
 // TestWriteReorgForModifyColumnWithUniqIdx tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithUniqIdx(c *C) {
-	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
+	modifyColumnSQL := "alter table tt change column c cc tinyint unsigned not null default 1 first"
 	s.testModifyColumn(c, model.StateWriteReorganization, modifyColumnSQL, uniqIdx)
+}
+
+// TestWriteReorgForModifyColumnWithPKIsHandle tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
+func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithPKIsHandle(c *C) {
+	modifyColumnSQL := "alter table tt change column c cc tinyint unsigned not null default 1 first"
+	enableChangeColumnType := s.se.GetSessionVars().EnableChangeColumnType
+	s.se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		s.se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+		config.RestoreFunc()()
+	}()
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+
+	_, err := s.se.Execute(context.Background(), "use test_db_state")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), `create table tt (a int not null, b int default 1, c int not null default 0, unique index idx(c), primary key idx1(a), index idx2(a, c))`)
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "insert into tt (a, c) values(-1, -11)")
+	c.Assert(err, IsNil)
+	_, err = s.se.Execute(context.Background(), "insert into tt (a, c) values(1, 11)")
+	c.Assert(err, IsNil)
+	defer s.se.Execute(context.Background(), "drop table tt")
+
+	sqls := make([]sqlWithErr, 12)
+	sqls[0] = sqlWithErr{"delete from tt where c = -11", nil}
+	sqls[1] = sqlWithErr{"update tt use index(idx2) set a = 12, c = 555 where c = 11", errors.Errorf("[types:1690]constant 555 overflows tinyint")}
+	sqls[2] = sqlWithErr{"update tt use index(idx2) set a = 12, c = 10 where c = 11", nil}
+	sqls[3] = sqlWithErr{"insert into tt (a, c) values(2, 22)", nil}
+	sqls[4] = sqlWithErr{"update tt use index(idx2) set a = 21, c = 2 where c = 22", nil}
+	sqls[5] = sqlWithErr{"update tt use index(idx2) set a = 23 where c = 2", nil}
+	sqls[6] = sqlWithErr{"insert tt set a = 31, c = 333", errors.Errorf("[types:1690]constant 333 overflows tinyint")}
+	sqls[7] = sqlWithErr{"insert tt set a = 32, c = 123", nil}
+	sqls[8] = sqlWithErr{"insert tt set a = 33", nil}
+	sqls[9] = sqlWithErr{"insert into tt select * from tt order by c limit 1 on duplicate key update c = 44;", nil}
+	sqls[10] = sqlWithErr{"replace into tt values(5, 55, 56)", nil}
+	sqls[11] = sqlWithErr{"replace into tt values(6, 66, 56)", nil}
+
+	query := &expectQuery{sql: "admin check table tt;", rows: nil}
+	s.runTestInSchemaState(c, model.StateWriteReorganization, false, modifyColumnSQL, sqls, query)
 }
 
 // TestWriteReorgForModifyColumnWithPrimaryIdx tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
 func (s *serialTestStateChangeSuite) TestWriteReorgForModifyColumnWithPrimaryIdx(c *C) {
 	modifyColumnSQL := "alter table tt change column c cc tinyint not null default 1 first"
 	s.testModifyColumn(c, model.StateWriteReorganization, modifyColumnSQL, uniqIdx)
-
 }
 
 // TestWriteReorgForModifyColumnWithoutFirst tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
@@ -609,10 +650,10 @@ func (s *serialTestStateChangeSuite) testModifyColumn(c *C, state model.SchemaSt
 	c.Assert(err, IsNil)
 	defer s.se.Execute(context.Background(), "drop table tt")
 
-	sqls := make([]sqlWithErr, 12)
+	sqls := make([]sqlWithErr, 13)
 	sqls[0] = sqlWithErr{"delete from tt where c = 11", nil}
 	if state == model.StateWriteReorganization {
-		sqls[1] = sqlWithErr{"update tt use index(idx2) set a = 'a_update', c = 222 where c = 22", errors.Errorf("[types:1690]constant 222 overflows tinyint")}
+		sqls[1] = sqlWithErr{"update tt use index(idx2) set a = 'a_update', c = 555 where c = 22", errors.Errorf("[types:1690]constant 555 overflows tinyint")}
 		sqls[4] = sqlWithErr{"insert tt set a = 'a_insert', c = 333", errors.Errorf("[types:1690]constant 333 overflows tinyint")}
 	} else {
 		sqls[1] = sqlWithErr{"update tt use index(idx2) set a = 'a_update', c = 2 where c = 22", nil}
@@ -631,6 +672,7 @@ func (s *serialTestStateChangeSuite) testModifyColumn(c *C, state model.SchemaSt
 	sqls[9] = sqlWithErr{"insert ignore into tt values('a_insert_ignore_2', 1, 123) on duplicate key update c = 33 ", nil}
 	sqls[10] = sqlWithErr{"insert ignore into tt values('a_insert_ignore_3', 1, 123) on duplicate key update c = 66 ", nil}
 	sqls[11] = sqlWithErr{"replace into tt values('a_replace_1', 55, 56)", nil}
+	sqls[12] = sqlWithErr{"replace into tt values('a_replace_2', 77, 56)", nil}
 
 	query := &expectQuery{sql: "admin check table tt;", rows: nil}
 	s.runTestInSchemaState(c, state, false, modifyColumnSQL, sqls, query)
