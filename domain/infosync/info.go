@@ -693,12 +693,6 @@ func getServerInfo(id string) *ServerInfo {
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
 
-	if len(info.IP) == 0 || info.IP == "0.0.0.0" {
-		if ip := util2.GetLocalIP(); ip != "" {
-			info.IP = ip
-		}
-	}
-
 	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {
 			info.StartTimestamp = 1282967700000
