@@ -477,9 +477,9 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
 			zap.String("startHandle", toString(start)), zap.String("endHandle", toString(end)))
 
-		if _, _err_ := failpoint.Eval(_curpkg_("errorUpdateReorgHandle")); _err_ == nil {
+		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
-		}
+		})
 		err = t.UpdateDDLReorgHandle(job, start, end, pid)
 		if err != nil {
 			return &info, errors.Trace(err)
