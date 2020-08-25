@@ -1179,8 +1179,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	}.Init(b.ctx, b.getSelectOffset())
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
 	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
-	switch {
-	case hasCommonCols:
+	if hasCommonCols {
 		for _, c := range commonInfos {
 			is.Columns = append(is.Columns, c.ColumnInfo)
 		}
@@ -1210,7 +1209,6 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		ts.HandleIdx = make([]int, 0, len(commonCols))
 		for pkOffset, cInfo := range commonInfos {
 			found := false
-			// search in current columns.
 			for i, c := range ts.Columns {
 				if c.ID == cInfo.ID {
 					found = true
