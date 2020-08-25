@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var (
@@ -52,6 +51,7 @@ type HashJoinExec struct {
 	outerFilter       expression.CNFExprs
 	probeKeys         []*expression.Column
 	buildKeys         []*expression.Column
+	isNullEQ          []bool
 	probeTypes        []*types.FieldType
 	buildTypes        []*types.FieldType
 
@@ -141,7 +141,7 @@ func (e *HashJoinExec) Close() error {
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
 		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
 		if e.rowContainer != nil {
 			runtimeStats.setHashStat(e.rowContainer.stat)
@@ -242,13 +242,11 @@ func (e *HashJoinExec) wait4BuildSide() (emptyBuild bool, err error) {
 			return false, err
 		}
 	}
-	if e.rowContainer.Len() == 0 && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
+	if e.rowContainer.Len() == uint64(0) && (e.joinType == plannercore.InnerJoin || e.joinType == plannercore.SemiJoin) {
 		return true, nil
 	}
 	return false, nil
 }
-
-var buildSideResultLabel fmt.Stringer = stringutil.StringerStr("hashJoin.buildSideResult")
 
 // fetchBuildSideRows fetches all rows from build side executor, and append them
 // to e.buildSideResult.
@@ -545,8 +543,9 @@ func (e *HashJoinExec) join2Chunk(workerID uint, probeSideChk *chunk.Chunk, hCtx
 	}
 
 	hCtx.initHash(probeSideChk.NumRows())
-	for _, i := range hCtx.keyColIdx {
-		err = codec.HashChunkSelected(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull, selected)
+	for keyIdx, i := range hCtx.keyColIdx {
+		ignoreNull := len(e.isNullEQ) > keyIdx && e.isNullEQ[keyIdx]
+		err = codec.HashChunkSelected(e.rowContainer.sc, hCtx.hashVals, probeSideChk, hCtx.allTypes[i], i, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			joinResult.err = err
 			return false, joinResult
@@ -652,7 +651,7 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 		},
 	)
 
-	// TODO: Parallel build hash table. Currently not support because `rowHashMap` is not thread-safe.
+	// TODO: Parallel build hash table. Currently not support because `unsafeHashTable` is not thread-safe.
 	err := e.buildHashTableForList(buildSideResultCh)
 	if err != nil {
 		e.buildFinished <- errors.Trace(err)
@@ -685,9 +684,9 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	var selected []bool
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
-	e.rowContainer.GetMemTracker().SetLabel(buildSideResultLabel)
+	e.rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
-	e.rowContainer.GetDiskTracker().SetLabel(buildSideResultLabel)
+	e.rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
 		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
@@ -703,19 +702,19 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 			return nil
 		}
 		if !e.useOuterToBuild {
-			err = e.rowContainer.PutChunk(chk)
+			err = e.rowContainer.PutChunk(chk, e.isNullEQ)
 		} else {
 			var bitMap = bitmap.NewConcurrentBitmap(chk.NumRows())
 			e.outerMatchedStatus = append(e.outerMatchedStatus, bitMap)
 			e.memTracker.Consume(bitMap.BytesConsumed())
 			if len(e.outerFilter) == 0 {
-				err = e.rowContainer.PutChunk(chk)
+				err = e.rowContainer.PutChunk(chk, e.isNullEQ)
 			} else {
 				selected, err = expression.VectorizedFilter(e.ctx, e.outerFilter, chunk.NewIterator4Chunk(chk), selected)
 				if err != nil {
 					return err
 				}
-				err = e.rowContainer.PutChunkSelected(chk, selected)
+				err = e.rowContainer.PutChunkSelected(chk, selected, e.isNullEQ)
 			}
 		}
 		if err != nil {
@@ -768,7 +767,7 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.canUseCache {
 			var hitRatio float64
 			if e.cacheAccessCounter > 0 {
@@ -781,8 +780,6 @@ func (e *NestedLoopApplyExec) Close() error {
 	}
 	return e.outerExec.Close()
 }
-
-var innerListLabel fmt.Stringer = stringutil.StringerStr("innerList")
 
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
@@ -799,7 +796,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	e.innerList.GetMemTracker().SetLabel(innerListLabel)
+	e.innerList.GetMemTracker().SetLabel(memory.LabelForInnerList)
 	e.innerList.GetMemTracker().AttachTo(e.memTracker)
 
 	if e.canUseCache {

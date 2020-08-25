@@ -924,11 +924,14 @@ func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
 	sql1 := `alter table t_part add partition (
     partition p2 values less than (30)
    );`
+	sql2 := `alter table t_part add partition (
+    partition p3 values less than (30)
+   );`
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
 	}
-	s.testControlParallelExecSQL(c, sql1, sql1, f)
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
 func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
@@ -1108,7 +1111,10 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 	f(c, err1, err2)
 }
 
-func (s *testStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
+func (s *serialTestStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	ctx := context.Background()
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)
@@ -1297,7 +1303,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		for {
 			seCnt := atomic.LoadInt32(&sessionCnt)
 			// Make sure the two session have got the same information schema. And the first session can continue to go on,
-			// or the frist session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
+			// or the first session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
 			if currID == firstConnID || seCnt == finishedCnt {
 				break
 			}
@@ -1309,7 +1315,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 		return info
 	}
 	d := s.dom.DDL()
-	d.(ddl.DDLForTest).SetInterceptoror(intercept)
+	d.(ddl.DDLForTest).SetInterceptor(intercept)
 
 	// Make sure the connection 1 executes a SQL before the connection 2.
 	// And the connection 2 executes a SQL with an outdated information schema.
@@ -1337,7 +1343,7 @@ func (s *testStateChangeSuite) TestParallelDDLBeforeRunDDLJob(c *C) {
 	wg.Wait()
 
 	intercept = &ddl.TestInterceptor{}
-	d.(ddl.DDLForTest).SetInterceptoror(intercept)
+	d.(ddl.DDLForTest).SetInterceptor(intercept)
 }
 
 func (s *testStateChangeSuite) TestParallelAlterSchemaCharsetAndCollate(c *C) {

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb-tools/tidb-binlog/node"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -823,7 +824,7 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 				buf.WriteString(table.OptionalFsp(&col.FieldType))
 			}
 		}
-		if tableInfo.PKIsHandle && tableInfo.ContainsAutoRandomBits() && tableInfo.GetPkName().L == col.Name.L {
+		if ddl.IsAutoRandomColumnID(tableInfo, col.ID) {
 			buf.WriteString(fmt.Sprintf(" /*T![auto_rand] AUTO_RANDOM(%d) */", tableInfo.AutoRandomBits))
 		}
 		if len(col.Comment) > 0 {
@@ -881,6 +882,29 @@ func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.T
 		}
 		if i != len(publicIndices)-1 {
 			buf.WriteString(",\n")
+		}
+	}
+
+	// Foreign Keys are supported by data dictionary even though
+	// they are not enforced by DDL. This is still helpful to applications.
+	for _, fk := range tableInfo.ForeignKeys {
+		buf.WriteString(fmt.Sprintf(",\n  CONSTRAINT %s FOREIGN KEY ", stringutil.Escape(fk.Name.O, sqlMode)))
+		colNames := make([]string, 0, len(fk.Cols))
+		for _, col := range fk.Cols {
+			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
+		}
+		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(colNames, ",")))
+		buf.WriteString(fmt.Sprintf(" REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode)))
+		refColNames := make([]string, 0, len(fk.Cols))
+		for _, refCol := range fk.RefCols {
+			refColNames = append(refColNames, stringutil.Escape(refCol.O, sqlMode))
+		}
+		buf.WriteString(fmt.Sprintf("(%s)", strings.Join(refColNames, ",")))
+		if ast.ReferOptionType(fk.OnDelete) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON DELETE %s", ast.ReferOptionType(fk.OnDelete).String()))
+		}
+		if ast.ReferOptionType(fk.OnUpdate) != 0 {
+			buf.WriteString(fmt.Sprintf(" ON UPDATE %s", ast.ReferOptionType(fk.OnUpdate).String()))
 		}
 	}
 

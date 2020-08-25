@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -40,16 +41,28 @@ type SampleItem struct {
 	// Ordinal is original position of this item in SampleCollector before sorting. This
 	// is used for computing correlation.
 	Ordinal int
-	// RowID is the row id of the sample in its key.
+	// Handle is the handle of the sample in its key.
 	// This property is used to calculate Ordinal in fast analyze.
-	RowID int64
+	Handle kv.Handle
 }
 
-// SortSampleItems sorts a slice of SampleItem.
-func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
-	sorter := sampleItemSorter{items: items, sc: sc}
+// CopySampleItems returns a deep copy of SampleItem slice.
+func CopySampleItems(items []*SampleItem) []*SampleItem {
+	n := make([]*SampleItem, len(items))
+	for i, item := range items {
+		ni := *item
+		n[i] = &ni
+	}
+	return n
+}
+
+// SortSampleItems shallow copies and sorts a slice of SampleItem.
+func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) ([]*SampleItem, error) {
+	sortedItems := make([]*SampleItem, len(items))
+	copy(sortedItems, items)
+	sorter := sampleItemSorter{items: sortedItems, sc: sc}
 	sort.Stable(&sorter)
-	return sorter.err
+	return sortedItems, sorter.err
 }
 
 type sampleItemSorter struct {

@@ -208,10 +208,10 @@ func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Bac
 	return nil
 }
 
-func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations committerMutations) error {
+func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.LockCtx, mutations CommitterMutations) error {
 	return c.doActionOnMutations(bo, actionPessimisticLock{lockCtx}, mutations)
 }
 
-func (c *twoPhaseCommitter) pessimisticRollbackMutations(bo *Backoffer, mutations committerMutations) error {
+func (c *twoPhaseCommitter) pessimisticRollbackMutations(bo *Backoffer, mutations CommitterMutations) error {
 	return c.doActionOnMutations(bo, actionPessimisticRollback{}, mutations)
 }

@@ -345,7 +345,7 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 	}
 
 	v, ok := p.(*plannercore.PointGetPlan)
-	return ok && v.IndexInfo == nil
+	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle))
 }
 
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement
@@ -469,10 +469,6 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		if stmtHints.ForceNthPlan < 1 {
 			stmtHints.ForceNthPlan = -1
 			warn := errors.Errorf("the hintdata for NTH_PLAN() is too small, hint ignored.")
-			warns = append(warns, warn)
-		} else if stmtHints.ForceNthPlan > 100 {
-			stmtHints.ForceNthPlan = -1
-			warn := errors.Errorf("the hintdata for NTH_PLAN() is too big, hint ignored.")
 			warns = append(warns, warn)
 		}
 	} else {

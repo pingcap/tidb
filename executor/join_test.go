@@ -54,6 +54,15 @@ func (s *testSuiteJoin1) TestJoinPanic(c *C) {
 	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
 	err := tk.ExecToErr("SELECT * FROM events e JOIN (SELECT clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
 	c.Check(err, NotNil)
+
+	// Test for PR 18983, use to detect race.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tpj1,tpj2;")
+	tk.MustExec("create table tpj1 (id int, b int,  unique index (id));")
+	tk.MustExec("create table tpj2 (id int, b int,  unique index (id));")
+	tk.MustExec("insert into tpj1 values  (1,1);")
+	tk.MustExec("insert into tpj2 values  (1,1);")
+	tk.MustQuery("select tpj1.b,tpj2.b from tpj1 left join tpj2 on tpj1.id=tpj2.id where tpj1.id=1;").Check(testkit.Rows("1 1"))
 }
 
 func (s *testSuite) TestJoinInDisk(c *C) {
@@ -188,14 +197,14 @@ func (s *testSuiteJoin2) TestJoin(c *C) {
 
 	// The physical plans of the two sql are tested at physical_plan_test.go
 	tk.MustQuery("select /*+ INL_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
-	tk.MustQuery("select /*+ INL_HASH_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Sort().Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(t, t1) */ * from t join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4"))
 	tk.MustQuery("select /*+ INL_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
-	tk.MustQuery("select /*+ INL_HASH_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Sort().Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(t) */ * from t1 join t on t.a=t1.a and t.a < t1.b").Check(testkit.Rows("1 2 1 1", "1 3 1 1", "1 4 1 1", "3 4 3 3"))
 	// Test single index reader.
 	tk.MustQuery("select /*+ INL_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Check(testkit.Rows("2", "3"))
-	tk.MustQuery("select /*+ INL_HASH_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Sort().Check(testkit.Rows("2", "3"))
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(t, t1) */ t1.b from t1 join t on t.b=t1.b").Check(testkit.Rows("2", "3"))
 	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(t1) */ * from t right outer join t1 on t.a=t1.a").Check(testkit.Rows("1 1 1 2", "1 1 1 3", "1 1 1 4", "3 3 3 4", "<nil> <nil> 4 5"))
@@ -1911,11 +1920,13 @@ func (s *testSuiteJoin1) TestIssue11544(c *C) {
 	tk.MustExec("insert into 11544tt values(1, 'aaaaaaa'), (1, 'aaaabbb'), (1, 'aaaacccc')")
 	tk.MustQuery("select /*+ INL_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and (tt.b = 'aaaaaaa' or tt.b = 'aaaabbb')").Check(testkit.Rows("1 1 aaaaaaa", "1 1 aaaabbb"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and (tt.b = 'aaaaaaa' or tt.b = 'aaaabbb')").Check(testkit.Rows("1 1 aaaaaaa", "1 1 aaaabbb"))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and (tt.b = 'aaaaaaa' or tt.b = 'aaaabbb')").Check(testkit.Rows("1 1 aaaaaaa", "1 1 aaaabbb"))
+	// INL_MERGE_JOIN is invalid
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and (tt.b = 'aaaaaaa' or tt.b = 'aaaabbb')").Sort().Check(testkit.Rows("1 1 aaaaaaa", "1 1 aaaabbb"))
 
 	tk.MustQuery("select /*+ INL_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and tt.b in ('aaaaaaa', 'aaaabbb', 'aaaacccc')").Check(testkit.Rows("1 1 aaaaaaa", "1 1 aaaabbb", "1 1 aaaacccc"))
 	tk.MustQuery("select /*+ INL_HASH_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and tt.b in ('aaaaaaa', 'aaaabbb', 'aaaacccc')").Check(testkit.Rows("1 1 aaaaaaa", "1 1 aaaabbb", "1 1 aaaacccc"))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and tt.b in ('aaaaaaa', 'aaaabbb', 'aaaacccc')").Check(testkit.Rows("1 1 aaaaaaa", "1 1 aaaabbb", "1 1 aaaacccc"))
+	// INL_MERGE_JOIN is invalid
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(tt) */ * from 11544t t, 11544tt tt where t.a=tt.a and tt.b in ('aaaaaaa', 'aaaabbb', 'aaaacccc')").Sort().Check(testkit.Rows("1 1 aaaaaaa", "1 1 aaaabbb", "1 1 aaaacccc"))
 }
 
 func (s *testSuiteJoin1) TestIssue11390(c *C) {
@@ -2090,6 +2101,17 @@ func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
 	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
 }
 
+func (s *testSuiteJoin1) TestIssue18564(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, primary key(a), index idx(b,a));")
+	tk.MustExec("create table t2(a int, b int, primary key(a), index idx(b,a));")
+	tk.MustExec("insert into t1 values(1, 1)")
+	tk.MustExec("insert into t2 values(1, 1)")
+	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t1 FORCE INDEX (idx) join t2 on t1.b=t2.b and t1.a = t2.a").Check(testkit.Rows("1 1 1 1"))
+}
+
 func (s *testSuite9) TestIssue18572_1(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1")
@@ -2142,4 +2164,70 @@ func (s *testSuite9) TestIssue18572_3(c *C) {
 	c.Assert(err, IsNil)
 	_, err = session.GetRows4Test(context.Background(), nil, rs)
 	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinBuildErr"), IsTrue)
+}
+
+func (s *testSuite9) TestIssue19112(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 ( c_int int, c_decimal decimal(12, 6), key(c_int), unique key(c_decimal) )")
+	tk.MustExec("create table t2 like t1")
+	tk.MustExec("insert into t1 (c_int, c_decimal) values (1, 4.064000), (2, 0.257000), (3, 1.010000)")
+	tk.MustExec("insert into t2 (c_int, c_decimal) values (1, 4.064000), (3, 1.010000)")
+	tk.MustQuery("select /*+ HASH_JOIN(t1,t2) */  * from t1 join t2 on t1.c_decimal = t2.c_decimal order by t1.c_int").Check(testkit.Rows(
+		"1 4.064000 1 4.064000",
+		"3 1.010000 3 1.010000"))
+}
+
+func (s *testSuiteJoin3) TestIssue11896(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// compare bigint to bit(64)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 bigint)")
+	tk.MustExec("create table t1(c1 bit(64))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x00\x00\x00\x00\x00\x00\x00\x01"))
+
+	// compare int to bit(32)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int)")
+	tk.MustExec("create table t1(c1 bit(32))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x00\x00\x00\x01"))
+
+	// compare mediumint to bit(24)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 mediumint)")
+	tk.MustExec("create table t1(c1 bit(24))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x00\x00\x01"))
+
+	// compare smallint to bit(16)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 smallint)")
+	tk.MustExec("create table t1(c1 bit(16))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x00\x01"))
+
+	// compare tinyint to bit(8)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 tinyint)")
+	tk.MustExec("create table t1(c1 bit(8))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x01"))
 }

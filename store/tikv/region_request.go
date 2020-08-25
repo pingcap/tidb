@@ -14,7 +14,9 @@
 package tikv
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -62,6 +64,54 @@ type RegionRequestSender struct {
 	storeAddr    string
 	rpcError     error
 	failStoreIDs map[uint64]struct{}
+	RegionRequestRuntimeStats
+}
+
+// RegionRequestRuntimeStats records the runtime stats of send region requests.
+type RegionRequestRuntimeStats struct {
+	Stats map[tikvrpc.CmdType]*RPCRuntimeStats
+}
+
+// NewRegionRequestRuntimeStats returns a new RegionRequestRuntimeStats.
+func NewRegionRequestRuntimeStats() RegionRequestRuntimeStats {
+	return RegionRequestRuntimeStats{
+		Stats: make(map[tikvrpc.CmdType]*RPCRuntimeStats),
+	}
+}
+
+// RPCRuntimeStats indicates the RPC request count and consume time.
+type RPCRuntimeStats struct {
+	Count int64
+	// Send region request consume time.
+	Consume int64
+}
+
+// String implements fmt.Stringer interface.
+func (r *RegionRequestRuntimeStats) String() string {
+	var buf bytes.Buffer
+	for k, v := range r.Stats {
+		if buf.Len() > 0 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(fmt.Sprintf("%s:{num_rpc:%d, total_time:%s}", k.String(), v.Count, time.Duration(v.Consume)))
+	}
+	return buf.String()
+}
+
+// Merge merges other RegionRequestRuntimeStats.
+func (r *RegionRequestRuntimeStats) Merge(rs RegionRequestRuntimeStats) {
+	for cmd, v := range rs.Stats {
+		stat, ok := r.Stats[cmd]
+		if !ok {
+			r.Stats[cmd] = &RPCRuntimeStats{
+				Count:   v.Count,
+				Consume: v.Consume,
+			}
+			continue
+		}
+		stat.Count += v.Count
+		stat.Consume += v.Consume
+	}
 }
 
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
@@ -85,15 +135,18 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
 	}
+	if ss.Stats != nil {
+		defer func(start time.Time) {
+			recordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
+		}(time.Now())
+	}
 	resp, err = ss.client.SendRequest(ctx, rpcCtx.Addr, req, timout)
 	if err != nil {
 		cancel()
 		ss.rpcError = err
-		for _, failedCtx := range ctxs {
-			e := ss.onSendFail(bo, failedCtx.ctx, err)
-			if e != nil {
-				return nil, false, func() {}, errors.Trace(e)
-			}
+		e := ss.onSendFail(bo, ctxs, err)
+		if e != nil {
+			return nil, false, func() {}, errors.Trace(e)
 		}
 		return nil, true, func() {}, nil
 	}
@@ -101,7 +154,20 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	return
 }
 
-func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, err error) error {
+func recordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats, cmd tikvrpc.CmdType, d time.Duration) {
+	stat, ok := stats[cmd]
+	if !ok {
+		stats[cmd] = &RPCRuntimeStats{
+			Count:   1,
+			Consume: int64(d),
+		}
+		return
+	}
+	stat.Count++
+	stat.Consume += int64(d)
+}
+
+func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctxs []copTaskAndRPCContext, err error) error {
 	// If it failed because the context is cancelled by ourself, don't retry.
 	if errors.Cause(err) == context.Canceled || status.Code(errors.Cause(err)) == codes.Canceled {
 		return errors.Trace(err)
@@ -109,15 +175,18 @@ func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctx *RPCContext, e
 		return errTiDBShuttingDown
 	}
 
-	if ctx.Meta != nil {
-		ss.regionCache.OnSendFail(bo, ctx, ss.needReloadRegion(ctx), err)
+	for _, failedCtx := range ctxs {
+		ctx := failedCtx.ctx
+		if ctx.Meta != nil {
+			ss.regionCache.OnSendFail(bo, ctx, ss.needReloadRegion(ctx), err)
+		}
 	}
 
 	// Retry on send request failure when it's not canceled.
 	// When a store is not available, the leader of related region should be elected quickly.
 	// TODO: the number of retry time should be limited:since region may be unavailable
 	// when some unrecoverable disaster happened.
-	err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctx: %v, try next peer later", err, ctx))
+	err = bo.Backoff(boTiKVRPC, errors.Errorf("send tikv request error: %v, ctxs: %v, try next peer later", err, ctxs))
 	return errors.Trace(err)
 }
 
@@ -328,6 +397,13 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		}
 		defer s.releaseStoreToken(rpcCtx.Store)
 	}
+
+	if s.Stats != nil {
+		defer func(start time.Time) {
+			recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
+		}(time.Now())
+	}
+
 	ctx := bo.ctx
 	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		var cancel context.CancelFunc

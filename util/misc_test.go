@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
@@ -177,7 +176,7 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 		State:   3,
 		Info:    "test",
 		StmtCtx: &stmtctx.StatementContext{
-			MemTracker: memory.NewTracker(stringutil.StringerStr(""), -1),
+			MemTracker: memory.NewTracker(-1, -1),
 		},
 	}
 	row := pi.ToRowForShow(false)

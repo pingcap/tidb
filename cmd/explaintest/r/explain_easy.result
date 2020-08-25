@@ -186,11 +186,11 @@ HashAgg_18	24000.00	root		group by:Column#10, funcs:firstrow(Column#11)->Column#
     └─IndexReader_73	10000.00	root		index:IndexFullScan_72
       └─IndexFullScan_72	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:true, stats:pseudo
 select * from information_schema.tidb_indexes where table_name='t4';
-TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID
-test	t4	0	PRIMARY	1	a	NULL		NULL	0
-test	t4	1	idx	1	a	NULL		NULL	1
-test	t4	1	idx	2	b	NULL		NULL	1
-test	t4	1	expr_idx	1	NULL	NULL		(`a` + `b` + 1)	2
+TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	KEY_NAME	SEQ_IN_INDEX	COLUMN_NAME	SUB_PART	INDEX_COMMENT	Expression	INDEX_ID	IS_VISIBLE
+test	t4	0	PRIMARY	1	a	NULL		NULL	0	YES
+test	t4	1	idx	1	a	NULL		NULL	1	YES
+test	t4	1	idx	2	b	NULL		NULL	1	YES
+test	t4	1	expr_idx	1	NULL	NULL		(`a` + `b` + 1)	2	YES
 explain select count(1) from (select count(1) from (select * from t1 where c3 = 100) k) k2;
 id	estRows	task	access object	operator info
 StreamAgg_13	1.00	root		funcs:count(1)->Column#5
@@ -679,8 +679,8 @@ HashAgg_15	2.00	root		group by:Column#3, funcs:firstrow(Column#6)->Column#3
 └─Union_16	2.00	root		
   ├─HashAgg_17	1.00	root		group by:1, funcs:firstrow(0)->Column#6, funcs:firstrow(0)->Column#3
   │ └─TableDual_20	1.00	root		rows:1
-  └─StreamAgg_27	1.00	root		group by:Column#1, funcs:firstrow(Column#1)->Column#6, funcs:firstrow(Column#1)->Column#3
-    └─Projection_32	1.00	root		1->Column#1
+  └─StreamAgg_27	1.00	root		group by:Column#2, funcs:firstrow(Column#2)->Column#6, funcs:firstrow(Column#2)->Column#3
+    └─Projection_32	1.00	root		1->Column#2
       └─TableDual_33	1.00	root		rows:1
 create table t (i int key, j int, unique key (i, j));
 begin;
@@ -771,4 +771,17 @@ label = "cop"
 "TableReader_7" -> "Selection_6"
 }
 
+drop table if exists t;
+create table t(a binary(16) not null, b varchar(2) default null, c varchar(100) default 'aaaa', key (a,b));
+explain select * from t where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+id	estRows	task	access object	operator info
+IndexLookUp_10	0.10	root		
+├─IndexRangeScan_8(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:["[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb","[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb"], keep order:false, stats:pseudo
+└─TableRowIDScan_9(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+id	estRows	task	access object	operator info
+Update_4	N/A	root		N/A
+└─IndexLookUp_11	0.10	root		
+  ├─IndexRangeScan_9(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:["[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb","[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb"], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;

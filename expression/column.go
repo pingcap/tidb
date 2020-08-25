@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -606,4 +607,14 @@ func (col *Column) Coercibility() Coercibility {
 	}
 	col.SetCoercibility(deriveCoercibilityForColumn(col))
 	return col.collationInfo.Coercibility()
+}
+
+// SortColumns sort columns based on UniqueID.
+func SortColumns(cols []*Column) []*Column {
+	sorted := make([]*Column, len(cols))
+	copy(sorted, cols)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].UniqueID < sorted[j].UniqueID
+	})
+	return sorted
 }

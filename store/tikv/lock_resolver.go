@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -598,6 +598,8 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 		}
 		if status.IsCommitted() {
 			lreq.CommitVersion = status.CommitTS()
+		} else {
+			logutil.BgLogger().Info("resolveLock rollback", zap.String("lock", l.String()))
 		}
 
 		if resolveLite {
@@ -605,9 +607,6 @@ func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, li
 			// prevent from scanning the whole region in this case.
 			tikvLockResolverCountWithResolveLockLite.Inc()
 			lreq.Keys = [][]byte{l.Key}
-			if !status.IsCommitted() {
-				logutil.BgLogger().Info("resolveLock rollback", zap.String("lock", l.String()))
-			}
 		}
 		req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, lreq)
 		resp, err := lr.store.SendReq(bo, req, loc.Region, readTimeoutShort)

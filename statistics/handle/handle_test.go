@@ -51,6 +51,7 @@ func cleanEnv(c *C, store kv.Storage, do *domain.Domain) {
 	tk.MustExec("delete from mysql.stats_meta")
 	tk.MustExec("delete from mysql.stats_histograms")
 	tk.MustExec("delete from mysql.stats_buckets")
+	tk.MustExec("delete from mysql.stats_extended")
 	do.StatsHandle().Clear()
 }
 
@@ -97,6 +98,64 @@ func (s *testStatsSuite) TestStatsCache(c *C) {
 	do.StatsHandle().Update(is)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
+}
+
+func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int,c3 int)")
+	testKit.MustExec("insert into t values(1, 2, 3)")
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsTrue)
+	testKit.MustExec("analyze table t")
+
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+
+	c.Assert(statsTbl.Pseudo, IsFalse)
+	testKit.MustExec("create index idx_t on t(c1)")
+	do.InfoSchema()
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+
+	// If index is build, but stats is not updated. statsTbl can also work.
+	c.Assert(statsTbl.Pseudo, IsFalse)
+	// But the added index will not work.
+	c.Assert(statsTbl.Indices[int64(1)], IsNil)
+
+	testKit.MustExec("analyze table t")
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+
+	c.Assert(statsTbl.Pseudo, IsFalse)
+
+	// If the new schema drop a column, the table stats can still work.
+	testKit.MustExec("alter table t drop column c2")
+	is = do.InfoSchema()
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(is)
+
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(statsTbl.Pseudo, IsFalse)
+
+	// If the new schema add a column, the table stats can still work.
+	testKit.MustExec("alter table t add column c10 int")
+	is = do.InfoSchema()
+
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(is)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.Pseudo, IsFalse)
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
 }
 
 func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {
@@ -547,4 +606,155 @@ func (s *testStatsSuite) TestCorrelation(c *C) {
 	result = testKit.MustQuery("show stats_histograms where Table_name = 't' and Is_index = 1").Sort()
 	c.Assert(len(result.Rows()), Equals, 1)
 	c.Assert(result.Rows()[0][9], Equals, "0")
+}
+
+func (s *testStatsSuite) TestExtendedStatsOps(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	err := tk.ExecToErr("drop statistics s1")
+	c.Assert(err.Error(), Equals, "[planner:1046]No database selected")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
+	tk.MustExec("insert into t values(1,1,5,1),(2,2,4,2),(3,3,3,3),(4,4,2,4),(5,5,1,5)")
+	tk.MustExec("analyze table t")
+	err = tk.ExecToErr("create statistics s1(correlation) on not_exist_db.t(b,c)")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'not_exist_db.t' doesn't exist")
+	err = tk.ExecToErr("create statistics s1(correlation) on not_exist_tbl(b,c)")
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.not_exist_tbl' doesn't exist")
+	err = tk.ExecToErr("create statistics s1(correlation) on t(b,e)")
+	c.Assert(err.Error(), Equals, "[ddl:1072]column does not exist: e")
+	tk.MustExec("create statistics s1(correlation) on t(a,b)")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 No need to create correlation statistics on the integer primary key column",
+	))
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended where stats_name = 's1' and db = 'test'").Check(testkit.Rows())
+	err = tk.ExecToErr("create statistics s1(correlation) on t(b,c,d)")
+	c.Assert(err.Error(), Equals, "[planner:1815]Only support Correlation and Dependency statistics types on 2 columns")
+
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended where stats_name = 's1' and db = 'test'").Check(testkit.Rows())
+	tk.MustExec("create statistics s1(correlation) on t(b,c)")
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended where stats_name = 's1' and db = 'test'").Check(testkit.Rows(
+		"2 [2,3] <nil> <nil> 0",
+	))
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	do.StatsHandle().Update(is)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
+
+	tk.MustExec("update mysql.stats_extended set status = 1 where stats_name = 's1' and db = 'test'")
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(is)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 1)
+
+	tk.MustExec("drop statistics s1")
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended where stats_name = 's1' and db = 'test'").Check(testkit.Rows(
+		"2 [2,3] <nil> <nil> 2",
+	))
+	do.StatsHandle().Update(is)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
+}
+
+func (s *testStatsSuite) TestAdminReloadStatistics(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
+	tk.MustExec("insert into t values(1,1,5,1),(2,2,4,2),(3,3,3,3),(4,4,2,4),(5,5,1,5)")
+	tk.MustExec("analyze table t")
+	tk.MustExec("create statistics s1(correlation) on t(b,c)")
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended where stats_name = 's1' and db = 'test'").Check(testkit.Rows(
+		"2 [2,3] <nil> <nil> 0",
+	))
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	do.StatsHandle().Update(is)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
+
+	tk.MustExec("update mysql.stats_extended set status = 1 where stats_name = 's1' and db = 'test'")
+	do.StatsHandle().Clear()
+	do.StatsHandle().Update(is)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 1)
+
+	tk.MustExec("delete from mysql.stats_extended where stats_name = 's1' and db = 'test'")
+	do.StatsHandle().Update(is)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 1)
+
+	tk.MustExec("admin reload statistics")
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
+}
+
+func (s *testStatsSuite) TestCorrelationStatsCompute(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	tk.MustExec("insert into t values(1,1,5),(2,2,4),(3,3,3),(4,4,2),(5,5,1)")
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended").Check(testkit.Rows())
+	tk.MustExec("create statistics s1(correlation) on t(a,b)")
+	tk.MustExec("create statistics s2(correlation) on t(a,c)")
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"2 [1,2] <nil> <nil> 0",
+		"2 [1,3] <nil> <nil> 0",
+	))
+	do := s.do
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tableInfo := tbl.Meta()
+	do.StatsHandle().Update(is)
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 0)
+
+	tk.MustExec("analyze table t")
+	tk.MustQuery("select type, column_ids, scalar_stats, blob_stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
+		"2 [1,2] 1 <nil> 1",
+		"2 [1,3] -1 <nil> 1",
+	))
+	do.StatsHandle().Update(is)
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	c.Assert(statsTbl, NotNil)
+	c.Assert(statsTbl.ExtendedStats, NotNil)
+	c.Assert(len(statsTbl.ExtendedStats.Stats), Equals, 2)
+	foundS1, foundS2 := false, false
+	for key, item := range statsTbl.ExtendedStats.Stats {
+		c.Assert(key.DB, Equals, "test")
+		switch key.StatsName {
+		case "s1":
+			foundS1 = true
+			c.Assert(item.ScalarVals, Equals, float64(1))
+		case "s2":
+			foundS2 = true
+			c.Assert(item.ScalarVals, Equals, float64(-1))
+		default:
+			c.Assert("Unexpected extended stats in cache", IsNil)
+		}
+	}
+	c.Assert(foundS1 && foundS2, IsTrue)
 }

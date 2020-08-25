@@ -596,7 +596,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		errStr := err.Error()
 		conflictCommitTS := extractConflictCommitTS(errStr)
 		forUpdateTS := txnCtx.GetForUpdateTS()
-		logutil.Logger(ctx).Info("pessimistic write conflict, retry statement",
+		logutil.Logger(ctx).Debug("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
 			zap.Uint64("forUpdateTS", forUpdateTS),
 			zap.String("err", errStr))
@@ -775,8 +775,14 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
 	sessVars := a.Ctx.GetSessionVars()
-	pps := types.CloneRow(sessVars.PreparedParams)
-	sessVars.PrevStmt = FormatSQL(a.OriginText(), pps)
+	prevStmt := a.GetTextToLog()
+	if sessVars.EnableLogDesensitization {
+		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
+	} else {
+		pps := types.CloneRow(sessVars.PreparedParams)
+		sessVars.PrevStmt = FormatSQL(prevStmt, pps)
+	}
+
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
 		sessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
