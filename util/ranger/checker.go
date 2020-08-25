@@ -77,9 +77,6 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		return c.checkColumn(scalar.GetArgs()[0])
 	case ast.UnaryNot:
 		// TODO: support "not like" convert to access conditions.
-		if _, ok := scalar.GetArgs()[0].(*expression.Column); ok {
-			return true
-		}
 		if s, ok := scalar.GetArgs()[0].(*expression.ScalarFunction); ok {
 			if s.FuncName.L == ast.Like {
 				return false

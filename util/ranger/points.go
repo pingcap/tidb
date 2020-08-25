@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Error instances.
@@ -317,8 +318,16 @@ func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (type
 	return val, op, false
 }
 
-func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []point {
+func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, keepNull bool) []point {
 	if isNot == 1 {
+		if keepNull {
+			// Range is {[0, 0]}
+			startPoint2 := point{start: true}
+			startPoint2.value.SetInt64(0)
+			endPoint2 := point{}
+			endPoint2.value.SetInt64(0)
+			return []point{startPoint2, endPoint2}
+		}
 		// NOT TRUE range is {[null null] [0, 0]}
 		startPoint1 := point{start: true}
 		endPoint1 := point{}
@@ -492,18 +501,11 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 	return []point{startPoint, endPoint}
 }
 
-func (r *builder) buildFromNot(inputExpr expression.Expression) []point {
-	// Use IsFalse to build range for `not column`
-	if _, ok := inputExpr.(*expression.Column); ok {
-		return r.buildFromIsFalse(nil, 0)
-	}
-	expr, ok := inputExpr.(*expression.ScalarFunction)
-	if !ok {
-		return nil
-	}
+func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	switch n := expr.FuncName.L; n {
 	case ast.IsTruth:
-		return r.buildFromIsTrue(expr, 1)
+		keepNull := r.isTrueKeepNull(expr)
+		return r.buildFromIsTrue(expr, 1, keepNull)
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
@@ -559,7 +561,8 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []point {
 	case ast.LogicOr:
 		return r.union(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	case ast.IsTruth:
-		return r.buildFromIsTrue(expr, 0)
+		keepNull := r.isTrueKeepNull(expr)
+		return r.buildFromIsTrue(expr, 0, keepNull)
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 0)
 	case ast.In:
@@ -572,7 +575,7 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []point {
 		endPoint := point{}
 		return []point{startPoint, endPoint}
 	case ast.UnaryNot:
-		return r.buildFromNot(expr.GetArgs()[0])
+		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction))
 	}
 
 	return nil
@@ -645,4 +648,12 @@ func (r *builder) merge(a, b []point, union bool) []point {
 		}
 	}
 	return mergedPoints[:curTail]
+}
+
+func (r *builder) isTrueKeepNull(expr *expression.ScalarFunction) bool {
+	switch expr.Function.PbCode() {
+	case tipb.ScalarFuncSig_DecimalIsTrueWithNull, tipb.ScalarFuncSig_RealIsTrueWithNull, tipb.ScalarFuncSig_IntIsTrueWithNull:
+		return true
+	}
+	return false
 }
