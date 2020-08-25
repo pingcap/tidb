@@ -115,8 +115,10 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo, 
 	return exprs[0], nil
 }
 
-func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.PartitionInfo) ([]int, []expression.Expression, error) {
-	pe, err := generateHashPartitionExpr(ds.ctx, ds.table.Meta().Partition, ds.TblCols, ds.names)
+func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
+	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, []expression.Expression, error) {
+	pi := tbl.Meta().Partition
+	pe, err := generateHashPartitionExpr(ctx, pi, columns, names)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -126,32 +128,40 @@ func (s *partitionProcessor) findUsedPartitions(ds *DataSource, pi *model.Partit
 		partIdx[i].Index = i
 		colLen = append(colLen, types.UnspecifiedLength)
 	}
-	datchedResult, err := ranger.DetachCondAndBuildRangeForPartition(ds.SCtx(), ds.allConds, partIdx, colLen)
+	datchedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partIdx, colLen)
 	if err != nil {
 		return nil, nil, err
 	}
 	ranges := datchedResult.Ranges
 	used := make([]int, 0, len(ranges))
 	for _, r := range ranges {
-		if r.IsPointNullable(ds.ctx.GetSessionVars().StmtCtx) {
+		if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {
 			if !r.HighVal[0].IsNull() {
 				if len(r.HighVal) != len(partIdx) {
 					used = []int{-1}
 					break
 				}
 			}
-			pos, isNull, err := pe.EvalInt(ds.ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+			pos, isNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
 			if err != nil {
 				return nil, nil, err
 			}
 			if isNull {
 				pos = 0
 			}
-			used = append(used, int(math.Abs(pos%int64(pi.Num))))
+			idx := math.Abs(pos % int64(pi.Num))
+			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+				continue
+			}
+			used = append(used, int(idx))
 		} else {
-			used = []int{-1}
+			used = []int{FullRange}
 			break
 		}
+	}
+	if len(partitionNames) > 0 {
+		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
+		return s.convertToIntSlice(or, pi, partitionNames), nil, nil
 	}
 	sort.Ints(used)
 	ret := make([]int, 0, len(used))
@@ -193,14 +203,14 @@ func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
 	}
 }
 
-func (s *partitionProcessor) newPruneHashPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
-	used, _, err := s.findUsedPartitions(ds, pi)
+func (s *partitionProcessor) PruneHashPartition(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
+	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
+	used, _, err := s.findUsedPartitions(ctx, tbl, partitionNames, conds, columns, names)
 	if err != nil {
 		return nil, err
 	}
-	return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi))
+	return used, nil
 }
-
 
 func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
 	used, err := s.pruneHashPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, ds.names)
@@ -247,7 +257,7 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	}
 	// Try to locate partition directly for hash partition.
 	if pi.Type == model.PartitionTypeHash {
-		return s.newPruneHashPartition(ds, pi)
+		return s.processHashPartition(ds, pi)
 	}
 	if pi.Type == model.PartitionTypeRange {
 		return s.processRangePartition(ds, pi)
