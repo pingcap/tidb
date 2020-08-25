@@ -774,8 +774,38 @@ func (w *worker) doModifyColumnTypeWithData(
 		// none -> delete only
 		updateChangingInfo(job, changingCol, changingIdxs, model.StateDeleteOnly)
 		job.Args = append(job.Args, changingCol, changingIdxs)
+		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
+			if valStr, ok := val.(string); ok {
+				var ctx sessionctx.Context
+				ctx, err := w.sessPool.get()
+				if err != nil {
+					failpoint.Return(ver, err)
+				}
+				defer w.sessPool.put(ctx)
+
+				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("use test")
+				if err != nil {
+					failpoint.Return(ver, err)
+				}
+				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(valStr)
+				if err != nil {
+					failpoint.Return(ver, err)
+				}
+			}
+		})
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != changingCol.State)
 	case model.StateDeleteOnly:
+		// Column from null to not null.
+		if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(changingCol.Flag) {
+			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
+			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, oldCol.Name, oldCol.Tp != changingCol.Tp)
+			if err != nil {
+				if ErrWarnDataTruncated.Equal(err) || errInvalidUseOfNull.Equal(err) {
+					job.State = model.JobStateRollingback
+				}
+				return ver, err
+			}
+		}
 		// delete only -> write only
 		updateChangingInfo(job, changingCol, changingIdxs, model.StateWriteOnly)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != changingCol.State)
