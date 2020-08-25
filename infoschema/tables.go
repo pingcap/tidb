@@ -1351,8 +1351,8 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	for _, member := range members {
-		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), member, pdapi.ClusterVersion)
+	for _, addr := range members {
+		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.ClusterVersion)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1369,7 +1369,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
 		// Get PD git_hash
-		url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), member, pdapi.Status)
+		url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
 		req, err = http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1391,8 +1391,8 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 
 		servers = append(servers, ServerInfo{
 			ServerType:     "pd",
-			Address:        member,
-			StatusAddr:     member,
+			Address:        addr,
+			StatusAddr:     addr,
 			Version:        version,
 			GitHash:        content.GitHash,
 			StartTimestamp: content.StartTimestamp,
