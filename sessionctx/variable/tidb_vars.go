@@ -435,6 +435,9 @@ const (
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
+
+	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
+	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
 )
 
 // Default TiDB system variable values.
@@ -477,7 +480,7 @@ const (
 	DefCurretTS                        = 0
 	DefInitChunkSize                   = 32
 	DefMaxChunkSize                    = 1024
-	DefDMLBatchSize                    = 20000
+	DefDMLBatchSize                    = 0
 	DefMaxPreparedStmtCount            = -1
 	DefWaitTimeout                     = 0
 	DefTiDBMemQuotaHashJoin            = 32 << 30 // 32GB.
@@ -539,6 +542,7 @@ const (
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
+	DefTiDBEnableAmendPessimisticTxn   = true
 )
 
 // Process global variables.

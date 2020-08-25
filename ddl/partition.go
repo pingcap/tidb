@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
@@ -220,14 +222,14 @@ func checkPartitionReplica(addingDefinitions []model.PartitionDefinition, d *ddl
 	}
 	for _, pd := range addingDefinitions {
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(pd.ID)
-		regions, _, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
+		regions, err := pdCli.ScanRegions(ctx, startKey, endKey, -1)
 		if err != nil {
 			return needWait, errors.Trace(err)
 		}
 		// For every region in the partition, if it has some corresponding peers and
 		// no pending peers, that means the replication has completed.
 		for _, region := range regions {
-			regionState, err := pdCli.GetRegionByID(ctx, region.Id)
+			regionState, err := pdCli.GetRegionByID(ctx, region.Meta.Id)
 			if err != nil {
 				return needWait, errors.Trace(err)
 			}
@@ -238,7 +240,7 @@ func checkPartitionReplica(addingDefinitions []model.PartitionDefinition, d *ddl
 				continue
 			}
 			needWait = true
-			logutil.BgLogger().Info("[ddl] partition replicas check failed in replica-only DDL state", zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Id), zap.Bool("tiflash peer at least one", tiflashPeerAtLeastOne), zap.Time("check time", time.Now()))
+			logutil.BgLogger().Info("[ddl] partition replicas check failed in replica-only DDL state", zap.Int64("pID", pd.ID), zap.Uint64("wait region ID", region.Meta.Id), zap.Bool("tiflash peer at least one", tiflashPeerAtLeastOne), zap.Time("check time", time.Now()))
 			return needWait, nil
 		}
 	}
@@ -859,6 +861,21 @@ func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def 
 	return index, nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
 }
 
+func buildPlacementDropRules(schemaID, tableID int64, partitionIDs []int64) []*placement.RuleOp {
+	rules := make([]*placement.RuleOp, 0, len(partitionIDs))
+	for _, partitionID := range partitionIDs {
+		rules = append(rules, &placement.RuleOp{
+			Action:           placement.RuleOpDel,
+			DeleteByIDPrefix: true,
+			Rule: &placement.Rule{
+				GroupID: placement.RuleDefaultGroupID,
+				ID:      fmt.Sprintf("%d_t%d_p%d", schemaID, tableID, partitionID),
+			},
+		})
+	}
+	return rules
+}
+
 // onDropTablePartition deletes old partition meta.
 func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
@@ -882,16 +899,24 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 		physicalTableIDs = removePartitionInfo(tblInfo, partNames)
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+	}
+
+	rules := buildPlacementDropRules(job.SchemaID, tblInfo.ID, physicalTableIDs)
+
+	err = infosync.UpdatePlacementRules(nil, rules)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
 	// Finish this job.
 	if job.IsRollingback() {
 		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	} else {
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 	}
 
@@ -1289,7 +1314,7 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 	return nil
 }
 
-func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model.IndexColumn, tblInfo *model.TableInfo, isPK bool) error {
+func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model.IndexColumn, tblInfo *model.TableInfo) (bool, error) {
 	var (
 		partCols []*model.ColumnInfo
 		err      error
@@ -1300,29 +1325,24 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model
 		// Parse partitioning key, extract the column names in the partitioning key to slice.
 		partCols, err = extractPartitionColumns(partExpr, tblInfo)
 		if err != nil {
-			return err
+			return false, err
 		}
 	} else {
 		partCols = make([]*model.ColumnInfo, 0, len(pi.Columns))
 		for _, col := range pi.Columns {
 			colInfo := getColumnInfoByName(tblInfo, col.L)
 			if colInfo == nil {
-				return infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
+				return false, infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
 			}
 			partCols = append(partCols, colInfo)
 		}
 	}
 
-	// Every unique key on the table must use every column in the table's partitioning expression.(This
+	// In MySQL, every unique key on the table must use every column in the table's partitioning expression.(This
 	// also includes the table's primary key.)
+	// In TiDB, global index will be built when this constraint is not satisfied and EnableGlobalIndex is set.
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
-	if !checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexColumns) {
-		if isPK {
-			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
-		}
-		return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
-	}
-	return nil
+	return checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexColumns), nil
 }
 
 type columnNameExtractor struct {
@@ -1445,4 +1465,47 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 	}
 	tblInfo.Partition.Definitions = newDefs
 	return nil
+}
+
+func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
+	var partitionID int64
+	var rules []*placement.RuleOp
+	err := job.DecodeArgs(&partitionID, &rules)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return 0, err
+	}
+
+	ptInfo := tblInfo.GetPartitionInfo()
+	if ptInfo.GetNameByID(partitionID) == "" {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
+	}
+
+	for i, rule := range rules {
+		if rule.Action == placement.RuleOpDel {
+			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s", job.SchemaID, tblInfo.ID, partitionID, rule.Role)
+		} else {
+			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s_%d_%d", job.SchemaID, tblInfo.ID, partitionID, rule.Role, job.ID, i)
+		}
+	}
+
+	ver, err := t.GetSchemaVersion()
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	err = infosync.UpdatePlacementRules(nil, rules)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
 }

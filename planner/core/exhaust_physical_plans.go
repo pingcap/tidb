@@ -842,6 +842,8 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		rangeDecidedBy:  outerJoinKeys,
 		KeepOrder:       keepOrder,
 		Desc:            desc,
+		physicalTableID: ds.physicalTableID,
+		isPartition:     ds.isPartition,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if rowCount <= 0 {
@@ -874,6 +876,12 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		cst:               sessVars.ScanFactor * rowSize * ts.stats.RowCount,
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
+	}
+	copTask.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
 	}
 	selStats := ts.stats.Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
@@ -932,6 +940,12 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tblCols:     ds.TblCols,
 		keepOrder:   is.KeepOrder,
 	}
+	cop.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+	}
 	if !ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table) {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
@@ -942,14 +956,14 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, ds.blockOffset)
 		ts.schema = is.dataSourceSchema.Clone()
-		if ds.tableInfo.IsCommonHandle {
-			cop.commonHandleCols = ds.commonHandleCols
-		}
 		// If inner cop task need keep order, the extraHandleCol should be set.
-		if cop.keepOrder {
+		if cop.keepOrder && !ds.tableInfo.IsCommonHandle {
 			cop.extraHandleCol, cop.doubleReadNeedProj = ts.appendExtraHandleCol(ds)
 		}
 		cop.tablePlan = ts
+	}
+	if cop.tablePlan != nil && ds.tableInfo.IsCommonHandle {
+		cop.commonHandleCols = ds.commonHandleCols
 	}
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), cop.tablePlan != nil)
 	indexConds, tblConds := ds.splitIndexFilterConditions(filterConds, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
@@ -1574,16 +1588,34 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
-	if p.JoinType != InnerJoin || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 || len(p.OtherConditions) != 0 || len(p.EqualConditions) == 0 {
+	// Disable broadcast join on partition table for TiFlash.
+	for _, child := range p.children {
+		if ds, isDataSource := child.(*DataSource); isDataSource {
+			if ds.tableInfo.GetPartitionInfo() != nil {
+				return nil
+			}
+		}
+	}
+
+	// for left join the global idx must be 1, and for right join the global idx must be 0
+	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin) || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 || len(p.OtherConditions) != 0 || len(p.EqualConditions) == 0 {
 		return nil
 	}
 
 	if hasPrefer, idx := p.getPreferredBCJLocalIndex(); hasPrefer {
+		if (idx == 0 && p.JoinType == RightOuterJoin) || (idx == 1 && p.JoinType == LeftOuterJoin) {
+			return nil
+		}
 		return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1-idx)
 	}
-	results := p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
-	results = append(results, p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)...)
-	return results
+	if p.JoinType == InnerJoin {
+		results := p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
+		results = append(results, p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)...)
+		return results
+	} else if p.JoinType == LeftOuterJoin {
+		return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 1)
+	}
+	return p.tryToGetBroadCastJoinByPreferGlobalIdx(prop, 0)
 }
 
 func (p *LogicalJoin) tryToGetBroadCastJoinByPreferGlobalIdx(prop *property.PhysicalProperty, preferredGlobalIndex int) []PhysicalPlan {

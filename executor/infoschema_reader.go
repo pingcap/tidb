@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.etcd.io/etcd/clientv3"
 )
 
@@ -346,7 +347,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 					"",                    // COMMENT
 					"",                    // INDEX_COMMENT
 					"YES",                 // IS_VISIBLE
-					"NULL",                // Expression
+					nil,                   // Expression
 				)
 				rows = append(rows, record)
 			}
@@ -374,7 +375,8 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 			}
 
 			colName := col.Name.O
-			expression := "NULL"
+			var expression interface{}
+			expression = nil
 			tblCol := table.Columns[col.Offset]
 			if tblCol.Hidden {
 				colName = "NULL"
@@ -769,8 +771,9 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 					pkCol.Name.O,  // COLUMN_NAME
 					nil,           // SUB_PART
 					"",            // INDEX_COMMENT
-					"NULL",        // Expression
+					nil,           // Expression
 					0,             // INDEX_ID
+					"YES",         // IS_VISIBLE
 				)
 				rows = append(rows, record)
 			}
@@ -788,11 +791,16 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 						subPart = col.Length
 					}
 					colName := col.Name.O
-					expression := "NULL"
+					var expression interface{}
+					expression = nil
 					tblCol := tb.Columns[col.Offset]
 					if tblCol.Hidden {
 						colName = "NULL"
 						expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+					}
+					visible := "YES"
+					if idxInfo.Invisible {
+						visible = "NO"
 					}
 					record := types.MakeDatums(
 						schema.Name.O,   // TABLE_SCHEMA
@@ -805,6 +813,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 						idxInfo.Comment, // INDEX_COMMENT
 						expression,      // Expression
 						idxInfo.ID,      // INDEX_ID
+						visible,         // IS_VISIBLE
 					)
 					rows = append(rows, record)
 				}
@@ -1652,6 +1661,7 @@ func (e *memtableRetriever) setDataForServersInfo() error {
 			info.Version,         // VERSION
 			info.GitHash,         // GIT_HASH
 			info.BinlogStatus,    // BINLOG_STATUS
+			stringutil.BuildStringFromLabels(info.Labels), // LABELS
 		)
 		rows = append(rows, row)
 	}
