@@ -827,16 +827,17 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	desc bool,
 	rowCount float64,
 ) task {
+	// If ds.tableInfo.Partition != nil && !ds.isPartition, it means the data source is a partition table reader.
+	// If the inner task need to keep order, the partition table reader can't satisfy it.
+	if keepOrder && ds.tableInfo.Partition != nil && !ds.isPartition {
+		return nil
+	}
 	var ranges []*ranger.Range
 	// pk is nil means the table uses the common handle.
 	if pk == nil {
 		ranges = ranger.FullRange()
 	} else {
 		ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pk.RetType.Flag))
-	}
-	// If the inner task need to keep order, the partition table reader can't satisfy it.
-	if keepOrder && ds.tableInfo.Partition != nil {
-		return nil
 	}
 	ts := PhysicalTableScan{
 		Table:           ds.tableInfo,
@@ -924,8 +925,9 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	rowCount float64,
 	maxOneRow bool,
 ) task {
+	// If ds.tableInfo.Partition != nil && !ds.isPartition, it means the data source is a partition table reader.
 	// If the inner task need to keep order, the partition table reader can't satisfy it.
-	if keepOrder && ds.tableInfo.Partition != nil {
+	if keepOrder && ds.tableInfo.Partition != nil && !ds.isPartition {
 		return nil
 	}
 	is := PhysicalIndexScan{
