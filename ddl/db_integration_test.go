@@ -587,6 +587,10 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrWrongDBName)
 	sql = "alter table test_error_code_succ modify t.c1 bigint"
 	tk.MustGetErrCode(sql, errno.ErrWrongTableName)
+	sql = "alter table test_error_code_succ change c1 _tidb_rowid bigint"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
+	sql = "alter table test_error_code_succ rename column c1 to _tidb_rowid"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
 	// insert value
 	tk.MustExec("create table test_error_code_null(c1 char(100) not null);")
 	sql = "insert into test_error_code_null (c1) values(null);"
