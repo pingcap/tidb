@@ -6842,6 +6842,14 @@ func (s *testIntegrationSerialSuite) TestIssue17233(c *C) {
 	tk.MustQuery("SELECT view_10.col_1 FROM view_4 JOIN view_10").Check(testkit.Rows("16", "16", "16", "16", "16", "18", "18", "18", "18", "18", "19", "19", "19", "19", "19"))
 }
 
+func (s *testIntegrationSuite) TestIssue18515(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b json, c int AS (JSON_EXTRACT(b, '$.population')), key(c));")
+	tk.MustExec("select /*+ TIDB_INLJ(t2) */ t1.a, t1.c, t2.a from t t1, t t2 where t1.c=t2.c;")
+}
+
 func (s *testIntegrationSerialSuite) TestIssue17989(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
