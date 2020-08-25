@@ -459,6 +459,25 @@ func (p BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInf
 	return &p
 }
 
+<<<<<<< HEAD
+=======
+// Init initializes PointGetPlan.
+func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PointGetPlan {
+	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet, offset)
+	p.stats = stats
+	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
+	return &p
+}
+
+func flattenTreePlan(plan PhysicalPlan, plans []PhysicalPlan) []PhysicalPlan {
+	plans = append(plans, plan)
+	for _, child := range plan.Children() {
+		plans = flattenTreePlan(child, plans)
+	}
+	return plans
+}
+
+>>>>>>> 977449f... planner: fix a bug that can't find column in indexLookupJoin with virtual generated column (#18516)
 // flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
 func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
 	plans := make([]PhysicalPlan, 0, 5)
