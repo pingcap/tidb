@@ -651,12 +651,7 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 
 		tp := t.tablePlan
 		for len(tp.Children()) > 0 {
-			if len(tp.Children()) == 1 {
-				tp = tp.Children()[0]
-			} else {
-				join := tp.(*PhysicalBroadCastJoin)
-				tp = join.children[1-join.InnerChildIdx]
-			}
+			tp = tp.Children()[0]
 		}
 		ts := tp.(*PhysicalTableScan)
 		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)

@@ -703,22 +703,6 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 		physicalTableID: ds.physicalTableID,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
-<<<<<<< HEAD
-	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
-=======
-	if ts.HandleCols == nil {
-		handleCol := ds.getPKIsHandleCol()
-		if handleCol == nil {
-			handleCol, _ = ts.appendExtraHandleCol(ds)
-		}
-		ts.HandleCols = NewIntHandleCols(handleCol)
-	}
-	var err error
-	ts.HandleCols, err = ts.HandleCols.ResolveIndices(ts.schema)
-	if err != nil {
-		return nil, 0, err
-	}
->>>>>>> 977449f... planner: fix a bug that can't find column in indexLookupJoin with virtual generated column (#18516)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
