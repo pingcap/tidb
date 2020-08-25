@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/versioninfo"
@@ -1137,7 +1136,7 @@ func (ts *HTTPHandlerTestSuite) TestServerInfo(c *C) {
 
 	cfg := config.GetGlobalConfig()
 	c.Assert(info.IsOwner, IsTrue)
-	c.Assert(info.IP, Equals, util.GetLocalIP())
+	c.Assert(info.IP, Equals, cfg.AdvertiseAddress)
 	c.Assert(info.StatusPort, Equals, cfg.Status.StatusPort)
 	c.Assert(info.Lease, Equals, cfg.Lease)
 	c.Assert(info.Version, Equals, mysql.ServerVersion)
@@ -1175,7 +1174,7 @@ func (ts *HTTPHandlerTestSerialSuite) TestAllServerInfo(c *C) {
 	c.Assert(ok, Equals, true)
 
 	cfg := config.GetGlobalConfig()
-	c.Assert(serverInfo.IP, Equals, util.GetLocalIP())
+	c.Assert(serverInfo.IP, Equals, cfg.AdvertiseAddress)
 	c.Assert(serverInfo.StatusPort, Equals, cfg.Status.StatusPort)
 	c.Assert(serverInfo.Lease, Equals, cfg.Lease)
 	c.Assert(serverInfo.Version, Equals, mysql.ServerVersion)
