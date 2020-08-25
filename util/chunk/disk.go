@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/checksum"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/encrypt"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -43,6 +44,9 @@ type ListInDisk struct {
 	bufFlushMutex sync.RWMutex
 	diskTracker   *disk.Tracker // track disk usage.
 	numRowsInDisk int
+
+	// ctrCipher stores the key and nonce using by aes encrypt io layer
+	ctrCipher *encrypt.CtrCipher
 }
 
 var defaultChunkListInDiskPath = "chunk.ListInDisk"
@@ -66,7 +70,16 @@ func (l *ListInDisk) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	l.w = checksum.NewWriter(l.disk)
+	var underlying io.WriteCloser = l.disk
+	if config.GetGlobalConfig().Security.SpilledFileEncryptionMethod != config.SpilledFileEncryptionMethodPlaintext {
+		// The possible values of SpilledFileEncryptionMethod are "plaintext", "aes128-ctr"
+		l.ctrCipher, err = encrypt.NewCtrCipher()
+		if err != nil {
+			return
+		}
+		underlying = encrypt.NewWriter(l.disk, l.ctrCipher)
+	}
+	l.w = checksum.NewWriter(underlying)
 	l.bufFlushMutex = sync.RWMutex{}
 	return
 }
@@ -155,7 +168,11 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 		return
 	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
-	r := io.NewSectionReader(checksum.NewReader(l.disk), off, l.offWrite-off)
+	var underlying io.ReaderAt = l.disk
+	if l.ctrCipher != nil {
+		underlying = encrypt.NewReader(l.disk, l.ctrCipher)
+	}
+	r := io.NewSectionReader(checksum.NewReader(underlying), off, l.offWrite-off)
 	format := rowInDisk{numCol: len(l.fieldTypes)}
 	_, err = format.ReadFrom(r)
 	if err != nil {
