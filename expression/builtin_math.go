@@ -1961,6 +1961,9 @@ func (b *builtinTruncateIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return x, false, nil
+	}
 
 	d, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
@@ -1969,6 +1972,10 @@ func (b *builtinTruncateIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 
 	if d >= 0 {
 		return x, false, nil
+	}
+	// -MinInt = MinInt, special case
+	if d == mathutil.MinInt {
+		return 0, false, nil
 	}
 	shift := int64(math.Pow10(int(-d)))
 	return x / shift * shift, false, nil
@@ -1991,6 +1998,9 @@ func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return x, false, nil
+	}
 	uintx := uint64(x)
 
 	d, isNull, err := b.args[1].EvalInt(b.ctx, row)
@@ -1999,6 +2009,10 @@ func (b *builtinTruncateUintSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	if d >= 0 {
 		return x, false, nil
+	}
+	// -MinInt = MinInt, special case
+	if d == mathutil.MinInt {
+		return 0, false, nil
 	}
 	shift := uint64(math.Pow10(int(-d)))
 	return int64(uintx / shift * shift), false, nil
