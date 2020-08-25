@@ -532,7 +532,7 @@ func (s *testInfoschemaTableSerialSuite) TestForServersInfo(c *C) {
 	c.Assert(result.Rows()[0][8], Equals, stringutil.BuildStringFromLabels(info.Labels))
 }
 
-func (s *testInfoschemaTableSuite) TestForTableTiFlashReplica(c *C) {
+func (s *testInfoschemaTableSerialSuite) TestForTableTiFlashReplica(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
 
