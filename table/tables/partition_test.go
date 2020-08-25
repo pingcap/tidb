@@ -310,13 +310,30 @@ func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 }
 
-func (ts *testSuite) TestLocatePartitionSingleColumn(c *C) {
+func (ts *testSuite) TestMultiTableUpdate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE t_hash_locate (
+	tk.MustExec(`CREATE TABLE t_a (
 		id int(20),
 		data_date date
 	) partition by hash(id) partitions 10`)
+	tk.MustExec(`CREATE TABLE t_b (
+		id int(20),
+		data_date date
+	) PARTITION BY RANGE(id) (
+		PARTITION p0 VALUES LESS THAN (2),
+		PARTITION p1 VALUES LESS THAN (4),
+		PARTITION p2 VALUES LESS THAN (6)
+	)`)
+	tk.MustExec("INSERT INTO t_a VALUES (1, '2020-08-25'), (2, '2020-08-25'), (3, '2020-08-25'), (4, '2020-08-25'), (5, '2020-08-25')")
+	tk.MustExec("INSERT INTO t_b VALUES (1, '2020-08-25'), (2, '2020-08-25'), (3, '2020-08-25'), (4, '2020-08-25'), (5, '2020-08-25')")
+	tk.MustExec("update t_a, t_b set t_a.data_date = '2020-08-24',  t_a.data_date = '2020-08-23', t_a.id = t_a.id + t_b.id where t_a.id = t_b.id")
+	tk.MustQuery("select id from t_a order by id").Check(testkit.Rows("2", "4", "6", "8", "10"))
+}
+
+func (ts *testSuite) TestLocatePartitionSingleColumn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
 
 	tk.MustExec(`CREATE TABLE t_range (
 		id int(10) NOT NULL,
