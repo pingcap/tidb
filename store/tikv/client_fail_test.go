@@ -29,12 +29,12 @@ type testClientFailSuite struct {
 	OneByOneSuite
 }
 
-func (s *testClientFailSuite) SetUpSuite(c *C) {
+func (s *testClientFailSuite) SetUpSuite(_ *C) {
 	// This lock make testClientFailSuite runs exclusively.
 	withTiKVGlobalLock.Lock()
 }
 
-func (s testClientFailSuite) TearDownSuite(c *C) {
+func (s testClientFailSuite) TearDownSuite(_ *C) {
 	withTiKVGlobalLock.Unlock()
 }
 
@@ -64,6 +64,6 @@ func (s *testClientFailSuite) TestPanicInRecvLoop(c *C) {
 	time.Sleep(time.Second * 2)
 
 	req = tikvrpc.NewRequest(tikvrpc.CmdEmpty, &tikvpb.BatchCommandsEmptyRequest{})
-	_, err = rpcClient.SendRequest(context.Background(), addr, req, time.Second)
+	_, err = rpcClient.SendRequest(context.Background(), addr, req, time.Second*4)
 	c.Assert(err, IsNil)
 }
