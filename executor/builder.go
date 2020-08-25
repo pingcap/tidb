@@ -2922,6 +2922,20 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
+	// Adjust UnionScan->PartitionTable->Reader
+	// to PartitionTable->UnionScan->Reader
+	// The build of UnionScan executor is delay to the nextPartition() function
+	// because the Reader executor is available there.
+	if x, ok := reader.(*PartitionTableExecutor); ok {
+		nextPartitionForReader := x.nextPartition
+		x.nextPartition = nextPartitionForUnionScan{
+			b:     builder.executorBuilder,
+			us:    v,
+			child: nextPartitionForReader,
+		}
+		return x, nil
+	}
+
 	ret := builder.buildUnionScanFromReader(reader, v)
 	if us, ok := ret.(*UnionScanExec); ok {
 		err = us.open(ctx)
