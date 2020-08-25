@@ -206,6 +206,17 @@ func IsMemOrSysDB(dbLowerName string) bool {
 	return false
 }
 
+// IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
+func IsSystemView(dbLowerName string) bool {
+	switch dbLowerName {
+	case InformationSchemaName.L,
+		PerformanceSchemaName.L,
+		MetricSchemaName.L:
+		return true
+	}
+	return false
+}
+
 // X509NameOnline prints pkix.Name into old X509_NAME_oneline format.
 // https://www.openssl.org/docs/manmaster/man3/X509_NAME_oneline.html
 func X509NameOnline(n pkix.Name) string {

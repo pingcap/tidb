@@ -465,13 +465,9 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
 				}
-				var tableType string
-				switch schema.Name.L {
-				case util.InformationSchemaName.L, util.PerformanceSchemaName.L,
-					util.MetricSchemaName.L:
+				tableType := "BASE TABLE"
+				if util.IsSystemView(schema.Name.L) {
 					tableType = "SYSTEM VIEW"
-				default:
-					tableType = "BASE TABLE"
 				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
 				record := types.MakeDatums(
