@@ -27,9 +27,15 @@ import (
 )
 
 type commitDetailCtxKeyType struct{}
+type lockKeyDetailCtxKeyType struct{}
 
-// CommitDetailCtxKey presents CommitDetail info key in context.
-var CommitDetailCtxKey = commitDetailCtxKeyType{}
+var (
+	// CommitDetailCtxKey presents CommitDetail info key in context.
+	CommitDetailCtxKey = commitDetailCtxKeyType{}
+
+	// CommitDetailCtxKey presents CommitDetail info key in context.
+	LockKeyDetailCtxKey = lockKeyDetailCtxKeyType{}
+)
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
@@ -78,6 +84,12 @@ type CommitDetails struct {
 	WriteSize         int
 	PrewriteRegionNum int32
 	TxnRetry          int
+}
+
+type LockKeyStats struct {
+	TotalTime time.Duration
+	RegionNum int32
+	LockKeys  int32
 }
 
 const (

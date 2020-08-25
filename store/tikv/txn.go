@@ -337,6 +337,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	// Exclude keys that are already locked.
 	var err error
 	keys := make([][]byte, 0, len(keysInput))
+	startTime := time.Now()
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 	defer func() {
@@ -351,6 +352,9 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		}
 		if lockCtx.LockKeysCount != nil {
 			*lockCtx.LockKeysCount += int32(len(keys))
+		}
+		if lockCtx.Stats != nil {
+			lockCtx.Stats.TotalTime = time.Since(startTime)
 		}
 	}()
 	memBuf := txn.us.GetMemBuffer()
@@ -399,6 +403,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			assignedPrimaryKey = true
 		}
 
+		lockCtx.Stats = new(execdetails.LockKeyStats)
 		bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, txn.vars)
 		txn.committer.forUpdateTS = lockCtx.ForUpdateTS
 		// If the number of keys greater than 1, it can be on different region,
