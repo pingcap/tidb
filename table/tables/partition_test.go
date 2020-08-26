@@ -334,6 +334,10 @@ func (ts *testSuite) TestMultiTableUpdate(c *C) {
 func (ts *testSuite) TestLocatePartitionSingleColumn(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_hash_locate (
+		id int(20),
+		data_date date
+	) partition by hash(id) partitions 10`)
 
 	tk.MustExec(`CREATE TABLE t_range (
 		id int(10) NOT NULL,
