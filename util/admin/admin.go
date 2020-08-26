@@ -342,7 +342,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		} else if idxCnt > tblCnt {
 			ret = IdxCntGreater
 		}
-		return ret, i, errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
+		return ret, i, ErrAdminCheckTable.GenWithStack("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
 	}
 	return 0, 0, nil
 }
@@ -470,4 +470,6 @@ var (
 	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(errno.ErrCancelFinishedDDLJob, errno.MySQLErrName[errno.ErrCancelFinishedDDLJob])
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
 	ErrCannotCancelDDLJob = terror.ClassAdmin.New(errno.ErrCannotCancelDDLJob, errno.MySQLErrName[errno.ErrCannotCancelDDLJob])
+	// ErrAdminCheckTable returns when the table records is inconsistent with the index values.
+	ErrAdminCheckTable = terror.ClassAdmin.New(errno.ErrAdminCheckTable, errno.MySQLErrName[errno.ErrAdminCheckTable])
 )
