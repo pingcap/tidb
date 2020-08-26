@@ -4217,12 +4217,20 @@ func (s *testSerialDBSuite) TestProcessColumnFlags(c *C) {
 	// check `processColumnFlags()`
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
-	tk.MustExec("create table t(a year(4) comment 'xxx')")
+	tk.MustExec("create table t(a year(4) comment 'xxx', b year, c bit)")
 	defer s.mustExec(tk, c, "drop table t;")
 
 	tk.MustExec("alter table t modify a year(4)")
 
-	tk.MustExec("alter table t modify a year(4) not null")
+	tk.MustExec("alter table t modify a year(4) signed")
+
+	tk.MustExec("alter table t modify a year(4) unsigned")
+
+	tk.MustExec("alter table t modify a year(4) zerofill")
+
+	tk.MustExec("alter table t modify b year")
+
+	tk.MustExec("alter table t modify c bit")
 }
 
 func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
