@@ -354,6 +354,11 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			*lockCtx.LockKeysCount += int32(len(keys))
 		}
 		if lockCtx.Stats != nil {
+			ctxValue := ctx.Value(execdetails.LockKeysDetailCtxKey)
+			if ctxValue != nil {
+				lockKeysDetail := ctxValue.(**execdetails.LockKeysDetails)
+				*lockKeysDetail = lockCtx.Stats
+			}
 			lockCtx.Stats.TotalTime = time.Since(startTime)
 		}
 	}()
