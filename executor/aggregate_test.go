@@ -407,9 +407,9 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	result.Check(testkit.Rows("1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "2 0"))
 
 	_, err = tk.Exec("select std(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: std")
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
 	_, err = tk.Exec("select stddev(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev")
+	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
 	_, err = tk.Exec("select stddev_pop(a) from t")
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
 	_, err = tk.Exec("select std_samp(a) from t")

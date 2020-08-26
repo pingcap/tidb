@@ -1680,3 +1680,50 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLockBatchPointGet(c *C) {
 	err = tk.ExecToErr("commit")
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
 }
+
+func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk2.MustExec("use test_db")
+	tk2.MustExec("drop table if exists t1")
+	tk2.MustExec("create table t1(c1 int primary key, c2 int, c3 int, unique key uk(c2));")
+	tk2.MustExec("insert into t1 values(1, 1, 1);")
+	tk2.MustExec("insert into t1 values(2, 2, 2);")
+	tk3.MustExec("use test_db")
+
+	// Set off the session variable.
+	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 0;")
+	tk3.MustExec("begin pessimistic")
+	tk3.MustExec("insert into t1 values(3, 3, 3)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values(4, 4, 4)")
+	tk2.MustExec("alter table t1 add column new_col int")
+	err := tk3.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 1 1 <nil>", "2 2 2 <nil>", "4 4 4 <nil>"))
+
+	// Set off the global variable.
+	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = 0;")
+	tk4 := testkit.NewTestKitWithInit(c, s.store)
+	tk4.MustQuery(`show variables like "tidb_enable_amend_pessimistic_txn"`).Check(testkit.Rows("tidb_enable_amend_pessimistic_txn 0"))
+	tk4.MustExec("use test_db")
+	tk4.MustExec("begin pessimistic")
+	tk4.MustExec("insert into t1 values(5, 5, 5, 5)")
+	tk2.MustExec("alter table t1 drop column new_col")
+	err = tk4.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk4.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk4.MustExec("begin pessimistic")
+	tk4.MustExec("insert into t1 values(5, 5, 5)")
+	tk2.MustExec("alter table t1 add column new_col2 int")
+	tk4.MustExec("commit")
+	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 1 1 <nil>", "2 2 2 <nil>", "4 4 4 <nil>", "5 5 5 <nil>"))
+
+	// Restore.
+	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = 1;")
+}

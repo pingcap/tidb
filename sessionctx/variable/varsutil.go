@@ -464,7 +464,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
 		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
 		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo,
-		TiDBAllowAutoRandExplicitInsert, TiDBEnableClusteredIndex, TiDBEnableTelemetry:
+		TiDBAllowAutoRandExplicitInsert, TiDBEnableClusteredIndex, TiDBEnableTelemetry, TiDBEnableAmendPessimisticTxn:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
@@ -720,7 +720,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if v != DefTiDBRowFormatV1 && v != DefTiDBRowFormatV2 {
 			return value, errors.Errorf("Unsupported row format version %d", v)
 		}
-	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines:
+	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines, TiDBEnableParallelApply:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
 			return "on", nil

@@ -346,8 +346,8 @@ func CommonHandleRangesToKVRanges(sc *stmtctx.StatementContext, tid int64, range
 			low = kv.Key(low).PrefixNext()
 		}
 		ran.LowVal[0].SetBytes(low)
-		startKey := tablecodec.EncodeCommonHandleSeekKey(tid, low)
-		endKey := tablecodec.EncodeCommonHandleSeekKey(tid, high)
+		startKey := tablecodec.EncodeRowKey(tid, low)
+		endKey := tablecodec.EncodeRowKey(tid, high)
 		krs = append(krs, kv.KeyRange{StartKey: startKey, EndKey: endKey})
 	}
 	return krs, nil
