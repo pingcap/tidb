@@ -52,6 +52,7 @@ type ExecDetails struct {
 	ProcessedKeys    int64
 	CommitDetail     *CommitDetails
 	LockKeysDetail   *LockKeysDetails
+	RetryCount       int
 }
 
 type stmtExecDetailKeyType struct{}
@@ -97,7 +98,9 @@ type LockKeysDetails struct {
 		sync.Mutex
 		BackoffTypes []fmt.Stringer
 	}
-	RetryCount int
+	LockRPCTime  int64
+	LockRPCCount int64
+	RetryCount   int
 }
 
 func (ld *LockKeysDetails) Merge(lockKey *LockKeysDetails) {
@@ -106,6 +109,8 @@ func (ld *LockKeysDetails) Merge(lockKey *LockKeysDetails) {
 	ld.LockKeys += lockKey.LockKeys
 	ld.ResolveLockTime += lockKey.ResolveLockTime
 	ld.BackoffTime += lockKey.BackoffTime
+	ld.LockRPCTime += lockKey.LockRPCTime
+	ld.LockRPCCount += ld.LockRPCCount
 	ld.Mu.BackoffTypes = append(ld.Mu.BackoffTypes, lockKey.Mu.BackoffTypes...)
 	ld.RetryCount++
 }
@@ -240,6 +245,12 @@ func (d ExecDetails) String() string {
 		}
 		if lockKeysDetail.BackoffTime > 0 {
 			parts = append(parts, "LockKeysBackoff: "+strconv.FormatFloat(time.Duration(lockKeysDetail.BackoffTime).Seconds(), 'f', -1, 64))
+		}
+		if lockKeysDetail.LockRPCTime > 0 {
+			parts = append(parts, "LockKeysRPC: "+strconv.FormatFloat(time.Duration(lockKeysDetail.LockRPCTime).Seconds(), 'f', -1, 64))
+		}
+		if lockKeysDetail.LockRPCCount > 0 {
+			parts = append(parts, "LockKeysRPCCount: "+strconv.FormatInt(int64(lockKeysDetail.LockRPCCount), 10))
 		}
 		if lockKeysDetail.RetryCount > 0 {
 			parts = append(parts, "LockKeysRetryCount: "+strconv.FormatInt(int64(lockKeysDetail.RetryCount), 10))

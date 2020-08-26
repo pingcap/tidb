@@ -1852,6 +1852,7 @@ type SlowQueryLogItems struct {
 	PDTotal           time.Duration
 	BackoffTotal      time.Duration
 	WriteSQLRespTotal time.Duration
+	ExecRetryCount    int
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1888,6 +1889,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if s.ConnectionID != 0 {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
+	}
+	if logItems.ExecRetryCount > 0 {
+		writeSlowLogItem(&buf, "Exec_retry_count", strconv.Itoa(logItems.ExecRetryCount))
 	}
 	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))
