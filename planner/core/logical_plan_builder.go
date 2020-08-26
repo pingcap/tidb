@@ -2597,6 +2597,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 	}()
 
 	if sel.SelectStmtOpts != nil {
+		enableNoopFuncs := b.ctx.GetSessionVars().EnableNoopFuncs
+		if sel.SelectStmtOpts.CalcFoundRows && !enableNoopFuncs {
+			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+			return nil, err
+		}
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
 		defer func() { b.inStraightJoin = origin }()
