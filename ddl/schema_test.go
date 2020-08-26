@@ -226,26 +226,30 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	doDDLJobErr(c, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, ctx, d2)
 }
 
-func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
+// runInterruptedJob should be called concurrently with restartWorkers
+func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan struct{}) {
 	ctx := mock.NewContext()
 	ctx.Store = d.store
 
 	var (
 		history *model.Job
 		err     error
-		done    = make(chan struct{}, 1)
 	)
-	go func() {
-		_ = d.doDDLJob(ctx, job)
 
-		for history == nil {
-			history, err = d.getHistoryDDLJob(job.ID)
-			c.Assert(err, IsNil)
-			time.Sleep(10 * testLease)
-		}
-		c.Assert(history.Error, IsNil)
-		done <- struct{}{}
-	}()
+	_ = d.doDDLJob(ctx, job)
+
+	for history == nil {
+		history, err = d.getHistoryDDLJob(job.ID)
+		c.Assert(err, IsNil)
+		time.Sleep(10 * testLease)
+	}
+	c.Assert(history.Error, IsNil)
+	doneCh <- struct{}{}
+}
+
+func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
+	done := make(chan struct{}, 1)
+	go runInterruptedJob(c, d, job, done)
 
 	ticker := time.NewTicker(d.lease * 1)
 	defer ticker.Stop()

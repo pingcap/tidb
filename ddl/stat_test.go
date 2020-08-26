@@ -20,8 +20,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 )
 
 var _ = Suite(&testStatSuite{})
@@ -73,24 +73,8 @@ func (s *testStatSuite) TestStat(c *C) {
 		Args:       []interface{}{dbInfo.Name},
 	}
 
-	ctx := mock.NewContext()
-	ctx.Store = store
-	var (
-		history *model.Job
-		err     error
-		done    = make(chan struct{}, 1)
-	)
-	go func() {
-		_ = d.doDDLJob(ctx, job)
-
-		for history == nil {
-			history, err = d.getHistoryDDLJob(job.ID)
-			c.Assert(err, IsNil)
-			time.Sleep(10 * testLease)
-		}
-		c.Assert(history.Error, IsNil)
-		done <- struct{}{}
-	}()
+	done := make(chan struct{}, 1)
+	go runInterruptedJob(c, d, job, done)
 
 	ticker := time.NewTicker(d.lease * 1)
 	defer ticker.Stop()
