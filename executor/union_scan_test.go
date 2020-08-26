@@ -282,7 +282,7 @@ func (s *testSuite4) TestForUpdateUntouchedIndex(c *C) {
 }
 
 // See https://github.com/pingcap/tidb/issues/19136
-func (s *testSuite7) TestForApplyAndUnionScan(c *C) {
+func (s *testSuite4) TestForApplyAndUnionScan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
