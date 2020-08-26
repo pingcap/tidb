@@ -712,8 +712,16 @@ func (cc *clientConn) Run(ctx context.Context) {
 				metrics.CriticalErrorCounter.Add(1)
 				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
 			}
+<<<<<<< HEAD
 
 			logutil.Logger(ctx).Error("dispatch error",
+=======
+			var txnMode string
+			if cc.ctx != nil {
+				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
+			}
+			logutil.Logger(ctx).Info("command dispatched failed",
+>>>>>>> 7c5cfd7... server: change dispatch failed log to info level (#19217)
 				zap.String("connInfo", cc.String()),
 				zap.String("command", mysql.Command2Str[data[0]]),
 				zap.String("status", cc.SessionStatusToString()),
