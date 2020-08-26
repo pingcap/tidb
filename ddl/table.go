@@ -76,7 +76,7 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 			return ver, errors.Trace(err)
 		}
 
-		failpoint.Inject("mockCreateTableCheckFail", func(val failpoint.Value) {
+		failpoint.Inject("checkOwnerCheckAllVersionsWaitTime", func(val failpoint.Value) {
 			if val.(bool) {
 				failpoint.Return(ver, errors.New("mock create table error"))
 			}

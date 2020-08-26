@@ -1412,10 +1412,6 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 
 func (s *testSerialSuite) TestCreateTableNoBlock(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockCreateTableCheckFail", `return(true)`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockCreateTableCheckFail"), IsNil)
-	}()
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime"), IsNil)
