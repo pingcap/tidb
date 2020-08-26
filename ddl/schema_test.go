@@ -236,7 +236,9 @@ func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan struct{}) {
 		err     error
 	)
 
+	d.mu.RLock()
 	_ = d.doDDLJob(ctx, job)
+	d.mu.RUnlock()
 
 	for history == nil {
 		history, err = d.getHistoryDDLJob(job.ID)

@@ -492,18 +492,14 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			d.cancel()
 		})
 
-		// avoid data race with restartWorkers in ddl_test.go
-		d.mu.RLock()
 		select {
 		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
 		case <-d.ctx.Done():
 			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done", zap.Error(d.ctx.Err()))
 			err := d.ctx.Err()
-			d.mu.RUnlock()
 			return err
 		}
-		d.mu.RUnlock()
 
 		historyJob, err = d.getHistoryDDLJob(jobID)
 		if err != nil {
