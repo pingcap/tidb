@@ -499,8 +499,9 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		case <-ticker.C:
 		case <-d.ctx.Done():
 			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done", zap.Error(d.ctx.Err()))
+			err := d.ctx.Err()
 			d.mu.RUnlock()
-			return d.ctx.Err()
+			return err
 		}
 		d.mu.RUnlock()
 
