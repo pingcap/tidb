@@ -149,7 +149,6 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 		return errors.Trace(err)
 	}
 	startTS := txn.StartTS()
-<<<<<<< HEAD
 	// We only update the version so that other tidb will know that this table is deleted.
 	sql := fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", startTS, physicalID)
 	_, err = exec.Execute(context.Background(), sql)
@@ -161,15 +160,13 @@ func (h *Handle) DeleteTableStatsFromKV(physicalID int64) (err error) {
 		return
 	}
 	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", physicalID))
+	if err != nil {
+		return
+	}
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d", physicalID))
+	if err != nil {
+		return
+	}
+	_, err = exec.Execute(context.Background(), fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d", physicalID))
 	return
-=======
-	sqls := make([]string, 0, 5)
-	// We only update the version so that other tidb will know that this table is deleted.
-	sqls = append(sqls, fmt.Sprintf("update mysql.stats_meta set version = %d where table_id = %d ", startTS, physicalID))
-	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_histograms where table_id = %d", physicalID))
-	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_buckets where table_id = %d", physicalID))
-	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_top_n where table_id = %d", physicalID))
-	sqls = append(sqls, fmt.Sprintf("delete from mysql.stats_feedback where table_id = %d", physicalID))
-	return execSQLs(context.Background(), exec, sqls)
->>>>>>> 8fe2a0b... statistics: drop stats should delete topn (#18160)
 }
