@@ -52,7 +52,7 @@ FAILPOINT_ENABLE  := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs t
 FAILPOINT_DISABLE := $$(find $$PWD/ -type d | grep -vE "(\.git|tools)" | xargs tools/bin/failpoint-ctl disable)
 
 LDFLAGS += -X "github.com/pingcap/parser/mysql.TiDBReleaseVersion=$(shell git describe --tags --dirty --always)"
-LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %I:%M:%S')"
+LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBBuildTS=$(shell date -u '+%Y-%m-%d %H:%M:%S')"
 LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
@@ -69,7 +69,7 @@ VB_FILE =
 VB_FUNC =
 
 
-.PHONY: all build clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest
+.PHONY: all clean test gotest server dev benchkv benchraw check checklist parser tidy ddltest
 
 default: server buildsucc
 
@@ -84,9 +84,6 @@ parser:
 	@echo "remove this command later, when our CI script doesn't call it"
 
 dev: checklist check test
-
-build:
-	$(GOBUILD)
 
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec

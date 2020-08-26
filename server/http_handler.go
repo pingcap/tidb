@@ -550,7 +550,11 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 	tName := curTable.Name.String()
 	tID := curTable.ID
 	pi := curTable.GetPartitionInfo()
+	isCommonHandle := curTable.IsCommonHandle
 	for _, index := range curTable.Indices {
+		if index.Primary && isCommonHandle {
+			continue
+		}
 		if pi != nil {
 			for _, def := range pi.Definitions {
 				if f := r.GetIndexFrame(def.ID, index.ID, dbName, fmt.Sprintf("%s(%s)", tName, def.Name.O), index.Name.String()); f != nil {
@@ -567,12 +571,12 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 
 	if pi != nil {
 		for _, def := range pi.Definitions {
-			if f := r.GetRecordFrame(def.ID, dbName, fmt.Sprintf("%s(%s)", tName, def.Name.O)); f != nil {
+			if f := r.GetRecordFrame(def.ID, dbName, fmt.Sprintf("%s(%s)", tName, def.Name.O), isCommonHandle); f != nil {
 				rt.Frames = append(rt.Frames, f)
 			}
 		}
 	} else {
-		if f := r.GetRecordFrame(tID, dbName, tName); f != nil {
+		if f := r.GetRecordFrame(tID, dbName, tName, isCommonHandle); f != nil {
 			rt.Frames = append(rt.Frames, f)
 		}
 	}
