@@ -56,11 +56,7 @@ type dagContext struct {
 
 func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-	if err := h.checkRequestContext(req.GetContext()); err != nil {
-		resp.RegionError = err
-		return resp
-	}
-	dagCtx, e, dagReq, err := h.buildDAGExecutor(req, false)
+	dagCtx, e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		resp.OtherError = err.Error()
 		return resp
@@ -92,7 +88,7 @@ func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.
 	return buildResp(selResp, execDetails, err)
 }
 
-func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request, batchCop bool) (*dagContext, executor, *tipb.DAGRequest, error) {
+func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, executor, *tipb.DAGRequest, error) {
 	if len(req.Ranges) == 0 {
 		return nil, nil, nil, errors.New("request range is null")
 	}
@@ -119,7 +115,7 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request, batchCop bool) (
 		evalCtx:   &evalContext{sc: sc},
 	}
 	var e executor
-	if batchCop {
+	if len(dagReq.Executors) == 0 {
 		e, err = h.buildDAGForTiFlash(ctx, dagReq.RootExecutor)
 	} else {
 		e, err = h.buildDAG(ctx, dagReq.Executors)
@@ -138,7 +134,7 @@ func constructTimeZone(name string, offset int) (*time.Location, error) {
 }
 
 func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Request) (tikvpb.Tikv_CoprocessorStreamClient, error) {
-	dagCtx, e, dagReq, err := h.buildDAGExecutor(req, false)
+	dagCtx, e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -695,11 +691,13 @@ func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 }
 
 func (h *rpcHandler) constructRespSchema(dagCtx *dagContext) []*types.FieldType {
-	root := dagCtx.dagReq.Executors[len(dagCtx.dagReq.Executors)-1]
-	agg := root.Aggregation
-	if root.StreamAgg != nil {
-		agg = root.StreamAgg
+	var root *tipb.Executor
+	if len(dagCtx.dagReq.Executors) == 0 {
+		root = dagCtx.dagReq.RootExecutor
+	} else {
+		root = dagCtx.dagReq.Executors[len(dagCtx.dagReq.Executors)-1]
 	}
+	agg := root.Aggregation
 	if agg == nil {
 		return dagCtx.evalCtx.fieldTps
 	}

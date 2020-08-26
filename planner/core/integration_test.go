@@ -25,9 +25,12 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -710,6 +713,30 @@ func (s *testIntegrationSuite) TestPartitionPruningForInExpr(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSuite) TestPartitionPruningForEQ(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime, b int) partition by range(weekday(a)) (partition p0 values less than(10), partition p1 values less than (100))")
+
+	is := infoschema.GetInfoSchema(tk.Se)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	pt := tbl.(table.PartitionedTable)
+	query, err := expression.ParseSimpleExprWithTableInfo(tk.Se, "a = '2020-01-01 00:00:00'", tbl.Meta())
+	c.Assert(err, IsNil)
+	dbName := model.NewCIStr(tk.Se.GetSessionVars().CurrentDB)
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(tk.Se, dbName, tbl.Meta().Name, tbl.Meta().Columns, tbl.Meta())
+	c.Assert(err, IsNil)
+	// Even the partition is not monotonous, EQ condition should be prune!
+	// select * from t where a = '2020-01-01 00:00:00'
+	res, err := core.PartitionPruning(tk.Se, pt, []expression.Expression{query}, nil, columns, names)
+	c.Assert(err, IsNil)
+	c.Assert(res, HasLen, 1)
+	c.Assert(res[0], Equals, 0)
 }
 
 func (s *testIntegrationSuite) TestErrNoDB(c *C) {
@@ -1491,4 +1518,18 @@ partition p2 values less than (10))`)
 		})
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSuite) TestPartialBatchPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c_int int, c_str varchar(40), primary key(c_int, c_str))")
+	tk.MustExec("insert into t values (3, 'bose')")
+	tk.MustQuery("select * from t where c_int in (3)").Check(testkit.Rows(
+		"3 bose",
+	))
+	tk.MustQuery("select * from t where c_int in (3) or c_str in ('yalow') and c_int in (1, 2)").Check(testkit.Rows(
+		"3 bose",
+	))
 }

@@ -20,6 +20,7 @@ import (
 	"crypto/x509/pkix"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -531,4 +532,18 @@ func initInternalClient() {
 	internalHTTPClient = &http.Client{
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
+}
+
+// GetLocalIP will return a local IP(non-loopback, non 0.0.0.0), if there is one
+func GetLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err == nil {
+		for _, address := range addrs {
+			ipnet, ok := address.(*net.IPNet)
+			if ok && ipnet.IP.IsGlobalUnicast() {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return ""
 }
