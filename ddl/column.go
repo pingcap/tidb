@@ -936,16 +936,15 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 }
 
 type rowRecord struct {
-	handle kv.Handle
-	key    []byte // It's used to lock a record. Record it to reduce the encoding time.
-	vals   []byte // It's the record.
+	key  []byte // It's used to lock a record. Record it to reduce the encoding time.
+	vals []byte // It's the record.
 }
 
 // getNextHandle gets next handle of entry that we are going to process.
-func (w *updateColumnWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) (nextHandle kv.Handle) {
+func (w *updateColumnWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool, lastAccessedHandle kv.Handle) (nextHandle kv.Handle) {
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
-		return w.rowRecords[len(w.rowRecords)-1].handle.Next()
+		return lastAccessedHandle.Next()
 	}
 
 	// The task is done. So we need to choose a handle outside this range.
@@ -965,8 +964,8 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
+	var lastAccessedHandle kv.Handle
 	oprStartTime := startTime
-	sysZone := timeutil.SystemLocation()
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startHandle, taskRange.endHandle, taskRange.endIncluded,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
 			oprEndTime := time.Now()
@@ -983,39 +982,12 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 				return false, nil
 			}
 
-			_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRow, time.UTC, sysZone, w.rowMap)
-			if err != nil {
-				return false, errors.Trace(errCantDecodeIndex.GenWithStackByArgs(err))
+			if err1 := w.getIndexRecord(handle, recordKey, rawRow); err1 != nil {
+				return false, errors.Trace(err1)
 			}
-
-			if _, ok := w.rowMap[w.newColInfo.ID]; ok {
-				// The column is already added by update or insert statement, skip it.
-				w.cleanRowMap()
-				return true, nil
-			}
-
-			newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
-			// TODO: Consider sql_mode and the error msg(encounter this error check whether to rollback).
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-			w.rowMap[w.newColInfo.ID] = newColVal
-			newColumnIDs := make([]int64, 0, len(w.rowMap))
-			newRow := make([]types.Datum, 0, len(w.rowMap))
-			for colID, val := range w.rowMap {
-				newColumnIDs = append(newColumnIDs, colID)
-				newRow = append(newRow, val)
-			}
-			sctx, rd := w.sessCtx.GetSessionVars().StmtCtx, &w.sessCtx.GetSessionVars().RowEncoder
-			newRowVal, err := tablecodec.EncodeRow(sctx, newRow, newColumnIDs, nil, nil, rd)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-
-			w.rowRecords = append(w.rowRecords, &rowRecord{handle: handle, key: recordKey, vals: newRowVal})
-			w.cleanRowMap()
+			lastAccessedHandle = handle
 			if handle.Equal(taskRange.endHandle) {
-				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle
+				// If taskRange.endIncluded == false, we will not reach here when handle == taskRange.endHandle.
 				taskDone = true
 				return false, nil
 			}
@@ -1027,7 +999,42 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	}
 
 	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
-	return w.rowRecords, w.getNextHandle(taskRange, taskDone), taskDone, errors.Trace(err)
+	return w.rowRecords, w.getNextHandle(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
+}
+
+func (w *updateColumnWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawRow []byte) error {
+	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRow, time.UTC, timeutil.SystemLocation(), w.rowMap)
+	if err != nil {
+		return errors.Trace(errCantDecodeIndex.GenWithStackByArgs(err))
+	}
+
+	if _, ok := w.rowMap[w.newColInfo.ID]; ok {
+		// The column is already added by update or insert statement, skip it.
+		w.cleanRowMap()
+		return nil
+	}
+
+	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
+	// TODO: Consider sql_mode and the error msg(encounter this error check whether to rollback).
+	if err != nil {
+		return errors.Trace(err)
+	}
+	w.rowMap[w.newColInfo.ID] = newColVal
+	newColumnIDs := make([]int64, 0, len(w.rowMap))
+	newRow := make([]types.Datum, 0, len(w.rowMap))
+	for colID, val := range w.rowMap {
+		newColumnIDs = append(newColumnIDs, colID)
+		newRow = append(newRow, val)
+	}
+	sctx, rd := w.sessCtx.GetSessionVars().StmtCtx, &w.sessCtx.GetSessionVars().RowEncoder
+	newRowVal, err := tablecodec.EncodeRow(sctx, newRow, newColumnIDs, nil, nil, rd)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	w.rowRecords = append(w.rowRecords, &rowRecord{key: recordKey, vals: newRowVal})
+	w.cleanRowMap()
+	return nil
 }
 
 func (w *updateColumnWorker) cleanRowMap() {

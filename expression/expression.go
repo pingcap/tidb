@@ -727,7 +727,7 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
 func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
-	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl, false)
+	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -773,15 +773,10 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, tblInfo *model.TableInfo, needWritableCols bool) ([]*Column, types.NameSlice, error) {
-	columns := make([]*Column, 0, len(tblInfo.Columns))
-	names := make([]*types.FieldName, 0, len(tblInfo.Columns))
-	for i, col := range tblInfo.Columns {
-		if col.State != model.StatePublic {
-			if !needWritableCols || (col.State != model.StateWriteOnly && col.State != model.StateWriteReorganization) {
-				continue
-			}
-		}
+func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
+	columns := make([]*Column, 0, len(colInfos))
+	names := make([]*types.FieldName, 0, len(colInfos))
+	for i, col := range colInfos {
 		names = append(names, &types.FieldName{
 			OrigTblName: tblName,
 			OrigColName: col.Name,
@@ -807,12 +802,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 		ctx.GetSessionVars().StmtCtx.IgnoreTruncate = save
 	}()
 	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
-	for i, col := range tblInfo.Columns {
-		if col.State != model.StatePublic {
-			if !needWritableCols || (col.State != model.StateWriteOnly && col.State != model.StateWriteReorganization) {
-				continue
-			}
-		}
+	for i, col := range colInfos {
 		if col.IsGenerated() && !col.GeneratedStored {
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
 			if err != nil {

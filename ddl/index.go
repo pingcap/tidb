@@ -1183,7 +1183,11 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller) {
 
 func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table) (map[int64]decoder.Column, error) {
 	dbName := model.NewCIStr(sessCtx.GetSessionVars().CurrentDB)
-	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, t.Meta(), true)
+	writableColInfos := make([]*model.ColumnInfo, 0, len(t.WritableCols()))
+	for _, col := range t.WritableCols() {
+		writableColInfos = append(writableColInfos, col.ColumnInfo)
+	}
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, writableColInfos, t.Meta())
 	if err != nil {
 		return nil, err
 	}

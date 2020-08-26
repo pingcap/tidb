@@ -3664,7 +3664,7 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 	s.mustExec(tk, c, "drop table t1")
 }
 
-func (s *testSerialSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) {
+func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull", `return("insert into tt values (NULL, NULL)")`), IsNil)
 
 	tk := testkit.NewTestKitWithInit(c, s.store)
