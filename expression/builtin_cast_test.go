@@ -356,7 +356,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	}
 	for i, t := range castToDecCases {
 		args := []Expression{t.before}
-		b, err := newBaseBuiltinFunc(ctx, "", args, types.ETDecimal)
+		b, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		c.Assert(err, IsNil)
 		decFunc := newBaseBuiltinCastFunc(b, false)
 		decFunc.tp = types.NewFieldType(mysql.TypeNewDecimal)
@@ -442,7 +442,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeNewDecimal)
 		tp.Flen, tp.Decimal = t.flen, t.decimal
-		b, err := newBaseBuiltinFunc(ctx, "", args, types.ETDecimal)
+		b, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		c.Assert(err, IsNil)
 		decFunc := newBaseBuiltinCastFunc(b, false)
 		decFunc.tp = tp
@@ -512,7 +512,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	}
 	for i, t := range castToIntCases {
 		args := []Expression{t.before}
-		b, err := newBaseBuiltinFunc(ctx, "", args, types.ETInt)
+		b, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		c.Assert(err, IsNil)
 		intFunc := newBaseBuiltinCastFunc(b, false)
 		switch i {
@@ -580,7 +580,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	}
 	for i, t := range castToRealCases {
 		args := []Expression{t.before}
-		b, err := newBaseBuiltinFunc(ctx, "", args, types.ETReal)
+		b, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		c.Assert(err, IsNil)
 		realFunc := newBaseBuiltinCastFunc(b, false)
 		switch i {
@@ -656,7 +656,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.Charset = charset.CharsetBin
 		args := []Expression{t.before}
-		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, tp.EvalType())
+		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		c.Assert(err, IsNil)
 		stringFunc.tp = tp
 		switch i {
@@ -735,7 +735,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.Flen, tp.Charset = t.flen, charset.CharsetBin
-		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, tp.EvalType())
+		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		c.Assert(err, IsNil)
 		stringFunc.tp = tp
 		switch i {
@@ -811,7 +811,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDatetime)
 		tp.Decimal = int(types.DefaultFsp)
-		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, tp.EvalType())
+		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		c.Assert(err, IsNil)
 		timeFunc.tp = tp
 		switch i {
@@ -896,7 +896,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(t.tp)
 		tp.Decimal = int(t.fsp)
-		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, tp.EvalType())
+		timeFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		c.Assert(err, IsNil)
 		timeFunc.tp = tp
 		switch i {
@@ -978,7 +978,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = int(types.DefaultFsp)
-		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, tp.EvalType())
+		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		c.Assert(err, IsNil)
 		durationFunc.tp = tp
 		switch i {
@@ -1056,7 +1056,7 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		args := []Expression{t.before}
 		tp := types.NewFieldType(mysql.TypeDuration)
 		tp.Decimal = t.fsp
-		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, tp.EvalType())
+		durationFunc, err := newBaseBuiltinFunc(ctx, "", args, 0)
 		c.Assert(err, IsNil)
 		durationFunc.tp = tp
 		switch i {
