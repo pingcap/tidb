@@ -1058,6 +1058,7 @@ func (s *testSuite) TestNotEvolvePlanForReadStorageHint(c *C) {
 	}
 
 	// Make sure the best plan of the SQL is use TiKV index.
+	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
 	rows := tk.MustQuery("explain select * from t where a >= 11 and b >= 11").Rows()
 	c.Assert(fmt.Sprintf("%v", rows[len(rows)-1][2]), Equals, "cop[tikv]")
 

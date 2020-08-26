@@ -637,6 +637,9 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	if sv == nil {
 		return ""
 	}
+	if sv.EnableLogDesensitization {
+		return cc.preparedStmt2StringNoArgs(stmtID)
+	}
 	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PreparedParams.String()
 }
 

@@ -19,6 +19,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	parsertypes "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
@@ -49,9 +51,12 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -166,14 +171,41 @@ func testAddIndexWithPK(tk *testkit.TestKit, s *testSerialDBSuite, c *C) {
 func (s *testSerialDBSuite) TestAddIndexWithPK(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = false
 	})
-	defer config.RestoreFunc()()
 
 	testAddIndexWithPK(tk, s, c)
 	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
 	testAddIndexWithPK(tk, s, c)
+}
+
+func (s *testDBSuite5) TestAddIndexWithDupIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+
+	err1 := ddl.ErrDupKeyName.GenWithStack("index already exist %s", "idx")
+	err2 := ddl.ErrDupKeyName.GenWithStack("index already exist %s; "+
+		"a background job is trying to add the same index, "+
+		"please check by `ADMIN SHOW DDL JOBS`", "idx")
+
+	// When there is already an duplicate index, show error message.
+	tk.MustExec("create table test_add_index_with_dup (a int, key idx (a))")
+	_, err := tk.Exec("alter table test_add_index_with_dup add index idx (a)")
+	c.Check(errors.Cause(err1).(*terror.Error).Equal(err), Equals, true)
+	c.Assert(errors.Cause(err1).Error() == err.Error(), IsTrue)
+
+	// When there is another session adding duplicate index with state other than
+	// StatePublic, show explicit error message.
+	t := s.testGetTable(c, "test_add_index_with_dup")
+	indexInfo := t.Meta().FindIndexByName("idx")
+	indexInfo.State = model.StateNone
+	_, err = tk.Exec("alter table test_add_index_with_dup add index idx (a)")
+	c.Check(errors.Cause(err2).(*terror.Error).Equal(err), Equals, true)
+	c.Assert(errors.Cause(err2).Error() == err.Error(), IsTrue)
+
+	tk.MustExec("drop table test_add_index_with_dup")
 }
 
 func (s *testDBSuite1) TestRenameIndex(c *C) {
@@ -983,13 +1015,34 @@ func (s *testDBSuite5) TestAddMultiColumnsIndex(c *C) {
 	tk.MustExec("alter table tidb.test add index idx1 (a, b);")
 	tk.MustExec("admin check table test")
 }
+
+func (s *testDBSuite6) TestAddMultiColumnsIndexClusterIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_add_multi_col_index_clustered;")
+	tk.MustExec("create database test_add_multi_col_index_clustered;")
+	tk.MustExec("use test_add_multi_col_index_clustered;")
+
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("create table t (a int, b varchar(10), c int, primary key (a, b));")
+	tk.MustExec("insert into t values (1, '1', 1), (2, '2', NULL), (3, '3', 3);")
+	tk.MustExec("create index idx on t (a, c);")
+
+	tk.MustExec("admin check index t idx;")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("insert into t values (5, '5', 5), (6, '6', NULL);")
+
+	tk.MustExec("admin check index t idx;")
+	tk.MustExec("admin check table t;")
+}
+
 func (s *testDBSuite1) TestAddPrimaryKey1(c *C) {
-	testAddIndex(c, s.store, s.lease, false,
+	testAddIndex(c, s.store, s.lease, testPlain,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, unique key(c1))", "primary")
 }
 
 func (s *testDBSuite2) TestAddPrimaryKey2(c *C) {
-	testAddIndex(c, s.store, s.lease, true,
+	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by range (c3) (
 			      partition p0 values less than (3440),
@@ -1000,13 +1053,13 @@ func (s *testDBSuite2) TestAddPrimaryKey2(c *C) {
 }
 
 func (s *testDBSuite3) TestAddPrimaryKey3(c *C) {
-	testAddIndex(c, s.store, s.lease, true,
+	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by hash (c3) partitions 4;`, "primary")
 }
 
 func (s *testDBSuite4) TestAddPrimaryKey4(c *C) {
-	testAddIndex(c, s.store, s.lease, true,
+	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, key(c1))
 			      partition by range columns (c3) (
 			      partition p0 values less than (3440),
@@ -1017,12 +1070,12 @@ func (s *testDBSuite4) TestAddPrimaryKey4(c *C) {
 }
 
 func (s *testDBSuite1) TestAddIndex1(c *C) {
-	testAddIndex(c, s.store, s.lease, false,
+	testAddIndex(c, s.store, s.lease, testPlain,
 		"create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))", "")
 }
 
 func (s *testDBSuite2) TestAddIndex2(c *C) {
-	testAddIndex(c, s.store, s.lease, true,
+	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range (c1) (
 			      partition p0 values less than (3440),
@@ -1033,13 +1086,13 @@ func (s *testDBSuite2) TestAddIndex2(c *C) {
 }
 
 func (s *testDBSuite3) TestAddIndex3(c *C) {
-	testAddIndex(c, s.store, s.lease, true,
+	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by hash (c1) partitions 4;`, "")
 }
 
 func (s *testDBSuite4) TestAddIndex4(c *C) {
-	testAddIndex(c, s.store, s.lease, true,
+	testAddIndex(c, s.store, s.lease, testPartition,
 		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))
 			      partition by range columns (c1) (
 			      partition p0 values less than (3440),
@@ -1049,11 +1102,27 @@ func (s *testDBSuite4) TestAddIndex4(c *C) {
 			      partition p4 values less than maxvalue)`, "")
 }
 
-func testAddIndex(c *C, store kv.Storage, lease time.Duration, testPartition bool, createTableSQL, idxTp string) {
+func (s *testDBSuite5) TestAddIndex5(c *C) {
+	testAddIndex(c, s.store, s.lease, testClusteredIndex,
+		`create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c2, c3))`, "")
+}
+
+type testAddIndexType int8
+
+const (
+	testPlain testAddIndexType = iota
+	testPartition
+	testClusteredIndex
+)
+
+func testAddIndex(c *C, store kv.Storage, lease time.Duration, tp testAddIndexType, createTableSQL, idxTp string) {
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("use test_db")
-	if testPartition {
+	switch tp {
+	case testPartition:
 		tk.MustExec("set @@session.tidb_enable_table_partition = '1';")
+	case testClusteredIndex:
+		tk.MustExec("set @@tidb_enable_clustered_index = 1")
 	}
 	tk.MustExec("drop table if exists test_add_index")
 	tk.MustExec(createTableSQL)
@@ -1139,7 +1208,7 @@ LOOP:
 	matchRows(c, rows, expectedRows)
 
 	tk.MustExec("admin check table test_add_index")
-	if testPartition {
+	if tp == testPartition {
 		return
 	}
 
@@ -1153,11 +1222,11 @@ LOOP:
 	ctx := tk.Se.(sessionctx.Context)
 	c.Assert(ctx.NewTxn(context.Background()), IsNil)
 	t := testGetTableByName(c, ctx, "test_db", "test_add_index")
-	handles := make(map[int64]struct{})
+	handles := kv.NewHandleMap()
 	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
 	err := t.IterRecords(ctx, startKey, t.Cols(),
-		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
-			handles[h] = struct{}{}
+		func(h kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
+			handles.Set(h, struct{}{})
 			return true, nil
 		})
 	c.Assert(err, IsNil)
@@ -1194,11 +1263,11 @@ LOOP:
 		}
 
 		c.Assert(err, IsNil)
-		_, ok := handles[h.IntValue()]
+		_, ok := handles.Get(h)
 		c.Assert(ok, IsTrue)
-		delete(handles, h.IntValue())
+		handles.Delete(h)
 	}
-	c.Assert(handles, HasLen, 0)
+	c.Assert(handles.Len(), Equals, 0)
 	tk.MustExec("drop table test_add_index")
 }
 
@@ -1226,6 +1295,8 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 	}{
 		{model.ActionAddTablePartition, model.JobStateNone, model.StateNone, true},
 		{model.ActionDropTablePartition, model.JobStateNone, model.StateNone, true},
+		// Add table partition now can be cancelled in ReplicaOnly state.
+		{model.ActionAddTablePartition, model.JobStateRunning, model.StateReplicaOnly, true},
 		{model.ActionAddTablePartition, model.JobStateRunning, model.StatePublic, false},
 		{model.ActionDropTablePartition, model.JobStateRunning, model.StatePublic, false},
 	}
@@ -1426,13 +1497,23 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	var err1 error
+	var c3idx table.Index
 	for i := range testCases {
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			s.mustExec(tk, c, "alter table test_drop_column add column c3 int")
+			s.mustExec(tk, c, "alter table test_drop_column add index idx_c3(c3)")
+			tt := s.testGetTable(c, "test_drop_column")
+			for _, idx := range tt.Indices() {
+				if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+					c3idx = idx
+					break
+				}
+			}
 		}
 		_, err1 = tk.Exec("alter table test_drop_column drop column c3")
 		var col1 *table.Column
+		var idx1 table.Index
 		t := s.testGetTable(c, "test_drop_column")
 		for _, col := range t.Cols() {
 			if strings.EqualFold(col.Name.L, "c3") {
@@ -1440,16 +1521,28 @@ func (s *testDBSuite3) TestCancelDropColumn(c *C) {
 				break
 			}
 		}
+		for _, idx := range t.Indices() {
+			if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+				idx1 = idx
+				break
+			}
+		}
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(col1, NotNil)
 			c.Assert(col1.Name.L, Equals, "c3")
+			c.Assert(idx1, NotNil)
+			c.Assert(idx1.Meta().Name.L, Equals, "idx_c3")
 			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 		} else {
 			c.Assert(col1, IsNil)
+			c.Assert(idx1, IsNil)
 			c.Assert(err1, IsNil)
 			c.Assert(checkErr, NotNil)
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+			// Check index is deleted
+			ctx := s.s.(sessionctx.Context)
+			checkDelRangeDone(c, ctx, c3idx)
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -1511,28 +1604,50 @@ func (s *testDBSuite3) TestCancelDropColumns(c *C) {
 	originalHook := s.dom.DDL().GetHook()
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	var err1 error
+	var c3idx table.Index
 	for i := range testCases {
 		testCase = &testCases[i]
 		if testCase.needAddColumn {
 			s.mustExec(tk, c, "alter table test_drop_column add column c3 int, add column c4 int")
+			s.mustExec(tk, c, "alter table test_drop_column add index idx_c3(c3)")
+			tt := s.testGetTable(c, "test_drop_column")
+			for _, idx := range tt.Indices() {
+				if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+					c3idx = idx
+					break
+				}
+			}
 		}
 		_, err1 = tk.Exec("alter table test_drop_column drop column c3, drop column c4")
 		t := s.testGetTable(c, "test_drop_column")
 		col3 := table.FindCol(t.Cols(), "c3")
 		col4 := table.FindCol(t.Cols(), "c4")
+		var idx3 table.Index
+		for _, idx := range t.Indices() {
+			if strings.EqualFold(idx.Meta().Name.L, "idx_c3") {
+				idx3 = idx
+				break
+			}
+		}
 		if testCase.cancelSucc {
 			c.Assert(checkErr, IsNil)
 			c.Assert(col3, NotNil)
 			c.Assert(col4, NotNil)
+			c.Assert(idx3, NotNil)
 			c.Assert(col3.Name.L, Equals, "c3")
 			c.Assert(col4.Name.L, Equals, "c4")
+			c.Assert(idx3.Meta().Name.L, Equals, "idx_c3")
 			c.Assert(err1.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 		} else {
 			c.Assert(col3, IsNil)
 			c.Assert(col4, IsNil)
+			c.Assert(idx3, IsNil)
 			c.Assert(err1, IsNil)
 			c.Assert(checkErr, NotNil)
 			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+			// Check index is deleted
+			ctx := s.s.(sessionctx.Context)
+			checkDelRangeDone(c, ctx, c3idx)
 		}
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -1695,6 +1810,141 @@ func (s *testDBSuite4) TestAddIndexWithDupCols(c *C) {
 	tk.MustExec("drop table test_add_index_with_dup")
 }
 
+// checkGlobalIndexRow reads one record from global index and check. Only support int handle.
+func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo,
+	pid int64, idxVals []types.Datum, rowVals []types.Datum) {
+	ctx.NewTxn(context.Background())
+	txn, err := ctx.Txn(true)
+	sc := ctx.GetSessionVars().StmtCtx
+	c.Assert(err, IsNil)
+
+	tblColMap := make(map[int64]*types.FieldType, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		tblColMap[col.ID] = &col.FieldType
+	}
+	idxColInfos := make([]rowcodec.ColInfo, 0, len(indexInfo.Columns))
+	for _, idxCol := range indexInfo.Columns {
+		col := tblInfo.Columns[idxCol.Offset]
+		idxColInfos = append(idxColInfos, rowcodec.ColInfo{
+			ID:         col.ID,
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
+		})
+	}
+
+	// Check local index entry does not exist.
+	localPrefix := tablecodec.EncodeTableIndexPrefix(pid, indexInfo.ID)
+	it, err := txn.Iter(localPrefix, nil)
+	c.Assert(err, IsNil)
+	// no local index entry.
+	c.Assert(it.Valid() && it.Key().HasPrefix(localPrefix), IsFalse)
+	it.Close()
+
+	// Check global index entry.
+	encodedValue, err := codec.EncodeKey(sc, nil, idxVals...)
+	c.Assert(err, IsNil)
+	key := tablecodec.EncodeIndexSeekKey(tblInfo.ID, indexInfo.ID, encodedValue)
+	c.Assert(err, IsNil)
+	value, err := txn.Get(context.Background(), key)
+	c.Assert(err, IsNil)
+	colVals, err := tablecodec.DecodeIndexKV(key, value, len(indexInfo.Columns),
+		tablecodec.HandleDefault, idxColInfos)
+	c.Assert(err, IsNil)
+	c.Assert(colVals, HasLen, len(idxVals)+2)
+	for i, val := range idxVals {
+		_, d, err := codec.DecodeOne(colVals[i])
+		c.Assert(err, IsNil)
+		c.Assert(d, DeepEquals, val)
+	}
+	_, d, err := codec.DecodeOne(colVals[len(idxVals)+1]) //pid
+	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64(), Equals, pid)
+
+	_, d, err = codec.DecodeOne(colVals[len(idxVals)]) //handle
+	c.Assert(err, IsNil)
+	h := kv.IntHandle(d.GetInt64())
+	rowKey := tablecodec.EncodeRowKey(pid, h.Encoded())
+	rowValue, err := txn.Get(context.Background(), rowKey)
+	c.Assert(err, IsNil)
+	rowValueDatums, err := tablecodec.DecodeRowToDatumMap(rowValue, tblColMap, time.UTC)
+	c.Assert(err, IsNil)
+	c.Assert(rowValueDatums, NotNil)
+	for i, val := range rowVals {
+		c.Assert(rowValueDatums[tblInfo.Columns[i].ID], DeepEquals, val)
+	}
+}
+
+func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table test_t1 (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("insert test_t1 values (1, 1)")
+	tk.MustExec("alter table test_t1 add unique index p_a (a);")
+	tk.MustExec("insert test_t1 values (2, 11)")
+	t := s.testGetTable(c, "test_t1")
+	tblInfo := t.Meta()
+	indexInfo := tblInfo.FindIndexByName("p_a")
+	c.Assert(indexInfo, NotNil)
+	c.Assert(indexInfo.Global, IsTrue)
+
+	ctx := s.s.(sessionctx.Context)
+	ctx.NewTxn(context.Background())
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+
+	// check row 1
+	pid := tblInfo.Partition.Definitions[0].ID
+	idxVals := []types.Datum{types.NewDatum(1)}
+	rowVals := []types.Datum{types.NewDatum(1), types.NewDatum(1)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	// check row 2
+	pid = tblInfo.Partition.Definitions[1].ID
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
+	txn.Commit(context.Background())
+
+	// Test add global Primary Key index
+	tk.MustExec("create table test_t2 (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("insert test_t2 values (1, 1)")
+	tk.MustExec("alter table test_t2 add primary key (a);")
+	tk.MustExec("insert test_t2 values (2, 11)")
+	t = s.testGetTable(c, "test_t2")
+	tblInfo = t.Meta()
+	indexInfo = t.Meta().FindIndexByName("primary")
+	c.Assert(indexInfo, NotNil)
+	c.Assert(indexInfo.Global, IsTrue)
+
+	ctx.NewTxn(context.Background())
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+
+	// check row 1
+	pid = tblInfo.Partition.Definitions[0].ID
+	idxVals = []types.Datum{types.NewDatum(1)}
+	rowVals = []types.Datum{types.NewDatum(1), types.NewDatum(1)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	// check row 2
+	pid = tblInfo.Partition.Definitions[1].ID
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	txn.Commit(context.Background())
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = false
+	})
+}
+
 func (s *testDBSuite) showColumns(tk *testkit.TestKit, c *C, tableName string) [][]interface{} {
 	return s.mustQuery(tk, c, fmt.Sprintf("show columns from %s", tableName))
 }
@@ -1808,7 +2058,7 @@ LOOP:
 		}
 	}()
 	err = t.IterRecords(ctx, t.FirstKey(), t.Cols(),
-		func(h int64, data []types.Datum, cols []*table.Column) (bool, error) {
+		func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 			i++
 			// c4 must be -1 or > 0
 			v, err1 := data[3].ToInt64(ctx.GetSessionVars().StmtCtx)
@@ -2125,7 +2375,7 @@ func match(c *C, row []interface{}, expected ...interface{}) {
 }
 
 // TestCreateTableWithLike2 tests create table with like when refer table have non-public column/index.
-func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
+func (s *testSerialDBSuite) TestCreateTableWithLike2(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1,t2;")
@@ -2197,6 +2447,9 @@ func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	checkTbl2()
 
 	// Test for table has tiflash  replica.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
@@ -2227,7 +2480,7 @@ func (s *testDBSuite4) TestCreateTableWithLike2(c *C) {
 	c.Assert(t1.Meta().TiFlashReplica.AvailablePartitionIDs, DeepEquals, []int64{partition.Definitions[0].ID, partition.Definitions[1].ID})
 }
 
-func (s *testDBSuite1) TestCreateTable(c *C) {
+func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
@@ -2270,20 +2523,45 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	tk.MustExec("use test")
 	failSQL := "create table t_enum (a enum('e','e'));"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	// TODO: Uncomment lines below after fixing #18134.
-	//failSQL = "create table t_enum (a enum('e','E'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	//failSQL = "create table t_enum (a enum('abc','Abc'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	failSQL = "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	// test for set column
-	//failSQL = "create table t_enum (a set('e','e'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	//failSQL = "create table t_enum (a set('e','E'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	//failSQL = "create table t_enum (a set('abc','Abc'));"
-	//tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
-	//_, err = tk.Exec("create table t_enum (a enum('B','b'));")
-	//c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
+	failSQL = "create table t_enum (a set('e','e'));"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('e','E')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	_, err = tk.Exec("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;")
+	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
+
+	// test for table option "union" not supported
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
+	failSQL = "ALTER TABLE x UNION = (y);"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
+	tk.MustExec("drop table x;")
+	tk.MustExec("drop table y;")
+
+	// test for table option "insert method" not supported
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE INSERT_METHOD=LAST;"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
+	failSQL = "ALTER TABLE x INSERT_METHOD=LAST;"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
+	tk.MustExec("drop table x;")
+	tk.MustExec("drop table y;")
 }
 
 func (s *testDBSuite5) TestRepairTable(c *C) {
@@ -2313,55 +2591,54 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: database test is not in repair")
 
-	// TODO: Uncomment lines below after fixing #18135.
-	//// Test repair table when the table isn't in repairInfo.
-	//tk.MustExec("CREATE TABLE other_table (a int, b varchar(1), key using hash(b));")
-	//_, err = tk.Exec("admin repair table t CREATE TABLE t (a float primary key, b varchar(5));")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: table t is not in repair")
-	//
-	//// Test user can't access to the repaired table.
-	//_, err = tk.Exec("select * from other_table")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.other_table' doesn't exist")
-	//
-	//// Test create statement use the same name with what is in repaired.
-	//_, err = tk.Exec("CREATE TABLE other_table (a int);")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[ddl:1103]Incorrect table name 'other_table'%!(EXTRA string=this table is in repair)")
-	//
-	//// Test column lost in repair table.
-	//_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a int, c char(1));")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Column c has lost")
-	//
-	//// Test column type should be the same.
-	//_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a bigint, b varchar(1), key using hash(b));")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Column a type should be the same")
-	//
-	//// Test index lost in repair table.
-	//_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a int unique);")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Index a has lost")
-	//
-	//// Test index type should be the same.
-	//_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a int, b varchar(2) unique)")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Index b type should be the same")
-	//
-	//// Test sub create statement in repair statement with the same name.
-	//_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a int);")
-	//c.Assert(err, IsNil)
+	// Test repair table when the table isn't in repairInfo.
+	tk.MustExec("CREATE TABLE other_table (a int, b varchar(1), key using hash(b));")
+	_, err = tk.Exec("admin repair table t CREATE TABLE t (a float primary key, b varchar(5));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: table t is not in repair")
 
-	//// Test whether repair table name is case sensitive.
-	//domainutil.RepairInfo.SetRepairMode(true)
-	//domainutil.RepairInfo.SetRepairTableList([]string{"test.other_table2"})
-	//tk.MustExec("CREATE TABLE otHer_tAblE2 (a int, b varchar(1));")
-	//_, err = tk.Exec("admin repair table otHer_tAblE2 CREATE TABLE otHeR_tAbLe (a int, b varchar(2));")
-	//c.Assert(err, IsNil)
-	//repairTable := testGetTableByName(c, s.s, "test", "otHeR_tAbLe")
-	//c.Assert(repairTable.Meta().Name.O, Equals, "otHeR_tAbLe")
+	// Test user can't access to the repaired table.
+	_, err = tk.Exec("select * from other_table")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[schema:1146]Table 'test.other_table' doesn't exist")
+
+	// Test create statement use the same name with what is in repaired.
+	_, err = tk.Exec("CREATE TABLE other_table (a int);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:1103]Incorrect table name 'other_table'%!(EXTRA string=this table is in repair)")
+
+	// Test column lost in repair table.
+	_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a int, c char(1));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Column c has lost")
+
+	// Test column type should be the same.
+	_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a bigint, b varchar(1), key using hash(b));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Column a type should be the same")
+
+	// Test index lost in repair table.
+	_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a int unique);")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Index a has lost")
+
+	// Test index type should be the same.
+	_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a int, b varchar(2) unique)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Index b type should be the same")
+
+	// Test sub create statement in repair statement with the same name.
+	_, err = tk.Exec("admin repair table other_table CREATE TABLE other_table (a int);")
+	c.Assert(err, IsNil)
+
+	// Test whether repair table name is case sensitive.
+	domainutil.RepairInfo.SetRepairMode(true)
+	domainutil.RepairInfo.SetRepairTableList([]string{"test.other_table2"})
+	tk.MustExec("CREATE TABLE otHer_tAblE2 (a int, b varchar(1));")
+	_, err = tk.Exec("admin repair table otHer_tAblE2 CREATE TABLE otHeR_tAbLe (a int, b varchar(2));")
+	c.Assert(err, IsNil)
+	repairTable := testGetTableByName(c, s.s, "test", "otHeR_tAbLe")
+	c.Assert(repairTable.Meta().Name.O, Equals, "otHeR_tAbLe")
 
 	// Test memory and system database is not for repair.
 	domainutil.RepairInfo.SetRepairMode(true)
@@ -2403,31 +2680,30 @@ func (s *testDBSuite5) TestRepairTable(c *C) {
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 
-	// TODO: Uncomment lines below after fixing #18135.
-	//// Exec the repair statement to override the tableInfo.
-	//tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key auto_increment, b varchar(5), c int);")
-	//c.Assert(repairErr, IsNil)
-	//
-	//// Check the repaired tableInfo is exactly the same with old one in tableID, indexID, colID.
-	//// testGetTableByName will extract the Table from `domain.InfoSchema()` directly.
-	//repairTable = testGetTableByName(c, s.s, "test", "origin")
-	//c.Assert(repairTable.Meta().ID, Equals, originTableInfo.ID)
-	//c.Assert(len(repairTable.Meta().Columns), Equals, 3)
-	//c.Assert(repairTable.Meta().Columns[0].ID, Equals, originTableInfo.Columns[0].ID)
-	//c.Assert(repairTable.Meta().Columns[1].ID, Equals, originTableInfo.Columns[1].ID)
-	//c.Assert(repairTable.Meta().Columns[2].ID, Equals, originTableInfo.Columns[2].ID)
-	//c.Assert(len(repairTable.Meta().Indices), Equals, 1)
-	//c.Assert(repairTable.Meta().Indices[0].ID, Equals, originTableInfo.Columns[0].ID)
-	//c.Assert(repairTable.Meta().AutoIncID, Equals, originTableInfo.AutoIncID)
-	//
-	//c.Assert(repairTable.Meta().Columns[0].Tp, Equals, mysql.TypeLong)
-	//c.Assert(repairTable.Meta().Columns[1].Tp, Equals, mysql.TypeVarchar)
-	//c.Assert(repairTable.Meta().Columns[1].Flen, Equals, 5)
-	//c.Assert(repairTable.Meta().Columns[2].Tp, Equals, mysql.TypeLong)
-	//
-	//// Exec the show create table statement to make sure new tableInfo has been set.
-	//result := tk.MustQuery("show create table origin")
-	//c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` int(11) NOT NULL AUTO_INCREMENT,\n  `b` varchar(5) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	// Exec the repair statement to override the tableInfo.
+	tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key auto_increment, b varchar(5), c int);")
+	c.Assert(repairErr, IsNil)
+
+	// Check the repaired tableInfo is exactly the same with old one in tableID, indexID, colID.
+	// testGetTableByName will extract the Table from `domain.InfoSchema()` directly.
+	repairTable = testGetTableByName(c, s.s, "test", "origin")
+	c.Assert(repairTable.Meta().ID, Equals, originTableInfo.ID)
+	c.Assert(len(repairTable.Meta().Columns), Equals, 3)
+	c.Assert(repairTable.Meta().Columns[0].ID, Equals, originTableInfo.Columns[0].ID)
+	c.Assert(repairTable.Meta().Columns[1].ID, Equals, originTableInfo.Columns[1].ID)
+	c.Assert(repairTable.Meta().Columns[2].ID, Equals, originTableInfo.Columns[2].ID)
+	c.Assert(len(repairTable.Meta().Indices), Equals, 1)
+	c.Assert(repairTable.Meta().Indices[0].ID, Equals, originTableInfo.Columns[0].ID)
+	c.Assert(repairTable.Meta().AutoIncID, Equals, originTableInfo.AutoIncID)
+
+	c.Assert(repairTable.Meta().Columns[0].Tp, Equals, mysql.TypeLong)
+	c.Assert(repairTable.Meta().Columns[1].Tp, Equals, mysql.TypeVarchar)
+	c.Assert(repairTable.Meta().Columns[1].Flen, Equals, 5)
+	c.Assert(repairTable.Meta().Columns[2].Tp, Equals, mysql.TypeLong)
+
+	// Exec the show create table statement to make sure new tableInfo has been set.
+	result := tk.MustQuery("show create table origin")
+	c.Assert(result.Rows()[0][1], Equals, "CREATE TABLE `origin` (\n  `a` int(11) NOT NULL AUTO_INCREMENT,\n  `b` varchar(5) DEFAULT NULL,\n  `c` int(11) DEFAULT NULL,\n  PRIMARY KEY (`a`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
 
 }
 
@@ -2452,76 +2728,75 @@ func (s *testDBSuite5) TestRepairTableWithPartition(c *C) {
 	turnRepairModeAndInit(true)
 	defer turnRepairModeAndInit(false)
 	// Domain reload the tableInfo and add it into repairInfo.
-	// TODO: Uncomment lines below after fixing #18137.
-	//tk.MustExec("create table origin (a int not null) partition by RANGE(a) (" +
-	//	"partition p10 values less than (10)," +
-	//	"partition p30 values less than (30)," +
-	//	"partition p50 values less than (50)," +
-	//	"partition p70 values less than (70)," +
-	//	"partition p90 values less than (90));")
-	//// Test for some old partition has lost.
-	//_, err := tk.Exec("admin repair table origin create table origin (a int not null) partition by RANGE(a) (" +
-	//	"partition p10 values less than (10)," +
-	//	"partition p30 values less than (30)," +
-	//	"partition p50 values less than (50)," +
-	//	"partition p90 values less than (90)," +
-	//	"partition p100 values less than (100));")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Partition p100 has lost")
-	//
-	//// Test for some partition changed the condition.
-	//_, err = tk.Exec("admin repair table origin create table origin (a int not null) partition by RANGE(a) (" +
-	//	"partition p10 values less than (10)," +
-	//	"partition p20 values less than (25)," +
-	//	"partition p50 values less than (50)," +
-	//	"partition p90 values less than (90));")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Partition p20 has lost")
-	//
-	//// Test for some partition changed the partition name.
-	//_, err = tk.Exec("admin repair table origin create table origin (a int not null) partition by RANGE(a) (" +
-	//	"partition p10 values less than (10)," +
-	//	"partition p30 values less than (30)," +
-	//	"partition pNew values less than (50)," +
-	//	"partition p90 values less than (90));")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Partition pnew has lost")
-	//
-	//originTableInfo, _ := domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
-	//tk.MustExec("admin repair table origin create table origin_rename (a int not null) partition by RANGE(a) (" +
-	//	"partition p10 values less than (10)," +
-	//	"partition p30 values less than (30)," +
-	//	"partition p50 values less than (50)," +
-	//	"partition p90 values less than (90));")
-	//repairTable := testGetTableByName(c, s.s, "test", "origin_rename")
-	//c.Assert(repairTable.Meta().ID, Equals, originTableInfo.ID)
-	//c.Assert(len(repairTable.Meta().Columns), Equals, 1)
-	//c.Assert(repairTable.Meta().Columns[0].ID, Equals, originTableInfo.Columns[0].ID)
-	//c.Assert(len(repairTable.Meta().Partition.Definitions), Equals, 4)
-	//c.Assert(repairTable.Meta().Partition.Definitions[0].ID, Equals, originTableInfo.Partition.Definitions[0].ID)
-	//c.Assert(repairTable.Meta().Partition.Definitions[1].ID, Equals, originTableInfo.Partition.Definitions[1].ID)
-	//c.Assert(repairTable.Meta().Partition.Definitions[2].ID, Equals, originTableInfo.Partition.Definitions[2].ID)
-	//c.Assert(repairTable.Meta().Partition.Definitions[3].ID, Equals, originTableInfo.Partition.Definitions[4].ID)
-	//
-	//// Test hash partition.
-	//tk.MustExec("drop table if exists origin")
-	//domainutil.RepairInfo.SetRepairMode(true)
-	//domainutil.RepairInfo.SetRepairTableList([]string{"test.origin"})
-	//tk.MustExec("create table origin (a varchar(1), b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
-	//
-	//// Test partition num in repair should be exactly same with old one, other wise will cause partition semantic problem.
-	//_, err = tk.Exec("admin repair table origin create table origin (a varchar(2), b int not null, c int, key idx(c)) partition by hash(b) partitions 20")
-	//c.Assert(err, NotNil)
-	//c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Hash partition num should be the same")
-	//
-	//originTableInfo, _ = domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
-	//tk.MustExec("admin repair table origin create table origin (a varchar(3), b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
-	//repairTable = testGetTableByName(c, s.s, "test", "origin")
-	//c.Assert(repairTable.Meta().ID, Equals, originTableInfo.ID)
-	//c.Assert(len(repairTable.Meta().Partition.Definitions), Equals, 30)
-	//c.Assert(repairTable.Meta().Partition.Definitions[0].ID, Equals, originTableInfo.Partition.Definitions[0].ID)
-	//c.Assert(repairTable.Meta().Partition.Definitions[1].ID, Equals, originTableInfo.Partition.Definitions[1].ID)
-	//c.Assert(repairTable.Meta().Partition.Definitions[29].ID, Equals, originTableInfo.Partition.Definitions[29].ID)
+	tk.MustExec("create table origin (a int not null) partition by RANGE(a) (" +
+		"partition p10 values less than (10)," +
+		"partition p30 values less than (30)," +
+		"partition p50 values less than (50)," +
+		"partition p70 values less than (70)," +
+		"partition p90 values less than (90));")
+	// Test for some old partition has lost.
+	_, err := tk.Exec("admin repair table origin create table origin (a int not null) partition by RANGE(a) (" +
+		"partition p10 values less than (10)," +
+		"partition p30 values less than (30)," +
+		"partition p50 values less than (50)," +
+		"partition p90 values less than (90)," +
+		"partition p100 values less than (100));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Partition p100 has lost")
+
+	// Test for some partition changed the condition.
+	_, err = tk.Exec("admin repair table origin create table origin (a int not null) partition by RANGE(a) (" +
+		"partition p10 values less than (10)," +
+		"partition p20 values less than (25)," +
+		"partition p50 values less than (50)," +
+		"partition p90 values less than (90));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Partition p20 has lost")
+
+	// Test for some partition changed the partition name.
+	_, err = tk.Exec("admin repair table origin create table origin (a int not null) partition by RANGE(a) (" +
+		"partition p10 values less than (10)," +
+		"partition p30 values less than (30)," +
+		"partition pNew values less than (50)," +
+		"partition p90 values less than (90));")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Partition pnew has lost")
+
+	originTableInfo, _ := domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
+	tk.MustExec("admin repair table origin create table origin_rename (a int not null) partition by RANGE(a) (" +
+		"partition p10 values less than (10)," +
+		"partition p30 values less than (30)," +
+		"partition p50 values less than (50)," +
+		"partition p90 values less than (90));")
+	repairTable := testGetTableByName(c, s.s, "test", "origin_rename")
+	c.Assert(repairTable.Meta().ID, Equals, originTableInfo.ID)
+	c.Assert(len(repairTable.Meta().Columns), Equals, 1)
+	c.Assert(repairTable.Meta().Columns[0].ID, Equals, originTableInfo.Columns[0].ID)
+	c.Assert(len(repairTable.Meta().Partition.Definitions), Equals, 4)
+	c.Assert(repairTable.Meta().Partition.Definitions[0].ID, Equals, originTableInfo.Partition.Definitions[0].ID)
+	c.Assert(repairTable.Meta().Partition.Definitions[1].ID, Equals, originTableInfo.Partition.Definitions[1].ID)
+	c.Assert(repairTable.Meta().Partition.Definitions[2].ID, Equals, originTableInfo.Partition.Definitions[2].ID)
+	c.Assert(repairTable.Meta().Partition.Definitions[3].ID, Equals, originTableInfo.Partition.Definitions[4].ID)
+
+	// Test hash partition.
+	tk.MustExec("drop table if exists origin")
+	domainutil.RepairInfo.SetRepairMode(true)
+	domainutil.RepairInfo.SetRepairTableList([]string{"test.origin"})
+	tk.MustExec("create table origin (a varchar(1), b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
+
+	// Test partition num in repair should be exactly same with old one, other wise will cause partition semantic problem.
+	_, err = tk.Exec("admin repair table origin create table origin (a varchar(2), b int not null, c int, key idx(c)) partition by hash(b) partitions 20")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8215]Failed to repair table: Hash partition num should be the same")
+
+	originTableInfo, _ = domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
+	tk.MustExec("admin repair table origin create table origin (a varchar(3), b int not null, c int, key idx(c)) partition by hash(b) partitions 30")
+	repairTable = testGetTableByName(c, s.s, "test", "origin")
+	c.Assert(repairTable.Meta().ID, Equals, originTableInfo.ID)
+	c.Assert(len(repairTable.Meta().Partition.Definitions), Equals, 30)
+	c.Assert(repairTable.Meta().Partition.Definitions[0].ID, Equals, originTableInfo.Partition.Definitions[0].ID)
+	c.Assert(repairTable.Meta().Partition.Definitions[1].ID, Equals, originTableInfo.Partition.Definitions[1].ID)
+	c.Assert(repairTable.Meta().Partition.Definitions[29].ID, Equals, originTableInfo.Partition.Definitions[29].ID)
 }
 
 func (s *testDBSuite2) TestCreateTableWithSetCol(c *C) {
@@ -2716,7 +2991,7 @@ func (s *testDBSuite3) TestFKOnGeneratedColumns(c *C) {
 	tk.MustExec("drop table t1,t2,t3,t4,t5;")
 }
 
-func (s *testDBSuite3) TestTruncateTable(c *C) {
+func (s *testSerialDBSuite) TestTruncateTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table truncate_table (c1 int, c2 int)")
@@ -2763,6 +3038,9 @@ func (s *testDBSuite3) TestTruncateTable(c *C) {
 	c.Assert(hasOldTableData, IsFalse)
 
 	// Test for truncate table should clear the tiflash available status.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
@@ -3117,18 +3395,17 @@ func (s *testSerialDBSuite) TestRebaseAutoID(c *C) {
 	tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1"))
 	tk.MustExec("alter table tidb.test auto_increment = 6000;")
 	tk.MustExec("insert tidb.test values (null, 1);")
-	// TODO: Uncomment lines below after fixing #18138.
-	//tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1"))
-	//tk.MustExec("alter table tidb.test auto_increment = 5;")
-	//tk.MustExec("insert tidb.test values (null, 1);")
-	//tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1"))
-	//
-	//// Current range for table test is [11000, 15999].
-	//// Though it does not have a tuple "a = 15999", its global next auto increment id should be 16000.
-	//// Anyway it is not compatible with MySQL.
-	//tk.MustExec("alter table tidb.test auto_increment = 12000;")
-	//tk.MustExec("insert tidb.test values (null, 1);")
-	//tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1", "16000 1"))
+	tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1"))
+	tk.MustExec("alter table tidb.test auto_increment = 5;")
+	tk.MustExec("insert tidb.test values (null, 1);")
+	tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1"))
+
+	// Current range for table test is [11000, 15999].
+	// Though it does not have a tuple "a = 15999", its global next auto increment id should be 16000.
+	// Anyway it is not compatible with MySQL.
+	tk.MustExec("alter table tidb.test auto_increment = 12000;")
+	tk.MustExec("insert tidb.test values (null, 1);")
+	tk.MustQuery("select * from tidb.test").Check(testkit.Rows("1 1", "6000 1", "11000 1", "16000 1"))
 
 	tk.MustExec("create table tidb.test2 (a int);")
 	tk.MustGetErrCode("alter table tidb.test2 add column b int auto_increment key, auto_increment=10;", errno.ErrUnsupportedDDLOperation)
@@ -3612,8 +3889,7 @@ func (s *testDBSuite4) TestAddColumn2(c *C) {
 	c.Assert(err, IsNil)
 	_, err = writeOnlyTable.AddRecord(tk.Se, types.MakeDatums(oldRow[0].GetInt64(), 2, oldRow[2].GetInt64()), table.IsUpdate)
 	c.Assert(err, IsNil)
-	err = tk.Se.StmtCommit(nil)
-	c.Assert(err, IsNil)
+	tk.Se.StmtCommit()
 	err = tk.Se.CommitTxn(ctx)
 	c.Assert(err, IsNil)
 
@@ -3744,7 +4020,7 @@ func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testSerialDBSuite, c
 	tk.MustExec("insert into t values()")
 	tk.MustExec("ALTER TABLE t ADD COLUMN y1 year as (y + 2)")
 	_, err := tk.Exec("ALTER TABLE t ADD INDEX idx_y(y1)")
-	c.Assert(err.Error(), Equals, "[ddl:8202]Cannot decode index value, because cannot convert datum from unsigned bigint to type year.")
+	c.Assert(err, IsNil)
 
 	t := s.testGetTable(c, "t")
 	for _, idx := range t.Indices() {
@@ -3937,7 +4213,7 @@ func (s *testDBSuite4) TestIssue9100(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:1503]A PRIMARY must include all columns in the table's partitioning function")
 }
 
-func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
+func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("create table t_mcc(a varchar(8) charset utf8, b varchar(8) charset utf8)")
@@ -3965,7 +4241,9 @@ func (s *testDBSuite1) TestModifyColumnCharset(c *C) {
 
 }
 
-func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
+func (s *testSerialDBSuite) TestSetTableFlashReplica(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	s.mustExec(tk, c, "drop table if exists t_flash;")
@@ -4055,6 +4333,14 @@ func (s *testDBSuite1) TestSetTableFlashReplica(c *C) {
 	t, dbInfo = is.FindTableByPartitionID(t.Meta().ID)
 	c.Assert(t, IsNil)
 	c.Assert(dbInfo, IsNil)
+	failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
+	// Test for set replica count more than the tiflash store count.
+	s.mustExec(tk, c, "drop table if exists t_flash;")
+	tk.MustExec("create table t_flash(a int, b int)")
+	_, err = tk.Exec("alter table t_flash set tiflash replica 2 location labels 'a','b';")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "the tiflash replica count: 2 should be less than the total tiflash server count: 0")
 }
 
 func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
@@ -4076,8 +4362,7 @@ func (s *testSerialDBSuite) TestAlterShardRowIDBits(c *C) {
 	// Test increase shard_row_id_bits failed by overflow global auto ID.
 	_, err := tk.Exec("alter table t1 SHARD_ROW_ID_BITS = 10;")
 	c.Assert(err, NotNil)
-	// TODO: Uncomment lines below after fixing #18139.
-	//c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID 72057594037932936 overflow")
+	c.Assert(err.Error(), Equals, "[autoid:1467]shard_row_id_bits 10 will cause next global auto ID 72057594037932936 overflow")
 
 	// Test reduce shard_row_id_bits will be ok.
 	tk.MustExec("alter table t1 SHARD_ROW_ID_BITS = 3;")
@@ -4227,7 +4512,10 @@ func (s *testDBSuite2) TestWriteLocal(c *C) {
 	tk2.MustExec("unlock tables")
 }
 
-func (s *testDBSuite2) TestSkipSchemaChecker(c *C) {
+func (s *testSerialDBSuite) TestSkipSchemaChecker(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -4662,6 +4950,49 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	c.Assert(err.Error(), Equals, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
 }
 
+func (s *testDBSuite4) TestColumnCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+	tk.MustExec("drop table if exists column_check")
+	tk.MustExec("create table column_check (pk int primary key, a int check (a > 1))")
+	defer tk.MustExec("drop table if exists column_check")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|Column check is not supported"))
+}
+
+func (s *testDBSuite5) TestAlterCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+	tk.MustExec("drop table if exists alter_check")
+	tk.MustExec("create table alter_check (pk int primary key)")
+	defer tk.MustExec("drop table if exists alter_check")
+	tk.MustExec("alter table alter_check alter check crcn ENFORCED")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|ALTER CHECK is not supported"))
+}
+
+func (s *testDBSuite6) TestDropCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+	tk.MustExec("drop table if exists drop_check")
+	tk.MustExec("create table drop_check (pk int primary key)")
+	defer tk.MustExec("drop table if exists drop_check")
+	tk.MustExec("alter table drop_check drop check crcn")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|DROP CHECK is not supported"))
+}
+
+func (s *testDBSuite7) TestAddConstraintCheck(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+	tk.MustExec("drop table if exists add_constraint_check")
+	tk.MustExec("create table add_constraint_check (pk int primary key, a int)")
+	defer tk.MustExec("drop table if exists add_constraint_check")
+	tk.MustExec("alter table add_constraint_check add constraint crn check (a > 1)")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|ADD CONSTRAINT CHECK is not supported"))
+}
+
 func (s *testDBSuite6) TestAlterOrderBy(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use " + s.schemaName)
@@ -4729,9 +5060,8 @@ func (s *testSerialDBSuite) TestDDLJobErrorCount(c *C) {
 		if historyJob == nil {
 			continue
 		}
-		// TODO: Uncomment lines below after fixing #18140.
-		//c.Assert(historyJob.ErrorCount, Equals, int64(1))
-		//kv.ErrEntryTooLarge.Equal(historyJob.Error)
+		c.Assert(historyJob.ErrorCount, Equals, int64(1), Commentf("%v", historyJob))
+		kv.ErrEntryTooLarge.Equal(historyJob.Error)
 		break
 	}
 }
@@ -4755,8 +5085,273 @@ func (s *testDBSuite1) TestAlterTableWithValidation(c *C) {
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8200|ALTER TABLE WITHOUT VALIDATION is currently unsupported"))
 }
 
+func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
+	// Prepare work.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
+	tk.MustExec("insert t1 values (1, 10, 100), (2, 20, 200)")
+	tk.MustExec("alter table t1 add index k2(c2)")
+	tk.MustExec("alter table t1 drop index k2")
+	tk.MustExec("alter table t1 add index k2(c2)")
+	tk.MustExec("alter table t1 drop index k2")
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test_db")
+
+	// tkSQLs are the sql statements for the pessimistic transaction.
+	// tk2DDL are the ddl statements executed before the pessimistic transaction.
+	// idxDDL is the DDL statement executed between pessimistic transaction begin and commit.
+	// failCommit means the pessimistic transaction commit should fail not.
+	type caseUnit struct {
+		tkSQLs     []string
+		tk2DDL     []string
+		idxDDL     string
+		checkSQLs  []string
+		rowsExps   [][]string
+		failCommit bool
+		stateEnd   model.SchemaState
+	}
+
+	cases := []caseUnit{
+		// Test secondary index
+		{[]string{"insert into t1 values(3, 30, 300)",
+			"insert into t2 values(11, 11, 11)"},
+			[]string{"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2",
+				"alter table t1 add index kk2(c2, c1)",
+				"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2"},
+			"alter table t1 add index k2(c2)",
+			[]string{"select c3, c2 from t1 use index(k2) where c2 = 20",
+				"select c3, c2 from t1 use index(k2) where c2 = 10",
+				"select * from t1",
+				"select * from t2 where c1 = 11"},
+			[][]string{{"200 20"},
+				{"100 10"},
+				{"1 10 100", "2 20 200", "3 30 300"},
+				{"11 11 11"}},
+			false,
+			model.StateNone},
+		// Test secondary index
+		{[]string{"insert into t2 values(5, 50, 500)",
+			"insert into t2 values(11, 11, 11)",
+			"delete from t2 where c2 = 11",
+			"update t2 set c2 = 110 where c1 = 11"},
+			//"update t2 set c1 = 10 where c3 = 100"},
+			[]string{"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2",
+				"alter table t1 add index kk2(c2, c1)",
+				"alter table t1 add index k2(c2)",
+				"alter table t1 drop index k2"},
+			"alter table t1 add index k2(c2)",
+			[]string{"select c3, c2 from t1 use index(k2) where c2 = 20",
+				"select c3, c2 from t1 use index(k2) where c2 = 10",
+				"select * from t1",
+				"select * from t2 where c1 = 11",
+				"select * from t2 where c3 = 100"},
+			[][]string{{"200 20"},
+				{"100 10"},
+				{"1 10 100", "2 20 200"},
+				{},
+				{"1 10 100"}},
+			false,
+			model.StateNone},
+		// Test unique index
+		/* TODO unique index is not supported now.
+		{[]string{"insert into t1 values(3, 30, 300)",
+			"insert into t1 values(4, 40, 400)",
+			"insert into t2 values(11, 11, 11)",
+			"insert into t2 values(12, 12, 11)"},
+			[]string{"alter table t1 add unique index uk3(c3)",
+				"alter table t1 drop index uk3",
+				"alter table t2 add unique index ukc1c3(c1, c3)",
+				"alter table t2 add unique index ukc3(c3)",
+				"alter table t2 drop index ukc1c3",
+				"alter table t2 drop index ukc3",
+				"alter table t2 add index kc3(c3)"},
+			"alter table t1 add unique index uk3(c3)",
+			[]string{"select c3, c2 from t1 use index(uk3) where c3 = 200",
+				"select c3, c2 from t1 use index(uk3) where c3 = 300",
+				"select c3, c2 from t1 use index(uk3) where c3 = 400",
+				"select * from t1",
+				"select * from t2"},
+			[][]string{{"200 20"},
+				{"300 30"},
+				{"400 40"},
+				{"1 10 100", "2 20 200", "3 30 300", "4 40 400"},
+				{"1 10 100", "2 20 200", "11 11 11", "12 12 11"}},
+			false, model.StateNone},
+		// Test unique index fail to commit, this case needs the new index could be inserted
+		{[]string{"insert into t1 values(3, 30, 300)",
+			"insert into t1 values(4, 40, 300)",
+			"insert into t2 values(11, 11, 11)",
+			"insert into t2 values(12, 11, 12)"},
+			//[]string{"alter table t1 add unique index uk3(c3)", "alter table t1 drop index uk3"},
+			[]string{},
+			"alter table t1 add unique index uk3(c3)",
+			[]string{"select c3, c2 from t1 use index(uk3) where c3 = 200",
+				"select c3, c2 from t1 use index(uk3) where c3 = 300",
+				"select c3, c2 from t1 where c1 = 4",
+				"select * from t1",
+				"select * from t2"},
+			[][]string{{"200 20"},
+				{},
+				{},
+				{"1 10 100", "2 20 200"},
+				{"1 10 100", "2 20 200"}},
+			true,
+			model.StateWriteOnly},
+		*/
+	}
+	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
+
+	// Test add index state change
+	do := s.dom.DDL()
+	startStates := []model.SchemaState{model.StateNone, model.StateDeleteOnly}
+	for _, startState := range startStates {
+		endStatMap := session.ConstOpAddIndex[startState]
+		var endStates []model.SchemaState
+		for st := range endStatMap {
+			endStates = append(endStates, st)
+		}
+		sort.Slice(endStates, func(i, j int) bool { return endStates[i] < endStates[j] })
+		for _, endState := range endStates {
+			for _, curCase := range cases {
+				if endState < curCase.stateEnd {
+					break
+				}
+				tk2.MustExec("drop table if exists t1")
+				tk2.MustExec("drop table if exists t2")
+				tk2.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
+				tk2.MustExec("create table t2 (c1 int primary key, c2 int, c3 int, index ok2(c2))")
+				tk2.MustExec("insert t1 values (1, 10, 100), (2, 20, 200)")
+				tk2.MustExec("insert t2 values (1, 10, 100), (2, 20, 200)")
+				tk2.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
+				tk.MustQuery("select * from t1;").Check(testkit.Rows("1 10 100", "2 20 200"))
+				tk.MustQuery("select * from t2;").Check(testkit.Rows("1 10 100", "2 20 200"))
+
+				for _, DDLSQL := range curCase.tk2DDL {
+					tk2.MustExec(DDLSQL)
+				}
+				hook := &ddl.TestDDLCallback{}
+				prepared := false
+				committed := false
+				hook.OnJobUpdatedExported = func(job *model.Job) {
+					if job.SchemaState == startState {
+						if !prepared {
+							tk.MustExec("begin pessimistic")
+							for _, tkSQL := range curCase.tkSQLs {
+								tk.MustExec(tkSQL)
+							}
+							prepared = true
+						}
+					} else if job.SchemaState == endState {
+						if !committed {
+							if curCase.failCommit {
+								_, err := tk.Exec("commit")
+								c.Assert(err, NotNil)
+							} else {
+								tk.MustExec("commit")
+							}
+						}
+						committed = true
+					}
+				}
+				originalCallback := do.GetHook()
+				do.(ddl.DDLForTest).SetHook(hook)
+				tk2.MustExec(curCase.idxDDL)
+				do.(ddl.DDLForTest).SetHook(originalCallback)
+				tk2.MustExec("admin check table t1")
+				for i, checkSQL := range curCase.checkSQLs {
+					if len(curCase.rowsExps[i]) > 0 {
+						tk2.MustQuery(checkSQL).Check(testkit.Rows(curCase.rowsExps[i]...))
+					} else {
+						tk2.MustQuery(checkSQL).Check(nil)
+					}
+				}
+			}
+		}
+	}
+	tk.MustExec("admin check table t1")
+}
+
+// TestAddIndexFailOnCaseWhenCanExit is used to close #19325.
+func (s *testSerialDBSuite) TestAddIndexFailOnCaseWhenCanExit(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	_, err := tk.Exec("alter table t add index idx(b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: job.ErrCount:512, mock unknown type: ast.whenClause.")
+	tk.MustExec("drop table if exists t")
+}
+
 func init() {
 	// Make sure it will only be executed once.
 	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
 	domain.SchemaOutOfDateRetryTimes = int32(50)
+}
+
+func (s *testSerialDBSuite) TestCreateTableWithIntegerLengthWaring(c *C) {
+	// Inject the strict-integer-display-width variable in parser directly.
+	parsertypes.TiDBStrictIntegerDisplayWidth = true
+	defer func() {
+		parsertypes.TiDBStrictIntegerDisplayWidth = false
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t(a tinyint(1))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a smallint(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a mediumint(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a integer(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int1(1))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int2(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int3(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int4(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int8(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
 }

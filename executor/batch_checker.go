@@ -53,7 +53,7 @@ func encodeNewRow(ctx sessionctx.Context, t table.Table, row []types.Datum) ([]b
 	colIDs := make([]int64, 0, len(row))
 	skimmedRow := make([]types.Datum, 0, len(row))
 	for _, col := range t.Cols() {
-		if !tables.CanSkip(t.Meta(), col, row[col.Offset]) {
+		if !tables.CanSkip(t.Meta(), col, &row[col.Offset]) {
 			colIDs = append(colIDs, col.ID)
 			skimmedRow = append(skimmedRow, row[col.Offset])
 		}
@@ -143,6 +143,9 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	// append unique keys and errors
 	for _, v := range t.WritableIndices() {
 		if !v.Meta().Unique {
+			continue
+		}
+		if t.Meta().IsCommonHandle && v.Meta().Primary {
 			continue
 		}
 		colVals, err1 := v.FetchValues(row, nil)

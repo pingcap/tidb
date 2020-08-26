@@ -37,6 +37,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	scopeGlobal  = "global"
+	scopeSession = "session"
+)
+
 // SetExecutor executes set statement.
 type SetExecutor struct {
 	baseExecutor
@@ -132,7 +137,9 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 		return errors.Errorf("Variable '%s' is a read only variable", name)
 	}
 	var valStr string
+	var scopeStr string
 	if v.IsGlobal {
+		scopeStr = scopeGlobal
 		// Set global scope system variable.
 		if sysVar.Scope&variable.ScopeGlobal == 0 {
 			return errors.Errorf("Variable '%s' is a SESSION variable and can't be used with SET GLOBAL", name)
@@ -163,6 +170,7 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			return err
 		}
 	} else {
+		scopeStr = scopeSession
 		// Set session scope system variable.
 		if sysVar.Scope&variable.ScopeSession == 0 {
 			return errors.Errorf("Variable '%s' is a GLOBAL variable and should be set with SET GLOBAL", name)
@@ -203,13 +211,13 @@ func (e *SetExecutor) setSysVariable(name string, v *expression.VarAssignment) e
 			valStr, err = value.ToString()
 			terror.Log(err)
 		}
-		if name != variable.AutoCommit {
-			logutil.BgLogger().Info("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
-		} else {
-			// Some applications will set `autocommit` variable before query.
-			// This will print too many unnecessary log info.
-			logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
-		}
+	}
+	if scopeStr == scopeGlobal {
+		logutil.BgLogger().Info(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+	} else {
+		// Clients are often noisy in setting session variables such as
+		// autocommit, timezone, query cache
+		logutil.BgLogger().Debug(fmt.Sprintf("set %s var", scopeStr), zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	}
 
 	switch name {

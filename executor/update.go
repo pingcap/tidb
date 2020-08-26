@@ -22,10 +22,10 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -48,6 +48,8 @@ type UpdateExec struct {
 	allAssignmentsAreConstant bool
 	drained                   bool
 	memTracker                *memory.Tracker
+
+	stats *runtimeStatsWithSnapshot
 }
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, newData []types.Datum) error {
@@ -64,26 +66,9 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 			e.updatedRowKeys[content.TblID] = kv.NewHandleMap()
 		}
 		var handle kv.Handle
-		if !content.IsCommonHandle {
-			handleDatum := row[content.HandleOrdinal[0]]
-			if e.canNotUpdate(handleDatum) {
-				continue
-			}
-			handle = kv.IntHandle(row[content.HandleOrdinal[0]].GetInt64())
-		} else {
-			// TODO: Redesign update join for cluster index table.
-			pkDts := make([]types.Datum, 0, len(content.HandleOrdinal))
-			for _, ordinal := range content.HandleOrdinal {
-				pkDts = append(pkDts, row[ordinal])
-			}
-			handleBytes, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, pkDts...)
-			if err != nil {
-				return err
-			}
-			handle, err = kv.NewCommonHandle(handleBytes)
-			if err != nil {
-				return err
-			}
+		handle, err = content.HandleCols.BuildHandleByDatums(row)
+		if err != nil {
+			return err
 		}
 
 		oldData := row[content.Start:content.End]
@@ -186,6 +171,12 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		}
 		memUsageOfChk = chk.MemoryUsage()
 		e.memTracker.Consume(memUsageOfChk)
+		if e.collectRuntimeStatsEnabled() {
+			txn, err := e.ctx.Txn(false)
+			if err == nil && txn.GetSnapshot() != nil {
+				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			}
+		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
@@ -278,6 +269,12 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 // Close implements the Executor Close interface.
 func (e *UpdateExec) Close() error {
 	e.setMessage()
+	if e.runtimeStats != nil && e.stats != nil {
+		txn, err := e.ctx.Txn(false)
+		if err == nil && txn.GetSnapshot() != nil {
+			txn.GetSnapshot().DelOption(kv.CollectRuntimeStats)
+		}
+	}
 	return e.children[0].Close()
 }
 
@@ -297,4 +294,19 @@ func (e *UpdateExec) setMessage() {
 	numWarnings := stmtCtx.WarningCount()
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUpdateInfo], numMatched, numChanged, numWarnings)
 	stmtCtx.SetMessage(msg)
+}
+
+func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
+	if e.runtimeStats != nil {
+		if e.stats == nil {
+			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			e.stats = &runtimeStatsWithSnapshot{
+				BasicRuntimeStats:    e.runtimeStats,
+				SnapshotRuntimeStats: snapshotStats,
+			}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		}
+		return true
+	}
+	return false
 }

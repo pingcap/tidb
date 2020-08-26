@@ -147,6 +147,10 @@ const (
 	TableStatementsSummaryHistory = "STATEMENTS_SUMMARY_HISTORY"
 	// TableStorageStats is a table that contains all tables disk usage
 	TableStorageStats = "TABLE_STORAGE_STATS"
+	// TableTiFlashTables is the string constant of tiflash tables table.
+	TableTiFlashTables = "TIFLASH_TABLES"
+	// TableTiFlashSegments is the string constant of tiflash segments table.
+	TableTiFlashSegments = "TIFLASH_SEGMENTS"
 )
 
 var tableIDMap = map[string]int64{
@@ -213,6 +217,8 @@ var tableIDMap = map[string]int64{
 	ClusterTableStatementsSummary:           autoid.InformationSchemaDBID + 61,
 	ClusterTableStatementsSummaryHistory:    autoid.InformationSchemaDBID + 62,
 	TableStorageStats:                       autoid.InformationSchemaDBID + 63,
+	TableTiFlashTables:                      autoid.InformationSchemaDBID + 64,
+	TableTiFlashSegments:                    autoid.InformationSchemaDBID + 65,
 }
 
 type columnInfo struct {
@@ -703,6 +709,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "INDEX_COMMENT", tp: mysql.TypeVarchar, size: 2048},
 	{name: "Expression", tp: mysql.TypeVarchar, size: 64},
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
 }
 
 var slowQueryCols = []columnInfo{
@@ -850,6 +857,7 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{name: "VERSION", tp: mysql.TypeVarchar, size: 64},
 	{name: "GIT_HASH", tp: mysql.TypeVarchar, size: 64},
 	{name: "BINLOG_STATUS", tp: mysql.TypeVarchar, size: 64},
+	{name: "LABELS", tp: mysql.TypeVarchar, size: 128},
 }
 
 var tableClusterConfigCols = []columnInfo{
@@ -1128,6 +1136,85 @@ var tableStorageStatsCols = []columnInfo{
 	{name: "TABLE_KEYS", tp: mysql.TypeLonglong, size: 64, comment: "The count of keys of single replica of the table"},
 }
 
+var tableTableTiFlashTablesCols = []columnInfo{
+	{name: "DATABASE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
+	{name: "SEGMENT_COUNT", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_DELETE_RANGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_RATE_ROWS", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_RATE_SEGMENTS", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_PLACED_RATE", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_CACHE_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_CACHE_RATE", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_CACHE_WASTED_RATE", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_INDEX_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "AVG_SEGMENT_ROWS", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_SEGMENT_SIZE", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_COUNT", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_DELTA_ROWS", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_DELTA_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "AVG_DELTA_ROWS", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_DELTA_SIZE", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_DELTA_DELETE_RANGES", tp: mysql.TypeDouble, size: 64},
+	{name: "STABLE_COUNT", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_STABLE_ROWS", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_STABLE_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "TOTAL_STABLE_SIZE_ON_DISK", tp: mysql.TypeLonglong, size: 64},
+	{name: "AVG_STABLE_ROWS", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_STABLE_SIZE", tp: mysql.TypeDouble, size: 64},
+	{name: "TOTAL_PACK_COUNT_IN_DELTA", tp: mysql.TypeLonglong, size: 64},
+	{name: "AVG_PACK_COUNT_IN_DELTA", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_PACK_ROWS_IN_DELTA", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_PACK_SIZE_IN_DELTA", tp: mysql.TypeDouble, size: 64},
+	{name: "TOTAL_PACK_COUNT_IN_STABLE", tp: mysql.TypeLonglong, size: 64},
+	{name: "AVG_PACK_COUNT_IN_STABLE", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_PACK_ROWS_IN_STABLE", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_PACK_SIZE_IN_STABLE", tp: mysql.TypeDouble, size: 64},
+	{name: "STORAGE_STABLE_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_STABLE_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_STABLE_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_STABLE_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_DELTA_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_DELTA_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_DELTA_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_DELTA_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_META_NUM_SNAPSHOTS", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_META_NUM_PAGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_META_NUM_NORMAL_PAGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STORAGE_META_MAX_PAGE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "BACKGROUND_TASKS_LENGTH", tp: mysql.TypeLonglong, size: 64},
+	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
+}
+
+var tableTableTiFlashSegmentsCols = []columnInfo{
+	{name: "DATABASE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_DATABASE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_TABLE", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "IS_TOMBSTONE", tp: mysql.TypeLonglong, size: 64},
+	{name: "SEGMENT_ID", tp: mysql.TypeLonglong, size: 64},
+	{name: "RANGE", tp: mysql.TypeVarchar, size: 64},
+	{name: "ROWS", tp: mysql.TypeLonglong, size: 64},
+	{name: "SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELETE_RANGES", tp: mysql.TypeLonglong, size: 64},
+	{name: "STABLE_SIZE_ON_DISK", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_PACK_COUNT", tp: mysql.TypeLonglong, size: 64},
+	{name: "STABLE_PACK_COUNT", tp: mysql.TypeLonglong, size: 64},
+	{name: "AVG_DELTA_PACK_ROWS", tp: mysql.TypeDouble, size: 64},
+	{name: "AVG_STABLE_PACK_ROWS", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_RATE", tp: mysql.TypeDouble, size: 64},
+	{name: "DELTA_CACHE_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "DELTA_INDEX_SIZE", tp: mysql.TypeLonglong, size: 64},
+	{name: "TIFLASH_INSTANCE", tp: mysql.TypeVarchar, size: 64},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //  - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1317,12 +1404,14 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
+const tiflashLabel = "tiflash"
+
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
 func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	isTiFlashStore := func(store *metapb.Store) bool {
 		isTiFlash := false
 		for _, label := range store.Labels {
-			if label.GetKey() == "engine" && label.GetValue() == "tiflash" {
+			if label.GetKey() == "engine" && label.GetValue() == tiflashLabel {
 				isTiFlash = true
 			}
 		}
@@ -1356,7 +1445,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 		var tp string
 		if isTiFlashStore(store) {
-			tp = "tiflash"
+			tp = tiflashLabel
 		} else {
 			tp = tikv.GetStoreTypeByMeta(store).Name()
 		}
@@ -1370,6 +1459,26 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		})
 	}
 	return servers, nil
+}
+
+// GetTiFlashStoreCount returns the count of tiflash server.
+func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
+	failpoint.Inject("mockTiFlashStoreCount", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(uint64(10), nil)
+		}
+	})
+
+	stores, err := GetStoreServerInfo(ctx)
+	if err != nil {
+		return cnt, err
+	}
+	for _, store := range stores {
+		if store.ServerType == tiflashLabel {
+			cnt++
+		}
+	}
+	return cnt, nil
 }
 
 var tableNameToColumns = map[string][]columnInfo{
@@ -1431,6 +1540,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableStatementsSummary:                  tableStatementsSummaryCols,
 	TableStatementsSummaryHistory:           tableStatementsSummaryCols,
 	TableStorageStats:                       tableStorageStatsCols,
+	TableTiFlashTables:                      tableTableTiFlashTablesCols,
+	TableTiFlashSegments:                    tableTableTiFlashSegmentsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
@@ -1515,7 +1626,7 @@ func (it *infoschemaTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, 
 		return err
 	}
 	for i, row := range rows {
-		more, err := fn(int64(i), row, cols)
+		more, err := fn(kv.IntHandle(i), row, cols)
 		if err != nil {
 			return err
 		}
@@ -1646,7 +1757,7 @@ type VirtualTable struct{}
 
 // IterRecords implements table.Table IterRecords interface.
 func (vt *VirtualTable) IterRecords(ctx sessionctx.Context, startKey kv.Key, cols []*table.Column,
-	fn table.RecordIterFunc) error {
+	_ table.RecordIterFunc) error {
 	if len(startKey) != 0 {
 		return table.ErrUnsupportedOp
 	}

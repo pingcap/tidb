@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -200,6 +202,35 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustQuery(`select * from t1 use index(primary)`).Check(testkit.Rows(`1.0000`))
 }
 
+func (s *testSuite8) TestClusterIndexInsertOnDuplicateKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists cluster_index_duplicate_entry_error;")
+	tk.MustExec("create database cluster_index_duplicate_entry_error;")
+	tk.MustExec("use cluster_index_duplicate_entry_error;")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+
+	tk.MustExec("create table t(a char(20), b int, primary key(a));")
+	tk.MustExec("insert into t values('aa', 1), ('bb', 1);")
+	_, err := tk.Exec("insert into t values('aa', 2);")
+	c.Assert(err, ErrorMatches, ".*Duplicate entry 'aa' for.*")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a char(20), b varchar(30), c varchar(10), primary key(a, b, c));")
+	tk.MustExec("insert into t values ('a', 'b', 'c'), ('b', 'a', 'c');")
+	_, err = tk.Exec("insert into t values ('a', 'b', 'c');")
+	c.Assert(err, ErrorMatches, ".*Duplicate entry 'a-b-c' for.*")
+}
+
+func (s *testSuite10) TestPaddingCommonHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)
+	tk.MustExec(`insert into t1 set c1 = 0.1`)
+	tk.MustExec(`insert into t1 set c1 = 0.1 on duplicate key update c1 = 1`)
+	tk.MustQuery(`select * from t1`).Check(testkit.Rows(`1.0000`))
+}
+
 func (s *testSuite2) TestInsertReorgDelete(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -271,6 +302,17 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`create table t1(a bigint);`)
 	_, err := tk.Exec(`insert into t1 values("asfasdfsajhlkhlksdaf");`)
 	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a varchar(10)) charset ascii;`)
+	_, err = tk.Exec(`insert into t1 values('我');`)
+	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue)
+
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1(a char(10) charset utf8);`)
+	tk.MustExec(`insert into t1 values('我');`)
+	tk.MustExec(`alter table t1 add column b char(10) charset ascii as ((a));`)
+	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`我 `))
 }
 
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
@@ -1003,6 +1045,12 @@ func (s *testSuite9) TestAutoRandomID(c *C) {
 	tk.MustQuery(`select last_insert_id()`).Check(testkit.Rows(fmt.Sprintf("%d", firstValue)))
 
 	tk.MustExec(`drop table ar`)
+	tk.MustExec(`create table ar (id bigint key auto_random(15), name char(10))`)
+	overflowVal := 1 << (64 - 5)
+	errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, overflowVal, 1<<(64-16)-1)
+	_, err = tk.Exec(fmt.Sprintf("alter table ar auto_random_base = %d", overflowVal))
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), errMsg), IsTrue)
 }
 
 func (s *testSuite9) TestMultiAutoRandomID(c *C) {
@@ -1234,10 +1282,6 @@ func (s *testSuite10) TestClusterPrimaryTableInsertDuplicate(c *C) {
 }
 
 func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
-	// TODO: support double read on cluster index.
-	c.Skip("because we do not support the double read on cluster index, so this test will fail since " +
-		"https://github.com/pingcap/tidb/pull/18054 merged. After we support the double read on cluster index, we " +
-		"should remake the test effective.")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
@@ -1251,4 +1295,38 @@ func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
 	tk.MustExec("CREATE TABLE pkt2 (a varchar(255), b int, unique index idx(b), primary key(a,b));")
 	tk.MustExec("insert into pkt2 values ('aaa',1);")
 	tk.MustQuery(`select b from pkt2 where b = 1;`).Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table if exists issue_18232;")
+	tk.MustExec("create table issue_18232 (a int, b int, c int, d int, primary key (a, b), index idx(c));")
+
+	iter, cnt := combination([]string{"a", "b", "c", "d"}), 0
+	for {
+		comb := iter()
+		if comb == nil {
+			break
+		}
+		selField := strings.Join(comb, ",")
+		sql := fmt.Sprintf("select %s from issue_18232 use index (idx);", selField)
+		tk.MustExec(sql)
+		cnt++
+	}
+	c.Assert(cnt, Equals, 15)
+}
+
+func combination(items []string) func() []string {
+	current := 1
+	buf := make([]string, len(items))
+	return func() []string {
+		if current >= int(math.Pow(2, float64(len(items)))) {
+			return nil
+		}
+		buf = buf[:0]
+		for i, e := range items {
+			if (1<<i)&current != 0 {
+				buf = append(buf, e)
+			}
+		}
+		current++
+		return buf
+	}
 }

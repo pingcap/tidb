@@ -32,16 +32,67 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
+
+// GetPreparedStmt extract the prepared statement from the execute statement.
+func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
+	var ok bool
+	execID := stmt.ExecID
+	if stmt.Name != "" {
+		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
+			return nil, plannercore.ErrStmtNotFound
+		}
+	}
+	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
+		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+		if !ok {
+			return nil, errors.Errorf("invalid CachedPrepareStmt type")
+		}
+		return preparedObj.PreparedAst.Stmt, nil
+	}
+	return nil, plannercore.ErrStmtNotFound
+}
+
+// IsReadOnly check whether the ast.Node is a read only statement.
+func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
+	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
+		s, err := GetPreparedStmt(execStmt, vars)
+		if err != nil {
+			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
+			return false
+		}
+		return ast.IsReadOnly(s)
+	}
+	return ast.IsReadOnly(node)
+}
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
-	if _, isolationReadContainTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; isolationReadContainTiKV {
-		fp := plannercore.TryFastPlan(sctx, node)
+	sessVars := sctx.GetSessionVars()
+
+	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
+	// engine in not read only stmt.
+	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(node, sessVars) {
+		delete(sessVars.IsolationReadEngines, kv.TiFlash)
+		defer func() {
+			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}()
+	}
+
+	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
+		var fp plannercore.Plan
+		if fpv, ok := sctx.Value(plannercore.PointPlanKey).(plannercore.PointPlanVal); ok {
+			// point plan is already tried in a multi-statement query.
+			fp = fpv.Plan
+		} else {
+			fp = plannercore.TryFastPlan(sctx, node)
+		}
 		if fp != nil {
 			if !useMaxTS(sctx, fp) {
 				sctx.PrepareTSFuture(ctx)
@@ -55,17 +106,17 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	stmtHints, warns := handleStmtHints(tableHints)
 	defer func() {
-		sctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
+		sessVars.StmtCtx.StmtHints = stmtHints
 		for _, warn := range warns {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 		}
 	}()
-	sctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
+	sessVars.StmtCtx.StmtHints = stmtHints
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
 		return nil, nil, err
 	}
-	if !(sctx.GetSessionVars().UsePlanBaselines || sctx.GetSessionVars().EvolvePlanBaselines) {
+	if !(sessVars.UsePlanBaselines || sessVars.EvolvePlanBaselines) {
 		return bestPlan, names, nil
 	}
 	stmtNode, ok := node.(ast.StmtNode)
@@ -294,7 +345,7 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 	}
 
 	v, ok := p.(*plannercore.PointGetPlan)
-	return ok && v.IndexInfo == nil
+	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle))
 }
 
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement
@@ -320,8 +371,8 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	if len(hints) == 0 {
 		return
 	}
-	var memoryQuotaHint, useToJAHint, useCascadesHint, maxExecutionTime *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt int
+	var memoryQuotaHint, useToJAHint, useCascadesHint, maxExecutionTime, forceNthPlan *ast.TableOptimizerHint
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt int
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case "memory_quota":
@@ -340,6 +391,9 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		case "max_execution_time":
 			maxExecutionTimeCnt++
 			maxExecutionTime = hint
+		case "nth_plan":
+			forceNthPlanCnt++
+			forceNthPlan = hint
 		}
 	}
 	// Handle MEMORY_QUOTA
@@ -404,6 +458,21 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		}
 		stmtHints.HasMaxExecutionTime = true
 		stmtHints.MaxExecutionTime = maxExecutionTime.HintData.(uint64)
+	}
+	// Handle NTH_PLAN
+	if forceNthPlanCnt != 0 {
+		if forceNthPlanCnt > 1 {
+			warn := errors.Errorf("NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(%v)", forceNthPlan.HintData.(int64))
+			warns = append(warns, warn)
+		}
+		stmtHints.ForceNthPlan = forceNthPlan.HintData.(int64)
+		if stmtHints.ForceNthPlan < 1 {
+			stmtHints.ForceNthPlan = -1
+			warn := errors.Errorf("the hintdata for NTH_PLAN() is too small, hint ignored.")
+			warns = append(warns, warn)
+		}
+	} else {
+		stmtHints.ForceNthPlan = -1
 	}
 	return
 }

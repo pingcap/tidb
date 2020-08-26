@@ -254,11 +254,33 @@ func (configInspection) inspectDiffConfig(_ context.Context, sctx sessionctx.Con
 		sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
 	}
 
+	generateDetail := func(tp, item string) string {
+		query := fmt.Sprintf("select value, instance from information_schema.cluster_config where type='%s' and `key`='%s';", tp, item)
+		rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(query)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("check configuration consistency failed: %v", err))
+			return fmt.Sprintf("the cluster has different config value of %[2]s, execute the sql to see more detail: select * from information_schema.cluster_config where type='%[1]s' and `key`='%[2]s'",
+				tp, item)
+		}
+		m := make(map[string][]string)
+		for _, row := range rows {
+			value := row.GetString(0)
+			instance := row.GetString(1)
+			m[value] = append(m[value], instance)
+		}
+		groups := make([]string, 0, len(m))
+		for k, v := range m {
+			sort.Strings(v)
+			groups = append(groups, fmt.Sprintf("%s config value is %s", strings.Join(v, ","), k))
+		}
+		sort.Strings(groups)
+		return strings.Join(groups, "\n")
+	}
+
 	var results []inspectionResult
 	for _, row := range rows {
 		if filter.enable(row.GetString(1)) {
-			detail := fmt.Sprintf("the cluster has different config value of %[2]s, execute the sql to see more detail: select * from information_schema.cluster_config where type='%[1]s' and `key`='%[2]s'",
-				row.GetString(0), row.GetString(1))
+			detail := generateDetail(row.GetString(0), row.GetString(1))
 			results = append(results, inspectionResult{
 				tp:       row.GetString(0),
 				instance: "",

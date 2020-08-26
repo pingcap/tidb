@@ -20,6 +20,10 @@ import (
 
 func (s *testSuite7) TestDirtyTransaction(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int primary key, b int, index idx_b (b));")
@@ -327,4 +331,18 @@ func (s *testSuite7) TestForUpdateUntouchedIndex(c *C) {
 	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '2' for key 'a'")
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
+}
+
+// See https://github.com/pingcap/tidb/issues/19136
+func (s *testSuite7) TestForApplyAndUnionScan(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t ( c_int int, c_str varchar(40), primary key(c_int, c_str) )")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1, 'amazing almeida'), (2, 'boring bardeen'), (3, 'busy wescoff')")
+	tk.MustQuery("select c_int, (select t1.c_int from t t1 where t1.c_int = 3 and t1.c_int > t.c_int order by t1.c_int limit 1) x from t").Check(testkit.Rows("1 3", "2 3", "3 <nil>"))
+	tk.MustExec("commit")
+	tk.MustQuery("select c_int, (select t1.c_int from t t1 where t1.c_int = 3 and t1.c_int > t.c_int order by t1.c_int limit 1) x from t").Check(testkit.Rows("1 3", "2 3", "3 <nil>"))
 }

@@ -59,13 +59,13 @@ func NewHelper(store tikv.Storage) *Helper {
 
 // GetMvccByEncodedKey get the MVCC value by the specific encoded key.
 func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackoffer(context.Background(), 500), encodedKey)
+	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
-	kvResp, err := h.Store.SendReq(tikv.NewBackoffer(context.Background(), 500), tikvReq, keyLocation.Region, time.Minute)
+	kvResp, err := h.Store.SendReq(tikv.NewBackofferWithVars(context.Background(), 500, nil), tikvReq, keyLocation.Region, time.Minute)
 	if err != nil {
 		logutil.BgLogger().Info("get MVCC by encoded key failed",
 			zap.Stringer("encodeKey", encodedKey),
@@ -202,7 +202,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
-		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackoffer(context.Background(), 500), regionID)
+		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
 		if err != nil {
 			logutil.BgLogger().Error("locate region failed", zap.Error(err))
 			continue
@@ -241,20 +241,20 @@ func (h *Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *Re
 func findRangeInTable(hotRange *RegionFrameRange, db *model.DBInfo, tbl *model.TableInfo) *FrameItem {
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
-		return findRangeInPhysicalTable(hotRange, tbl.ID, db.Name.O, tbl.Name.O, tbl.Indices)
+		return findRangeInPhysicalTable(hotRange, tbl.ID, db.Name.O, tbl.Name.O, tbl.Indices, tbl.IsCommonHandle)
 	}
 
 	for _, def := range pi.Definitions {
 		tablePartition := fmt.Sprintf("%s(%s)", tbl.Name.O, def.Name)
-		if f := findRangeInPhysicalTable(hotRange, def.ID, db.Name.O, tablePartition, tbl.Indices); f != nil {
+		if f := findRangeInPhysicalTable(hotRange, def.ID, db.Name.O, tablePartition, tbl.Indices, tbl.IsCommonHandle); f != nil {
 			return f
 		}
 	}
 	return nil
 }
 
-func findRangeInPhysicalTable(hotRange *RegionFrameRange, physicalID int64, dbName, tblName string, indices []*model.IndexInfo) *FrameItem {
-	if f := hotRange.GetRecordFrame(physicalID, dbName, tblName); f != nil {
+func findRangeInPhysicalTable(hotRange *RegionFrameRange, physicalID int64, dbName, tblName string, indices []*model.IndexInfo, isCommonHandle bool) *FrameItem {
+	if f := hotRange.GetRecordFrame(physicalID, dbName, tblName, isCommonHandle); f != nil {
 		return f
 	}
 	for _, idx := range indices {
@@ -314,7 +314,23 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 			var handle kv.Handle
 			_, handle, err = tablecodec.DecodeRecordKey(key)
 			if err == nil {
-				frame.RecordID = handle.IntValue()
+				if handle.IsInt() {
+					frame.RecordID = handle.IntValue()
+				} else {
+					data, err := handle.Data()
+					if err != nil {
+						return nil, err
+					}
+					frame.IndexName = "PRIMARY"
+					frame.IndexValues = make([]string, 0, len(data))
+					for _, datum := range data {
+						str, err := datum.ToString()
+						if err != nil {
+							return nil, err
+						}
+						frame.IndexValues = append(frame.IndexValues, str)
+					}
+				}
 			}
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
@@ -354,25 +370,25 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 
 // GetRecordFrame returns the record frame of a table. If the table's records
 // are not covered by this frame range, it returns nil.
-func (r *RegionFrameRange) GetRecordFrame(tableID int64, dbName, tableName string) *FrameItem {
+func (r *RegionFrameRange) GetRecordFrame(tableID int64, dbName, tableName string, isCommonHandle bool) (f *FrameItem) {
 	if tableID == r.First.TableID && r.First.IsRecord {
 		r.First.DBName, r.First.TableName = dbName, tableName
-		return r.First
-	}
-	if tableID == r.Last.TableID && r.Last.IsRecord {
+		f = r.First
+	} else if tableID == r.Last.TableID && r.Last.IsRecord {
 		r.Last.DBName, r.Last.TableName = dbName, tableName
-		return r.Last
-	}
-
-	if tableID >= r.First.TableID && tableID < r.Last.TableID {
-		return &FrameItem{
+		f = r.Last
+	} else if tableID >= r.First.TableID && tableID < r.Last.TableID {
+		f = &FrameItem{
 			DBName:    dbName,
 			TableName: tableName,
 			TableID:   tableID,
 			IsRecord:  true,
 		}
 	}
-	return nil
+	if f != nil && f.IsRecord && isCommonHandle {
+		f.IndexName = "PRIMARY"
+	}
+	return
 }
 
 // GetIndexFrame returns the indnex frame of a table. If the table's indices are
