@@ -112,7 +112,7 @@ var mapServerStatus2Str = map[uint16]string{
 	mysql.ServerStatusInTrans:            "in transaction",
 	mysql.ServerStatusAutocommit:         "autocommit",
 	mysql.ServerMoreResultsExists:        "more results exists",
-	mysql.ServerStatusNoGoodIndexUsed:    "no goods index used",
+	mysql.ServerStatusNoGoodIndexUsed:    "no good index used",
 	mysql.ServerStatusNoIndexUsed:        "no index used",
 	mysql.ServerStatusCursorExists:       "cursor exists",
 	mysql.ServerStatusLastRowSend:        "last row send",
