@@ -662,7 +662,6 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 		"update prefetch set c = c + 1 where a = 3 and b = 3;"
 	err := cc.handleQuery(ctx, query)
 	c.Assert(err, IsNil)
-
 	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsTrue)
@@ -682,5 +681,4 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	c.Assert(tk.Se.GetSessionVars().TxnCtx.PessimisticCacheHit, Equals, 5)
 	tk.MustExec("commit")
 	tk.MustQuery("select * from prefetch").Check(testkit.Rows("1 1 3", "2 2 6", "3 3 5"))
-
 }
