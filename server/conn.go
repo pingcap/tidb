@@ -727,7 +727,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if cc.ctx != nil {
 				txnMode = cc.ctx.GetSessionVars().GetReadableTxnMode()
 			}
-			logutil.Logger(ctx).Error("command dispatched failed",
+			logutil.Logger(ctx).Info("command dispatched failed",
 				zap.String("connInfo", cc.String()),
 				zap.String("command", mysql.Command2Str[data[0]]),
 				zap.String("status", cc.SessionStatusToString()),
