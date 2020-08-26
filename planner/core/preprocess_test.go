@@ -269,12 +269,26 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 func (s *testValidatorSuite) TestForeignKey(c *C) {
 	defer testleak.AfterTest(c)()
 
-	s.runSQL(c, "ALTER TABLE test.t ADD CONSTRAINT fk FOREIGN KEY (c2) REFERENCES t (c1)", false, nil)
-
-	_, err := s.se.Execute(context.Background(), "use test")
+	_, err := s.se.Execute(context.Background(), "create table test.t1(a int, b int, c int)")
 	c.Assert(err, IsNil)
 
-	s.runSQL(c, "ALTER TABLE test.t ADD CONSTRAINT fk FOREIGN KEY (c3) REFERENCES t (c1)", false, nil)
+	_, err = s.se.Execute(context.Background(), "create table test.t2(c int)")
+	c.Assert(err, IsNil)
 
-	s.runSQL(c, "ALTER TABLE test.t ADD CONSTRAINT fk FOREIGN KEY (c4) REFERENCES test.t(c1)", false, nil)
+	_, err = s.se.Execute(context.Background(), "create database test2")
+	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), "create table test2.t(c int)")
+	c.Assert(err, IsNil)
+
+	s.is = s.dom.InfoSchema()
+
+	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES t2 (c)", false, nil)
+
+	_, err = s.se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+
+	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES t2 (c)", false, nil)
+
+	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES test2.t (c)", false, nil)
 }
