@@ -20,11 +20,10 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
 	github.com/juju/errors v0.0.0-20181118221551-089d3ea4e4d5
-	github.com/juju/testing v0.0.0-20200706033705-4c23f9c453cd // indirect
 	github.com/klauspost/cpuid v1.2.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20200820080223-c734bcc4ea53
+	github.com/ngaut/unistore v0.0.0-20200826054345-a70ab8a1f698
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
