@@ -305,6 +305,7 @@ func newTLSHttpClient(c *C, caFile, certFile, keyFile string) *http.Client {
 
 func (ts *tidbTestSuite) TestMultiStatements(c *C) {
 	c.Parallel()
+	ts.runFailedTestMultiStatements(c)
 	ts.runTestMultiStatements(c)
 }
 

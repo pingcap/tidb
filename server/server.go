@@ -94,6 +94,7 @@ var (
 	errAccessDenied            = terror.ClassServer.New(errno.ErrAccessDenied, errno.MySQLErrName[errno.ErrAccessDenied])
 	errConCount                = terror.ClassServer.New(errno.ErrConCount, errno.MySQLErrName[errno.ErrConCount])
 	errSecureTransportRequired = terror.ClassServer.New(errno.ErrSecureTransportRequired, errno.MySQLErrName[errno.ErrSecureTransportRequired])
+	errMultiStatementDisabled  = terror.ClassServer.New(errno.ErrUnknown, "client has multi-statement capability disabled") // MySQL returns a parse error
 )
 
 // DefaultCapability is the capability of the server when it is created using the default configuration.

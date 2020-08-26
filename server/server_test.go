@@ -1238,8 +1238,22 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 	c.Assert(data.GitHash, Equals, versioninfo.TiDBGitHash)
 }
 
+// The golang sql driver (and most drivers) should have multi-statement
+// disabled by default for security reasons. Lets ensure that the behavior
+// is correct.
+
+func (cli *testServerClient) runFailedTestMultiStatements(c *C) {
+	cli.runTestsOnNewDB(c, nil, "FailedMultiStatements", func(dbt *DBTest) {
+		_, err := dbt.db.Exec("SELECT 1; SELECT 1; SELECT 2; SELECT 3;")
+		c.Assert(err.Error(), Equals, "Error 1105: client has multi-statement capability disabled")
+	})
+}
+
 func (cli *testServerClient) runTestMultiStatements(c *C) {
-	cli.runTestsOnNewDB(c, nil, "MultiStatements", func(dbt *DBTest) {
+
+	cli.runTestsOnNewDB(c, func(config *mysql.Config) {
+		config.Params = map[string]string{"multiStatements": "true"}
+	}, "MultiStatements", func(dbt *DBTest) {
 		// Create Table
 		dbt.mustExec("CREATE TABLE `test` (`id` int(11) NOT NULL, `value` int(11) NOT NULL) ")
 
