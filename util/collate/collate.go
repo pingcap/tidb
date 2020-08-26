@@ -37,7 +37,15 @@ var (
 	// ErrUnsupportedCollation is returned when an unsupported collation is specified.
 	ErrUnsupportedCollation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnknownCollation, mysql.Message("Unsupported collation when new collation is enabled: '%-.64s'", nil))
 	// ErrIllegalMixCollation is returned when illegal mix of collations.
+<<<<<<< HEAD
 	ErrIllegalMixCollation = dbterror.ClassExpression.NewStd(mysql.ErrCantAggregate2collations)
+=======
+	ErrIllegalMixCollation = terror.ClassExpression.New(mysql.ErrCantAggregateNcollations, mysql.MySQLErrName[mysql.ErrCantAggregateNcollations])
+	// ErrIllegalMix2Collation is returned when illegal mix of 2 collations.
+	ErrIllegalMix2Collation = terror.ClassExpression.New(mysql.ErrCantAggregate2collations, mysql.MySQLErrName[mysql.ErrCantAggregate2collations])
+	// ErrIllegalMix3Collation is returned when illegal mix of 3 collations.
+	ErrIllegalMix3Collation = terror.ClassExpression.New(mysql.ErrCantAggregate3collations, mysql.MySQLErrName[mysql.ErrCantAggregate3collations])
+>>>>>>> d355b82f1... expression: unicode_ci support when infer collation and charset information (#19142)
 )
 
 // DefaultLen is set for datum if the string datum don't know its length.

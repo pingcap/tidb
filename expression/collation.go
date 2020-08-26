@@ -14,12 +14,11 @@
 package expression
 
 import (
-	"strings"
-
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 )
 
 type collationInfo struct {
@@ -113,10 +112,31 @@ var (
 	}
 
 	// collationPriority is the priority when infer the result collation, the priority of collation a > b iff collationPriority[a] > collationPriority[b]
+	// collation a and b are incompatible if collationPriority[a] = collationPriority[b]
 	collationPriority = map[string]int{
+<<<<<<< HEAD
 		charset.CollationASCII:   0,
 		charset.CollationLatin1:  1,
 		"utf8_general_ci":        2,
+=======
+		charset.CollationASCII:   1,
+		charset.CollationLatin1:  2,
+		"utf8_general_ci":        3,
+		"utf8_unicode_ci":        3,
+		charset.CollationUTF8:    4,
+		"utf8mb4_general_ci":     5,
+		"utf8mb4_unicode_ci":     5,
+		charset.CollationUTF8MB4: 6,
+		charset.CollationBin:     7,
+	}
+
+	// CollationStrictnessGroup group collation by strictness
+	CollationStrictnessGroup = map[string]int{
+		"utf8_general_ci":        1,
+		"utf8mb4_general_ci":     1,
+		charset.CollationASCII:   3,
+		charset.CollationLatin1:  3,
+>>>>>>> d355b82f1... expression: unicode_ci support when infer collation and charset information (#19142)
 		charset.CollationUTF8:    3,
 		"utf8mb4_general_ci":     4,
 		charset.CollationUTF8MB4: 5,
@@ -143,12 +163,23 @@ func deriveCoercibilityForScarlarFunc(sf *ScalarFunction) Coercibility {
 	if sf.RetType.EvalType() != types.ETString {
 		return CoercibilityNumeric
 	}
+<<<<<<< HEAD
 	coer := CoercibilityIgnorable
 	for _, arg := range sf.GetArgs() {
 		if arg.Coercibility() < coer {
 			coer = arg.Coercibility()
 		}
 	}
+=======
+
+	_, _, coer, _ := inferCollation(sf.GetArgs()...)
+
+	// it is weird if a ScalarFunction is CoercibilityNumeric but return string type
+	if coer == CoercibilityNumeric {
+		return CoercibilityCoercible
+	}
+
+>>>>>>> d355b82f1... expression: unicode_ci support when infer collation and charset information (#19142)
 	return coer
 }
 
@@ -170,6 +201,7 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 
 // DeriveCollationFromExprs derives collation information from these expressions.
 func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstCharset, dstCollation string) {
+<<<<<<< HEAD
 	curCoer := CoercibilityCoercible
 	curCollationPriority := -1
 	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
@@ -203,9 +235,53 @@ func DeriveCollationFromExprs(ctx sessionctx.Context, exprs ...Expression) (dstC
 			continue
 		}
 		curCollationPriority, dstCharset, dstCollation = collationPriority, ft.Charset, ft.Collate
-	}
-	if !hasStrArg {
-		dstCharset, dstCollation = charset.CharsetBin, charset.CollationBin
-	}
+=======
+	dstCollation, dstCharset, _, _ = inferCollation(exprs...)
 	return
+}
+
+// inferCollation infers collation, charset, coercibility and check the legitimacy.
+func inferCollation(exprs ...Expression) (dstCollation, dstCharset string, coercibility Coercibility, legal bool) {
+	firstExplicitCollation := ""
+	coercibility = CoercibilityIgnorable
+	dstCharset, dstCollation = charset.GetDefaultCharsetAndCollate()
+	for _, arg := range exprs {
+		if arg.Coercibility() == CoercibilityExplicit {
+			if firstExplicitCollation == "" {
+				firstExplicitCollation = arg.GetType().Collate
+				coercibility, dstCollation, dstCharset = CoercibilityExplicit, arg.GetType().Collate, arg.GetType().Charset
+			} else if firstExplicitCollation != arg.GetType().Collate {
+				return "", "", CoercibilityIgnorable, false
+			}
+		} else if arg.Coercibility() < coercibility {
+			coercibility, dstCollation, dstCharset = arg.Coercibility(), arg.GetType().Collate, arg.GetType().Charset
+		} else if arg.Coercibility() == coercibility && dstCollation != arg.GetType().Collate {
+			p1 := collationPriority[dstCollation]
+			p2 := collationPriority[arg.GetType().Collate]
+
+			// same priority means this two collation is incompatible, coercibility might derive to CoercibilityNone
+			if p1 == p2 {
+				coercibility, dstCollation, dstCharset = CoercibilityNone, getBinCollation(arg.GetType().Charset), arg.GetType().Charset
+			} else if p1 < p2 {
+				dstCollation, dstCharset = arg.GetType().Collate, arg.GetType().Charset
+			}
+		}
+>>>>>>> d355b82f1... expression: unicode_ci support when infer collation and charset information (#19142)
+	}
+
+	return dstCollation, dstCharset, coercibility, true
+}
+
+// getBinCollation get binary collation by charset
+func getBinCollation(cs string) string {
+	switch cs {
+	case charset.CharsetUTF8:
+		return charset.CollationUTF8
+	case charset.CharsetUTF8MB4:
+		return charset.CollationUTF8MB4
+	}
+
+	logutil.BgLogger().Error("unexpected charset " + cs)
+	// it must return something, never reachable
+	return charset.CollationUTF8MB4
 }
