@@ -15,7 +15,9 @@ package core
 
 import (
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/sessionctx"
 )
 
 // AggregateFuncExtractor visits Expr tree.
@@ -169,6 +171,11 @@ func buildPhysicalJoinSchema(joinType JoinType, join PhysicalPlan) *expression.S
 
 // GetStatsInfo gets the statistics info from a physical plan tree.
 func GetStatsInfo(i interface{}) map[string]uint64 {
+	if i == nil {
+		// it's a workaround for https://github.com/pingcap/tidb/issues/17419
+		// To entirely fix this, uncomment the assertion in TestPreparedIssue17419
+		return nil
+	}
 	p := i.(Plan)
 	var physicalPlan PhysicalPlan
 	switch x := p.(type) {
@@ -189,4 +196,19 @@ func GetStatsInfo(i interface{}) map[string]uint64 {
 	statsInfos := make(map[string]uint64)
 	statsInfos = CollectPlanStatsVersion(physicalPlan, statsInfos)
 	return statsInfos
+}
+
+func tableHasDirtyContent(ctx sessionctx.Context, tableInfo *model.TableInfo) bool {
+	pi := tableInfo.GetPartitionInfo()
+	if pi == nil {
+		return ctx.HasDirtyContent(tableInfo.ID)
+	}
+	// Currently, we add UnionScan on every partition even though only one partition's data is changed.
+	// This is limited by current implementation of Partition Prune. It'll be updated once we modify that part.
+	for _, partition := range pi.Definitions {
+		if ctx.HasDirtyContent(partition.ID) {
+			return true
+		}
+	}
+	return false
 }

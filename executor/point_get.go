@@ -64,6 +64,7 @@ type PointGetExecutor struct {
 	done         bool
 	lock         bool
 	lockWaitTime int64
+	snapValExist bool
 }
 
 // Open implements the Executor interface.
@@ -146,7 +147,9 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *PointGetExecutor) lockKeyIfNeeded(ctx context.Context, key []byte) error {
 	if e.lock {
-		return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), e.lockWaitTime), key)
+		lockCtx := newLockCtx(e.ctx.GetSessionVars(), e.lockWaitTime)
+		lockCtx.PointGetLock = &e.snapValExist
+		return doLockKeys(ctx, e.ctx, lockCtx, key)
 	}
 	return nil
 }
@@ -191,7 +194,11 @@ func (e *PointGetExecutor) get(key kv.Key) (val []byte, err error) {
 		}
 		// fallthrough to snapshot get.
 	}
-	return e.snapshot.Get(key)
+	snapVal, snapErr := e.snapshot.Get(key)
+	if snapErr == nil && len(snapVal) > 0 {
+		e.snapValExist = true
+	}
+	return snapVal, snapErr
 }
 
 func (e *PointGetExecutor) decodeRowValToChunk(rowVal []byte, chk *chunk.Chunk) error {

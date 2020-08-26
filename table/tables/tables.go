@@ -602,6 +602,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 			}
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
+			txn.SetOption(kv.CheckExists, ctx.GetSessionVars().StmtCtx.CheckKeyExists)
 		}
 		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID, opt); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
@@ -1092,6 +1093,7 @@ func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64, da
 	recordKey := t.RecordKey(recordID)
 	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
 	txn.SetOption(kv.PresumeKeyNotExistsError, e)
+	txn.SetOption(kv.CheckExists, ctx.GetSessionVars().StmtCtx.CheckKeyExists)
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	_, err = txn.Get(recordKey)
 	if err == nil {
