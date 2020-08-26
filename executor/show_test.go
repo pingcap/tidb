@@ -942,24 +942,22 @@ func (s *testSuite5) TestShowVar(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	var showSQL string
 	for _, v := range variable.SysVars {
-		if v.Scope != variable.ScopeNone {
-			if v.Scope != variable.ScopeGlobal|variable.ScopeSession {
-				if v.Scope == variable.ScopeGlobal {
-					showSQL = "show variables like '" + v.Name + "'"
-					res := tk.MustQuery(showSQL)
-					c.Check(res.Rows(), HasLen, 0)
-					showSQL = "show global variables like '" + v.Name + "'"
-					res = tk.MustQuery(showSQL)
-					c.Check(res.Rows(), HasLen, 1)
-				}
-				if v.Scope == variable.ScopeSession {
-					showSQL = "show global variables like '" + v.Name + "'"
-					res := tk.MustQuery(showSQL)
-					c.Check(res.Rows(), HasLen, 0)
-					showSQL = "show variables like '" + v.Name + "'"
-					res = tk.MustQuery(showSQL)
-					c.Check(res.Rows(), HasLen, 1)
-				}
+		if v.Scope != variable.ScopeNone && v.Scope != variable.ScopeGlobal|variable.ScopeSession {
+			if v.Scope == variable.ScopeGlobal {
+				showSQL = "show variables like '" + v.Name + "'"
+				res := tk.MustQuery(showSQL)
+				c.Check(res.Rows(), HasLen, 0)
+				showSQL = "show global variables like '" + v.Name + "'"
+				res = tk.MustQuery(showSQL)
+				c.Check(res.Rows(), HasLen, 1)
+			}
+			if v.Scope == variable.ScopeSession {
+				showSQL = "show global variables like '" + v.Name + "'"
+				res := tk.MustQuery(showSQL)
+				c.Check(res.Rows(), HasLen, 0)
+				showSQL = "show variables like '" + v.Name + "'"
+				res = tk.MustQuery(showSQL)
+				c.Check(res.Rows(), HasLen, 1)
 			}
 		}
 	}
