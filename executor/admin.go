@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -259,7 +260,10 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 		return nil, err
 	}
 	var builder distsql.RequestBuilder
-	builder.KeyRanges = buildRecoverIndexKeyRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalID, startHandle)
+	builder.KeyRanges, err = buildRecoverIndexKeyRanges(e.ctx.GetSessionVars().StmtCtx, e.physicalID, startHandle)
+	if err != nil {
+		return nil, err
+	}
 	kvReq, err := builder.
 		SetDAGRequest(dagPB).
 		SetStartTS(txn.StartTS()).
@@ -282,7 +286,7 @@ func (e *RecoverIndexExec) buildTableScan(ctx context.Context, txn kv.Transactio
 }
 
 // buildRecoverIndexKeyRanges build a KeyRange: (startHandle, unlimited).
-func buildRecoverIndexKeyRanges(sctx *stmtctx.StatementContext, tid int64, startHandle kv.Handle) []kv.KeyRange {
+func buildRecoverIndexKeyRanges(sctx *stmtctx.StatementContext, tid int64, startHandle kv.Handle) ([]kv.KeyRange, error) {
 	var startKey []byte
 	if startHandle == nil {
 		startKey = tablecodec.EncodeRowKey(tid, []byte{codec.NilFlag})
@@ -291,10 +295,10 @@ func buildRecoverIndexKeyRanges(sctx *stmtctx.StatementContext, tid int64, start
 	}
 	maxVal, err := codec.EncodeKey(sctx, nil, types.MaxValueDatum())
 	if err != nil {
-		panic("should never reach here")
+		return nil, errors.Trace(err)
 	}
 	endKey := tablecodec.EncodeRowKey(tid, maxVal)
-	return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}
+	return []kv.KeyRange{{StartKey: startKey, EndKey: endKey}}, nil
 }
 
 type backfillResult struct {
