@@ -159,7 +159,7 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 			break
 		}
 	}
-	if len(partitionNames) > 0 {
+	if len(partitionNames) > 0 && len(used) == 1 && used[0] == FullRange {
 		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
 		return s.convertToIntSlice(or, pi, partitionNames), nil, nil
 	}
@@ -195,7 +195,7 @@ func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
 	if len(used) == 1 && used[0] == -1 {
 		return fullRange(len(pi.Definitions))
 	}
-	ret := make(partitionRangeOR, len(used))
+	ret := make(partitionRangeOR, 0, len(used))
 	for _, i := range used {
 		ret = append(ret, partitionRange{i, i + 1})
 	}
