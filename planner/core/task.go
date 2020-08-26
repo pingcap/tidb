@@ -716,6 +716,18 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
 		t.cst += t.count() * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
+
+		tp := t.tablePlan
+		for len(tp.Children()) > 0 {
+			if len(tp.Children()) == 1 {
+				tp = tp.Children()[0]
+			} else {
+				join := tp.(*PhysicalBroadCastJoin)
+				tp = join.children[1-join.InnerChildIdx]
+			}
+		}
+		ts := tp.(*PhysicalTableScan)
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 	}
 	t.cst /= copIterWorkers
 	newTask := &rootTask{
@@ -756,7 +768,6 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		p.stats = t.tablePlan.statsInfo()
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		newTask.p = p
 	}
 
@@ -893,11 +904,7 @@ func (p *PhysicalTopN) canPushDown(cop *copTask) bool {
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	storeType := kv.TiKV
-	if tableScan, ok := cop.tablePlan.(*PhysicalTableScan); ok {
-		storeType = tableScan.StoreType
-	}
-	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeType)
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), cop.getStoreType())
 }
 
 func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
