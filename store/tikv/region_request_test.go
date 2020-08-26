@@ -508,15 +508,15 @@ func (s *testRegionRequestSuite) TestOnMaxTimestampNotSyncedError(c *C) {
 		count := 0
 		s.regionRequestSender.client = &fnClient{func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (response *tikvrpc.Response, err error) {
 			count += 1
+			var resp *tikvrpc.Response
 			if count < 3 {
-				errResp := &tikvrpc.Response{Resp: &kvrpcpb.PrewriteResponse{
+				resp = &tikvrpc.Response{Resp: &kvrpcpb.PrewriteResponse{
 					RegionError: &errorpb.Error{MaxTimestampNotSynced: &errorpb.MaxTimestampNotSynced{}},
 				}}
-				return errResp, nil
 			} else {
-				okResp := &tikvrpc.Response{Resp: &kvrpcpb.PrewriteResponse{}}
-				return okResp, nil
+				resp = &tikvrpc.Response{Resp: &kvrpcpb.PrewriteResponse{}}
 			}
+			return resp, nil
 		}}
 		bo := NewBackofferWithVars(context.Background(), 5, nil)
 		resp, err := s.regionRequestSender.SendReq(bo, req, region.Region, time.Second)
