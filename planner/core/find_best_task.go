@@ -560,9 +560,14 @@ func (ds *DataSource) canConvertToPointGet(candidate *candidatePath) bool {
 	canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
 	if !candidate.path.IsTablePath {
 		canConvertPointGet = canConvertPointGet &&
-			candidate.path.Index.Unique &&
-			!candidate.path.Index.HasPrefixIndex() &&
-			len(candidate.path.Ranges[0].LowVal) == len(candidate.path.Index.Columns)
+			candidate.path.Index.Unique && !candidate.path.Index.HasPrefixIndex()
+		idxColsLen := len(candidate.path.Index.Columns)
+		for _, ran := range candidate.path.Ranges {
+			if len(ran.LowVal) != idxColsLen {
+				canConvertPointGet = false
+				break
+			}
+		}
 	}
 	if !canConvertPointGet {
 		return false
