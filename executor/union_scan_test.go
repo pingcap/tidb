@@ -280,8 +280,6 @@ func (s *testSuite4) TestForUpdateUntouchedIndex(c *C) {
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 }
-<<<<<<< HEAD
-=======
 
 // See https://github.com/pingcap/tidb/issues/19136
 func (s *testSuite7) TestForApplyAndUnionScan(c *C) {
@@ -319,4 +317,3 @@ func (s *testSuite7) TestForApplyAndUnionScan(c *C) {
 	tk.MustQuery("select c_int, c_str from t where (select count(*) from t1 where t1.c_int in (t.c_int, t.c_int + 2, t.c_int + 10)) > 2").Check(testkit.Rows())
 	tk.MustExec("rollback")
 }
->>>>>>> 2a05244... executor: reset kvRange in TableReaderExec.Close (#19447)
