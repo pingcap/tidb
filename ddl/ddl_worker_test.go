@@ -56,8 +56,9 @@ func (s *testDDLSuite) TestCheckOwner(c *C) {
 	store := testCreateStore(c, "test_owner")
 	defer store.Close()
 
-	d1 := newDDL(
+	d1 := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -74,8 +75,9 @@ func (s *testDDLSerialSuite) testRunWorker(c *C) {
 	defer store.Close()
 
 	RunWorker = false
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -87,8 +89,9 @@ func (s *testDDLSerialSuite) testRunWorker(c *C) {
 	c.Assert(worker, IsNil)
 	// Make sure the DDL job can be done and exit that goroutine.
 	RunWorker = true
-	d1 := newDDL(
+	d1 := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -102,8 +105,9 @@ func (s *testDDLSuite) TestSchemaError(c *C) {
 	store := testCreateStore(c, "test_schema_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -117,8 +121,9 @@ func (s *testDDLSuite) TestTableError(c *C) {
 	store := testCreateStore(c, "test_table_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -162,8 +167,9 @@ func (s *testDDLSuite) TestViewError(c *C) {
 	store := testCreateStore(c, "test_view_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -189,8 +195,9 @@ func (s *testDDLSuite) TestViewError(c *C) {
 func (s *testDDLSuite) TestInvalidDDLJob(c *C) {
 	store := testCreateStore(c, "test_invalid_ddl_job_type_error")
 	defer store.Close()
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -212,8 +219,9 @@ func (s *testDDLSuite) TestForeignKeyError(c *C) {
 	store := testCreateStore(c, "test_foreign_key_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -234,8 +242,9 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 	store := testCreateStore(c, "test_index_error")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -273,8 +282,9 @@ func (s *testDDLSuite) TestIndexError(c *C) {
 func (s *testDDLSuite) TestColumnError(c *C) {
 	store := testCreateStore(c, "test_column_error")
 	defer store.Close()
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -450,6 +460,10 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionAddPrimaryKey, jobIDs: []int64{firstID + 35}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob.GenWithStackByArgs(firstID + 35)}, cancelState: model.StatePublic},
 		{act: model.ActionDropPrimaryKey, jobIDs: []int64{firstID + 36}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
 		{act: model.ActionDropPrimaryKey, jobIDs: []int64{firstID + 37}, cancelRetErrs: []error{admin.ErrCannotCancelDDLJob.GenWithStackByArgs(firstID + 37)}, cancelState: model.StateDeleteOnly},
+
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 42}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 43}, cancelRetErrs: noErrs, cancelState: model.StateReplicaOnly},
+		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 44}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
 	}
 
 	return tests
@@ -502,8 +516,9 @@ func (s *testDDLSuite) checkCancelDropColumn(c *C, d *ddl, schemaID int64, table
 func (s *testDDLSuite) TestCancelJob(c *C) {
 	store := testCreateStore(c, "test_cancel_job")
 	defer store.Close()
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -781,7 +796,7 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 
 	// test truncate table partition failed caused by canceled.
 	test = &tests[24]
-	truncateTblPartitionArgs := []interface{}{partitionTblInfo.Partition.Definitions[0].ID}
+	truncateTblPartitionArgs := []interface{}{[]int64{partitionTblInfo.Partition.Definitions[0].ID}}
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, partitionTblInfo.ID, test.act, truncateTblPartitionArgs, &test.cancelState)
 	c.Check(checkErr, IsNil)
 	changedTable = testGetTable(c, d, dbInfo.ID, partitionTblInfo.ID)
@@ -851,6 +866,33 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	testDropIndex(c, ctx, d, dbInfo, tblInfo, idxOrigName)
 	c.Check(errors.ErrorStack(checkErr), Equals, "")
 	s.checkDropIdx(c, d, dbInfo.ID, tblInfo.ID, idxOrigName, true)
+
+	// Cancel add table partition.
+	baseTableInfo := testTableInfoWithPartitionLessThan(c, d, "empty_table", 5, "1000")
+	testCreateTable(c, ctx, d, dbInfo, baseTableInfo)
+
+	cancelState = model.StateNone
+	updateTest(&tests[34])
+	addedPartInfo := testAddedNewTablePartitionInfo(c, d, baseTableInfo, "p1", "maxvalue")
+	addPartitionArgs := []interface{}{addedPartInfo}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs, &cancelState)
+	c.Check(checkErr, IsNil)
+	baseTable := testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(len(baseTable.Meta().Partition.Definitions), Equals, 1)
+
+	updateTest(&tests[35])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs, &cancelState)
+	c.Check(checkErr, IsNil)
+	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(len(baseTable.Meta().Partition.Definitions), Equals, 1)
+
+	updateTest(&tests[36])
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, addPartitionArgs)
+	c.Check(checkErr, IsNil)
+	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(len(baseTable.Meta().Partition.Definitions), Equals, 2)
+	c.Assert(baseTable.Meta().Partition.Definitions[1].ID, Equals, addedPartInfo.Definitions[0].ID)
+	c.Assert(baseTable.Meta().Partition.Definitions[1].LessThan[0], Equals, addedPartInfo.Definitions[0].LessThan[0])
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {
@@ -962,8 +1004,9 @@ func addDDLJob(c *C, d *ddl, job *model.Job) {
 func (s *testDDLSuite) TestParallelDDL(c *C) {
 	store := testCreateStore(c, "test_parallel_ddl")
 	defer store.Close()
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)
@@ -1156,8 +1199,9 @@ func (s *testDDLSuite) TestDDLPackageExecuteSQL(c *C) {
 	store := testCreateStore(c, "test_run_sql")
 	defer store.Close()
 
-	d := newDDL(
+	d := testNewDDLAndStart(
 		context.Background(),
+		c,
 		WithStore(store),
 		WithLease(testLease),
 	)

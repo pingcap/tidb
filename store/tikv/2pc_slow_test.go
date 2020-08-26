@@ -52,7 +52,7 @@ func (s *testTiclientSuite) TestSplitRegionIn2PC(c *C) {
 	defer atomic.StoreUint32(&preSplitSizeThreshold, old)
 	atomic.StoreUint32(&preSplitSizeThreshold, 5000)
 
-	bo := NewBackoffer(context.Background(), 1)
+	bo := NewBackofferWithVars(context.Background(), 1, nil)
 	checkKeyRegion := func(bo *Backoffer, start, end []byte, checker Checker) {
 		// Check regions after split.
 		loc1, err := s.store.regionCache.LocateKey(bo, start)

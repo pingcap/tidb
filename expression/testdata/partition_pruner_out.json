@@ -102,7 +102,7 @@
       {
         "SQL": "explain select * from t6 where b is null",
         "Result": [
-          "Union_9 30.00 root  ",
+          "PartitionUnion_9 30.00 root  ",
           "├─TableReader_12 10.00 root  data:Selection_11",
           "│ └─Selection_11 10.00 cop[tikv]  isnull(test_partition.t6.b)",
           "│   └─TableFullScan_10 10000.00 cop[tikv] table:t6, partition:p0 keep order:false, stats:pseudo",

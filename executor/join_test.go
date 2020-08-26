@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -53,14 +54,22 @@ func (s *testSuiteJoin1) TestJoinPanic(c *C) {
 	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
 	err := tk.ExecToErr("SELECT * FROM events e JOIN (SELECT clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
 	c.Check(err, NotNil)
+
+	// Test for PR 18983, use to detect race.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tpj1,tpj2;")
+	tk.MustExec("create table tpj1 (id int, b int,  unique index (id));")
+	tk.MustExec("create table tpj2 (id int, b int,  unique index (id));")
+	tk.MustExec("insert into tpj1 values  (1,1);")
+	tk.MustExec("insert into tpj2 values  (1,1);")
+	tk.MustQuery("select tpj1.b,tpj2.b from tpj1 left join tpj2 on tpj1.id=tpj2.id where tpj1.id=1;").Check(testkit.Rows("1 1"))
 }
 
 func (s *testSuite) TestJoinInDisk(c *C) {
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMUseTmpStorage = true
-	config.StoreGlobalConfig(&newConf)
-	defer config.StoreGlobalConfig(originCfg)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+	})
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1869,6 +1878,15 @@ func (s *testSuiteJoin2) TestNullEmptyAwareSemiJoin(c *C) {
 			result.Check(results[i].result)
 		}
 	}
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1 values(1),(2)")
+	tk.MustExec("insert into t2 values(1),(null)")
+	tk.MustQuery("select * from t1 where a not in (select a from t2 where t1.a = t2.a)").Check(testkit.Rows(
+		"2",
+	))
 }
 
 func (s *testSuiteJoin1) TestScalarFuncNullSemiJoin(c *C) {
@@ -2063,4 +2081,104 @@ func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
 		"    └─TableReader_14(Probe) 9990.00 root  data:Selection_13",
 		"      └─Selection_13 9990.00 cop[tikv]  not(isnull(test.s.b))",
 		"        └─TableFullScan_12 10000.00 cop[tikv] table:S keep order:false, stats:pseudo"))
+}
+
+func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
+	config.GetGlobalConfig().OOMAction = config.OOMActionCancel
+	defer func() { config.GetGlobalConfig().OOMAction = config.OOMActionLog }()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, index(a))")
+	tk.MustExec("create table t2(a int, index(a))")
+	tk.MustExec("insert into t1 values(1),(2)")
+	tk.MustExec("insert into t2 values(1),(1),(2),(2)")
+	tk.MustExec("set @@tidb_mem_quota_query=1000")
+	err := tk.QueryToErr("select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
+	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
+
+	fpName := "github.com/pingcap/tidb/executor/mockIndexMergeJoinOOMPanic"
+	c.Assert(failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable(fpName), IsNil)
+	}()
+	err = tk.QueryToErr("select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t1.a = t2.a;")
+	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
+}
+
+func (s *testSuiteJoin1) TestIssue18564(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, b int, primary key(a), index idx(b,a));")
+	tk.MustExec("create table t2(a int, b int, primary key(a), index idx(b,a));")
+	tk.MustExec("insert into t1 values(1, 1)")
+	tk.MustExec("insert into t2 values(1, 1)")
+	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t1 FORCE INDEX (idx) join t2 on t1.b=t2.b and t1.a = t2.a").Check(testkit.Rows("1 1 1 1"))
+}
+
+func (s *testSuite9) TestIssue18572_1(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index idx(b));")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustExec("insert into t1 select * from t1;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinInnerWorkerErr"), IsNil)
+	}()
+
+	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinInnerWorkerErr"), IsTrue)
+}
+
+func (s *testSuite9) TestIssue18572_2(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index idx(b));")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustExec("insert into t1 select * from t1;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr"), IsNil)
+	}()
+
+	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinOuterWorkerErr"), IsTrue)
+}
+
+func (s *testSuite9) TestIssue18572_3(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int, b int, index idx(b));")
+	tk.MustExec("insert into t1 values(1, 1);")
+	tk.MustExec("insert into t1 select * from t1;")
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinBuildErr"), IsNil)
+	}()
+
+	rs, err := tk.Exec("select /*+ inl_hash_join(t1) */ * from t1 right join t1 t2 on t1.b=t2.b;")
+	c.Assert(err, IsNil)
+	_, err = session.GetRows4Test(context.Background(), nil, rs)
+	c.Assert(strings.Contains(err.Error(), "mockIndexHashJoinBuildErr"), IsTrue)
+}
+
+func (s *testSuite9) TestIssue19112(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 ( c_int int, c_decimal decimal(12, 6), key(c_int), unique key(c_decimal) )")
+	tk.MustExec("create table t2 like t1")
+	tk.MustExec("insert into t1 (c_int, c_decimal) values (1, 4.064000), (2, 0.257000), (3, 1.010000)")
+	tk.MustExec("insert into t2 (c_int, c_decimal) values (1, 4.064000), (3, 1.010000)")
+	tk.MustQuery("select /*+ HASH_JOIN(t1,t2) */  * from t1 join t2 on t1.c_decimal = t2.c_decimal order by t1.c_int").Check(testkit.Rows(
+		"1 4.064000 1 4.064000",
+		"3 1.010000 3 1.010000"))
 }

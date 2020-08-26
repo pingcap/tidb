@@ -59,7 +59,7 @@ func (a *aggregationPushDownSolver) isDecomposableWithUnion(fun *aggregation.Agg
 		return false
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
 		return true
-	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg:
+	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncApproxCountDistinct:
 		return true
 	default:
 		return false
@@ -366,10 +366,27 @@ func (a *aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, u
 }
 
 func (a *aggregationPushDownSolver) optimize(ctx context.Context, p LogicalPlan) (LogicalPlan, error) {
-	if !p.SCtx().GetSessionVars().AllowAggPushDown {
-		return p, nil
-	}
 	return a.aggPushDown(p)
+}
+
+func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAll, agg *LogicalAggregation) error {
+	for _, aggFunc := range agg.AggFuncs {
+		if !a.isDecomposableWithUnion(aggFunc) {
+			return nil
+		}
+	}
+	pushedAgg := a.splitPartialAgg(agg)
+	newChildren := make([]LogicalPlan, 0, len(union.Children()))
+	for _, child := range union.Children() {
+		newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
+		if err != nil {
+			return err
+		}
+		newChildren = append(newChildren, newChild)
+	}
+	union.SetSchema(expression.NewSchema(newChildren[0].Schema().Columns...))
+	union.SetChildren(newChildren...)
+	return nil
 }
 
 // aggPushDown tries to push down aggregate functions to join paths.
@@ -380,7 +397,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 			p = proj
 		} else {
 			child := agg.children[0]
-			if join, ok1 := child.(*LogicalJoin); ok1 && a.checkValidJoin(join) {
+			if join, ok1 := child.(*LogicalJoin); ok1 && a.checkValidJoin(join) && p.SCtx().GetSessionVars().AllowAggPushDown {
 				if valid, leftAggFuncs, rightAggFuncs, leftGbyCols, rightGbyCols := a.splitAggFuncsAndGbyCols(agg, join); valid {
 					var lChild, rChild LogicalPlan
 					// If there exist count or sum functions in left join path, we can't push any
@@ -411,7 +428,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 						p = proj
 					}
 				}
-			} else if proj, ok1 := child.(*LogicalProjection); ok1 {
+			} else if proj, ok1 := child.(*LogicalProjection); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
 				// TODO: This optimization is not always reasonable. We have not supported pushing projection to kv layer yet,
 				// so we must do this optimization.
 				for i, gbyItem := range agg.GroupByItems {
@@ -427,23 +444,16 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan) (_ LogicalPlan, e
 				}
 				projChild := proj.children[0]
 				agg.SetChildren(projChild)
-			} else if union, ok1 := child.(*LogicalUnionAll); ok1 {
-				for _, aggFunc := range agg.AggFuncs {
-					if !a.isDecomposableWithUnion(aggFunc) {
-						return p, nil
-					}
+			} else if union, ok1 := child.(*LogicalUnionAll); ok1 && p.SCtx().GetSessionVars().AllowAggPushDown {
+				err := a.tryAggPushDownForUnion(union, agg)
+				if err != nil {
+					return nil, err
 				}
-				pushedAgg := a.splitPartialAgg(agg)
-				newChildren := make([]LogicalPlan, 0, len(union.children))
-				for _, child := range union.children {
-					newChild, err := a.pushAggCrossUnion(pushedAgg, union.Schema(), child)
-					if err != nil {
-						return p, err
-					}
-					newChildren = append(newChildren, newChild)
+			} else if union, ok1 := child.(*LogicalPartitionUnionAll); ok1 {
+				err := a.tryAggPushDownForUnion(&union.LogicalUnionAll, agg)
+				if err != nil {
+					return nil, err
 				}
-				union.SetSchema(expression.NewSchema(newChildren[0].Schema().Columns...))
-				union.SetChildren(newChildren...)
 			}
 		}
 	}

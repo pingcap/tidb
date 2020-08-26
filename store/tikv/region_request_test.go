@@ -123,7 +123,7 @@ func (s *testRegionRequestSuite) TestOnRegionError(c *C) {
 			}}
 			return staleResp, nil
 		}}
-		bo := NewBackoffer(context.Background(), 5)
+		bo := NewBackofferWithVars(context.Background(), 5, nil)
 		resp, err := s.regionRequestSender.SendReq(bo, req, region.Region, time.Second)
 		c.Assert(err, NotNil)
 		c.Assert(resp, IsNil)
@@ -202,7 +202,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOn
 	s.cluster.ChangeLeader(s.region, s.peer)
 
 	// send to store2 fail and send to new leader store1.
-	bo2 := NewBackoffer(context.Background(), 100)
+	bo2 := NewBackofferWithVars(context.Background(), 100, nil)
 	resp, err = s.regionRequestSender.SendReq(bo2, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	regionErr, err := resp.GetRegionError()
@@ -419,30 +419,6 @@ func (s *mockTikvGrpcServer) BatchCommands(tikvpb.Tikv_BatchCommandsServer) erro
 }
 
 func (s *mockTikvGrpcServer) ReadIndex(context.Context, *kvrpcpb.ReadIndexRequest) (*kvrpcpb.ReadIndexResponse, error) {
-	return nil, errors.New("unreachable")
-}
-
-func (s *mockTikvGrpcServer) VerGet(context.Context, *kvrpcpb.VerGetRequest) (*kvrpcpb.VerGetResponse, error) {
-	return nil, errors.New("unreachable")
-}
-
-func (s *mockTikvGrpcServer) VerBatchGet(context.Context, *kvrpcpb.VerBatchGetRequest) (*kvrpcpb.VerBatchGetResponse, error) {
-	return nil, errors.New("unreachable")
-}
-
-func (s *mockTikvGrpcServer) VerMut(context.Context, *kvrpcpb.VerMutRequest) (*kvrpcpb.VerMutResponse, error) {
-	return nil, errors.New("unreachable")
-}
-
-func (s *mockTikvGrpcServer) VerBatchMut(context.Context, *kvrpcpb.VerBatchMutRequest) (*kvrpcpb.VerBatchMutResponse, error) {
-	return nil, errors.New("unreachable")
-}
-
-func (s *mockTikvGrpcServer) VerScan(context.Context, *kvrpcpb.VerScanRequest) (*kvrpcpb.VerScanResponse, error) {
-	return nil, errors.New("unreachable")
-}
-
-func (s *mockTikvGrpcServer) VerDeleteRange(context.Context, *kvrpcpb.VerDeleteRangeRequest) (*kvrpcpb.VerDeleteRangeResponse, error) {
 	return nil, errors.New("unreachable")
 }
 

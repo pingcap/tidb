@@ -67,6 +67,10 @@ func TestSyncerSimple(t *testing.T) {
 		WithStore(store),
 		WithLease(testLease),
 	)
+	err = d.Start(nil)
+	if err != nil {
+		t.Fatalf("DDL start failed %v", err)
+	}
 	defer d.Stop()
 
 	// for init function
@@ -99,6 +103,10 @@ func TestSyncerSimple(t *testing.T) {
 		WithStore(store),
 		WithLease(testLease),
 	)
+	err = d1.Start(nil)
+	if err != nil {
+		t.Fatalf("DDL start failed %v", err)
+	}
 	defer d1.Stop()
 	if err = d1.SchemaSyncer().Init(ctx); err != nil {
 		t.Fatalf("schema version syncer init failed %v", err)
@@ -168,7 +176,6 @@ func TestSyncerSimple(t *testing.T) {
 	}
 
 	// for StartCleanWork
-	go d.SchemaSyncer().StartCleanWork()
 	ttl := 10
 	// Make sure NeededCleanTTL > ttl, then we definitely clean the ttl.
 	NeededCleanTTL = int64(11)

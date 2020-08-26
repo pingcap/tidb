@@ -16,6 +16,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	math2 "math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -61,6 +63,8 @@ type PointGetPlan struct {
 	LockWaitTime       int64
 	partitionColumnPos int
 	Columns            []*model.ColumnInfo
+
+	Path *util.AccessPath
 }
 
 type nameValuePair struct {
@@ -357,19 +361,26 @@ func (p *BatchPointGetPlan) GetCost(cols []*expression.Column) float64 {
 }
 
 // TryFastPlan tries to use the PointGetPlan for the query.
-func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
+func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 	ctx.GetSessionVars().PlanID = 0
 	ctx.GetSessionVars().PlanColumnID = 0
 	switch x := node.(type) {
 	case *ast.SelectStmt:
+		defer func() {
+			if ctx.GetSessionVars().SelectLimit != math2.MaxUint64 && p != nil {
+				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so point get plan is not activated"))
+				p = nil
+			}
+		}()
 		// Try to convert the `SELECT a, b, c FROM t WHERE (a, b, c) in ((1, 2, 4), (1, 3, 5))` to
 		// `PhysicalUnionAll` which children are `PointGet` if exists an unique key (a, b, c) in table `t`
 		if fp := tryWhereIn2BatchPointGet(ctx, x); fp != nil {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
-				return nil
+				return
 			}
 			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockTp)
-			return fp
+			p = fp
+			return
 		}
 		if fp := tryPointGetPlan(ctx, x); fp != nil {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
@@ -379,10 +390,12 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) Plan {
 				tableDual := PhysicalTableDual{}
 				tableDual.names = fp.outputNames
 				tableDual.SetSchema(fp.Schema())
-				return tableDual.Init(ctx, &property.StatsInfo{}, 0)
+				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
+				return
 			}
 			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockTp)
-			return fp
+			p = fp
+			return
 		}
 	case *ast.UpdateStmt:
 		return tryUpdatePointPlan(ctx, x)
@@ -416,9 +429,12 @@ func newBatchPointGetPlan(
 	names []*types.FieldName, whereColNames []string,
 ) *BatchPointGetPlan {
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
-	partitionColName := getHashPartitionColumnName(ctx, tbl)
-	if tbl.GetPartitionInfo() != nil && partitionColName == nil {
-		return nil
+	var partitionColName *ast.ColumnName
+	if tbl.GetPartitionInfo() != nil {
+		partitionColName = getHashPartitionColumnName(ctx, tbl)
+		if partitionColName == nil {
+			return nil
+		}
 	}
 	if handleCol != nil {
 		var handles = make([]int64, len(patternInExpr.List))
@@ -560,6 +576,10 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 	if tbl == nil {
 		return nil
 	}
+	// Skip the optimization with partition selection.
+	if len(tblName.PartitionNames) > 0 {
+		return nil
+	}
 
 	for _, col := range tbl.Columns {
 		if col.IsGenerated() || col.State != model.StatePublic {
@@ -688,6 +708,14 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if partitionInfo == nil {
 			return nil
 		}
+		// Take partition selection into consideration.
+		if len(tblName.PartitionNames) > 0 {
+			if !partitionNameInSet(partitionInfo.Name, tblName.PartitionNames) {
+				p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+				p.IsTableDual = true
+				return p
+			}
+		}
 	}
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
@@ -734,6 +762,16 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		return p
 	}
 	return nil
+}
+
+func partitionNameInSet(name model.CIStr, pnames []model.CIStr) bool {
+	for _, pname := range pnames {
+		// Case insensitive, create table partition p0, query using P0 is OK.
+		if name.L == pname.L {
+			return true
+		}
+	}
+	return false
 }
 
 func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
@@ -1167,7 +1205,7 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 	for i, pair := range pairs {
 		if partitionColName.Name.L == pair.colName {
 			val := pair.value.GetInt64()
-			pos := math.Abs(val) % int64(pi.Num)
+			pos := math.Abs(val % int64(pi.Num))
 			return &pi.Definitions[pos], i
 		}
 	}

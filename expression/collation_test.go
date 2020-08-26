@@ -72,8 +72,7 @@ func (s *testCollationSuites) TestDeriveCollationFromExprs(c *C) {
 	ctx := mock.NewContext()
 
 	// no string column
-	chs, coll, flen := DeriveCollationFromExprs(ctx, newColumnWithType(0, tInt), newColumnWithType(0, tInt), newColumnWithType(0, tInt))
+	chs, coll := DeriveCollationFromExprs(ctx, newColumnWithType(0, tInt), newColumnWithType(0, tInt), newColumnWithType(0, tInt))
 	c.Assert(chs, Equals, charset.CharsetBin)
 	c.Assert(coll, Equals, charset.CollationBin)
-	c.Assert(flen, Equals, types.UnspecifiedLength)
 }

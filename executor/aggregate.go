@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
@@ -243,8 +244,11 @@ func (e *HashAggExec) Close() error {
 			partialConcurrency = cap(e.partialWorkers)
 			finalConcurrency = cap(e.finalWorkers)
 		}
-		e.runtimeStats.SetConcurrencyInfo("PartialConcurrency", partialConcurrency)
-		e.runtimeStats.SetConcurrencyInfo("FinalConcurrency", finalConcurrency)
+		partialConcurrencyInfo := execdetails.NewConcurrencyInfo("PartialConcurrency", partialConcurrency)
+		finalConcurrencyInfo := execdetails.NewConcurrencyInfo("FinalConcurrency", finalConcurrency)
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
+		runtimeStats.SetConcurrencyInfo(partialConcurrencyInfo, finalConcurrencyInfo)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
 	}
 	return e.baseExecutor.Close()
 }
@@ -358,7 +362,7 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
 	err := errors.Errorf("%v", r)
 	output <- &AfFinalResult{err: errors.Errorf("%v", r)}
-	logutil.BgLogger().Error("parallel hash aggregation panicked", zap.Error(err))
+	logutil.BgLogger().Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
 }
 
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {

@@ -64,29 +64,29 @@ var inspectionSummaryRules = map[string][]string{
 		"pd_start_tso_wait_duration",
 		"tidb_transaction_local_latch_wait_duration",
 		"tidb_transaction_duration",
-		"pd_handle_request_duration",
+		"pd_request_rpc_duration",
 		"tidb_cop_duration",
 		"tidb_batch_client_wait_duration",
 		"tidb_batch_client_unavailable_duration",
 		"tidb_kv_backoff_duration",
 		"tidb_kv_request_duration",
 		"pd_client_cmd_duration",
-		"tikv_grpc_messge_duration",
+		"tikv_grpc_message_duration",
 		"tikv_average_grpc_messge_duration",
 		"tikv_channel_full",
 		"tikv_scheduler_is_busy",
 		"tikv_coprocessor_is_busy",
 		"tikv_engine_write_stall",
-		"tikv_apply_log_avg_duration",
-		"tikv_apply_log_duration",
-		"tikv_append_log_avg_duration",
-		"tikv_append_log_duration",
-		"tikv_commit_log_avg_duration",
-		"tikv_commit_log_duration",
-		"tikv_process_duration",
-		"tikv_propose_wait_duration",
+		"tikv_raftstore_apply_log_avg_duration",
+		"tikv_raftstore_apply_log_duration",
+		"tikv_raftstore_append_log_avg_duration",
+		"tikv_raftstore_append_log_duration",
+		"tikv_raftstore_commit_log_avg_duration",
+		"tikv_raftstore_commit_log_duration",
+		"tikv_raftstore_process_duration",
+		"tikv_raftstore_propose_wait_duration",
 		"tikv_propose_avg_wait_duration",
-		"tikv_apply_wait_duration",
+		"tikv_raftstore_apply_wait_duration",
 		"tikv_apply_avg_wait_duration",
 		"tikv_check_split_duration",
 		"tikv_storage_async_request_duration",
@@ -155,7 +155,7 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_grpc_avg_req_batch_size",
 		"tikv_grpc_avg_resp_batch_size",
 		"tikv_grpc_errors",
-		"tikv_grpc_messge_duration",
+		"tikv_grpc_message_duration",
 		"tikv_grpc_qps",
 		"tikv_grpc_req_batch_size",
 		"tikv_grpc_resp_batch_size",
@@ -219,7 +219,7 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_grpc_avg_req_batch_size",
 		"tikv_grpc_avg_resp_batch_size",
 		"tikv_grpc_errors",
-		"tikv_grpc_messge_duration",
+		"tikv_grpc_message_duration",
 		"tikv_grpc_qps",
 		"tikv_grpc_req_batch_size",
 		"tikv_grpc_resp_batch_size",
@@ -238,15 +238,15 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_scheduler_stage",
 		"tikv_scheduler_writing_bytes",
 		"tikv_propose_avg_wait_duration",
-		"tikv_propose_wait_duration",
-		"tikv_append_log_avg_duration",
-		"tikv_append_log_duration",
-		"tikv_commit_log_avg_duration",
-		"tikv_commit_log_duration",
+		"tikv_raftstore_propose_wait_duration",
+		"tikv_raftstore_append_log_avg_duration",
+		"tikv_raftstore_append_log_duration",
+		"tikv_raftstore_commit_log_avg_duration",
+		"tikv_raftstore_commit_log_duration",
 		"tikv_apply_avg_wait_duration",
-		"tikv_apply_log_avg_duration",
-		"tikv_apply_log_duration",
-		"tikv_apply_wait_duration",
+		"tikv_raftstore_apply_log_avg_duration",
+		"tikv_raftstore_apply_log_duration",
+		"tikv_raftstore_apply_wait_duration",
 		"tikv_engine_wal_sync_operations",
 		"tikv_engine_write_duration",
 		"tikv_engine_write_operations",
@@ -355,9 +355,9 @@ var inspectionSummaryRules = map[string][]string{
 		"pd_cluster_status",
 		"pd_grpc_completed_commands_duration",
 		"pd_grpc_completed_commands_rate",
-		"pd_handle_request_duration",
-		"pd_handle_request_ops",
-		"pd_handle_request_duration_avg",
+		"pd_request_rpc_duration",
+		"pd_request_rpc_ops",
+		"pd_request_rpc_duration_avg",
 		"pd_handle_transactions_duration",
 		"pd_handle_transactions_rate",
 		"pd_hotspot_status",
@@ -388,18 +388,18 @@ var inspectionSummaryRules = map[string][]string{
 		"tikv_approximate_avg_region_size",
 		"tikv_approximate_region_size_histogram",
 		"tikv_approximate_region_size",
-		"tikv_append_log_avg_duration",
-		"tikv_append_log_duration",
-		"tikv_commit_log_avg_duration",
-		"tikv_commit_log_duration",
+		"tikv_raftstore_append_log_avg_duration",
+		"tikv_raftstore_append_log_duration",
+		"tikv_raftstore_commit_log_avg_duration",
+		"tikv_raftstore_commit_log_duration",
 		"tikv_apply_avg_wait_duration",
-		"tikv_apply_log_avg_duration",
-		"tikv_apply_log_duration",
-		"tikv_apply_wait_duration",
-		"tikv_process_duration",
-		"tikv_process_handled",
+		"tikv_raftstore_apply_log_avg_duration",
+		"tikv_raftstore_apply_log_duration",
+		"tikv_raftstore_apply_wait_duration",
+		"tikv_raftstore_process_duration",
+		"tikv_raftstore_process_handled",
 		"tikv_propose_avg_wait_duration",
-		"tikv_propose_wait_duration",
+		"tikv_raftstore_propose_wait_duration",
 		"tikv_raft_dropped_messages",
 		"tikv_raft_log_speed",
 		"tikv_raft_message_avg_batch_size",
@@ -422,7 +422,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 	condition := e.timeRange.Condition()
 	var finalRows [][]types.Datum
 	for rule, tables := range inspectionSummaryRules {
-		if !rules.exist(rule) {
+		if len(rules.set) != 0 && !rules.set.Exist(rule) {
 			continue
 		}
 		for _, name := range tables {
@@ -435,6 +435,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 				continue
 			}
 			cols := def.Labels
+			comment := def.Comment
 			cond := condition
 			if def.Quantile > 0 {
 				cols = append(cols, "quantile")
@@ -493,6 +494,7 @@ func (e *inspectionSummaryRetriever) retrieve(ctx context.Context, sctx sessionc
 					row.GetFloat64(0), // avg
 					row.GetFloat64(1), // min
 					row.GetFloat64(2), // max
+					comment,
 				))
 			}
 		}

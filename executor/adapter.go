@@ -120,7 +120,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return
 		}
 		err = errors.Errorf("%v", r)
-		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.Text), zap.Stack("stack"))
+		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog()), zap.Stack("stack"))
 	}()
 
 	err = Next(ctx, a.executor, req)
@@ -217,7 +217,6 @@ func (a *ExecStmt) PointGet(ctx context.Context, is infoschema.InfoSchema) (*rec
 		}
 		a.PsStmt.Executor = newExecutor
 	}
-	stmtNodeCounterSelect.Inc()
 	pointExecutor := a.PsStmt.Executor.(*PointGetExecutor)
 	if err = pointExecutor.Open(ctx); err != nil {
 		terror.Call(pointExecutor.Close)
@@ -244,15 +243,7 @@ func (a *ExecStmt) IsPrepared() bool {
 // If current StmtNode is an ExecuteStmt, we can get its prepared stmt,
 // then using ast.IsReadOnly function to determine a statement is read only or not.
 func (a *ExecStmt) IsReadOnly(vars *variable.SessionVars) bool {
-	if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
-		s, err := getPreparedStmt(execStmt, vars)
-		if err != nil {
-			logutil.BgLogger().Error("getPreparedStmt failed", zap.Error(err))
-			return false
-		}
-		return ast.IsReadOnly(s)
-	}
-	return ast.IsReadOnly(a.StmtNode)
+	return planner.IsReadOnly(a.StmtNode, vars)
 }
 
 // RebuildPlan rebuilds current execute statement plan.
@@ -292,10 +283,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)
-		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.Text), zap.Stack("stack"))
+		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog()), zap.Stack("stack"))
 	}()
 
 	sctx := a.Ctx
+	ctx = sessionctx.SetCommitCtx(ctx, sctx)
 	if _, ok := a.Plan.(*plannercore.Analyze); ok && sctx.GetSessionVars().InRestrictedSQL {
 		oriStats, _ := sctx.GetSessionVars().GetSystemVar(variable.TiDBBuildStatsConcurrency)
 		oriScan := sctx.GetSessionVars().DistSQLScanConcurrency
@@ -806,13 +798,21 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
-	threshold := time.Duration(cfg.Log.SlowThreshold) * time.Millisecond
+	threshold := time.Duration(atomic.LoadUint64(&cfg.Log.SlowThreshold)) * time.Millisecond
 	enable := cfg.Log.EnableSlowLog
 	// if the level is Debug, print slow logs anyway
 	if (!enable || costTime < threshold) && level > zapcore.DebugLevel {
 		return
 	}
-	sql := FormatSQL(a.Text, sessVars.PreparedParams)
+	var sql stringutil.StringerFunc
+	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
+	if sessVars.EnableLogDesensitization {
+		sql = FormatSQL(normalizedSQL, nil)
+	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
+	} else {
+		sql = FormatSQL(a.Text, sessVars.PreparedParams)
+	}
 
 	var tableIDs, indexNames string
 	if len(sessVars.StmtCtx.TableIDs) > 0 {
@@ -825,7 +825,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
-	_, digest := sessVars.StmtCtx.SQLDigest()
+	diskMax := sessVars.StmtCtx.DiskTracker.MaxConsumed()
 	_, planDigest := getPlanDigest(a.Ctx, a.Plan)
 	slowItems := &variable.SlowQueryLogItems{
 		TxnTS:          txnTS,
@@ -839,6 +839,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		CopTasks:       copTaskInfo,
 		ExecDetail:     execDetail,
 		MemMax:         memMax,
+		DiskMax:        diskMax,
 		Succ:           succ,
 		Plan:           getPlanTree(a.Plan),
 		PlanDigest:     planDigest,
@@ -955,10 +956,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := stmtCtx.MemTracker.MaxConsumed()
-
+	diskMax := stmtCtx.DiskTracker.MaxConsumed()
+	sql := a.GetTextToLog()
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
-		OriginalSQL:    a.Text,
+		OriginalSQL:    sql,
 		NormalizedSQL:  normalizedSQL,
 		Digest:         digest,
 		PrevSQL:        prevSQL,
@@ -974,8 +976,24 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		CopTasks:       copTaskInfo,
 		ExecDetail:     &execDetail,
 		MemMax:         memMax,
+		DiskMax:        diskMax,
 		StartTime:      sessVars.StartTime,
 		IsInternal:     sessVars.InRestrictedSQL,
 		Succeed:        succ,
+		PlanInCache:    sessVars.FoundInPlanCache,
 	})
+}
+
+// GetTextToLog return the query text to log.
+func (a *ExecStmt) GetTextToLog() string {
+	var sql string
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.EnableLogDesensitization {
+		sql, _ = sessVars.StmtCtx.SQLDigest()
+	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+		sql = sensitiveStmt.SecureText()
+	} else {
+		sql = a.Text
+	}
+	return sql
 }

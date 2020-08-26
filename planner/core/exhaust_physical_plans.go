@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
@@ -756,6 +757,8 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		rangeDecidedBy:  outerJoinKeys,
 		KeepOrder:       keepOrder,
 		Desc:            desc,
+		physicalTableID: ds.physicalTableID,
+		isPartition:     ds.isPartition,
 	}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.schema.Clone())
 	if rowCount <= 0 {
@@ -1828,6 +1831,14 @@ func (p *LogicalUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) 
 	ua := PhysicalUnionAll{}.Init(p.ctx, p.stats.ScaleByExpectCnt(prop.ExpectedCnt), p.blockOffset, chReqProps...)
 	ua.SetSchema(p.Schema())
 	return []PhysicalPlan{ua}, true
+}
+
+func (p *LogicalPartitionUnionAll) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool) {
+	uas, flagHint := p.LogicalUnionAll.exhaustPhysicalPlans(prop)
+	for _, ua := range uas {
+		ua.(*PhysicalUnionAll).tp = plancodec.TypePartitionUnion
+	}
+	return uas, flagHint
 }
 
 func (ls *LogicalSort) getPhysicalSort(prop *property.PhysicalProperty) *PhysicalSort {

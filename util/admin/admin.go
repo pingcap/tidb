@@ -15,6 +15,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -104,8 +105,10 @@ func IsJobRollbackable(job *model.Job) bool {
 			job.SchemaState == model.StateDeleteOnly {
 			return false
 		}
+	case model.ActionAddTablePartition:
+		return job.SchemaState == model.StateNone || job.SchemaState == model.StateReplicaOnly
 	case model.ActionDropColumn, model.ActionModifyColumn,
-		model.ActionDropTablePartition, model.ActionAddTablePartition,
+		model.ActionDropTablePartition,
 		model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
@@ -160,7 +163,7 @@ func CancelJobs(txn kv.Transaction, ids []int64) ([]error, error) {
 
 			job.State = model.JobStateCancelling
 			// Make sure RawArgs isn't overwritten.
-			err := job.DecodeArgs(job.RawArgs)
+			err := json.Unmarshal(job.RawArgs, &job.Args)
 			if err != nil {
 				errs[i] = errors.Trace(err)
 				continue
@@ -339,7 +342,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 }
 
 // CheckRecordAndIndex is exported for testing.
-func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
+func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
 	sc := sessCtx.GetSessionVars().StmtCtx
 	cols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
@@ -378,7 +381,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 
 		return true, nil
 	}
-	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc, genExprs)
+	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -386,24 +389,16 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	return nil
 }
 
-func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
-	var containsVirtualCol bool
-	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(decodeCol, t, func(genCol *table.Column) (expression.Expression, error) {
-		containsVirtualCol = true
-		return genExpr[model.TableColumnID{TableID: t.Meta().ID, ColumnID: genCol.ID}], nil
-	})
-	_ = ignored
+func makeRowDecoder(t table.Table, sctx sessionctx.Context) *decoder.RowDecoder {
+	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
+	exprCols, _ := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
+	mockSchema := expression.NewSchema(exprCols...)
+	decodeColsMap := decoder.BuildFullDecodeColMap(t, mockSchema)
 
-	if containsVirtualCol {
-		decoder.SubstituteGenColsInDecodeColMap(decodeColsMap)
-		decoder.RemoveUnusedVirtualCols(decodeColsMap, decodeCol)
-	}
 	return decoder.NewRowDecoder(t, decodeColsMap)
 }
 
-// genExprs use to calculate generated column value.
-func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
-	fn table.RecordIterFunc, genExprs map[model.TableColumnID]expression.Expression) error {
+func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {
 	prefix := t.RecordPrefix()
 	keyUpperBound := prefix.PrefixNext()
 
@@ -421,7 +416,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		zap.Stringer("startKey", startKey),
 		zap.Stringer("key", it.Key()),
 		zap.Binary("value", it.Value()))
-	rowDecoder := makeRowDecoder(t, cols, genExprs)
+	rowDecoder := makeRowDecoder(t, sessCtx)
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock

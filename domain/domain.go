@@ -15,7 +15,6 @@ package domain
 
 import (
 	"context"
-	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -44,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/expensivequery"
@@ -76,6 +76,7 @@ type Domain struct {
 	expensiveQueryHandle *expensivequery.Handle
 	wg                   sync.WaitGroup
 	statsUpdating        sync2.AtomicInt32
+	cancel               context.CancelFunc
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -407,7 +408,7 @@ func (do *Domain) ShowSlowQuery(showSlow *ast.ShowSlow) []*SlowQueryInfo {
 }
 
 func (do *Domain) topNSlowQueryLoop() {
-	defer recoverInDomain("topNSlowQueryLoop", false)
+	defer util.Recover(metrics.LabelDomain, "topNSlowQueryLoop", nil, false)
 	defer do.wg.Done()
 	ticker := time.NewTicker(time.Minute * 10)
 	defer ticker.Stop()
@@ -436,8 +437,11 @@ func (do *Domain) topNSlowQueryLoop() {
 }
 
 func (do *Domain) infoSyncerKeeper() {
-	defer do.wg.Done()
-	defer recoverInDomain("infoSyncerKeeper", false)
+	defer func() {
+		do.wg.Done()
+		logutil.BgLogger().Info("infoSyncerKeeper exited.")
+		util.Recover(metrics.LabelDomain, "infoSyncerKeeper", nil, false)
+	}()
 	ticker := time.NewTicker(infosync.ReportInterval)
 	defer ticker.Stop()
 	for {
@@ -458,7 +462,7 @@ func (do *Domain) infoSyncerKeeper() {
 
 func (do *Domain) topologySyncerKeeper() {
 	defer do.wg.Done()
-	defer recoverInDomain("topologySyncerKeeper", false)
+	defer util.Recover(metrics.LabelDomain, "topologySyncerKeeper", nil, false)
 	ticker := time.NewTicker(infosync.TopologyTimeToRefresh)
 	defer ticker.Stop()
 
@@ -481,13 +485,14 @@ func (do *Domain) topologySyncerKeeper() {
 	}
 }
 
-func (do *Domain) loadSchemaInLoop(lease time.Duration) {
+func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 	defer do.wg.Done()
+	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	// Lease renewal can run at any frequency.
 	// Use lease/2 here as recommend by paper.
 	ticker := time.NewTicker(lease / 2)
 	defer ticker.Stop()
-	defer recoverInDomain("loadSchemaInLoop", true)
+	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	syncer := do.ddl.SchemaSyncer()
 
 	for {
@@ -517,7 +522,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			// then continue to change the TiDB schema to version 3. Unfortunately, this down TiDB schema version will still be version 1.
 			// And version 1 is not consistent to version 3. So we need to stop the schema validator to prohibit the DML executing.
 			do.SchemaValidator.Stop()
-			err := do.mustRestartSyncer()
+			err := do.mustRestartSyncer(ctx)
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop, schema syncer restart failed", zap.Error(err))
 				break
@@ -539,8 +544,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 
 // mustRestartSyncer tries to restart the SchemaSyncer.
 // It returns until it's successful or the domain is stoped.
-func (do *Domain) mustRestartSyncer() error {
-	ctx := context.Background()
+func (do *Domain) mustRestartSyncer(ctx context.Context) error {
 	syncer := do.ddl.SchemaSyncer()
 
 	for {
@@ -603,6 +607,7 @@ func (do *Domain) Close() {
 
 	do.sysSessionPool.Close()
 	do.slowQuery.Close()
+	do.cancel()
 	do.wg.Wait()
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
@@ -648,16 +653,20 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
 		if addrs := ebd.EtcdAddrs(); addrs != nil {
 			cfg := config.GetGlobalConfig()
+			// silence etcd warn log, when domain closed, it won't randomly print warn log
+			// see details at the issue https://github.com/pingcap/tidb/issues/15479
+			etcdLogCfg := zap.NewProductionConfig()
+			etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
 			cli, err := clientv3.New(clientv3.Config{
+				LogConfig:        &etcdLogCfg,
 				Endpoints:        addrs,
 				AutoSyncInterval: 30 * time.Second,
 				DialTimeout:      5 * time.Second,
 				DialOptions: []grpc.DialOption{
 					grpc.WithBackoffMaxDelay(time.Second * 3),
 					grpc.WithKeepaliveParams(keepalive.ClientParameters{
-						Time:                time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
-						Timeout:             time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
-						PermitWithoutStream: true,
+						Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
+						Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
 					}),
 				},
 				TLS: ebd.TLSConfig(),
@@ -679,7 +688,8 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		return sysFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
-	ctx := context.Background()
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	do.cancel = cancelFunc
 	callback := &ddlCallback{do: do}
 	d := do.ddl
 	do.ddl = ddl.NewDDL(
@@ -689,8 +699,11 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		ddl.WithInfoHandle(do.infoHandle),
 		ddl.WithHook(callback),
 		ddl.WithLease(ddlLease),
-		ddl.WithResourcePool(sysCtxPool),
 	)
+	err := do.ddl.Start(sysCtxPool)
+	if err != nil {
+		return err
+	}
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			if err := do.ddl.Stop(); err != nil {
@@ -700,11 +713,12 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		}
 	})
 
-	err := do.ddl.SchemaSyncer().Init(ctx)
+	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
+	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
 		return err
 	}
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient)
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient, skipRegisterToDashboard)
 	if err != nil {
 		return err
 	}
@@ -718,7 +732,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if ddlLease > 0 {
 		do.wg.Add(1)
 		// Local store needs to get the change information for every DDL state in each session.
-		go do.loadSchemaInLoop(ddlLease)
+		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
 	do.wg.Add(1)
 	go do.topNSlowQueryLoop()
@@ -726,8 +740,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	do.wg.Add(1)
 	go do.infoSyncerKeeper()
 
-	do.wg.Add(1)
-	go do.topologySyncerKeeper()
+	if !skipRegisterToDashboard {
+		do.wg.Add(1)
+		go do.topologySyncerKeeper()
+	}
 
 	return nil
 }
@@ -819,8 +835,11 @@ func (do *Domain) LoadPrivilegeLoop(ctx sessionctx.Context) error {
 
 	do.wg.Add(1)
 	go func() {
-		defer do.wg.Done()
-		defer recoverInDomain("loadPrivilegeInLoop", false)
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("loadPrivilegeInLoop exited.")
+			util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
+		}()
 		var count int
 		for {
 			ok := true
@@ -880,8 +899,11 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 func (do *Domain) globalBindHandleWorkerLoop() {
 	do.wg.Add(1)
 	go func() {
-		defer do.wg.Done()
-		defer recoverInDomain("globalBindHandleWorkerLoop", false)
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("globalBindHandleWorkerLoop exited.")
+			util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
+		}()
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
 		defer bindWorkerTicker.Stop()
 		for {
@@ -906,8 +928,11 @@ func (do *Domain) globalBindHandleWorkerLoop() {
 func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 	do.wg.Add(1)
 	go func() {
-		defer do.wg.Done()
-		defer recoverInDomain("handleEvolvePlanTasksLoop", false)
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("handleEvolvePlanTasksLoop exited.")
+			util.Recover(metrics.LabelDomain, "handleEvolvePlanTasksLoop", nil, false)
+		}()
 		owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
 		for {
 			select {
@@ -920,6 +945,37 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 				err := do.bindHandle.HandleEvolvePlanTask(ctx, false)
 				if err != nil {
 					logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
+				}
+			}
+		}
+	}()
+}
+
+// TelemetryLoop create a goroutine that reports usage data in a loop, it should be called only once
+// in BootstrapSession.
+func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
+	ctx.GetSessionVars().InRestrictedSQL = true
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("handleTelemetryLoop exited.")
+			util.Recover(metrics.LabelDomain, "handleTelemetryLoop", nil, false)
+		}()
+		owner := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
+		for {
+			select {
+			case <-do.exit:
+				owner.Cancel()
+				return
+			case <-time.After(telemetry.ReportInterval):
+				if !owner.IsOwner() {
+					continue
+				}
+				err := telemetry.ReportUsageData(ctx, do.GetEtcdClient())
+				if err != nil {
+					// Only status update errors will be printed out
+					logutil.BgLogger().Warn("handleTelemetryLoop status update failed", zap.Error(err))
 				}
 			}
 		}
@@ -982,15 +1038,14 @@ func (do *Domain) UpdateTableStatsLoop(ctx sessionctx.Context) error {
 
 func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
-	cancelCtx, cancelFunc := context.WithCancel(context.Background())
 	var statsOwner owner.Manager
 	if do.etcdClient == nil {
-		statsOwner = owner.NewMockManager(id, cancelFunc)
+		statsOwner = owner.NewMockManager(context.Background(), id)
 	} else {
-		statsOwner = owner.NewOwnerManager(do.etcdClient, prompt, id, ownerKey, cancelFunc)
+		statsOwner = owner.NewOwnerManager(context.Background(), do.etcdClient, prompt, id, ownerKey)
 	}
 	// TODO: Need to do something when err is not nil.
-	err := statsOwner.CampaignOwner(cancelCtx)
+	err := statsOwner.CampaignOwner()
 	if err != nil {
 		logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
 	}
@@ -998,7 +1053,7 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 }
 
 func (do *Domain) loadStatsWorker() {
-	defer recoverInDomain("loadStatsWorker", false)
+	defer util.Recover(metrics.LabelDomain, "loadStatsWorker", nil, false)
 	defer do.wg.Done()
 	lease := do.statsLease
 	if lease == 0 {
@@ -1032,7 +1087,7 @@ func (do *Domain) loadStatsWorker() {
 }
 
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
-	defer recoverInDomain("updateStatsWorker", false)
+	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	lease := do.statsLease
 	deltaUpdateTicker := time.NewTicker(20 * lease)
 	defer deltaUpdateTicker.Stop()
@@ -1092,7 +1147,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 }
 
 func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
-	defer recoverInDomain("autoAnalyzeWorker", false)
+	defer util.Recover(metrics.LabelDomain, "autoAnalyzeWorker", nil, false)
 	statsHandle := do.StatsHandle()
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer func() {
@@ -1137,22 +1192,6 @@ func (do *Domain) NotifyUpdatePrivilege(ctx sessionctx.Context) {
 	_, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(`FLUSH PRIVILEGES`)
 	if err != nil {
 		logutil.BgLogger().Error("unable to update privileges", zap.Error(err))
-	}
-}
-
-func recoverInDomain(funcName string, quit bool) {
-	r := recover()
-	if r == nil {
-		return
-	}
-	buf := util.GetStack()
-	logutil.BgLogger().Error("recover in domain failed", zap.String("funcName", funcName),
-		zap.Any("error", r), zap.String("buffer", string(buf)))
-	metrics.PanicCounter.WithLabelValues(metrics.LabelDomain).Inc()
-	if quit {
-		// Wait for metrics to be pushed.
-		time.Sleep(time.Second * 15)
-		os.Exit(1)
 	}
 }
 

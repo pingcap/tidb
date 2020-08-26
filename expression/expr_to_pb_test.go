@@ -601,6 +601,41 @@ func (s *testEvaluatorSuite) TestOtherFunc2Pb(c *C) {
 	}
 }
 
+func (s *testEvaluatorSuite) TestExprPushDownToFlash(c *C) {
+	sc := new(stmtctx.StatementContext)
+	client := new(mock.Client)
+	dg := new(dataGen4Expr2PbTest)
+	exprs := make([]Expression, 0)
+
+	jsonColumn := dg.genColumn(mysql.TypeJSON, 1)
+	intColumn := dg.genColumn(mysql.TypeLonglong, 2)
+	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.If, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.BitNeg, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Xor, types.NewFieldType(mysql.TypeLonglong), intColumn, intColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+
+	canPush := CanExprsPushDown(sc, exprs, client, kv.TiFlash)
+	c.Assert(canPush, Equals, true)
+
+	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	c.Assert(err, IsNil)
+	exprs = append(exprs, function)
+	pushed, remained := PushDownExprs(sc, exprs, client, kv.TiFlash)
+	c.Assert(len(pushed), Equals, len(exprs)-1)
+	c.Assert(len(remained), Equals, 1)
+}
+
 func (s *testEvaluatorSuite) TestExprOnlyPushDownToFlash(c *C) {
 	sc := new(stmtctx.StatementContext)
 	client := new(mock.Client)
@@ -791,12 +826,12 @@ func (s *testEvalSerialSuite) TestPushCollationDown(c *C) {
 
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeVarchar), types.NewFieldType(mysql.TypeVarchar)}
 	for _, coll := range []string{charset.CollationBin, charset.CollationLatin1, charset.CollationUTF8, charset.CollationUTF8MB4} {
-		fc.SetCharsetAndCollation("binary", coll, types.UnspecifiedLength) // only collation matters
+		fc.SetCharsetAndCollation("binary", coll) // only collation matters
 		pbExpr, err := ExpressionsToPBList(sc, []Expression{fc}, client)
 		c.Assert(err, IsNil)
 		expr, err := PBToExpr(pbExpr[0], tps, sc)
 		c.Assert(err, IsNil)
-		_, eColl, _ := expr.CharsetAndCollation(nil)
+		_, eColl := expr.CharsetAndCollation(nil)
 		c.Assert(eColl, Equals, coll)
 	}
 }

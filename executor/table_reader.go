@@ -182,10 +182,7 @@ func (e *TableReaderExecutor) Close() error {
 	if e.resultHandler != nil {
 		err = e.resultHandler.Close()
 	}
-	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID().String())
-		copStats.SetRowNum(e.feedback.Actual())
-	}
+	e.kvRanges = e.kvRanges[:0]
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }

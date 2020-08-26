@@ -15,8 +15,12 @@ import (
 )
 
 var _ = Suite(&pkgTestSuite{})
+var _ = SerialSuites(&pkgTestSerialSuite{})
 
 type pkgTestSuite struct {
+}
+
+type pkgTestSerialSuite struct {
 }
 
 func (s *pkgTestSuite) TestNestedLoopApply(c *C) {

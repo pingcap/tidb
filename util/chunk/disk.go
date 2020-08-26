@@ -71,6 +71,10 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
+	err = disk.CheckAndInitTempDir()
+	if err != nil {
+		return
+	}
 	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
 	if err != nil {
 		return
@@ -134,6 +138,20 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 	return
 }
 
+// GetChunk gets a Chunk from the ListInDisk by chkIdx.
+func (l *ListInDisk) GetChunk(chkIdx int) (*Chunk, error) {
+	chk := NewChunkWithCapacity(l.fieldTypes, l.NumRowsOfChunk(chkIdx))
+	offsets := l.offsets[chkIdx]
+	for rowIdx := range offsets {
+		row, err := l.GetRow(RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
+		if err != nil {
+			return chk, err
+		}
+		chk.AppendRow(row)
+	}
+	return chk, nil
+}
+
 // GetRow gets a Row from the ListInDisk by RowPtr.
 func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 	err = l.flush()
@@ -171,7 +189,7 @@ func (l *ListInDisk) Close() error {
 		l.diskTracker.Consume(-l.diskTracker.BytesConsumed())
 		terror.Call(l.disk.Close)
 		bufWriterPool.Put(l.bufWriter)
-		return os.Remove(l.disk.Name())
+		terror.Log(os.Remove(l.disk.Name()))
 	}
 	return nil
 }

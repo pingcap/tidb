@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strconv"
@@ -416,6 +417,48 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "tidb_metric_query_range_duration(9) cannot be smaller than 10 or larger than 216000")
 	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("120"))
+
+	// test for tidb_slow_log_masking
+	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_slow_log_masking = 1")
+	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_slow_log_masking = 0")
+	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
+	_, err = tk.Exec("set session tidb_slow_log_masking = 0")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`select @@session.tidb_slow_log_masking;`)
+	c.Assert(err, NotNil)
+}
+
+func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	testCases := []struct {
+		sessionVarName string
+		minValue       int
+		maxValue       int
+	}{
+		{"auto_increment_increment", 1, 65535},
+		{"auto_increment_offset", 1, 65535},
+	}
+
+	for _, tc := range testCases {
+		name := tc.sessionVarName
+		selectSQL := fmt.Sprintf("select @@%s;", name)
+		validValue := tc.minValue + (tc.maxValue-tc.minValue)/2
+		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, validValue))
+		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", validValue)))
+
+		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, tc.minValue-1))
+		warnMsg := fmt.Sprintf("Warning 1292 Truncated incorrect %s value: '%d'", name, tc.minValue-1)
+		tk.MustQuery("show warnings").Check(testkit.Rows(warnMsg))
+		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", tc.minValue)))
+
+		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, tc.maxValue+1))
+		warnMsg = fmt.Sprintf("Warning 1292 Truncated incorrect %s value: '%d'", name, tc.maxValue+1)
+		tk.MustQuery("show warnings").Check(testkit.Rows(warnMsg))
+		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", tc.maxValue)))
+	}
 }
 
 func (s *testSuite5) TestSetCharset(c *C) {
@@ -499,7 +542,7 @@ func (s *testSuite5) TestSetCharset(c *C) {
 	tk.MustExec(`SET CHARACTER SET latin1`)
 	check(
 		"latin1",
-		"latin1",
+		"utf8mb4",
 		"latin1",
 		"utf8mb4",
 		"utf8mb4",
@@ -872,6 +915,9 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
 	_, err = tk.Exec("set @@tx_isolation='SERIALIZABLE'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set global allow_auto_random_explicit_insert=on;")
+	tk.MustQuery("select @@global.allow_auto_random_explicit_insert;").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite5) TestSelectGlobalVar(c *C) {

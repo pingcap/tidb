@@ -125,7 +125,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	lastUpdateTime := h.bindInfo.lastUpdateTime
 	h.bindInfo.Unlock()
 
-	sql := "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation from mysql.bind_info"
+	sql := "select original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source from mysql.bind_info"
 	if !fullLoad {
 		sql += " where update_time > \"" + lastUpdateTime.String() + "\""
 	}
@@ -462,6 +462,7 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 		UpdateTime: row.GetTime(5),
 		Charset:    row.GetString(6),
 		Collation:  row.GetString(7),
+		Source:     row.GetString(8),
 	}
 	bindRecord := &BindRecord{
 		OriginalSQL: row.GetString(0),
@@ -567,7 +568,7 @@ func (h *BindHandle) deleteBindInfoSQL(normdOrigSQL, db, bindSQL string) string 
 }
 
 func (h *BindHandle) insertBindInfoSQL(orignalSQL string, db string, info Binding) string {
-	return fmt.Sprintf(`INSERT INTO mysql.bind_info VALUES (%s, %s, %s, %s, %s, %s, %s, %s)`,
+	return fmt.Sprintf(`INSERT INTO mysql.bind_info VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)`,
 		expression.Quote(orignalSQL),
 		expression.Quote(info.BindSQL),
 		expression.Quote(db),
@@ -576,6 +577,7 @@ func (h *BindHandle) insertBindInfoSQL(orignalSQL string, db string, info Bindin
 		expression.Quote(info.UpdateTime.String()),
 		expression.Quote(info.Charset),
 		expression.Quote(info.Collation),
+		expression.Quote(info.Source),
 	)
 }
 
@@ -628,6 +630,7 @@ func (h *BindHandle) CaptureBaselines() {
 			Status:    Using,
 			Charset:   charset,
 			Collation: collation,
+			Source:    Capture,
 		}
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.AddBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})

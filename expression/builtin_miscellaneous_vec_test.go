@@ -199,7 +199,7 @@ func (s *testEvaluatorSuite) TestSleepVectorized(c *C) {
 
 	input.Reset()
 	input.AppendFloat64(0, 0.01)
-	input.AppendFloat64(0, 1)
+	input.AppendFloat64(0, 2)
 	input.AppendFloat64(0, 2)
 	start = time.Now()
 	go func() {

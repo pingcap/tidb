@@ -163,11 +163,16 @@ type stmtSummaryByDigestElement struct {
 	// other
 	sumMem          int64
 	maxMem          int64
+	sumDisk         int64
+	maxDisk         int64
 	sumAffectedRows uint64
 	// The first time this type of SQL executes.
 	firstSeen time.Time
 	// The last time this type of SQL executes.
 	lastSeen time.Time
+	// plan cache
+	planInCache   bool
+	planCacheHits int64
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -189,9 +194,11 @@ type StmtExecInfo struct {
 	CopTasks       *stmtctx.CopTasksDetails
 	ExecDetail     *execdetails.ExecDetails
 	MemMax         int64
+	DiskMax        int64
 	StartTime      time.Time
 	IsInternal     bool
 	Succeed        bool
+	PlanInCache    bool
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -568,13 +575,15 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
-		samplePlan:   sei.PlanGenerator(),
-		indexNames:   sei.StmtCtx.IndexNames,
-		minLatency:   sei.TotalLatency,
-		firstSeen:    sei.StartTime,
-		lastSeen:     sei.StartTime,
-		backoffTypes: make(map[fmt.Stringer]int),
-		authUsers:    make(map[string]struct{}),
+		samplePlan:    sei.PlanGenerator(),
+		indexNames:    sei.StmtCtx.IndexNames,
+		minLatency:    sei.TotalLatency,
+		firstSeen:     sei.StartTime,
+		lastSeen:      sei.StartTime,
+		backoffTypes:  make(map[fmt.Stringer]int),
+		authUsers:     make(map[string]struct{}),
+		planInCache:   false,
+		planCacheHits: 0,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -721,11 +730,23 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		commitDetails.Mu.Unlock()
 	}
 
+	//plan cache
+	if sei.PlanInCache {
+		ssElement.planInCache = true
+		ssElement.planCacheHits += 1
+	} else {
+		ssElement.planInCache = false
+	}
+
 	// other
 	ssElement.sumAffectedRows += sei.StmtCtx.AffectedRows()
 	ssElement.sumMem += sei.MemMax
 	if sei.MemMax > ssElement.maxMem {
 		ssElement.maxMem = sei.MemMax
+	}
+	ssElement.sumDisk += sei.DiskMax
+	if sei.DiskMax > ssElement.maxDisk {
+		ssElement.maxDisk = sei.DiskMax
 	}
 	if sei.StartTime.Before(ssElement.firstSeen) {
 		ssElement.firstSeen = sei.StartTime
@@ -812,9 +833,13 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		formatBackoffTypes(ssElement.backoffTypes),
 		avgInt(ssElement.sumMem, ssElement.execCount),
 		ssElement.maxMem,
+		avgInt(ssElement.sumDisk, ssElement.execCount),
+		ssElement.maxDisk,
 		avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount),
 		types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0),
 		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),
+		ssElement.planInCache,
+		ssElement.planCacheHits,
 		ssElement.sampleSQL,
 		ssElement.prevSQL,
 		ssbd.planDigest,

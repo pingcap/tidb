@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mvmap"
@@ -292,7 +293,7 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 	select {
 	case task = <-e.resultCh:
 	case <-ctx.Done():
-		return nil, nil
+		return nil, ctx.Err()
 	}
 	if task == nil {
 		return nil, nil
@@ -304,7 +305,7 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 			return nil, err
 		}
 	case <-ctx.Done():
-		return nil, nil
+		return nil, ctx.Err()
 	}
 
 	e.task = task
@@ -555,6 +556,9 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 			if terror.ErrorEqual(err, types.ErrOverflow) {
 				return nil, nil
 			}
+			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.Tp == mysql.TypeSet || innerColType.Tp == mysql.TypeEnum) {
+				return nil, nil
+			}
 			return nil, err
 		}
 		cmp, err := outerValue.CompareDatum(sc, &innerValue)
@@ -618,7 +622,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		default:
 		}
 		err := Next(ctx, innerExec, iw.executorChk)
@@ -681,7 +685,9 @@ func (e *IndexLookUpJoin) Close() error {
 	e.memTracker = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)
-		e.runtimeStats.SetConcurrencyInfo("Concurrency", concurrency)
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
 	}
 	return e.baseExecutor.Close()
 }

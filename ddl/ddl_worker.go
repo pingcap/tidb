@@ -129,6 +129,11 @@ func (w *worker) close() {
 func (w *worker) start(d *ddlCtx) {
 	logutil.Logger(w.logCtx).Info("[ddl] start DDL worker")
 	defer w.wg.Done()
+	defer tidbutil.Recover(
+		metrics.LabelDDLWorker,
+		fmt.Sprintf("DDL ID %s, %s start", d.uuid, w),
+		nil, true,
+	)
 
 	// We use 4 * lease time to check owner's timeout, so here, we will update owner's status
 	// every 2 * lease time. If lease is 0, we will use default 1s.
@@ -196,6 +201,9 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 }
 
 func (d *ddl) limitDDLJobs() {
+	defer d.wg.Done()
+	defer tidbutil.Recover(metrics.LabelDDL, "limitDDLJobs", nil, true)
+
 	tasks := make([]*limitJobTask, 0, batchAddingJobs)
 	for {
 		select {
@@ -460,18 +468,20 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 
 			// If running job meets error, we will save this error in job Error
 			// and retry later if the job is not cancelled.
-			tidbutil.WithRecovery(func() {
-				schemaVer, runJobErr = w.runDDLJob(d, t, job)
-			}, func(r interface{}) {
-				if r != nil {
-					// If run ddl job panic, just cancel the ddl jobs.
-					job.State = model.JobStateCancelling
-				}
-			})
+			schemaVer, runJobErr = w.runDDLJob(d, t, job)
 			if job.IsCancelled() {
 				txn.Discard()
 				err = w.finishDDLJob(t, job)
 				return errors.Trace(err)
+			}
+			if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
+				// If the running job meets an error
+				// and the job state is rolling back, it means that we have already handled this error.
+				// Some DDL jobs (such as adding indexes) may need to update the table info and the schema version,
+				// then shouldn't discard the KV modification.
+				// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
+				// Otherwise, we should discard the KV modification when running job.
+				txn.Discard()
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
@@ -562,6 +572,12 @@ func chooseLeaseTime(t, max time.Duration) time.Duration {
 
 // runDDLJob runs a DDL job. It returns the current schema version in this transaction and the error.
 func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runDDLJob", w),
+		func() {
+			// If run DDL job panic, just cancel the DDL jobs.
+			job.State = model.JobStateCancelling
+		}, false)
+
 	// Mock for run ddl job panic.
 	failpoint.Inject("mockPanicInRunDDLJob", func(val failpoint.Value) {})
 
@@ -646,7 +662,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionUnlockTable:
 		ver, err = onUnlockTables(t, job)
 	case model.ActionSetTiFlashReplica:
-		ver, err = onSetTableFlashReplica(t, job)
+		ver, err = w.onSetTableFlashReplica(t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
 		ver, err = onUpdateFlashReplicaStatus(t, job)
 	case model.ActionCreateSequence:

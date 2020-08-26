@@ -24,7 +24,9 @@
       "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection->Projection",
       "UnionAll{DataScan(t1)->Projection->Aggr(count(test.t.a),sum(test.t.a))->DataScan(t2)->Projection->Aggr(count(test.t.a),sum(test.t.a))}->Aggr(avg(Column#38, Column#39))->Projection",
       "UnionAll{DataScan(t1)->Projection->Projection->Projection->DataScan(t2)->Projection->Projection->Projection}->Aggr(count(distinct Column#25))->Projection",
-      "UnionAll{DataScan(t1)->Projection->Aggr(firstrow(test.t.b),firstrow(test.t.b))->DataScan(t2)->Projection->Aggr(firstrow(test.t.b),firstrow(test.t.b))}->Aggr(count(distinct Column#26))->Projection"
+      "UnionAll{DataScan(t1)->Projection->Aggr(firstrow(test.t.b),firstrow(test.t.b))->DataScan(t2)->Projection->Aggr(firstrow(test.t.b),firstrow(test.t.b))}->Aggr(count(distinct Column#26))->Projection",
+      "UnionAll{DataScan(t1)->Projection->Aggr(approx_count_distinct(test.t.a))->DataScan(t2)->Projection->Aggr(approx_count_distinct(test.t.a))}->Aggr(approx_count_distinct(Column#38))->Projection",
+      "UnionAll{DataScan(t1)->Projection->Aggr(approx_count_distinct(test.t.b))->DataScan(t2)->Projection->Aggr(approx_count_distinct(test.t.b))}->Aggr(approx_count_distinct(Column#38))->Projection"
     ]
   },
   {
@@ -561,7 +563,8 @@
       "DataScan(t)->Projection",
       "DataScan(t)->Projection",
       "DataScan(t)->Projection",
-      "DataScan(t)->Projection"
+      "DataScan(t)->Projection",
+      "DataScan(t)->Aggr(approx_count_distinct(test.t.a, test.t.b),firstrow(test.t.a))->Projection"
     ]
   },
   {
@@ -809,17 +812,17 @@
   {
     "Name": "TestTablePartition",
     "Cases": [
-      "UnionAll{Partition(41)->Partition(42)->Partition(43)->Partition(44)->Partition(45)}->Projection",
-      "UnionAll{Partition(41)->Partition(42)}->Projection",
-      "UnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
-      "UnionAll{Partition(42)->Partition(43)}->Projection",
-      "UnionAll{UnionAll{Partition(42)->Partition(43)}->Projection->Projection->UnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
-      "UnionAll{UnionAll{Partition(42)->Partition(43)}->Projection->Projection->UnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
+      "PartitionUnionAll{Partition(41)->Partition(42)->Partition(43)->Partition(44)->Partition(45)}->Projection",
+      "PartitionUnionAll{Partition(41)->Partition(42)}->Projection",
+      "PartitionUnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
+      "PartitionUnionAll{Partition(42)->Partition(43)}->Projection",
+      "UnionAll{PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection->PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
+      "UnionAll{PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection->PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
       "Partition(41)->Projection",
       "Partition(45)->Projection",
       "Dual->Projection",
       "Partition(41)->Projection",
-      "UnionAll{Partition(41)->Partition(44)}->Projection"
+      "PartitionUnionAll{Partition(41)->Partition(44)}->Projection"
     ]
   },
   {
@@ -897,11 +900,12 @@
   {
     "Name": "TestOuterJoinEliminator",
     "Cases": [
-      "DataScan(t1)->Aggr(firstrow(test.t.a),firstrow(test.t.b))",
-      "DataScan(t2)->Aggr(firstrow(test.t.a),firstrow(test.t.b))",
+      "DataScan(t1)->Projection",
+      "DataScan(t2)->Projection",
       "DataScan(t1)->Aggr(max(test.t.a),min(test.t.b))->Projection",
       "DataScan(t1)->Aggr(sum(distinct test.t.a))->Projection",
       "DataScan(t1)->Aggr(count(distinct test.t.a, test.t.b))->Projection",
+      "DataScan(t1)->Aggr(approx_count_distinct(test.t.a, test.t.b))->Projection",
       "DataScan(t1)->Projection",
       "DataScan(t2)->Projection",
       "Join{Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->DataScan(t3)->TopN([test.t.b true],0,1)}(test.t.b,test.t.b)->TopN([test.t.b true],0,1)->Aggr(max(test.t.b))->Projection",

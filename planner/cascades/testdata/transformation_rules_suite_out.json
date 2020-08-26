@@ -110,6 +110,23 @@
         ]
       },
       {
+        "SQL": "select a, approx_count_distinct(b) from t group by a having a > 1 and max(b) > 10",
+        "Result": [
+          "Group#0 Schema:[test.t.a,Column#16]",
+          "    Projection_5 input:[Group#1], test.t.a, Column#13",
+          "Group#1 Schema:[test.t.a,Column#13,Column#14]",
+          "    Projection_3 input:[Group#2], test.t.a, Column#13, Column#14",
+          "Group#2 Schema:[Column#13,Column#14,test.t.a]",
+          "    Selection_8 input:[Group#3], gt(Column#14, 10)",
+          "Group#3 Schema:[Column#13,Column#14,test.t.a]",
+          "    Aggregation_2 input:[Group#4], group by:test.t.a, funcs:approx_count_distinct(test.t.b), max(test.t.b), firstrow(test.t.a)",
+          "Group#4 Schema:[test.t.a,test.t.b]",
+          "    TiKVSingleGather_10 input:[Group#5], table:t",
+          "Group#5 Schema:[test.t.a,test.t.b]",
+          "    TableScan_12 table:t, pk col:test.t.a, cond:[gt(test.t.a, 1)]"
+        ]
+      },
+      {
         "SQL": "select t1.a, t1.b, t2.b from t t1, t t2 where t1.a = t2.a and t2.b = t1.b and t1.a > 10 and t2.b > 10 and t1.a > t2.b",
         "Result": [
           "Group#0 Schema:[test.t.a,test.t.b,test.t.b]",
@@ -2172,6 +2189,19 @@
           "    Projection_3 input:[Group#1], Column#13",
           "Group#1 Schema:[Column#13]",
           "    Aggregation_5 input:[Group#2], funcs:count(distinct test.t.c)",
+          "Group#2 Schema:[test.t.a,test.t.c]",
+          "    Selection_4 input:[Group#3], not(gt(test.t.a, 10))",
+          "Group#3 Schema:[test.t.a,test.t.c]",
+          "    DataSource_1 table:t"
+        ]
+      },
+      {
+        "SQL": "select approx_count_distinct(case when a > 10 then null else c end) from t",
+        "Result": [
+          "Group#0 Schema:[Column#13]",
+          "    Projection_3 input:[Group#1], Column#13",
+          "Group#1 Schema:[Column#13]",
+          "    Aggregation_5 input:[Group#2], funcs:approx_count_distinct(test.t.c)",
           "Group#2 Schema:[test.t.a,test.t.c]",
           "    Selection_4 input:[Group#3], not(gt(test.t.a, 10))",
           "Group#3 Schema:[test.t.a,test.t.c]",

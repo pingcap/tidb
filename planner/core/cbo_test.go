@@ -431,13 +431,13 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		store.Close()
 	}()
 
-	cfg := config.GetGlobalConfig()
-	orgEnable := cfg.PreparedPlanCache.Enabled
-	orgCapacity := cfg.PreparedPlanCache.Capacity
+	defer config.RestoreFunc()()
 	flags := []bool{false, true}
 	for _, flag := range flags {
-		cfg.PreparedPlanCache.Enabled = flag
-		cfg.PreparedPlanCache.Capacity = 100
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.PreparedPlanCache.Enabled = flag
+			conf.PreparedPlanCache.Capacity = 100
+		})
 		testKit := testkit.NewTestKit(c, store)
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
@@ -460,8 +460,6 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 
 		c.Assert(core.ToString(p), Equals, best, Commentf("for %s", sql))
 	}
-	cfg.PreparedPlanCache.Enabled = orgEnable
-	cfg.PreparedPlanCache.Capacity = orgCapacity
 }
 
 func (s *testAnalyzeSuite) TestNullCount(c *C) {
@@ -853,5 +851,34 @@ func (s *testAnalyzeSuite) TestTiFlashCostModel(c *C) {
 				tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
 			}
 		}
+	}
+}
+
+func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t, t1")
+	testKit.MustExec("CREATE TABLE t(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c bigint(20) NOT NULL, PRIMARY KEY (a,c,b), KEY (b))")
+	err = s.loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom)
+	c.Assert(err, IsNil)
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }

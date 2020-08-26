@@ -1065,8 +1065,8 @@ func GetCmpFunction(ctx sessionctx.Context, lhs, rhs Expression) CompareFunc {
 	case types.ETDecimal:
 		return CompareDecimal
 	case types.ETString:
-		_, dstCollation, dstFlen := DeriveCollationFromExprs(ctx, lhs, rhs)
-		return genCompareString(dstCollation, dstFlen)
+		_, dstCollation := DeriveCollationFromExprs(ctx, lhs, rhs)
+		return genCompareString(dstCollation)
 	case types.ETDuration:
 		return CompareDuration
 	case types.ETDatetime, types.ETTimestamp:
@@ -2436,7 +2436,7 @@ func CompareInt(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsR
 	return int64(res), false, nil
 }
 
-func genCompareString(collation string, flen int) func(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
+func genCompareString(collation string) func(sctx sessionctx.Context, lhsArg Expression, rhsArg Expression, lhsRow chunk.Row, rhsRow chunk.Row) (int64, bool, error) {
 	return func(sctx sessionctx.Context, lhsArg, rhsArg Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
 		return CompareStringWithCollationInfo(sctx, lhsArg, rhsArg, lhsRow, rhsRow, collation)
 	}

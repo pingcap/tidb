@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
@@ -255,7 +254,6 @@ func (e *ExecuteExec) Build(b *executorBuilder) error {
 		return errors.Trace(b.err)
 	}
 	e.stmtExec = stmtExec
-	CountStmtNode(e.stmt, e.ctx.GetSessionVars().InRestrictedSQL)
 	if e.ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
 		e.lowerPriority = needLowerPriority(e.plan)
 	}
@@ -328,22 +326,4 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	}
 	return stmt, nil
-}
-
-func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
-	var ok bool
-	execID := stmt.ExecID
-	if stmt.Name != "" {
-		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
-			return nil, plannercore.ErrStmtNotFound
-		}
-	}
-	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
-		if !ok {
-			return nil, errors.Errorf("invalid CachedPrepareStmt type")
-		}
-		return preparedObj.PreparedAst.Stmt, nil
-	}
-	return nil, plannercore.ErrStmtNotFound
 }

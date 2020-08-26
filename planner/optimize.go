@@ -31,14 +31,58 @@ import (
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
+
+// GetPreparedStmt extract the prepared statement from the execute statement.
+func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
+	var ok bool
+	execID := stmt.ExecID
+	if stmt.Name != "" {
+		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
+			return nil, plannercore.ErrStmtNotFound
+		}
+	}
+	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
+		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
+		if !ok {
+			return nil, errors.Errorf("invalid CachedPrepareStmt type")
+		}
+		return preparedObj.PreparedAst.Stmt, nil
+	}
+	return nil, plannercore.ErrStmtNotFound
+}
+
+// IsReadOnly check whether the ast.Node is a read only statement.
+func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
+	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
+		s, err := GetPreparedStmt(execStmt, vars)
+		if err != nil {
+			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
+			return false
+		}
+		return ast.IsReadOnly(s)
+	}
+	return ast.IsReadOnly(node)
+}
 
 // Optimize does optimization and creates a Plan.
 // The node must be prepared first.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plannercore.Plan, types.NameSlice, error) {
+	sessVars := sctx.GetSessionVars()
+
+	// Because for write stmt, TiFlash has a different results when lock the data in point get plan. We ban the TiFlash
+	// engine in not read only stmt.
+	if _, isolationReadContainTiFlash := sessVars.IsolationReadEngines[kv.TiFlash]; isolationReadContainTiFlash && !IsReadOnly(node, sessVars) {
+		delete(sessVars.IsolationReadEngines, kv.TiFlash)
+		defer func() {
+			sessVars.IsolationReadEngines[kv.TiFlash] = struct{}{}
+		}()
+	}
 	if _, isolationReadContainTiKV := sctx.GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; isolationReadContainTiKV {
 		fp := plannercore.TryFastPlan(sctx, node)
 		if fp != nil {
@@ -51,20 +95,20 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	sctx.PrepareTSFuture(ctx)
 
-	tableHints := hint.ExtractTableHintsFromStmtNode(node)
+	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	stmtHints, warns := handleStmtHints(tableHints)
 	defer func() {
-		sctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
+		sessVars.StmtCtx.StmtHints = stmtHints
 		for _, warn := range warns {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 		}
 	}()
-	sctx.GetSessionVars().StmtCtx.StmtHints = stmtHints
+	sessVars.StmtCtx.StmtHints = stmtHints
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
 		return nil, nil, err
 	}
-	if !(sctx.GetSessionVars().UsePlanBaselines || sctx.GetSessionVars().EvolvePlanBaselines) {
+	if !(sessVars.UsePlanBaselines || sessVars.EvolvePlanBaselines) {
 		return bestPlan, names, nil
 	}
 	stmtNode, ok := node.(ast.StmtNode)
@@ -73,6 +117,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	bindRecord, scope := getBindRecord(sctx, stmtNode)
 	if bindRecord == nil {
+		return bestPlan, names, nil
+	}
+	if sctx.GetSessionVars().SelectLimit != math.MaxUint64 {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so plan binding is not activated"))
 		return bestPlan, names, nil
 	}
 	bestPlanHint := plannercore.GenHintsFromPhysicalPlan(bestPlan)
@@ -266,6 +314,7 @@ func handleEvolveTasks(ctx context.Context, sctx sessionctx.Context, br *bindinf
 		Status:    bindinfo.PendingVerify,
 		Charset:   charset,
 		Collation: collation,
+		Source:    bindinfo.Evolve,
 	}
 	globalHandle := domain.GetDomain(sctx).BindHandle()
 	globalHandle.AddEvolvePlanTask(br.OriginalSQL, br.Db, binding)

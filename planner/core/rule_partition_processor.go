@@ -61,7 +61,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan) (LogicalPlan, err
 		if err != nil {
 			return nil, err
 		}
-		if ua, ok := ds.(*LogicalUnionAll); ok {
+		if ua, ok := ds.(*LogicalPartitionUnionAll); ok {
 			// Adjust the UnionScan->Union->DataSource1, DataSource2 ... to
 			// Union->(UnionScan->DataSource1), (UnionScan->DataSource2)
 			children := make([]LogicalPlan, 0, len(ua.Children()))
@@ -124,7 +124,7 @@ func (s *partitionProcessor) pruneHashPartition(ds *DataSource, pi *model.Partit
 		return tableDual, nil
 	}
 	if ok {
-		idx := math.Abs(val) % int64(pi.Num)
+		idx := math.Abs(val % int64(pi.Num))
 		if len(ds.partitionNames) > 0 && !s.findByName(ds.partitionNames, pi.Definitions[idx].Name.L) {
 			// For condition like `from t partition (p1) where a = 5`, but they are conflict, return TableDual directly.
 			tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.blockOffset)
@@ -733,7 +733,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 		// No need for the union all.
 		return children[0], nil
 	}
-	unionAll := LogicalUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
+	unionAll := LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.blockOffset)
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema.Clone())
 	return unionAll, nil

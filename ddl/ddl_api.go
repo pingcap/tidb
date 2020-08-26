@@ -613,7 +613,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	err = checkColumnValueConstraint(col)
+	err = checkColumnValueConstraint(col, col.Collate)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -778,7 +778,7 @@ func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 	if existCnt != len(valMap) {
 		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 	}
-	setVal, err := types.ParseSetName(col.Elems, str)
+	setVal, err := types.ParseSetName(col.Elems, str, col.Collate)
 	if err != nil {
 		return "", ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
 	}
@@ -881,21 +881,22 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 	return nil
 }
 
-func checkColumnValueConstraint(col *table.Column) error {
+func checkColumnValueConstraint(col *table.Column, collation string) error {
 	if col.Tp != mysql.TypeEnum && col.Tp != mysql.TypeSet {
 		return nil
 	}
-	valueMap := make(map[string]string, len(col.Elems))
+	valueMap := make(map[string]bool, len(col.Elems))
+	ctor := collate.GetCollator(collation)
 	for i := range col.Elems {
-		val := strings.ToLower(col.Elems[i])
+		val := string(ctor.Key(col.Elems[i]))
 		if _, ok := valueMap[val]; ok {
 			tpStr := "ENUM"
 			if col.Tp == mysql.TypeSet {
 				tpStr = "SET"
 			}
-			return types.ErrDuplicatedValueInType.GenWithStackByArgs(col.Name, valueMap[val], tpStr)
+			return types.ErrDuplicatedValueInType.GenWithStackByArgs(col.Name, col.Elems[i], tpStr)
 		}
-		valueMap[val] = col.Elems[i]
+		valueMap[val] = true
 	}
 	return nil
 }
@@ -1105,15 +1106,16 @@ func checkConstraintNames(constraints []*ast.Constraint) error {
 }
 
 func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
-	allowAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
 	pkColName := tbInfo.GetPkName()
 	for _, col := range colDefs {
 		if containsColumnOption(col, ast.ColumnOptionAutoRandom) {
-			if !allowAutoRandom {
-				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExperimentalDisabledErrMsg)
+			if col.Tp.Tp != mysql.TypeLonglong {
+				return ErrInvalidAutoRandom.GenWithStackByArgs(
+					fmt.Sprintf(autoid.AutoRandomOnNonBigIntColumn, types.TypeStr(col.Tp.Tp)))
 			}
 			if !tbInfo.PKIsHandle || col.Name.Name.L != pkColName.L {
-				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O))
+				errMsg := fmt.Sprintf(autoid.AutoRandomPKisNotHandleErrMsg, col.Name.Name.O)
+				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 			}
 			if containsColumnOption(col, ast.ColumnOptionAutoIncrement) {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
@@ -1126,16 +1128,18 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 			if err != nil {
 				return errors.Trace(err)
 			}
-			maxFieldTypeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[col.Tp.Tp] * 8)
+
+			layout := autoid.NewAutoRandomIDLayout(col.Tp, autoRandBits)
 			if autoRandBits == 0 {
 				return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomNonPositive)
-			} else if autoRandBits >= maxFieldTypeBitsLength {
-				return ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(autoid.AutoRandomOverflowErrMsg, col.Name.Name.L, maxFieldTypeBitsLength, autoRandBits, col.Name.Name.L, maxFieldTypeBitsLength-1))
+			} else if autoRandBits > autoid.MaxAutoRandomBits {
+				errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
+					autoid.MaxAutoRandomBits, autoRandBits, col.Name.Name.O)
+				return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 			}
 			tbInfo.AutoRandomBits = autoRandBits
 
-			availableBits := maxFieldTypeBitsLength - 1 - autoRandBits
-			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, uint64(math.Pow(2, float64(availableBits)))-1)
+			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, layout.IncrementalBitsCapacity())
 			ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(msg))
 		}
 	}
@@ -1374,10 +1378,13 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 	if err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(tbInfo); err != nil {
+	// Fix issue 17952 which will cause partition range expr can't be parsed as Int.
+	// checkTableInfoValidWithStmt will do the constant fold the partition expression first,
+	// then checkTableInfoValidExtra will pass the tableInfo check successfully.
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+	if err = checkTableInfoValidExtra(tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil
@@ -1575,7 +1582,7 @@ func (d *ddl) CreateTableWithInfo(
 			err = nil
 		}
 	} else if actionType == model.ActionCreateTable {
-		d.preSplitAndScatter(ctx, tbInfo)
+		d.preSplitAndScatter(ctx, tbInfo, tbInfo.GetPartitionInfo())
 		if tbInfo.AutoIncID > 1 {
 			// Default tableAutoIncID base is 0.
 			// If the first ID is expected to greater than 1, we need to do rebase.
@@ -1595,7 +1602,8 @@ func (d *ddl) CreateTableWithInfo(
 }
 
 // preSplitAndScatter performs pre-split and scatter of the table's regions.
-func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo) {
+// If `pi` is not nil, will only split region for `pi`, this is used when add partition.
+func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo, pi *model.PartitionInfo) {
 	sp, ok := d.store.(kv.SplittableStore)
 	if !ok || atomic.LoadUint32(&EnableSplitTableRegion) == 0 {
 		return
@@ -1610,11 +1618,10 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 	} else {
 		scatterRegion = variable.TiDBOptOn(val)
 	}
-	pi := tbInfo.GetPartitionInfo()
 	if pi != nil {
-		preSplit = func() { splitPartitionTableRegion(sp, pi, scatterRegion) }
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, pi, scatterRegion) }
 	} else {
-		preSplit = func() { splitTableRegion(sp, tbInfo, scatterRegion) }
+		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
 	}
 	if scatterRegion {
 		preSplit()
@@ -2046,11 +2053,11 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 	for _, spec := range validSpecs {
 		resolvedAlgorithm, err := ResolveAlterAlgorithm(spec, algorithm)
 		if err != nil {
-			if algorithm != ast.AlgorithmTypeCopy {
+			// If TiDB failed to choose a better algorithm, report the error
+			if resolvedAlgorithm == ast.AlgorithmTypeDefault {
 				return nil, errors.Trace(err)
 			}
-			// For the compatibility, we return warning instead of error when the algorithm is COPY,
-			// because the COPY ALGORITHM is not supported in TiDB.
+			// For the compatibility, we return warning instead of error when a better algorithm is chosed by TiDB
 			ctx.GetSessionVars().StmtCtx.AppendError(err)
 		}
 
@@ -2208,20 +2215,40 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	if err != nil {
 		return errors.Trace(err)
 	}
-	autoIncID, err := t.Allocators(ctx).Get(tp).NextGlobalAutoID(t.Meta().ID)
+	var actionType model.ActionType
+	switch tp {
+	case autoid.AutoRandomType:
+		tbInfo := t.Meta()
+		if tbInfo.AutoRandomBits == 0 {
+			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomRebaseNotApplicable))
+		}
+		var autoRandColTp types.FieldType
+		for _, c := range tbInfo.Columns {
+			if mysql.HasPriKeyFlag(c.Flag) {
+				autoRandColTp = c.FieldType
+				break
+			}
+		}
+		layout := autoid.NewAutoRandomIDLayout(&autoRandColTp, tbInfo.AutoRandomBits)
+		if layout.IncrementalMask()&newBase != newBase {
+			errMsg := fmt.Sprintf(autoid.AutoRandomRebaseOverflow, newBase, layout.IncrementalBitsCapacity())
+			return errors.Trace(ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
+		}
+		actionType = model.ActionRebaseAutoRandomBase
+	case autoid.RowIDAllocType:
+		actionType = model.ActionRebaseAutoID
+	}
+
+	autoID, err := t.Allocators(ctx).Get(tp).NextGlobalAutoID(t.Meta().ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// If newBase < autoIncID, we need to do a rebase before returning.
+	// If newBase < autoID, we need to do a rebase before returning.
 	// Assume there are 2 TiDB servers: TiDB-A with allocator range of 0 ~ 30000; TiDB-B with allocator range of 30001 ~ 60000.
 	// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
 	// and TiDB-B finds 100 < 30001 but returns without any handling,
 	// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
-	newBase = mathutil.MaxInt64(newBase, autoIncID)
-	actionType := model.ActionRebaseAutoID
-	if tp == autoid.AutoRandomType {
-		actionType = model.ActionRebaseAutoRandomBase
-	}
+	newBase = mathutil.MaxInt64(newBase, autoID)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -2472,6 +2499,9 @@ func (d *ddl) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, spec *
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
 		return nil
 	}
+	if err == nil {
+		d.preSplitAndScatter(ctx, meta, partInfo)
+	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
@@ -2534,6 +2564,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	if err != nil {
 		return errors.Trace(err)
 	}
+	pids := []int64{pid}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -2541,7 +2572,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		SchemaName: schema.Name.L,
 		Type:       model.ActionTruncateTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{pid},
+		Args:       []interface{}{pids},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -2573,7 +2604,8 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	partName := spec.PartitionNames[0].L
-	err = checkDropTablePartition(meta, partName)
+	partNames := []string{partName}
+	err = checkDropTablePartition(meta, partNames)
 	if err != nil {
 		if ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -2588,7 +2620,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		SchemaName: schema.Name.L,
 		Type:       model.ActionDropTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partName},
+		Args:       []interface{}{partNames},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -3000,7 +3032,8 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkAutoRandom(t.Meta(), col, specNewColumn); err != nil {
+	var newAutoRandBits uint64
+	if newAutoRandBits, err = checkAutoRandom(t.Meta(), col, specNewColumn); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -3010,7 +3043,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp},
+		Args:       []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
 	return job, nil
 }
@@ -3052,34 +3085,46 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	return nil
 }
 
-func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) error {
-	if !config.GetGlobalConfig().Experimental.AllowAutoRandom && containsColumnOption(specNewColumn, ast.ColumnOptionAutoRandom) {
-		return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomExperimentalDisabledErrMsg)
+func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
+	// Disallow add/drop actions on auto_random.
+	var oldRandBits uint64
+	if tableInfo.PKIsHandle && (tableInfo.GetPkName().L == originCol.Name.L) {
+		oldRandBits = tableInfo.AutoRandomBits
 	}
-	// Disallow add/drop/modify actions on auto_random.
-	newAutoRandomBit, err := extractAutoRandomBitsFromColDef(specNewColumn)
+	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
-	if tableInfo.AutoRandomBits != newAutoRandomBit {
-		return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterErrMsg)
+	switch {
+	case oldRandBits == newRandBits:
+		break
+	case oldRandBits == 0 || newRandBits == 0:
+		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomAlterErrMsg)
+	case autoid.MaxAutoRandomBits < newRandBits:
+		errMsg := fmt.Sprintf(autoid.AutoRandomOverflowErrMsg,
+			autoid.MaxAutoRandomBits, newRandBits, specNewColumn.Name.Name.O)
+		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
+	case oldRandBits < newRandBits:
+		break // Increasing auto_random shard bits is allowed.
+	case oldRandBits > newRandBits:
+		return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomDecreaseBitErrMsg)
 	}
 
-	if tableInfo.AutoRandomBits != 0 {
+	if oldRandBits != 0 {
 		// Disallow changing the column field type.
 		if originCol.Tp != specNewColumn.Tp.Tp {
-			return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomModifyColTypeErrMsg)
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomModifyColTypeErrMsg)
 		}
 		// Disallow changing auto_increment on auto_random column.
 		if containsColumnOption(specNewColumn, ast.ColumnOptionAutoIncrement) != mysql.HasAutoIncrementFlag(originCol.Flag) {
-			return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithAutoIncErrMsg)
 		}
 		// Disallow specifying a default value on auto_random column.
 		if containsColumnOption(specNewColumn, ast.ColumnOptionDefaultValue) {
-			return ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
+			return 0, ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomIncompatibleWithDefaultValueErrMsg)
 		}
 	}
-	return nil
+	return newRandBits, nil
 }
 
 // ChangeColumn renames an existing column and modifies the column's definition,
@@ -3378,6 +3423,11 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		}
 	}
 
+	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
@@ -3389,6 +3439,18 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
+	// Check the tiflash replica count should be less than the total tiflash stores.
+	tiflashStoreCnt, err := infoschema.GetTiFlashStoreCount(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if replicaCount > tiflashStoreCnt {
+		return errors.Errorf("the tiflash replica count: %d should be less than the total tiflash server count: %d", replicaCount, tiflashStoreCnt)
+	}
+	return nil
 }
 
 // UpdateTableReplicaInfo updates the table flash replica infos.
@@ -3624,7 +3686,7 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	oldTblInfo := tb.Meta()
 	if oldTblInfo.PreSplitRegions > 0 {
 		if _, tb, err := d.getSchemaAndTableByIdent(ctx, ti); err == nil {
-			d.preSplitAndScatter(ctx, tb.Meta())
+			d.preSplitAndScatter(ctx, tb.Meta(), tb.Meta().GetPartitionInfo())
 		}
 	}
 
@@ -3726,7 +3788,9 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	}
 
 	indexName = model.NewCIStr(mysql.PrimaryKeyName)
-	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
+	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil ||
+		// If the table's PKIsHandle is true, it also means that this table has a primary key.
+		t.Meta().PKIsHandle {
 		return infoschema.ErrMultiplePriKey
 	}
 
@@ -3871,7 +3935,14 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	}
 
 	if indexInfo := t.Meta().FindIndexByName(indexName.L); indexInfo != nil {
-		err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+		if indexInfo.State != model.StatePublic {
+			// NOTE: explicit error message. See issue #18363.
+			err = ErrDupKeyName.GenWithStack("index already exist %s; "+
+				"a background job is trying to add the same index, "+
+				"please check by `ADMIN SHOW DDL JOBS`", indexName)
+		} else {
+			err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
+		}
 		if ifNotExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil

@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -42,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -141,6 +139,9 @@ type DDL interface {
 		onExist OnExist,
 		tryRetainID bool) error
 
+	// Start campaigns the owner and starts workers.
+	// ctxPool is used for the worker's delRangeManager and creates sessions.
+	Start(ctxPool *pools.ResourcePool) error
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
 	// Stats returns the DDL statistics.
@@ -255,16 +256,15 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	}
 
 	id := uuid.New().String()
-	ctx, cancelFunc := context.WithCancel(ctx)
 	var manager owner.Manager
 	var syncer util.SchemaSyncer
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
-		manager = owner.NewMockManager(id, cancelFunc)
+		manager = owner.NewMockManager(ctx, id)
 		syncer = NewMockSchemaSyncer()
 	} else {
-		manager = owner.NewOwnerManager(etcdCli, ddlPrompt, id, DDLOwnerKey, cancelFunc)
+		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
 		syncer = util.NewSchemaSyncer(etcdCli, id, manager)
 	}
 
@@ -285,10 +285,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		limitJobCh: make(chan *limitJobTask, batchAddingJobs),
 	}
 
-	d.start(ctx, opt.ResourcePool)
-	variable.RegisterStatistics(d)
-
-	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
 	return d
 }
 
@@ -315,31 +311,21 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 	return delRangeMgr
 }
 
-// start campaigns the owner and starts workers.
-// ctxPool is used for the worker's delRangeManager and creates sessions.
-func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
+// Start implements DDL.Start interface.
+func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 	d.quitCh = make(chan struct{})
 
 	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
-		tidbutil.WithRecovery(
-			func() { d.limitDDLJobs() },
-			func(r interface{}) {
-				if r != nil {
-					logutil.BgLogger().Error("[ddl] limit DDL jobs meet panic",
-						zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
-					metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
-				}
-			})
-	}()
+	go d.limitDDLJobs()
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
 	// Otherwise, we needn't do that.
 	if RunWorker {
-		err := d.ownerManager.CampaignOwner(ctx)
-		terror.Log(errors.Trace(err))
+		err := d.ownerManager.CampaignOwner()
+		if err != nil {
+			return errors.Trace(err)
+		}
 
 		d.workers = make(map[workerType]*worker, 2)
 		d.sessPool = newSessionPool(ctxPool)
@@ -349,14 +335,8 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			w := worker
-			go tidbutil.WithRecovery(
-				func() { w.start(d.ddlCtx) },
-				func(r interface{}) {
-					if r != nil {
-						logutil.Logger(w.logCtx).Error("[ddl] DDL worker meet panic", zap.String("ID", d.uuid))
-						metrics.PanicCounter.WithLabelValues(metrics.LabelDDLWorker).Inc()
-					}
-				})
+			go w.start(d.ddlCtx)
+
 			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, worker.String())).Inc()
 
 			// When the start function is called, we will send a fake job to let worker
@@ -364,17 +344,14 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 			asyncNotify(worker.ddlJobCh)
 		}
 
-		go tidbutil.WithRecovery(
-			func() { d.schemaSyncer.StartCleanWork() },
-			func(r interface{}) {
-				if r != nil {
-					logutil.BgLogger().Error("[ddl] DDL syncer clean worker meet panic",
-						zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
-					metrics.PanicCounter.WithLabelValues(metrics.LabelDDLSyncer).Inc()
-				}
-			})
+		go d.schemaSyncer.StartCleanWork()
 		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
+
+	variable.RegisterStatistics(d)
+
+	metrics.DDLCounter.WithLabelValues(metrics.CreateDDLInstance).Inc()
+	return nil
 }
 
 func (d *ddl) close() {

@@ -828,7 +828,7 @@ func (b *PlanBuilder) filterPathByIsolationRead(paths []*util.AccessPath, dbName
 			}
 			availableEngineStr += paths[i].StoreType.Name()
 		}
-		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok {
+		if _, ok := isolationReadEngines[paths[i].StoreType]; !ok && paths[i].StoreType != kv.TiDB {
 			paths = append(paths[:i], paths[i+1:]...)
 		}
 	}
@@ -869,7 +869,7 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		Name: x.Name,
 	}
 	if x.SQLVar != nil {
-		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
+		if v, ok := b.ctx.GetSessionVars().Users[strings.ToLower(x.SQLVar.Name)]; ok {
 			p.SQLText = v.GetString()
 		} else {
 			p.SQLText = "NULL"
@@ -959,6 +959,12 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
+	case ast.AdminShowTelemetry:
+		p := &AdminShowTelemetry{}
+		p.setSchemaAndNames(buildShowTelemetrySchema())
+		ret = p
+	case ast.AdminResetTelemetryID:
+		return &AdminResetTelemetryID{}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -988,7 +994,6 @@ func (b *PlanBuilder) getGenExprs(ctx context.Context, dbName model.CIStr, tbl t
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
 			found := false
 			for _, column := range idx.Columns {
 				if strings.EqualFold(col.Name.L, column.Name.L) {
@@ -1025,70 +1030,24 @@ func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInf
 }
 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
-	// Get generated columns.
-	var genCols []*expression.Column
 	pkOffset := -1
 	tblInfo := tbl.Meta()
-	colsMap := set.NewInt64Set()
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
 	idxReaderCols := make([]*model.ColumnInfo, 0, len(idx.Columns))
 	tblReaderCols := make([]*model.ColumnInfo, 0, len(tbl.Cols()))
-	fullExprCols, fullColNames := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
-	genExprsMap, err := b.getGenExprs(ctx, dbName, tbl, idx, fullExprCols, fullColNames)
-	if err != nil {
-		return nil, err
-	}
+	fullExprCols, _ := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
 	for _, idxCol := range idx.Columns {
 		for i, col := range tblInfo.Columns {
 			if idxCol.Name.L == col.Name.L {
 				idxReaderCols = append(idxReaderCols, col)
 				tblReaderCols = append(tblReaderCols, col)
 				schema.Append(fullExprCols.Columns[i])
-				colsMap.Insert(col.ID)
-				if mysql.HasPriKeyFlag(col.Flag) {
-					pkOffset = len(tblReaderCols) - 1
-				}
-				genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}
-				if expr, ok := genExprsMap[genColumnID]; ok {
-					cols := expression.ExtractColumns(expr)
-					genCols = append(genCols, cols...)
-				}
 			}
 		}
 	}
 	idxCols, idxColLens := expression.IndexInfo2PrefixCols(tblReaderCols, schema.Columns, idx)
 	fullIdxCols, _ := expression.IndexInfo2Cols(tblReaderCols, schema.Columns, idx)
 	// Add generated columns to tblSchema and tblReaderCols.
-	tblSchema := schema.Clone()
-	for _, col := range genCols {
-		if !colsMap.Exist(col.ID) {
-			info := FindColumnInfoByID(tblInfo.Columns, col.ID)
-			if info != nil {
-				tblReaderCols = append(tblReaderCols, info)
-				tblSchema.Append(col)
-				colsMap.Insert(col.ID)
-				if mysql.HasPriKeyFlag(col.RetType.Flag) {
-					pkOffset = len(tblReaderCols) - 1
-				}
-			}
-		}
-	}
-	for k, expr := range genExprsMap {
-		genExprsMap[k], err = expr.ResolveIndices(tblSchema)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if !tbl.Meta().PKIsHandle || pkOffset == -1 {
-		tblReaderCols = append(tblReaderCols, model.NewExtraHandleColInfo())
-		handleCol := &expression.Column{
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			ID:       model.ExtraHandleID,
-		}
-		tblSchema.Append(handleCol)
-		pkOffset = len(tblReaderCols) - 1
-	}
 
 	is := PhysicalIndexScan{
 		Table:            tblInfo,
@@ -1100,13 +1059,29 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		IdxColLens:       idxColLens,
 		dataSourceSchema: schema,
 		Ranges:           ranger.FullRange(),
-		GenExprs:         genExprsMap,
 	}.Init(b.ctx, b.getSelectOffset())
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
 	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx, b.getSelectOffset())
-	ts.SetSchema(tblSchema.Clone())
+	ts.SetSchema(schema.Clone())
+	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+	for offset, col := range ts.Columns {
+		if mysql.HasPriKeyFlag(col.Flag) {
+			pkOffset = offset
+		}
+	}
+	if !tbl.Meta().PKIsHandle || pkOffset == -1 {
+		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+		handleCol := &expression.Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       model.ExtraHandleID,
+		}
+		ts.schema.Append(handleCol)
+		pkOffset = len(ts.Columns) - 1
+	}
+
 	if tbl.Meta().GetPartitionInfo() != nil {
 		pid := tbl.(table.PhysicalTable).GetPhysicalID()
 		is.physicalTableID = pid
@@ -1122,6 +1097,9 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	ts.HandleIdx = pkOffset
 	is.initSchema(idx, fullIdxCols, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
+	if err := rootT.p.ResolveIndices(); err != nil {
+		return nil, err
+	}
 	return rootT.p, nil
 }
 
@@ -1500,6 +1478,7 @@ func buildShowNextRowID() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "TABLE_NAME", mysql.TypeVarchar, mysql.MaxTableNameLength))
 	schema.Append(buildColumnWithName("", "COLUMN_NAME", mysql.TypeVarchar, mysql.MaxColumnNameLength))
 	schema.Append(buildColumnWithName("", "NEXT_GLOBAL_ROW_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "ID_TYPE", mysql.TypeVarchar, 15))
 	return schema.col2Schema(), schema.names
 }
 
@@ -1614,6 +1593,14 @@ func buildBRIESchema() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "BackupTS", mysql.TypeLonglong, longlongSize))
 	schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
 	schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
+	return schema.col2Schema(), schema.names
+}
+
+func buildShowTelemetrySchema() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "TRACKING_ID", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "LAST_STATUS", mysql.TypeString, mysql.MaxBlobWidth))
+	schema.Append(buildColumnWithName("", "DATA_PREVIEW", mysql.TypeString, mysql.MaxBlobWidth))
 	return schema.col2Schema(), schema.names
 }
 
@@ -1940,7 +1927,6 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		if err != nil {
 			return igc, err
 		}
-		expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
 
 		igc.Columns = append(igc.Columns, columnName)
 		igc.Exprs = append(igc.Exprs, expr)
@@ -2015,8 +2001,8 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 	var authErr error
 	if b.ctx.GetSessionVars().User != nil {
-		authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.Hostname,
-			b.ctx.GetSessionVars().User.Username, tableInfo.Name.L)
+		authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
+			b.ctx.GetSessionVars().User.AuthHostname, tableInfo.Name.L)
 	}
 
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tn.DBInfo.Name.L,
@@ -2612,43 +2598,43 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			return nil, ErrNoDB
 		}
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrDBaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.Hostname,
-				b.ctx.GetSessionVars().User.Username, v.Name)
+			authErr = ErrDBaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Name)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.Name, "", "", authErr)
 	case *ast.AlterTableStmt:
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.Hostname,
-				b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.Table.Schema.L,
 			v.Table.Name.L, "", authErr)
 		for _, spec := range v.Specs {
 			if spec.Tp == ast.AlterTableRenameTable {
 				if b.ctx.GetSessionVars().User != nil {
-					authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.Hostname,
-						b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+						b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
 					v.Table.Name.L, "", authErr)
 
 				if b.ctx.GetSessionVars().User != nil {
-					authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.Hostname,
-						b.ctx.GetSessionVars().User.Username, spec.NewTable.Name.L)
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+						b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, spec.NewTable.Schema.L,
 					spec.NewTable.Name.L, "", authErr)
 
 				if b.ctx.GetSessionVars().User != nil {
-					authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.Hostname,
-						b.ctx.GetSessionVars().User.Username, spec.NewTable.Name.L)
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
+						b.ctx.GetSessionVars().User.AuthHostname, spec.NewTable.Name.L)
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, spec.NewTable.Schema.L,
 					spec.NewTable.Name.L, "", authErr)
 			} else if spec.Tp == ast.AlterTableDropPartition {
 				if b.ctx.GetSessionVars().User != nil {
-					authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.Hostname,
-						b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+					authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+						b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
 					v.Table.Name.L, "", authErr)
@@ -2656,29 +2642,29 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		}
 	case *ast.CreateDatabaseStmt:
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.Username,
-				b.ctx.GetSessionVars().User.Hostname, v.Name)
+			authErr = ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Name)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Name,
 			"", "", authErr)
 	case *ast.CreateIndexStmt:
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrTableaccessDenied.GenWithStackByArgs("INDEX", b.ctx.GetSessionVars().User.Hostname,
-				b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("INDEX", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.IndexPriv, v.Table.Schema.L,
 			v.Table.Name.L, "", authErr)
 	case *ast.CreateTableStmt:
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.Hostname,
-				b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Table.Schema.L,
 			v.Table.Name.L, "", authErr)
 		if v.ReferTable != nil {
 			if b.ctx.GetSessionVars().User != nil {
-				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.Hostname,
-					b.ctx.GetSessionVars().User.Username, v.ReferTable.Name.L)
+				authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+					b.ctx.GetSessionVars().User.AuthHostname, v.ReferTable.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, v.ReferTable.Schema.L,
 				v.ReferTable.Name.L, "", authErr)
@@ -2711,8 +2697,8 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 			return nil, ddl.ErrViewWrongList
 		}
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.Hostname,
-				b.ctx.GetSessionVars().User.Username, v.ViewName.Name.L)
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.ViewName.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
 			v.ViewName.Name.L, "", authErr)
@@ -2726,30 +2712,30 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 		}
 	case *ast.CreateSequenceStmt:
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.Hostname,
-				b.ctx.GetSessionVars().User.Username, v.Name.Name.L)
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Name.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.Name.Schema.L,
 			v.Name.Name.L, "", authErr)
 	case *ast.DropDatabaseStmt:
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.Username,
-				b.ctx.GetSessionVars().User.Hostname, v.Name)
+			authErr = ErrDBaccessDenied.GenWithStackByArgs(b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Name)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Name,
 			"", "", authErr)
 	case *ast.DropIndexStmt:
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrTableaccessDenied.GenWithStackByArgs("INDEx", b.ctx.GetSessionVars().User.Hostname,
-				b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("INDEx", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.IndexPriv, v.Table.Schema.L,
 			v.Table.Name.L, "", authErr)
 	case *ast.DropTableStmt:
 		for _, tableVal := range v.Tables {
 			if b.ctx.GetSessionVars().User != nil {
-				authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.Hostname,
-					b.ctx.GetSessionVars().User.Username, tableVal.Name.L)
+				authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+					b.ctx.GetSessionVars().User.AuthHostname, tableVal.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, tableVal.Schema.L,
 				tableVal.Name.L, "", authErr)
@@ -2757,44 +2743,44 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 	case *ast.DropSequenceStmt:
 		for _, sequence := range v.Sequences {
 			if b.ctx.GetSessionVars().User != nil {
-				authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.Hostname,
-					b.ctx.GetSessionVars().User.Username, sequence.Name.L)
+				authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+					b.ctx.GetSessionVars().User.AuthHostname, sequence.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, sequence.Schema.L,
 				sequence.Name.L, "", authErr)
 		}
 	case *ast.TruncateTableStmt:
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.Hostname,
-				b.ctx.GetSessionVars().User.Username, v.Table.Name.L)
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.Table.Schema.L,
 			v.Table.Name.L, "", authErr)
 	case *ast.RenameTableStmt:
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.Hostname,
-				b.ctx.GetSessionVars().User.Username, v.OldTable.Name.L)
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.OldTable.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, v.OldTable.Schema.L,
 			v.OldTable.Name.L, "", authErr)
 
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.Hostname,
-				b.ctx.GetSessionVars().User.Username, v.OldTable.Name.L)
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.OldTable.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.OldTable.Schema.L,
 			v.OldTable.Name.L, "", authErr)
 
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.Hostname,
-				b.ctx.GetSessionVars().User.Username, v.NewTable.Name.L)
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("CREATE", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.NewTable.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreatePriv, v.NewTable.Schema.L,
 			v.NewTable.Name.L, "", authErr)
 
 		if b.ctx.GetSessionVars().User != nil {
-			authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.Hostname,
-				b.ctx.GetSessionVars().User.Username, v.NewTable.Name.L)
+			authErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", b.ctx.GetSessionVars().User.AuthUsername,
+				b.ctx.GetSessionVars().User.AuthHostname, v.NewTable.Name.L)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, v.NewTable.Schema.L,
 			v.NewTable.Name.L, "", authErr)
@@ -2855,12 +2841,13 @@ func (b *PlanBuilder) buildTrace(trace *ast.TraceStmt) (Plan, error) {
 	return p, nil
 }
 
-func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, analyze bool, execStmt ast.StmtNode) (Plan, error) {
+func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, rows [][]string, analyze bool, execStmt ast.StmtNode) (Plan, error) {
 	p := &Explain{
 		TargetPlan: targetPlan,
 		Format:     format,
 		Analyze:    analyze,
 		ExecStmt:   execStmt,
+		Rows:       rows,
 	}
 	p.ctx = b.ctx
 	return p, p.prepareSchema()
@@ -2886,7 +2873,7 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 		return &Explain{Format: explainFor.Format}, nil
 	}
 
-	return b.buildExplainPlan(targetPlan, explainFor.Format, false, nil)
+	return b.buildExplainPlan(targetPlan, explainFor.Format, processInfo.PlanExplainRows, false, nil)
 }
 
 func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt) (Plan, error) {
@@ -2898,7 +2885,7 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 		return nil, err
 	}
 
-	return b.buildExplainPlan(targetPlan, explain.Format, explain.Analyze, explain.Stmt)
+	return b.buildExplainPlan(targetPlan, explain.Format, nil, explain.Analyze, explain.Stmt)
 }
 
 func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) (Plan, error) {
@@ -3098,8 +3085,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Privilege", "Context", "Comment"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowBindings:
-		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation"}
-		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar}
+		names = []string{"Original_sql", "Bind_sql", "Default_db", "Status", "Create_time", "Update_time", "Charset", "Collation", "Source"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeDatetime, mysql.TypeDatetime, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar}
 	case ast.ShowAnalyzeStatus:
 		names = []string{"Table_schema", "Table_name", "Partition_name", "Job_info", "Processed_rows", "Start_time", "State"}
 		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeDatetime, mysql.TypeVarchar}

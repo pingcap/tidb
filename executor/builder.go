@@ -226,6 +226,10 @@ func (b *executorBuilder) build(p plannercore.Plan) Executor {
 		return b.buildIndexMergeReader(v)
 	case *plannercore.SelectInto:
 		return b.buildSelectInto(v)
+	case *plannercore.AdminShowTelemetry:
+		return b.buildAdminShowTelemetry(v)
+	case *plannercore.AdminResetTelemetryID:
+		return b.buildAdminResetTelemetryID(v)
 	default:
 		if mp, ok := p.(MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -344,7 +348,7 @@ func buildIndexLookUpChecker(b *executorBuilder, readerPlan *plannercore.Physica
 		tps = append(tps, &col.FieldType)
 	}
 	tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
-	readerExec.checkIndexValue = &checkIndexValue{genExprs: is.GenExprs, idxColTps: tps}
+	readerExec.checkIndexValue = &checkIndexValue{idxColTps: tps}
 
 	colNames := make([]string, 0, len(is.Columns))
 	for _, col := range is.Columns {
@@ -865,7 +869,9 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 		explain:      v,
 	}
 	if v.Analyze {
-		b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		if b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil {
+			b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
+		}
 		explainExec.analyzeExec = b.build(v.TargetPlan)
 	}
 	return explainExec
@@ -900,6 +906,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 	us.mutableRow = chunk.MutRowFromTypes(retTypes(us))
 
 	// If the push-downed condition contains virtual column, we may build a selection upon reader
+	originReader := reader
 	if sel, ok := reader.(*SelectionExec); ok {
 		reader = sel.children[0]
 	}
@@ -953,7 +960,7 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		us.virtualColumnIndex = buildVirtualColumnIndex(us.Schema(), us.columns)
 	default:
 		// The mem table will not be written by sql directly, so we can omit the union scan to avoid err reporting.
-		return reader
+		return originReader
 	}
 	return us
 }
@@ -1122,11 +1129,11 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) Executo
 	executorCountHashJoinExec.Inc()
 
 	for i := range v.EqualConditions {
-		chs, coll, flen := v.EqualConditions[i].CharsetAndCollation(e.ctx)
+		chs, coll := v.EqualConditions[i].CharsetAndCollation(e.ctx)
 		bt := leftTypes[v.LeftJoinKeys[i].Index]
-		bt.Charset, bt.Collate, bt.Flen = chs, coll, flen
+		bt.Charset, bt.Collate = chs, coll
 		pt := rightTypes[v.RightJoinKeys[i].Index]
-		pt.Charset, pt.Collate, pt.Flen = chs, coll, flen
+		pt.Charset, pt.Collate = chs, coll
 	}
 	if leftIsBuildSide {
 		e.buildTypes, e.probeTypes = leftTypes, rightTypes
@@ -1420,7 +1427,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			strings.ToLower(infoschema.TableTiDBIndexes),
 			strings.ToLower(infoschema.TableViews),
 			strings.ToLower(infoschema.TableTables),
-			strings.ToLower(infoschema.TableColumns),
 			strings.ToLower(infoschema.TableSequences),
 			strings.ToLower(infoschema.TablePartitions),
 			strings.ToLower(infoschema.TableEngines),
@@ -1453,6 +1459,16 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 					columns: v.Columns,
 				},
 			}
+		case strings.ToLower(infoschema.TableColumns):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				table:        v.Table,
+				retriever: &hugeMemTableRetriever{
+					table:   v.Table,
+					columns: v.Columns,
+				},
+			}
+
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
 			return &MemTableReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
@@ -1467,6 +1483,17 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) Executo
 			return &DDLJobsReaderExec{
 				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
 				is:           b.is,
+			}
+		case strings.ToLower(infoschema.TableTiFlashTables),
+			strings.ToLower(infoschema.TableTiFlashSegments):
+			return &MemTableReaderExec{
+				baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID()),
+				table:        v.Table,
+				retriever: &TiFlashSystemTableRetriever{
+					table:      v.Table,
+					outputCols: v.Columns,
+					extractor:  v.Extractor.(*plannercore.TiFlashSystemTableExtractor),
+				},
 			}
 		}
 	}
@@ -1986,6 +2013,10 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan) (dag
 	dagReq = &tipb.DAGRequest{}
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
+	if sc.RuntimeStatsColl != nil {
+		collExec := true
+		dagReq.CollectExecutionSummaries = &collExec
+	}
 	dagReq.Flags = sc.PushDownFlags()
 	dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
 
@@ -2264,7 +2295,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	} else {
 		e.feedback = statistics.NewQueryFeedback(getPhysicalTableID(tbl), ts.Hist, int64(ts.StatsCount()), ts.Desc)
 	}
-	collect := (b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil) || e.feedback.CollectFeedback(len(ts.Ranges))
+	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(ts.Ranges))
 	if !collect {
 		e.feedback.Invalidate()
 	}
@@ -2347,7 +2378,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	} else {
 		e.feedback = statistics.NewQueryFeedback(e.physicalTableID, is.Hist, int64(is.StatsCount()), is.Desc)
 	}
-	collect := (b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil) || e.feedback.CollectFeedback(len(is.Ranges))
+	collect := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
 	if !collect {
 		e.feedback.Invalidate()
 	}
@@ -2450,10 +2481,10 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	} else {
 		e.feedback = statistics.NewQueryFeedback(getPhysicalTableID(tbl), is.Hist, int64(is.StatsCount()), is.Desc)
 	}
-	// do not collect the feedback for table request.
+	// Do not collect the feedback for table request.
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
-	collectIndex := (b.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil) || e.feedback.CollectFeedback(len(is.Ranges))
+	collectIndex := statistics.CollectFeedback(b.ctx.GetSessionVars().StmtCtx, e.feedback, len(is.Ranges))
 	if !collectIndex {
 		e.feedback.Invalidate()
 	}
@@ -2675,10 +2706,6 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 }
 
 func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
-	if e.runtimeStats != nil && e.dagPB.CollectExecutionSummaries == nil {
-		colExec := true
-		e.dagPB.CollectExecutionSummaries = &colExec
-	}
 	startTS, err := builder.getSnapshotTS()
 	if err != nil {
 		return nil, err
@@ -3049,4 +3076,12 @@ func getPhysicalTableID(t table.Table) int64 {
 		return p.GetPhysicalID()
 	}
 	return t.Meta().ID
+}
+
+func (b *executorBuilder) buildAdminShowTelemetry(v *plannercore.AdminShowTelemetry) Executor {
+	return &AdminShowTelemetryExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())}
+}
+
+func (b *executorBuilder) buildAdminResetTelemetryID(v *plannercore.AdminResetTelemetryID) Executor {
+	return &AdminResetTelemetryIDExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ExplainID())}
 }

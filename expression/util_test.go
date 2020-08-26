@@ -551,7 +551,7 @@ func (m *MockExpr) HasCoercibility() bool                             { return f
 func (m *MockExpr) Coercibility() Coercibility                        { return 0 }
 func (m *MockExpr) SetCoercibility(Coercibility)                      {}
 
-func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string, int) {
-	return "", "", 0
+func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
+	return "", ""
 }
-func (m *MockExpr) SetCharsetAndCollation(chs, coll string, flen int) {}
+func (m *MockExpr) SetCharsetAndCollation(chs, coll string) {}

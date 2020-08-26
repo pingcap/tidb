@@ -96,7 +96,7 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	start := time.Now()
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, e.ctx.GetSessionVars().GetSplitRegionTimeout())
 	defer cancel()
-	regionIDs, err := s.SplitRegions(context.Background(), e.splitIdxKeys, true)
+	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitIdxKeys, true)
 	if err != nil {
 		logutil.BgLogger().Warn("split table index region failed",
 			zap.String("table", e.tableInfo.Name.L),
@@ -398,7 +398,7 @@ func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Con
 			remainMillisecond = int((sctx.GetSessionVars().GetSplitRegionTimeout().Seconds() - time.Since(startTime).Seconds()) * 1000)
 		}
 
-		err := store.WaitScatterRegionFinish(regionID, remainMillisecond)
+		err := store.WaitScatterRegionFinish(ctxWithTimeout, regionID, remainMillisecond)
 		if err == nil {
 			finishScatterNum++
 		} else {
@@ -584,7 +584,7 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(physicalTableID)
 	regionCache := tikvStore.GetRegionCache()
-	recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackoffer(context.Background(), 20000), startKey, endKey)
+	recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
@@ -602,7 +602,7 @@ func getPhysicalTableRegions(physicalTableID int64, tableInfo *model.TableInfo, 
 			continue
 		}
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(physicalTableID, index.ID)
-		regionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackoffer(context.Background(), 20000), startKey, endKey)
+		regionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
 		if err != nil {
 			return nil, err
 		}
@@ -627,7 +627,7 @@ func getPhysicalIndexRegions(physicalTableID int64, indexInfo *model.IndexInfo, 
 
 	startKey, endKey := tablecodec.GetTableIndexKeyRange(physicalTableID, indexInfo.ID)
 	regionCache := tikvStore.GetRegionCache()
-	regions, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackoffer(context.Background(), 20000), startKey, endKey)
+	regions, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
 	if err != nil {
 		return nil, err
 	}
@@ -724,7 +724,7 @@ func getRegionMeta(tikvStore tikv.Storage, regionMetas []*tikv.Region, uniqueReg
 		uniqueRegionMap[r.GetID()] = struct{}{}
 		regions = append(regions, regionMeta{
 			region:   r.GetMeta(),
-			leaderID: r.GetLeaderID(),
+			leaderID: r.GetLeaderPeerID(),
 			storeID:  r.GetLeaderStoreID(),
 		})
 	}

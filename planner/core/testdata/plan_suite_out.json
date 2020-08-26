@@ -607,11 +607,11 @@
       },
       {
         "SQL": "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->HashAgg}(test.t.a,test.t.a)->Projection"
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])}(test.t.a,test.t.a)->Projection}(test.t.a,test.t.a)->Projection"
       },
       {
         "SQL": "select (select count(*) from t s, t t1 where s.a = t.a and s.a = t1.a) from t order by t.a",
-        "Best": "MergeLeftOuterJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->StreamAgg}(test.t.a,test.t.a)->Projection->Projection"
+        "Best": "MergeLeftOuterJoin{TableReader(Table(t))->MergeInnerJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.a,test.t.a)->Projection}(test.t.a,test.t.a)->Projection->Projection"
       }
     ]
   },
@@ -1220,7 +1220,7 @@
       },
       {
         "SQL": "select /*+ STREAM_AGG() */ distinct a from t",
-        "Best": "TableReader(Table(t))->StreamAgg",
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]])",
         "Warning": ""
       },
       {
@@ -1367,14 +1367,14 @@
         ],
         "Plan": [
           "HashJoin_19 25000.00 root  inner join, equal:[eq(test.tt.a, test.tt.a)]",
-          "├─Union_28(Build) 20000.00 root  ",
+          "├─PartitionUnion_28(Build) 20000.00 root  ",
           "│ ├─UnionScan_29 10000.00 root  ",
           "│ │ └─TableReader_31 10000.00 root  data:TableFullScan_30",
           "│ │   └─TableFullScan_30 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
           "│ └─UnionScan_32 10000.00 root  ",
           "│   └─TableReader_34 10000.00 root  data:TableFullScan_33",
           "│     └─TableFullScan_33 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
-          "└─Union_21(Probe) 20000.00 root  ",
+          "└─PartitionUnion_21(Probe) 20000.00 root  ",
           "  ├─UnionScan_22 10000.00 root  ",
           "  │ └─TableReader_24 10000.00 root  data:TableFullScan_23",
           "  │   └─TableFullScan_23 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
@@ -1556,7 +1556,7 @@
         "Plan": [
           "HashAgg_11 1.00 root  funcs:sum(distinct Column#9)->Column#4",
           "└─Projection_23 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
-          "  └─Union_12 16000.00 root  ",
+          "  └─PartitionUnion_12 16000.00 root  ",
           "    ├─HashAgg_16 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
           "    │ └─TableReader_17 8000.00 root  data:HashAgg_13",
           "    │   └─HashAgg_13 8000.00 cop[tikv]  group by:test.pt.b, ",
@@ -1685,7 +1685,7 @@
         "Plan": [
           "HashAgg_11 1.00 root  funcs:sum(distinct Column#9)->Column#4",
           "└─Projection_23 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
-          "  └─Union_12 16000.00 root  ",
+          "  └─PartitionUnion_12 16000.00 root  ",
           "    ├─HashAgg_16 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
           "    │ └─TableReader_17 8000.00 root  data:HashAgg_13",
           "    │   └─HashAgg_13 8000.00 cop[tikv]  group by:test.pt.b, ",
@@ -1725,13 +1725,17 @@
       {
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
         "Plan": [
-          "HashAgg_8 1.00 root  funcs:sum(distinct Column#5)->Column#4",
-          "└─Projection_14 20000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#5",
-          "  └─Union_9 20000.00 root  ",
-          "    ├─TableReader_11 10000.00 root  data:TableFullScan_10",
-          "    │ └─TableFullScan_10 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
-          "    └─TableReader_13 10000.00 root  data:TableFullScan_12",
-          "      └─TableFullScan_12 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
+          "HashAgg_11 1.00 root  funcs:sum(distinct Column#9)->Column#4",
+          "└─Projection_23 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
+          "  └─PartitionUnion_12 16000.00 root  ",
+          "    ├─HashAgg_16 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "    │ └─TableReader_17 8000.00 root  data:HashAgg_13",
+          "    │   └─HashAgg_13 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "    │     └─TableFullScan_15 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
+          "    └─HashAgg_21 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "      └─TableReader_22 8000.00 root  data:HashAgg_18",
+          "        └─HashAgg_18 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "          └─TableFullScan_20 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "<nil>"
@@ -1773,7 +1777,7 @@
         "Plan": [
           "HashAgg_10 1.00 root  funcs:group_concat(Column#6 order by Column#7 desc separator \"++\")->Column#4, funcs:group_concat(Column#8 order by Column#9 desc, Column#10 asc separator \"--\")->Column#5",
           "└─Projection_23 20000.00 root  cast(test.ptest.name, var_string(20))->Column#6, test.ptest.name, cast(test.ptest.id, var_string(20))->Column#8, test.ptest.name, test.ptest.id",
-          "  └─Union_13 20000.00 root  ",
+          "  └─PartitionUnion_13 20000.00 root  ",
           "    ├─TableReader_15 10000.00 root  data:TableFullScan_14",
           "    │ └─TableFullScan_14 10000.00 cop[tikv] table:ptest, partition:p0 keep order:false, stats:pseudo",
           "    └─TableReader_17 10000.00 root  data:TableFullScan_16",
@@ -1800,7 +1804,7 @@
         "Plan": [
           "StreamAgg_9 1.00 root  funcs:group_concat(distinct Column#5 order by Column#6 desc separator \",\")->Column#4",
           "└─Projection_20 20000.00 root  cast(test.ptest.name, var_string(20))->Column#5, test.ptest.name",
-          "  └─Union_15 20000.00 root  ",
+          "  └─PartitionUnion_15 20000.00 root  ",
           "    ├─TableReader_17 10000.00 root  data:TableFullScan_16",
           "    │ └─TableFullScan_16 10000.00 cop[tikv] table:ptest, partition:p0 keep order:false, stats:pseudo",
           "    └─TableReader_19 10000.00 root  data:TableFullScan_18",

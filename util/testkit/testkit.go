@@ -129,14 +129,21 @@ func NewTestKitWithInit(c *check.C, store kv.Storage) *TestKit {
 
 var connectionID uint64
 
+// GetConnectionID get the connection ID for tk.Se
+func (tk *TestKit) GetConnectionID() {
+	if tk.Se != nil {
+		id := atomic.AddUint64(&connectionID, 1)
+		tk.Se.SetConnectionID(id)
+	}
+}
+
 // Exec executes a sql statement.
 func (tk *TestKit) Exec(sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	var err error
 	if tk.Se == nil {
 		tk.Se, err = session.CreateSession4Test(tk.store)
 		tk.c.Assert(err, check.IsNil)
-		id := atomic.AddUint64(&connectionID, 1)
-		tk.Se.SetConnectionID(id)
+		tk.GetConnectionID()
 	}
 	ctx := context.Background()
 	if len(args) == 0 {

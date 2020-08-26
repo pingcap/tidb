@@ -24,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // NewOne stands for a number 1.
@@ -86,12 +84,7 @@ func (c *Constant) String() string {
 		dt := c.ParamMarker.GetUserVar()
 		c.Value.SetValue(dt.GetValue(), c.RetType)
 	} else if c.DeferredExpr != nil {
-		dt, err := c.Eval(chunk.Row{})
-		if err != nil {
-			logutil.BgLogger().Error("eval constant failed", zap.Error(err))
-			return ""
-		}
-		c.Value.SetValue(dt.GetValue(), c.RetType)
+		return c.DeferredExpr.String()
 	}
 	return fmt.Sprintf("%v", c.Value.GetValue())
 }
@@ -109,11 +102,11 @@ func (c *Constant) Clone() Expression {
 
 // GetType implements Expression interface.
 func (c *Constant) GetType() *types.FieldType {
-	if p := c.ParamMarker; p != nil && !p.ctx.GetSessionVars().StmtCtx.InExplainStmt {
+	if c.ParamMarker != nil {
 		// GetType() may be called in multi-threaded context, e.g, in building inner executors of IndexJoin,
 		// so it should avoid data race. We achieve this by returning different FieldType pointer for each call.
 		tp := types.NewFieldType(mysql.TypeUnspecified)
-		dt := p.GetUserVar()
+		dt := c.ParamMarker.GetUserVar()
 		types.DefaultParamTypeForValue(dt.GetValue(), tp)
 		return tp
 	}
@@ -176,27 +169,19 @@ func (c *Constant) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, resul
 	return c.DeferredExpr.VecEvalJSON(ctx, input, result)
 }
 
-func (c *Constant) getLazyDatum() (dt types.Datum, isLazy bool, err error) {
-	if p := c.ParamMarker; p != nil {
-		if p.ctx.GetSessionVars().StmtCtx.InExplainStmt {
-			// Since `ParamMarker` is not nil only in prepare/execute context, the query must be `explain for connection` when coming here.
-			// The PreparedParams may have been reset already, to avoid panic, we just use the pre-evaluated datum for this constant.
-			return dt, false, nil
-		}
-		dt = p.GetUserVar()
-		isLazy = true
-		return
+func (c *Constant) getLazyDatum(row chunk.Row) (dt types.Datum, isLazy bool, err error) {
+	if c.ParamMarker != nil {
+		return c.ParamMarker.GetUserVar(), true, nil
 	} else if c.DeferredExpr != nil {
-		dt, err = c.DeferredExpr.Eval(chunk.Row{})
-		isLazy = true
-		return
+		dt, err = c.DeferredExpr.Eval(row)
+		return dt, true, err
 	}
-	return
+	return types.Datum{}, false, nil
 }
 
 // Eval implements Expression interface.
-func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
-	if dt, lazy, err := c.getLazyDatum(); lazy {
+func (c *Constant) Eval(row chunk.Row) (types.Datum, error) {
+	if dt, lazy, err := c.getLazyDatum(row); lazy {
 		if err != nil {
 			return c.Value, err
 		}
@@ -220,8 +205,8 @@ func (c *Constant) Eval(_ chunk.Row) (types.Datum, error) {
 }
 
 // EvalInt returns int representation of Constant.
-func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return 0, false, err
 	}
@@ -241,8 +226,8 @@ func (c *Constant) EvalInt(ctx sessionctx.Context, _ chunk.Row) (int64, bool, er
 }
 
 // EvalReal returns real representation of Constant.
-func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool, error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return 0, false, err
 	}
@@ -260,8 +245,8 @@ func (c *Constant) EvalReal(ctx sessionctx.Context, _ chunk.Row) (float64, bool,
 }
 
 // EvalString returns string representation of Constant.
-func (c *Constant) EvalString(ctx sessionctx.Context, _ chunk.Row) (string, bool, error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return "", false, err
 	}
@@ -276,8 +261,8 @@ func (c *Constant) EvalString(ctx sessionctx.Context, _ chunk.Row) (string, bool
 }
 
 // EvalDecimal returns decimal representation of Constant.
-func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDecimal, bool, error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return nil, false, err
 	}
@@ -292,8 +277,8 @@ func (c *Constant) EvalDecimal(ctx sessionctx.Context, _ chunk.Row) (*types.MyDe
 }
 
 // EvalTime returns DATE/DATETIME/TIMESTAMP representation of Constant.
-func (c *Constant) EvalTime(ctx sessionctx.Context, _ chunk.Row) (val types.Time, isNull bool, err error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Time, isNull bool, err error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return types.ZeroTime, false, err
 	}
@@ -307,8 +292,8 @@ func (c *Constant) EvalTime(ctx sessionctx.Context, _ chunk.Row) (val types.Time
 }
 
 // EvalDuration returns Duration representation of Constant.
-func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.Duration, isNull bool, err error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return types.Duration{}, false, err
 	}
@@ -322,8 +307,8 @@ func (c *Constant) EvalDuration(ctx sessionctx.Context, _ chunk.Row) (val types.
 }
 
 // EvalJSON returns JSON representation of Constant.
-func (c *Constant) EvalJSON(ctx sessionctx.Context, _ chunk.Row) (json.BinaryJSON, bool, error) {
-	dt, lazy, err := c.getLazyDatum()
+func (c *Constant) EvalJSON(ctx sessionctx.Context, row chunk.Row) (json.BinaryJSON, bool, error) {
+	dt, lazy, err := c.getLazyDatum(row)
 	if err != nil {
 		return json.BinaryJSON{}, false, err
 	}
@@ -424,4 +409,19 @@ func (c *Constant) Coercibility() Coercibility {
 
 	c.SetCoercibility(deriveCoercibilityForConstant(c))
 	return c.collationInfo.Coercibility()
+}
+
+// ParamConstInExpression checks whether there's Param Marker in the given expression.
+func ParamConstInExpression(expr Expression) bool {
+	switch x := expr.(type) {
+	case *ScalarFunction:
+		for _, arg := range x.GetArgs() {
+			if ParamConstInExpression(arg) {
+				return true
+			}
+		}
+	case *Constant:
+		return x.ParamMarker != nil
+	}
+	return false
 }

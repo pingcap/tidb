@@ -34,6 +34,8 @@ const (
 	TypeJoin = "Join"
 	// TypeUnion is the type of Union.
 	TypeUnion = "Union"
+	// TypePartitionUnion is the type of PartitionUnion
+	TypePartitionUnion = "PartitionUnion"
 	// TypeTableScan is the type of TableScan.
 	TypeTableScan = "TableScan"
 	// TypeMemTableScan is the type of TableScan.

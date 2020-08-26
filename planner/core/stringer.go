@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+
+	"github.com/pingcap/tidb/util/plancodec"
 )
 
 // ToString explains a Plan, returns description string.
@@ -131,12 +133,16 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			r := eq.GetArgs()[1].String()
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
-	case *LogicalUnionAll, *PhysicalUnionAll:
+	case *LogicalUnionAll, *PhysicalUnionAll, *LogicalPartitionUnionAll:
 		last := len(idxs) - 1
 		idx := idxs[last]
 		children := strs[idx:]
 		strs = strs[:idx]
-		str = "UnionAll{" + strings.Join(children, "->") + "}"
+		name := "UnionAll"
+		if x.TP() == plancodec.TypePartitionUnion {
+			name = "PartitionUnionAll"
+		}
+		str = name + "{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
 	case *DataSource:
 		if x.isPartition {
