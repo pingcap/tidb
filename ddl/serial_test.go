@@ -1146,3 +1146,159 @@ func (s *testSerialSuite) TestForbidUnsupportedCollations(c *C) {
 	// mustGetUnsupportedCollation("create database ucd collate utf8mb4_unicode_ci", errMsgUnsupportedUnicodeCI)
 	// mustGetUnsupportedCollation("alter table t convert to collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSerialSuite) TestInvisibleIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t,t1,t2,t3,t4,t5,t6")
+
+	// The DDL statement related to invisible index.
+	showIndexes := "select index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't'"
+	// 1. Create table with invisible index
+	tk.MustExec("create table t (a int, b int, unique (a) invisible)")
+	tk.MustQuery(showIndexes).Check(testkit.Rows("a NO"))
+	tk.MustExec("insert into t values (1, 2)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2"))
+	// 2. Drop invisible index
+	tk.MustExec("alter table t drop index a")
+	tk.MustQuery(showIndexes).Check(testkit.Rows())
+	tk.MustExec("insert into t values (3, 4)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4"))
+	// 3. Add an invisible index
+	tk.MustExec("alter table t add index (b) invisible")
+	tk.MustQuery(showIndexes).Check(testkit.Rows("b NO"))
+	tk.MustExec("insert into t values (5, 6)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6"))
+	// 4. Drop it
+	tk.MustExec("alter table t drop index b")
+	tk.MustQuery(showIndexes).Check(testkit.Rows())
+	tk.MustExec("insert into t values (7, 8)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6", "7 8"))
+	// 5. Create a multiple-column invisible index
+	tk.MustExec("alter table t add index a_b(a, b) invisible")
+	tk.MustQuery(showIndexes).Check(testkit.Rows("a_b NO", "a_b NO"))
+	tk.MustExec("insert into t values (9, 10)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6", "7 8", "9 10"))
+	// 6. Drop it
+	tk.MustExec("alter table t drop index a_b")
+	tk.MustQuery(showIndexes).Check(testkit.Rows())
+	tk.MustExec("insert into t values (11, 12)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 2", "3 4", "5 6", "7 8", "9 10", "11 12"))
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
+
+	// Limitation: Primary key cannot be invisible index
+	tk.MustGetErrCode("create table t1 (a int, primary key (a) invisible)", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("create table t1 (a int, b int, primary key (a, b) invisible)", errno.ErrPKIndexCantBeInvisible)
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustGetErrCode("alter table t1 add primary key(a) invisible", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("alter table t1 add primary key(a, b) invisible", errno.ErrPKIndexCantBeInvisible)
+
+	// Implicit primary key cannot be invisible index
+	// Create a implicit primary key
+	tk.MustGetErrCode("create table t2(a int not null, unique (a) invisible)", errno.ErrPKIndexCantBeInvisible)
+	// Column `a` become implicit primary key after DDL statement on itself
+	tk.MustExec("create table t2(a int not null)")
+	tk.MustGetErrCode("alter table t2 add unique (a) invisible", errno.ErrPKIndexCantBeInvisible)
+	tk.MustExec("create table t3(a int, unique index (a) invisible)")
+	tk.MustGetErrCode("alter table t3 modify column a int not null", errno.ErrPKIndexCantBeInvisible)
+	// Only first unique column can be implicit primary
+	tk.MustExec("create table t4(a int not null, b int not null, unique (a), unique (b) invisible)")
+	showIndexes = "select index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't4'"
+	tk.MustQuery(showIndexes).Check(testkit.Rows("a YES", "b NO"))
+	tk.MustExec("insert into t4 values (1, 2)")
+	tk.MustQuery("select * from t4").Check(testkit.Rows("1 2"))
+	tk.MustGetErrCode("create table t5(a int not null, b int not null, unique (b) invisible, unique (a))", errno.ErrPKIndexCantBeInvisible)
+	// Column `b` become implicit primary key after DDL statement on other columns
+	tk.MustExec("create table t5(a int not null, b int not null, unique (a), unique (b) invisible)")
+	tk.MustGetErrCode("alter table t5 drop index a", errno.ErrPKIndexCantBeInvisible)
+	tk.MustGetErrCode("alter table t5 modify column a int null", errno.ErrPKIndexCantBeInvisible)
+	// If these is a explicit primary key, no key will become implicit primary key
+	tk.MustExec("create table t6 (a int not null, b int, unique (a) invisible, primary key(b))")
+	showIndexes = "select index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't6'"
+	tk.MustQuery(showIndexes).Check(testkit.Rows("a NO", "PRIMARY YES"))
+	tk.MustExec("insert into t6 values (1, 2)")
+	tk.MustQuery("select * from t6").Check(testkit.Rows("1 2"))
+	tk.MustGetErrCode("alter table t6 drop primary key", errno.ErrPKIndexCantBeInvisible)
+}
+
+func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.MustExec("CREATE TABLE t1 (a int primary key, b int)")
+	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")
+	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b))")
+	tk.MustExec("CREATE TABLE t4 (a int, b int, c int)")
+	ctx := tk.Se.(sessionctx.Context)
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().PKIsHandle, IsTrue)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
+	tk.MustExec("CREATE TABLE t5 (a varchar(255) primary key, b int)")
+	tk.MustExec("CREATE TABLE t6 (a int, b int, c int, primary key (a, b))")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t5"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t6"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+
+	tk.MustExec("CREATE TABLE t21 like t2")
+	tk.MustExec("CREATE TABLE t31 like t3")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t21"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t31"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsTrue)
+
+	tk.Se.GetSessionVars().EnableClusteredIndex = false
+	tk.MustExec("CREATE TABLE t7 (a varchar(255) primary key, b int)")
+	is = domain.GetDomain(ctx).InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t7"))
+	c.Assert(err, IsNil)
+	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+}
+
+func (s *testSerialSuite) TestCreateTableNoBlock(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime"), IsNil)
+	}()
+	save := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(1)
+	defer func() {
+		variable.SetDDLErrorCountLimit(save)
+	}()
+
+	tk.MustExec("drop table if exists t")
+	_, err := tk.Exec("create table t(a int)")
+	c.Assert(err, NotNil)
+}
+>>>>>>> 33f3843... ddl: avoid DDL retry taking too long (#19328)
