@@ -3665,11 +3665,11 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 }
 
 func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull", `return("insert into tt values (NULL, NULL)")`), IsNil)
-
 	tk := testkit.NewTestKitWithInit(c, s.store)
+
 	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull", `return("insert into test.tt values (NULL, NULL)")`), IsNil)
 	defer func() {
 		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
 		failpoint.Disable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull")
