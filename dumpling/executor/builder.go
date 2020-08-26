@@ -952,6 +952,16 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 		}
 		return x
 	}
+	// If reader is union, it means a partitiont table and we should transfer as above.
+	if x, ok := reader.(*UnionExec); ok {
+		for i, child := range x.children {
+			x.children[i] = b.buildUnionScanFromReader(child, v)
+			if b.err != nil {
+				return nil
+			}
+		}
+		return x
+	}
 
 	return b.buildUnionScanFromReader(reader, v)
 }
@@ -2527,6 +2537,40 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 
 	if pi := ts.Table.GetPartitionInfo(); pi == nil {
 		return ret
+	}
+
+	if v.StoreType == kv.TiFlash {
+		tmp, _ := b.is.TableByID(ts.Table.ID)
+		tbl := tmp.(table.PartitionedTable)
+		partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		partsExecutor := make([]Executor, 0, len(partitions))
+		for _, part := range partitions {
+			exec, err := buildNoRangeTableReader(b, v)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+			exec.ranges = ts.Ranges
+			nexec, err := nextPartitionForTableReader{exec: exec}.nextPartition(context.Background(), part)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+			partsExecutor = append(partsExecutor, nexec)
+		}
+		if len(partsExecutor) == 0 {
+			return &TableDualExec{baseExecutor: *ret.base()}
+		}
+		if len(partsExecutor) == 1 {
+			return partsExecutor[0]
+		}
+		return &UnionExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), partsExecutor...),
+		}
 	}
 
 	nextPartition := nextPartitionForTableReader{ret}
