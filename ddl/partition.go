@@ -983,7 +983,7 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 	rules, err = infosync.GetPlacementRules(nil)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to retrive placement rules from PD")
+		return ver, errors.Wrapf(err, "failed to retrieve placement rules from PD")
 	}
 
 	// TODO: maybe add a middle state
