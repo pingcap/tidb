@@ -815,6 +815,9 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 				} else if types.ErrTruncated.Equal(err) {
 					// This behavior is consistent with MySQL.
 					err = nil
+				} else if bufreal[i] != bufreal[i] {
+					// This branch is also meant to be consistent with MySQL. If bufreal is NaN, then we should just ignore it, instead of reporting any error.
+					err = nil
 				}
 				if err != nil {
 					return err
