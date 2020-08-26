@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 )
 
 var _ = Suite(&testTableSuite{})
@@ -409,7 +408,7 @@ func (s *testTableSuite) TestTableResume(c *C) {
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{tblInfo},
 	}
-	c.Assert(d.doDDLJob(mock.NewContext(), job), IsNil)
+	testRunInterruptedJob(c, d, job)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
 
 	job = &model.Job{
@@ -418,6 +417,6 @@ func (s *testTableSuite) TestTableResume(c *C) {
 		Type:       model.ActionDropTable,
 		BinlogInfo: &model.HistoryInfo{},
 	}
-	c.Assert(d.doDDLJob(mock.NewContext(), job), IsNil)
+	testRunInterruptedJob(c, d, job)
 	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StateNone)
 }
