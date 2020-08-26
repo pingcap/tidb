@@ -43,7 +43,7 @@ type testValidatorSuite struct {
 	is    infoschema.InfoSchema
 }
 
-func (s *testValidatorSuite) SetUpSuite(c *C) {
+func (s *testValidatorSuite) SetUpTest(c *C) {
 	var err error
 	s.store, s.dom, err = newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -56,7 +56,7 @@ func (s *testValidatorSuite) SetUpSuite(c *C) {
 	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 }
 
-func (s *testValidatorSuite) TearDownSuite(c *C) {
+func (s *testValidatorSuite) TearDownTest(c *C) {
 	s.dom.Close()
 	s.store.Close()
 }
