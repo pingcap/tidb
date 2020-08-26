@@ -35,7 +35,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20200810113304-6157337686b1
+	github.com/pingcap/kvproto v0.0.0-20200826081920-597e3bf93df7
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
 	github.com/pingcap/parser v0.0.0-20200821073936-cf85e80665c4
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
@@ -68,5 +68,3 @@ require (
 )
 
 go 1.13
-
-replace github.com/pingcap/kvproto => github.com/sticnarf/kvproto v0.0.0-20200824070050-8609ec656db8
