@@ -653,7 +653,6 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			logutil.Logger(ddlLogCtx).Info("[ddl] DDL job is finished", zap.Int64("jobID", jobID))
 			return nil
 		}
-
 		if historyJob.Error != nil {
 			return errors.Trace(historyJob.Error)
 		}
