@@ -75,7 +75,7 @@ var (
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
 	// tempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
-	tempStorageDirName = encodeDefTempStorageDir(DefHost, DefStatusHost, DefPort, DefStatusPort)
+	tempStorageDirName = encodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
 
 // Config contains configuration options.
@@ -148,17 +148,29 @@ type Config struct {
 	SkipRegisterToDashboard bool `toml:"skip-register-to-dashboard" json:"skip-register-to-dashboard"`
 	// EnableTelemetry enables the usage data report to PingCAP.
 	EnableTelemetry bool `toml:"enable-telemetry" json:"enable-telemetry"`
+	// Labels indicates the labels set for the tidb server. The labels describe some specific properties for the tidb
+	// server like `zone`/`rack`/`host`. Currently, labels won't affect the tidb server except for some special
+	// label keys. Now we only have `group` as a special label key.
+	// Note that: 'group' is a special label key which should be automatically set by tidb-operator. We don't suggest
+	// users to set 'group' in labels.
+	Labels map[string]string `toml:"labels" json:"labels"`
+	// EnableGlobalIndex enables creating global index.
+	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
+	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
+	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
 // and the `tmp-storage-path` was not specified in the conf.toml or was specified the same as the default value.
 func (c *Config) UpdateTempStoragePath() {
 	if c.TempStoragePath == tempStorageDirName {
-		c.TempStoragePath = encodeDefTempStorageDir(c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
+		c.TempStoragePath = encodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
+	} else {
+		c.TempStoragePath = encodeDefTempStorageDir(c.TempStoragePath, c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
 	}
 }
 
-func encodeDefTempStorageDir(host, statusHost string, port, statusPort uint) string {
+func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
 	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
 	var osUID string
 	currentUser, err := user.Current()
@@ -167,7 +179,7 @@ func encodeDefTempStorageDir(host, statusHost string, port, statusPort uint) str
 	} else {
 		osUID = currentUser.Uid
 	}
-	return filepath.Join(os.TempDir(), osUID+"_tidb", dirName, "tmp-storage")
+	return filepath.Join(tempDir, osUID+"_tidb", dirName, "tmp-storage")
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -287,6 +299,16 @@ func (l *Log) getDisableErrorStack() bool {
 	return !l.EnableErrorStack.toBool()
 }
 
+// The following constants represents the valid action configurations for Security.SpilledFileEncryptionMethod.
+// "plaintext" means encryption is disabled.
+// NOTE: Although the values is case insensitive, we should use lower-case
+// strings because the configuration value will be transformed to lower-case
+// string and compared with these constants in the further usage.
+const (
+	SpilledFileEncryptionMethodPlaintext = "plaintext"
+	SpilledFileEncryptionMethodAES128CTR = "aes128-ctr"
+)
+
 // Security is the security section of the config.
 type Security struct {
 	SkipGrantTable         bool     `toml:"skip-grant-table" json:"skip-grant-table"`
@@ -298,6 +320,8 @@ type Security struct {
 	ClusterSSLCert         string   `toml:"cluster-ssl-cert" json:"cluster-ssl-cert"`
 	ClusterSSLKey          string   `toml:"cluster-ssl-key" json:"cluster-ssl-key"`
 	ClusterVerifyCN        []string `toml:"cluster-verify-cn" json:"cluster-verify-cn"`
+	// If set to "plaintext", the spilled files will not be encrypted.
+	SpilledFileEncryptionMethod string `toml:"spilled-file-encryption-method" json:"spilled-file-encryption-method"`
 }
 
 // The ErrConfigValidationFailed error is used so that external callers can do a type assertion
@@ -702,6 +726,12 @@ var defaultConf = Config{
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
+	Labels:                     make(map[string]string),
+	EnableGlobalIndex:          false,
+	Security: Security{
+		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
+	},
+	DeprecateIntegerDisplayWidth: false,
 }
 
 var (
@@ -898,6 +928,15 @@ func (c *Config) Valid() error {
 		if engine != "tidb" && engine != "tikv" && engine != "tiflash" {
 			return fmt.Errorf("type of [isolation-read]engines can't be %v should be one of tidb or tikv or tiflash", engine)
 		}
+	}
+
+	// test security
+	c.Security.SpilledFileEncryptionMethod = strings.ToLower(c.Security.SpilledFileEncryptionMethod)
+	switch c.Security.SpilledFileEncryptionMethod {
+	case SpilledFileEncryptionMethodPlaintext, SpilledFileEncryptionMethodAES128CTR:
+	default:
+		return fmt.Errorf("unsupported [security]spilled-file-encryption-method %v, TiDB only supports [%v, %v]",
+			c.Security.SpilledFileEncryptionMethod, SpilledFileEncryptionMethodPlaintext, SpilledFileEncryptionMethodAES128CTR)
 	}
 
 	// test log level

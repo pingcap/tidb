@@ -412,7 +412,7 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	result = tk.MustQuery("select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);")
 	result.Check(testkit.Rows("1 2 1 2"))
 
-	/* Enable & fix this test after https://github.com/pingcap/tidb/issues/11895 is fixed.
+	/* Issue 11895 */
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 bigint unsigned);")
@@ -421,9 +421,8 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	tk.MustExec("insert into t1 value(-1);")
 	result = tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;")
 	c.Check(len(result.Rows()), Equals, 1)
-	*/
 
-	/* https://github.com/pingcap/tidb/issues/11896
+	/* Issues 11896 */
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 bigint);")
@@ -432,7 +431,6 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	tk.MustExec("insert into t1 value(1);")
 	result = tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;")
 	c.Check(len(result.Rows()), Equals, 1)
-	*/
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
@@ -2177,4 +2175,58 @@ func (s *testSuite9) TestIssue19112(c *C) {
 	tk.MustQuery("select /*+ HASH_JOIN(t1,t2) */  * from t1 join t2 on t1.c_decimal = t2.c_decimal order by t1.c_int").Check(testkit.Rows(
 		"1 4.064000 1 4.064000",
 		"3 1.010000 3 1.010000"))
+}
+
+func (s *testSuiteJoin3) TestIssue11896(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	// compare bigint to bit(64)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 bigint)")
+	tk.MustExec("create table t1(c1 bit(64))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x00\x00\x00\x00\x00\x00\x00\x01"))
+
+	// compare int to bit(32)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 int)")
+	tk.MustExec("create table t1(c1 bit(32))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x00\x00\x00\x01"))
+
+	// compare mediumint to bit(24)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 mediumint)")
+	tk.MustExec("create table t1(c1 bit(24))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x00\x00\x01"))
+
+	// compare smallint to bit(16)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 smallint)")
+	tk.MustExec("create table t1(c1 bit(16))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x00\x01"))
+
+	// compare tinyint to bit(8)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t(c1 tinyint)")
+	tk.MustExec("create table t1(c1 bit(8))")
+	tk.MustExec("insert into t value(1)")
+	tk.MustExec("insert into t1 value(1)")
+	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
+		testkit.Rows("1 \x01"))
 }
