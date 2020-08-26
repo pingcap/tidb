@@ -66,6 +66,8 @@ var (
 	_ AggFunc = (*maxMin4String)(nil)
 	_ AggFunc = (*maxMin4Duration)(nil)
 	_ AggFunc = (*maxMin4JSON)(nil)
+	_ AggFunc = (*maxMin4Enum)(nil)
+	_ AggFunc = (*maxMin4Set)(nil)
 
 	// All the AggFunc implementations for "AVG" are listed here.
 	_ AggFunc = (*avgOriginal4Decimal)(nil)
