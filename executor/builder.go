@@ -2542,7 +2542,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 	if v.StoreType == kv.TiFlash {
 		tmp, _ := b.is.TableByID(ts.Table.ID)
 		tbl := tmp.(table.PartitionedTable)
-		partitions, err := partitionPruning(b.ctx, tbl, v.PartitionTable.PruningConds, v.PartitionTable.PartitionNames)
+		partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
 		if err != nil {
 			b.err = err
 			return nil
