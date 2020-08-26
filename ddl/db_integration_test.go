@@ -1834,7 +1834,6 @@ func (s *testIntegrationSuite11) TestChangingDBCharset(c *C) {
 	tk.MustExec("drop database if exists TEST_UPPERCASE_DB_CHARSET;")
 	tk.MustExec("create database TEST_UPPERCASE_DB_CHARSET;")
 	tk.MustExec("use TEST_UPPERCASE_DB_CHARSET;")
-	tk.MustExec("alter database TEST_UPPERCASE_DB_CHARSET default character set utf8;")
 	tk.MustExec("alter database TEST_UPPERCASE_DB_CHARSET default character set utf8mb4;")
 }
 
