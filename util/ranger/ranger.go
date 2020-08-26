@@ -292,14 +292,15 @@ func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
-func (d *rangeDetacher) buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, newTp []*types.FieldType, lengths []int,
+func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
+	sc := d.sctx.GetSessionVars().StmtCtx
 	rb := builder{sc: sc}
 	var (
 		ranges []*Range
 		err    error
 	)
-	for _, col := range cols {
+	for _, col := range d.cols {
 		newTp = append(newTp, newFieldType(col.RetType))
 	}
 	for i := 0; i < eqAndInCount; i++ {
@@ -335,8 +336,8 @@ func (d *rangeDetacher) buildCNFIndexRange(sc *stmtctx.StatementContext, cols []
 	}
 
 	// Take prefix index into consideration.
-	if hasPrefix(lengths) {
-		if fixPrefixColRange(ranges, lengths, newTp) {
+	if hasPrefix(d.lengths) {
+		if fixPrefixColRange(ranges, d.lengths, newTp) {
 			ranges, err = UnionRanges(sc, ranges, d.mergeConsecutive)
 			if err != nil {
 				return nil, errors.Trace(err)
