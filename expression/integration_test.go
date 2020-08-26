@@ -5084,6 +5084,14 @@ func (s *testIntegrationSuite) TestIssue15986(c *C) {
 		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows("0"))
 }
 
+func (s *testIntegrationSuite) TestGenerateColumnIndexCase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 int, c1 int as (case when c0 > 0 then 0 else -1 end))")
+	tk.MustExec("alter table t0 add index idx(c1);")
+}
+
 func (s *testIntegrationSuite) TestIssue19012(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
