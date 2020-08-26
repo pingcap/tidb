@@ -1520,6 +1520,20 @@ partition p2 values less than (10))`)
 	}
 }
 
+func (s *testIntegrationSuite) TestPartialBatchPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c_int int, c_str varchar(40), primary key(c_int, c_str))")
+	tk.MustExec("insert into t values (3, 'bose')")
+	tk.MustQuery("select * from t where c_int in (3)").Check(testkit.Rows(
+		"3 bose",
+	))
+	tk.MustQuery("select * from t where c_int in (3) or c_str in ('yalow') and c_int in (1, 2)").Check(testkit.Rows(
+		"3 bose",
+	))
+}
+
 func (s *testIntegrationSuite) TestIssue19926(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
