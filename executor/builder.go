@@ -396,11 +396,23 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 }
 
 func buildRecoverIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
-	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns))
+	handleLen := 1
+	var pkCols []*model.IndexColumn
+	if tblInfo.IsCommonHandle {
+		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		pkCols = pkIdx.Columns
+		handleLen = len(pkIdx.Columns)
+	}
+	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+handleLen)
 	for _, idxCol := range indexInfo.Columns {
 		columns = append(columns, tblInfo.Columns[idxCol.Offset])
 	}
-
+	if tblInfo.IsCommonHandle {
+		for _, c := range pkCols {
+			columns = append(columns, tblInfo.Columns[c.Offset])
+		}
+		return columns
+	}
 	handleOffset := len(columns)
 	handleColsInfo := &model.ColumnInfo{
 		ID:     model.ExtraHandleID,
@@ -432,7 +444,34 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 		table:        t,
 		physicalID:   t.Meta().ID,
 	}
+	sessCtx := e.ctx.GetSessionVars().StmtCtx
+	e.handleCols = buildHandleColsForRecoverIndex(sessCtx, tblInfo, index.Meta(), e.columns)
 	return e
+}
+
+func buildHandleColsForRecoverIndex(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo,
+	idxInfo *model.IndexInfo, allColInfo []*model.ColumnInfo) plannercore.HandleCols {
+	if !tblInfo.IsCommonHandle {
+		extraColPos := len(allColInfo) - 1
+		intCol := &expression.Column{
+			Index:   extraColPos,
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+		return plannercore.NewIntHandleCols(intCol)
+	}
+	tblCols := make([]*expression.Column, len(tblInfo.Columns))
+	for i := 0; i < len(tblInfo.Columns); i++ {
+		c := tblInfo.Columns[i]
+		tblCols[i] = &expression.Column{
+			RetType: &c.FieldType,
+			ID:      c.ID,
+		}
+	}
+	pkIdx := tables.FindPrimaryIndex(tblInfo)
+	for i, c := range pkIdx.Columns {
+		tblCols[c.Offset].Index = len(idxInfo.Columns) + i
+	}
+	return plannercore.NewCommonHandleCols(sctx, tblInfo, pkIdx, tblCols)
 }
 
 func buildCleanupIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
