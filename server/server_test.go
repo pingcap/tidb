@@ -43,7 +43,7 @@ import (
 )
 
 var (
-	regression                 = true
+	regression = true
 )
 
 func TestT(t *testing.T) {
