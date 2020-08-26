@@ -307,6 +307,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 	return nil, err
 }
 
+// GetPlacementRules is used to retrive placement rules from PD.
 func GetPlacementRules(ctx context.Context) ([]*placement.RuleOp, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
