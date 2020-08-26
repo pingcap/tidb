@@ -7078,7 +7078,7 @@ func (s *testIntegrationSerialSuite) TestIssue17063(c *C) {
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
-	tk.MustExec(`drop table if exist t;`)
+	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec("create table t(a char, b char) collate utf8mb4_general_ci;")
 	tk.MustExec(`insert into t values('a', 'b');`)
 	tk.MustExec(`insert into t values('a', 'B');`)
