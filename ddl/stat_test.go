@@ -134,9 +134,9 @@ func (s *testSerialStatSuite) TestDDLStatsInfo(c *C) {
 
 	job := buildCreateIdxJob(dbInfo, tblInfo, true, "idx", "c1")
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"), IsNil)
 	}()
 
 	done := make(chan error, 1)
