@@ -2504,7 +2504,15 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 			DBName:      dbName,
 			RetType:     col.GetType(),
 		})
+<<<<<<< HEAD
 		projExprs = append(projExprs, col)
+=======
+		projSchema.Append(&expression.Column{
+			UniqueID: cols[i].UniqueID,
+			RetType:  cols[i].GetType(),
+		})
+		projExprs = append(projExprs, cols[i])
+>>>>>>> 38c7510... planner: use the same unique id between schema and column in ProjUponView  (#19461)
 	}
 	projUponView := LogicalProjection{Exprs: projExprs}.Init(b.ctx)
 	projUponView.SetChildren(selectLogicalPlan.(LogicalPlan))
