@@ -69,6 +69,7 @@ func (s *testCollationSuites) TestCompareString(c *C) {
 
 func (s *testCollationSuites) TestDeriveCollationFromExprs(c *C) {
 	tInt := types.NewFieldType(mysql.TypeLonglong)
+	tInt.Charset = charset.CharsetBin
 	ctx := mock.NewContext()
 
 	// no string column
