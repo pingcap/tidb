@@ -66,7 +66,9 @@ func (d *ddl) generalWorker() *worker {
 // restartWorkers is like the function of d.start. But it won't initialize the "workers" and create a new worker.
 // It only starts the original workers.
 func (d *ddl) restartWorkers(ctx context.Context) {
+	d.mu.Lock()
 	d.ctx, d.cancel = context.WithCancel(ctx)
+	d.mu.Unlock()
 
 	d.wg.Add(1)
 	go d.limitDDLJobs()
