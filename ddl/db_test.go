@@ -4213,6 +4213,18 @@ func (s *testDBSuite4) TestIssue9100(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:1503]A PRIMARY must include all columns in the table's partitioning function")
 }
 
+func (s *testSerialDBSuite) TestProcessColumnFlags(c *C) {
+	// check `processColumnFlags()`
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t(a year(4) comment 'xxx')")
+	defer s.mustExec(tk, c, "drop table t;")
+
+	tk.MustExec("alter table t modify a year(4)")
+
+	tk.MustExec("alter table t modify a year(4) not null")
+}
+
 func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
