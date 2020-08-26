@@ -68,24 +68,26 @@ func (s *testSuite9) TestIssue18631(c *C) {
 func (s *testSuiteWithData) TestIndexJoinOnSinglePartitionTable(c *C) {
 	// For issue 19145
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	tk.MustExec("set @try_old_partition_implementation = 1")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue )")
-	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue )")
-	tk.MustExec("insert into t1 values (1, 'Alice')")
-	tk.MustExec("insert into t2 values (1, 'Bob')")
-	sql := "select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
-	tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
-	rows := s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-	c.Assert(strings.Index(rows[0], "IndexMergeJoin"), Equals, 0)
+	for _, val := range []string{"1", "null"} {
+		tk.MustExec("set @try_old_partition_implementation = " + val)
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue )")
+		tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue )")
+		tk.MustExec("insert into t1 values (1, 'Alice')")
+		tk.MustExec("insert into t2 values (1, 'Bob')")
+		sql := "select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
+		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
+		rows := s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+		c.Assert(strings.Index(rows[0], "IndexMergeJoin"), Equals, 0)
 
-	sql = "select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
-	tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
-	rows = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-	c.Assert(strings.Index(rows[0], "IndexHashJoin"), Equals, 0)
+		sql = "select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
+		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
+		rows = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+		c.Assert(strings.Index(rows[0], "IndexHashJoin"), Equals, 0)
 
-	sql = "select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
-	tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
-	rows = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
-	c.Assert(strings.Index(rows[0], "IndexJoin"), Equals, 0)
+		sql = "select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str"
+		tk.MustQuery(sql).Check(testkit.Rows("1 Alice 1 Bob"))
+		rows = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + sql).Rows())
+		c.Assert(strings.Index(rows[0], "IndexJoin"), Equals, 0)
+	}
 }

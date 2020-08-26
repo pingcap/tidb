@@ -861,6 +861,21 @@ func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def 
 	return index, nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
 }
 
+func buildPlacementDropRules(schemaID, tableID int64, partitionIDs []int64) []*placement.RuleOp {
+	rules := make([]*placement.RuleOp, 0, len(partitionIDs))
+	for _, partitionID := range partitionIDs {
+		rules = append(rules, &placement.RuleOp{
+			Action:           placement.RuleOpDel,
+			DeleteByIDPrefix: true,
+			Rule: &placement.Rule{
+				GroupID: placement.RuleDefaultGroupID,
+				ID:      fmt.Sprintf("%d_t%d_p%d", schemaID, tableID, partitionID),
+			},
+		})
+	}
+	return rules
+}
+
 // onDropTablePartition deletes old partition meta.
 func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
@@ -886,11 +901,17 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		physicalTableIDs = removePartitionInfo(tblInfo, partNames)
 	}
 
+	rules := buildPlacementDropRules(job.SchemaID, tblInfo.ID, physicalTableIDs)
+	err = infosync.UpdatePlacementRules(nil, rules)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-
 	// Finish this job.
 	if job.IsRollingback() {
 		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
@@ -1292,7 +1313,7 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 	return nil
 }
 
-func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model.IndexColumn, tblInfo *model.TableInfo, isPK bool) error {
+func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model.IndexColumn, tblInfo *model.TableInfo) (bool, error) {
 	var (
 		partCols []*model.ColumnInfo
 		err      error
@@ -1303,29 +1324,24 @@ func checkPartitionKeysConstraint(pi *model.PartitionInfo, indexColumns []*model
 		// Parse partitioning key, extract the column names in the partitioning key to slice.
 		partCols, err = extractPartitionColumns(partExpr, tblInfo)
 		if err != nil {
-			return err
+			return false, err
 		}
 	} else {
 		partCols = make([]*model.ColumnInfo, 0, len(pi.Columns))
 		for _, col := range pi.Columns {
 			colInfo := getColumnInfoByName(tblInfo, col.L)
 			if colInfo == nil {
-				return infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
+				return false, infoschema.ErrColumnNotExists.GenWithStackByArgs(col, tblInfo.Name)
 			}
 			partCols = append(partCols, colInfo)
 		}
 	}
 
-	// Every unique key on the table must use every column in the table's partitioning expression.(This
+	// In MySQL, every unique key on the table must use every column in the table's partitioning expression.(This
 	// also includes the table's primary key.)
+	// In TiDB, global index will be built when this constraint is not satisfied and EnableGlobalIndex is set.
 	// See https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations-partitioning-keys-unique-keys.html
-	if !checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexColumns) {
-		if isPK {
-			return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY")
-		}
-		return ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
-	}
-	return nil
+	return checkUniqueKeyIncludePartKey(columnInfoSlice(partCols), indexColumns), nil
 }
 
 type columnNameExtractor struct {
