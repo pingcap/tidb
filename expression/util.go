@@ -219,7 +219,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		newExpr.SetCoercibility(v.Coercibility())
 		return true, newExpr
 	case *ScalarFunction:
-		if v.FuncName.L == ast.Cast {
+		if v.FuncName.L == ast.Cast || v.FuncName.L == ast.IsTruth {
 			newFunc := v.Clone().(*ScalarFunction)
 			_, newFunc.GetArgs()[0] = ColumnSubstituteImpl(newFunc.GetArgs()[0], schema, newExprs)
 			return true, newFunc
