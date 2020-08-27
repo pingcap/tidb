@@ -191,13 +191,8 @@ func (ts *tidbTestSuite) TestStatusPort(c *C) {
 	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
-<<<<<<< HEAD
 	cfg := config.NewConfig()
-	cfg.Port = genPort()
-=======
-	cfg := newTestConfig()
 	cfg.Port = 0
->>>>>>> 9ed4159... server: listen port `0` when testing (#19478)
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
@@ -465,13 +460,8 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 
 func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, ts.store)
-<<<<<<< HEAD
 	cfg := config.NewConfig()
-	cfg.Port = genPort()
-=======
-	cfg := newTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
->>>>>>> 9ed4159... server: listen port `0` when testing (#19478)
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)

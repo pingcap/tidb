@@ -367,7 +367,8 @@ func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
 	cfg.Status.ReportStatus = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
-	c.Assert(err, IsNil)
+	c.Assert(err, IsNil, Commentf("??? %v", fmt.Sprintf("%+v", err)))
+	ts.port, ts.statusPort = getPortFromTCPAddr(server.listener.Addr()), getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
 	go server.Run()
 	ts.waitUntilServerOnline()

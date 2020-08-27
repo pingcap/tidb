@@ -429,13 +429,8 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(ts.store)
-<<<<<<< HEAD
 	cfg := config.NewConfig()
-	cfg.Port = genPort()
-=======
-	cfg := newTestConfig()
-	cfg.Port, cfg.Status.StatusPort = 0, 0
->>>>>>> 9ed4159... server: listen port `0` when testing (#19478)
+	cfg.Port = 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
 
