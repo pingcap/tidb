@@ -1003,8 +1003,12 @@ func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64
 	tryAmend bool) (*RelatedSchemaChange, bool, error) {
 	checker, ok := c.txn.us.GetOption(kv.SchemaChecker).(schemaLeaseChecker)
 	if !ok {
-		logutil.Logger(ctx).Warn("schemaLeaseChecker is not set for this transaction, schema check skipped",
-			zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", checkTS))
+		if c.connID > 0 {
+			logutil.Logger(ctx).Warn("schemaLeaseChecker is not set for this transaction",
+				zap.Uint64("connID", c.connID),
+				zap.Uint64("startTS", c.startTS),
+				zap.Uint64("commitTS", checkTS))
+		}
 		return nil, false, nil
 	}
 	relatedChanges, err := checker.CheckBySchemaVer(checkTS, startInfoSchema)
