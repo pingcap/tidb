@@ -242,7 +242,7 @@ func (s *testPrepareSerialSuite) TestPrepareCacheNow(c *C) {
 	c.Assert(rs[0][3].(string), Equals, rs[0][8].(string))
 }
 
-func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
+func (s *testPrepareSerialSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
