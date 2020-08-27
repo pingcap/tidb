@@ -648,6 +648,10 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 		sessionVars = e.ctx.GetSessionVars()
 	)
 	if !e.GlobalScope {
+		// Collect session scope variables.
+		// 1. Exclude the variables of ScopeGlobal in variable.SysVars;
+		// 2. If it is a session only variable, use the default value defined in code,
+		// 	otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.SysVars {
 			if v.Scope != variable.ScopeGlobal {
 				value, err = variable.GetSessionSystemVar(sessionVars, v.Name)
@@ -658,6 +662,10 @@ func (e *ShowExec) fetchShowVariables() (err error) {
 			}
 		}
 	} else {
+		// Collect global scope variables.
+		// 1. Exclude the variables of ScopeSession in variable.SysVars;
+		// 2. If the variable is ScopeNone, it's a read-only variable, return the default value of it,
+		// 	otherwise, fetch the value from table `mysql.Global_Variables`.
 		for _, v := range variable.SysVars {
 			if v.Scope != variable.ScopeSession {
 				value, err = variable.GetGlobalSystemVar(sessionVars, v.Name)
