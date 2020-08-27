@@ -376,23 +376,26 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 	}
 
 	// Partition by range.
-	col, fn, err := makePartitionByFnCol(ctx, columns, names, pi.Expr)
+	col, fn, mono, err := makePartitionByFnCol(ctx, columns, names, pi.Expr)
 	if err != nil {
 		return nil, err
 	}
 	result := fullRange(len(pi.Definitions))
-	// Extract the partition column, if the column is not null, it's possible to prune.
-	if col != nil {
-		pruner := rangePruner{
-			lessThan: lessThanDataInt{
-				data:     partExpr.ForRangePruning.LessThan,
-				maxvalue: partExpr.ForRangePruning.MaxValue,
-			},
-			col:    col,
-			partFn: fn,
-		}
-		result = partitionRangeForCNFExpr(ctx, conds, &pruner, result)
+	if col == nil {
+		return result, nil
 	}
+
+	// Extract the partition column, if the column is not null, it's possible to prune.
+	pruner := rangePruner{
+		lessThan: lessThanDataInt{
+			data:     partExpr.ForRangePruning.LessThan,
+			maxvalue: partExpr.ForRangePruning.MaxValue,
+		},
+		col:        col,
+		partFn:     fn,
+		monotonous: mono,
+	}
+	result = partitionRangeForCNFExpr(ctx, conds, &pruner, result)
 	return result, nil
 }
 
@@ -405,15 +408,16 @@ func (s *partitionProcessor) processRangePartition(ds *DataSource, pi *model.Par
 }
 
 // makePartitionByFnCol extracts the column and function information in 'partition by ... fn(col)'.
-func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column, names types.NameSlice, partitionExpr string) (*expression.Column, *expression.ScalarFunction, error) {
+func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column, names types.NameSlice, partitionExpr string) (*expression.Column, *expression.ScalarFunction, bool, error) {
 	schema := expression.NewSchema(columns...)
 	tmp, err := expression.ParseSimpleExprsWithNames(sctx, partitionExpr, schema, names)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	partExpr := tmp[0]
 	var col *expression.Column
 	var fn *expression.ScalarFunction
+	var monotonous bool
 	switch raw := partExpr.(type) {
 	case *expression.ScalarFunction:
 		// Special handle for floor(unix_timestamp(ts)) as partition expression.
@@ -423,26 +427,25 @@ func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column,
 				args := ut.GetArgs()
 				if len(args) == 1 {
 					if c, ok1 := args[0].(*expression.Column); ok1 {
-						return c, raw, nil
+						return c, raw, true, nil
 					}
 				}
 			}
 		}
 
-		if _, ok := monotoneIncFuncs[raw.FuncName.L]; ok {
-			fn = raw
-			args := fn.GetArgs()
-			if len(args) > 0 {
-				arg0 := args[0]
-				if c, ok1 := arg0.(*expression.Column); ok1 {
-					col = c
-				}
+		fn = raw
+		args := fn.GetArgs()
+		if len(args) > 0 {
+			arg0 := args[0]
+			if c, ok1 := arg0.(*expression.Column); ok1 {
+				col = c
 			}
 		}
+		_, monotonous = monotoneIncFuncs[raw.FuncName.L]
 	case *expression.Column:
 		col = raw
 	}
-	return col, fn, nil
+	return col, fn, monotonous, nil
 }
 
 func partitionRangeForCNFExpr(sctx sessionctx.Context, exprs []expression.Expression,
@@ -494,6 +497,8 @@ type rangePruner struct {
 	lessThan lessThanDataInt
 	col      *expression.Column
 	partFn   *expression.ScalarFunction
+	// If partFn is not nil, monotonous indicates partFn is monotonous or not.
+	monotonous bool
 }
 
 func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (int, int, bool) {
@@ -503,6 +508,7 @@ func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expres
 			return 0, 0, true
 		}
 	}
+
 	dataForPrune, ok := p.extractDataForPrune(sctx, expr)
 	if !ok {
 		return 0, 0, false
@@ -611,6 +617,11 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	// Current expression is 'col op const'
 	var constExpr expression.Expression
 	if p.partFn != nil {
+		// If the partition function is not monotone, only EQ condition can be pruning.
+		if !p.monotonous && ret.op != ast.EQ {
+			return ret, false
+		}
+
 		// If the partition expression is fn(col), change constExpr to fn(constExpr).
 		constExpr = replaceColumnWithConst(p.partFn, con)
 
@@ -864,6 +875,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			// Not a deep copy.
 			newDataSource := *ds
 			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
+			newDataSource.schema = ds.schema.Clone()
 			newDataSource.isPartition = true
 			newDataSource.physicalTableID = pi.Definitions[i].ID
 

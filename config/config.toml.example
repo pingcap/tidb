@@ -9,7 +9,7 @@ advertise-address = ""
 # TiDB server port.
 port = 4000
 
-# Registered store name, [tikv, unistore]
+# Registered store name, [tikv, mocktikv, unistore]
 store = "unistore"
 
 # TiDB storage path.
@@ -118,6 +118,10 @@ skip-register-to-dashboard = false
 # If this config is set to `false` on all TiDB servers, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
 # See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
 enable-telemetry = true
+
+# deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
+# a warning like `Integer display width is deprecated and will be removed in a future release`.
+deprecate-integer-display-length = false
 
 [log]
 # Log level: debug, info, warn, error, fatal.

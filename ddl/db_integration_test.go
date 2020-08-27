@@ -482,6 +482,8 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrDupFieldName)
 	sql = "create table test_error_code1 (c1 int, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int)"
 	tk.MustGetErrCode(sql, errno.ErrTooLongIdent)
+	sql = "create table test_error_code1 (c1 int, `_tidb_rowid` int)"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
 	sql = "create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int)"
 	tk.MustGetErrCode(sql, errno.ErrTooLongIdent)
 	sql = "create table test_error_code1 (c1 int, c2 int, key aa (c1, c2), key aa (c1))"
@@ -555,6 +557,8 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrNoSuchTable)
 	sql = "alter table test_error_code_succ add column `a ` int ;"
 	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
+	sql = "alter table test_error_code_succ add column `_tidb_rowid` int ;"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
 	tk.MustExec("create table test_on_update (c1 int, c2 int);")
 	sql = "alter table test_on_update add column c3 int on update current_timestamp;"
 	tk.MustGetErrCode(sql, errno.ErrInvalidOnUpdate)
@@ -605,6 +609,10 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrWrongDBName)
 	sql = "alter table test_error_code_succ modify t.c1 bigint"
 	tk.MustGetErrCode(sql, errno.ErrWrongTableName)
+	sql = "alter table test_error_code_succ change c1 _tidb_rowid bigint"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
+	sql = "alter table test_error_code_succ rename column c1 to _tidb_rowid"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
 	// insert value
 	tk.MustExec("create table test_error_code_null(c1 char(100) not null);")
 	sql = "insert into test_error_code_null (c1) values(null);"
@@ -913,7 +921,7 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
+func (s *testIntegrationSuite5) TestModifyColumnOption(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -945,7 +953,7 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 	_, err = tk.Exec("alter table t1 change a a datetime")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type datetime not match origin int(11)")
 	_, err = tk.Exec("alter table t1 change a a int(11) unsigned")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change unsigned integer to signed or vice versa")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change unsigned integer to signed or vice versa, and tidb_enable_change_column_type is false")
 	_, err = tk.Exec("alter table t2 change b b int(11) unsigned")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin char(1)")
 }
@@ -2148,8 +2156,10 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
+	defer config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
+		conf.AlterPrimaryKey = true
 	})
 
 	tk := testkit.NewTestKit(c, s.store)
