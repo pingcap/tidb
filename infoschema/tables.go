@@ -709,6 +709,7 @@ var tableTiDBIndexesCols = []columnInfo{
 	{name: "INDEX_COMMENT", tp: mysql.TypeVarchar, size: 2048},
 	{name: "Expression", tp: mysql.TypeVarchar, size: 64},
 	{name: "INDEX_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "IS_VISIBLE", tp: mysql.TypeVarchar, size: 64},
 }
 
 var slowQueryCols = []columnInfo{
@@ -717,6 +718,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogUserStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogHostStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogConnIDStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: variable.SlowLogExecRetryCount, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
 	{name: variable.SlowLogQueryTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogParseTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogCompileTimeStr, tp: mysql.TypeDouble, size: 22},
@@ -856,6 +858,7 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{name: "VERSION", tp: mysql.TypeVarchar, size: 64},
 	{name: "GIT_HASH", tp: mysql.TypeVarchar, size: 64},
 	{name: "BINLOG_STATUS", tp: mysql.TypeVarchar, size: 64},
+	{name: "LABELS", tp: mysql.TypeVarchar, size: 128},
 }
 
 var tableClusterConfigCols = []columnInfo{

@@ -328,11 +328,6 @@ func (s *testColumnSuite) TestColumn(c *C) {
 	job = testCreateIndex(c, ctx, d, s.dbInfo, tblInfo, false, "c5_idx", "c5")
 	testCheckJobDone(c, d, job, true)
 
-	testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c5", true)
-
-	testDropIndex(c, ctx, d, s.dbInfo, tblInfo, "c5_idx")
-	testCheckJobDone(c, d, job, true)
-
 	job = testDropColumn(c, ctx, d, s.dbInfo, tblInfo, "c5", false)
 	testCheckJobDone(c, d, job, false)
 
@@ -1149,6 +1144,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		WithStore(s.store),
 		WithLease(testLease),
 	)
+	ctx := testNewContext(d)
 	defer d.Stop()
 	tests := []struct {
 		origin string
@@ -1156,7 +1152,7 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 		err    error
 	}{
 		{"int", "bigint", nil},
-		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("length 10 is less than origin 11")},
+		{"int", "int unsigned", errUnsupportedModifyColumn.GenWithStackByArgs("length 10 is less than origin 11, and tidb_enable_change_column_type is false")},
 		{"varchar(10)", "text", nil},
 		{"varbinary(10)", "blob", nil},
 		{"text", "blob", errUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
@@ -1170,9 +1166,9 @@ func (s *testColumnSuite) TestModifyColumn(c *C) {
 	for _, tt := range tests {
 		ftA := s.colDefStrToFieldType(c, tt.origin)
 		ftB := s.colDefStrToFieldType(c, tt.to)
-		err := checkModifyTypes(ftA, ftB, false)
+		err := checkModifyTypes(ctx, ftA, ftB, false)
 		if err == nil {
-			c.Assert(tt.err, IsNil)
+			c.Assert(tt.err, IsNil, Commentf("origin:%v, to:%v", tt.origin, tt.to))
 		} else {
 			c.Assert(err.Error(), Equals, tt.err.Error())
 		}

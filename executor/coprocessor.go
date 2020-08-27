@@ -76,6 +76,9 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		}
 		totalChunks = append(totalChunks, partChunks...)
 	}
+	if err := e.Close(); err != nil {
+		return h.buildErrorResponse(err)
+	}
 	return h.buildUnaryResponse(totalChunks)
 }
 

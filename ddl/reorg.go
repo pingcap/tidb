@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -312,10 +313,16 @@ func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl ta
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ranges := ranger.FullIntRange(false)
-	var builder distsql.RequestBuilder
-	builder.SetTableRanges(tbl.GetPhysicalID(), ranges, nil).
-		SetDAGRequest(dagPB).
+	var b distsql.RequestBuilder
+	var builder *distsql.RequestBuilder
+	if !tbl.Meta().IsCommonHandle {
+		ranges := ranger.FullIntRange(false)
+		builder = b.SetTableRanges(tbl.GetPhysicalID(), ranges, nil)
+	} else {
+		ranges := ranger.FullNotNullRange()
+		builder = b.SetCommonHandleRanges(sctx.GetSessionVars().StmtCtx, tbl.GetPhysicalID(), ranges)
+	}
+	builder.SetDAGRequest(dagPB).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(1).SetDesc(true)
@@ -339,6 +346,7 @@ func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl ta
 // GetTableMaxHandle gets the max handle of a PhysicalTable.
 func (dc *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
 	var handleCols []*model.ColumnInfo
+	var pkIdx *model.IndexInfo
 	tblInfo := tbl.Meta()
 	switch {
 	case tblInfo.PKIsHandle:
@@ -349,7 +357,7 @@ func (dc *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (ma
 			}
 		}
 	case tblInfo.IsCommonHandle:
-		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		pkIdx = tables.FindPrimaryIndex(tblInfo)
 		cols := tblInfo.Cols()
 		for _, idxCol := range pkIdx.Columns {
 			handleCols = append(handleCols, cols[idxCol.Offset])
@@ -379,18 +387,20 @@ func (dc *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (ma
 	sessCtx := newContext(dc.store)
 	row := chk.GetRow(0)
 	if tblInfo.IsCommonHandle {
-		maxHandle, err = buildHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, row, handleCols)
+		maxHandle, err = buildCommonHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, tblInfo, pkIdx, handleCols, row)
 		return maxHandle, false, err
 	}
 	return kv.IntHandle(row.GetInt64(0)), false, nil
 }
 
-func buildHandleFromChunkRow(sctx *stmtctx.StatementContext, row chunk.Row, cols []*model.ColumnInfo) (kv.Handle, error) {
+func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+	cols []*model.ColumnInfo, row chunk.Row) (kv.Handle, error) {
 	fieldTypes := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		fieldTypes = append(fieldTypes, &col.FieldType)
 	}
 	datumRow := row.GetDatumRow(fieldTypes)
+	tablecodec.TruncateIndexValues(tblInfo, idxInfo, datumRow)
 
 	var handleBytes []byte
 	handleBytes, err := codec.EncodeKey(sctx, nil, datumRow...)

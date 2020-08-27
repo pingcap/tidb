@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/trace"
 	"sync"
 
 	"github.com/pingcap/parser/model"
@@ -138,6 +139,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		reader = sel.children[0]
 	}
 
+	defer trace.StartRegion(ctx, "UnionScanBuildRows").End()
 	// 1. select without virtual columns
 	// 2. build virtual columns and select with virtual columns
 	switch x := reader.(type) {
@@ -195,6 +197,15 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 	}
 	return nil
+}
+
+// Close implements the Executor Close interface.
+func (us *UnionScanExec) Close() error {
+	us.cursor4AddRows = 0
+	us.cursor4SnapshotRows = 0
+	us.addedRows = us.addedRows[:0]
+	us.snapshotRows = us.snapshotRows[:0]
+	return us.children[0].Close()
 }
 
 // getOneRow gets one result row from dirty table or child.
