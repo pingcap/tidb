@@ -65,6 +65,7 @@ func (d *ddl) generalWorker() *worker {
 
 // restartWorkers is like the function of d.start. But it won't initialize the "workers" and create a new worker.
 // It only starts the original workers.
+// this function should be called with failpoint `github.com/pingcap/tidb/ddl/avoidDataRace` enabled to avoid data race
 func (d *ddl) restartWorkers(ctx context.Context) {
 	d.m.Lock()
 	d.ctx, d.cancel = context.WithCancel(ctx)
