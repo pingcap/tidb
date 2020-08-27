@@ -143,5 +143,10 @@ func (s *partitionTableSuite) TestPartitionReaderUnderApply(c *C) {
 	tk.MustExec("create table t2  (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key (c_int)) partition by hash (c_int) partitions 4")
 	tk.MustExec("insert into t1 values (1, 'romantic robinson', 4.436), (2, 'stoic chaplygin', 9.826), (3, 'vibrant shamir', 6.300), (4, 'hungry wilson', 4.900), (5, 'naughty swartz', 9.524)")
 	tk.MustExec("insert into t2 select * from t1")
-	tk.MustExec("select * from t1 where c_decimal in (select c_decimal from t2 where t1.c_int = t2.c_int or t1.c_int = t2.c_int and t1.c_str > t2.c_str)")
+	tk.MustQuery("select * from t1 where c_decimal in (select c_decimal from t2 where t1.c_int = t2.c_int or t1.c_int = t2.c_int and t1.c_str > t2.c_str)").Check(testkit.Rows(
+		"1 romantic robinson 4.436000",
+		"2 stoic chaplygin 9.826000",
+		"3 vibrant shamir 6.300000",
+		"4 hungry wilson 4.900000",
+		"5 naughty swartz 9.524000"))
 }
