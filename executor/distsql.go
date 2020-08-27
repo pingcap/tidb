@@ -581,6 +581,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.finished = nil
 	e.workerStarted = false
 	e.memTracker = nil
+	e.resultCurr = nil
 	return nil
 }
 
