@@ -1495,6 +1495,23 @@ func (s *testPlanSuite) TestHintFromDiffDatabase(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestUnionPruning(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec("set @try_old_partition_implementation = 1")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40), unique key(c_int), key(c_str))")
+	tk.MustExec("create table t2 (c_int int, c_str varchar(40), primary key(c_int, c_str)) partition by hash (c_int) partitions 4")
+	tk.MustExec("select * from t1 where c_int in (select c_int from t2 where t1.c_int = t2.c_int or t1.c_int = t2.c_int and t1.c_str > t2.c_str)")
+}
+
 func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
