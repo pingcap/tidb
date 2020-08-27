@@ -814,9 +814,6 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.InRestrictedSQL {
-		return
-	}
 	level := log.GetLevel()
 	cfg := config.GetGlobalConfig()
 	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse

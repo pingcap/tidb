@@ -53,7 +53,6 @@ type ExecDetails struct {
 	ProcessedKeys    int64
 	CommitDetail     *CommitDetails
 	LockKeysDetail   *LockKeysDetails
-	RetryCount       int
 }
 
 type stmtExecDetailKeyType struct{}
@@ -228,33 +227,6 @@ func (d ExecDetails) String() string {
 		}
 		if commitDetails.TxnRetry > 0 {
 			parts = append(parts, TxnRetryStr+": "+strconv.FormatInt(int64(commitDetails.TxnRetry), 10))
-		}
-	}
-	lockKeysDetail := d.LockKeysDetail
-	if lockKeysDetail != nil {
-		if lockKeysDetail.TotalTime > 0 {
-			parts = append(parts, "LockKeysTotalTime: "+strconv.FormatFloat(lockKeysDetail.TotalTime.Seconds(), 'f', -1, 64))
-		}
-		if lockKeysDetail.RegionNum > 0 {
-			parts = append(parts, "LockKeysRegions: "+strconv.FormatInt(int64(lockKeysDetail.RegionNum), 10))
-		}
-		if lockKeysDetail.LockKeys > 0 {
-			parts = append(parts, "LockKeysNum: "+strconv.FormatInt(int64(lockKeysDetail.LockKeys), 10))
-		}
-		if lockKeysDetail.ResolveLockTime > 0 {
-			parts = append(parts, "LockKeysResolveLock: "+strconv.FormatFloat(time.Duration(lockKeysDetail.ResolveLockTime).Seconds(), 'f', -1, 64))
-		}
-		if lockKeysDetail.BackoffTime > 0 {
-			parts = append(parts, "LockKeysBackoff: "+strconv.FormatFloat(time.Duration(lockKeysDetail.BackoffTime).Seconds(), 'f', -1, 64))
-		}
-		if lockKeysDetail.LockRPCTime > 0 {
-			parts = append(parts, "LockKeysRPC: "+strconv.FormatFloat(time.Duration(lockKeysDetail.LockRPCTime).Seconds(), 'f', -1, 64))
-		}
-		if lockKeysDetail.LockRPCCount > 0 {
-			parts = append(parts, "LockKeysRPCCount: "+strconv.FormatInt(int64(lockKeysDetail.LockRPCCount), 10))
-		}
-		if lockKeysDetail.RetryCount > 0 {
-			parts = append(parts, "LockKeysRetryCount: "+strconv.FormatInt(int64(lockKeysDetail.RetryCount), 10))
 		}
 	}
 	return strings.Join(parts, " ")
