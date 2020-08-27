@@ -853,6 +853,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		statsWithCommit := &execdetails.RuntimeStatsWithCommit{
 			RuntimeStats: stats,
 			Commit:       execDetail.CommitDetail,
+			LockKeys:     execDetail.LockKeysDetail,
 		}
 		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
 	}
