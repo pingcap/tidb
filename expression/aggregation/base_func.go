@@ -248,7 +248,7 @@ func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
 		a.typeInfer4MaxMin(ctx)
 	} else {
 		// Merge the type of first and third argument.
-		a.RetTp = expression.InferType4ControlFuncs(a.Args[0].GetType(), a.Args[2].GetType())
+		a.RetTp = expression.InferType4ControlFuncs(a.Args[0], a.Args[2])
 	}
 }
 
