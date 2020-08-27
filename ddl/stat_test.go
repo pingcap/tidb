@@ -10,6 +10,7 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// +build !race
 
 package ddl
 
@@ -46,8 +47,6 @@ func (s *testStatSuite) getDDLSchemaVer(c *C, d *ddl) int64 {
 }
 
 func (s *testStatSuite) TestStat(c *C) {
-	failpoint.Enable("github.com/pingcap/tidb/ddl/avoidDataRace", "return")
-	defer failpoint.Disable("github.com/pingcap/tidb/ddl/avoidDataRace")
 	store := testCreateStore(c, "test_stat")
 	defer store.Close()
 

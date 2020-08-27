@@ -460,21 +460,13 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 }
 
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
-	failpoint.Inject("avoidDataRace", func(_ failpoint.Value) {
-		d.m.RLock()
-	})
-	dctx, dcancel := d.ctx, d.cancel
-	failpoint.Inject("avoidDataRace", func(_ failpoint.Value) {
-		d.m.RUnlock()
-	})
-
 	// Get a global job ID and put the DDL job in the queue.
 	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	task := &limitJobTask{job, make(chan error)}
 	select {
 	case d.limitJobCh <- task:
-	case <-dctx.Done():
-		return dctx.Err()
+	case <-d.ctx.Done():
+		return d.ctx.Err()
 	}
 	// Wait job has been added to DDL queue
 	select {
@@ -482,8 +474,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
-	case <-dctx.Done():
-		return dctx.Err()
+	case <-d.ctx.Done():
+		return d.ctx.Err()
 	}
 
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
@@ -510,15 +502,15 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}()
 	for {
 		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
-			dcancel()
+			d.cancel()
 		})
 
 		select {
 		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
-		case <-dctx.Done():
+		case <-d.ctx.Done():
 			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done", zap.Error(d.ctx.Err()))
-			err := dctx.Err()
+			err := d.ctx.Err()
 			return err
 		}
 
