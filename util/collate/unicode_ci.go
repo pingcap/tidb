@@ -123,8 +123,8 @@ func (uc *unicodeCICollator) Key(str string) []byte {
 	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str)*2)
 	r := rune(0)
-	si := 0	// decode index of s
-	sn, ss := uint64(0), uint64(0)	// weight of str. weight in unicode_ci may has 8 uint16s. sn indicate first 4 u16s, ss indicate last 4 u16s
+	si := 0                        // decode index of s
+	sn, ss := uint64(0), uint64(0) // weight of str. weight in unicode_ci may has 8 uint16s. sn indicate first 4 u16s, ss indicate last 4 u16s
 
 	for si < len(str) {
 		r, si = decodeRune(str, si)
