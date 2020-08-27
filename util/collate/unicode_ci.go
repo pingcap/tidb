@@ -66,9 +66,12 @@ type unicodeCICollator struct {
 func (uc *unicodeCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
+	// weight of a, b. weight in unicode_ci may has 8 uint16s. xn indicate first 4 u16s, xs indicate last 4 u16s
 	an, bn := uint64(0), uint64(0)
-	ar, br := rune(0), rune(0)
 	as, bs := uint64(0), uint64(0)
+	// rune of a, b
+	ar, br := rune(0), rune(0)
+	// decode index of a, b
 	ai, bi := 0, 0
 	for {
 		if an == 0 {
@@ -119,8 +122,9 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 func (uc *unicodeCICollator) Key(str string) []byte {
 	str = truncateTailingSpace(str)
 	buf := make([]byte, 0, len(str)*2)
-	r, si := rune(0), 0
-	sn, ss := uint64(0), uint64(0)
+	r := rune(0)
+	si := 0	// decode index of s
+	sn, ss := uint64(0), uint64(0)	// weight of str. weight in unicode_ci may has 8 uint16s. sn indicate first 4 u16s, ss indicate last 4 u16s
 
 	for si < len(str) {
 		r, si = decodeRune(str, si)
