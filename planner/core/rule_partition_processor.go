@@ -875,6 +875,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			// Not a deep copy.
 			newDataSource := *ds
 			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
+			newDataSource.schema = ds.schema.Clone()
 			newDataSource.isPartition = true
 			newDataSource.physicalTableID = pi.Definitions[i].ID
 
