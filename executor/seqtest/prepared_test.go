@@ -15,12 +15,17 @@ package executor_test
 
 import (
 	"context"
+	"crypto/tls"
 	"math"
+	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/metrics"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 	dto "github.com/prometheus/client_model/go"
 )
@@ -769,4 +774,63 @@ func (s *seqTestSuite) TestPreparedIssue8644(c *C) {
 		r := tk.MustQuery(`select * from t`)
 		r.Check(testkit.Rows("a", "aaaaaaaaaaaaaaaaaa"))
 	}
+}
+
+// mockSessionManager is a mocked session manager which is used for test.
+type mockSessionManager1 struct {
+	Se session.Session
+}
+
+// ShowProcessList implements the SessionManager.ShowProcessList interface.
+func (msm *mockSessionManager1) ShowProcessList() map[uint64]*util.ProcessInfo {
+	ret := make(map[uint64]*util.ProcessInfo)
+	return ret
+}
+
+func (msm *mockSessionManager1) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	pi := msm.Se.ShowProcess()
+	return pi, true
+}
+
+// Kill implements the SessionManager.Kill interface.
+func (msm *mockSessionManager1) Kill(cid uint64, query bool) {}
+
+func (msm *mockSessionManager1) UpdateTLSConfig(cfg *tls.Config) {}
+
+func (s *seqTestSuite) TestPreparedIssue17419(c *C) {
+	ctx := context.Background()
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t (a) values (1), (2), (3)")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+
+	var err error
+	tk1.Se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	query := "select * from test.t"
+	stmtID, _, _, err := tk1.Se.PrepareStmt(query)
+	c.Assert(err, IsNil)
+
+	sm := &mockSessionManager1{
+		Se: tk1.Se,
+	}
+	tk1.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+
+	rs, err := tk1.Se.ExecutePreparedStmt(ctx, stmtID)
+	c.Assert(err, IsNil)
+	tk1.ResultSetToResult(rs, Commentf("%v", rs)).Check(testkit.Rows("1", "2", "3"))
+	tk1.Se.SetProcessInfo("", time.Now(), mysql.ComStmtExecute, 0)
+
+	s.domain.ExpensiveQueryHandle().LogOnQueryExceedMemQuota(tk.Se.GetSessionVars().ConnectionID)
+
+	// After entirely fixing https://github.com/pingcap/tidb/issues/17419
+	// c.Assert(tk1.Se.ShowProcess().Plan, NotNil)
+	// _, ok := tk1.Se.ShowProcess().Plan.(*plannercore.Execute)
+	// c.Assert(ok, IsTrue)
 }
