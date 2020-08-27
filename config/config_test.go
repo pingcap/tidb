@@ -191,6 +191,7 @@ mem-quota-query = 10000
 nested-loop-join-cache-capacity = 100
 max-index-length = 3080
 skip-register-to-dashboard = true
+deprecate-integer-display-length = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -211,6 +212,11 @@ history-size=100
 allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
+[labels]
+foo= "bar"
+group= "abc"
+[security]
+spilled-file-encryption-method = "plaintext"
 `)
 
 	c.Assert(err, IsNil)
@@ -253,6 +259,11 @@ engines = ["tiflash"]
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
+	c.Assert(len(conf.Labels), Equals, 2)
+	c.Assert(conf.Labels["foo"], Equals, "bar")
+	c.Assert(conf.Labels["group"], Equals, "abc")
+	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
+	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
 
 	_, err = f.WriteString(`
 [log.file]
@@ -285,6 +296,15 @@ enable-telemetry = false
 	c.Assert(f.Sync(), IsNil)
 	c.Assert(conf.Load(configFile), IsNil)
 	c.Assert(conf.EnableTelemetry, Equals, false)
+
+	_, err = f.WriteString(`
+[security]
+spilled-file-encryption-method = "aes128-ctr"
+`)
+	c.Assert(err, IsNil)
+	c.Assert(f.Sync(), IsNil)
+	c.Assert(conf.Load(configFile), IsNil)
+	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodAES128CTR)
 
 	c.Assert(f.Close(), IsNil)
 	c.Assert(os.Remove(configFile), IsNil)
@@ -518,4 +538,22 @@ func (s *testConfigSuite) TestModifyThroughLDFlags(c *C) {
 	defaultConf.EnableTelemetry = originalEnableTelemetry
 	CheckTableBeforeDrop = originalCheckTableBeforeDrop
 	StoreGlobalConfig(originalGlobalConfig)
+}
+
+func (s *testConfigSuite) TestSecurityValid(c *C) {
+	c1 := NewConfig()
+	tests := []struct {
+		spilledFileEncryptionMethod string
+		valid                       bool
+	}{
+		{"", false},
+		{"Plaintext", true},
+		{"plaintext123", false},
+		{"aes256-ctr", false},
+		{"aes128-ctr", true},
+	}
+	for _, tt := range tests {
+		c1.Security.SpilledFileEncryptionMethod = tt.spilledFileEncryptionMethod
+		c.Assert(c1.Valid() == nil, Equals, tt.valid)
+	}
 }

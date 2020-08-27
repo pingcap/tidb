@@ -194,6 +194,13 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	}
 	txnSize := txn.Size()
 
+	if e.collectRuntimeStatsEnabled() {
+		if snapshot := txn.GetSnapshot(); snapshot != nil {
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(kv.CollectRuntimeStats)
+		}
+	}
+
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
 	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
