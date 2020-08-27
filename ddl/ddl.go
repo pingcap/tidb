@@ -176,6 +176,7 @@ type ddl struct {
 	m          sync.RWMutex
 	ctx        context.Context
 	cancel     context.CancelFunc
+	wg         sync.WaitGroup // It's only used to deal with data race in stat_test and schema_test.
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
@@ -317,6 +318,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 	d.ctx, d.cancel = context.WithCancel(d.ctx)
 
+	d.wg.Add(1)
 	go d.limitDDLJobs()
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
@@ -361,6 +363,7 @@ func (d *ddl) close() {
 
 	startTime := time.Now()
 	d.cancel()
+	d.wg.Wait()
 	d.ownerManager.Cancel()
 	d.schemaSyncer.Close()
 
