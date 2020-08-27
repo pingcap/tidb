@@ -176,7 +176,7 @@ type ddl struct {
 	m          sync.RWMutex
 	ctx        context.Context
 	cancel     context.CancelFunc
-	wg         sync.WaitGroup // It's only used to deal with data race in state_test and schema_test.
+	wg         sync.WaitGroup // It's only used to deal with data race in stat_test and schema_test.
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
@@ -460,22 +460,43 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 }
 
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	failpoint.Inject("avoidDataRace", func(_ failpoint.Value) {
+		d.m.RLock()
+	})
+	dctx, dcancel := d.ctx, d.cancel
+	failpoint.Inject("avoidDataRace", func(_ failpoint.Value) {
+		d.m.RUnlock()
+	})
+
 	// Get a global job ID and put the DDL job in the queue.
 	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	task := &limitJobTask{job, make(chan error)}
-	d.limitJobCh <- task
-	err := <-task.err
-	if err != nil {
-		return errors.Trace(err)
+	select {
+	case d.limitJobCh <- task:
+	case <-dctx.Done():
+		return dctx.Err()
 	}
+	// Wait job has been added to DDL queue
+	select {
+	case err := <-task.err:
+		if err != nil {
+			return errors.Trace(err)
+		}
+	case <-dctx.Done():
+		return dctx.Err()
+	}
+
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
 	d.asyncNotifyWorker(job.Type)
 	logutil.BgLogger().Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
 
-	var historyJob *model.Job
-	jobID := job.ID
+	var (
+		historyJob *model.Job
+		err        error
+		jobID      = job.ID
+	)
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
@@ -489,15 +510,15 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}()
 	for {
 		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
-			d.cancel()
+			dcancel()
 		})
 
 		select {
 		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
-		case <-d.ctx.Done():
+		case <-dctx.Done():
 			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done", zap.Error(d.ctx.Err()))
-			err := d.ctx.Err()
+			err := dctx.Err()
 			return err
 		}
 
