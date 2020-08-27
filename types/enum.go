@@ -47,6 +47,10 @@ func (e Enum) ToNumber() float64 {
 
 // ParseEnumName creates a Enum with item name.
 func ParseEnumName(elems []string, name string, collation string) (Enum, error) {
+	if len(name) == 0 {
+		return Enum{Name: name, Value: 0}, nil
+	}
+
 	ctor := collate.GetCollator(collation)
 	for i, n := range elems {
 		if ctor.Compare(n, name) == 0 {
@@ -64,8 +68,12 @@ func ParseEnumName(elems []string, name string, collation string) (Enum, error) 
 
 // ParseEnumValue creates a Enum with special number.
 func ParseEnumValue(elems []string, number uint64) (Enum, error) {
-	if number == 0 || number > uint64(len(elems)) {
+	if number > uint64(len(elems)) {
 		return Enum{}, errors.Errorf("number %d overflow enum boundary [1, %d]", number, len(elems))
+	}
+
+	if number == 0 {
+		return Enum{Name: "", Value: number}, nil
 	}
 
 	return Enum{Name: elems[number-1], Value: number}, nil

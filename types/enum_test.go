@@ -35,8 +35,9 @@ func (s *testEnumSuite) TestEnum(c *C) {
 		Expected int
 	}{
 		{[]string{"a", "b"}, "a", 1},
-		{[]string{"a"}, "b", 0},
+		{[]string{"a"}, "b", -1},
 		{[]string{"a"}, "1", 1},
+		{[]string{"a"}, "", 0},
 	}
 	citbl := []struct {
 		Elems    []string
@@ -45,14 +46,15 @@ func (s *testEnumSuite) TestEnum(c *C) {
 	}{
 		{[]string{"a", "b"}, "A     ", 1},
 		{[]string{"a"}, "A", 1},
-		{[]string{"a"}, "b", 0},
+		{[]string{"a"}, "b", -1},
 		{[]string{"啊"}, "啊", 1},
 		{[]string{"a"}, "1", 1},
+		{[]string{"a"}, "", 0},
 	}
 
 	for _, t := range tbl {
 		e, err := ParseEnumName(t.Elems, t.Name, mysql.DefaultCollationName)
-		if t.Expected == 0 {
+		if t.Expected == -1 {
 			c.Assert(err, NotNil)
 			c.Assert(e.ToNumber(), Equals, float64(0))
 			c.Assert(e.String(), Equals, "")
@@ -60,12 +62,16 @@ func (s *testEnumSuite) TestEnum(c *C) {
 		}
 
 		c.Assert(err, IsNil)
-		c.Assert(e.String(), Equals, t.Elems[t.Expected-1])
-		c.Assert(e.ToNumber(), Equals, float64(t.Expected))
+		if e.ToNumber() == 0 {
+			c.Assert(e.String(), Equals, "")
+		} else {
+			c.Assert(e.String(), Equals, t.Elems[t.Expected-1])
+			c.Assert(e.ToNumber(), Equals, float64(t.Expected))
+		}
 	}
 	for _, t := range citbl {
 		e, err := ParseEnumName(t.Elems, t.Name, "utf8_general_ci")
-		if t.Expected == 0 {
+		if t.Expected == -1 {
 			c.Assert(err, NotNil)
 			c.Assert(e.ToNumber(), Equals, float64(0))
 			c.Assert(e.String(), Equals, "")
@@ -73,8 +79,12 @@ func (s *testEnumSuite) TestEnum(c *C) {
 		}
 
 		c.Assert(err, IsNil)
-		c.Assert(e.String(), Equals, t.Elems[t.Expected-1])
-		c.Assert(e.ToNumber(), Equals, float64(t.Expected))
+		if e.ToNumber() == 0 {
+			c.Assert(e.String(), Equals, "")
+		} else {
+			c.Assert(e.String(), Equals, t.Elems[t.Expected-1])
+			c.Assert(e.ToNumber(), Equals, float64(t.Expected))
+		}
 	}
 
 	tblNumber := []struct {
@@ -84,11 +94,12 @@ func (s *testEnumSuite) TestEnum(c *C) {
 	}{
 		{[]string{"a"}, 1, 1},
 		{[]string{"a"}, 0, 0},
+		{[]string{"a"}, 2, -1},
 	}
 
 	for _, t := range tblNumber {
 		e, err := ParseEnumValue(t.Elems, t.Number)
-		if t.Expected == 0 {
+		if t.Expected == -1 {
 			c.Assert(err, NotNil)
 			continue
 		}
