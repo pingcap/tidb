@@ -576,3 +576,17 @@ func UnionPartitionRanges(sc *stmtctx.StatementContext, ranges []*Range) ([]*Ran
 	ranges = append(ranges, lastRange.originalValue)
 	return ranges, nil
 }
+
+// DetachCondAndBuildRangeForPartition will detach the index filters from table filters.
+// The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
+func DetachCondAndBuildRangeForPartition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
+	lengths []int) (*DetachRangeResult, error) {
+	d := &rangeDetacher{
+		sctx:             sctx,
+		allConds:         conditions,
+		cols:             cols,
+		lengths:          lengths,
+		mergeConsecutive: false,
+	}
+	return d.detachCondAndBuildRangeForCols()
+}
