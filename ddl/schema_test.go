@@ -10,7 +10,6 @@
 // distributed under the License is distributed on an "AS IS" BASIS,
 // See the License for the specific language governing permissions and
 // limitations under the License.
-// +build !race
 
 package ddl
 
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 )
 
 var _ = Suite(&testSchemaSuite{})
@@ -225,79 +223,6 @@ func (s *testSchemaSuite) TestSchemaWaitJob(c *C) {
 	c.Assert(err, IsNil)
 	schemaID := genIDs[0]
 	doDDLJobErr(c, schemaID, 0, model.ActionCreateSchema, []interface{}{dbInfo}, ctx, d2)
-}
-
-// runInterruptedJob should be called concurrently with restartWorkers
-func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan struct{}) {
-	ctx := mock.NewContext()
-	ctx.Store = d.store
-
-	var (
-		history *model.Job
-		err     error
-	)
-
-	_ = d.doDDLJob(ctx, job)
-
-	for history == nil {
-		history, err = d.getHistoryDDLJob(job.ID)
-		c.Assert(err, IsNil)
-		time.Sleep(10 * testLease)
-	}
-	c.Assert(history.Error, IsNil)
-	doneCh <- struct{}{}
-}
-
-func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
-	done := make(chan struct{}, 1)
-	go runInterruptedJob(c, d, job, done)
-
-	ticker := time.NewTicker(d.lease * 1)
-	defer ticker.Stop()
-LOOP:
-	for {
-		select {
-		case <-ticker.C:
-			d.Stop()
-			d.restartWorkers(context.Background())
-			time.Sleep(time.Millisecond * 20)
-		case <-done:
-			break LOOP
-		}
-	}
-}
-
-func (s *testSchemaSuite) TestSchemaResume(c *C) {
-	store := testCreateStore(c, "test_schema_resume")
-	defer store.Close()
-
-	d1 := testNewDDLAndStart(
-		context.Background(),
-		c,
-		WithStore(store),
-		WithLease(testLease),
-	)
-	defer d1.Stop()
-
-	testCheckOwner(c, d1, true)
-
-	dbInfo := testSchemaInfo(c, d1, "test")
-	job := &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionCreateSchema,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{dbInfo},
-	}
-	testRunInterruptedJob(c, d1, job)
-	testCheckSchemaState(c, d1, dbInfo, model.StatePublic)
-
-	job = &model.Job{
-		SchemaID:   dbInfo.ID,
-		Type:       model.ActionDropSchema,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-	testRunInterruptedJob(c, d1, job)
-	testCheckSchemaState(c, d1, dbInfo, model.StateNone)
 }
 
 func testGetSchemaInfoWithError(d *ddl, schemaID int64) (*model.DBInfo, error) {

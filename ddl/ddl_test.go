@@ -22,7 +22,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -61,31 +60,6 @@ func (d *ddl) SetInterceptor(i Interceptor) {
 // generalWorker returns the general worker.
 func (d *ddl) generalWorker() *worker {
 	return d.workers[generalWorker]
-}
-
-// restartWorkers is like the function of d.start. But it won't initialize the "workers" and create a new worker.
-// It only starts the original workers.
-// this function should be called with failpoint `github.com/pingcap/tidb/ddl/avoidDataRace` enabled to avoid data race
-func (d *ddl) restartWorkers(ctx context.Context) {
-	d.m.Lock()
-	d.ctx, d.cancel = context.WithCancel(ctx)
-	d.m.Unlock()
-
-	d.wg.Add(1)
-	go d.limitDDLJobs()
-	if !RunWorker {
-		return
-	}
-
-	err := d.ownerManager.CampaignOwner()
-	terror.Log(err)
-	for _, worker := range d.workers {
-		worker.wg.Add(1)
-		worker.ctx = d.ctx
-		w := worker
-		go w.start(d.ddlCtx)
-		asyncNotify(worker.ddlJobCh)
-	}
 }
 
 func TestT(t *testing.T) {
