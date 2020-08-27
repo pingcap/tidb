@@ -1080,6 +1080,16 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
 }
 
+func (s *testPrivilegeSuite) TestFieldList(c *C) { // Issue #14237 List fields RPC
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'tableaccess'@'localhost'`)
+	mustExec(c, se, `CREATE TABLE fieldlistt1 (a int)`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tableaccess", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.FieldList("fieldlistt1")
+	message := "SELECT command denied to user 'tableaccess'@'localhost' for table 'fieldlistt1'"
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
+}
+
 func mustExec(c *C, se session.Session, sql string) {
 	_, err := se.Execute(context.Background(), sql)
 	c.Assert(err, IsNil)
