@@ -34,7 +34,7 @@ var (
 	// CommitDetailCtxKey presents CommitDetail info key in context.
 	CommitDetailCtxKey = commitDetailCtxKeyType{}
 
-	// CommitDetailCtxKey presents CommitDetail info key in context.
+	// LockKeysDetailCtxKey presents LockKeysDetail info key in context.
 	LockKeysDetailCtxKey = lockKeysDetailCtxKeyType{}
 )
 
