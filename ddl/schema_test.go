@@ -19,6 +19,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/infoschema"
@@ -267,6 +268,9 @@ LOOP:
 }
 
 func (s *testSchemaSuite) TestSchemaResume(c *C) {
+	failpoint.Enable("github.com/pingcap/tidb/ddl/avoidDataRace", "return")
+	defer failpoint.Disable("github.com/pingcap/tidb/ddl/avoidDataRace")
+
 	store := testCreateStore(c, "test_schema_resume")
 	defer store.Close()
 

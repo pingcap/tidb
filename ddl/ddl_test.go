@@ -20,7 +20,6 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
@@ -67,11 +66,9 @@ func (d *ddl) generalWorker() *worker {
 // restartWorkers is like the function of d.start. But it won't initialize the "workers" and create a new worker.
 // It only starts the original workers.
 func (d *ddl) restartWorkers(ctx context.Context) {
-	failpoint.Enable("github.com/pingcap/tidb/ddl/avoidDataRace", "return")
 	d.m.Lock()
 	d.ctx, d.cancel = context.WithCancel(ctx)
 	d.m.Unlock()
-	failpoint.Disable("github.com/pingcap/tidb/ddl/avoidDataRace")
 
 	d.wg.Add(1)
 	go d.limitDDLJobs()
