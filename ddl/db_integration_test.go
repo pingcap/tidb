@@ -1103,6 +1103,11 @@ func (s *testIntegrationSuite5) TestBitDefaultValue(c *C) {
 	tk.MustExec("alter table t_bit add column b bit(1) default b'0';")
 	tk.MustExec("alter table t_bit modify column b bit(1) default b'1';")
 	tk.MustQuery("select b from t_bit").Check(testkit.Rows("\x00"))
+	tk.MustExec("drop table t_bit")
+
+	tk.MustExec("create table t_bit (a bit);")
+	tk.MustExec("insert into t_bit values (null);")
+	tk.MustQuery("select count(*) from t_bit where a is null;").Check(testkit.Rows("1"))
 
 	tk.MustExec(`create table testalltypes1 (
     field_1 bit default 1,
