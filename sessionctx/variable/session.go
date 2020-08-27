@@ -1827,6 +1827,8 @@ const (
 	SlowLogBackoffTotal = "Backoff_total"
 	// SlowLogWriteSQLRespTotal is the total time used to write response to client.
 	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
+	// SlowLogExecRetryCount is the execution retry count.
+	SlowLogExecRetryCount = "Exec_retry_count"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -1858,6 +1860,7 @@ type SlowQueryLogItems struct {
 	PDTotal           time.Duration
 	BackoffTotal      time.Duration
 	WriteSQLRespTotal time.Duration
+	ExecRetryCount    uint
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1894,6 +1897,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if s.ConnectionID != 0 {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
+	}
+	if logItems.ExecRetryCount > 0 {
+		writeSlowLogItem(&buf, SlowLogExecRetryCount, strconv.Itoa(int(logItems.ExecRetryCount)))
 	}
 	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))

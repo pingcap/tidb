@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/trace"
 	"sync"
 
 	"github.com/pingcap/parser/model"
@@ -138,6 +139,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		reader = sel.children[0]
 	}
 
+	defer trace.StartRegion(ctx, "UnionScanBuildRows").End()
 	// 1. select without virtual columns
 	// 2. build virtual columns and select with virtual columns
 	switch x := reader.(type) {
