@@ -1379,10 +1379,9 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
-		if err != nil {
-			return ret, errors.Trace(err)
+		if err == nil {
+			e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 		}
-		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
 		logutil.BgLogger().Error("convert to MySQL enum failed", zap.Error(err))
@@ -1404,10 +1403,9 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
-		if err != nil {
-			return ret, errors.Trace(err)
+		if err == nil {
+			s, err = ParseSetValue(target.Elems, uintDatum.GetUint64())
 		}
-		s, err = ParseSetValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
 		logutil.BgLogger().Error("convert to MySQL set failed", zap.Error(err))

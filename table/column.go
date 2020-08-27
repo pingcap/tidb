@@ -191,15 +191,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	if returnOverflow && types.ErrOverflow.Equal(err) {
 		return casted, err
 	}
-	if err != nil && types.ErrTruncated.Equal(err) {
-		str, err1 := val.ToString()
-		if err1 != nil {
-			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
-		}
-		err = sc.HandleTruncate(types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str))
-	} else {
-		err = sc.HandleTruncate(err)
-	}
+	err = sc.HandleTruncate(err)
 	if forceIgnoreTruncate {
 		err = nil
 	} else if err != nil {
