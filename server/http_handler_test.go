@@ -227,7 +227,8 @@ func (ts *HTTPHandlerTestSuite) TestRegionIndexRangeWithStartNoLimit(c *C) {
 func (ts *HTTPHandlerTestSuite) TestRegionsAPI(c *C) {
 	ts.startServer(c)
 	defer ts.stopServer(c)
-	resp, err := ts.fetchStatus("/tables/information_schema/SCHEMATA/regions")
+	ts.prepareData(c)
+	resp, err := ts.fetchStatus("/tables/tidb/t/regions")
 	c.Assert(err, IsNil)
 	c.Assert(resp.StatusCode, Equals, http.StatusOK)
 	defer resp.Body.Close()
