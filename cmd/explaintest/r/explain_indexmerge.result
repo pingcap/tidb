@@ -99,17 +99,17 @@ label = "cop"
 set session tidb_enable_index_merge = off;
 explain select /*+ use_index_merge(t, tb, tc) */ * from t where b < 50 or c < 5000000;
 id	estRows	task	access object	operator info
-IndexMerge_8	5000000.00	root		
+IndexMerge_8	4999999.00	root		
 ├─IndexRangeScan_5(Build)	49.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,50), keep order:false
 ├─IndexRangeScan_6(Build)	4999999.00	cop[tikv]	table:t, index:tc(c)	range:[-inf,5000000), keep order:false
-└─TableRowIDScan_7(Probe)	5000000.00	cop[tikv]	table:t	keep order:false
+└─TableRowIDScan_7(Probe)	4999999.00	cop[tikv]	table:t	keep order:false
 explain select /*+ use_index_merge(t, tb, tc) */ * from t where (b < 10000 or c < 10000) and (a < 10 or d < 10) and f < 10;
 id	estRows	task	access object	operator info
 IndexMerge_9	0.00	root		
 ├─IndexRangeScan_5(Build)	9999.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,10000), keep order:false
 ├─IndexRangeScan_6(Build)	9999.00	cop[tikv]	table:t, index:tc(c)	range:[-inf,10000), keep order:false
 └─Selection_8(Probe)	0.00	cop[tikv]		lt(test.t.f, 10), or(lt(test.t.a, 10), lt(test.t.d, 10))
-  └─TableRowIDScan_7	19998.00	cop[tikv]	table:t	keep order:false
+  └─TableRowIDScan_7	19978.00	cop[tikv]	table:t	keep order:false
 explain select /*+ use_index_merge(t, tb) */ * from t where b < 50 or c < 5000000;
 id	estRows	task	access object	operator info
 TableReader_7	4999999.00	root		data:Selection_6
@@ -122,7 +122,7 @@ TableReader_7	4999999.00	root		data:Selection_6
   └─TableFullScan_5	5000000.00	cop[tikv]	table:t	keep order:false
 explain select /*+ use_index_merge(t, primary, tb) */ * from t where a < 50 or b < 5000000;
 id	estRows	task	access object	operator info
-IndexMerge_8	5000000.00	root		
+IndexMerge_8	4999999.00	root		
 ├─TableRangeScan_5(Build)	49.00	cop[tikv]	table:t	range:[-inf,50), keep order:false
 ├─IndexRangeScan_6(Build)	4999999.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,5000000), keep order:false
-└─TableRowIDScan_7(Probe)	5000000.00	cop[tikv]	table:t	keep order:false
+└─TableRowIDScan_7(Probe)	4999999.00	cop[tikv]	table:t	keep order:false
