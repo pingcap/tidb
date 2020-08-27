@@ -5,8 +5,8 @@
       {
         "SQL": "explain select * from t where t.a > 1 and t.b = \"flash\" or t.a + 3 * t.a = 5",
         "Plan": [
-          "TableReader_7 8000.00 root  data:Selection_6",
-          "└─Selection_6 8000.00 cop[tiflash]  or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
+          "TableReader_7 8000.67 root  data:Selection_6",
+          "└─Selection_6 8000.67 cop[tiflash]  or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
           "  └─TableFullScan_5 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -16,6 +16,27 @@
           "Selection_7 10000.00 root  eq(plus(cast(test.t.a), 3), 5.1)",
           "└─TableReader_6 10000.00 root  data:TableFullScan_5",
           "  └─TableFullScan_5 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where b > 'a' order by convert(b, unsigned) limit 2",
+        "Plan": [
+          "Projection_17 2.00 root  test.t.a, test.t.b",
+          "└─TopN_8 2.00 root  Column#3, offset:0, count:2",
+          "  └─Projection_18 3333.33 root  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
+          "    └─TableReader_13 3333.33 root  data:Selection_12",
+	  "      └─Selection_12 3333.33 cop[tiflash]  gt(test.t.b, \"a\")",
+	  "        └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where b > 'a' order by b limit 2",
+        "Plan": [
+          "TopN_8 2.00 root  test.t.b, offset:0, count:2",
+          "└─TableReader_17 2.00 root  data:TopN_16",
+          "  └─TopN_16 2.00 cop[tiflash]  test.t.b, offset:0, count:2",
+	  "    └─Selection_15 3333.33 cop[tiflash]  gt(test.t.b, \"a\")",
+          "      └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -29,7 +50,7 @@
           "StreamAgg_32 1.00 root  funcs:count(Column#14)->Column#11",
           "└─TableReader_33 1.00 root  data:StreamAgg_13",
           "  └─StreamAgg_13 1.00 cop[tiflash]  funcs:count(1)->Column#14",
-	  "    └─BroadcastJoin_31 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "    └─BroadcastJoin_31 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
           "      ├─Selection_23(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
           "      │ └─TableFullScan_22 2.00 cop[tiflash] table:d1_t keep order:false, global read",
           "      └─Selection_21(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",

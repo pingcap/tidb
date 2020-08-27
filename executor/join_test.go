@@ -412,7 +412,7 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	result = tk.MustQuery("select * from t a , t1 b where (a.c1, a.c2) = (b.c1, b.c2);")
 	result.Check(testkit.Rows("1 2 1 2"))
 
-	/* Enable & fix this test after https://github.com/pingcap/tidb/issues/11895 is fixed.
+	/* Issue 11895 */
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 bigint unsigned);")
@@ -421,9 +421,8 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	tk.MustExec("insert into t1 value(-1);")
 	result = tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;")
 	c.Check(len(result.Rows()), Equals, 1)
-	*/
 
-	/* https://github.com/pingcap/tidb/issues/11896
+	/* Issues 11896 */
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t(c1 bigint);")
@@ -432,7 +431,6 @@ func (s *testSuiteJoin2) TestJoinCast(c *C) {
 	tk.MustExec("insert into t1 value(1);")
 	result = tk.MustQuery("select * from t, t1 where t.c1 = t1.c1;")
 	c.Check(len(result.Rows()), Equals, 1)
-	*/
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("drop table if exists t1;")
@@ -1881,6 +1879,15 @@ func (s *testSuiteJoin2) TestNullEmptyAwareSemiJoin(c *C) {
 			result.Check(results[i].result)
 		}
 	}
+
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("insert into t1 values(1),(2)")
+	tk.MustExec("insert into t2 values(1),(null)")
+	tk.MustQuery("select * from t1 where a not in (select a from t2 where t1.a = t2.a)").Check(testkit.Rows(
+		"2",
+	))
 }
 
 func (s *testSuiteJoin1) TestScalarFuncNullSemiJoin(c *C) {
@@ -2231,4 +2238,34 @@ func (s *testSuiteJoin3) TestIssue11896(c *C) {
 	tk.MustExec("insert into t1 value(1)")
 	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
 		testkit.Rows("1 \x01"))
+}
+
+func (s *testSuiteJoin3) TestIssue19498(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c_int int, primary key (c_int));")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4)")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (c_str varchar(40));")
+	tk.MustExec("insert into t2 values ('zen sammet');")
+	tk.MustExec("insert into t2 values ('happy fermat');")
+	tk.MustExec("insert into t2 values ('happy archimedes');")
+	tk.MustExec("insert into t2 values ('happy hypatia');")
+
+	tk.MustExec("drop table if exists t3;")
+	tk.MustExec("create table t3 (c_int int, c_str varchar(40), primary key (c_int), key (c_str));")
+	tk.MustExec("insert into t3 values (1, 'sweet hoover');")
+	tk.MustExec("insert into t3 values (2, 'awesome elion');")
+	tk.MustExec("insert into t3 values (3, 'hungry khayyam');")
+	tk.MustExec("insert into t3 values (4, 'objective kapitsa');")
+
+	rs := tk.MustQuery("select c_str, (select /*+ INL_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;")
+	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
+
+	rs = tk.MustQuery("select c_str, (select /*+ INL_HASH_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;")
+	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
+
+	rs = tk.MustQuery("select c_str, (select /*+ INL_MERGE_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;")
+	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
 }

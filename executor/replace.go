@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/trace"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -180,6 +181,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	 * See http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
 	 */
 
+	defer trace.StartRegion(ctx, "ReplaceExec").End()
 	// Get keys need to be checked.
 	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, newRows)
 	if err != nil {
@@ -191,6 +193,13 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 		return err
 	}
 	txnSize := txn.Size()
+
+	if e.collectRuntimeStatsEnabled() {
+		if snapshot := txn.GetSnapshot(); snapshot != nil {
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(kv.CollectRuntimeStats)
+		}
+	}
 
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
