@@ -1203,66 +1203,13 @@ func buildTableInfo(ctx sessionctx.Context, d *ddl, tableName model.CIStr, cols 
 	return
 }
 
-func (d *ddl) CreateTableWithLike(ctx sessionctx.Context, ident, referIdent ast.Ident, ifNotExists bool) error {
-	is := d.GetInfoSchemaWithInterceptor(ctx)
-	_, ok := is.SchemaByName(referIdent.Schema)
-	if !ok {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
-	}
-	referTbl, err := is.TableByName(referIdent.Schema, referIdent.Name)
-	if err != nil {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
-	}
-	schema, ok := is.SchemaByName(ident.Schema)
-	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
-	}
-	if is.TableExists(ident.Schema, ident.Name) {
-		if ifNotExists {
-			ctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrTableExists.GenWithStackByArgs(ident))
-			return nil
-		}
-		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
-	}
-
-	tblInfo := buildTableInfoWithLike(ident, referTbl.Meta())
-	count := 1
-	if tblInfo.Partition != nil {
-		count += len(tblInfo.Partition.Definitions)
-	}
-	var genIDs []int64
-	genIDs, err = d.genGlobalIDs(count)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tblInfo.ID = genIDs[0]
-	if tblInfo.Partition != nil {
-		for i := 0; i < len(tblInfo.Partition.Definitions); i++ {
-			tblInfo.Partition.Definitions[i].ID = genIDs[i+1]
-		}
-	}
-
-	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    tblInfo.ID,
-		SchemaName: schema.Name.L,
-		Type:       model.ActionCreateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tblInfo},
-	}
-
-	err = d.doDDLJob(ctx, job)
-	err = d.callHookOnChanged(err)
-	return errors.Trace(err)
-}
-
 // checkTableInfoValid uses to check table info valid. This is used to validate table info.
 func checkTableInfoValid(tblInfo *model.TableInfo) error {
 	_, err := tables.TableFromMeta(nil, tblInfo)
 	return err
 }
 
-func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) model.TableInfo {
+func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) *model.TableInfo {
 	tblInfo := *referTblInfo
 	// Check non-public column and adjust column offset.
 	newColumns := referTblInfo.Cols()
@@ -1283,7 +1230,7 @@ func buildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo) mode
 		copy(pi.Definitions, referTblInfo.Partition.Definitions)
 		tblInfo.Partition = &pi
 	}
-	return tblInfo
+	return &tblInfo
 }
 
 // BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
@@ -1387,14 +1334,23 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, d *ddl, s *ast.CreateTableS
 
 func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	if s.ReferTable != nil {
-		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
-		return d.CreateTableWithLike(ctx, ident, referIdent, s.IfNotExists)
-	}
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	var referTbl table.Table
+	if s.ReferTable != nil {
+		referIdent := ast.Ident{Schema: s.ReferTable.Schema, Name: s.ReferTable.Name}
+		_, ok := is.SchemaByName(referIdent.Schema)
+		if !ok {
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
+		}
+		referTbl, err = is.TableByName(referIdent.Schema, referIdent.Name)
+		if err != nil {
+			return infoschema.ErrTableNotExists.GenWithStackByArgs(referIdent.Schema, referIdent.Name)
+		}
 	}
 	if is.TableExists(ident.Schema, ident.Name) {
 		if s.IfNotExists {
@@ -1404,7 +1360,29 @@ func (d *ddl) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err e
 		return infoschema.ErrTableExists.GenWithStackByArgs(ident)
 	}
 
-	tbInfo, err := buildTableInfoWithCheck(ctx, d, s, schema.Charset, schema.Collate)
+	// build tableInfo
+	var tbInfo *model.TableInfo
+	if s.ReferTable != nil {
+		tbInfo = buildTableInfoWithLike(ident, referTbl.Meta())
+		count := 1
+		if tbInfo.Partition != nil {
+			count += len(tbInfo.Partition.Definitions)
+		}
+		var genIDs []int64
+		genIDs, err = d.genGlobalIDs(count)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tbInfo.ID = genIDs[0]
+		if tbInfo.Partition != nil {
+			for i := 0; i < len(tbInfo.Partition.Definitions); i++ {
+				tbInfo.Partition.Definitions[i].ID = genIDs[i+1]
+			}
+		}
+	} else {
+		tbInfo, err = buildTableInfoWithCheck(ctx, d, s, schema.Charset, schema.Collate)
+	}
+
 	if err != nil {
 		return errors.Trace(err)
 	}
