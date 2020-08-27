@@ -55,7 +55,8 @@ var (
 )
 
 // InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, LEAD and LAG.
-func InferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
+func InferType4ControlFuncs(lexp, rexp Expression) *types.FieldType {
+	lhs, rhs := lexp.GetType(), rexp.GetType()
 	resultFieldType := &types.FieldType{}
 	if lhs.Tp == mysql.TypeNull {
 		*resultFieldType = *rhs
@@ -80,12 +81,14 @@ func InferType4ControlFuncs(lhs, rhs *types.FieldType) *types.FieldType {
 			}
 		}
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
-			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = charset.CharsetUTF8MB4, charset.CollationUTF8MB4, 0
+			resultFieldType.Collate, resultFieldType.Charset, _, _ = inferCollation(lexp, rexp)
+			resultFieldType.Flag = 0
 			if mysql.HasBinaryFlag(lhs.Flag) || !types.IsNonBinaryStr(rhs) {
 				resultFieldType.Flag |= mysql.BinaryFlag
 			}
 		} else if types.IsNonBinaryStr(rhs) && !types.IsBinaryStr(lhs) {
-			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = charset.CharsetUTF8MB4, charset.CollationUTF8MB4, 0
+			resultFieldType.Collate, resultFieldType.Charset, _, _ = inferCollation(lexp, rexp)
+			resultFieldType.Flag = 0
 			if mysql.HasBinaryFlag(rhs.Flag) || !types.IsNonBinaryStr(lhs) {
 				resultFieldType.Flag |= mysql.BinaryFlag
 			}
@@ -484,7 +487,7 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	retTp := InferType4ControlFuncs(args[1].GetType(), args[2].GetType())
+	retTp := InferType4ControlFuncs(args[1], args[2])
 	evalTps := retTp.EvalType()
 	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
 	if err != nil {
@@ -701,7 +704,7 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		return nil, err
 	}
 	lhs, rhs := args[0].GetType(), args[1].GetType()
-	retTp := InferType4ControlFuncs(lhs, rhs)
+	retTp := InferType4ControlFuncs(args[0], args[1])
 	retTp.Flag |= (lhs.Flag & mysql.NotNullFlag) | (rhs.Flag & mysql.NotNullFlag)
 	if lhs.Tp == mysql.TypeNull && rhs.Tp == mysql.TypeNull {
 		retTp.Tp = mysql.TypeNull
