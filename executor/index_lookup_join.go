@@ -664,5 +664,16 @@ func (e *IndexLookUpJoin) Close() error {
 	}
 	e.workerWg.Wait()
 	e.memTracker = nil
+<<<<<<< HEAD
 	return e.children[0].Close()
+=======
+	e.task = nil
+	if e.runtimeStats != nil {
+		concurrency := cap(e.resultCh)
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
+	}
+	return e.baseExecutor.Close()
+>>>>>>> 1417991... executor: reset INLJ.task when Close (#19513)
 }
