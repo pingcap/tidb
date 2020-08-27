@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"runtime"
+	"runtime/trace"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -323,6 +324,7 @@ func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowPtr chunk
 }
 
 func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
+	defer trace.StartRegion(ctx, "IndexLookupJoinOuterWorker").End()
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -438,6 +440,7 @@ func (ow *outerWorker) increaseBatchSize() {
 }
 
 func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
+	defer trace.StartRegion(ctx, "IndexLookupJoinInnerWorker").End()
 	var task *lookUpJoinTask
 	defer func() {
 		if r := recover(); r != nil {
