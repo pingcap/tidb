@@ -939,6 +939,13 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 		return nil
 	}
 
+	return b.buildUnionScanFromReader(reader, v)
+}
+
+// buildUnionScanFromReader builds union scan executor from child executor.
+// Note that this function may be called by inner workers of index lookup join concurrently.
+// Be careful to avoid data race.
+func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannercore.PhysicalUnionScan) Executor {
 	// Adjust UnionScan->PartitionTable->Reader
 	// to PartitionTable->UnionScan->Reader
 	// The build of UnionScan executor is delay to the nextPartition() function
@@ -952,14 +959,16 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 		}
 		return x
 	}
-
-	return b.buildUnionScanFromReader(reader, v)
-}
-
-// buildUnionScanFromReader builds union scan executor from child executor.
-// Note that this function may be called by inner workers of index lookup join concurrently.
-// Be careful to avoid data race.
-func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannercore.PhysicalUnionScan) Executor {
+	// If reader is union, it means a partitiont table and we should transfer as above.
+	if x, ok := reader.(*UnionExec); ok {
+		for i, child := range x.children {
+			x.children[i] = b.buildUnionScanFromReader(child, v)
+			if b.err != nil {
+				return nil
+			}
+		}
+		return x
+	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), reader)}
 	// Get the handle column index of the below Plan.
 	us.belowHandleCols = v.HandleCols
@@ -2529,6 +2538,40 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return ret
 	}
 
+	if v.StoreType == kv.TiFlash {
+		tmp, _ := b.is.TableByID(ts.Table.ID)
+		tbl := tmp.(table.PartitionedTable)
+		partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		partsExecutor := make([]Executor, 0, len(partitions))
+		for _, part := range partitions {
+			exec, err := buildNoRangeTableReader(b, v)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+			exec.ranges = ts.Ranges
+			nexec, err := nextPartitionForTableReader{exec: exec}.nextPartition(context.Background(), part)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+			partsExecutor = append(partsExecutor, nexec)
+		}
+		if len(partsExecutor) == 0 {
+			return &TableDualExec{baseExecutor: *ret.base()}
+		}
+		if len(partsExecutor) == 1 {
+			return partsExecutor[0]
+		}
+		return &UnionExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), partsExecutor...),
+		}
+	}
+
 	nextPartition := nextPartitionForTableReader{ret}
 	exec, err := buildPartitionTable(b, ts.Table, &v.PartitionInfo, ret, nextPartition)
 	if err != nil {
@@ -2961,6 +3004,7 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
+
 	ret := builder.buildUnionScanFromReader(reader, v)
 	if us, ok := ret.(*UnionScanExec); ok {
 		err = us.open(ctx)
@@ -3201,7 +3245,7 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*indexJoin
 		return retRanges, nil
 	}
 
-	return ranger.UnionRanges(ctx.GetSessionVars().StmtCtx, tmpDatumRanges)
+	return ranger.UnionRanges(ctx.GetSessionVars().StmtCtx, tmpDatumRanges, true)
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
@@ -3255,7 +3299,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		return kvRanges, nil
 	}
 
-	tmpDatumRanges, err = ranger.UnionRanges(ctx.GetSessionVars().StmtCtx, tmpDatumRanges)
+	tmpDatumRanges, err = ranger.UnionRanges(ctx.GetSessionVars().StmtCtx, tmpDatumRanges, true)
 	if err != nil {
 		return nil, err
 	}
