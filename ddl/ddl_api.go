@@ -60,7 +60,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const expressionIndexPrefix = "_V$"
+const (
+	expressionIndexPrefix = "_V$"
+	changingColumnPrefix  = "_Col$_"
+	changingIndexPrefix   = "_Idx$_"
+)
 
 func (d *ddl) CreateSchema(ctx sessionctx.Context, schema model.CIStr, charsetInfo *ast.CharsetOpt) error {
 	dbInfo := &model.DBInfo{Name: schema}
@@ -384,6 +388,10 @@ func buildColumnAndConstraint(
 	tblCharset string,
 	tblCollate string,
 ) (*table.Column, []*ast.Constraint, error) {
+	if colName := colDef.Name.Name.L; colName == model.ExtraHandleName.L {
+		return nil, nil, ErrWrongColumnName.GenWithStackByArgs(colName)
+	}
+
 	// specifiedCollate refers to the last collate specified in colDef.Options.
 	chs, coll, err := getCharsetAndCollateInColumnDef(colDef)
 	if err != nil {
@@ -3186,8 +3194,9 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 
 // CheckModifyTypeCompatible checks whether changes column type to another is compatible considering
 // field length and precision.
-func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) error {
+func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (allowedChangeColumnValueMsg string, err error) {
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
+	var isIntType bool
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
 		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
@@ -3195,68 +3204,87 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) err
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		default:
-			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+			isIntType = true
 		default:
-			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	case mysql.TypeEnum:
 		if origin.Tp != to.Tp {
 			msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
-			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		if len(to.Elems) < len(origin.Elems) {
 			msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
-			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		for index, originElem := range origin.Elems {
 			toElem := to.Elems[index]
 			if originElem != toElem {
 				msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
-				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+				return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 		}
 	case mysql.TypeNewDecimal:
 		// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
 		if to.Flen != origin.Flen || to.Decimal != origin.Decimal {
-			return errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")
 		}
 	default:
 		if origin.Tp != to.Tp {
-			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 	}
 
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
-		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		if isIntType {
+			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		}
+		return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 	if to.Decimal > 0 && to.Decimal < origin.Decimal {
 		msg := fmt.Sprintf("decimal %d is less than origin %d", to.Decimal, origin.Decimal)
-		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 
 	toUnsigned := mysql.HasUnsignedFlag(to.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
 	if originUnsigned != toUnsigned {
 		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
-		return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		if isIntType {
+			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		}
+		return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
-	return nil
+	return "", nil
 }
 
 // checkModifyTypes checks if the 'origin' type can be modified to 'to' type with out the need to
 // change or check existing data in the table.
 // It returns error if the two types has incompatible Charset and Collation, different sign, different
 // digital/string types, or length of new Flen and Decimal is less than origin.
-func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
-	err := CheckModifyTypeCompatible(origin, to)
+func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
+	changeColumnValueMsg, err := CheckModifyTypeCompatible(origin, to)
 	if err != nil {
-		return errors.Trace(err)
+		enableChangeColumnType := ctx.GetSessionVars().EnableChangeColumnType
+		if len(changeColumnValueMsg) == 0 {
+			return errors.Trace(err)
+		}
+
+		if !enableChangeColumnType {
+			msg := fmt.Sprintf("%s, and tidb_enable_change_column_type is false", changeColumnValueMsg)
+			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		} else if mysql.HasPriKeyFlag(origin.Flag) {
+			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
+			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		}
 	}
+
 	err = checkModifyCharsetAndCollation(to.Charset, to.Collate, origin.Charset, origin.Collate, needRewriteCollationData)
 	return errors.Trace(err)
 }
@@ -3400,6 +3428,9 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name)
 	}
 	newColName := specNewColumn.Name.Name
+	if newColName.L == model.ExtraHandleName.L {
+		return nil, ErrWrongColumnName.GenWithStackByArgs(newColName.L)
+	}
 	// If we want to rename the column name, we need to check whether it already exists.
 	if newColName.L != originalColName.L {
 		c := table.FindCol(t.Cols(), newColName.L)
@@ -3470,12 +3501,21 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(&col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
+	if err = checkModifyTypes(ctx, &col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		if strings.Contains(err.Error(), "Unsupported modifying collation") {
 			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
 			err = errUnsupportedModifyCollation.GenWithStack(colErrMsg, col.Name.L, col.Collate, newCol.Collate)
 		}
 		return nil, errors.Trace(err)
+	}
+	if ctx.GetSessionVars().EnableChangeColumnType && needChangeColumnData(col.ColumnInfo, newCol.ColumnInfo) {
+		if newCol.IsGenerated() || col.IsGenerated() {
+			// TODO: Make it compatible with MySQL error.
+			msg := fmt.Sprintf("tidb_enable_change_column_type is true, newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
+			return nil, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+		} else if t.Meta().Partition != nil {
+			return nil, errUnsupportedModifyColumn.GenWithStackByArgs("tidb_enable_change_column_type is true, table is partition table")
+		}
 	}
 
 	// Copy index related options to the new spec.
@@ -3656,6 +3696,9 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 	newColName := spec.NewColumnName.Name
 	if oldColName.L == newColName.L {
 		return nil
+	}
+	if newColName.L == model.ExtraHandleName.L {
+		return ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
 
 	schema, tbl, err := d.getSchemaAndTableByIdent(ctx, ident)

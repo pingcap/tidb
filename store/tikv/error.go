@@ -39,6 +39,7 @@ var (
 	ErrRegionUnavailable           = terror.ClassTiKV.New(mysql.ErrRegionUnavailable, mysql.MySQLErrName[mysql.ErrRegionUnavailable])
 	ErrTiKVServerBusy              = terror.ClassTiKV.New(mysql.ErrTiKVServerBusy, mysql.MySQLErrName[mysql.ErrTiKVServerBusy])
 	ErrTiKVStaleCommand            = terror.ClassTiKV.New(mysql.ErrTiKVStaleCommand, mysql.MySQLErrName[mysql.ErrTiKVStaleCommand])
+	ErrTiKVMaxTimestampNotSynced   = terror.ClassTiKV.New(mysql.ErrTiKVMaxTimestampNotSynced, mysql.MySQLErrName[mysql.ErrTiKVMaxTimestampNotSynced])
 	ErrGCTooEarly                  = terror.ClassTiKV.New(mysql.ErrGCTooEarly, mysql.MySQLErrName[mysql.ErrGCTooEarly])
 	ErrQueryInterrupted            = terror.ClassTiKV.New(mysql.ErrQueryInterrupted, mysql.MySQLErrName[mysql.ErrQueryInterrupted])
 	ErrLockAcquireFailAndNoWaitSet = terror.ClassTiKV.New(mysql.ErrLockAcquireFailAndNoWaitSet, mysql.MySQLErrName[mysql.ErrLockAcquireFailAndNoWaitSet])
