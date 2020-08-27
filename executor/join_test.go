@@ -879,6 +879,65 @@ func (s *testSuiteJoin3) TestSubquery(c *C) {
 	tk.MustExec("insert into t2 values(1)")
 	tk.MustQuery("select * from t1 where a in (select a from t2)").Check(testkit.Rows("1"))
 
+	tk.MustExec("insert into t2 value(null)")
+	tk.MustQuery("select * from t1 where 1 in (select b from t2)").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t1 where 1 not in (select b from t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t1 where 2 not in (select b from t2)").Check(testkit.Rows())
+	tk.MustQuery("select * from t1 where 2 in (select b from t2)").Check(testkit.Rows())
+	tk.MustQuery("select 1 in (select b from t2) from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 in (select 1 from t2) from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 not in (select b from t2) from t1").Check(testkit.Rows("0"))
+	tk.MustQuery("select 1 not in (select 1 from t2) from t1").Check(testkit.Rows("0"))
+
+	tk.MustExec("delete from t2 where b=1")
+	tk.MustQuery("select 1 in (select b from t2) from t1").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select 1 not in (select b from t2) from t1").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select 1 not in (select 1 from t2) from t1").Check(testkit.Rows("0"))
+	tk.MustQuery("select 1 in (select 1 from t2) from t1").Check(testkit.Rows("1"))
+	tk.MustQuery("select 1 not in (select null from t1) from t2").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select 1 in (select null from t1) from t2").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists s")
+	tk.MustExec("create table s(a int not null, b int)")
+	tk.MustExec("set sql_mode = ''")
+	tk.MustQuery("select (2,0) in (select s.a, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) not in (select s.a, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) = any (select s.a, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) != all (select s.a, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) in (select s.b, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) not in (select s.b, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) = any (select s.b, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select (2,0) != all (select s.b, min(s.b) from s) as f").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into s values(1,null)")
+	tk.MustQuery("select 1 in (select b from s)").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1),(null)")
+	tk.MustQuery("select a not in (select 1) from t").Sort().Check(testkit.Rows(
+		"0",
+		"<nil>",
+	))
+	tk.MustQuery("select 1 not in (select null from t t1) from t").Check(testkit.Rows(
+		"<nil>",
+		"<nil>",
+	))
+	tk.MustQuery("select 1 in (select null from t t1) from t").Check(testkit.Rows(
+		"<nil>",
+		"<nil>",
+	))
+	tk.MustQuery("select a in (select 0) xx from (select null as a) x").Check(testkit.Rows("<nil>"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1,null),(null, null),(null, 2)")
+	tk.MustQuery("select * from t t1 where (2 in (select a from t t2 where (t2.b=t1.b) is null))").Check(testkit.Rows())
+	tk.MustQuery("select (t2.a in (select t1.a from t t1)) is true from t t2").Sort().Check(testkit.Rows(
+		"0",
+		"0",
+		"1",
+	))
+
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
 

@@ -19,6 +19,7 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -271,4 +272,42 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx sessionctx.Context, sch
 		return types.NewDatum(0), true
 	}
 	return con.Value, true
+}
+
+// UpdateNotNullFlag4RetType checks if we should remove the NotNull flag for the return type of the agg.
+func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool) error {
+	var removeNotNull bool
+	switch a.Name {
+	case ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor,
+		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue, ast.WindowFuncRowNumber,
+		ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncCumeDist, ast.WindowFuncNtile, ast.WindowFuncPercentRank,
+		ast.WindowFuncLead, ast.WindowFuncLag, ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncJsonObjectAgg:
+		removeNotNull = false
+	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
+		if !hasGroupBy {
+			removeNotNull = true
+		}
+	// `select max(a) from empty_tbl` returns `null`, while `select max(a) from empty_tbl group by b` returns empty.
+	case ast.AggFuncMax, ast.AggFuncMin:
+		if !hasGroupBy && a.RetTp.Tp != mysql.TypeBit {
+			removeNotNull = true
+		}
+	// `select distinct a from empty_tbl` returns empty
+	// `select a from empty_tbl group by b` returns empty
+	// `select a, max(a) from empty_tbl` returns `(null, null)`
+	// `select a, max(a) from empty_tbl group by b` returns empty
+	// `select a, count(a) from empty_tbl` returns `(null, 0)`
+	// `select a, count(a) from empty_tbl group by b` returns empty
+	case ast.AggFuncFirstRow:
+		if !allAggsFirstRow && !hasGroupBy {
+			removeNotNull = true
+		}
+	default:
+		return errors.Errorf("unsupported agg function: %s", a.Name)
+	}
+	if removeNotNull {
+		a.RetTp = a.RetTp.Clone()
+		a.RetTp.Flag &^= mysql.NotNullFlag
+	}
+	return nil
 }

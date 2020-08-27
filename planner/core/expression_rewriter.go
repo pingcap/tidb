@@ -410,16 +410,41 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 }
 
 func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r expression.Expression, not bool) {
-	var condition expression.Expression
-	if rCol, ok := r.(*expression.Column); ok && (er.asScalar || not) {
-		// If both input columns of `!= all / = any` expression are not null, we can treat the expression
-		// as normal column equal condition.
-		if lCol, ok := l.(*expression.Column); !ok || !mysql.HasNotNullFlag(lCol.GetType().Flag) || !mysql.HasNotNullFlag(rCol.GetType().Flag) {
-			rColCopy := *rCol
-			rColCopy.InOperand = true
-			r = &rColCopy
+	if er.asScalar || not {
+		if expression.GetRowLen(r) == 1 {
+			rCol := r.(*expression.Column)
+			// If both input columns of `!= all / = any` expression are not null, we can treat the expression
+			// as normal column equal condition.
+			if !expression.ExprNotNull(l) || !expression.ExprNotNull(rCol) {
+				rColCopy := *rCol
+				rColCopy.InOperand = true
+				r = &rColCopy
+			}
+		} else {
+			rowFunc := r.(*expression.ScalarFunction)
+			rargs := rowFunc.GetArgs()
+			args := make([]expression.Expression, 0, len(rargs))
+			modified := false
+			for i, rarg := range rargs {
+				larg := expression.GetFuncArg(l, i)
+				if !expression.ExprNotNull(larg) || !expression.ExprNotNull(rarg) {
+					rCol := rarg.(*expression.Column)
+					rColCopy := *rCol
+					rColCopy.InOperand = true
+					rarg = &rColCopy
+					modified = true
+				}
+				args = append(args, rarg)
+			}
+			if modified {
+				r, er.err = er.newFunction(ast.RowFunc, args[0].GetType(), args...)
+				if er.err != nil {
+					return
+				}
+			}
 		}
 	}
+	var condition expression.Expression
 	condition, er.err = er.constructBinaryOpFunction(l, r, ast.EQ)
 	if er.err != nil {
 		return
@@ -790,7 +815,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		if v.Not || asScalar {
 			// If both input columns of `in` expression are not null, we can treat the expression
 			// as normal column equal condition instead.
-			if !mysql.HasNotNullFlag(lexpr.GetType().Flag) || !mysql.HasNotNullFlag(rCol.GetType().Flag) {
+			if !expression.ExprNotNull(lexpr) || !expression.ExprNotNull(rCol) {
 				rColCopy := *rCol
 				rColCopy.InOperand = true
 				rexpr = &rColCopy
@@ -798,7 +823,13 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		}
 	} else {
 		args := make([]expression.Expression, 0, np.Schema().Len())
-		for _, col := range np.Schema().Columns {
+		for i, col := range np.Schema().Columns {
+			larg := expression.GetFuncArg(lexpr, i)
+			if !expression.ExprNotNull(larg) || !expression.ExprNotNull(col) {
+				rarg := *col
+				rarg.InOperand = true
+				col = &rarg
+			}
 			args = append(args, col)
 		}
 		rexpr, er.err = er.newFunction(ast.RowFunc, args[0].GetType(), args...)

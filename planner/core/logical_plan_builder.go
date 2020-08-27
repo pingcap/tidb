@@ -189,6 +189,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	// aggIdxMap maps the old index to new index after applying common aggregation functions elimination.
 	aggIndexMap := make(map[int]int)
 
+	allAggsFirstRow := true
 	for i, aggFunc := range aggFuncList {
 		newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
 		for _, arg := range aggFunc.Args {
@@ -202,6 +203,9 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		newFunc, err := aggregation.NewAggFuncDesc(b.ctx, aggFunc.F, newArgList, aggFunc.Distinct)
 		if err != nil {
 			return nil, nil, err
+		}
+		if newFunc.Name != ast.AggFuncFirstRow {
+			allAggsFirstRow = false
 		}
 		if aggFunc.Order != nil {
 			trueArgs := aggFunc.Args[:len(aggFunc.Args)-1] // the last argument is SEPARATOR, remote it.
@@ -253,6 +257,14 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 		newCol.RetType = newFunc.RetTp
 		schema4Agg.Append(newCol)
 		names = append(names, p.OutputNames()[i])
+	}
+	hasGroupBy := len(gbyItems) > 0
+	for i, aggFunc := range plan4Agg.AggFuncs {
+		err := aggFunc.UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow)
+		if err != nil {
+			return nil, nil, err
+		}
+		schema4Agg.Columns[i].RetType = aggFunc.RetTp
 	}
 	plan4Agg.names = names
 	plan4Agg.SetChildren(p)
@@ -366,6 +378,15 @@ func (p *LogicalJoin) ExtractOnCondition(
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
 	for _, expr := range conditions {
+		// For queries like `select a in (select a from s where s.b = t.b) from t`,
+		// if subquery is empty caused by `s.b = t.b`, the result should always be
+		// false even if t.a is null or s.a is null. To make this join "empty aware",
+		// we should differentiate `t.a = s.a` from other column equal conditions, so
+		// we put it into OtherConditions instead of EqualConditions of join.
+		if expression.IsEQCondFromIn(expr) {
+			otherCond = append(otherCond, expr)
+			continue
+		}
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && len(binop.GetArgs()) == 2 {
 			ctx := binop.GetCtx()
@@ -392,12 +413,7 @@ func (p *LogicalJoin) ExtractOnCondition(
 							rightCond = append(rightCond, notNullExpr)
 						}
 					}
-					// For queries like `select a in (select a from s where s.b = t.b) from t`,
-					// if subquery is empty caused by `s.b = t.b`, the result should always be
-					// false even if t.a is null or s.a is null. To make this join "empty aware",
-					// we should differentiate `t.a = s.a` from other column equal conditions, so
-					// we put it into OtherConditions instead of EqualConditions of join.
-					if binop.FuncName.L == ast.EQ && !arg0.InOperand && !arg1.InOperand {
+					if binop.FuncName.L == ast.EQ {
 						cond := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
 						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 						continue
