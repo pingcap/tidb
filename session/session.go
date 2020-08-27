@@ -2097,6 +2097,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBLogDesensitization,
 	variable.TiDBEnableTelemetry,
 	variable.TiDBShardAllocateStep,
+	variable.TiDBEnableChangeColumnType,
 	variable.TiDBEnableAmendPessimisticTxn,
 }
 
