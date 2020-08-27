@@ -7071,3 +7071,16 @@ func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 	tk.MustQuery("select coercibility(1);").Check(testkit.Rows("5"))
 	tk.MustQuery("select coercibility(1=1);").Check(testkit.Rows("5"))
 }
+
+func (s *testIntegrationSuite) TestIssue19504(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c_int int, primary key (c_int));")
+	tk.MustExec("insert into t1 values (1), (2), (3);")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (c_int int, primary key (c_int));")
+	tk.MustExec("insert into t2 values (1);")
+	tk.MustQuery("select (select count(c_int) from t2 where c_int = t1.c_int) c1, (select count(1) from t2 where c_int = t1.c_int) c2 from t1;").
+		Check(testkit.Rows("1 1","0 0","0 0"))
+}
