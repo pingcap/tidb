@@ -420,6 +420,9 @@ func overrideConfig(cfg *config.Config) {
 		cfg.AdvertiseAddress = *advertiseAddress
 	}
 	if len(cfg.AdvertiseAddress) == 0 {
+		cfg.AdvertiseAddress = util.GetLocalIP()
+	}
+	if len(cfg.AdvertiseAddress) == 0 {
 		cfg.AdvertiseAddress = cfg.Host
 	}
 	var err error
