@@ -14,6 +14,7 @@
 package expression
 
 import (
+	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -212,7 +213,7 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		sc.IgnoreTruncate = origin
 	}()
 
-	for _, t := range []struct {
+	for i, t := range []struct {
 		args   []types.Datum
 		ret    int64
 		getErr bool
@@ -250,6 +251,9 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		}
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
+		if v.GetInt64() != t.ret {
+			fmt.Println(i, t)
+		}
 		c.Assert(v.GetInt64(), Equals, t.ret)
 	}
 }
