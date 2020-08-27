@@ -64,7 +64,6 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		generalMatch int
 		unicodeMatch int
 	}{
-		// general_ci and unicode_ci same
 		{"a", "", 0, 0},
 		{"a", "a", 1, 1},
 		{"a", "á", 1, 1},
@@ -82,8 +81,15 @@ func (s *testEvaluatorSerialSuites) TestCILike(c *C) {
 		{"áá", "a%_a", 0, 0},
 		{"áééáííí", "a_%a%", 1, 1},
 
-		// general_ci and unicode_ci different
+		// performs matching on a per-character basis
+		// https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
 		{"ß", "s%", 1, 0},
+		{"ß", "%s", 1, 0},
+		{"ß", "ss", 0, 0},
+		{"ß", "s", 1, 0},
+		{"ss", "%ß%", 1, 0},
+		{"ß", "_", 1, 1},
+		{"ß", "__", 0, 0},
 	}
 	for _, tt := range tests {
 		commentf := Commentf(`for input = "%s", pattern = "%s"`, tt.input, tt.pattern)
