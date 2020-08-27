@@ -2243,5 +2243,5 @@ func (s *testSuiteJoin3) TestIssue19500(c *C) {
 	tk.MustExec("create table t3 (c_int int, c_str varchar(40), key (c_str));")
 	tk.MustExec("insert into t3 values (1, 'sweet morse'),(2, 'reverent golick'),(3, 'clever rubin'),(4, 'flamboyant morse');")
 	tk.MustQuery("select (select (select sum(c_int) from t3 where t3.c_str > t2.c_str) from t2 where t2.c_int > t1.c_int order by c_int limit 1) q from t1 order by q;").
-		Check(testkit.Rows("<nil>","<nil>","3","3","3"))
+		Check(testkit.Rows("<nil>", "<nil>", "3", "3", "3"))
 }
