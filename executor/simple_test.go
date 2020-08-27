@@ -404,7 +404,7 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(sessionctx.Context)
-	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost", AuthHostname: "localhost"}
 	tk.MustExec(alterUserSQL)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("1")))
@@ -730,3 +730,57 @@ func (s *testSuite3) TestRoleAtomic(c *C) {
 	result.Check(testkit.Rows("r2"))
 	tk.MustExec("drop role r2;")
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSuite3) TestExtendedStatsPrivileges(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create user 'u1'@'%'")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil), IsTrue)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 't'")
+	tk.MustExec("grant select on test.* to 'u1'@'%'")
+	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 'stats_extended'")
+	tk.MustExec("grant insert on mysql.stats_extended to 'u1'@'%'")
+	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, "drop statistics s1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]DROP STATISTICS command denied to user 'u1'@'%' for table 'stats_extended'")
+	tk.MustExec("grant update on mysql.stats_extended to 'u1'@'%'")
+	_, err = se.Execute(ctx, "drop statistics s1")
+	c.Assert(err, IsNil)
+	tk.MustExec("drop user 'u1'@'%'")
+}
+
+func (s *testSuite3) TestIssue17247(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user 'issue17247'")
+	tk.MustExec("grant CREATE USER on *.* to 'issue17247'")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "issue17247", Hostname: "%"}, nil, nil), IsTrue)
+	tk1.MustExec("ALTER USER USER() IDENTIFIED BY 'xxx'")
+	tk1.MustExec("ALTER USER CURRENT_USER() IDENTIFIED BY 'yyy'")
+	tk1.MustExec("ALTER USER CURRENT_USER IDENTIFIED BY 'zzz'")
+	tk.MustExec("ALTER USER 'issue17247'@'%' IDENTIFIED BY 'kkk'")
+	tk.MustExec("ALTER USER 'issue17247'@'%' IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
+	// Wrong grammar
+	_, err := tk1.Exec("ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
+	c.Assert(err, NotNil)
+}
+>>>>>>> bba4c64... executor: fix alter user statement for user() and current_user() (#19345)
