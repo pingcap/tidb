@@ -4200,9 +4200,15 @@ PARTITION p2 VALUES LESS THAN (100)
 );
 desc select * from t where a = 11 and b = 1 or a = 12 and b = 1;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 TableReader_8	8000.00	root		data:Selection_7
 └─Selection_7	8000.00	cop[tikv]		or(and(eq(test.t.a, 11), eq(test.t.b, 1)), and(eq(test.t.a, 12), eq(test.t.b, 1)))
   └─TableFullScan_6	10000.00	cop[tikv]	table:t, partition:p2	keep order:false, stats:pseudo
+=======
+TableReader_7	0.02	root	partition:p2	data:Selection_6
+└─Selection_6	0.02	cop[tikv]		or(and(eq(test.t.a, 11), eq(test.t.b, 1)), and(eq(test.t.a, 12), eq(test.t.b, 1)))
+  └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+>>>>>>> b78f4896f... statistics, util/ranger: improve selectivity calculation for DNF filters (#18741)
 drop table if exists t;
 create table t (ts timestamp(3) not null default current_timestamp(3))
 partition by range (floor(unix_timestamp(ts))) (

@@ -4,9 +4,15 @@
     "Cases": [
       {
         "SQL": "explain select * from t where t.a > 1 and t.b = \"flash\" or t.a + 3 * t.a = 5",
+<<<<<<< HEAD
         "Result": [
           "TableReader_7 8000.00 root  data:Selection_6",
           "└─Selection_6 8000.00 cop[tiflash]  or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
+=======
+        "Plan": [
+          "TableReader_7 8000.67 root  data:Selection_6",
+          "└─Selection_6 8000.67 cop[tiflash]  or(and(gt(test.t.a, 1), eq(test.t.b, \"flash\")), eq(plus(test.t.a, mul(3, test.t.a)), 5))",
+>>>>>>> b78f4896f... statistics, util/ranger: improve selectivity calculation for DNF filters (#18741)
           "  └─TableFullScan_5 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
@@ -48,6 +54,7 @@
       {
         "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
         "Plan": [
+<<<<<<< HEAD
           "StreamAgg_24 1.00 root  funcs:count(Column#13)->Column#11",
           "└─TableReader_25 1.00 root  data:StreamAgg_9",
           "  └─StreamAgg_9 1.00 batchCop[tiflash]  funcs:count(1)->Column#13",
@@ -56,6 +63,16 @@
           "      │ └─TableFullScan_18 2.00 batchCop[tiflash] table:d1_t keep order:false, global read",
           "      └─Selection_17(Probe) 8.00 batchCop[tiflash]  not(isnull(test.fact_t.d1_k))",
           "        └─TableFullScan_16 8.00 batchCop[tiflash] table:fact_t keep order:false"
+=======
+          "StreamAgg_32 1.00 root  funcs:count(Column#14)->Column#11",
+          "└─TableReader_33 1.00 root  data:StreamAgg_13",
+          "  └─StreamAgg_13 1.00 cop[tiflash]  funcs:count(1)->Column#14",
+          "    └─BroadcastJoin_31 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─Selection_23(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │ └─TableFullScan_22 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─Selection_21(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_20 8.00 cop[tiflash] table:fact_t keep order:false"
+>>>>>>> b78f4896f... statistics, util/ranger: improve selectivity calculation for DNF filters (#18741)
         ]
       },
       {

@@ -583,6 +583,7 @@ func (s *testPointGetSuite) TestWithTiDBSnapshot(c *C) {
 	tk.MustExec("rollback")
 }
 
+<<<<<<< HEAD
 func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
 	var wg sync.WaitGroup
 	errCh := make(chan error)
@@ -696,6 +697,24 @@ func (s *testPointGetSuite) TestPointGetLockExistKey(c *C) {
 		wg.Add(1)
 		tableName := fmt.Sprintf("t_%d", i)
 		go testLock(one.rc, one.key, tableName)
+=======
+func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`create table t1 (a int, b decimal(10,0), c int, primary key(a,b))`)
+	tk.MustExec(`create table t2 (a varchar(20), b int, primary key(a), unique key(b))`)
+	tk.MustExec(`insert into t1 values(1,1,1),(2,2,2),(3,3,3)`)
+	tk.MustExec(`insert into t2 values('111',1),('222',2),('333',3)`)
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+>>>>>>> b78f4896f... statistics, util/ranger: improve selectivity calculation for DNF filters (#18741)
 	}
 
 	go func() {
