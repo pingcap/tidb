@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync"
@@ -118,6 +119,7 @@ type Session interface {
 	SetSessionManager(util.SessionManager)
 	Close()
 	Auth(user *auth.UserIdentity, auth []byte, salt []byte) bool
+	AuthWithoutVerification(user *auth.UserIdentity) bool
 	ShowProcess() *util.ProcessInfo
 	// PrepareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context)
@@ -163,6 +165,7 @@ type session struct {
 		values map[fmt.Stringer]interface{}
 	}
 
+	currentCtx  context.Context // only use for runtime.trace, Please NEVER use it.
 	currentPlan plannercore.Plan
 
 	store kv.Storage
@@ -426,7 +429,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
-	s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+	if s.GetSessionVars().EnableAmendPessimisticTxn {
+		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+	}
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -653,11 +658,15 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
+				sql := sqlForLog(st.GetTextToLog())
+				if !sessVars.EnableLogDesensitization {
+					sql += sessVars.PreparedParams.String()
+				}
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i),
-					zap.String("sql", sqlForLog(st.OriginText())+sessVars.PreparedParams.String()))
+					zap.String("sql", sql))
 			} else {
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -998,6 +1007,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
+	defer trace.StartRegion(ctx, "ParseSQL").End()
 	s.parser.SetSQLMode(s.sessionVars.SQLMode)
 	s.parser.EnableWindowFunc(s.sessionVars.EnableWindowFunction)
 	return s.parser.Parse(sql, charset, collation)
@@ -1430,7 +1440,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
-		if err := s.txn.changePendingToValid(); err != nil {
+		if err := s.txn.changePendingToValid(s.currentCtx); err != nil {
 			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
 			s.txn.cleanup()
@@ -1595,6 +1605,38 @@ func (s *session) Auth(user *auth.UserIdentity, authentication []byte, salt []by
 	// Check Hostname.
 	for _, addr := range getHostByIP(user.Hostname) {
 		u, h, success := pm.ConnectionVerification(user.Username, addr, authentication, salt, s.sessionVars.TLSConnectionState)
+		if success {
+			s.sessionVars.User = &auth.UserIdentity{
+				Username:     user.Username,
+				Hostname:     addr,
+				AuthUsername: u,
+				AuthHostname: h,
+			}
+			s.sessionVars.ActiveRoles = pm.GetDefaultRoles(u, h)
+			return true
+		}
+	}
+	return false
+}
+
+// AuthWithoutVerification is required by the ResetConnection RPC
+func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
+	pm := privilege.GetPrivilegeManager(s)
+
+	// Check IP or localhost.
+	var success bool
+	user.AuthUsername, user.AuthHostname, success = pm.GetAuthWithoutVerification(user.Username, user.Hostname)
+	if success {
+		s.sessionVars.User = user
+		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+		return true
+	} else if user.Hostname == variable.DefHostname {
+		return false
+	}
+
+	// Check Hostname.
+	for _, addr := range getHostByIP(user.Hostname) {
+		u, h, success := pm.GetAuthWithoutVerification(user.Username, addr)
 		if success {
 			s.sessionVars.User = &auth.UserIdentity{
 				Username:     user.Username,
@@ -1915,7 +1957,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version48
+	currentBootstrapVersion = version50
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2058,6 +2100,8 @@ var builtinGlobalVariable = []string{
 	variable.TiDBLogDesensitization,
 	variable.TiDBEnableTelemetry,
 	variable.TiDBShardAllocateStep,
+	variable.TiDBEnableChangeColumnType,
+	variable.TiDBEnableAmendPessimisticTxn,
 }
 
 var (
@@ -2129,6 +2173,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 // PrepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
 // It is called before we execute a sql query.
 func (s *session) PrepareTxnCtx(ctx context.Context) {
+	s.currentCtx = ctx
 	if s.txn.validOrPending() {
 		return
 	}

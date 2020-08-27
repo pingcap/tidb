@@ -345,7 +345,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 			// After rolling back an AddIndex operation, we need to use delete-range to delete the half-done index data.
 			err = w.deleteRange(job)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition:
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns:
 			err = w.deleteRange(job)
 		}
 	}
@@ -481,6 +481,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
 				// Otherwise, we should discard the KV modification when running job.
 				txn.Reset()
+				// If error happens after updateSchemaVersion(), then the schemaVer is updated.
+				// Result in the retry duration is up to 2 * lease.
+				schemaVer = 0
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
@@ -633,7 +636,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionDropColumns:
 		ver, err = onDropColumns(t, job)
 	case model.ActionModifyColumn:
-		ver, err = w.onModifyColumn(t, job)
+		ver, err = w.onModifyColumn(d, t, job)
 	case model.ActionSetDefaultValue:
 		ver, err = onSetDefaultValue(t, job)
 	case model.ActionAddIndex:

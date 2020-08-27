@@ -345,15 +345,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	// rebuild index
-	err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
-	if err != nil {
-		return err
-	}
-	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
-
 	var colIDs, binlogColIDs []int64
 	var row, binlogOldRow, binlogNewRow []types.Datum
+	numColsCap := len(newData) + 1 // +1 for the extra handle column that we may need to append.
 	colIDs = make([]int64, 0, numColsCap)
 	row = make([]types.Datum, 0, numColsCap)
 	if shouldWriteBinlog(sctx) {
@@ -362,13 +356,35 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		binlogNewRow = make([]types.Datum, 0, numColsCap)
 	}
 
-	for _, col := range t.WritableCols() {
+	for _, col := range t.Columns {
 		var value types.Datum
+		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
+			if col.ChangeStateInfo != nil {
+				// TODO: Check overflow or ignoreTruncate.
+				value, err = table.CastValue(sctx, oldData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+				if err != nil {
+					logutil.BgLogger().Info("update record cast value failed", zap.Any("col", col), zap.Uint64("txnStartTS", txn.StartTS()),
+						zap.String("handle", h.String()), zap.Any("val", oldData[col.DependencyColumnOffset]), zap.Error(err))
+				}
+				oldData = append(oldData, value)
+				touched = append(touched, touched[col.DependencyColumnOffset])
+			}
+			continue
+		}
 		if col.State != model.StatePublic {
 			// If col is in write only or write reorganization state we should keep the oldData.
-			// Because the oldData must be the orignal data(it's changed by other TiDBs.) or the orignal default value.
+			// Because the oldData must be the original data(it's changed by other TiDBs.) or the original default value.
 			// TODO: Use newData directly.
 			value = oldData[col.Offset]
+			if col.ChangeStateInfo != nil {
+				// TODO: Check overflow or ignoreTruncate.
+				value, err = table.CastValue(sctx, newData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+				if err != nil {
+					return err
+				}
+				newData[col.Offset] = value
+				touched[col.Offset] = touched[col.DependencyColumnOffset]
+			}
 		} else {
 			value = newData[col.Offset]
 		}
@@ -381,6 +397,12 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 			binlogOldRow = append(binlogOldRow, oldData[col.Offset])
 			binlogNewRow = append(binlogNewRow, value)
 		}
+	}
+
+	// rebuild index
+	err = t.rebuildIndices(sctx, txn, h, touched, oldData, newData, table.WithCtx(ctx))
+	if err != nil {
+		return err
 	}
 
 	key := t.RecordKey(h)
@@ -584,6 +606,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			for _, idxCol := range pkIdx.Columns {
 				pkDts = append(pkDts, r[tblInfo.Columns[idxCol.Offset].Offset])
 			}
+			tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
 			var handleBytes []byte
 			handleBytes, err = codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, pkDts...)
 			if err != nil {
@@ -636,9 +659,25 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	for _, col := range t.WritableCols() {
 		var value types.Datum
-		// Update call `AddRecord` will already handle the write only column default value.
-		// Only insert should add default value for write only column.
-		if col.State != model.StatePublic && !opt.IsUpdate {
+		if col.ChangeStateInfo != nil && col.State != model.StatePublic {
+			// TODO: Check overflow or ignoreTruncate.
+			value, err = table.CastValue(sctx, r[col.DependencyColumnOffset], col.ColumnInfo, false, false)
+			if err != nil {
+				return nil, err
+			}
+			if len(r) < len(t.WritableCols()) {
+				r = append(r, value)
+			} else {
+				r[col.Offset] = value
+			}
+			row = append(row, value)
+			colIDs = append(colIDs, col.ID)
+			continue
+		}
+		if col.State != model.StatePublic &&
+			// Update call `AddRecord` will already handle the write only column default value.
+			// Only insert should add default value for write only column.
+			!opt.IsUpdate {
 			// If col is in write only or write reorganization state, we must add it with its default value.
 			value, err = table.GetColOriginDefaultValue(sctx, col.ToInfo())
 			if err != nil {
@@ -659,6 +698,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			row = append(row, value)
 		}
 	}
+
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(recordID)
@@ -880,12 +920,41 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 		if col.IsGenerated() && !col.GeneratedStored {
 			continue
 		}
-		v[i], err = GetColDefaultValue(ctx, col, defaultVals)
+		if col.ChangeStateInfo != nil {
+			v[i], _, err = GetChangingColVal(ctx, cols, col, rowMap, defaultVals)
+		} else {
+			v[i], err = GetColDefaultValue(ctx, col, defaultVals)
+		}
 		if err != nil {
 			return nil, rowMap, err
 		}
 	}
 	return v, rowMap, nil
+}
+
+// GetChangingColVal gets the changing column value when executing "modify/change column" statement.
+func GetChangingColVal(ctx sessionctx.Context, cols []*table.Column, col *table.Column, rowMap map[int64]types.Datum, defaultVals []types.Datum) (_ types.Datum, isDefaultVal bool, err error) {
+	relativeCol := cols[col.ChangeStateInfo.DependencyColumnOffset]
+	idxColumnVal, ok := rowMap[relativeCol.ID]
+	if ok {
+		// It needs cast values here when filling back column or index values in "modify/change column" statement.
+		if ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue {
+			return idxColumnVal, false, nil
+		}
+		idxColumnVal, err := table.CastValue(ctx, rowMap[relativeCol.ID], col.ColumnInfo, false, false)
+		// TODO: Consider sql_mode and the error msg(encounter this error check whether to rollback).
+		if err != nil {
+			return idxColumnVal, false, errors.Trace(err)
+		}
+		return idxColumnVal, false, nil
+	}
+
+	idxColumnVal, err = GetColDefaultValue(ctx, col, defaultVals)
+	if err != nil {
+		return idxColumnVal, false, errors.Trace(err)
+	}
+
+	return idxColumnVal, true, nil
 }
 
 // Row implements table.Table Row interface.
@@ -898,6 +967,10 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	err := t.removeRowData(ctx, h)
 	if err != nil {
 		return err
+	}
+	// The table has non-public column and this column is doing the operation of "modify/change column".
+	if len(t.Columns) > len(r) && t.Columns[len(r)].ChangeStateInfo != nil {
+		r = append(r, r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset])
 	}
 	err = t.removeRowIndices(ctx, h, r)
 	if err != nil {
@@ -1323,7 +1396,13 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 		return true
 	}
 	if col.IsCommonHandleColumn(info) {
-		return true
+		pkIdx := FindPrimaryIndex(info)
+		for _, idxCol := range pkIdx.Columns {
+			if info.Columns[idxCol.Offset].ID != col.ID {
+				continue
+			}
+			return idxCol.Length == types.UnspecifiedLength
+		}
 	}
 	if col.GetDefaultValue() == nil && value.IsNull() {
 		return true

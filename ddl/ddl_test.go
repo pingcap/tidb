@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -38,8 +39,8 @@ import (
 type DDLForTest interface {
 	// SetHook sets the hook.
 	SetHook(h Callback)
-	// SetInterceptoror sets the interceptor.
-	SetInterceptoror(h Interceptor)
+	// SetInterceptor sets the interceptor.
+	SetInterceptor(h Interceptor)
 }
 
 // SetHook implements DDL.SetHook interface.
@@ -50,8 +51,8 @@ func (d *ddl) SetHook(h Callback) {
 	d.mu.hook = h
 }
 
-// SetInterceptoror implements DDL.SetInterceptoror interface.
-func (d *ddl) SetInterceptoror(i Interceptor) {
+// SetInterceptor implements DDL.SetInterceptor interface.
+func (d *ddl) SetInterceptor(i Interceptor) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -101,6 +102,11 @@ func TestT(t *testing.T) {
 		// Test for add/drop primary key.
 		conf.AlterPrimaryKey = true
 	})
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	testleak.BeforeTest()
 	TestingT(t)

@@ -586,6 +586,42 @@ func (s *testSuite3) TestDropStats(c *C) {
 	h.SetLease(0)
 }
 
+func (s *testSuite3) TestDropStatsFromKV(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 varchar(20), c2 varchar(20))")
+	tk.MustExec(`insert into t values("1","1"),("2","2"),("3","3"),("4","4")`)
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("analyze table t")
+	tblID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_name = "t" and table_schema = "test"`).Rows()[0][0].(string)
+	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
+		testkit.Rows("0 16"))
+	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
+		testkit.Rows("1", "2"))
+	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
+		testkit.Rows("1 0",
+			"1 1",
+			"1 2",
+			"1 3",
+			"2 0",
+			"2 1",
+			"2 2",
+			"2 3"))
+	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
+		testkit.Rows("1", "1", "1", "1", "2", "2", "2", "2"))
+
+	tk.MustExec("drop stats t")
+	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
+		testkit.Rows("0 16"))
+	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
+		testkit.Rows())
+	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
+		testkit.Rows())
+	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
+		testkit.Rows())
+}
+
 func (s *testSuite3) TestFlushTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -685,4 +721,37 @@ func (s *testSuite3) TestRoleAtomic(c *C) {
 	result = tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
 	result.Check(testkit.Rows("r2"))
 	tk.MustExec("drop role r2;")
+}
+
+func (s *testSuite3) TestExtendedStatsPrivileges(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create user 'u1'@'%'")
+	se, err := session.CreateSession4Test(s.store)
+	c.Check(err, IsNil)
+	defer se.Close()
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil), IsTrue)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 't'")
+	tk.MustExec("grant select on test.* to 'u1'@'%'")
+	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]CREATE STATISTICS command denied to user 'u1'@'%' for table 'stats_extended'")
+	tk.MustExec("grant insert on mysql.stats_extended to 'u1'@'%'")
+	_, err = se.Execute(ctx, "create statistics s1(correlation) on test.t(a,b)")
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, "drop statistics s1")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1142]DROP STATISTICS command denied to user 'u1'@'%' for table 'stats_extended'")
+	tk.MustExec("grant update on mysql.stats_extended to 'u1'@'%'")
+	_, err = se.Execute(ctx, "drop statistics s1")
+	c.Assert(err, IsNil)
+	tk.MustExec("drop user 'u1'@'%'")
 }
