@@ -90,6 +90,8 @@ func (ts *tidbTestSuiteBase) SetUpSuite(c *C) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	ts.port = getPortFromTCPAddr(server.listener.Addr())
+	ts.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ts.server = server
 	go ts.server.Run()
 	ts.waitUntilServerOnline()
@@ -189,8 +191,13 @@ func (ts *tidbTestSuite) TestStatusPort(c *C) {
 	ts.domain, err = session.BootstrapSession(ts.store)
 	c.Assert(err, IsNil)
 	ts.tidbdrv = NewTiDBDriver(ts.store)
+<<<<<<< HEAD
 	cfg := config.NewConfig()
 	cfg.Port = genPort()
+=======
+	cfg := newTestConfig()
+	cfg.Port = 0
+>>>>>>> 9ed4159... server: listen port `0` when testing (#19478)
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = ts.statusPort
 	cfg.Performance.TCPKeepAlive = true
@@ -225,6 +232,8 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLS(c *C) {
 	cfg.Security.ClusterSSLKey = "/tmp/server-key-2.pem"
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 
@@ -272,6 +281,8 @@ func (ts *tidbTestSuite) TestStatusAPIWithTLSCNCheck(c *C) {
 	cfg.Security.ClusterVerifyCN = []string{"tidb-client-2"}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
+	cli.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 
@@ -321,6 +332,7 @@ func (ts *tidbTestSuite) TestSocketForwarding(c *C) {
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 	defer server.Close()
@@ -453,8 +465,13 @@ func registerTLSConfig(configName string, caCertPath string, clientCertPath stri
 
 func (ts *tidbTestSuite) TestSystemTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, ts.store)
+<<<<<<< HEAD
 	cfg := config.NewConfig()
 	cfg.Port = genPort()
+=======
+	cfg := newTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
+>>>>>>> 9ed4159... server: listen port `0` when testing (#19478)
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
@@ -494,6 +511,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 	err = cli.runTestTLSConnection(c, connOverrider) // We should get ErrNoTLS.
@@ -515,6 +533,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	}
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 	err = cli.runTestTLSConnection(c, connOverrider) // We should establish connection successfully.
@@ -541,6 +560,7 @@ func (ts *tidbTestSerialSuite) TestTLS(c *C) {
 	}
 	server, err = NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 	// The client does not provide a certificate, the connection should succeed.
@@ -599,6 +619,7 @@ func (ts *tidbTestSerialSuite) TestReloadTLS(c *C) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 	// The client provides a valid certificate.
@@ -702,6 +723,7 @@ func (ts *tidbTestSerialSuite) TestErrorNoRollback(c *C) {
 	}
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
+	cli.port = getPortFromTCPAddr(server.listener.Addr())
 	go server.Run()
 	time.Sleep(time.Millisecond * 100)
 	connOverrider := func(config *mysql.Config) {
