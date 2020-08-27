@@ -200,7 +200,6 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 }
 
 func (d *ddl) limitDDLJobs() {
-	defer d.wg.Done()
 	defer tidbutil.Recover(metrics.LabelDDL, "limitDDLJobs", nil, true)
 
 	tasks := make([]*limitJobTask, 0, batchAddingJobs)
