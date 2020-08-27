@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"runtime/trace"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/mysql"
@@ -44,6 +45,7 @@ type InsertExec struct {
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
+	defer trace.StartRegion(ctx, "InsertExec").End()
 	logutil.Eventf(ctx, "insert %d rows into table `%s`", len(rows), stringutil.MemoizeStr(func() string {
 		var tblName string
 		if meta := e.Table.Meta(); meta != nil {

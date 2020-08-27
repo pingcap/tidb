@@ -16,6 +16,7 @@ package planner
 import (
 	"context"
 	"math"
+	"runtime/trace"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -337,6 +338,7 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 // for point select like plan which does not need extra things
 func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
+	defer trace.StartRegion(ctx, "Optimize").End()
 	var err error
 	builder := plannercore.NewPlanBuilder(sctx, is, nil)
 	p, err := builder.Build(ctx, execAst)
