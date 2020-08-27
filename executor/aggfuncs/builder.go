@@ -57,6 +57,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildJSONObjectAgg(aggFuncDesc, ordinal)
 	case ast.AggFuncApproxCountDistinct:
 		return buildApproxCountDistinct(aggFuncDesc, ordinal)
+	case ast.AggFuncStddevPop:
+		return buildStdDevPop(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -449,6 +451,29 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			return &varPop4DistinctFloat64{base}
 		}
 		return &varPop4Float64{base}
+	}
+}
+
+// buildStdDevPop builds the AggFunc implementation for function "STD()/STDDEV()/STDDEV_POP()"
+func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseStdDevPopAggFunc{
+		varPop4Float64{
+			baseVarPopAggFunc{
+				baseAggFunc{
+					args:    aggFuncDesc.Args,
+					ordinal: ordinal,
+				},
+			},
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &stdDevPop4DistinctFloat64{base}
+		}
+		return &stdDevPop4Float64{base}
 	}
 }
 
