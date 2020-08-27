@@ -877,6 +877,10 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.blockOffset)
 			newDataSource.isPartition = true
 			newDataSource.physicalTableID = pi.Definitions[i].ID
+			// copy ds.schema to avoid column-prune UnionAll problem
+			// https://github.com/pingcap/tidb/issues/19161
+			newDsSchema := *ds.schema
+			newDataSource.schema = &newDsSchema
 
 			// There are many expression nodes in the plan tree use the original datasource
 			// id as FromID. So we set the id of the newDataSource with the original one to
