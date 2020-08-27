@@ -58,6 +58,7 @@ func (lt *LogicalTopN) setChild(p LogicalPlan) LogicalPlan {
 		limit := LogicalLimit{
 			Count:  lt.Count,
 			Offset: lt.Offset,
+			topnHints: lt.topnHints,
 		}.Init(lt.ctx, lt.blockOffset)
 		limit.SetChildren(p)
 		return limit
@@ -79,7 +80,7 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 }
 
 func (p *LogicalLimit) convertToTopN() *LogicalTopN {
-	return LogicalTopN{Offset: p.Offset, Count: p.Count}.Init(p.ctx, p.blockOffset)
+	return LogicalTopN{Offset: p.Offset, Count: p.Count, topnHints: p.topnHints}.Init(p.ctx, p.blockOffset)
 }
 
 func (p *LogicalLimit) pushDownTopN(topN *LogicalTopN) LogicalPlan {
@@ -94,7 +95,7 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	for i, child := range p.children {
 		var newTopN *LogicalTopN
 		if topN != nil {
-			newTopN = LogicalTopN{Count: topN.Count + topN.Offset}.Init(p.ctx, topN.blockOffset)
+			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, topnHints: topN.topnHints}.Init(p.ctx, topN.blockOffset)
 			for _, by := range topN.ByItems {
 				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
 			}
@@ -155,6 +156,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPla
 	newTopN := LogicalTopN{
 		Count:   topN.Count + topN.Offset,
 		ByItems: make([]*util.ByItems, len(topN.ByItems)),
+		topnHints: topN.topnHints,
 	}.Init(topN.ctx, topN.blockOffset)
 	for i := range topN.ByItems {
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()

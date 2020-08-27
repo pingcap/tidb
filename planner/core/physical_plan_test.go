@@ -858,6 +858,38 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestTopNToCopHint(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tn")
+	tk.MustExec("create table tn(a int, b int, c int, d int, key (a, b, c, d))")
+
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+		}
+	)
+
+	s.testData.GetTestCases(c, &input, &output)
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func (s *testPlanSuite) TestPushdownDistinctEnable(c *C) {
 	defer testleak.AfterTest(c)()
 	var (

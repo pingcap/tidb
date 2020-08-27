@@ -1445,6 +1445,30 @@
     ]
   },
   {
+    "Name": "TestTopNToCopHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ TOPN_TO_COP() */ * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
+        "Plan": [
+          "TopN_8 0.83 root  test.tn.d, offset:0, count:1",
+          "└─IndexReader_15 0.83 root  index:TopN_14",
+          "  └─TopN_14 0.83 cop[tikv]  test.tn.d, offset:0, count:1",
+          "    └─Selection_13 0.83 cop[tikv]  gt(test.tn.c, 50)",
+          "      └─IndexRangeScan_12 2.50 cop[tikv] table:tn, index:a(a, b, c, d) range:(1 10,1 20), keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "select * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
+        "Plan": [
+          "TopN_10 0.83 root  test.tn.d, offset:0, count:1",
+          "└─IndexReader_20 0.83 root  index:Selection_19",
+          "  └─Selection_19 0.83 cop[tikv]  gt(test.tn.c, 50)",
+          "    └─IndexRangeScan_18 2.50 cop[tikv] table:tn, index:a(a, b, c, d) range:(1 10,1 20), keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestPushdownDistinctEnable",
     "Cases": [
       {

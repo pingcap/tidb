@@ -1704,7 +1704,10 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 }
 
 func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
-	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if !lt.topnHints.preferTopNToCop {
+		allTaskTypes = append(allTaskTypes, property.RootTaskType)
+	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64}
@@ -1723,8 +1726,11 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 	if !canPass {
 		return nil
 	}
-	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
-	ret := make([]PhysicalPlan, 0, 3)
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if !lt.topnHints.preferTopNToCop {
+		allTaskTypes = append(allTaskTypes, property.RootTaskType)
+	}
+	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), Items: p.Items}
 		limit := PhysicalLimit{
