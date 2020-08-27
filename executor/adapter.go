@@ -894,7 +894,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PDTotal:           time.Duration(atomic.LoadInt64(&stmtDetail.WaitPDRespDuration)),
 		BackoffTotal:      time.Duration(atomic.LoadInt64(&stmtDetail.BackoffDuration)),
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
+<<<<<<< HEAD
 		RewriteInfo:       sessVars.RewritePhaseInfo,
+=======
+		ExecRetryCount:    a.retryCount,
+>>>>>>> 253d43fb5... *: add execution retry count in slow log and slow_query (#19487)
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
