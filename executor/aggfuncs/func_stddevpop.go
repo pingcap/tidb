@@ -34,8 +34,8 @@ func (e *stdDevPop4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	varicance := p.variance / float64(p.count)
-	chk.AppendFloat64(e.ordinal, math.Sqrt(varicance))
+	variance := p.variance / float64(p.count)
+	chk.AppendFloat64(e.ordinal, math.Sqrt(variance))
 	return nil
 }
 
@@ -49,7 +49,7 @@ func (e *stdDevPop4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Cont
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	varicance := p.variance / float64(p.count)
-	chk.AppendFloat64(e.ordinal, math.Sqrt(varicance))
+	variance := p.variance / float64(p.count)
+	chk.AppendFloat64(e.ordinal, math.Sqrt(variance))
 	return nil
 }
