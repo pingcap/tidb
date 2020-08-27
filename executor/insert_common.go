@@ -443,16 +443,17 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 			}
 		}
 
+		err = base.exec(ctx, rows)
+		if err != nil {
+			return err
+		}
+		rows = rows[:0]
 		if len(rows) != 0 {
 			memUsageOfRows = types.EstimatedMemUsage(rows[0], len(rows))
 			memTracker.Consume(memUsageOfRows)
 		}
 		memTracker.Consume(-memUsageOfRows)
 		memTracker.Consume(-chkMemUsage)
-	}
-	err := base.exec(ctx, rows)
-	if err != nil {
-		return err
 	}
 	return nil
 }
