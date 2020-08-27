@@ -63,7 +63,8 @@ func interestingGoroutines() (gs []string) {
 		"oracles.(*pdOracle).updateTS",
 		"tikv.(*tikvStore).runSafePointChecker",
 		"tikv.(*RegionCache).asyncCheckAndResolveLoop",
-		"github.com/pingcap/badger.(*writeWorker).runMergeLSM",
+		"github.com/pingcap/badger",
+		"github.com/ngaut/unistore/tikv.(*MVCCStore).runUpdateSafePointLoop",
 	}
 	shouldIgnore := func(stack string) bool {
 		if stack == "" {
