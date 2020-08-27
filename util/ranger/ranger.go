@@ -530,53 +530,6 @@ func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.E
 	return expression.NewFunctionInternal(ctx, funcName, sf.GetType(), args...)
 }
 
-// UnionPartitionRanges sorts `ranges`, union adjacent ones if possible.
-// For two intervals [a, b], [c, d], we have guaranteed that a <= c. If b >= c. Then two intervals are overlapped.
-// And this two can be merged as [a, max(b, d)].
-// Otherwise they aren't overlapped.
-func UnionPartitionRanges(sc *stmtctx.StatementContext, ranges []*Range) ([]*Range, error) {
-	if len(ranges) == 0 {
-		return nil, nil
-	}
-	objects := make([]*sortRange, 0, len(ranges))
-	for _, ran := range ranges {
-		left, err := codec.EncodeKey(sc, nil, ran.LowVal...)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if ran.LowExclude {
-			left = kv.Key(left).PrefixNext()
-		}
-		right, err := codec.EncodeKey(sc, nil, ran.HighVal...)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if !ran.HighExclude {
-			right = kv.Key(right).PrefixNext()
-		}
-		objects = append(objects, &sortRange{originalValue: ran, encodedStart: left, encodedEnd: right})
-	}
-	sort.Slice(objects, func(i, j int) bool {
-		return bytes.Compare(objects[i].encodedStart, objects[j].encodedStart) < 0
-	})
-	ranges = ranges[:0]
-	lastRange := objects[0]
-	for i := 1; i < len(objects); i++ {
-		if bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) > 0 {
-			if bytes.Compare(lastRange.encodedEnd, objects[i].encodedEnd) < 0 {
-				lastRange.encodedEnd = objects[i].encodedEnd
-				lastRange.originalValue.HighVal = objects[i].originalValue.HighVal
-				lastRange.originalValue.HighExclude = objects[i].originalValue.HighExclude
-			}
-		} else {
-			ranges = append(ranges, lastRange.originalValue)
-			lastRange = objects[i]
-		}
-	}
-	ranges = append(ranges, lastRange.originalValue)
-	return ranges, nil
-}
-
 // DetachCondAndBuildRangeForPartition will detach the index filters from table filters.
 // The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
 func DetachCondAndBuildRangeForPartition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
