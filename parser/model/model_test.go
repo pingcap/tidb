@@ -363,6 +363,13 @@ func (testModelSuite) TestDefaultValue(c *C) {
 	err = newBitCol.SetDefaultValue(randBitStr)
 	c.Assert(newBitCol.GetDefaultValue(), Equals, randBitStr)
 
+	nullBitCol := srcCol.Clone()
+	nullBitCol.Name = NewCIStr("nullBitCol")
+	nullBitCol.FieldType = *types.NewFieldType(mysql.TypeBit)
+	err = nullBitCol.SetOriginDefaultValue(nil)
+	c.Assert(err, IsNil)
+	c.Assert(nullBitCol.GetOriginDefaultValue(), IsNil)
+
 	testCases := []struct {
 		col          *ColumnInfo
 		isConsistent bool
@@ -371,6 +378,7 @@ func (testModelSuite) TestDefaultValue(c *C) {
 		{oldBitCol, false},
 		{newPlainCol, true},
 		{newBitCol, true},
+		{nullBitCol, true},
 	}
 	for _, tc := range testCases {
 		col, isConsistent := tc.col, tc.isConsistent
