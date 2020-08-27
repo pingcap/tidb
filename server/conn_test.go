@@ -173,7 +173,7 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 			bufWriter: bufio.NewWriter(&outBuffer),
 		},
 	}
-	err := cc.writeInitialHandshake()
+	err := cc.writeInitialHandshake(context.TODO())
 	c.Assert(err, IsNil)
 
 	expected := new(bytes.Buffer)
@@ -488,11 +488,11 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 		err := cc.dispatch(context.Background(), inBytes)
 		c.Assert(err, Equals, cs.err)
 		if err == nil {
-			err = cc.flush()
+			err = cc.flush(context.TODO())
 			c.Assert(err, IsNil)
 			c.Assert(outBuffer.Bytes(), DeepEquals, cs.out)
 		} else {
-			_ = cc.flush()
+			_ = cc.flush(context.TODO())
 		}
 		outBuffer.Reset()
 	}

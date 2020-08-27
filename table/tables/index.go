@@ -364,3 +364,13 @@ func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum,
 	}
 	return vals, nil
 }
+
+// FindChangingCol finds the changing column in idxInfo.
+func FindChangingCol(cols []*table.Column, idxInfo *model.IndexInfo) *table.Column {
+	for _, ic := range idxInfo.Columns {
+		if col := cols[ic.Offset]; col.ChangeStateInfo != nil {
+			return col
+		}
+	}
+	return nil
+}
