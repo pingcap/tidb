@@ -7078,7 +7078,8 @@ func (s *testIntegrationSerialSuite) TestIssue14448(c *C) {
 	tk.MustExec("CREATE TABLE t1 (a INT)")
 	tk.MustExec("INSERT INTO t1 VALUES (1),(2),(3)")
 	_, err := tk.Exec("SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1")
-	c.Assert(err.Error(), Equals, `[expression:1235]function SQL_CALC_FOUND_ROWS has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`)
+	message := `function SQL_CALC_FOUND_ROWS has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
 	tk.MustExec("SET tidb_enable_noop_functions=1")
 	tk.MustExec("SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1")
 }
