@@ -667,3 +667,59 @@ func (s *testStatsSuite) TestCollationColumnEstimate(c *C) {
 		tk.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
 	}
 }
+
+// TestDNFCondSelectivity tests selectivity calculation with DNF conditions covered by using independence assumption.
+func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int primary key, b int, c int, d int)")
+	testKit.MustExec("insert into t value(1,5,4,4),(3,4,1,8),(4,2,6,10),(6,7,2,5),(7,1,4,9),(8,9,8,3),(9,1,9,1),(10,6,6,2)")
+	testKit.MustExec("alter table t add index (b)")
+	testKit.MustExec("alter table t add index (d)")
+	testKit.MustExec(`analyze table t`)
+
+	ctx := context.Background()
+	is := s.do.InfoSchema()
+	h := s.do.StatsHandle()
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	tblInfo := tb.Meta()
+	statsTbl := h.GetTableStats(tblInfo)
+
+	var (
+		input  []string
+		output []struct {
+			SQL         string
+			Selectivity float64
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		sctx := testKit.Se.(sessionctx.Context)
+		stmts, err := session.Parse(sctx, tt)
+		c.Assert(err, IsNil, Commentf("error %v, for sql %s", err, tt))
+		c.Assert(stmts, HasLen, 1)
+
+		err = plannercore.Preprocess(sctx, stmts[0], is)
+		c.Assert(err, IsNil, Commentf("error %v, for sql %s", err, tt))
+		p, _, err := plannercore.BuildLogicalPlan(ctx, sctx, stmts[0], is)
+		c.Assert(err, IsNil, Commentf("error %v, for building plan, sql %s", err, tt))
+
+		sel := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+		ds := sel.Children()[0].(*plannercore.DataSource)
+
+		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.Columns, ds.Schema().Columns)
+
+		ratio, _, err := histColl.Selectivity(sctx, sel.Conditions, nil)
+		c.Assert(err, IsNil, Commentf("error %v, for expr %s", err, tt))
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Selectivity = ratio
+		})
+		c.Assert(math.Abs(ratio-output[i].Selectivity) < eps, IsTrue,
+			Commentf("for %s, needed: %v, got: %v", tt, output[i].Selectivity, ratio))
+	}
+}
