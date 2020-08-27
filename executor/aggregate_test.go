@@ -337,12 +337,45 @@ func (s *testSuite1) TestAggregation(c *C) {
 	tk.MustExec("insert into t value(0), (-0.9871), (-0.9871)")
 	tk.MustQuery("select 10 from t group by a").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
+<<<<<<< HEAD
 	_, err = tk.Exec("select std(a) from t")
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: std")
 	_, err = tk.Exec("select stddev(a) from t")
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev")
 	_, err = tk.Exec("select stddev_pop(a) from t")
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
+=======
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a tinyint, b smallint, c mediumint, d int, e bigint, f float, g double, h decimal)")
+	tk.MustExec("insert into t values(1, 2, 3, 4, 5, 6.1, 7.2, 8.3), (1, 3, 4, 5, 6, 7.1, 8.2, 9.3)")
+	result = tk.MustQuery("select var_pop(b), var_pop(c), var_pop(d), var_pop(e), var_pop(f), var_pop(g), var_pop(h) from t group by a")
+	result.Check(testkit.Rows("0.25 0.25 0.25 0.25 0.25 0.25 0.25"))
+
+	tk.MustExec("insert into t values(2, 3, 4, 5, 6, 7.2, 8.3, 9)")
+	result = tk.MustQuery("select a, var_pop(b) over w, var_pop(c) over w from t window w as (partition by a)").Sort()
+	result.Check(testkit.Rows("1 0.25 0.25", "1 0.25 0.25", "2 0 0"))
+
+	tk.MustExec("delete from t where t.a = 2")
+	tk.MustExec("insert into t values(1, 2, 4, 5, 6, 6.1, 7.2, 9)")
+	result = tk.MustQuery("select a, var_pop(distinct b), var_pop(distinct c), var_pop(distinct d), var_pop(distinct e), var_pop(distinct f), var_pop(distinct g), var_pop(distinct h) from t group by a")
+	result.Check(testkit.Rows("1 0.25 0.25 0.25 0.25 0.25 0.25 0.25"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a int, b bigint, c float, d double, e decimal)")
+	tk.MustExec("insert into t values(1, 1000, 6.8, 3.45, 8.3), (1, 3998, -3.4, 5.12, 9.3),(1, 288, 9.2, 6.08, 1)")
+	result = tk.MustQuery("select variance(b), variance(c), variance(d), variance(e) from t group by a")
+	result.Check(testkit.Rows("2584338.6666666665 29.840000178019228 1.1808222222222229 12.666666666666666"))
+
+	tk.MustExec("insert into t values(1, 255, 6.8, 6.08, 1)")
+	result = tk.MustQuery("select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a")
+	result.Check(testkit.Rows("2364075.6875 29.840000178019228 1.1808222222222229 12.666666666666666"))
+
+	tk.MustExec("insert into t values(2, 322, 0.8, 2.22, 6)")
+	result = tk.MustQuery("select a, variance(b) over w from t window w as (partition by a)").Sort()
+	result.Check(testkit.Rows("1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "2 0"))
+
+>>>>>>> 49af6a5... expression: Support stddev_pop function (#19195)
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
 	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
@@ -355,6 +388,7 @@ func (s *testSuite1) TestAggregation(c *C) {
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
 }
 
+<<<<<<< HEAD
 func (s *testSuite1) TestStreamAggPushDown(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -373,6 +407,60 @@ func (s *testSuite1) TestStreamAggPushDown(c *C) {
 	tk.MustQuery("select count(a) from t where b>0 group by a, b;").Check(testkit.Rows("3", "1", "1", "1"))
 	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a;").Check(testkit.Rows("3", "1", "1", "1"))
 	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a limit 1;").Check(testkit.Rows("3"))
+=======
+	// For issue #14072: wrong result when using generated column with aggregate statement
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (a int, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
+	tk.MustExec("insert into t1 (a) values (2), (1), (1), (3), (NULL);")
+	tk.MustQuery("select sum(a) from t1 group by b order by b;").Check(testkit.Rows("<nil>", "3", "2", "2"))
+	tk.MustQuery("select sum(a) from t1 group by c order by c;").Check(testkit.Rows("<nil>", "3", "2", "2"))
+	tk.MustQuery("select sum(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "-2", "-2", "-3"))
+	tk.MustQuery("select sum(b) from t1 group by c order by c;").Check(testkit.Rows("<nil>", "-3", "-2", "-2"))
+	tk.MustQuery("select sum(c) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "-2", "-2", "-3"))
+	tk.MustQuery("select sum(c) from t1 group by b order by b;").Check(testkit.Rows("<nil>", "-3", "-2", "-2"))
+
+	// For stddev_pop()/std()/stddev() function
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`create table t1 (grp int, a bigint unsigned, c char(10) not null);`)
+	tk.MustExec(`insert into t1 values (1,1,"a");`)
+	tk.MustExec(`insert into t1 values (2,2,"b");`)
+	tk.MustExec(`insert into t1 values (2,3,"c");`)
+	tk.MustExec(`insert into t1 values (3,4,"E");`)
+	tk.MustExec(`insert into t1 values (3,5,"C");`)
+	tk.MustExec(`insert into t1 values (3,6,"D");`)
+	tk.MustQuery(`select stddev_pop(all a) from t1;`).Check(testkit.Rows("1.707825127659933"))
+	tk.MustQuery(`select stddev_pop(a) from t1 group by grp order by grp;`).Check(testkit.Rows("0", "0.5", "0.816496580927726"))
+	tk.MustQuery(`select sum(a)+count(a)+avg(a)+stddev_pop(a) as sum from t1 group by grp order by grp;`).Check(testkit.Rows("3", "10", "23.816496580927726"))
+	tk.MustQuery(`select std(all a) from t1;`).Check(testkit.Rows("1.707825127659933"))
+	tk.MustQuery(`select std(a) from t1 group by grp order by grp;`).Check(testkit.Rows("0", "0.5", "0.816496580927726"))
+	tk.MustQuery(`select sum(a)+count(a)+avg(a)+std(a) as sum from t1 group by grp order by grp;`).Check(testkit.Rows("3", "10", "23.816496580927726"))
+	tk.MustQuery(`select stddev(all a) from t1;`).Check(testkit.Rows("1.707825127659933"))
+	tk.MustQuery(`select stddev(a) from t1 group by grp order by grp;`).Check(testkit.Rows("0", "0.5", "0.816496580927726"))
+	tk.MustQuery(`select sum(a)+count(a)+avg(a)+stddev(a) as sum from t1 group by grp order by grp;`).Check(testkit.Rows("3", "10", "23.816496580927726"))
+	// test null
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (a int, b int);")
+	tk.MustQuery("select  stddev_pop(b) from t1;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select  std(b) from t1;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select  stddev(b) from t1;").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into t1 values (1,null);")
+	tk.MustQuery("select stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into t1 values (1,null);")
+	tk.MustExec("insert into t1 values (2,null);")
+	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "<nil>"))
+	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "<nil>"))
+	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "<nil>"))
+	tk.MustExec("insert into t1 values (2,1);")
+	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustExec("insert into t1 values (3,1);")
+	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
+	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
+	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
+>>>>>>> 49af6a5... expression: Support stddev_pop function (#19195)
 }
 
 func (s *testSuite1) TestAggPrune(c *C) {
