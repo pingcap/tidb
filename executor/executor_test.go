@@ -5940,19 +5940,6 @@ func (s *testSplitTable) TestKillTableReader(c *C) {
 	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 1)
 	wg.Wait()
 }
-<<<<<<< HEAD
-=======
-
-func (s *testSuite) TestPrevStmtDesensitization(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.Se.GetSessionVars().EnableLogDesensitization = true
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values (1),(2)")
-	c.Assert(tk.Se.GetSessionVars().PrevStmt.String(), Equals, "insert into t values ( ? ) , ( ? )")
-}
 
 func (s *testSuite) TestIssue19372(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -5964,28 +5951,3 @@ func (s *testSuite) TestIssue19372(c *C) {
 	tk.MustExec("insert into t2 select * from t1;")
 	tk.MustQuery("select (select t2.c_str from t2 where t2.c_str <= t1.c_str and t2.c_int in (1, 2) order by t2.c_str limit 1) x from t1 order by c_int;").Check(testkit.Rows("a", "a", "a"))
 }
-
-func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int, b int, unique index (a))")
-
-	testSQLs := []string{
-		"insert ignore into t1 values (5,5);",
-		"insert into t1 values (5,5) on duplicate key update a=a+1;",
-		"replace into t1 values (5,6),(6,7)",
-		"update t1 set a=a+1 where a=6;",
-	}
-
-	for _, sql := range testSQLs {
-		tk.MustExec(sql)
-		info := tk.Se.ShowProcess()
-		c.Assert(info, NotNil)
-		p, ok := info.Plan.(plannercore.Plan)
-		c.Assert(ok, IsTrue)
-		stats := tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(p.ID())
-		c.Assert(stats.String(), Matches, "time.*loops.*Get.*num_rpc.*total_time.*")
-	}
-}
->>>>>>> deec855... executor: fix incorrect results when there is an IndexLookUp under the inner side of an Apply (#19496)
