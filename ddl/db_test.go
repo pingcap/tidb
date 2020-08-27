@@ -2204,6 +2204,7 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	// test for enum column
 	s.tk.MustExec("use test")
 	failSQL := "create table t_enum (a enum('e','e'));"
+<<<<<<< HEAD
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	failSQL = "create table t_enum (a enum('e','E'));"
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
@@ -2218,6 +2219,58 @@ func (s *testDBSuite1) TestCreateTable(c *C) {
 	s.tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	_, err = s.tk.Exec("create table t_enum (a enum('B','b'));")
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'B' in ENUM")
+=======
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk = testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	failSQL = "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_unicode_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	// test for set column
+	failSQL = "create table t_enum (a set('e','e'));"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('e','E')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	_, err = tk.Exec("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;")
+	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
+	failSQL = "create table t_enum (a set('e','E')) charset=utf8 collate=utf8_unicode_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('ss','ß')) charset=utf8 collate=utf8_unicode_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	_, err = tk.Exec("create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;")
+	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'ß' in ENUM")
+
+	// test for table option "union" not supported
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
+	failSQL = "ALTER TABLE x UNION = (y);"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionUnionUnsupported)
+	tk.MustExec("drop table x;")
+	tk.MustExec("drop table y;")
+
+	// test for table option "insert method" not supported
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
+	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
+	failSQL = "CREATE TABLE z (a INT) ENGINE = MERGE INSERT_METHOD=LAST;"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
+	failSQL = "ALTER TABLE x INSERT_METHOD=LAST;"
+	tk.MustGetErrCode(failSQL, errno.ErrTableOptionInsertMethodUnsupported)
+	tk.MustExec("drop table x;")
+	tk.MustExec("drop table y;")
+>>>>>>> ba60cf5a6... charset: implement utf8_unicode_ci and utf8mb4_unicode_ci collation (#18776)
 }
 
 func (s *testDBSuite5) TestRepairTable(c *C) {
