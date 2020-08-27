@@ -189,10 +189,14 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column) erro
 		parentUsedCols = make([]*expression.Column, len(p.schema.Columns))
 		copy(parentUsedCols, p.schema.Columns)
 	}
-	for _, child := range p.Children() {
+	for i, child := range p.Children() {
+		originCols := child.Schema().Columns
 		err := child.PruneColumns(parentUsedCols)
 		if err != nil {
 			return err
+		}
+		if i != len(p.Children())-1 {
+			child.Schema().Columns = originCols
 		}
 	}
 
