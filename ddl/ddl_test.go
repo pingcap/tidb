@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -101,6 +102,11 @@ func TestT(t *testing.T) {
 		// Test for add/drop primary key.
 		conf.AlterPrimaryKey = true
 	})
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	testleak.BeforeTest()
 	TestingT(t)
