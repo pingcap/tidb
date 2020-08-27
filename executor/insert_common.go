@@ -974,7 +974,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	for i, r := range toBeCheckedRows {
 		skip := false
 		if r.handleKey != nil {
-			_, err := txn.Get(ctx, r.handleKey.newKV.key)
+			_, err := txn.Get(ctx, r.handleKey.newKey)
 			if err == nil {
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 				continue
@@ -984,7 +984,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 		for _, uk := range r.uniqueKeys {
-			_, err := txn.Get(ctx, uk.newKV.key)
+			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
