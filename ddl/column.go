@@ -680,7 +680,7 @@ func checkModifyColumn(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.Tabl
 	}
 
 	oldCol := model.FindColumnInfo(tblInfo.Columns, jp.oldColName.L)
-	if oldCol == nil {
+	if oldCol == nil || oldCol.State != model.StatePublic {
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, jp, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(*(jp.oldColName), tblInfo.Name))
 	}
@@ -703,10 +703,6 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		return rollbackModifyColumnType(t, tblInfo, job, oldCol, jp)
 	}
 
-	if oldCol == nil || oldCol.State != model.StatePublic {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(jp.oldColName, tblInfo.Name))
-	}
 	// If we want to rename the column name, we need to check whether it already exists.
 	if jp.newCol.Name.L != jp.oldColName.L {
 		c := model.FindColumnInfo(tblInfo.Columns, jp.newCol.Name.L)
@@ -835,11 +831,6 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 				defer w.sessPool.put(ctx)
 
-				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL("use test")
-				if err != nil {
-					job.State = model.JobStateCancelled
-					failpoint.Return(ver, err)
-				}
 				_, _, err = ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(valStr)
 				if err != nil {
 					job.State = model.JobStateCancelled
@@ -895,10 +886,10 @@ func (w *worker) doModifyColumnTypeWithData(
 				logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				// When encounter these error above, we change the job to rolling back job directly.
 				job.State = model.JobStateRollingback
+				return ver, errors.Trace(err)
 			}
 			if types.ErrOverflow.Equal(err) {
-				// TODO: Do rollback.
-				job.State = model.JobStateCancelled
+				job.State = model.JobStateRollingback
 				return ver, errors.Trace(err)
 			}
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
