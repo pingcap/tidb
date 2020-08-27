@@ -848,7 +848,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 
 	// Attach commit runtime stats to executor runtime stats.
-	if execDetail.CommitDetail != nil && sessVars.StmtCtx.RuntimeStatsColl != nil {
+	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
 		stats := sessVars.StmtCtx.RuntimeStatsColl.GetRootStats(a.Plan.ID())
 		statsWithCommit := &execdetails.RuntimeStatsWithCommit{
 			RuntimeStats: stats,
