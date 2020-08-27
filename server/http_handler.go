@@ -1386,6 +1386,9 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// 		`for id in [frameRange.firstTableID,frameRange.endTableID]`
 	// on [frameRange.firstTableID,frameRange.endTableID] is small enough.
 	for _, db := range schema.AllSchemas() {
+		if util.IsMemDB(db.Name.L) {
+			continue
+		}
 		for _, tableVal := range db.Tables {
 			regionDetail.addTableInRange(db.Name.String(), tableVal, frameRange)
 		}
