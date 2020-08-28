@@ -129,6 +129,8 @@ var (
 	CollationStrictnessGroup = map[string]int{
 		"utf8_general_ci":        1,
 		"utf8mb4_general_ci":     1,
+		"utf8_unicode_ci":    	  2,
+		"utf8mb4_unicode_ci":     2,
 		charset.CollationASCII:   3,
 		charset.CollationLatin1:  3,
 		charset.CollationUTF8:    3,
@@ -141,6 +143,7 @@ var (
 	// collation group id in value is stricter than collation group id in key
 	CollationStrictness = map[int][]int{
 		1: {3, 4},
+		2: {3, 4},
 		3: {4},
 		4: {},
 	}
