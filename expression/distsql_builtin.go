@@ -224,7 +224,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_LeastTime:
 		f = &builtinLeastTimeSig{base}
 	case tipb.ScalarFuncSig_IntervalInt:
-		f = &builtinIntervalIntSig{base, false} // TODO(Zhifeng): by assigning false by default, the behavior of this function will be the same as before, although might be incompatible with MySQL, need to be fixed in the future.
+		f = &builtinIntervalIntSig{base, false} // Since interval function won't be pushed down to TiKV, therefore it doesn't matter what value we give to hasNullable
 	case tipb.ScalarFuncSig_IntervalReal:
 		f = &builtinIntervalRealSig{base, false}
 	case tipb.ScalarFuncSig_GEInt:

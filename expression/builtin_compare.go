@@ -977,6 +977,7 @@ type builtinIntervalRealSig struct {
 func (b *builtinIntervalRealSig) Clone() builtinFunc {
 	newSig := &builtinIntervalRealSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.hasNullable = b.hasNullable
 	return newSig
 }
 

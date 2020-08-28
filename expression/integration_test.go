@@ -6977,6 +6977,18 @@ func (s *testIntegrationSuite) TestIssue18515(c *C) {
 	tk.MustExec("select /*+ TIDB_INLJ(t2) */ t1.a, t1.c, t2.a from t t1, t t2 where t1.c=t2.c;")
 }
 
+func (s *testIntegrationSuite) TestIssue18525(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (col0 BLOB, col1 CHAR(74), col2 DATE UNIQUE)")
+	tk.MustExec("insert into t1 values ('l', '7a34bc7d-6786-461b-92d3-fd0a6cd88f39', '1000-01-03')")
+	tk.MustExec("insert into t1 values ('l', NULL, '1000-01-04')")
+	tk.MustExec("insert into t1 values ('b', NULL, '1000-01-02')")
+	tk.MustQuery("select INTERVAL( ( CONVERT( -11752 USING utf8 ) ), 6558853612195285496, `col1`) from t1").Check(testkit.Rows("0", "0", "0"))
+
+}
+
 func (s *testIntegrationSerialSuite) TestIssue17989(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
