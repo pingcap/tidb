@@ -1005,6 +1005,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertDefault("create table t (a bigint auto_random(2) primary key default 5)")
 	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
 		assertDefault("alter table t modify column a bigint auto_random default 3")
+		assertDefault("alter table t alter column a set default 3")
 	})
 
 	// Overflow data type max length.
@@ -1421,4 +1422,21 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t7"))
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+}
+
+func (s *testSerialSuite) TestCreateTableNoBlock(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime"), IsNil)
+	}()
+	save := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(1)
+	defer func() {
+		variable.SetDDLErrorCountLimit(save)
+	}()
+
+	tk.MustExec("drop table if exists t")
+	_, err := tk.Exec("create table t(a int)")
+	c.Assert(err, NotNil)
 }
