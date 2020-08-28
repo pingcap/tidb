@@ -456,6 +456,7 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 	return nil
 }
 
+// InsertRuntimeStats To Get InsertAndCheck Runtime Stat
 type InsertRuntimeStats struct {
 	*pointGetRuntimeStats
 	start time.Time
