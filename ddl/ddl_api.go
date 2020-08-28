@@ -4983,8 +4983,8 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	return errors.Trace(err)
 }
 
-// UnlockTables uses to execute unlock tables statement.
-func (d *ddl) CleanDeadLock(unlockTables []model.TableLockTpInfo, se model.SessionInfo) error {
+// CleanDeadTableLock uses to clean dead table locks.
+func (d *ddl) CleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.SessionInfo) error {
 	if len(unlockTables) == 0 {
 		return nil
 	}

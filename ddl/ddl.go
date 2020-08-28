@@ -198,7 +198,7 @@ type ddlCtx struct {
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoHandle   *infoschema.Handle
-	deadLockCkr  util.DeadLockChecker
+	deadLockCkr  util.DeadTableLockChecker
 
 	// hook may be modified.
 	mu struct {
@@ -262,7 +262,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	id := uuid.New().String()
 	var manager owner.Manager
 	var syncer util.SchemaSyncer
-	var deadLockCkr util.DeadLockChecker
+	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
@@ -573,7 +573,7 @@ func (d *ddl) startCleanDeadLock() {
 				wg.Add(1)
 				go goutil.WithRecovery(func() {
 					defer wg.Done()
-					err := d.CleanDeadLock(tables, se)
+					err := d.CleanDeadTableLock(tables, se)
 					if err != nil {
 						logutil.BgLogger().Info("[ddl] clean dead table lock failed.", zap.Error(err))
 					}

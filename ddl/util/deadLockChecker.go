@@ -15,7 +15,6 @@ package util
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -26,17 +25,17 @@ import (
 	"go.uber.org/zap"
 )
 
-type DeadLockChecker struct {
+type DeadTableLockChecker struct {
 	etcdCli *clientv3.Client
 }
 
-func NewDeadLockChecker(etcdCli *clientv3.Client) DeadLockChecker {
-	return DeadLockChecker{
+func NewDeadLockChecker(etcdCli *clientv3.Client) DeadTableLockChecker {
+	return DeadTableLockChecker{
 		etcdCli: etcdCli,
 	}
 }
 
-func (d *DeadLockChecker) getAliveServers() (map[string]struct{}, error) {
+func (d *DeadTableLockChecker) getAliveServers() (map[string]struct{}, error) {
 	var err error
 	var resp *clientv3.GetResponse
 	allInfo := make(map[string]struct{})
@@ -61,7 +60,7 @@ func (d *DeadLockChecker) getAliveServers() (map[string]struct{}, error) {
 	return nil, errors.Trace(err)
 }
 
-func (d *DeadLockChecker) GetDeadLockTables(schemas []*model.DBInfo) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
+func (d *DeadTableLockChecker) GetDeadLockTables(schemas []*model.DBInfo) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
 	if d.etcdCli == nil {
 		return nil, nil
 	}
