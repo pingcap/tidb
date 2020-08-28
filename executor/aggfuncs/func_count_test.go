@@ -103,9 +103,6 @@ func (s *testSuite) TestCount(c *C) {
 }
 
 func (s *testSuite) TestMemCount(c *C) {
-	if israce.RaceEnabled {
-		c.Skip("skip race test")
-	}
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncCount, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4CountDistinctIntSize, distinctUpdateMemDeltaGens, true),
