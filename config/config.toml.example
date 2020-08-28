@@ -77,7 +77,7 @@ treat-old-version-utf8-as-utf8mb4 = true
 max-index-length = 3072
 
 # enable-table-lock is used to control table lock feature. Default is false, indicate the table lock feature is disabled.
-enable-table-lock = true
+enable-table-lock = false
 
 # delay-clean-table-lock is used to control the time (Milliseconds) of delay before unlock the table in the abnormal situation.
 delay-clean-table-lock = 0

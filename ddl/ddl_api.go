@@ -4984,9 +4984,9 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 }
 
 // UnlockTables uses to execute unlock tables statement.
-func (d *ddl) CleanDeadLock(unlockTables []model.TableLockTpInfo, se model.SessionInfo) {
+func (d *ddl) CleanDeadLock(unlockTables []model.TableLockTpInfo, se model.SessionInfo) error {
 	if len(unlockTables) == 0 {
-		return
+		return nil
 	}
 	arg := &lockTablesArg{
 		UnlockTables: unlockTables,
@@ -5002,14 +5002,12 @@ func (d *ddl) CleanDeadLock(unlockTables []model.TableLockTpInfo, se model.Sessi
 
 	ctx, err := d.sessPool.get()
 	if err != nil {
-		logutil.BgLogger().Info("[ddl] clean dead lock, failed to get session.", zap.Error(err))
-		return
+		return err
 	}
 	defer d.sessPool.put(ctx)
 	err = d.doDDLJob(ctx, job)
-	if err != nil {
-		logutil.BgLogger().Info("[ddl] clean dead lock failed.", zap.Error(err))
-	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }
 
 func throwErrIfInMemOrSysDB(ctx sessionctx.Context, dbLowerName string) error {

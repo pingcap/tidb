@@ -573,7 +573,10 @@ func (d *ddl) startCleanDeadLock() {
 				wg.Add(1)
 				go goutil.WithRecovery(func() {
 					defer wg.Done()
-					d.CleanDeadLock(tables, se)
+					err := d.CleanDeadLock(tables, se)
+					if err != nil {
+						logutil.BgLogger().Info("[ddl] clean dead lock failed.", zap.Error(err))
+					}
 				}, nil)
 			}
 			wg.Wait()
