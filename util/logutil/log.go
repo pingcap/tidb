@@ -79,7 +79,7 @@ type LogConfig struct {
 func NewLogConfig(level, format, slowQueryFile string, fileCfg FileLogConfig, disableTimestamp bool, opts ...func(*zaplog.Config)) *LogConfig {
 	c := &LogConfig{
 		Config: zaplog.Config{
-			Level:            level,
+			Level:            "info",
 			Format:           format,
 			DisableTimestamp: disableTimestamp,
 			File:             fileCfg.FileLogConfig,
@@ -128,13 +128,13 @@ func (hook *contextHook) Levels() []log.Level {
 func stringToLogLevel(level string) log.Level {
 	switch strings.ToLower(level) {
 	case "fatal":
-		return log.FatalLevel
+		return log.InfoLevel
 	case "error":
-		return log.ErrorLevel
+		return log.InfoLevel
 	case "warn", "warning":
-		return log.WarnLevel
+		return log.InfoLevel
 	case "debug":
-		return log.DebugLevel
+		return log.InfoLevel
 	case "info":
 		return log.InfoLevel
 	}
