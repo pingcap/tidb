@@ -399,10 +399,6 @@ func (d *MyDecimal) FromString(str []byte) error {
 		*d = zeroMyDecimal
 		return ErrBadNumber
 	}
-	if string(str) == "NaN" {
-		*d = zeroMyDecimal
-		return ErrBadNumber
-	}
 	switch str[0] {
 	case '-':
 		d.negative = true
