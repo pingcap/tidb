@@ -1214,47 +1214,6 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
 	res = tk.MustQuery("explain analyze select * from t where a in (1,2,3);")
 	checkExplain("BatchGet")
 }
-<<<<<<< HEAD
-=======
-
-func (s *testIntegrationSuite) TestPartitionExplain(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table pt (id int, c int, key i_id(id), key i_c(c)) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-
-	tk.MustExec("set @@tidb_enable_index_merge = 1;")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
-		})
-		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func (s *testIntegrationSuite) TestPartialBatchPointGet(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (c_int int, c_str varchar(40), primary key(c_int, c_str))")
-	tk.MustExec("insert into t values (3, 'bose')")
-	tk.MustQuery("select * from t where c_int in (3)").Check(testkit.Rows(
-		"3 bose",
-	))
-	tk.MustQuery("select * from t where c_int in (3) or c_str in ('yalow') and c_int in (1, 2)").Check(testkit.Rows(
-		"3 bose",
-	))
-}
 
 func (s *testIntegrationSuite) TestIssue19926(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1272,4 +1231,3 @@ func (s *testIntegrationSuite) TestIssue19926(c *C) {
 	tk.MustExec("create definer='root'@'localhost' view v as\nselect \nconcat(`ta`.`status`,`tb`.`status`) AS `status`, \n`ta`.`id` AS `id`  from (`ta` join `tb`) \nwhere (`ta`.`id` = `tb`.`id`);")
 	tk.MustQuery("SELECT tc.status,v.id FROM tc, v WHERE tc.id = v.id AND v.status = '11';").Check(testkit.Rows("1 1"))
 }
->>>>>>> 38c7510... planner: use the same unique id between schema and column in ProjUponView  (#19461)
