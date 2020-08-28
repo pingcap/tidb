@@ -954,6 +954,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if err != nil {
 		return err
 	}
+
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
@@ -965,10 +966,12 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}
 	}
+
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
+
 	skiplist := make([]bool, len(toBeCheckedRows))
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
