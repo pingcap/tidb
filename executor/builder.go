@@ -395,7 +395,7 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 	return e
 }
 
-func buildRecoverIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
+func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
 	handleLen := 1
 	var pkCols []*model.IndexColumn
 	if tblInfo.IsCommonHandle {
@@ -439,17 +439,17 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 	}
 	e := &RecoverIndexExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		columns:      buildRecoverIndexCols(tblInfo, index.Meta()),
+		columns:      buildIdxColsConcatHandleCols(tblInfo, index.Meta()),
 		index:        index,
 		table:        t,
 		physicalID:   t.Meta().ID,
 	}
 	sessCtx := e.ctx.GetSessionVars().StmtCtx
-	e.handleCols = buildHandleColsForRecoverIndex(sessCtx, tblInfo, index.Meta(), e.columns)
+	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
 	return e
 }
 
-func buildHandleColsForRecoverIndex(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo,
+func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo, allColInfo []*model.ColumnInfo) plannercore.HandleCols {
 	if !tblInfo.IsCommonHandle {
 		extraColPos := len(allColInfo) - 1
@@ -472,21 +472,6 @@ func buildHandleColsForRecoverIndex(sctx *stmtctx.StatementContext, tblInfo *mod
 		tblCols[c.Offset].Index = len(idxInfo.Columns) + i
 	}
 	return plannercore.NewCommonHandleCols(sctx, tblInfo, pkIdx, tblCols)
-}
-
-func buildCleanupIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
-	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+1)
-	for _, idxCol := range indexInfo.Columns {
-		columns = append(columns, tblInfo.Columns[idxCol.Offset])
-	}
-	handleColsInfo := &model.ColumnInfo{
-		ID:     model.ExtraHandleID,
-		Name:   model.ExtraHandleName,
-		Offset: len(tblInfo.Columns),
-	}
-	handleColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	columns = append(columns, handleColsInfo)
-	return columns
 }
 
 func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executor {
@@ -514,12 +499,14 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executo
 	}
 	e := &CleanupIndexExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		idxCols:      buildCleanupIndexCols(tblInfo, index.Meta()),
+		columns:      buildIdxColsConcatHandleCols(tblInfo, index.Meta()),
 		index:        index,
 		table:        t,
 		physicalID:   t.Meta().ID,
 		batchSize:    20000,
 	}
+	sessCtx := e.ctx.GetSessionVars().StmtCtx
+	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
 	return e
 }
 
@@ -939,6 +926,13 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 		return nil
 	}
 
+	return b.buildUnionScanFromReader(reader, v)
+}
+
+// buildUnionScanFromReader builds union scan executor from child executor.
+// Note that this function may be called by inner workers of index lookup join concurrently.
+// Be careful to avoid data race.
+func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannercore.PhysicalUnionScan) Executor {
 	// Adjust UnionScan->PartitionTable->Reader
 	// to PartitionTable->UnionScan->Reader
 	// The build of UnionScan executor is delay to the nextPartition() function
@@ -952,14 +946,16 @@ func (b *executorBuilder) buildUnionScanExec(v *plannercore.PhysicalUnionScan) E
 		}
 		return x
 	}
-
-	return b.buildUnionScanFromReader(reader, v)
-}
-
-// buildUnionScanFromReader builds union scan executor from child executor.
-// Note that this function may be called by inner workers of index lookup join concurrently.
-// Be careful to avoid data race.
-func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannercore.PhysicalUnionScan) Executor {
+	// If reader is union, it means a partitiont table and we should transfer as above.
+	if x, ok := reader.(*UnionExec); ok {
+		for i, child := range x.children {
+			x.children[i] = b.buildUnionScanFromReader(child, v)
+			if b.err != nil {
+				return nil
+			}
+		}
+		return x
+	}
 	us := &UnionScanExec{baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), reader)}
 	// Get the handle column index of the below Plan.
 	us.belowHandleCols = v.HandleCols
@@ -2529,6 +2525,40 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		return ret
 	}
 
+	if v.StoreType == kv.TiFlash {
+		tmp, _ := b.is.TableByID(ts.Table.ID)
+		tbl := tmp.(table.PartitionedTable)
+		partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		partsExecutor := make([]Executor, 0, len(partitions))
+		for _, part := range partitions {
+			exec, err := buildNoRangeTableReader(b, v)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+			exec.ranges = ts.Ranges
+			nexec, err := nextPartitionForTableReader{exec: exec}.nextPartition(context.Background(), part)
+			if err != nil {
+				b.err = err
+				return nil
+			}
+			partsExecutor = append(partsExecutor, nexec)
+		}
+		if len(partsExecutor) == 0 {
+			return &TableDualExec{baseExecutor: *ret.base()}
+		}
+		if len(partsExecutor) == 1 {
+			return partsExecutor[0]
+		}
+		return &UnionExec{
+			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), partsExecutor...),
+		}
+	}
+
 	nextPartition := nextPartitionForTableReader{ret}
 	exec, err := buildPartitionTable(b, ts.Table, &v.PartitionInfo, ret, nextPartition)
 	if err != nil {
@@ -2961,6 +2991,7 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	if err != nil {
 		return nil, err
 	}
+
 	ret := builder.buildUnionScanFromReader(reader, v)
 	if us, ok := ret.(*UnionScanExec); ok {
 		err = us.open(ctx)
@@ -3201,7 +3232,7 @@ func buildRangesForIndexJoin(ctx sessionctx.Context, lookUpContents []*indexJoin
 		return retRanges, nil
 	}
 
-	return ranger.UnionRanges(ctx.GetSessionVars().StmtCtx, tmpDatumRanges)
+	return ranger.UnionRanges(ctx.GetSessionVars().StmtCtx, tmpDatumRanges, true)
 }
 
 // buildKvRangesForIndexJoin builds kv ranges for index join when the inner plan is index scan plan.
@@ -3255,7 +3286,7 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 		return kvRanges, nil
 	}
 
-	tmpDatumRanges, err = ranger.UnionRanges(ctx.GetSessionVars().StmtCtx, tmpDatumRanges)
+	tmpDatumRanges, err = ranger.UnionRanges(ctx.GetSessionVars().StmtCtx, tmpDatumRanges, true)
 	if err != nil {
 		return nil, err
 	}
