@@ -460,23 +460,15 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 }
 
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	if isChanClosed(d.ctx.Done()) {
+		return d.ctx.Err()
+	}
+
 	// Get a global job ID and put the DDL job in the queue.
 	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	task := &limitJobTask{job, make(chan error)}
-	select {
-	case d.limitJobCh <- task:
-	case <-d.ctx.Done():
-		return d.ctx.Err()
-	}
-	// Wait job has been added to DDL queue
-	select {
-	case err := <-task.err:
-		if err != nil {
-			return errors.Trace(err)
-		}
-	case <-d.ctx.Done():
-		return d.ctx.Err()
-	}
+	d.limitJobCh <- task
+	err := <-task.err
 
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
@@ -484,11 +476,8 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	d.asyncNotifyWorker(job.Type)
 	logutil.BgLogger().Info("[ddl] start DDL job", zap.String("job", job.String()), zap.String("query", job.Query))
 
-	var (
-		historyJob *model.Job
-		err        error
-		jobID      = job.ID
-	)
+	var historyJob *model.Job
+	jobID := job.ID
 	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
 	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
 	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
