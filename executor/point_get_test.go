@@ -571,6 +571,8 @@ func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
 	tk.MustExec(`create table t2 (a varchar(20), b int, primary key(a), unique key(b))`)
 	tk.MustExec(`insert into t1 values(1,1,1),(2,2,2),(3,3,3)`)
 	tk.MustExec(`insert into t2 values('111',1),('222',2),('333',3)`)
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
 	var input []string
 	var output []struct {
 		SQL  string
