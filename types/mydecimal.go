@@ -2341,3 +2341,20 @@ func NewMaxOrMinDec(negative bool, prec, frac int) *MyDecimal {
 	terror.Log(errors.Trace(err))
 	return dec
 }
+
+func NewZeroDec(prec, frac int) *MyDecimal {
+	if prec == UnspecifiedLength {
+		return NewDecFromInt(0)
+	}
+	str := make([]byte, prec+1)
+	for i := 0; i < len(str); i++ {
+		str[i] = '0'
+	}
+	if frac != UnspecifiedLength {
+		str[prec-frac] = '.'
+	}
+	dec := new(MyDecimal)
+	err := dec.FromString(str)
+	terror.Log(errors.Trace(err))
+	return dec
+}
