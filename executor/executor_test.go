@@ -119,8 +119,8 @@ var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testBatchPointGetSuite{})
-var _ = Suite(&testRecoverTable{})
-var _ = Suite(&testMemTableReaderSuite{&testClusterTableBase{}})
+var _ = SerialSuites(&testRecoverTable{})
+var _ = SerialSuites(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
@@ -131,6 +131,7 @@ var _ = SerialSuites(&testSerialSuite1{&baseTestSuite{}})
 var _ = SerialSuites(&testSlowQuery{&baseTestSuite{}})
 var _ = Suite(&partitionTableSuite{&baseTestSuite{}})
 var _ = SerialSuites(&tiflashTestSuite{})
+var _ = SerialSuites(&testSerialSuite{&baseTestSuite{}})
 
 type testSuite struct{ *baseTestSuite }
 type testSuiteP1 struct{ *baseTestSuite }
@@ -142,6 +143,7 @@ type testSuiteWithData struct {
 }
 type testSlowQuery struct{ *baseTestSuite }
 type partitionTableSuite struct{ *baseTestSuite }
+type testSerialSuite struct { *baseTestSuite }
 
 type baseTestSuite struct {
 	cluster cluster.Cluster
@@ -2340,7 +2342,7 @@ func (s *testSuiteP2) TestBatchPointGetRepeatableRead(c *C) {
 	c.Assert(failpoint.Disable(step2), IsNil)
 }
 
-func (s *testSuite7) TestSplitRegionTimeout(c *C) {
+func (s *testSerialSuite) TestSplitRegionTimeout(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout", `return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3957,7 +3959,7 @@ func (s *testSuite3) TestDoSubquery(c *C) {
 	c.Assert(r, IsNil, Commentf("result of Do not empty"))
 }
 
-func (s *testSuite3) TestTSOFail(c *C) {
+func (s *testSerialSuite) TestTSOFail(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
@@ -6178,7 +6180,7 @@ func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
 		))
 }
 
-func (s *testSuite) TestKillTableReader(c *C) {
+func (s *testSerialSuite) TestKillTableReader(c *C) {
 	var retry = "github.com/pingcap/tidb/store/tikv/mockRetrySendReqToRegion"
 	defer func() {
 		c.Assert(failpoint.Disable(retry), IsNil)
@@ -6195,7 +6197,9 @@ func (s *testSuite) TestKillTableReader(c *C) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		c.Assert(int(errors.Cause(tk.QueryToErr("select * from t")).(*terror.Error).ToSQLError().Code), Equals, int(executor.ErrQueryInterrupted.Code()))
+		err := tk.QueryToErr("select * from t")
+		c.Assert(err, NotNil)
+		c.Assert(int(errors.Cause(err).(*terror.Error).ToSQLError().Code), Equals, int(executor.ErrQueryInterrupted.Code()))
 	}()
 	time.Sleep(1 * time.Second)
 	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 1)
