@@ -49,7 +49,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		return nil
 	}
 	e := &PointGetExecutor{
-		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
+		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
@@ -87,7 +87,7 @@ type PointGetExecutor struct {
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
 
-	stats *pointGetRuntimeStats
+	stats *runtimeStatsWithSnapshot
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -140,12 +140,12 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	}
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
-		e.stats = &pointGetRuntimeStats{
+		e.stats = &runtimeStatsWithSnapshot{
 			BasicRuntimeStats:    e.runtimeStats,
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
@@ -159,6 +159,7 @@ func (e *PointGetExecutor) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.DelOption(kv.CollectRuntimeStats)
 	}
+	e.done = false
 	return nil
 }
 
@@ -179,7 +180,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	if e.idxInfo != nil {
 		if isCommonHandleRead(e.tblInfo, e.idxInfo) {
-			handleBytes, err := codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, e.idxVals...)
+			handleBytes, err := EncodeUniqueIndexValuesForKey(e.ctx, e.tblInfo, e.idxInfo, e.idxVals)
 			if err != nil {
 				return err
 			}
@@ -338,6 +339,15 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 
 // EncodeUniqueIndexKey encodes a unique index key.
 func EncodeUniqueIndexKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, err error) {
+	encodedIdxVals, err := EncodeUniqueIndexValuesForKey(ctx, tblInfo, idxInfo, idxVals)
+	if err != nil {
+		return nil, err
+	}
+	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
+}
+
+// EncodeUniqueIndexValuesForKey encodes unique index values for a key.
+func EncodeUniqueIndexValuesForKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum) (_ []byte, err error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	for i := range idxVals {
 		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
@@ -363,7 +373,7 @@ func EncodeUniqueIndexKey(ctx sessionctx.Context, tblInfo *model.TableInfo, idxI
 	if err != nil {
 		return nil, err
 	}
-	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
+	return encodedIdxVals, nil
 }
 
 // DecodeRowValToChunk decodes row value into chunk checking row format used.
@@ -456,19 +466,18 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 	return nil
 }
 
-// InsertRuntimeStats To Get InsertAndCheck Runtime Stat
-type InsertRuntimeStats struct {
-	*pointGetRuntimeStats
+type InsertRuntimeStat struct {
+	*runtimeStatsWithSnapshot
 	start time.Time
 	end   time.Time
 }
 
-type pointGetRuntimeStats struct {
+type runtimeStatsWithSnapshot struct {
 	*execdetails.BasicRuntimeStats
 	*tikv.SnapshotRuntimeStats
 }
 
-func (e *pointGetRuntimeStats) String() string {
+func (e *runtimeStatsWithSnapshot) String() string {
 	var basic, rpcStatsStr string
 	if e.BasicRuntimeStats != nil {
 		basic = e.BasicRuntimeStats.String()

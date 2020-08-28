@@ -25,9 +25,12 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -404,8 +407,8 @@ func (s *testIntegrationSerialSuite) TestBroadcastJoin(c *C) {
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
 
-	// out join not supported
-	_, err := tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k")
+	// out table of out join should not be global
+	_, err := tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t), broadcast_join_local(d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 	// join with non-equal condition not supported
@@ -672,6 +675,7 @@ func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 	tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
 	tk.MustExec("insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5)")
 	tk.MustExec("analyze table t")
+	tk.MustExec("set @try_old_partition_implementation = 1")
 
 	var input []string
 	var output []struct {
@@ -695,7 +699,6 @@ func (s *testIntegrationSuite) TestPartitionPruningForInExpr(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(11), b int) partition by range (a) (partition p0 values less than (4), partition p1 values less than(10), partition p2 values less than maxvalue);")
 	tk.MustExec("insert into t values (1, 1),(10, 10),(11, 11)")
-	tk.MustExec("set @try_new_partition_implementation = 1")
 
 	var input []string
 	var output []struct {
@@ -710,6 +713,30 @@ func (s *testIntegrationSuite) TestPartitionPruningForInExpr(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func (s *testIntegrationSuite) TestPartitionPruningForEQ(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a datetime, b int) partition by range(weekday(a)) (partition p0 values less than(10), partition p1 values less than (100))")
+
+	is := infoschema.GetInfoSchema(tk.Se)
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	pt := tbl.(table.PartitionedTable)
+	query, err := expression.ParseSimpleExprWithTableInfo(tk.Se, "a = '2020-01-01 00:00:00'", tbl.Meta())
+	c.Assert(err, IsNil)
+	dbName := model.NewCIStr(tk.Se.GetSessionVars().CurrentDB)
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(tk.Se, dbName, tbl.Meta().Name, tbl.Meta().Cols(), tbl.Meta())
+	c.Assert(err, IsNil)
+	// Even the partition is not monotonous, EQ condition should be prune!
+	// select * from t where a = '2020-01-01 00:00:00'
+	res, err := core.PartitionPruning(tk.Se, pt, []expression.Expression{query}, nil, columns, names)
+	c.Assert(err, IsNil)
+	c.Assert(res, HasLen, 1)
+	c.Assert(res[0], Equals, 0)
 }
 
 func (s *testIntegrationSuite) TestErrNoDB(c *C) {
@@ -945,7 +972,8 @@ func (s *testIntegrationSuite) TestApproxCountDistinctInPartitionTable(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(11), b int) partition by range (a) (partition p0 values less than (3), partition p1 values less than maxvalue);")
 	tk.MustExec("insert into t values(1, 1), (2, 1), (3, 1), (4, 2), (4, 2)")
-	tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down=1"))
+	tk.MustExec("set session tidb_opt_agg_push_down=1")
+	tk.MustExec("set @try_old_partition_implementation = 1")
 	tk.MustQuery("explain select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("Sort_11 16000.00 root  test.t.b:desc",
 		"└─HashAgg_16 16000.00 root  group by:test.t.b, funcs:approx_count_distinct(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.b",
 		"  └─PartitionUnion_17 16000.00 root  ",
@@ -1146,8 +1174,8 @@ func (s *testIntegrationSerialSuite) TestIssue16837(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int,b int,c int,d int,e int,unique key idx_ab(a,b),unique key(c),unique key(d))")
 	tk.MustQuery("explain select /*+ use_index_merge(t,c,idx_ab) */ * from t where a = 1 or (e = 1 and c = 1)").Check(testkit.Rows(
-		"TableReader_7 8000.00 root  data:Selection_6",
-		"└─Selection_6 8000.00 cop[tikv]  or(eq(test.t.a, 1), and(eq(test.t.e, 1), eq(test.t.c, 1)))",
+		"TableReader_7 10.00 root  data:Selection_6",
+		"└─Selection_6 10.00 cop[tikv]  or(eq(test.t.a, 1), and(eq(test.t.e, 1), eq(test.t.c, 1)))",
 		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 IndexMerge is inapplicable or disabled"))
 	tk.MustExec("insert into t values (2, 1, 1, 1, 2)")
@@ -1207,6 +1235,8 @@ func (s *testIntegrationSuite) TestOptimizeHintOnPartitionTable(c *C) {
 			}
 		}
 	}
+
+	tk.MustExec("set @try_old_partition_implementation = 1")
 
 	var input []string
 	var output []struct {
@@ -1423,6 +1453,25 @@ func (s *testIntegrationSuite) TestIndexJoinOnClusteredIndex(c *C) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
 	}
 }
+func (s *testIntegrationSerialSuite) TestIssue18984(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t2")
+	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a, b))")
+	tk.MustExec("create table t2(a int, b int, c int, d int, primary key(a,b), index idx(c))")
+	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("insert into t2 values(1,2,3,4), (2,4,3,5), (1,3,1,1)")
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t) */ * from t right outer join t2 on t.a=t2.c").Check(testkit.Rows(
+		"1 1 1 1 3 1 1",
+		"3 3 3 1 2 3 4",
+		"3 3 3 2 4 3 5"))
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t2) */ * from t left outer join t2 on t.a=t2.c").Check(testkit.Rows(
+		"1 1 1 1 3 1 1",
+		"2 2 2 <nil> <nil> <nil> <nil>",
+		"3 3 3 1 2 3 4",
+		"3 3 3 2 4 3 5"))
+}
 
 func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -1454,7 +1503,7 @@ partition p0 values less than (4),
 partition p1 values less than (7),
 partition p2 values less than (10))`)
 
-	tk.MustExec("set @try_new_partition_implementation = 1;")
+	tk.MustExec("set @@tidb_enable_index_merge = 1;")
 
 	var input []string
 	var output []struct {
@@ -1469,6 +1518,35 @@ partition p2 values less than (10))`)
 		})
 		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 	}
+}
 
-	tk.MustExec("set @try_new_partition_implementation = null;")
+func (s *testIntegrationSuite) TestPartialBatchPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c_int int, c_str varchar(40), primary key(c_int, c_str))")
+	tk.MustExec("insert into t values (3, 'bose')")
+	tk.MustQuery("select * from t where c_int in (3)").Check(testkit.Rows(
+		"3 bose",
+	))
+	tk.MustQuery("select * from t where c_int in (3) or c_str in ('yalow') and c_int in (1, 2)").Check(testkit.Rows(
+		"3 bose",
+	))
+}
+
+func (s *testIntegrationSuite) TestIssue19926(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ta;")
+	tk.MustExec("drop table if exists tb;")
+	tk.MustExec("drop table if exists tc;")
+	tk.MustExec("drop view if exists v;")
+	tk.MustExec("CREATE TABLE `ta`  (\n  `id` varchar(36) NOT NULL ,\n  `status` varchar(1) NOT NULL \n);")
+	tk.MustExec("CREATE TABLE `tb`  (\n  `id` varchar(36) NOT NULL ,\n  `status` varchar(1) NOT NULL \n);")
+	tk.MustExec("CREATE TABLE `tc`  (\n  `id` varchar(36) NOT NULL ,\n  `status` varchar(1) NOT NULL \n);")
+	tk.MustExec("insert into ta values('1','1');")
+	tk.MustExec("insert into tb values('1','1');")
+	tk.MustExec("insert into tc values('1','1');")
+	tk.MustExec("create definer='root'@'localhost' view v as\nselect \nconcat(`ta`.`status`,`tb`.`status`) AS `status`, \n`ta`.`id` AS `id`  from (`ta` join `tb`) \nwhere (`ta`.`id` = `tb`.`id`);")
+	tk.MustQuery("SELECT tc.status,v.id FROM tc, v WHERE tc.id = v.id AND v.status = '11';").Check(testkit.Rows("1 1"))
 }

@@ -11,8 +11,8 @@
     "Name": "TestColumnIndexNullEstimation",
     "Cases": [
       [
-        "IndexReader_6 4.00 root  index:IndexFullScan_5",
-        "└─IndexFullScan_5 4.00 cop[tikv] table:t, index:idx_b(b) keep order:false"
+        "IndexReader_6 4.00 root  index:IndexRangeScan_5",
+        "└─IndexRangeScan_5 4.00 cop[tikv] table:t, index:idx_b(b) range:[NULL,NULL], keep order:false"
       ],
       [
         "IndexReader_6 1.00 root  index:IndexFullScan_5",
@@ -105,6 +105,27 @@
         "└─Selection_6 2.00 cop[tikv]  gt(test.t.a, \"aÄa\")",
         "  └─TableFullScan_5 4.00 cop[tikv] table:t keep order:false"
       ]
+    ]
+  },
+  {
+    "Name": "TestDNFCondSelectivity",
+    "Cases": [
+      {
+        "SQL": "select * from t where b > 7 or c < 4",
+        "Selectivity": 0.34375
+      },
+      {
+        "SQL": "select * from t where d < 5 or b > 6",
+        "Selectivity": 0.625
+      },
+      {
+        "SQL": "select * from t where a > 8 or d < 4 or c > 7 or b < 5",
+        "Selectivity": 0.82421875
+      },
+      {
+        "SQL": "select * from t where a < 8 and (b > 10 or c < 3 or b > 4) and a > 2",
+        "Selectivity": 0.3125
+      }
     ]
   }
 ]

@@ -14,13 +14,16 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -39,7 +42,7 @@ import (
 
 const amendableType = nonMemAmendType | memBufAmendType
 const nonMemAmendType = (1 << model.ActionAddColumn) | (1 << model.ActionDropColumn) | (1 << model.ActionDropIndex)
-const memBufAmendType = uint64(1 << model.ActionAddIndex)
+const memBufAmendType = uint64(1<<model.ActionAddIndex) | (1 << model.ActionModifyColumn)
 
 // Amend operation types.
 const (
@@ -128,6 +131,80 @@ func (a *amendCollector) keyHasAmendOp(key []byte) bool {
 	return len(ops) > 0
 }
 
+func needCollectIndexOps(actionType uint64) bool {
+	return actionType&(1<<model.ActionAddIndex) != 0
+}
+
+func needCollectModifyColOps(actionType uint64) bool {
+	return actionType&(1<<model.ActionModifyColumn) != 0
+}
+
+func fieldTypeDeepEquals(ft1 *types.FieldType, ft2 *types.FieldType) bool {
+	if ft1.Tp == ft2.Tp &&
+		ft1.Flag == ft2.Flag &&
+		ft1.Flen == ft2.Flen &&
+		ft1.Decimal == ft2.Decimal &&
+		ft1.Charset == ft2.Charset &&
+		ft1.Collate == ft2.Collate &&
+		len(ft1.Elems) == len(ft2.Elems) {
+		for i, elem := range ft1.Elems {
+			if elem != ft2.Elems[i] {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// colChangeAmendable checks whether the column change is amendable, now only increasing column field
+// length is allowed for committing concurrent pessimistic transactions.
+func colChangeAmendable(colAtStart *model.ColumnInfo, colAtCommit *model.ColumnInfo) error {
+	// Modifying a stored generated column is not allowed by DDL, the generated related fields are not considered.
+	if !fieldTypeDeepEquals(&colAtStart.FieldType, &colAtCommit.FieldType) {
+		if colAtStart.FieldType.Flag != colAtCommit.FieldType.Flag {
+			return errors.Trace(errors.Errorf("flag is not matched for column=%v, from=%v to=%v",
+				colAtCommit.Name.String(), colAtStart.FieldType.Flag, colAtCommit.FieldType.Flag))
+		}
+		if colAtStart.Charset != colAtCommit.Charset || colAtStart.Collate != colAtCommit.Collate {
+			return errors.Trace(errors.Errorf("charset or collate is not matched for column=%v", colAtCommit.Name.String()))
+		}
+		_, err := ddl.CheckModifyTypeCompatible(&colAtStart.FieldType, &colAtCommit.FieldType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	// TODO Default value change is not supported.
+	if !reflect.DeepEqual(colAtStart.DefaultValue, colAtCommit.DefaultValue) {
+		return errors.Trace(errors.Errorf("default value is not matched for column=%v, from=%v to=%v",
+			colAtCommit.Name.String(), colAtStart.DefaultValue, colAtCommit.DefaultValue))
+	}
+	if !bytes.Equal(colAtStart.DefaultValueBit, colAtCommit.DefaultValueBit) {
+		return errors.Trace(errors.Errorf("default value bits is not matched for column=%v, from=%v to=%v",
+			colAtCommit.Name.String(), colAtStart.DefaultValueBit, colAtCommit.DefaultValueBit))
+	}
+	if colAtStart.Version != colAtCommit.Version {
+		return errors.Trace(errors.Errorf("column version is not matched for column=%v, from=%v to=%v",
+			colAtCommit.Name.String(), colAtStart.Version, colAtCommit.Version))
+	}
+	return nil
+}
+
+// collectModifyColAmendOps is used to check if there is column change from nullable to not null by now.
+// TODO allow column change from nullable to not null, and generate keys check operation.
+func (a *amendCollector) collectModifyColAmendOps(tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
+	for _, colAtCommit := range tblAtCommit.Cols() {
+		colAtStart := findColByID(tblAtStart, colAtCommit.ID)
+		if colAtStart != nil {
+			err := colChangeAmendable(colAtStart.ColumnInfo, colAtCommit.ColumnInfo)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return nil, nil
+}
+
 func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStart, tblAtCommit table.Table) ([]amendOp, error) {
 	res := make([]amendOp, 0, 4)
 	// Check index having state change, collect index column info.
@@ -187,16 +264,24 @@ func (a *amendCollector) collectIndexAmendOps(sctx sessionctx.Context, tblAtStar
 
 // collectTblAmendOps collects amend operations for each table using the schema diff between startTS and commitTS.
 func (a *amendCollector) collectTblAmendOps(sctx sessionctx.Context, phyTblID int64,
-	tblInfoAtStart, tblInfoAtCommit table.Table) error {
+	tblInfoAtStart, tblInfoAtCommit table.Table, actionType uint64) error {
 	if _, ok := a.tblAmendOpMap[phyTblID]; !ok {
 		a.tblAmendOpMap[phyTblID] = make([]amendOp, 0, 4)
 	}
-	// TODO: currently only "add index" is considered.
-	ops, err := a.collectIndexAmendOps(sctx, tblInfoAtStart, tblInfoAtCommit)
-	if err != nil {
-		return err
+	if needCollectModifyColOps(actionType) {
+		_, err := a.collectModifyColAmendOps(tblInfoAtStart, tblInfoAtCommit)
+		if err != nil {
+			return err
+		}
 	}
-	a.tblAmendOpMap[phyTblID] = append(a.tblAmendOpMap[phyTblID], ops...)
+	if needCollectIndexOps(actionType) {
+		// TODO: currently only "add index" is considered.
+		ops, err := a.collectIndexAmendOps(sctx, tblInfoAtStart, tblInfoAtCommit)
+		if err != nil {
+			return err
+		}
+		a.tblAmendOpMap[phyTblID] = append(a.tblAmendOpMap[phyTblID], ops...)
+	}
 	return nil
 }
 
@@ -390,9 +475,7 @@ func (s *SchemaAmender) getAmendableKeys(commitMutations tikv.CommitterMutations
 			addKeys = append(addKeys, byteKey)
 		} else if pb.Op_Del == keyOp {
 			removeKeys = append(removeKeys, byteKey)
-		} else {
-			// Do nothing.
-		}
+		} // else Do nothing.
 	}
 	return addKeys, removeKeys
 }
@@ -495,7 +578,7 @@ func (s *SchemaAmender) AmendTxn(ctx context.Context, startInfoSchema tikv.Schem
 		}
 		if actionType&(memBufAmendType) != 0 {
 			needAmendMem = true
-			err := amendCollector.collectTblAmendOps(s.sess, tblID, tblInfoAtStart, tblInfoAtCommit)
+			err := amendCollector.collectTblAmendOps(s.sess, tblID, tblInfoAtStart, tblInfoAtCommit, actionType)
 			if err != nil {
 				return nil, err
 			}
