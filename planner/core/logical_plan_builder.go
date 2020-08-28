@@ -3255,7 +3255,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 			DBName:      dbName,
 		})
 		projSchema.Append(&expression.Column{
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: cols[i].UniqueID,
 			RetType:  cols[i].GetType(),
 		})
 		projExprs = append(projExprs, cols[i])
