@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"runtime/trace"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -202,6 +203,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	defer trace.StartRegion(ctx, "CommitTxn").End()
 
 	if !txn.valid {
 		return kv.ErrInvalidTxn
@@ -240,7 +242,11 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 			committer.ttlManager.close()
 		}
 	}()
-	if err := committer.initKeysAndMutations(); err != nil {
+
+	initRegion := trace.StartRegion(ctx, "InitKeys")
+	err = committer.initKeysAndMutations()
+	initRegion.End()
+	if err != nil {
 		return errors.Trace(err)
 	}
 	if committer.mutations.len() == 0 {
