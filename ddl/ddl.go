@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -347,6 +348,9 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		}
 
 		go d.schemaSyncer.StartCleanWork()
+		if config.TableLockEnabled() {
+			go d.startCleanDeadLock()
+		}
 		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
 

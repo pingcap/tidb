@@ -19,12 +19,14 @@ package ddl
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,10 +40,12 @@ import (
 	field_types "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -4955,6 +4959,57 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	return errors.Trace(err)
 }
 
+func (d *ddl) startCleanDeadLock() {
+	defer util.Recover(metrics.LabelDDL, "startCleanDeadLock", nil, false)
+
+	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if !d.ownerManager.IsOwner() {
+				continue
+			}
+
+			servers, err := infosync.GetAllServerInfo(context.Background())
+			if err != nil {
+				logutil.BgLogger().Info("[ddl] clean dead lock, failed to get all servers information", zap.Error(err))
+				continue
+			}
+
+			is := d.infoHandle.Get()
+			schemas := is.AllSchemas()
+			unlockTables := make(map[model.SessionInfo][]model.TableLockTpInfo)
+			for _, schema := range schemas {
+				for _, tbl := range schema.Tables {
+					if tbl.Lock == nil {
+						continue
+					}
+					for _, se := range tbl.Lock.Sessions {
+						if _, ok := servers[se.ServerID]; !ok {
+							unlockTables[se] = append(unlockTables[se], model.TableLockTpInfo{
+								SchemaID: schema.ID,
+								TableID:  tbl.ID,
+								Tp:       tbl.Lock.Tp,
+							})
+						}
+					}
+				}
+			}
+
+			var wg sync.WaitGroup
+			for se, tables := range unlockTables {
+				wg.Add(1)
+				go util.WithRecovery(func() {
+					defer wg.Done()
+					d.CleanDeadLock(tables, se)
+				}, nil)
+			}
+			wg.Wait()
+		}
+	}
+}
+
 // UnlockTables uses to execute unlock tables statement.
 func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLockTpInfo) error {
 	if len(unlockTables) == 0 {
@@ -4981,6 +5036,35 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	}
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+// UnlockTables uses to execute unlock tables statement.
+func (d *ddl) CleanDeadLock(unlockTables []model.TableLockTpInfo, se model.SessionInfo) {
+	if len(unlockTables) == 0 {
+		return
+	}
+	arg := &lockTablesArg{
+		UnlockTables: unlockTables,
+		SessionInfo:  se,
+	}
+	job := &model.Job{
+		SchemaID:   unlockTables[0].SchemaID,
+		TableID:    unlockTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+
+	ctx, err := d.sessPool.get()
+	if err != nil {
+		logutil.BgLogger().Info("[ddl] clean dead lock, failed to get session.", zap.Error(err))
+		return
+	}
+	defer d.sessPool.put(ctx)
+	err = d.doDDLJob(ctx, job)
+	if err != nil {
+		logutil.BgLogger().Info("[ddl] clean dead lock failed.", zap.Error(err))
+	}
 }
 
 func throwErrIfInMemOrSysDB(ctx sessionctx.Context, dbLowerName string) error {
