@@ -807,16 +807,13 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 	bufreal := buf.Float64s()
 	resdecimal := result.Decimals()
 	for i := 0; i < n; i++ {
-		if !b.inUnion || bufreal[i] >= 0 {
+		if !result.IsNull(i) && (!b.inUnion || bufreal[i] >= 0) {
 			if err = resdecimal[i].FromFloat64(bufreal[i]); err != nil {
 				if types.ErrOverflow.Equal(err) {
 					warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
 					err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
 				} else if types.ErrTruncated.Equal(err) {
 					// This behavior is consistent with MySQL.
-					err = nil
-				} else if bufreal[i] != bufreal[i] {
-					// This branch is also meant to be consistent with MySQL. If bufreal is NaN, then we should just ignore it, instead of reporting any error.
 					err = nil
 				}
 				if err != nil {
