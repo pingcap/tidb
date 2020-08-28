@@ -1470,64 +1470,8 @@ func (s *testSuite2) TestIssue19112(c *C) {
 		"1 4.064000 1 4.064000",
 		"3 1.010000 3 1.010000"))
 }
-<<<<<<< HEAD
-=======
 
-func (s *testSuiteJoin3) TestIssue11896(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	// compare bigint to bit(64)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 bigint)")
-	tk.MustExec("create table t1(c1 bit(64))")
-	tk.MustExec("insert into t value(1)")
-	tk.MustExec("insert into t1 value(1)")
-	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
-		testkit.Rows("1 \x00\x00\x00\x00\x00\x00\x00\x01"))
-
-	// compare int to bit(32)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 int)")
-	tk.MustExec("create table t1(c1 bit(32))")
-	tk.MustExec("insert into t value(1)")
-	tk.MustExec("insert into t1 value(1)")
-	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
-		testkit.Rows("1 \x00\x00\x00\x01"))
-
-	// compare mediumint to bit(24)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 mediumint)")
-	tk.MustExec("create table t1(c1 bit(24))")
-	tk.MustExec("insert into t value(1)")
-	tk.MustExec("insert into t1 value(1)")
-	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
-		testkit.Rows("1 \x00\x00\x01"))
-
-	// compare smallint to bit(16)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 smallint)")
-	tk.MustExec("create table t1(c1 bit(16))")
-	tk.MustExec("insert into t value(1)")
-	tk.MustExec("insert into t1 value(1)")
-	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
-		testkit.Rows("1 \x00\x01"))
-
-	// compare tinyint to bit(8)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 tinyint)")
-	tk.MustExec("create table t1(c1 bit(8))")
-	tk.MustExec("insert into t value(1)")
-	tk.MustExec("insert into t1 value(1)")
-	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
-		testkit.Rows("1 \x01"))
-}
-
-func (s *testSuiteJoin3) TestIssue19498(c *C) {
+func (s *testSuite2) TestIssue19498(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	tk.MustExec("drop table if exists t1;")
@@ -1556,4 +1500,3 @@ func (s *testSuiteJoin3) TestIssue19498(c *C) {
 	rs = tk.MustQuery("select c_str, (select /*+ INL_MERGE_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;")
 	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
 }
->>>>>>> 1417991... executor: reset INLJ.task when Close (#19513)
