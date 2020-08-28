@@ -965,8 +965,6 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}
 	}
-	end := time.Now()
-	e.stats.check = end.Sub(start)
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
@@ -974,8 +972,6 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	skiplist := make([]bool, len(toBeCheckedRows))
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
-		//skip := false
-		skiplist[i] = false
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKV.key)
 			if err == nil {
@@ -991,7 +987,6 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			if err == nil {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-				//skip = true
 				skiplist[i] = true
 				break
 			}
@@ -1000,7 +995,8 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 	}
-	e.stats.insert = time.Since(end)
+	end := time.Now()
+	e.stats.check = end.Sub(start)
 	// If row was checked with no duplicate keys,
 	// it should be add to values map for the further` row check.
 	// There may be duplicate keys inside the insert statement.
@@ -1013,6 +1009,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 	}
+	e.stats.insert = time.Since(end)
 	return nil
 }
 
