@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -950,6 +951,11 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	}
 	skiplist := make([]bool, len(toBeCheckedRows), len(toBeCheckedRows))
 	// append warnings and get no duplicated error rows
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("InsertValue.batchCheckAndInsert", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(ctx, span1)
+	}
 	for i, r := range toBeCheckedRows {
 		//skip := false
 		skiplist[i] = false
@@ -976,10 +982,10 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				return err
 			}
 		}
-		// If row was checked with no duplicate keys,
-		// it should be add to values map for the further row check.
-		// There may be duplicate keys inside the insert statement.
 	}
+	// If row was checked with no duplicate keys,
+	// it should be add to values map for the further row check.
+	// There may be duplicate keys inside the insert statement.
 	for index, skip := range skiplist {
 		if !skip {
 			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
