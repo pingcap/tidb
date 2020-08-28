@@ -948,10 +948,11 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
-
+	skiplist := make([]bool, len(toBeCheckedRows), len(toBeCheckedRows))
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
-		skip := false
+		//skip := false
+		skiplist[i] = false
 		if r.handleKey != nil {
 			_, err := txn.Get(ctx, r.handleKey.newKV.key)
 			if err == nil {
@@ -967,7 +968,8 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			if err == nil {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-				skip = true
+				//skip = true
+				skiplist[i] = true
 				break
 			}
 			if !kv.IsErrNotFound(err) {
@@ -977,9 +979,11 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		// If row was checked with no duplicate keys,
 		// it should be add to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
+	}
+	for index, skip := range skiplist {
 		if !skip {
 			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
-			err = addRecord(ctx, rows[i])
+			err = addRecord(ctx, rows[index])
 			if err != nil {
 				return err
 			}
