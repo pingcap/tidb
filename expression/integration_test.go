@@ -7107,6 +7107,7 @@ func (s *testIntegrationSerialSuite) TestIssue14448(c *C) {
 	c.Assert(strings.Contains(err.Error(), message), IsTrue)
 	tk.MustExec("SET tidb_enable_noop_functions=1")
 	tk.MustExec("SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1")
+}
 
 func (s *testIntegrationSerialSuite) TestIssue17063(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
