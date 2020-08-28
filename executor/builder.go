@@ -395,7 +395,7 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) Executor {
 	return e
 }
 
-func buildRecoverIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
+func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
 	handleLen := 1
 	var pkCols []*model.IndexColumn
 	if tblInfo.IsCommonHandle {
@@ -439,17 +439,17 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) Executo
 	}
 	e := &RecoverIndexExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		columns:      buildRecoverIndexCols(tblInfo, index.Meta()),
+		columns:      buildIdxColsConcatHandleCols(tblInfo, index.Meta()),
 		index:        index,
 		table:        t,
 		physicalID:   t.Meta().ID,
 	}
 	sessCtx := e.ctx.GetSessionVars().StmtCtx
-	e.handleCols = buildHandleColsForRecoverIndex(sessCtx, tblInfo, index.Meta(), e.columns)
+	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
 	return e
 }
 
-func buildHandleColsForRecoverIndex(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo,
+func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo, allColInfo []*model.ColumnInfo) plannercore.HandleCols {
 	if !tblInfo.IsCommonHandle {
 		extraColPos := len(allColInfo) - 1
@@ -472,21 +472,6 @@ func buildHandleColsForRecoverIndex(sctx *stmtctx.StatementContext, tblInfo *mod
 		tblCols[c.Offset].Index = len(idxInfo.Columns) + i
 	}
 	return plannercore.NewCommonHandleCols(sctx, tblInfo, pkIdx, tblCols)
-}
-
-func buildCleanupIndexCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) []*model.ColumnInfo {
-	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+1)
-	for _, idxCol := range indexInfo.Columns {
-		columns = append(columns, tblInfo.Columns[idxCol.Offset])
-	}
-	handleColsInfo := &model.ColumnInfo{
-		ID:     model.ExtraHandleID,
-		Name:   model.ExtraHandleName,
-		Offset: len(tblInfo.Columns),
-	}
-	handleColsInfo.FieldType = *types.NewFieldType(mysql.TypeLonglong)
-	columns = append(columns, handleColsInfo)
-	return columns
 }
 
 func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executor {
@@ -514,12 +499,14 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) Executo
 	}
 	e := &CleanupIndexExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		idxCols:      buildCleanupIndexCols(tblInfo, index.Meta()),
+		columns:      buildIdxColsConcatHandleCols(tblInfo, index.Meta()),
 		index:        index,
 		table:        t,
 		physicalID:   t.Meta().ID,
 		batchSize:    20000,
 	}
+	sessCtx := e.ctx.GetSessionVars().StmtCtx
+	e.handleCols = buildHandleColsForExec(sessCtx, tblInfo, index.Meta(), e.columns)
 	return e
 }
 
