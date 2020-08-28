@@ -26,11 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tipb/go-tipb"
->>>>>>> e6a6930... range: build right range for `NULL` value on index column (#19385)
 )
 
 // Error instances.

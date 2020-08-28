@@ -4502,271 +4502,7 @@ func (s *testSuite1) TestIssue16854(c *C) {
 	tk.MustExec("drop table t")
 }
 
-<<<<<<< HEAD
 func (s *testSuite1) TestIssue15718(c *C) {
-=======
-func (s *testSuite) TestIssue16921(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a float);")
-	tk.MustExec("create index a on t(a);")
-	tk.MustExec("insert into t values (1.0), (NULL), (0), (2.0);")
-	tk.MustQuery("select `a` from `t` use index (a) where !`a`;").Check(testkit.Rows("0"))
-	tk.MustQuery("select `a` from `t` ignore index (a) where !`a`;").Check(testkit.Rows("0"))
-	tk.MustQuery("select `a` from `t` use index (a) where `a`;").Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select `a` from `t` ignore index (a) where `a`;").Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select a from t use index (a) where not a is true;").Check(testkit.Rows("<nil>", "0"))
-	tk.MustQuery("select a from t use index (a) where not not a is true;").Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select a from t use index (a) where not not a;").Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select a from t use index (a) where not not not a is true;").Check(testkit.Rows("<nil>", "0"))
-	tk.MustQuery("select a from t use index (a) where not not not a;").Check(testkit.Rows("0"))
-}
-
-func (s *testSuite) TestIssue19100(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	tk.MustExec("drop table if exists t1, t2;")
-	tk.MustExec("create table t1 (c decimal);")
-	tk.MustExec("create table t2 (c decimal, key(c));")
-	tk.MustExec("insert into t1 values (null);")
-	tk.MustExec("insert into t2 values (null);")
-	tk.MustQuery("select count(*) from t1 where not c;").Check(testkit.Rows("0"))
-	tk.MustQuery("select count(*) from t2 where not c;").Check(testkit.Rows("0"))
-	tk.MustQuery("select count(*) from t1 where c;").Check(testkit.Rows("0"))
-	tk.MustQuery("select count(*) from t2 where c;").Check(testkit.Rows("0"))
-}
-
-// this is from jira issue #5856
-func (s *testSuite1) TestInsertValuesWithSubQuery(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("create table t2(a int, b int, c int)")
-	defer tk.MustExec("drop table if exists t2")
-
-	// should not reference upper scope
-	c.Assert(tk.ExecToErr("insert into t2 values (11, 8, (select not b))"), NotNil)
-	c.Assert(tk.ExecToErr("insert into t2 set a = 11, b = 8, c = (select b))"), NotNil)
-
-	// subquery reference target table is allowed
-	tk.MustExec("insert into t2 values(1, 1, (select b from t2))")
-	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1 <nil>"))
-	tk.MustExec("insert into t2 set a = 1, b = 1, c = (select b+1 from t2)")
-	tk.MustQuery("select * from t2").Check(testkit.Rows("1 1 <nil>", "1 1 2"))
-
-	// insert using column should work normally
-	tk.MustExec("delete from t2")
-	tk.MustExec("insert into t2 values(2, 4, a)")
-	tk.MustQuery("select * from t2").Check(testkit.Rows("2 4 2"))
-	tk.MustExec("insert into t2 set a = 3, b = 5, c = b")
-	tk.MustQuery("select * from t2").Check(testkit.Rows("2 4 2", "3 5 5"))
-}
-
-func (s *testSuite1) TestDIVZeroInPartitionExpr(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(a int) partition by range (10 div a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
-	defer tk.MustExec("drop table if exists t1")
-
-	tk.MustExec("set @@sql_mode=''")
-	tk.MustExec("insert into t1 values (NULL), (0), (1)")
-	tk.MustExec("set @@sql_mode='STRICT_ALL_TABLES,ERROR_FOR_DIVISION_BY_ZERO'")
-	tk.MustGetErrCode("insert into t1 values (NULL), (0), (1)", mysql.ErrDivisionByZero)
-}
-
-func (s *testSuite1) TestInsertIntoGivenPartitionSet(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec(`create table t1(
-	a int(11) DEFAULT NULL,
-	b varchar(10) DEFAULT NULL,
-	UNIQUE KEY idx_a (a)) PARTITION BY RANGE (a)
-	(PARTITION p0 VALUES LESS THAN (10) ENGINE = InnoDB,
-	 PARTITION p1 VALUES LESS THAN (20) ENGINE = InnoDB,
-	 PARTITION p2 VALUES LESS THAN (30) ENGINE = InnoDB,
-	 PARTITION p3 VALUES LESS THAN (40) ENGINE = InnoDB,
-	 PARTITION p4 VALUES LESS THAN MAXVALUE ENGINE = InnoDB)`)
-	defer tk.MustExec("drop table if exists t1")
-
-	// insert into
-	tk.MustExec("insert into t1 partition(p0) values(1, 'a'), (2, 'b')")
-	tk.MustQuery("select * from t1 partition(p0) order by a").Check(testkit.Rows("1 a", "2 b"))
-	tk.MustExec("insert into t1 partition(p0, p1) values(3, 'c'), (4, 'd')")
-	tk.MustQuery("select * from t1 partition(p1)").Check(testkit.Rows())
-
-	err := tk.ExecToErr("insert into t1 values(1, 'a')")
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'idx_a'")
-
-	err = tk.ExecToErr("insert into t1 partition(p0, p_non_exist) values(1, 'a')")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
-
-	err = tk.ExecToErr("insert into t1 partition(p0, p1) values(40, 'a')")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
-
-	// replace into
-	tk.MustExec("replace into t1 partition(p0) values(1, 'replace')")
-	tk.MustExec("replace into t1 partition(p0, p1) values(3, 'replace'), (4, 'replace')")
-
-	err = tk.ExecToErr("replace into t1 values(1, 'a')")
-	tk.MustQuery("select * from t1 partition (p0) order by a").Check(testkit.Rows("1 a", "2 b", "3 replace", "4 replace"))
-
-	err = tk.ExecToErr("replace into t1 partition(p0, p_non_exist) values(1, 'a')")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
-
-	err = tk.ExecToErr("replace into t1 partition(p0, p1) values(40, 'a')")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
-
-	tk.MustExec("truncate table t1")
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b char(10))")
-	defer tk.MustExec("drop table if exists t")
-
-	// insert into general table
-	err = tk.ExecToErr("insert into t partition(p0, p1) values(1, 'a')")
-	c.Assert(err.Error(), Equals, "[planner:1747]PARTITION () clause on non partitioned table")
-
-	// insert into from select
-	tk.MustExec("insert into t values(1, 'a'), (2, 'b')")
-	tk.MustExec("insert into t1 partition(p0) select * from t")
-	tk.MustQuery("select * from t1 partition(p0) order by a").Check(testkit.Rows("1 a", "2 b"))
-
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t values(3, 'c'), (4, 'd')")
-	tk.MustExec("insert into t1 partition(p0, p1) select * from t")
-	tk.MustQuery("select * from t1 partition(p1) order by a").Check(testkit.Rows())
-	tk.MustQuery("select * from t1 partition(p0) order by a").Check(testkit.Rows("1 a", "2 b", "3 c", "4 d"))
-
-	err = tk.ExecToErr("insert into t1 select 1, 'a'")
-	c.Assert(err.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'idx_a'")
-
-	err = tk.ExecToErr("insert into t1 partition(p0, p_non_exist) select 1, 'a'")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
-
-	err = tk.ExecToErr("insert into t1 partition(p0, p1) select 40, 'a'")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
-
-	// replace into from select
-	tk.MustExec("replace into t1 partition(p0) select 1, 'replace'")
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t values(3, 'replace'), (4, 'replace')")
-	tk.MustExec("replace into t1 partition(p0, p1) select * from t")
-
-	err = tk.ExecToErr("replace into t1 values select 1, 'a'")
-	tk.MustQuery("select * from t1 partition (p0) order by a").Check(testkit.Rows("1 replace", "2 b", "3 replace", "4 replace"))
-
-	err = tk.ExecToErr("replace into t1 partition(p0, p_non_exist) select 1, 'a'")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
-
-	err = tk.ExecToErr("replace into t1 partition(p0, p1) select 40, 'a'")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
-}
-
-func (s *testSuite1) TestUpdateGivenPartitionSet(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1,t2,t3")
-	tk.MustExec(`create table t1(
-	a int(11),
-	b varchar(10) DEFAULT NULL,
-	primary key idx_a (a)) PARTITION BY RANGE (a)
-	(PARTITION p0 VALUES LESS THAN (10) ENGINE = InnoDB,
-	 PARTITION p1 VALUES LESS THAN (20) ENGINE = InnoDB,
-	 PARTITION p2 VALUES LESS THAN (30) ENGINE = InnoDB,
-	 PARTITION p3 VALUES LESS THAN (40) ENGINE = InnoDB,
-	 PARTITION p4 VALUES LESS THAN MAXVALUE ENGINE = InnoDB)`)
-
-	tk.MustExec(`create table t2(
-	a int(11) DEFAULT NULL,
-	b varchar(10) DEFAULT NULL) PARTITION BY RANGE (a)
-	(PARTITION p0 VALUES LESS THAN (10) ENGINE = InnoDB,
-	 PARTITION p1 VALUES LESS THAN (20) ENGINE = InnoDB,
-	 PARTITION p2 VALUES LESS THAN (30) ENGINE = InnoDB,
-	 PARTITION p3 VALUES LESS THAN (40) ENGINE = InnoDB,
-	 PARTITION p4 VALUES LESS THAN MAXVALUE ENGINE = InnoDB)`)
-
-	tk.MustExec(`create table t3 (a int(11), b varchar(10) default null)`)
-
-	defer tk.MustExec("drop table if exists t1,t2,t3")
-	tk.MustExec("insert into t3 values(1, 'a'), (2, 'b'), (11, 'c'), (21, 'd')")
-	err := tk.ExecToErr("update t3 partition(p0) set a = 40 where a = 2")
-	c.Assert(err.Error(), Equals, "[planner:1747]PARTITION () clause on non partitioned table")
-
-	// update with primary key change
-	tk.MustExec("insert into t1 values(1, 'a'), (2, 'b'), (11, 'c'), (21, 'd')")
-	err = tk.ExecToErr("update t1 partition(p0, p1) set a = 40")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
-	err = tk.ExecToErr("update t1 partition(p0) set a = 40 where a = 2")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
-	// test non-exist partition.
-	err = tk.ExecToErr("update t1 partition (p0, p_non_exist) set a = 40")
-	c.Assert(err.Error(), Equals, "[table:1735]Unknown partition 'p_non_exist' in table 't1'")
-	// test join.
-	err = tk.ExecToErr("update t1 partition (p0), t3 set t1.a = 40 where t3.a = 2")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
-
-	tk.MustExec("update t1 partition(p0) set a = 3 where a = 2")
-	tk.MustExec("update t1 partition(p0, p3) set a = 33 where a = 1")
-
-	// update without partition change
-	tk.MustExec("insert into t2 values(1, 'a'), (2, 'b'), (11, 'c'), (21, 'd')")
-	err = tk.ExecToErr("update t2 partition(p0, p1) set a = 40")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
-	err = tk.ExecToErr("update t2 partition(p0) set a = 40 where a = 2")
-	c.Assert(err.Error(), Equals, "[table:1748]Found a row not matching the given partition set")
-
-	tk.MustExec("update t2 partition(p0) set a = 3 where a = 2")
-	tk.MustExec("update t2 partition(p0, p3) set a = 33 where a = 1")
-}
-
-func (s *testSuiteP2) TestApplyCache(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int);")
-	tk.MustExec("insert into t values (1),(1),(1),(1),(1),(1),(1),(1),(1);")
-	tk.MustExec("analyze table t;")
-	result := tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[1][0], Equals, "└─Apply_41")
-	var (
-		ind  int
-		flag bool
-	)
-	value := (result.Rows()[1][5]).(string)
-	for ind = 0; ind < len(value)-5; ind++ {
-		if value[ind:ind+5] == "cache" {
-			flag = true
-			break
-		}
-	}
-	c.Assert(flag, Equals, true)
-	c.Assert(value[ind:], Equals, "cache:ON, cacheHitRatio:88.889%")
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int);")
-	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9);")
-	tk.MustExec("analyze table t;")
-	result = tk.MustQuery("explain analyze SELECT count(1) FROM (SELECT (SELECT min(a) FROM t as t2 WHERE t2.a > t1.a) AS a from t as t1) t;")
-	c.Assert(result.Rows()[1][0], Equals, "└─Apply_41")
-	flag = false
-	value = (result.Rows()[1][5]).(string)
-	for ind = 0; ind < len(value)-5; ind++ {
-		if value[ind:ind+5] == "cache" {
-			flag = true
-			break
-		}
-	}
-	c.Assert(flag, Equals, true)
-	c.Assert(value[ind:], Equals, "cache:OFF")
-}
-
-// For issue 17256
-func (s *testSuite) TestGenerateColumnReplace(c *C) {
->>>>>>> e6a6930... range: build right range for `NULL` value on index column (#19385)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists tt;")
@@ -4808,4 +4544,36 @@ func (s *testSuite) TestKillTableReader(c *C) {
 	time.Sleep(1 * time.Second)
 	atomic.StoreUint32(&tk.Se.GetSessionVars().Killed, 1)
 	wg.Wait()
+}
+
+func (s *testSuite) TestIssue16921(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a float);")
+	tk.MustExec("create index a on t(a);")
+	tk.MustExec("insert into t values (1.0), (NULL), (0), (2.0);")
+	tk.MustQuery("select `a` from `t` use index (a) where !`a`;").Check(testkit.Rows("0"))
+	tk.MustQuery("select `a` from `t` ignore index (a) where !`a`;").Check(testkit.Rows("0"))
+	tk.MustQuery("select `a` from `t` use index (a) where `a`;").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select `a` from `t` ignore index (a) where `a`;").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t use index (a) where not a is true;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustQuery("select a from t use index (a) where not not a is true;").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t use index (a) where not not a;").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select a from t use index (a) where not not not a is true;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustQuery("select a from t use index (a) where not not not a;").Check(testkit.Rows("0"))
+}
+
+func (s *testSuite) TestIssue19100(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (c decimal);")
+	tk.MustExec("create table t2 (c decimal, key(c));")
+	tk.MustExec("insert into t1 values (null);")
+	tk.MustExec("insert into t2 values (null);")
+	tk.MustQuery("select count(*) from t1 where not c;").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t2 where not c;").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t1 where c;").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from t2 where c;").Check(testkit.Rows("0"))
 }
