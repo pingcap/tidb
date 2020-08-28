@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"math"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
@@ -947,12 +948,12 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum, addRecord func(ctx context.Context, row []types.Datum) error) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
+	start := time.Now()
 	// Get keys need to be checked.
 	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, rows)
 	if err != nil {
 		return err
 	}
-
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
@@ -964,7 +965,8 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}
 	}
-
+	end := time.Now()
+	e.stats.check = end.Sub(start)
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
@@ -998,6 +1000,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 	}
+	e.stats.insert = time.Since(end)
 	// If row was checked with no duplicate keys,
 	// it should be add to values map for the further` row check.
 	// There may be duplicate keys inside the insert statement.
