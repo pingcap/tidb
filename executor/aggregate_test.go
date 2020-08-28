@@ -406,15 +406,6 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	result = tk.MustQuery("select a, variance(b) over w from t window w as (partition by a)").Sort()
 	result.Check(testkit.Rows("1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "2 0"))
 
-<<<<<<< HEAD
-	_, err = tk.Exec("select std(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: std")
-	_, err = tk.Exec("select stddev(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev")
-	_, err = tk.Exec("select stddev_pop(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
-=======
->>>>>>> 49af6a5... expression: Support stddev_pop function (#19195)
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
 	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
