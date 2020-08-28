@@ -545,6 +545,7 @@ func (c *Cluster) getRegionsCoverRange(start, end MvccKey) []*Region {
 
 // Region is the Region meta data.
 type Region struct {
+	rw     sync.RWMutex
 	Meta   *metapb.Region
 	leader uint64
 }
@@ -575,11 +576,18 @@ func newRegion(regionID uint64, storeIDs, peerIDs []uint64, leaderPeerID uint64)
 }
 
 func (r *Region) addPeer(peerID, storeID uint64) {
+	r.rw.Lock()
+	defer r.rw.Unlock()
 	r.Meta.Peers = append(r.Meta.Peers, newPeerMeta(peerID, storeID))
-	r.incConfVer()
+	r.Meta.RegionEpoch = &metapb.RegionEpoch{
+		ConfVer: r.Meta.GetRegionEpoch().GetConfVer() + 1,
+		Version: r.Meta.GetRegionEpoch().GetVersion(),
+	}
 }
 
 func (r *Region) removePeer(peerID uint64) {
+	r.rw.Lock()
+	defer r.rw.Unlock()
 	for i, peer := range r.Meta.Peers {
 		if peer.GetId() == peerID {
 			r.Meta.Peers = append(r.Meta.Peers[:i], r.Meta.Peers[i+1:]...)
@@ -589,14 +597,21 @@ func (r *Region) removePeer(peerID uint64) {
 	if r.leader == peerID {
 		r.leader = 0
 	}
-	r.incConfVer()
+	r.Meta.RegionEpoch = &metapb.RegionEpoch{
+		ConfVer: r.Meta.GetRegionEpoch().GetConfVer() + 1,
+		Version: r.Meta.GetRegionEpoch().GetVersion(),
+	}
 }
 
 func (r *Region) changeLeader(leaderID uint64) {
+	r.rw.Lock()
+	defer r.rw.Unlock()
 	r.leader = leaderID
 }
 
 func (r *Region) leaderPeer() *metapb.Peer {
+	r.rw.RLock()
+	defer r.rw.RUnlock()
 	for _, p := range r.Meta.Peers {
 		if p.GetId() == r.leader {
 			return p
@@ -606,6 +621,8 @@ func (r *Region) leaderPeer() *metapb.Peer {
 }
 
 func (r *Region) split(newRegionID uint64, key MvccKey, peerIDs []uint64, leaderPeerID uint64) *Region {
+	r.rw.Lock()
+	defer r.rw.Unlock()
 	if len(r.Meta.Peers) != len(peerIDs) {
 		panic("len(r.meta.Peers) != len(peerIDs)")
 	}
@@ -615,29 +632,31 @@ func (r *Region) split(newRegionID uint64, key MvccKey, peerIDs []uint64, leader
 	}
 	region := newRegion(newRegionID, storeIDs, peerIDs, leaderPeerID)
 	region.updateKeyRange(key, r.Meta.EndKey)
-	r.updateKeyRange(r.Meta.StartKey, key)
+
+	r.Meta.EndKey = key
+	r.Meta.RegionEpoch = &metapb.RegionEpoch{
+		ConfVer: r.Meta.GetRegionEpoch().GetConfVer(),
+		Version: r.Meta.GetRegionEpoch().GetVersion() + 1,
+	}
+
 	return region
 }
 
 func (r *Region) merge(endKey MvccKey) {
+	r.rw.Lock()
+	defer r.rw.Unlock()
 	r.Meta.EndKey = endKey
-	r.incVersion()
-}
-
-func (r *Region) updateKeyRange(start, end MvccKey) {
-	r.Meta.StartKey = start
-	r.Meta.EndKey = end
-	r.incVersion()
-}
-
-func (r *Region) incConfVer() {
 	r.Meta.RegionEpoch = &metapb.RegionEpoch{
-		ConfVer: r.Meta.GetRegionEpoch().GetConfVer() + 1,
-		Version: r.Meta.GetRegionEpoch().GetVersion(),
+		ConfVer: r.Meta.GetRegionEpoch().GetConfVer(),
+		Version: r.Meta.GetRegionEpoch().GetVersion() + 1,
 	}
 }
 
-func (r *Region) incVersion() {
+func (r *Region) updateKeyRange(start, end MvccKey) {
+	r.rw.Lock()
+	defer r.rw.Unlock()
+	r.Meta.StartKey = start
+	r.Meta.EndKey = end
 	r.Meta.RegionEpoch = &metapb.RegionEpoch{
 		ConfVer: r.Meta.GetRegionEpoch().GetConfVer(),
 		Version: r.Meta.GetRegionEpoch().GetVersion() + 1,
