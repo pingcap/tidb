@@ -720,7 +720,9 @@ type PartitionInfo struct {
 	Definitions []PartitionDefinition `json:"definitions"`
 	// AddingDefinitions is filled when adding a partition that is in the mid state.
 	AddingDefinitions []PartitionDefinition `json:"adding_definitions"`
-	Num               uint64                `json:"num"`
+	// DroppingDefinitions is filled when dropping a partition that is in the mid state.
+	DroppingDefinitions []PartitionDefinition `json:"dropping_definitions"`
+	Num                 uint64                `json:"num"`
 }
 
 // GetNameByID gets the partition name by ID.
