@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	goutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -197,6 +198,7 @@ type ddlCtx struct {
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoHandle   *infoschema.Handle
+	deadLockCkr  util.DeadLockChecker
 
 	// hook may be modified.
 	mu struct {
@@ -260,6 +262,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	id := uuid.New().String()
 	var manager owner.Manager
 	var syncer util.SchemaSyncer
+	var deadLockCkr util.DeadLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
@@ -268,6 +271,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
 		syncer = util.NewSchemaSyncer(ctx, etcdCli, id, manager)
+		deadLockCkr = util.NewDeadLockChecker(etcdCli)
 	}
 
 	ddlCtx := &ddlCtx{
@@ -279,6 +283,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpsClient(),
 		infoHandle:   opt.InfoHandle,
+		deadLockCkr:  deadLockCkr,
 	}
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
@@ -543,6 +548,37 @@ func (d *ddl) GetHook() Callback {
 	defer d.mu.Unlock()
 
 	return d.mu.hook
+}
+
+func (d *ddl) startCleanDeadLock() {
+	defer goutil.Recover(metrics.LabelDDL, "startCleanDeadLock", nil, false)
+
+	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if !d.ownerManager.IsOwner() {
+				continue
+			}
+
+			deadLockTables, err := d.deadLockCkr.GetDeadLockTables(d.infoHandle.Get().AllSchemas())
+			if err != nil {
+				logutil.BgLogger().Info("[ddl] clean dead lock, failed to get all servers information", zap.Error(err))
+				continue
+			}
+
+			var wg sync.WaitGroup
+			for se, tables := range deadLockTables {
+				wg.Add(1)
+				go goutil.WithRecovery(func() {
+					defer wg.Done()
+					d.CleanDeadLock(tables, se)
+				}, nil)
+			}
+			wg.Wait()
+		}
+	}
 }
 
 // RecoverInfo contains information needed by DDL.RecoverTable.
