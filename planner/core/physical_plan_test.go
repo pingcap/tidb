@@ -874,8 +874,8 @@ func (s *testPlanSuite) TestTopNToCopHint(c *C) {
 	var (
 		input  []string
 		output []struct {
-			SQL    string
-			Plan   []string
+			SQL  string
+			Plan []string
 		}
 	)
 

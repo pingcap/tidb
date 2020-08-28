@@ -82,7 +82,7 @@ type tableHintInfo struct {
 	aggHints                    aggHintInfo
 	indexMergeHintList          []indexHintInfo
 	timeRangeHint               ast.HintTimeRange
-	topnHints					topnHintInfo
+	topnHints                   topnHintInfo
 }
 
 type topnHintInfo struct {

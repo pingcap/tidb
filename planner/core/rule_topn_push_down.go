@@ -56,8 +56,8 @@ func (lt *LogicalTopN) setChild(p LogicalPlan) LogicalPlan {
 
 	if lt.isLimit() {
 		limit := LogicalLimit{
-			Count:  lt.Count,
-			Offset: lt.Offset,
+			Count:     lt.Count,
+			Offset:    lt.Offset,
 			topnHints: lt.topnHints,
 		}.Init(lt.ctx, lt.blockOffset)
 		limit.SetChildren(p)
@@ -154,8 +154,8 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPla
 	}
 
 	newTopN := LogicalTopN{
-		Count:   topN.Count + topN.Offset,
-		ByItems: make([]*util.ByItems, len(topN.ByItems)),
+		Count:     topN.Count + topN.Offset,
+		ByItems:   make([]*util.ByItems, len(topN.ByItems)),
 		topnHints: topN.topnHints,
 	}.Init(topN.ctx, topN.blockOffset)
 	for i := range topN.ByItems {
