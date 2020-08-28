@@ -16,13 +16,14 @@ package util
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
-	"strings"
-	"time"
 )
 
 type DeadLockChecker struct {
@@ -52,7 +53,7 @@ func (d *DeadLockChecker) getAliveServers() (map[string]struct{}, error) {
 			continue
 		}
 		for _, kv := range resp.Kvs {
-			serverID := strings.TrimPrefix(string(kv.Key), DDLAllSchemaVersions)
+			serverID := strings.TrimPrefix(string(kv.Key), DDLAllSchemaVersions+"/")
 			allInfo[serverID] = struct{}{}
 		}
 		fmt.Printf("%v---\n", allInfo)
