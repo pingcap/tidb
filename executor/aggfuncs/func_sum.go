@@ -14,11 +14,24 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
+)
+
+const (
+	// DefPartialResult4SumFloat64Size is the size of partialResult4SumFloat64
+	DefPartialResult4SumFloat64Size = int64(unsafe.Sizeof(partialResult4SumFloat64{}))
+	// DefPartialResult4SumDecimalSize is the size of partialResult4SumDecimal
+	DefPartialResult4SumDecimalSize = int64(unsafe.Sizeof(partialResult4SumDecimal{}))
+	// DefPartialResult4SumDistinctFloat64Size is the size of partialResult4SumDistinctFloat64
+	DefPartialResult4SumDistinctFloat64Size = int64(unsafe.Sizeof(partialResult4SumDistinctFloat64{}))
+	// DefPartialResult4SumDistinctDecimalSize is the size of partialResult4SumDistinctDecimal
+	DefPartialResult4SumDistinctDecimalSize = int64(unsafe.Sizeof(partialResult4SumDistinctDecimal{}))
 )
 
 type partialResult4SumFloat64 struct {
