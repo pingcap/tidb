@@ -6251,3 +6251,17 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 		c.Assert(stats.String(), Matches, "time.*loops.*Get.*num_rpc.*total_time.*")
 	}
 }
+
+func (s *testSuite) TestIssue13758(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (pk int(11) primary key, a int(11) not null, b int(11), key idx_b(b), key idx_a(a))")
+	tk.MustExec("insert into `t1` values (1,1,0),(2,7,6),(3,2,null),(4,1,null),(5,4,5)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("insert into t2 values (1),(null)")
+	tk.MustQuery("select (select a from t1 use index(idx_a) where b >= t2.a order by a limit 1) as field from t2").Check(testkit.Rows(
+		"4",
+		"<nil>",
+	))
+}
