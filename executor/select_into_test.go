@@ -75,6 +75,14 @@ func (s *testSuite1) TestSelectIntoOutfileTypes(c *C) {
 	cmpAndRm(`{"id": 1, "name": "aaa"}
 {"id": 2, "name": "xxx"}
 `, outfile, c)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v tinyint unsigned)")
+	tk.MustExec("insert into t values (0), (1)")
+	tk.MustExec(fmt.Sprintf("SELECT * FROM t INTO OUTFILE %q", outfile))
+	cmpAndRm(`0
+1
+`, outfile, c)
 }
 
 func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
