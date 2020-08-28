@@ -25,10 +25,19 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	defaultRetryCnt      = 5
+	defaultRetryInterval = time.Millisecond * 200
+	defaultTimeout       = time.Second
+)
+
+// DeadTableLockChecker uses to check dead table locks.
+// If tidb-server panic or killed by others, the table locks hold by the killed tidb-server maybe doesn't released.
 type DeadTableLockChecker struct {
 	etcdCli *clientv3.Client
 }
 
+// NewDeadLockChecker creates new DeadLockChecker.
 func NewDeadLockChecker(etcdCli *clientv3.Client) DeadTableLockChecker {
 	return DeadTableLockChecker{
 		etcdCli: etcdCli,
@@ -39,16 +48,13 @@ func (d *DeadTableLockChecker) getAliveServers() (map[string]struct{}, error) {
 	var err error
 	var resp *clientv3.GetResponse
 	allInfo := make(map[string]struct{})
-	retryCnt := 5
-	retryInterval := time.Millisecond * 200
-	timeout := time.Second
-	for i := 0; i < retryCnt; i++ {
-		childCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	for i := 0; i < defaultRetryCnt; i++ {
+		childCtx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 		resp, err = d.etcdCli.Get(childCtx, DDLAllSchemaVersions, clientv3.WithPrefix())
 		cancel()
 		if err != nil {
 			logutil.BgLogger().Info("[ddl] clean dead table lock get alive servers failed.", zap.Error(err))
-			time.Sleep(retryInterval)
+			time.Sleep(defaultRetryInterval)
 			continue
 		}
 		for _, kv := range resp.Kvs {
@@ -60,7 +66,8 @@ func (d *DeadTableLockChecker) getAliveServers() (map[string]struct{}, error) {
 	return nil, errors.Trace(err)
 }
 
-func (d *DeadTableLockChecker) GetDeadLockTables(schemas []*model.DBInfo) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
+// GetDeadLockedTables gets dead locked tables.
+func (d *DeadTableLockChecker) GetDeadLockedTables(schemas []*model.DBInfo) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
 	if d.etcdCli == nil {
 		return nil, nil
 	}

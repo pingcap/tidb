@@ -354,7 +354,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 		go d.schemaSyncer.StartCleanWork()
 		if config.TableLockEnabled() {
-			go d.startCleanDeadLock()
+			go d.startCleanDeadTableLock()
 		}
 		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
@@ -550,8 +550,8 @@ func (d *ddl) GetHook() Callback {
 	return d.mu.hook
 }
 
-func (d *ddl) startCleanDeadLock() {
-	defer goutil.Recover(metrics.LabelDDL, "startCleanDeadLock", nil, false)
+func (d *ddl) startCleanDeadTableLock() {
+	defer goutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
 
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()
@@ -561,13 +561,11 @@ func (d *ddl) startCleanDeadLock() {
 			if !d.ownerManager.IsOwner() {
 				continue
 			}
-
-			deadLockTables, err := d.deadLockCkr.GetDeadLockTables(d.infoHandle.Get().AllSchemas())
+			deadLockTables, err := d.deadLockCkr.GetDeadLockedTables(d.infoHandle.Get().AllSchemas())
 			if err != nil {
 				logutil.BgLogger().Info("[ddl] clean dead table lock failed.", zap.Error(err))
 				continue
 			}
-
 			var wg sync.WaitGroup
 			for se, tables := range deadLockTables {
 				wg.Add(1)
