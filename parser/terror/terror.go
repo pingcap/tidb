@@ -357,7 +357,7 @@ func MustNil(err error, closeFuns ...func()) {
 		for _, f := range closeFuns {
 			f()
 		}
-		log.Fatal("unexpected error", zap.Error(err))
+		log.Fatal("unexpected error", zap.Error(err), zap.Stack("stack"))
 	}
 }
 
@@ -365,14 +365,14 @@ func MustNil(err error, closeFuns ...func()) {
 func Call(fn func() error) {
 	err := fn()
 	if err != nil {
-		log.Error("function call errored", zap.Error(err))
+		log.Error("function call errored", zap.Error(err), zap.Stack("stack"))
 	}
 }
 
 // Log logs the error if it is not nil.
 func Log(err error) {
 	if err != nil {
-		log.Error("encountered error", zap.Error(errors.WithStack(err)))
+		log.Error("encountered error", zap.Error(err), zap.Stack("stack"))
 	}
 }
 
