@@ -30,6 +30,7 @@ import (
 // It only starts the original workers.
 func (d *ddl) restartWorkers(ctx context.Context) {
 	d.cancel()
+	d.wg.Wait()
 	d.ctx, d.cancel = context.WithCancel(ctx)
 
 	d.wg.Add(1)
