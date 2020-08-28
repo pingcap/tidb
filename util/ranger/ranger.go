@@ -529,3 +529,17 @@ func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.E
 	}
 	return expression.NewFunctionInternal(ctx, funcName, sf.GetType(), args...)
 }
+
+// DetachCondAndBuildRangeForPartition will detach the index filters from table filters.
+// The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
+func DetachCondAndBuildRangeForPartition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
+	lengths []int) (*DetachRangeResult, error) {
+	d := &rangeDetacher{
+		sctx:             sctx,
+		allConds:         conditions,
+		cols:             cols,
+		lengths:          lengths,
+		mergeConsecutive: false,
+	}
+	return d.detachCondAndBuildRangeForCols()
+}
