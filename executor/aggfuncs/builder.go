@@ -51,8 +51,6 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitXor(aggFuncDesc, ordinal)
 	case ast.AggFuncBitAnd:
 		return buildBitAnd(aggFuncDesc, ordinal)
-<<<<<<< HEAD
-=======
 	case ast.AggFuncVarPop:
 		return buildVarPop(aggFuncDesc, ordinal)
 	case ast.AggFuncJsonObjectAgg:
@@ -61,7 +59,6 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildApproxCountDistinct(aggFuncDesc, ordinal)
 	case ast.AggFuncStddevPop:
 		return buildStdDevPop(aggFuncDesc, ordinal)
->>>>>>> 49af6a5... expression: Support stddev_pop function (#19195)
 	}
 	return nil
 }
@@ -373,8 +370,6 @@ func buildBitAnd(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	return &bitAndUint64{baseBitAggFunc{base}}
 }
 
-<<<<<<< HEAD
-=======
 // buildVarPop builds the AggFunc implementation for function "VAR_POP".
 func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseVarPopAggFunc{
@@ -431,7 +426,6 @@ func buildJSONObjectAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFu
 	}
 }
 
->>>>>>> 49af6a5... expression: Support stddev_pop function (#19195)
 // buildRowNumber builds the AggFunc implementation for function "ROW_NUMBER".
 func buildRowNumber(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{

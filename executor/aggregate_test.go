@@ -337,14 +337,6 @@ func (s *testSuite1) TestAggregation(c *C) {
 	tk.MustExec("insert into t value(0), (-0.9871), (-0.9871)")
 	tk.MustQuery("select 10 from t group by a").Check(testkit.Rows("10", "10"))
 	tk.MustQuery("select sum(a) from (select a from t union all select a from t) tmp").Check(testkit.Rows("-3.9484"))
-<<<<<<< HEAD
-	_, err = tk.Exec("select std(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: std")
-	_, err = tk.Exec("select stddev(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev")
-	_, err = tk.Exec("select stddev_pop(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
-=======
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a tinyint, b smallint, c mediumint, d int, e bigint, f float, g double, h decimal)")
@@ -375,7 +367,6 @@ func (s *testSuite1) TestAggregation(c *C) {
 	result = tk.MustQuery("select a, variance(b) over w from t window w as (partition by a)").Sort()
 	result.Check(testkit.Rows("1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "2 0"))
 
->>>>>>> 49af6a5... expression: Support stddev_pop function (#19195)
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
 	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
@@ -386,28 +377,7 @@ func (s *testSuite1) TestAggregation(c *C) {
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_pop")
 	_, err = tk.Exec("select var_samp(a) from t")
 	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
-}
 
-<<<<<<< HEAD
-func (s *testSuite1) TestStreamAggPushDown(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int, c int)")
-	tk.MustExec("alter table t add index idx(a, b, c)")
-	// test for empty table
-	tk.MustQuery("select count(a) from t group by a;").Check(testkit.Rows())
-	tk.MustQuery("select count(a) from t;").Check(testkit.Rows("0"))
-	// test for one row
-	tk.MustExec("insert t values(0,0,0)")
-	tk.MustQuery("select distinct b from t").Check(testkit.Rows("0"))
-	tk.MustQuery("select count(b) from t group by a;").Check(testkit.Rows("1"))
-	// test for rows
-	tk.MustExec("insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);")
-	tk.MustQuery("select count(a) from t where b>0 group by a, b;").Check(testkit.Rows("3", "1", "1", "1"))
-	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a;").Check(testkit.Rows("3", "1", "1", "1"))
-	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a limit 1;").Check(testkit.Rows("3"))
-=======
 	// For issue #14072: wrong result when using generated column with aggregate statement
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int, b int generated always as (-a) virtual, c int generated always as (-a) stored);")
@@ -460,7 +430,26 @@ func (s *testSuite1) TestStreamAggPushDown(c *C) {
 	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
->>>>>>> 49af6a5... expression: Support stddev_pop function (#19195)
+}
+
+func (s *testSuite1) TestStreamAggPushDown(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int)")
+	tk.MustExec("alter table t add index idx(a, b, c)")
+	// test for empty table
+	tk.MustQuery("select count(a) from t group by a;").Check(testkit.Rows())
+	tk.MustQuery("select count(a) from t;").Check(testkit.Rows("0"))
+	// test for one row
+	tk.MustExec("insert t values(0,0,0)")
+	tk.MustQuery("select distinct b from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(b) from t group by a;").Check(testkit.Rows("1"))
+	// test for rows
+	tk.MustExec("insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);")
+	tk.MustQuery("select count(a) from t where b>0 group by a, b;").Check(testkit.Rows("3", "1", "1", "1"))
+	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a;").Check(testkit.Rows("3", "1", "1", "1"))
+	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a limit 1;").Check(testkit.Rows("3"))
 }
 
 func (s *testSuite1) TestAggPrune(c *C) {
