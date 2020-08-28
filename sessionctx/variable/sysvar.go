@@ -691,6 +691,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, TiDBDDLErrorCountLimit, strconv.Itoa(DefTiDBDDLErrorCountLimit)},
 	{ScopeSession, TiDBDDLReorgPriority, "PRIORITY_LOW"},
 	{ScopeGlobal, TiDBMaxDeltaSchemaCount, strconv.Itoa(DefTiDBMaxDeltaSchemaCount)},
+	{ScopeGlobal, TiDBEnableChangeColumnType, BoolToIntStr(DefTiDBChangeColumnType)},
 	{ScopeSession, TiDBForcePriority, mysql.Priority2Str[DefTiDBForcePriority]},
 	{ScopeSession, TiDBEnableRadixJoin, BoolToIntStr(DefTiDBUseRadixJoin)},
 	{ScopeGlobal | ScopeSession, TiDBOptJoinReorderThreshold, strconv.Itoa(DefTiDBOptJoinReorderThreshold)},

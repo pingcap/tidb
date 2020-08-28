@@ -621,6 +621,82 @@ func (s *testSuite5) TestAdminCleanupIndexMore(c *C) {
 	tk.MustExec("admin check table admin_test")
 }
 
+func (s *testSuite5) TestClusteredAdminCleanupIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.MustExec("create table admin_test (c1 varchar(255), c2 int, c3 char(10) default 'c3', primary key (c1, c3), unique key(c2), key (c3))")
+	tk.MustExec("insert admin_test (c1, c2) values ('c1_1', 2), ('c1_2', 4), ('c1_3', NULL)")
+	tk.MustExec("insert admin_test (c1, c3) values ('c1_4', 'c3_4'), ('c1_5', 'c3_5'), ('c1_6', default)")
+
+	// Normally, there is no dangling index.
+	tk.MustQuery("admin cleanup index admin_test `primary`").Check(testkit.Rows("0"))
+	tk.MustQuery("admin cleanup index admin_test `c2`").Check(testkit.Rows("0"))
+	tk.MustQuery("admin cleanup index admin_test `c3`").Check(testkit.Rows("0"))
+
+	// Make some dangling index.
+	s.ctx = mock.NewContext()
+	s.ctx.Store = s.store
+	tbl, err := s.domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("admin_test"))
+	c.Assert(err, IsNil)
+	// cleanup clustered primary key takes no effect.
+
+	tblInfo := tbl.Meta()
+	idxInfo2 := tblInfo.FindIndexByName("c2")
+	indexOpr2 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo2)
+	idxInfo3 := tblInfo.FindIndexByName("c3")
+	indexOpr3 := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo3)
+
+	c2DanglingIdx := []struct {
+		handle kv.Handle
+		idxVal []types.Datum
+	}{
+		{testutil.MustNewCommonHandle(c, "c1_10", "c3_10"), types.MakeDatums(10)},
+		{testutil.MustNewCommonHandle(c, "c1_10", "c3_11"), types.MakeDatums(11)},
+		{testutil.MustNewCommonHandle(c, "c1_12", "c3_12"), types.MakeDatums(12)},
+	}
+	c3DanglingIdx := []struct {
+		handle kv.Handle
+		idxVal []types.Datum
+	}{
+		{testutil.MustNewCommonHandle(c, "c1_13", "c3_13"), types.MakeDatums("c3_13")},
+		{testutil.MustNewCommonHandle(c, "c1_14", "c3_14"), types.MakeDatums("c3_14")},
+		{testutil.MustNewCommonHandle(c, "c1_15", "c3_15"), types.MakeDatums("c3_15")},
+	}
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	for _, di := range c2DanglingIdx {
+		_, err := indexOpr2.Create(s.ctx, txn.GetUnionStore(), di.idxVal, di.handle)
+		c.Assert(err, IsNil)
+	}
+	for _, di := range c3DanglingIdx {
+		_, err := indexOpr3.Create(s.ctx, txn.GetUnionStore(), di.idxVal, di.handle)
+		c.Assert(err, IsNil)
+	}
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+
+	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
+	err = tk.ExecToErr("admin check index admin_test c2")
+	c.Assert(err, NotNil)
+	tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)").Check(testkit.Rows("9"))
+	tk.MustQuery("admin cleanup index admin_test c2").Check(testkit.Rows("3"))
+	tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)").Check(testkit.Rows("6"))
+	tk.MustExec("admin check index admin_test c2")
+
+	err = tk.ExecToErr("admin check table admin_test")
+	c.Assert(err, NotNil)
+	err = tk.ExecToErr("admin check index admin_test c3")
+	c.Assert(err, NotNil)
+	tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c3)").Check(testkit.Rows("9"))
+	tk.MustQuery("admin cleanup index admin_test c3").Check(testkit.Rows("3"))
+	tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c3)").Check(testkit.Rows("6"))
+	tk.MustExec("admin check index admin_test c3")
+	tk.MustExec("admin check table admin_test")
+}
+
 func (s *testSuite3) TestAdminCheckPartitionTableFailed(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
