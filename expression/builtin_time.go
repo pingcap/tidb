@@ -1709,7 +1709,7 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int8, unixTimeStamp *types.MyD
 		return res, true, nil
 	}
 	integralPart, err := unixTimeStamp.ToInt()
-	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
+	if err != nil && !terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 		return res, true, err
 	}
 	if integralPart > int64(math.MaxInt32) {
@@ -1732,7 +1732,7 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int8, unixTimeStamp *types.MyD
 		return res, true, err
 	}
 	fractionalPart, err := x.ToInt() // here fractionalPart is result multiplying the original fractional part by 10^9.
-	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
+	if err != nil && !terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
 		return res, true, err
 	}
 	if fsp < 0 {

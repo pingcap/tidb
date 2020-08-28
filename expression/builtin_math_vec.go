@@ -1152,7 +1152,7 @@ func (b *builtinCeilDecToIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			continue
 		}
 		i64s[i], err = d[i].ToInt()
-		if err == types.ErrTruncated {
+		if err == types.ErrTruncatedWrongVal {
 			err = nil
 			if !d[i].IsNegative() {
 				i64s[i] = i64s[i] + 1
@@ -1206,7 +1206,7 @@ func (b *builtinFloorDecToIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 			continue
 		}
 		i64s[i], err = d[i].ToInt()
-		if err == types.ErrTruncated {
+		if err == types.ErrTruncatedWrongVal {
 			err = nil
 			if d[i].IsNegative() {
 				i64s[i]--

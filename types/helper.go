@@ -148,7 +148,7 @@ const (
 func strToInt(str string) (int64, error) {
 	str = strings.TrimSpace(str)
 	if len(str) == 0 {
-		return 0, ErrTruncated
+		return 0, ErrTruncatedWrongVal
 	}
 	negative := false
 	i := 0
@@ -166,7 +166,7 @@ func strToInt(str string) (int64, error) {
 	r := uint64(0)
 	for ; i < len(str); i++ {
 		if !unicode.IsDigit(rune(str[i])) {
-			err = ErrTruncated
+			err = ErrTruncatedWrongVal
 			break
 		}
 		hasNum = true
@@ -186,7 +186,7 @@ func strToInt(str string) (int64, error) {
 		r = r1
 	}
 	if !hasNum {
-		err = ErrTruncated
+		err = ErrTruncatedWrongVal
 	}
 
 	if !negative && r >= intCutOff {
