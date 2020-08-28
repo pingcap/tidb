@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/privilege/privileges"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -154,6 +155,27 @@ func (s *testSuite5) TestShowGrantsPrivilege(c *C) {
 	c.Assert(se2.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername: "show_grants", AuthHostname: "%"}, nil, nil), IsTrue)
 	tk2.Se = se2
 	tk2.MustQuery("show grants")
+}
+
+func (s *testSuite5) TestIssue18878(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk.Se = se
+	tk.MustQuery("select user()").Check(testkit.Rows("root@127.0.0.1"))
+	tk.MustQuery("show grants")
+	tk.MustQuery("select user()").Check(testkit.Rows("root@127.0.0.1"))
+	err = tk.QueryToErr("show grants for root@127.0.0.1")
+	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("root", "127.0.0.1").Error())
+	err = tk.QueryToErr("show grants for root@localhost")
+	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("root", "localhost").Error())
+	err = tk.QueryToErr("show grants for root@1.1.1.1")
+	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("root", "1.1.1.1").Error())
+	tk.MustExec("create user `show_grants`@`127.0.%`")
+	err = tk.QueryToErr("show grants for `show_grants`@`127.0.0.1`")
+	c.Assert(err.Error(), Equals, privileges.ErrNonexistingGrant.FastGenByArgs("show_grants", "127.0.0.1").Error())
+	tk.MustQuery("show grants for `show_grants`@`127.0.%`")
 }
 
 func (s *testSuite5) TestIssue3641(c *C) {
