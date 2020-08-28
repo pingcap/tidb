@@ -129,7 +129,7 @@ var (
 	CollationStrictnessGroup = map[string]int{
 		"utf8_general_ci":        1,
 		"utf8mb4_general_ci":     1,
-		"utf8_unicode_ci":    	  2,
+		"utf8_unicode_ci":        2,
 		"utf8mb4_unicode_ci":     2,
 		charset.CollationASCII:   3,
 		charset.CollationLatin1:  3,
