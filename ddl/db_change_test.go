@@ -837,8 +837,8 @@ func (s *testStateChangeSuiteBase) runTestInSchemaState(c *C, state model.Schema
 		if job.SchemaState != state {
 			return
 		}
+		forceReloadDomain(se)
 		for _, sqlWithErr := range sqlWithErrs {
-			forceReloadDomain(se)
 			_, err = se.Execute(context.Background(), sqlWithErr.sql)
 			if !terror.ErrorEqual(err, sqlWithErr.expectErr) {
 				checkErr = errors.Errorf("sql: %s, expect err: %v, got err: %v", sqlWithErr.sql, sqlWithErr.expectErr, err)
