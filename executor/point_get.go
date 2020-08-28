@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -453,6 +454,12 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 		}
 	}
 	return nil
+}
+
+type InsertRuntimeStats struct {
+	*pointGetRuntimeStats
+	start time.Time
+	end   time.Time
 }
 
 type pointGetRuntimeStats struct {
