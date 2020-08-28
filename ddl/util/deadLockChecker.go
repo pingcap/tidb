@@ -48,7 +48,7 @@ func (d *DeadLockChecker) getAliveServers() (map[string]struct{}, error) {
 		resp, err = d.etcdCli.Get(childCtx, DDLAllSchemaVersions, clientv3.WithPrefix())
 		cancel()
 		if err != nil {
-			logutil.BgLogger().Info("[ddl] lock cleaner get alive servers failed.", zap.Error(err))
+			logutil.BgLogger().Info("[ddl] clean dead table lock get alive servers failed.", zap.Error(err))
 			time.Sleep(retryInterval)
 			continue
 		}
@@ -56,7 +56,6 @@ func (d *DeadLockChecker) getAliveServers() (map[string]struct{}, error) {
 			serverID := strings.TrimPrefix(string(kv.Key), DDLAllSchemaVersions+"/")
 			allInfo[serverID] = struct{}{}
 		}
-		fmt.Printf("%v---\n", allInfo)
 		return allInfo, nil
 	}
 	return nil, errors.Trace(err)

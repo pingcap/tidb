@@ -564,7 +564,7 @@ func (d *ddl) startCleanDeadLock() {
 
 			deadLockTables, err := d.deadLockCkr.GetDeadLockTables(d.infoHandle.Get().AllSchemas())
 			if err != nil {
-				logutil.BgLogger().Info("[ddl] clean dead lock, failed to get all servers information", zap.Error(err))
+				logutil.BgLogger().Info("[ddl] clean dead table lock failed.", zap.Error(err))
 				continue
 			}
 
@@ -575,7 +575,7 @@ func (d *ddl) startCleanDeadLock() {
 					defer wg.Done()
 					err := d.CleanDeadLock(tables, se)
 					if err != nil {
-						logutil.BgLogger().Info("[ddl] clean dead lock failed.", zap.Error(err))
+						logutil.BgLogger().Info("[ddl] clean dead table lock failed.", zap.Error(err))
 					}
 				}, nil)
 			}
