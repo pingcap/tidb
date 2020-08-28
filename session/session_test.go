@@ -134,13 +134,15 @@ func clearETCD(ebd tikv.EtcdBackend) error {
 	}
 	defer cli.Close()
 
-	leases, err := cli.Leases(context.Background())
+	resp, err := cli.Get(context.Background(), "/tidb", clientv3.WithPrefix())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, resp := range leases.Leases {
-		if _, err := cli.Revoke(context.Background(), resp.ID); err != nil {
-			return errors.Trace(err)
+	for _, kv := range resp.Kvs {
+		if kv.Lease != 0 {
+			if _, err := cli.Revoke(context.Background(), clientv3.LeaseID(kv.Lease)); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	_, err = cli.Delete(context.Background(), "/tidb", clientv3.WithPrefix())

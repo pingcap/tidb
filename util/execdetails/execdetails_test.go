@@ -114,3 +114,43 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatal("table_reader not exists")
 	}
 }
+
+func TestRuntimeStatsWithCommit(t *testing.T) {
+	basicStats := &BasicRuntimeStats{
+		loop:    1,
+		consume: int64(time.Second),
+	}
+	commitDetail := &CommitDetails{
+		GetCommitTsTime:   time.Second,
+		PrewriteTime:      time.Second,
+		CommitTime:        time.Second,
+		CommitBackoffTime: int64(time.Second),
+		Mu: struct {
+			sync.Mutex
+			BackoffTypes []fmt.Stringer
+		}{BackoffTypes: []fmt.Stringer{
+			stringutil.MemoizeStr(func() string {
+				return "backoff1"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff2"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff1"
+			}),
+		}},
+		ResolveLockTime:   int64(time.Second),
+		WriteKeys:         3,
+		WriteSize:         66,
+		PrewriteRegionNum: 5,
+		TxnRetry:          2,
+	}
+	stats := &RuntimeStatsWithCommit{
+		RuntimeStats: basicStats,
+		Commit:       commitDetail,
+	}
+	expect := "time:1s, loops:1, prewrite:1s, get_commit_ts:1s, commit:1s, commit_backoff: {time: 1s, type: [backoff1 backoff2]}, resolve_lock: 1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2"
+	if stats.String() != expect {
+		t.Fatalf("%v != %v", stats.String(), expect)
+	}
+}
