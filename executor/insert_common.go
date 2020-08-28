@@ -949,10 +949,10 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
-	skiplist := make([]bool, len(toBeCheckedRows), len(toBeCheckedRows))
+	skiplist := make([]bool, len(toBeCheckedRows))
 	// append warnings and get no duplicated error rows
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("InsertValue.batchCheckAndInsert", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("InsertValue.batchCheck", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		opentracing.ContextWithSpan(ctx, span1)
 	}
