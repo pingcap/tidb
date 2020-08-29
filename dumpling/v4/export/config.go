@@ -60,6 +60,8 @@ type Config struct {
 	DumpEmptyDatabase  bool
 	OutputFileTemplate *template.Template `json:"-"`
 	SessionParams      map[string]interface{}
+
+	PosAfterConnect bool
 }
 
 func DefaultConfig() *Config {
@@ -94,6 +96,7 @@ func DefaultConfig() *Config {
 		DumpEmptyDatabase:  true,
 		SessionParams:      make(map[string]interface{}),
 		OutputFileTemplate: DefaultOutputFileTemplate,
+		PosAfterConnect:    false,
 	}
 }
 
