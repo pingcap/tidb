@@ -737,7 +737,7 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			if dst.IsNull(i) {
 				continue
 			}
-			// If any invalid time is found, leastTime will use the string comprasion res
+			// If any invalid time is found, leastTime will use the string comparison res
 			if j == 0 {
 				// Make a deep copy here.
 				// Otherwise minStr will internally change with result.
