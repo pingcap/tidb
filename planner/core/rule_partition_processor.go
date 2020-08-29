@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -114,15 +115,62 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo, 
 	return exprs[0], nil
 }
 
-func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
-	if len(used) == 1 && used[0] == FullRange {
-		return fullRange(len(pi.Definitions))
+func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
+	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, []expression.Expression, error) {
+	pi := tbl.Meta().Partition
+	pe, err := generateHashPartitionExpr(ctx, pi, columns, names)
+	if err != nil {
+		return nil, nil, err
 	}
-	ret := make(partitionRangeOR, len(used))
-	for _, i := range used {
-		ret = append(ret, partitionRange{i, i + 1})
+	partIdx := expression.ExtractColumns(pe)
+	colLen := make([]int, 0, len(partIdx))
+	for i := 0; i < len(partIdx); i++ {
+		partIdx[i].Index = i
+		colLen = append(colLen, types.UnspecifiedLength)
 	}
-	return ret
+	datchedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partIdx, colLen)
+	if err != nil {
+		return nil, nil, err
+	}
+	ranges := datchedResult.Ranges
+	used := make([]int, 0, len(ranges))
+	for _, r := range ranges {
+		if r.IsPointNullable(ctx.GetSessionVars().StmtCtx) {
+			if !r.HighVal[0].IsNull() {
+				if len(r.HighVal) != len(partIdx) {
+					used = []int{-1}
+					break
+				}
+			}
+			pos, isNull, err := pe.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+			if err != nil {
+				return nil, nil, err
+			}
+			if isNull {
+				pos = 0
+			}
+			idx := math.Abs(pos % int64(pi.Num))
+			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+				continue
+			}
+			used = append(used, int(idx))
+		} else {
+			used = []int{FullRange}
+			break
+		}
+	}
+	if len(partitionNames) > 0 && len(used) == 1 && used[0] == FullRange {
+		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
+		return s.convertToIntSlice(or, pi, partitionNames), nil, nil
+	}
+	sort.Ints(used)
+	ret := used[:0]
+	for i := 0; i < len(used); i++ {
+		if i == 0 || used[i] != used[i-1] {
+			ret = append(ret, used[i])
+		}
+	}
+	return ret, datchedResult.RemainedConds, nil
 }
 
 func (s *partitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.PartitionInfo, partitionNames []model.CIStr) []int {
@@ -143,6 +191,26 @@ func (s *partitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.Pa
 	return ret
 }
 
+func convertToRangeOr(used []int, pi *model.PartitionInfo) partitionRangeOR {
+	if len(used) == 1 && used[0] == -1 {
+		return fullRange(len(pi.Definitions))
+	}
+	ret := make(partitionRangeOR, 0, len(used))
+	for _, i := range used {
+		ret = append(ret, partitionRange{i, i + 1})
+	}
+	return ret
+}
+
+func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
+	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
+	used, _, err := s.findUsedPartitions(ctx, tbl, partitionNames, conds, columns, names)
+	if err != nil {
+		return nil, err
+	}
+	return used, nil
+}
+
 func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.PartitionInfo) (LogicalPlan, error) {
 	used, err := s.pruneHashPartition(ds.SCtx(), ds.table, ds.partitionNames, ds.allConds, ds.TblCols, ds.names)
 	if err != nil {
@@ -156,37 +224,11 @@ func (s *partitionProcessor) processHashPartition(ds *DataSource, pi *model.Part
 	return tableDual, nil
 }
 
-func (s *partitionProcessor) pruneHashPartition(ctx sessionctx.Context, tbl table.Table, partitionNames []model.CIStr,
-	conds []expression.Expression, columns []*expression.Column, names types.NameSlice) ([]int, error) {
-	pi := tbl.Meta().Partition
-	pe, err := generateHashPartitionExpr(ctx, pi, columns, names)
-	if err != nil {
-		return nil, err
-	}
-	val, ok, hasConflict := expression.FastLocateHashPartition(ctx, conds, pe)
-	if hasConflict {
-		return nil, nil
-	}
-	if ok {
-		idx := math.Abs(val % int64(pi.Num))
-		if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
-			return nil, nil
-		}
-		return []int{int(idx)}, nil
-	}
-	if len(partitionNames) > 0 {
-		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
-		return s.convertToIntSlice(or, pi, partitionNames), nil
-	}
-	return []int{FullRange}, nil
-}
-
 func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 	pi := ds.tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ds, nil
 	}
-
 	// Try to locate partition directly for hash partition.
 	if pi.Type == model.PartitionTypeHash {
 		return s.processHashPartition(ds, pi)
