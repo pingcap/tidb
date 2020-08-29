@@ -2342,6 +2342,7 @@ func NewMaxOrMinDec(negative bool, prec, frac int) *MyDecimal {
 	return dec
 }
 
+// NewZeroDec returns the zero value decimal for given precision and fraction.
 func NewZeroDec(prec, frac int) *MyDecimal {
 	if prec == UnspecifiedLength {
 		return NewDecFromInt(0)
