@@ -47,9 +47,13 @@ func (m *globalMetadata) recordFinishTime(t time.Time) {
 	m.buffer.WriteString("Finished dump at: " + t.Format(metadataTimeLayout) + "\n")
 }
 
-func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerType) error {
+func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerType, afterConn bool) error {
 	// get master status info
-	m.buffer.WriteString("SHOW MASTER STATUS:\n")
+	m.buffer.WriteString("SHOW MASTER STATUS:")
+	if afterConn {
+		m.buffer.WriteString(" /* AFTER CONNECTION POOL ESTABLISHED */")
+	}
+	m.buffer.WriteString("\n")
 	switch serverType {
 	// For MySQL:
 	// mysql> SHOW MASTER STATUS;
@@ -120,6 +124,11 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 	}
 	m.buffer.WriteString("\n")
 	if serverType == ServerTypeTiDB {
+		return nil
+	}
+
+	// omit follower status if called after connection pool established
+	if afterConn {
 		return nil
 	}
 	// get follower status info
