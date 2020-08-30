@@ -409,8 +409,6 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
 	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
-	_, err = tk.Exec("select var_samp(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
 
 	// For issue #14072: wrong result when using generated column with aggregate statement
 	tk.MustExec("drop table if exists t1;")

@@ -115,6 +115,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4Std(ctx)
 	case ast.AggFuncJsonObjectAgg:
 		a.typeInfer4JsonFuncs(ctx)
+	case ast.AggFuncVarSamp:
+		a.typeInfer4VarSamp(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
@@ -262,6 +264,12 @@ func (a *baseFuncDesc) typeInfer4VarPop(ctx sessionctx.Context) {
 
 func (a *baseFuncDesc) typeInfer4Std(ctx sessionctx.Context) {
 	//std's return value type is double
+	a.RetTp = types.NewFieldType(mysql.TypeDouble)
+	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
+}
+
+func (a *baseFuncDesc) typeInfer4VarSamp(ctx sessionctx.Context) {
+	//var_samp's return value type is double
 	a.RetTp = types.NewFieldType(mysql.TypeDouble)
 	a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxRealWidth, types.UnspecifiedLength
 }

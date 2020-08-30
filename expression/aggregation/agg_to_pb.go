@@ -63,6 +63,8 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 		tp = tipb.ExprType_JsonObjectAgg
 	case ast.AggFuncStddevPop:
 		tp = tipb.ExprType_StddevPop
+	case ast.AggFuncVarSamp:
+		tp = tipb.ExprType_VarSamp
 	}
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
