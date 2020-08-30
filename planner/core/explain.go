@@ -283,12 +283,12 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 	}
 	tbl := tmp.(table.PartitionedTable)
 
-	return partitionAccessObject(sctx, tbl, pi, p.PartitionTable.PruningConds, p.PartitionTable.PartitionNames)
+	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
 }
 
-func partitionAccessObject(sctx sessionctx.Context, tbl table.PartitionedTable, pi *model.PartitionInfo, conds []expression.Expression, names []model.CIStr) string {
+func partitionAccessObject(sctx sessionctx.Context, tbl table.PartitionedTable, pi *model.PartitionInfo, partTable *PartitionInfo) string {
 	var buffer bytes.Buffer
-	idxArr, err := PartitionPruning(sctx, tbl, conds, names)
+	idxArr, err := PartitionPruning(sctx, tbl, partTable.PruningConds, partTable.PartitionNames, partTable.Columns, partTable.ColumnNames)
 	if err != nil {
 		return "partition pruning error" + err.Error()
 	}
@@ -344,7 +344,7 @@ func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
 	}
 
 	tbl := tmp.(table.PartitionedTable)
-	return partitionAccessObject(sctx, tbl, pi, p.PartitionTable.PruningConds, p.PartitionTable.PartitionNames)
+	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
 }
 
 // ExplainInfo implements Plan interface.
@@ -372,7 +372,7 @@ func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string
 	}
 
 	tbl := tmp.(table.PartitionedTable)
-	return partitionAccessObject(sctx, tbl, pi, p.PartitionTable.PruningConds, p.PartitionTable.PartitionNames)
+	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
 }
 
 // ExplainInfo implements Plan interface.
@@ -394,7 +394,7 @@ func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) string 
 	}
 	tbl := tmp.(table.PartitionedTable)
 
-	return partitionAccessObject(sctx, tbl, pi, p.PartitionTable.PruningConds, p.PartitionTable.PartitionNames)
+	return partitionAccessObject(sctx, tbl, pi, &p.PartitionInfo)
 }
 
 // ExplainInfo implements Plan interface.
