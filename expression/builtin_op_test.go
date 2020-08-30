@@ -486,9 +486,10 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 	sc.IgnoreTruncate = true
 
 	testCases := []struct {
-		args    []interface{}
-		isTrue  interface{}
-		isFalse interface{}
+		args     []interface{}
+		isTrue   interface{}
+		isFalse  interface{}
+		keepNull bool
 	}{
 		{
 			args:    []interface{}{-12},
@@ -540,9 +541,18 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 			isTrue:  0,
 			isFalse: 0,
 		},
+		{
+			args:     []interface{}{nil},
+			isTrue:   nil,
+			isFalse:  nil,
+			keepNull: true,
+		},
 	}
 
 	for _, tc := range testCases {
+		if tc.keepNull {
+			s.ctx.SetValue(isTrueKeepNullKey, struct{}{})
+		}
 		isTrueSig, err := funcs[ast.IsTruth].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(isTrueSig, NotNil)
@@ -550,9 +560,15 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 		isTrue, err := evalBuiltinFunc(isTrueSig, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(isTrue, testutil.DatumEquals, types.NewDatum(tc.isTrue))
+		if tc.keepNull {
+			s.ctx.SetValue(isTrueKeepNullKey, nil)
+		}
 	}
 
 	for _, tc := range testCases {
+		if tc.keepNull {
+			s.ctx.SetValue(isTrueKeepNullKey, struct{}{})
+		}
 		isFalseSig, err := funcs[ast.IsFalsity].getFunction(s.ctx, s.datumsToConstants(types.MakeDatums(tc.args...)))
 		c.Assert(err, IsNil)
 		c.Assert(isFalseSig, NotNil)
@@ -560,6 +576,9 @@ func (s *testEvaluatorSuite) TestIsTrueOrFalse(c *C) {
 		isFalse, err := evalBuiltinFunc(isFalseSig, chunk.Row{})
 		c.Assert(err, IsNil)
 		c.Assert(isFalse, testutil.DatumEquals, types.NewDatum(tc.isFalse))
+		if tc.keepNull {
+			s.ctx.SetValue(isTrueKeepNullKey, nil)
+		}
 	}
 }
 
