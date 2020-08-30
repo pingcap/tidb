@@ -111,8 +111,6 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4VarPop(ctx)
 	case ast.AggFuncStddevPop:
 		a.typeInfer4Std(ctx)
-	case ast.AggFuncJsonObjectAgg:
-		a.typeInfer4JsonFuncs(ctx)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}

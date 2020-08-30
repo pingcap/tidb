@@ -53,10 +53,6 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildBitAnd(aggFuncDesc, ordinal)
 	case ast.AggFuncVarPop:
 		return buildVarPop(aggFuncDesc, ordinal)
-	case ast.AggFuncJsonObjectAgg:
-		return buildJSONObjectAgg(aggFuncDesc, ordinal)
-	case ast.AggFuncApproxCountDistinct:
-		return buildApproxCountDistinct(aggFuncDesc, ordinal)
 	case ast.AggFuncStddevPop:
 		return buildStdDevPop(aggFuncDesc, ordinal)
 	}

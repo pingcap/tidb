@@ -40,11 +40,7 @@ func (a *aggregationPushDownSolver) isDecomposableWithJoin(fun *aggregation.AggF
 		return false
 	}
 	switch fun.Name {
-<<<<<<< HEAD
-	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
-=======
-	case ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncVarPop, ast.AggFuncJsonObjectAgg, ast.AggFuncStddevPop:
->>>>>>> 49af6a5... expression: Support stddev_pop function (#19195)
+	case ast.AggFuncAvg, ast.AggFuncGroupConcat, ast.AggFuncVarPop,  ast.AggFuncStddevPop:
 		// TODO: Support avg push down.
 		return false
 	case ast.AggFuncMax, ast.AggFuncMin, ast.AggFuncFirstRow:
