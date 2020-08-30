@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
@@ -431,10 +431,9 @@ func pushNotAcrossExpr(ctx sessionctx.Context, expr Expression, not bool) (_ Exp
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
-			child, err := wrapWithIsTrue(ctx, true, f.GetArgs()[0], true)
-			if err != nil {
-				return expr, false
-			}
+			ctx.SetValue(isTrueKeepNullKey, struct{}{})
+			child := wrapWithIsTrue(ctx, f.GetArgs()[0], true)
+			ctx.SetValue(isTrueKeepNullKey, nil)
 			var childExpr Expression
 			childExpr, changed = pushNotAcrossExpr(f.GetCtx(), child, !not)
 			if !changed && !not {

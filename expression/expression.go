@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -707,6 +706,10 @@ func SplitDNFItems(onExpr Expression) []Expression {
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	switch x := expr.(type) {
 	case *ScalarFunction:
+		if ctx.Value(isTrueKeepNullKey) == nil {
+			ctx.SetValue(isTrueKeepNullKey, struct{}{})
+			defer ctx.SetValue(isTrueKeepNullKey, nil)
+		}
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
 			args[i] = EvaluateExprWithNull(ctx, schema, arg)
@@ -1192,31 +1195,17 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 
 // wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not
 // type int, otherwise, returns `arg` directly.
-// The `keepNull` controls what the istrue function will return when `arg` is null:
-// 1. keepNull is true and arg is null, the istrue function returns null.
-// 2. keepNull is false and arg is null, the istrue function returns 0.
 // The `wrapForInt` indicates whether we need to wrapIsTrue for non-logical Expression with int type.
-// TODO: remove this function. ScalarFunction should be newed in one place.
-func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapForInt bool) (Expression, error) {
+func wrapWithIsTrue(ctx sessionctx.Context, arg Expression, wrapForInt bool) Expression {
 	if arg.GetType().EvalType() == types.ETInt {
 		if !wrapForInt {
-			return arg, nil
+			return arg
 		}
 		if child, ok := arg.(*ScalarFunction); ok {
 			if _, isLogicalOp := logicalOps[child.FuncName.L]; isLogicalOp {
-				return arg, nil
+				return arg
 			}
 		}
 	}
-	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
-	f, err := fc.getFunction(ctx, []Expression{arg})
-	if err != nil {
-		return nil, err
-	}
-	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.IsTruth),
-		Function: f,
-		RetType:  f.getRetTp(),
-	}
-	return FoldConstant(sf), nil
+	return NewFunctionInternal(ctx, ast.IsTruth, types.NewFieldType(mysql.TypeUnspecified), arg)
 }

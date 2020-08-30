@@ -67,14 +67,10 @@ func (c *logicAndFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	args[1], err = wrapWithIsTrue(ctx, true, args[1], false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	ctx.SetValue(isTrueKeepNullKey, struct{}{})
+	args[0] = wrapWithIsTrue(ctx, args[0], false)
+	args[1] = wrapWithIsTrue(ctx, args[1], false)
+	ctx.SetValue(isTrueKeepNullKey, nil)
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
@@ -120,14 +116,10 @@ func (c *logicOrFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	args[1], err = wrapWithIsTrue(ctx, true, args[1], false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	ctx.SetValue(isTrueKeepNullKey, struct{}{})
+	args[0] = wrapWithIsTrue(ctx, args[0], false)
+	args[1] = wrapWithIsTrue(ctx, args[1], false)
+	ctx.SetValue(isTrueKeepNullKey, nil)
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
@@ -179,14 +171,10 @@ func (c *logicXorFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	args[1], err = wrapWithIsTrue(ctx, true, args[1], false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+	ctx.SetValue(isTrueKeepNullKey, struct{}{})
+	args[0] = wrapWithIsTrue(ctx, args[0], false)
+	args[1] = wrapWithIsTrue(ctx, args[1], false)
+	ctx.SetValue(isTrueKeepNullKey, nil)
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
@@ -428,6 +416,14 @@ func (b *builtinRightShiftSig) evalInt(row chunk.Row) (int64, bool, error) {
 	return int64(uint64(arg0) >> uint64(arg1)), false, nil
 }
 
+type isTrueKeepNullKeyType int
+
+func (k isTrueKeepNullKeyType) String() string {
+	return "is_true_keep_null"
+}
+
+const isTrueKeepNullKey isTrueKeepNullKeyType = 0
+
 type isTrueOrFalseFunctionClass struct {
 	baseFunctionClass
 	op opcode.Op
@@ -456,27 +452,32 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 	}
 	bf.tp.Flen = 1
 
+	keepNull := c.keepNull
+	if ctx.Value(isTrueKeepNullKey) != nil {
+		keepNull = true
+	}
+
 	var sig builtinFunc
 	switch c.op {
 	case opcode.IsTruth:
 		switch argTp {
 		case types.ETReal:
-			sig = &builtinRealIsTrueSig{bf, c.keepNull}
-			if c.keepNull {
+			sig = &builtinRealIsTrueSig{bf, keepNull}
+			if keepNull {
 				sig.setPbCode(tipb.ScalarFuncSig_RealIsTrueWithNull)
 			} else {
 				sig.setPbCode(tipb.ScalarFuncSig_RealIsTrue)
 			}
 		case types.ETDecimal:
-			sig = &builtinDecimalIsTrueSig{bf, c.keepNull}
-			if c.keepNull {
+			sig = &builtinDecimalIsTrueSig{bf, keepNull}
+			if keepNull {
 				sig.setPbCode(tipb.ScalarFuncSig_DecimalIsTrueWithNull)
 			} else {
 				sig.setPbCode(tipb.ScalarFuncSig_DecimalIsTrue)
 			}
 		case types.ETInt:
-			sig = &builtinIntIsTrueSig{bf, c.keepNull}
-			if c.keepNull {
+			sig = &builtinIntIsTrueSig{bf, keepNull}
+			if keepNull {
 				sig.setPbCode(tipb.ScalarFuncSig_IntIsTrueWithNull)
 			} else {
 				sig.setPbCode(tipb.ScalarFuncSig_IntIsTrue)
@@ -487,22 +488,22 @@ func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []
 	case opcode.IsFalsity:
 		switch argTp {
 		case types.ETReal:
-			sig = &builtinRealIsFalseSig{bf, c.keepNull}
-			if c.keepNull {
+			sig = &builtinRealIsFalseSig{bf, keepNull}
+			if keepNull {
 				sig.setPbCode(tipb.ScalarFuncSig_RealIsFalseWithNull)
 			} else {
 				sig.setPbCode(tipb.ScalarFuncSig_RealIsFalse)
 			}
 		case types.ETDecimal:
-			sig = &builtinDecimalIsFalseSig{bf, c.keepNull}
-			if c.keepNull {
+			sig = &builtinDecimalIsFalseSig{bf, keepNull}
+			if keepNull {
 				sig.setPbCode(tipb.ScalarFuncSig_DecimalIsFalseWithNull)
 			} else {
 				sig.setPbCode(tipb.ScalarFuncSig_DecimalIsFalse)
 			}
 		case types.ETInt:
-			sig = &builtinIntIsFalseSig{bf, c.keepNull}
-			if c.keepNull {
+			sig = &builtinIntIsFalseSig{bf, keepNull}
+			if keepNull {
 				sig.setPbCode(tipb.ScalarFuncSig_IntIsFalseWithNull)
 			} else {
 				sig.setPbCode(tipb.ScalarFuncSig_IntIsFalse)
