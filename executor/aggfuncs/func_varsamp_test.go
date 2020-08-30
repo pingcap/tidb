@@ -17,7 +17,7 @@ func (s *testSuite) TestMergePartialResult4Varsamp(c *C) {
 
 func (s *testSuite) TestVarsamp(c *C) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncVarSamp, mysql.TypeDouble, 5, nil, 2.2222222222222223),
+		buildAggTester(ast.AggFuncVarSamp, mysql.TypeDouble, 5, nil, 2.5),
 	}
 	for _, test := range tests {
 		s.testAggFunc(c, test)

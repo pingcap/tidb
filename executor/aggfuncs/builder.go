@@ -472,23 +472,22 @@ func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	}
 }
 
-// buildVarSamp builds the AggFunc implementation for function "STD()/STDDEV()/STDDEV_POP()"
+// buildVarSamp builds the AggFunc implementation for function "VAR_SAMP()"
 func buildVarSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	base := baseVarSampAggFunc{
-		varPop4Float64{
-			baseVarPopAggFunc{
-				baseAggFunc{
-					args:    aggFuncDesc.Args,
-					ordinal: ordinal,
-				},
-			},
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
 		},
 	}
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 		return nil
 	default:
-		return &varSamp4Float64{base}
+		if aggFuncDesc.HasDistinct {
+			return &varSamp4DistinctFloat64{varPop4DistinctFloat64{base}}
+		}
+		return &varSamp4Float64{baseVarSampAggFunc{varPop4Float64{base}}}
 	}
 }
 
