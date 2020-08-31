@@ -1361,6 +1361,16 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 	logutil.BgLogger().Info("[ddl] start to add table index", zap.String("job", job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	totalAddedCount := job.GetRowCount()
 
+	if err := w.isReorgRunnable(reorgInfo.d); err != nil {
+		return errors.Trace(err)
+	}
+
+	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
+		}
+	})
+
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
 	sessCtx := newContext(reorgInfo.d.store)
 	decodeColMap, err := makeupDecodeColMap(sessCtx, t, indexInfo)
