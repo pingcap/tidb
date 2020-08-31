@@ -1208,7 +1208,12 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 			}
 		}
 	}
-	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
+	var fc *isTrueOrFalseFunctionClass
+	if keepNull {
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithNull, 1, 1}, opcode.IsTruth, keepNull}
+	} else {
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
+	}
 	f, err := fc.getFunction(ctx, []Expression{arg})
 	if err != nil {
 		return nil, err
@@ -1217,6 +1222,9 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 		FuncName: model.NewCIStr(ast.IsTruth),
 		Function: f,
 		RetType:  f.getRetTp(),
+	}
+	if keepNull {
+		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(sf), nil
 }
