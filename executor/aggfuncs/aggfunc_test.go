@@ -241,8 +241,8 @@ type aggMemTest struct {
 	isDistinct         bool
 }
 
-func buildAggMemTester(funcName string, tp byte, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens, isDistinct bool, results ...interface{}) aggMemTest {
-	aggTest := buildAggTester(funcName, tp, numRows, results)
+func buildAggMemTester(funcName string, tp byte, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens, isDistinct bool) aggMemTest {
+	aggTest := buildAggTester(funcName, tp, numRows)
 	pt := aggMemTest{
 		aggTest:            aggTest,
 		allocMemDelta:      allocMemDelta,
