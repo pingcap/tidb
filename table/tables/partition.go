@@ -434,6 +434,9 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 		err    error
 	)
 	if col, ok := t.partitionExpr.Expr.(*expression.Column); ok {
+		if r[col.Index].IsNull() {
+			isNull = true
+		}
 		ret = r[col.Index].GetInt64()
 	} else {
 		evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
@@ -448,15 +451,21 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 		if err != nil {
 			return 0, err
 		}
-		if isNull {
-			ret = 0
-		}
 		ret = val
 	}
-	unsigned := t.partitionExpr.Unsigned
+	unsigned := mysql.HasUnsignedFlag(t.partitionExpr.Expr.GetType().Flag)
 	ranges := t.partitionExpr.ForRangePruning
 	length := len(ranges.LessThan)
-	pos := sort.Search(length, func(i int) bool { return ranges.compare(i, ret, unsigned) > 0 })
+	pos := sort.Search(length, func(i int) bool {
+		if isNull {
+			return true
+		}
+		return ranges.compare(i, ret, unsigned) > 0
+	})
+	fmt.Println(ret, unsigned, pos)
+	if isNull {
+		pos = 0
+	}
 	if pos < 0 || pos >= length {
 		// The data does not belong to any of the partition returns `table has no partition for value %s`.
 		var valueMsg string
