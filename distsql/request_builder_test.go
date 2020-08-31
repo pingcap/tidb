@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -57,8 +56,8 @@ type testSuite struct {
 func (s *testSuite) SetUpSuite(c *C) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx = &stmtctx.StatementContext{
-		MemTracker:  memory.NewTracker(stringutil.StringerStr("testSuite"), -1),
-		DiskTracker: disk.NewTracker(stringutil.StringerStr("testSuite"), -1),
+		MemTracker:  memory.NewTracker(-1, -1),
+		DiskTracker: disk.NewTracker(-1, -1),
 	}
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{
@@ -681,5 +680,35 @@ func (s *testSuite) TestIndexRangesToKVRangesWithFbs(c *C) {
 	}
 	for i := 0; i < len(actual); i++ {
 		c.Assert(actual[i], DeepEquals, expect[i])
+	}
+}
+
+func (s *testSuite) TestScanLimitConcurrency(c *C) {
+	vars := variable.NewSessionVars()
+	for _, tt := range []struct {
+		tp          tipb.ExecType
+		limit       uint64
+		concurrency int
+	}{
+		{tipb.ExecType_TypeTableScan, 1, 1},
+		{tipb.ExecType_TypeIndexScan, 1, 1},
+		{tipb.ExecType_TypeTableScan, 1000000, vars.Concurrency.DistSQLScanConcurrency()},
+		{tipb.ExecType_TypeIndexScan, 1000000, vars.Concurrency.DistSQLScanConcurrency()},
+	} {
+		firstExec := &tipb.Executor{Tp: tt.tp}
+		switch tt.tp {
+		case tipb.ExecType_TypeTableScan:
+			firstExec.TblScan = &tipb.TableScan{}
+		case tipb.ExecType_TypeIndexScan:
+			firstExec.IdxScan = &tipb.IndexScan{}
+		}
+		limitExec := &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: &tipb.Limit{Limit: tt.limit}}
+		dag := &tipb.DAGRequest{Executors: []*tipb.Executor{firstExec, limitExec}}
+		actual, err := (&RequestBuilder{}).
+			SetDAGRequest(dag).
+			SetFromSessionVars(vars).
+			Build()
+		c.Assert(err, IsNil)
+		c.Assert(actual.Concurrency, Equals, tt.concurrency)
 	}
 }

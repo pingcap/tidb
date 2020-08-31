@@ -24,7 +24,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
@@ -174,7 +173,7 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 			bufWriter: bufio.NewWriter(&outBuffer),
 		},
 	}
-	err := cc.writeInitialHandshake()
+	err := cc.writeInitialHandshake(context.TODO())
 	c.Assert(err, IsNil)
 
 	expected := new(bytes.Buffer)
@@ -298,6 +297,24 @@ func (ts *ConnTestSuite) TestDispatch(c *C) {
 			err: nil,
 			out: []byte{0x3, 0x0, 0x0, 0xe, 0x0, 0x0, 0x0},
 		},
+		{
+			com: mysql.ComRefresh, // flush privileges
+			in:  []byte{0x01},
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0xf, 0x0, 0x0, 0x0, 0x3, 0x0, 0x0, 0x10, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComRefresh, // flush logs etc
+			in:  []byte{0x02},
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0x11, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComResetConnection,
+			in:  nil,
+			err: nil,
+			out: []byte{0x3, 0x0, 0x0, 0x12, 0x0, 0x0, 0x0},
+		},
 	}
 
 	ts.testDispatch(c, inputs, 0)
@@ -401,6 +418,24 @@ func (ts *ConnTestSuite) TestDispatchClientProtocol41(c *C) {
 			err: nil,
 			out: []byte{0x7, 0x0, 0x0, 0xe, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
 		},
+		{
+			com: mysql.ComRefresh, // flush privileges
+			in:  []byte{0x01},
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0xf, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0, 0x7, 0x0, 0x0, 0x10, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComRefresh, // flush logs etc
+			in:  []byte{0x02},
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0x11, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComResetConnection,
+			in:  nil,
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0x12, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
 	}
 
 	ts.testDispatch(c, inputs, mysql.ClientProtocol41)
@@ -427,10 +462,11 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(ts.store)
-	cfg := config.NewConfig()
-	cfg.Port = genPort()
+	cfg := newTestConfig()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
+
 	c.Assert(err, IsNil)
 	defer server.Close()
 
@@ -452,11 +488,11 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 		err := cc.dispatch(context.Background(), inBytes)
 		c.Assert(err, Equals, cs.err)
 		if err == nil {
-			err = cc.flush()
+			err = cc.flush(context.TODO())
 			c.Assert(err, IsNil)
 			c.Assert(outBuffer.Bytes(), DeepEquals, cs.out)
 		} else {
-			_ = cc.flush()
+			_ = cc.flush(context.TODO())
 		}
 		outBuffer.Reset()
 	}

@@ -14,7 +14,6 @@
 package tikv
 
 import (
-	"bytes"
 	"math"
 	"sync/atomic"
 	"time"
@@ -84,6 +83,8 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch batchMutations, txnSize u
 			req.Secondaries = c.asyncSecondaries()
 		}
 		req.UseAsyncCommit = true
+		// The async commit can not be used for large transactions, and the commit ts can't be pushed.
+		req.MinCommitTs = 0
 	}
 
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
@@ -121,7 +122,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
-			if bytes.Equal(c.primary(), batch.mutations.keys[0]) {
+			if batch.isPrimary {
 				// After writing the primary key, if the size of the transaction is large than 32M,
 				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
 				if int64(c.txnSize) > config.GetGlobalConfig().TiKVClient.TTLRefreshedTxnSize {
@@ -133,6 +134,9 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 				// commit cannot proceed. The client can then fallback to normal way to
 				// continue committing the transaction if prewrite are all finished.
 				if prewriteResp.MinCommitTs == 0 {
+					if c.testingKnobs.noFallBack {
+						return nil
+					}
 					logutil.Logger(bo.ctx).Warn("async commit cannot proceed since the returned minCommitTS is zero, "+
 						"fallback to normal path", zap.Uint64("startTS", c.startTS))
 					c.setAsyncCommit(false)
@@ -179,7 +183,7 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 	}
 }
 
-func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations committerMutations) error {
+func (c *twoPhaseCommitter) prewriteMutations(bo *Backoffer, mutations CommitterMutations) error {
 	if span := opentracing.SpanFromContext(bo.ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("twoPhaseCommitter.prewriteMutations", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()

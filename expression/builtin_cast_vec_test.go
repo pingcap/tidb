@@ -155,6 +155,47 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinCastFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinCastCases)
 }
 
+func (s *testEvaluatorSuite) TestVectorizedCastRealAsTime(c *C) {
+	col := &Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}
+	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col})
+	if err != nil {
+		panic(err)
+	}
+	cast := &builtinCastRealAsTimeSig{baseFunc}
+
+	inputs := []*chunk.Chunk{
+		genCastRealAsTime(),
+	}
+
+	for _, input := range inputs {
+		result := chunk.NewColumn(types.NewFieldType(mysql.TypeDatetime), input.NumRows())
+		c.Assert(cast.vecEvalTime(input, result), IsNil)
+		for i := 0; i < input.NumRows(); i++ {
+			res, isNull, err := cast.evalTime(input.GetRow(i))
+			c.Assert(err, IsNil)
+			if isNull {
+				c.Assert(result.IsNull(i), IsTrue)
+				continue
+			}
+			c.Assert(result.IsNull(i), IsFalse)
+			c.Assert(result.GetTime(i).Compare(res), Equals, 0)
+		}
+	}
+}
+
+func genCastRealAsTime() *chunk.Chunk {
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 10)
+	gen := newDefaultRandGen()
+	for i := 0; i < 10; i++ {
+		if i < 5 {
+			input.AppendFloat64(0, 0)
+		} else {
+			input.AppendFloat64(0, gen.Float64()*100000)
+		}
+	}
+	return input
+}
+
 // for issue https://github.com/pingcap/tidb/issues/16825
 func (s *testEvaluatorSuite) TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(c *C) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
@@ -175,7 +216,7 @@ func (s *testEvaluatorSuite) TestVectorizedCastStringAsDecimalWithUnsignedFlagIn
 	}
 
 	for _, input := range inputs {
-		result := chunk.NewColumn(types.NewFieldType(mysql.TypeDecimal), input.NumRows())
+		result := chunk.NewColumn(types.NewFieldType(mysql.TypeNewDecimal), input.NumRows())
 		c.Assert(cast.vecEvalDecimal(input, result), IsNil)
 		for i := 0; i < input.NumRows(); i++ {
 			res, isNull, err := cast.evalDecimal(input.GetRow(i))

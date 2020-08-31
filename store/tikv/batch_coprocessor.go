@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -42,7 +41,7 @@ type batchCopTask struct {
 
 type batchCopResponse struct {
 	pbResp *coprocessor.BatchResponse
-	detail *execdetails.ExecDetails
+	detail *CopRuntimeStats
 
 	// batch Cop Response is yet to return startKey. So batchCop cannot retry partially.
 	startKey kv.Key
@@ -63,8 +62,8 @@ func (rs *batchCopResponse) GetStartKey() kv.Key {
 
 // GetExecDetails is unavailable currently, because TiFlash has not collected exec details for batch cop.
 // TODO: Will fix in near future.
-func (rs *batchCopResponse) GetExecDetails() *execdetails.ExecDetails {
-	return &execdetails.ExecDetails{}
+func (rs *batchCopResponse) GetCopRuntimeStats() *CopRuntimeStats {
+	return rs.detail
 }
 
 // MemSize returns how many bytes of memory this response use
@@ -77,9 +76,6 @@ func (rs *batchCopResponse) MemSize() int64 {
 	rs.respSize += int64(cap(rs.startKey))
 	if rs.detail != nil {
 		rs.respSize += int64(sizeofExecDetails)
-		if rs.detail.CommitDetail != nil {
-			rs.respSize += int64(sizeofCommitDetails)
-		}
 	}
 	if rs.pbResp != nil {
 		// Using a approximate size since it's hard to get a accurate value.
@@ -304,7 +300,7 @@ func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *
 	for idx := 0; idx < len(tasks); idx++ {
 		ret, err := b.handleTaskOnce(ctx, bo, tasks[idx])
 		if err != nil {
-			resp := &batchCopResponse{err: errors.Trace(err)}
+			resp := &batchCopResponse{err: errors.Trace(err), detail: new(CopRuntimeStats)}
 			b.sendToRespCh(resp)
 			break
 		}
@@ -413,9 +409,22 @@ func (b *batchCopIterator) handleBatchCopResponse(bo *Backoffer, response *copro
 		return errors.Trace(err)
 	}
 
-	b.sendToRespCh(&batchCopResponse{
+	resp := batchCopResponse{
 		pbResp: response,
-	})
+		detail: new(CopRuntimeStats),
+	}
+
+	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
+	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
+	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
+	for backoff := range bo.backoffTimes {
+		backoffName := backoff.String()
+		resp.detail.BackoffTimes[backoffName] = bo.backoffTimes[backoff]
+		resp.detail.BackoffSleep[backoffName] = time.Duration(bo.backoffSleepMS[backoff]) * time.Millisecond
+	}
+	resp.detail.CalleeAddress = task.storeAddr
+
+	b.sendToRespCh(&resp)
 
 	return
 }

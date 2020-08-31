@@ -75,7 +75,6 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 
 	// Test create privilege.
 	tk.MustExec("create user myuser@localhost")
-	tk.MustExec("flush privileges")
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err := session.CreateSession4Test(s.store)
@@ -85,7 +84,6 @@ func (s *testSequenceSuite) TestCreateSequence(c *C) {
 
 	// grant the myuser the access to database test.
 	tk.MustExec("grant select on test.* to 'myuser'@'localhost'")
-	tk.MustExec("flush privileges")
 
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("create sequence my_seq")
@@ -141,7 +139,6 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	// Test drop privilege.
 	tk.MustExec("drop user if exists myuser@localhost")
 	tk.MustExec("create user myuser@localhost")
-	tk.MustExec("flush privileges")
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err := session.CreateSession4Test(s.store)
@@ -152,7 +149,6 @@ func (s *testSequenceSuite) TestDropSequence(c *C) {
 	// grant the myuser the access to database test.
 	tk.MustExec("create sequence my_seq")
 	tk.MustExec("grant select on test.* to 'myuser'@'localhost'")
-	tk.MustExec("flush privileges")
 
 	tk1.MustExec("use test")
 	_, err = tk1.Exec("drop sequence my_seq")
@@ -175,7 +171,6 @@ func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
 	// Test show privilege.
 	tk.MustExec("drop user if exists myuser@localhost")
 	tk.MustExec("create user myuser@localhost")
-	tk.MustExec("flush privileges")
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err := session.CreateSession4Test(s.store)
@@ -185,7 +180,6 @@ func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
 
 	// Grant the myuser the access to table t in database test, but sequence seq.
 	tk.MustExec("grant select on test.t to 'myuser'@'localhost'")
-	tk.MustExec("flush privileges")
 
 	tk1.MustExec("use test")
 	tk1.MustExec("show create table t")
@@ -195,7 +189,6 @@ func (s *testSequenceSuite) TestShowCreateSequence(c *C) {
 
 	// Grant the myuser the access to sequence seq in database test.
 	tk.MustExec("grant select on test.seq to 'myuser'@'localhost'")
-	tk.MustExec("flush privileges")
 
 	tk1.MustQuery("show create sequence seq").Check(testkit.Rows("seq CREATE SEQUENCE `seq` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB"))
 
@@ -879,7 +872,6 @@ func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
 	tk.MustExec("create table t(a int default next value for seq)")
 	tk.MustExec("drop user if exists myuser@localhost")
 	tk.MustExec("create user myuser@localhost")
-	tk.MustExec("flush privileges")
 
 	tk1 := testkit.NewTestKit(c, s.store)
 	se, err := session.CreateSession4Test(s.store)
@@ -889,7 +881,6 @@ func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
 
 	// grant the myuser the create access to the sequence.
 	tk.MustExec("grant insert on test.t to 'myuser'@'localhost'")
-	tk.MustExec("flush privileges")
 
 	// INSERT privilege required to use nextval.
 	tk1.MustExec("use test")
@@ -913,7 +904,6 @@ func (s *testSequenceSuite) TestSequenceFunctionPrivilege(c *C) {
 
 	// grant the myuser the SELECT & UPDATE access to sequence seq.
 	tk.MustExec("grant SELECT, INSERT on test.seq to 'myuser'@'localhost'")
-	tk.MustExec("flush privileges")
 
 	// SELECT privilege required to use nextval.
 	tk1.MustQuery("select nextval(seq)").Check(testkit.Rows("1"))

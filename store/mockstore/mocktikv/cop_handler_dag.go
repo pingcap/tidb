@@ -56,10 +56,6 @@ type dagContext struct {
 
 func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-	if err := h.checkRequestContext(req.GetContext()); err != nil {
-		resp.RegionError = err
-		return resp
-	}
 	dagCtx, e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		resp.OtherError = err.Error()
@@ -118,7 +114,12 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		startTS:   req.StartTs,
 		evalCtx:   &evalContext{sc: sc},
 	}
-	e, err := h.buildDAG(ctx, dagReq.Executors)
+	var e executor
+	if len(dagReq.Executors) == 0 {
+		e, err = h.buildDAGForTiFlash(ctx, dagReq.RootExecutor)
+	} else {
+		e, err = h.buildDAG(ctx, dagReq.Executors)
+	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -146,9 +147,10 @@ func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Reque
 	}, nil
 }
 
-func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
+func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, *tipb.Executor, error) {
 	var currExec executor
 	var err error
+	var childExec *tipb.Executor
 	switch curr.GetTp() {
 	case tipb.ExecType_TypeTableScan:
 		currExec, err = h.buildTableScan(ctx, curr)
@@ -156,26 +158,46 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		currExec, err = h.buildIndexScan(ctx, curr)
 	case tipb.ExecType_TypeSelection:
 		currExec, err = h.buildSelection(ctx, curr)
+		childExec = curr.Selection.Child
 	case tipb.ExecType_TypeAggregation:
 		currExec, err = h.buildHashAgg(ctx, curr)
+		childExec = curr.Aggregation.Child
 	case tipb.ExecType_TypeStreamAgg:
 		currExec, err = h.buildStreamAgg(ctx, curr)
+		childExec = curr.Aggregation.Child
 	case tipb.ExecType_TypeTopN:
 		currExec, err = h.buildTopN(ctx, curr)
+		childExec = curr.TopN.Child
 	case tipb.ExecType_TypeLimit:
 		currExec = &limitExec{limit: curr.Limit.GetLimit(), execDetail: new(execDetail)}
+		childExec = curr.Limit.Child
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
 	}
 
-	return currExec, errors.Trace(err)
+	return currExec, childExec, errors.Trace(err)
+}
+
+func (h *rpcHandler) buildDAGForTiFlash(ctx *dagContext, farther *tipb.Executor) (executor, error) {
+	curr, child, err := h.buildExec(ctx, farther)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if child != nil {
+		childExec, err := h.buildDAGForTiFlash(ctx, child)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		curr.SetSrcExec(childExec)
+	}
+	return curr, nil
 }
 
 func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
 	var src executor
 	for i := 0; i < len(executors); i++ {
-		curr, err := h.buildExec(ctx, executors[i])
+		curr, _, err := h.buildExec(ctx, executors[i])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -462,7 +484,7 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
-	// TODO set FlagInUnionStmt,
+	// TODO set FlagInSetOprStmt,
 	return sc
 }
 
@@ -669,11 +691,13 @@ func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 }
 
 func (h *rpcHandler) constructRespSchema(dagCtx *dagContext) []*types.FieldType {
-	root := dagCtx.dagReq.Executors[len(dagCtx.dagReq.Executors)-1]
-	agg := root.Aggregation
-	if root.StreamAgg != nil {
-		agg = root.StreamAgg
+	var root *tipb.Executor
+	if len(dagCtx.dagReq.Executors) == 0 {
+		root = dagCtx.dagReq.RootExecutor
+	} else {
+		root = dagCtx.dagReq.Executors[len(dagCtx.dagReq.Executors)-1]
 	}
+	agg := root.Aggregation
 	if agg == nil {
 		return dagCtx.evalCtx.fieldTps
 	}
