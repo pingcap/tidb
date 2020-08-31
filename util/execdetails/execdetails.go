@@ -88,6 +88,7 @@ type CommitDetails struct {
 	TxnRetry          int
 }
 
+// LockKeysDetails contains pessimistic lock keys detail information.
 type LockKeysDetails struct {
 	TotalTime       time.Duration
 	RegionNum       int32
@@ -103,6 +104,7 @@ type LockKeysDetails struct {
 	RetryCount   int
 }
 
+// Merge merges lock keys execution details into self.
 func (ld *LockKeysDetails) Merge(lockKey *LockKeysDetails) {
 	ld.TotalTime += lockKey.TotalTime
 	ld.RegionNum += lockKey.RegionNum
@@ -613,7 +615,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 		}
 		if e.LockKeys.LockRPCCount > 0 {
 			buf.WriteString(", rpc_count:")
-			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.LockRPCCount), 10))
+			buf.WriteString(strconv.FormatInt(e.LockKeys.LockRPCCount, 10))
 		}
 		if e.LockKeys.RetryCount > 0 {
 			buf.WriteString(", retry_count:")
