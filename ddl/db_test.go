@@ -293,7 +293,9 @@ func (s *testDBSuite2) TestAddUniqueIndexRollback(c *C) {
 }
 
 func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
@@ -4418,7 +4420,9 @@ func (s *testDBSuite2) TestTablesLockDelayClean(c *C) {
 
 	tk.MustExec("lock tables t1 write")
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockWrite)
-	config.GetGlobalConfig().DelayCleanTableLock = 100
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DelayCleanTableLock = 100
+	})
 	var wg sync.WaitGroup
 	wg.Add(1)
 	var startTime time.Time
@@ -4432,7 +4436,9 @@ func (s *testDBSuite2) TestTablesLockDelayClean(c *C) {
 	wg.Wait()
 	c.Assert(time.Since(startTime).Seconds() > 0.1, IsTrue)
 	checkTableLock(c, tk.Se, "test", "t1", model.TableLockNone)
-	config.GetGlobalConfig().DelayCleanTableLock = 0
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.DelayCleanTableLock = 0
+	})
 }
 
 // TestConcurrentLockTables test concurrent lock/unlock tables.
@@ -4668,6 +4674,23 @@ func (s *testSerialDBSuite) TestDDLJobErrorCount(c *C) {
 		kv.ErrEntryTooLarge.Equal(historyJob.Error)
 		break
 	}
+}
+
+// TestAddIndexFailOnCaseWhenCanExit is used to close #19325.
+func (s *testSerialDBSuite) TestAddIndexFailOnCaseWhenCanExit(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	_, err := tk.Exec("alter table t add index idx(b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	tk.MustExec("drop table if exists t")
 }
 
 func init() {

@@ -549,10 +549,10 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	saveConf := config.GetGlobalConfig()
-	conf := *saveConf
-	conf.Security.SkipGrantTable = true
-	config.StoreGlobalConfig(&conf)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SkipGrantTable = true
+	})
 
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -560,8 +560,6 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("FLUSH PRIVILEGES")
-
-	config.StoreGlobalConfig(saveConf)
 }
 
 func (s *testSuite3) TestDropStats(c *C) {

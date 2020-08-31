@@ -190,7 +190,7 @@ func (mds *mockDataSource) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func buildMockDataSource(opt mockDataSourceParameters) *mockDataSource {
-	baseExec := newBaseExecutor(opt.ctx, opt.schema, nil)
+	baseExec := newBaseExecutor(opt.ctx, opt.schema, 0)
 	m := &mockDataSource{baseExec, opt, nil, nil, 0}
 	rTypes := retTypes(m)
 	colData := make([][]interface{}, len(rTypes))
@@ -739,8 +739,8 @@ func defaultHashJoinTestCase(cols []*types.FieldType, joinType core.JoinType, us
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
-	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().IndexLookupJoinConcurrency = 4
 	tc := &hashJoinTestCase{rows: 100000, concurrency: 4, ctx: ctx, keyIdx: []int{0, 1}, rawData: wideString}
 	tc.cols = cols
@@ -782,7 +782,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 		probeKeys = append(probeKeys, cols1[keyIdx])
 	}
 	e := &HashJoinExec{
-		baseExecutor:      newBaseExecutor(testCase.ctx, joinSchema, stringutil.StringerStr("HashJoin"), innerExec, outerExec),
+		baseExecutor:      newBaseExecutor(testCase.ctx, joinSchema, 5, innerExec, outerExec),
 		concurrency:       uint(testCase.concurrency),
 		joinType:          testCase.joinType, // 0 for InnerJoin, 1 for LeftOutersJoin, 2 for RightOuterJoin
 		isOuterJoin:       false,
@@ -806,9 +806,9 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec Executor)
 	if testCase.disk {
 		memLimit = 1
 	}
-	t := memory.NewTracker(stringutil.StringerStr("root of prepare4HashJoin"), memLimit)
+	t := memory.NewTracker(-1, memLimit)
 	t.SetActionOnExceed(nil)
-	t2 := disk.NewTracker(stringutil.StringerStr("root of prepare4HashJoin"), -1)
+	t2 := disk.NewTracker(-1, -1)
 	e.ctx.GetSessionVars().StmtCtx.MemTracker = t
 	e.ctx.GetSessionVars().StmtCtx.DiskTracker = t2
 	return e
@@ -1128,8 +1128,8 @@ func defaultIndexJoinTestCase() *indexJoinTestCase {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().SnapshotTS = 1
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
-	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	tc := &indexJoinTestCase{
 		outerRows:       100000,
 		innerRows:       variable.DefMaxChunkSize * 100,
@@ -1182,7 +1182,7 @@ func prepare4IndexInnerHashJoin(tc *indexJoinTestCase, outerDS *mockDataSource, 
 		keyOff2IdxOff[i] = i
 	}
 	e := &IndexLookUpJoin{
-		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, stringutil.StringerStr("IndexInnerHashJoin"), outerDS),
+		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 1, outerDS),
 		outerCtx: outerCtx{
 			rowTypes: leftTypes,
 			keyCols:  tc.outerJoinKeyIdx,
@@ -1244,7 +1244,7 @@ func prepare4IndexMergeJoin(tc *indexJoinTestCase, outerDS *mockDataSource, inne
 		outerCompareFuncs = append(outerCompareFuncs, expression.GetCmpFunction(nil, outerJoinKeys[i], outerJoinKeys[i]))
 	}
 	e := &IndexLookUpMergeJoin{
-		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, stringutil.StringerStr("IndexMergeJoin"), outerDS),
+		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 2, outerDS),
 		outerMergeCtx: outerMergeCtx{
 			rowTypes:      leftTypes,
 			keyCols:       tc.outerJoinKeyIdx,
@@ -1386,7 +1386,7 @@ func prepare4MergeJoin(tc *mergeJoinTestCase, leftExec, rightExec *mockDataSourc
 	// only benchmark inner join
 	e := &MergeJoinExec{
 		stmtCtx:      tc.ctx.GetSessionVars().StmtCtx,
-		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, stringutil.StringerStr("MergeJoin"), leftExec, rightExec),
+		baseExecutor: newBaseExecutor(tc.ctx, joinSchema, 3, leftExec, rightExec),
 		compareFuncs: compareFuncs,
 		joiner: newJoiner(
 			tc.ctx,
@@ -1425,8 +1425,8 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().SnapshotTS = 1
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
-	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 
 	numInnerRows := numOuterRows*numInnerDup + numInnerRedundant
 	itc := &indexJoinTestCase{
@@ -1588,7 +1588,7 @@ func defaultSortTestCase() *sortCase {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(nil, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
 	tc := &sortCase{rows: 300000, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
 	return tc
 }
@@ -1602,7 +1602,7 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 	}
 	dataSource := buildMockDataSource(opt)
 	exec := &SortExec{
-		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, stringutil.StringerStr("sort"), dataSource),
+		baseExecutor: newBaseExecutor(cas.ctx, dataSource.schema, 4, dataSource),
 		ByItems:      make([]*util.ByItems, 0, len(cas.orderByIdx)),
 		schema:       dataSource.schema,
 	}

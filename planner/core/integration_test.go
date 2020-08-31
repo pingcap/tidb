@@ -303,8 +303,10 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
 	tk.MustExec("select * from t")
-	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
-	defer func() { config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash"} }()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.IsolationRead.Engines = []string{"tiflash"}
+	})
 	// Change instance config doesn't affect isolation read.
 	tk.MustExec("select * from t")
 }
@@ -1278,4 +1280,18 @@ func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
 	checkExplain("Get")
 	res = tk.MustQuery("explain analyze select * from t where a in (1,2,3);")
 	checkExplain("BatchGet")
+}
+
+func (s *testIntegrationSuite) TestPartialBatchPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c_int int, c_str varchar(40), primary key(c_int, c_str))")
+	tk.MustExec("insert into t values (3, 'bose')")
+	tk.MustQuery("select * from t where c_int in (3)").Check(testkit.Rows(
+		"3 bose",
+	))
+	tk.MustQuery("select * from t where c_int in (3) or c_str in ('yalow') and c_int in (1, 2)").Check(testkit.Rows(
+		"3 bose",
+	))
 }
