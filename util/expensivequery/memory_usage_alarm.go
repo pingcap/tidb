@@ -14,7 +14,11 @@
 package expensivequery
 
 import (
+	"bytes"
 	"fmt"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -73,14 +77,15 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 		return record
 	}
 	for _, f := range files{
+		name := filepath.Join(record.tmpDir, f.Name())
 		if strings.Contains(f.Name(), "running_sql") {
-			record.lastLogFileName = append(record.lastLogFileName, f.Name())
+			record.lastLogFileName = append(record.lastLogFileName, name)
 		}
 		if strings.Contains(f.Name(), "heap") {
-			record.lastProfileFileName[0] = append(record.lastProfileFileName[0], f.Name())
+			record.lastProfileFileName[0] = append(record.lastProfileFileName[0], name)
 		}
 		if strings.Contains(f.Name(),"goroutine") {
-			record.lastProfileFileName[1] = append(record.lastProfileFileName[1], f.Name())
+			record.lastProfileFileName[1] = append(record.lastProfileFileName[1], name)
 		}
 	}
 
@@ -89,7 +94,7 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 
 // If Performance.ServerMemoryQuota is set, use ServerMemoryQuota * 80% to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use system total memory usage * 80% to check oom risk.
-func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) {
+func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager,ctx sessionctx.Context) {
 	var memoryUsage uint64
 	instanceStats := &runtime.MemStats{}
 	if record.isServerMemoryQuotaSetByUser {
@@ -110,12 +115,12 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 		interval := time.Since(record.lastCheckTime)
 		record.lastCheckTime = time.Now()
 		if interval > 10*time.Second {
-			record.doRecord(memoryUsage, sm)
+			record.doRecord(memoryUsage, sm, ctx)
 		}
 	}
 }
 
-func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager) {
+func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager,ctx sessionctx.Context) {
 	memType := "os memory"
 	if record.isServerMemoryQuotaSetByUser {
 		memType = "instance memory"
@@ -131,17 +136,18 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager
 	}
 	record.recordSQL(sm)
 	record.recordProfile()
+	record.recordSummaryTable(ctx)
 
 	tryRemove := func(filename []string) {
 		// Keep the last 5 files
-		if len(filename) < 6 {
-			return
+		for len(filename) > 5 {
+			err := os.Remove(filename[0])
+			if err != nil {
+				logutil.BgLogger().Error("remove temp files failed", zap.Error(err))
+				return
+			}
+			filename = filename[1:]
 		}
-		err := os.Remove(filename[0])
-		if err != nil {
-			logutil.BgLogger().Error("remove temp files failed", zap.Error(err))
-		}
-		filename = filename[1:]
 	}
 	tryRemove(record.lastLogFileName)
 	for i := range record.lastProfileFileName {
@@ -239,4 +245,30 @@ func (record *memoryUsageAlarm) recordProfile() {
 		}
 		logutil.BgLogger().Info(fmt.Sprintf("record %v profile successfully", item.name), zap.Any("Profile file path", fileName))
 	}
+}
+
+func (record *memoryUsageAlarm) recordSummaryTable(ctx sessionctx.Context) {
+	sql := "select * from information_schema.statements_summary"
+	rows ,types, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		record.err = err
+		return
+	}
+
+	b := bytes.Buffer{}
+	for _, row := range rows {
+		for j := 0;j < row.Len();j++ {
+			switch types[j].Column.Tp {
+			case mysql.TypeTimestamp:
+				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(),row.GetTime(j).String()))
+			case mysql.TypeString, mysql.TypeVarchar,mysql.TypeBlob:
+				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(),row.GetString(j)))
+			case mysql.TypeLonglong,mysql.TypeLong,mysql.TypeTiny:
+				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(),row.GetInt64(j)))
+			case mysql.TypeDouble:
+				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(),row.GetFloat64(j)))
+			}
+		}
+	}
+	fmt.Println(b.String())
 }

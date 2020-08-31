@@ -15,6 +15,7 @@ package expensivequery
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -47,7 +48,7 @@ func (eqh *Handle) SetSessionManager(sm util.SessionManager) *Handle {
 }
 
 // Run starts a expensive query checker goroutine at the start time of the server.
-func (eqh *Handle) Run() {
+func (eqh *Handle) Run(ctx sessionctx.Context) {
 	threshold := atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 	// use 100ms as tickInterval temply, may use given interval or use defined variable later
 	tickInterval := time.Millisecond * time.Duration(100)
@@ -75,7 +76,7 @@ func (eqh *Handle) Run() {
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 			if record.err == nil {
-				record.alarm4ExcessiveMemUsage(sm)
+				record.alarm4ExcessiveMemUsage(sm,ctx)
 			}
 		case <-eqh.exitCh:
 			return
