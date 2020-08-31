@@ -179,15 +179,7 @@ func (ts *ConnTestSuite) TestAuthSwitchRequest(c *C) {
 	}
 
 	var resp handshakeResponse41
-	var pos int
-	var err error
-	capability := uint32(binary.LittleEndian.Uint16(data[:2]))
-
-	if capability&mysql.ClientProtocol41 > 0 {
-		pos, err = parseHandshakeResponseHeader(context.Background(), &resp, data)
-	} else {
-		pos, err = parseOldHandshakeResponseHeader(context.Background(), &resp, data)
-	}
+	pos, err := parseHandshakeResponseHeader(context.Background(), &resp, data)
 	c.Assert(err, IsNil)
 	err = parseHandshakeResponseBody(context.Background(), &resp, data, pos)
 	c.Assert(err, IsNil)
