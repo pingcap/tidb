@@ -1252,6 +1252,7 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 	e.workersCond.L.Lock()
 	defer e.workersCond.L.Unlock()
 	if !e.taskStarted {
+		e.fallbackAction.Action(t)
 		return
 	}
 	e.once.Do(func() {
