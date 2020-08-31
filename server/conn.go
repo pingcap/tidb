@@ -484,15 +484,18 @@ func parseHandshakeResponseBody(ctx context.Context, packet *handshakeResponse41
 		if len(data[offset:]) > 0 {
 			idx := bytes.IndexByte(data[offset:], 0)
 			packet.DBName = string(data[offset : offset+idx])
-			offset = offset + idx + 1
+			offset += idx + 1
 		}
 	}
 
 	if packet.Capability&mysql.ClientPluginAuth > 0 {
-		// TODO: Support mysql.ClientPluginAuth, skip it now
 		idx := bytes.IndexByte(data[offset:], 0)
-		packet.AuthPlugin = string(data[offset : offset+idx])
-		offset = offset + idx + 1
+		s := offset
+		f := offset + idx
+		if s < f { // handle unexpected bad packets
+			packet.AuthPlugin = string(data[s:f])
+		}
+		offset += idx + 1
 	}
 
 	if packet.Capability&mysql.ClientConnectAtts > 0 {
@@ -611,7 +614,8 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 		return err
 	}
 
-	if resp.AuthPlugin != "mysql_native_password" {
+	// switching from other methods should work, but not tested
+	if resp.AuthPlugin == "caching_sha2_password" {
 		resp.Auth, err = cc.authSwitchRequest(ctx)
 		if err != nil {
 			logutil.Logger(ctx).Warn("attempt to send auth switch request packet failed", zap.Error(err))
