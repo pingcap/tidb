@@ -1778,10 +1778,6 @@ func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldT
 		return expr
 	}
 
-	if tp.Flen == types.UnspecifiedLength {
-		tp.Flen = expr.GetType().Flen
-	}
-
 	var fc functionClass
 	switch tp.EvalType() {
 	case types.ETInt:
