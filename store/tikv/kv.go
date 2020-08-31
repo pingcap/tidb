@@ -172,6 +172,15 @@ func (s *tikvStore) UpdateSPCache(cachedSP uint64, cachedTime time.Time) {
 	s.spMutex.Unlock()
 }
 
+// GetSPCache exports for testing.
+func (s *tikvStore) GetSPCache() (uint64, time.Time) {
+	s.spMutex.RLock()
+	cachedSP := s.safePoint
+	cachedTime := s.spTime
+	s.spMutex.RUnlock()
+	return cachedSP, cachedTime
+}
+
 func (s *tikvStore) CheckVisibility(startTime uint64) error {
 	s.spMutex.RLock()
 	cachedSafePoint := s.safePoint

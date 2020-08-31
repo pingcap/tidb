@@ -504,6 +504,11 @@ func (s *testPointGetSerialSuite) TestSelectCheckVisibility(c *C) {
 	ts := txn.StartTS()
 	store := tk.Se.GetStore().(tikv.Storage)
 	// Update gc safe time for check data visibility.
+
+	cachedSP, cachedTime := store.GetSPCache()
+	defer func() {
+		store.UpdateSPCache(cachedSP, cachedTime)
+	}()
 	store.UpdateSPCache(ts+1, time.Now())
 	checkSelectResultError := func(sql string, expectErr *terror.Error) {
 		re, err := tk.Exec(sql)

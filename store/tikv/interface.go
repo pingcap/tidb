@@ -41,6 +41,9 @@ type Storage interface {
 	// UpdateSPCache updates the cache of safe point.
 	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
 
+	// GetSPCache gets the cache of safe point.
+	GetSPCache() (cachedSP uint64, cachedTime time.Time)
+
 	// GetGCHandler gets the GCHandler.
 	GetGCHandler() GCHandler
 
