@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
@@ -46,6 +48,11 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	base, err := newBaseBuiltinFuncWithFieldType(ctx, fieldTp, args)
 	if err != nil {
 		return nil, err
+	}
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	base.tp = fieldTp
 	switch sigCode {
@@ -917,9 +924,9 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_CharLengthUTF8:
 		f = &builtinCharLengthUTF8Sig{base}
 	case tipb.ScalarFuncSig_Concat:
-		f = &builtinConcatSig{base, 67108864}
+		f = &builtinConcatSig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_ConcatWS:
-		f = &builtinConcatWSSig{base, 67108864}
+		f = &builtinConcatWSSig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_Convert:
 		f = &builtinConvertSig{base}
 	case tipb.ScalarFuncSig_Elt:
@@ -943,15 +950,15 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_FormatWithLocale:
 		f = &builtinFormatWithLocaleSig{base}
 	case tipb.ScalarFuncSig_FromBase64:
-		f = &builtinFromBase64Sig{base, 67108864}
+		f = &builtinFromBase64Sig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_HexIntArg:
 		f = &builtinHexIntArgSig{base}
 	case tipb.ScalarFuncSig_HexStrArg:
 		f = &builtinHexStrArgSig{base}
 	case tipb.ScalarFuncSig_InsertUTF8:
-		f = &builtinInsertUTF8Sig{base, 67108864}
+		f = &builtinInsertUTF8Sig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_Insert:
-		f = &builtinInsertSig{base, 67108864}
+		f = &builtinInsertSig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_InstrUTF8:
 		f = &builtinInstrUTF8Sig{base}
 	case tipb.ScalarFuncSig_Instr:
@@ -975,9 +982,9 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_Lower:
 		f = &builtinLowerSig{base}
 	case tipb.ScalarFuncSig_LpadUTF8:
-		f = &builtinLpadUTF8Sig{base, 67108864}
+		f = &builtinLpadUTF8Sig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_Lpad:
-		f = &builtinLpadSig{base, 67108864}
+		f = &builtinLpadSig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_MakeSet:
 		f = &builtinMakeSetSig{base}
 	case tipb.ScalarFuncSig_OctInt:
@@ -991,7 +998,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_RTrim:
 		f = &builtinRTrimSig{base}
 	case tipb.ScalarFuncSig_Repeat:
-		f = &builtinRepeatSig{base, 67108864}
+		f = &builtinRepeatSig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_Replace:
 		f = &builtinReplaceSig{base}
 	case tipb.ScalarFuncSig_ReverseUTF8:
@@ -1003,11 +1010,11 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_Right:
 		f = &builtinRightSig{base}
 	case tipb.ScalarFuncSig_RpadUTF8:
-		f = &builtinRpadUTF8Sig{base, 67108864}
+		f = &builtinRpadUTF8Sig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_Rpad:
-		f = &builtinRpadSig{base, 67108864}
+		f = &builtinRpadSig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_Space:
-		f = &builtinSpaceSig{base, 67108864}
+		f = &builtinSpaceSig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_Strcmp:
 		f = &builtinStrcmpSig{base}
 	case tipb.ScalarFuncSig_Substring2ArgsUTF8:
@@ -1021,7 +1028,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_SubstringIndex:
 		f = &builtinSubstringIndexSig{base}
 	case tipb.ScalarFuncSig_ToBase64:
-		f = &builtinToBase64Sig{base, 67108864}
+		f = &builtinToBase64Sig{base, maxAllowedPacket}
 	case tipb.ScalarFuncSig_Trim1Arg:
 		f = &builtinTrim1ArgSig{base}
 	case tipb.ScalarFuncSig_Trim2Args:
