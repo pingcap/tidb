@@ -379,9 +379,17 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 	defer t.evalBufferPool.Put(evalBuffer)
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
-		var ret int64
+		var (
+			ret    int64
+			isNull bool
+			err    error
+		)
 		evalBuffer.SetDatums(r...)
-		ret, isNull, err = partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
+		if len(r) > evalBuffer.Len() {
+			ret, isNull, err = partitionExprs[i].EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+		} else {
+			ret, isNull, err = partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
+		}
 		if err != nil {
 			return true // Break the search.
 		}
@@ -419,14 +427,24 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 }
 
 func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
-	var ret int64
+	var (
+		ret    int64
+		val    int64
+		isNull bool
+		err    error
+	)
 	if col, ok := t.partitionExpr.Expr.(*expression.Column); ok {
 		ret = r[col.Index].GetInt64()
 	} else {
 		evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 		defer t.evalBufferPool.Put(evalBuffer)
-		evalBuffer.SetDatums(r...)
-		val, isNull, err := t.partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
+		if len(r) > evalBuffer.Len() {
+			// For some case such as `SELECT .. FOR UPDATE`, datum will contain handle column.
+			val, isNull, err = t.partitionExpr.Expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+		} else {
+			evalBuffer.SetDatums(r...)
+			val, isNull, err = t.partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
+		}
 		if err != nil {
 			return 0, err
 		}
@@ -471,8 +489,18 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 	}
 	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 	defer t.evalBufferPool.Put(evalBuffer)
-	evalBuffer.SetDatums(r...)
-	ret, isNull, err := t.partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
+	var (
+		ret    int64
+		isNull bool
+		err    error
+	)
+	if len(r) > evalBuffer.Len() {
+		// For some case such as `SELECT .. FOR UPDATE`, datum will contain handle column.
+		ret, isNull, err = t.partitionExpr.Expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+	} else {
+		evalBuffer.SetDatums(r...)
+		ret, isNull, err = t.partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
+	}
 	if err != nil {
 		return 0, err
 	}
