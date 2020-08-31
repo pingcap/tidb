@@ -203,7 +203,11 @@ func (c *twoPhaseCommitter) extractKeyExistsErr(key kv.Key) error {
 		if handle.IsInt() {
 			return kv.ErrKeyExists.FastGenByArgs(handle.String(), "PRIMARY")
 		}
-		values, err := tablecodec.DecodeValuesBytesToStrings(handle.Encoded())
+		trimLen := 0
+		for i := 0; i < handle.NumCols(); i++ {
+			trimLen += len(handle.EncodedCol(i))
+		}
+		values, err := tablecodec.DecodeValuesBytesToStrings(handle.Encoded()[:trimLen])
 		if err == nil {
 			return kv.ErrKeyExists.FastGenByArgs(strings.Join(values, "-"), "PRIMARY")
 		}

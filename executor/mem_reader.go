@@ -72,15 +72,21 @@ func (m *memIndexReader) getMemRows() ([][]types.Datum, error) {
 	for _, col := range m.index.Columns {
 		tps = append(tps, &cols[col.Offset].FieldType)
 	}
-	if m.table.PKIsHandle {
+	switch {
+	case m.table.PKIsHandle:
 		for _, col := range m.table.Columns {
 			if mysql.HasPriKeyFlag(col.Flag) {
 				tps = append(tps, &col.FieldType)
 				break
 			}
 		}
-	} else {
-		// ExtraHandle Column tp.
+	case m.table.IsCommonHandle:
+		pkIdx := tables.FindPrimaryIndex(m.table)
+		for _, pkCol := range pkIdx.Columns {
+			colInfo := m.table.Columns[pkCol.Offset]
+			tps = append(tps, &colInfo.FieldType)
+		}
+	default: // ExtraHandle Column tp.
 		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
 	}
 
