@@ -1185,6 +1185,14 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		default:
 			return false
 		}
+	case ast.Round:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal,
+			tipb.ScalarFuncSig_RoundDec:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}
