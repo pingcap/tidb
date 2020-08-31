@@ -15,6 +15,7 @@ package executor_test
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	. "github.com/pingcap/check"
@@ -25,11 +26,15 @@ import (
 )
 
 func (s *testSerialSuite1) TestSortInDisk(c *C) {
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMUseTmpStorage = true
-	config.StoreGlobalConfig(&newConf)
-	defer config.StoreGlobalConfig(originCfg)
+	s.testSortInDisk(c, false)
+	s.testSortInDisk(c, true)
+}
+
+func (s *testSerialSuite1) testSortInDisk(c *C, removeDir bool) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+	})
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill", "return(true)"), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testSortedRowContainerSpill"), IsNil)
@@ -43,6 +48,16 @@ func (s *testSerialSuite1) TestSortInDisk(c *C) {
 	}
 	tk.Se.SetSessionManager(sm)
 	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+
+	if removeDir {
+		c.Assert(os.RemoveAll(config.GetGlobalConfig().TempStoragePath), IsNil)
+		defer func() {
+			_, err := os.Stat(config.GetGlobalConfig().TempStoragePath)
+			if err != nil {
+				c.Assert(os.IsExist(err), IsTrue)
+			}
+		}()
+	}
 
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	tk.MustExec("set @@tidb_max_chunk_size=32;")

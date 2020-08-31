@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"context"
-	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -77,8 +76,8 @@ type selectResult struct {
 
 	// copPlanIDs contains all copTasks' planIDs,
 	// which help to collect copTasks' runtime stats.
-	copPlanIDs []fmt.Stringer
-	rootPlanID fmt.Stringer
+	copPlanIDs []int
+	rootPlanID int
 
 	fetchDuration    time.Duration
 	durationReported bool
@@ -235,7 +234,7 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, detail *execdetails.ExecDetails, respTime time.Duration) {
 	callee := detail.CalleeAddress
-	if r.rootPlanID == nil || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
+	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
 	}
 	if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
@@ -246,16 +245,12 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, detail *execde
 		return
 	}
 
-	r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID.String(), respTime, detail)
+	r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordOneReaderStats(r.rootPlanID, respTime, detail)
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
-			planID := ""
-			if detail.GetExecutorId() != "" {
-				planID = detail.GetExecutorId()
-			} else {
-				planID = r.copPlanIDs[i].String()
-			}
+			// Fixme: Use detail.GetExecutorId() if exist.
+			planID := r.copPlanIDs[i]
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
 				RecordOneCopTask(planID, callee, detail)
 		}
