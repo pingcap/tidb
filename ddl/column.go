@@ -768,7 +768,6 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 }
 
 // rollbackModifyColumnType is used to rollback modify-column job in the copy-change type.
-// TODO: this function logic is quite similar with drop column with multi index with it, maybe we can merge them together.
 func rollbackModifyColumnType(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, jp *modifyColumnJobParameter) (ver int64, err error) {
 	// If the not-null change is include, we should clean the flag info in oldCol.
 	if jp.modifyColumnTp == mysql.TypeNull {
@@ -807,8 +806,6 @@ func (w *worker) doModifyColumnTypeWithData(
 	switch changingCol.State {
 	case model.StateNone:
 		// Column from null to not null.
-		// TODO: here should write the PreventNullInsertFlag into changingCol, since the DML will cast a copy to changingCol, it will
-		// TODO: also refuse to insert null value. And this is easy for rolling back.
 		if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(changingCol.Flag) {
 			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, oldCol.Name, oldCol.Tp != changingCol.Tp)
