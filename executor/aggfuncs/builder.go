@@ -408,20 +408,6 @@ func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	}
 }
 
-// buildJSONObjectAgg builds the AggFunc implementation for function "json_objectagg".
-func buildJSONObjectAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	base := baseAggFunc{
-		args:    aggFuncDesc.Args,
-		ordinal: ordinal,
-	}
-	switch aggFuncDesc.Mode {
-	case aggregation.DedupMode:
-		return nil
-	default:
-		return &jsonObjectAgg{base}
-	}
-}
-
 // buildRowNumber builds the AggFunc implementation for function "ROW_NUMBER".
 func buildRowNumber(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{

@@ -75,3 +75,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/Win-Man/parser v3.0.17-0.20200830034341-ee8e1d62b136+incompatible

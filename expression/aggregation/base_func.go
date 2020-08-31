@@ -239,7 +239,6 @@ func (a *baseFuncDesc) typeInfer4LeadLag(ctx sessionctx.Context) {
 	}
 }
 
-
 func (a *baseFuncDesc) typeInfer4VarPop(ctx sessionctx.Context) {
 	//var_pop's return value type is double
 	a.RetTp = types.NewFieldType(mysql.TypeDouble)
