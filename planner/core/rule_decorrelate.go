@@ -190,11 +190,11 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 
 				for i, aggFunc := range agg.AggFuncs {
 					if idx := apply.schema.ColumnIndex(aggFunc.Args[0].(*expression.Column)); idx != -1 {
-						first, err := aggregation.NewAggFuncDesc(agg.ctx, agg.AggFuncs[i].Name, []expression.Expression{apply.schema.Columns[idx]}, false)
+						desc, err := aggregation.NewAggFuncDesc(agg.ctx, agg.AggFuncs[i].Name, []expression.Expression{apply.schema.Columns[idx]}, false)
 						if err != nil {
 							return nil, err
 						}
-						newAggFuncs = append(newAggFuncs, first)
+						newAggFuncs = append(newAggFuncs, desc)
 					}
 				}
 				agg.AggFuncs = newAggFuncs
