@@ -37,8 +37,8 @@ type DeadTableLockChecker struct {
 	etcdCli *clientv3.Client
 }
 
-// NewDeadLockChecker creates new DeadLockChecker.
-func NewDeadLockChecker(etcdCli *clientv3.Client) DeadTableLockChecker {
+// NewDeadTableLockChecker creates new DeadLockChecker.
+func NewDeadTableLockChecker(etcdCli *clientv3.Client) DeadTableLockChecker {
 	return DeadTableLockChecker{
 		etcdCli: etcdCli,
 	}

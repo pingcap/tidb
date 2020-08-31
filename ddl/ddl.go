@@ -198,7 +198,7 @@ type ddlCtx struct {
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoHandle   *infoschema.Handle
-	deadLockCkr  util.DeadTableLockChecker
+	tableLockCkr util.DeadTableLockChecker
 
 	// hook may be modified.
 	mu struct {
@@ -271,7 +271,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
 		syncer = util.NewSchemaSyncer(ctx, etcdCli, id, manager)
-		deadLockCkr = util.NewDeadLockChecker(etcdCli)
+		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
 	}
 
 	ddlCtx := &ddlCtx{
@@ -283,7 +283,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpsClient(),
 		infoHandle:   opt.InfoHandle,
-		deadLockCkr:  deadLockCkr,
+		tableLockCkr: deadLockCkr,
 	}
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
@@ -561,7 +561,7 @@ func (d *ddl) startCleanDeadTableLock() {
 			if !d.ownerManager.IsOwner() {
 				continue
 			}
-			deadLockTables, err := d.deadLockCkr.GetDeadLockedTables(d.infoHandle.Get().AllSchemas())
+			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.infoHandle.Get().AllSchemas())
 			if err != nil {
 				logutil.BgLogger().Info("[ddl] clean dead table lock failed.", zap.Error(err))
 				continue
