@@ -6763,42 +6763,6 @@ func (s *testIntegrationSerialSuite) TestIssue19045(c *C) {
 	tk.MustExec(`insert into t(a) values('101'),('101');`)
 	tk.MustQuery(`select  ( SELECT t1.a FROM  t1,  t2 WHERE t1.b = t2.a AND  t2.b = '03' AND t1.c = a.a) invode from t a ;`).Check(testkit.Rows("a011", "a011"))
 }
-<<<<<<< HEAD
-=======
-
-func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
-	tk.MustQuery("select collation(concat(1 collate `binary`));").Check(testkit.Rows("binary"))
-	tk.MustQuery("select coercibility(concat(1 collate `binary`));").Check(testkit.Rows("0"))
-	tk.MustQuery("select collation(concat(NULL,NULL));").Check(testkit.Rows("binary"))
-	tk.MustQuery("select coercibility(concat(NULL,NULL));").Check(testkit.Rows("6"))
-	tk.MustQuery("select collation(concat(1,1));").Check(testkit.Rows("utf8mb4_general_ci"))
-	tk.MustQuery("select coercibility(concat(1,1));").Check(testkit.Rows("4"))
-	tk.MustQuery("select collation(1);").Check(testkit.Rows("binary"))
-	tk.MustQuery("select coercibility(1);").Check(testkit.Rows("5"))
-	tk.MustQuery("select coercibility(1=1);").Check(testkit.Rows("5"))
-}
-
-func (s *testIntegrationSerialSuite) TestIssue17063(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec(`use test;`)
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec("create table t(a char, b char) collate utf8mb4_general_ci;")
-	tk.MustExec(`insert into t values('a', 'b');`)
-	tk.MustExec(`insert into t values('a', 'B');`)
-	tk.MustQuery(`select * from t where if(a='x', a, b) = 'b';`).Check(testkit.Rows("a b", "a B"))
-	tk.MustQuery(`select collation(if(a='x', a, b)) from t;`).Check(testkit.Rows("utf8mb4_general_ci", "utf8mb4_general_ci"))
-	tk.MustQuery(`select coercibility(if(a='x', a, b)) from t;`).Check(testkit.Rows("2", "2"))
-	tk.MustQuery(`select collation(lag(b, 1, 'B') over w) from t window w as (order by b);`).Check(testkit.Rows("utf8mb4_general_ci", "utf8mb4_general_ci"))
-	tk.MustQuery(`select coercibility(lag(b, 1, 'B') over w) from t window w as (order by b);`).Check(testkit.Rows("2", "2"))
-}
 
 func (s *testIntegrationSuite) TestIssue19504(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -6812,4 +6776,3 @@ func (s *testIntegrationSuite) TestIssue19504(c *C) {
 	tk.MustQuery("select (select count(c_int) from t2 where c_int = t1.c_int) c1, (select count(1) from t2 where c_int = t1.c_int) c2 from t1;").
 		Check(testkit.Rows("1 1", "0 0", "0 0"))
 }
->>>>>>> 27ea908... planner: reset not null flag when Apply convert to Join (#19567)
