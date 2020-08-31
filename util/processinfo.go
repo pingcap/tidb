@@ -30,6 +30,7 @@ type ProcessInfo struct {
 	User            string
 	Host            string
 	DB              string
+	Digest          string
 	Plan            interface{}
 	PlanExplainRows [][]string
 	Time            time.Time
@@ -67,6 +68,7 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 		pi.Host,
 		db,
 		mysql.Command2Str[pi.Command],
+		pi.Digest,
 		t,
 		serverStatus2Str(pi.State),
 		info,
