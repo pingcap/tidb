@@ -1829,7 +1829,7 @@ const (
 	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
 	// SlowLogExecRetryCount is the execution retry count.
 	SlowLogExecRetryCount = "Exec_retry_count"
-	// SlowLogExecRetryCount is the execution retry time.
+	// SlowLogExecRetryTime is the execution retry time.
 	SlowLogExecRetryTime = "Exec_retry_time"
 )
 
