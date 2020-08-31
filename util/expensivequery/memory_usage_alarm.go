@@ -68,15 +68,14 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 		record.isServerMemoryQuotaSetByUser = false
 	}
 	record.lastCheckTime = time.Time{}
-	record.tmpDir = filepath.Join(config.GetGlobalConfig().TempStoragePath,"record")
+	record.tmpDir = filepath.Join(config.GetGlobalConfig().TempStoragePath, "record")
 	record.lastProfileFileName = make([][]string, 2)
 	// Read last records
-	files , err:= ioutil.ReadDir(record.tmpDir)
+	files, err := ioutil.ReadDir(record.tmpDir)
 	if err != nil {
-		record.err = err
 		return record
 	}
-	for _, f := range files{
+	for _, f := range files {
 		name := filepath.Join(record.tmpDir, f.Name())
 		if strings.Contains(f.Name(), "running_sql") {
 			record.lastLogFileName = append(record.lastLogFileName, name)
@@ -84,7 +83,7 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 		if strings.Contains(f.Name(), "heap") {
 			record.lastProfileFileName[0] = append(record.lastProfileFileName[0], name)
 		}
-		if strings.Contains(f.Name(),"goroutine") {
+		if strings.Contains(f.Name(), "goroutine") {
 			record.lastProfileFileName[1] = append(record.lastProfileFileName[1], name)
 		}
 	}
@@ -94,7 +93,7 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 
 // If Performance.ServerMemoryQuota is set, use ServerMemoryQuota * 80% to check oom risk.
 // If Performance.ServerMemoryQuota is not set, use system total memory usage * 80% to check oom risk.
-func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager,ctx sessionctx.Context) {
+func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager, ctx sessionctx.Context) {
 	var memoryUsage uint64
 	instanceStats := &runtime.MemStats{}
 	if record.isServerMemoryQuotaSetByUser {
@@ -120,7 +119,7 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager,c
 	}
 }
 
-func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager,ctx sessionctx.Context) {
+func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager, ctx sessionctx.Context) {
 	memType := "os memory"
 	if record.isServerMemoryQuotaSetByUser {
 		memType = "instance memory"
@@ -134,9 +133,8 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager
 	if record.err = disk.CheckAndInitTempDir(); record.err != nil {
 		return
 	}
-	record.recordSQL(sm)
+	record.recordSQLAndSummaryTable(sm, ctx)
 	record.recordProfile()
-	record.recordSummaryTable(ctx)
 
 	tryRemove := func(filename []string) {
 		// Keep the last 5 files
@@ -155,7 +153,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager
 	}
 }
 
-func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
+func (record *memoryUsageAlarm) recordSQLAndSummaryTable(sm util.SessionManager, ctx sessionctx.Context) {
 	processInfo := sm.ShowProcessList()
 	pinfo := make([]*util.ProcessInfo, 0, len(processInfo))
 	for _, info := range processInfo {
@@ -212,7 +210,35 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager) {
 		return pinfo[i].Time.Before(pinfo[j].Time)
 	})
 
-	logutil.BgLogger().Info("record SQLs with the most memory usage or time usage successfully", zap.Any("SQLs file path", fileName))
+	// Record statements_summary table
+	sql := "select * from information_schema.statements_summary"
+	rows, types, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	if err != nil {
+		record.err = err
+		return
+	}
+
+	b := bytes.Buffer{}
+	for _, row := range rows {
+		for j := 0; j < row.Len(); j++ {
+			switch types[j].Column.Tp {
+			case mysql.TypeTimestamp:
+				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(), row.GetTime(j).String()))
+			case mysql.TypeString, mysql.TypeVarchar, mysql.TypeBlob:
+				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(), row.GetString(j)))
+			case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeTiny:
+				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(), row.GetInt64(j)))
+			case mysql.TypeDouble:
+				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(), row.GetFloat64(j)))
+			}
+		}
+	}
+	_, err = f.WriteString(b.String())
+	if err != nil {
+		record.err = err
+	}
+
+	logutil.BgLogger().Info("record SQLs with the most memory usage or time usage and statements_summary table successfully", zap.Any("SQLs file path", fileName))
 }
 
 func (record *memoryUsageAlarm) recordProfile() {
@@ -245,30 +271,4 @@ func (record *memoryUsageAlarm) recordProfile() {
 		}
 		logutil.BgLogger().Info(fmt.Sprintf("record %v profile successfully", item.name), zap.Any("Profile file path", fileName))
 	}
-}
-
-func (record *memoryUsageAlarm) recordSummaryTable(ctx sessionctx.Context) {
-	sql := "select * from information_schema.statements_summary"
-	rows ,types, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
-	if err != nil {
-		record.err = err
-		return
-	}
-
-	b := bytes.Buffer{}
-	for _, row := range rows {
-		for j := 0;j < row.Len();j++ {
-			switch types[j].Column.Tp {
-			case mysql.TypeTimestamp:
-				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(),row.GetTime(j).String()))
-			case mysql.TypeString, mysql.TypeVarchar,mysql.TypeBlob:
-				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(),row.GetString(j)))
-			case mysql.TypeLonglong,mysql.TypeLong,mysql.TypeTiny:
-				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(),row.GetInt64(j)))
-			case mysql.TypeDouble:
-				b.WriteString(fmt.Sprintf("%v : %v\n", types[j].Column.Name.String(),row.GetFloat64(j)))
-			}
-		}
-	}
-	fmt.Println(b.String())
 }
