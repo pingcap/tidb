@@ -15,8 +15,10 @@ package tikv
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
@@ -109,5 +111,21 @@ func (s *testSplitSuite) TestStaleEpoch(c *C) {
 	_, err = txn.Get(context.TODO(), []byte("a"))
 	c.Assert(err, IsNil)
 	_, err = txn.Get(context.TODO(), []byte("c"))
+	c.Assert(err, IsNil)
+}
+
+func (s *testSplitSuite) TestSplitBatchRegionsReq(c *C) {
+	var keys [][]byte
+	for i := 0; i < splitBatchRegionLimit*3; i++ {
+		keys = append(keys, []byte(fmt.Sprintf("%v", i)))
+	}
+	// let one region store all the keys above
+	s.store.regionCache.insertRegionToCache(&Region{
+		meta: &metapb.Region{
+			StartKey: []byte("0"),
+			EndKey:   []byte(fmt.Sprintf("%v", splitBatchRegionLimit*3+1)),
+		},
+	})
+	_, err := s.store.splitBatchRegionsReq(s.bo, keys, false)
 	c.Assert(err, IsNil)
 }
