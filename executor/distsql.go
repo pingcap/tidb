@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"runtime/trace"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -501,6 +502,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	e.idxWorkerWg.Add(1)
 	go func() {
+		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		ctx1, cancel := context.WithCancel(ctx)
 		_, err := worker.fetchHandles(ctx1, result)
 		if err != nil {
@@ -537,6 +539,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 		worker.memTracker.AttachTo(e.memTracker)
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
+			defer trace.StartRegion(ctx1, "IndexLookUpTableWorker").End()
 			worker.pickAndExecTask(ctx1)
 			cancel()
 			e.tblWorkerWg.Done()
@@ -581,6 +584,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.finished = nil
 	e.workerStarted = false
 	e.memTracker = nil
+	e.resultCurr = nil
 	return nil
 }
 
@@ -960,6 +964,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		}
 	}
 
+	defer trace.StartRegion(ctx, "IndexLookUpTableCompute").End()
 	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
 	task.memUsage += memUsage
 	task.memTracker.Consume(memUsage)
