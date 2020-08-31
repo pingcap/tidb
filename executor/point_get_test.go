@@ -33,13 +33,21 @@ import (
 )
 
 type testPointGetSuite struct {
+	baseTestPointGetSuite
+}
+
+type testPointGetSerialSuite struct {
+	baseTestPointGetSuite
+}
+
+type baseTestPointGetSuite struct {
 	store    kv.Storage
 	dom      *domain.Domain
 	cli      *checkRequestClient
 	testData testutil.TestData
 }
 
-func (s *testPointGetSuite) SetUpSuite(c *C) {
+func (s *baseTestPointGetSuite) SetUpSuite(c *C) {
 	cli := &checkRequestClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {
 		cli.Client = c
@@ -59,13 +67,13 @@ func (s *testPointGetSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 }
 
-func (s *testPointGetSuite) TearDownSuite(c *C) {
+func (s *baseTestPointGetSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
 	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
-func (s *testPointGetSuite) TearDownTest(c *C) {
+func (s *baseTestPointGetSuite) TearDownTest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	r := tk.MustQuery("show tables")
@@ -484,7 +492,7 @@ func (s *testPointGetSuite) TestPointGetByRowID(c *C) {
 	tk.MustQuery("select * from t where t._tidb_rowid = 1").Check(testkit.Rows("aaa 12"))
 }
 
-func (s *testPointGetSuite) TestSelectCheckVisibility(c *C) {
+func (s *testPointGetSerialSuite) TestSelectCheckVisibility(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
