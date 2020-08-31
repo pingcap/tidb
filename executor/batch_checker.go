@@ -131,12 +131,15 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	}
 	var handleKey *keyValueWithDupInfo
 	if handle != nil {
+		fn := func() string {
+			return kv.GetDuplicateErrorHandleString(handle)
+		}
 		handleKey = &keyValueWithDupInfo{
 			newKV: keyValue{
 				key:   t.RecordKey(handle),
 				value: newRowValue,
 			},
-			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(handle.String), "PRIMARY"),
+			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), "PRIMARY"),
 		}
 	}
 
