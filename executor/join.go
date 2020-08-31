@@ -138,6 +138,7 @@ func (e *HashJoinExec) Close() error {
 		e.joinChkResourceCh = nil
 		terror.Call(e.rowContainer.Close)
 	}
+	e.outerMatchedStatus = e.outerMatchedStatus[:0]
 
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
