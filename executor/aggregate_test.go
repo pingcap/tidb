@@ -345,8 +345,9 @@ func (s *testSuite1) TestAggregation(c *C) {
 	result.Check(testkit.Rows("0.25 0.25 0.25 0.25 0.25 0.25 0.25"))
 
 	tk.MustExec("insert into t values(2, 3, 4, 5, 6, 7.2, 8.3, 9)")
-	result = tk.MustQuery("select a, var_pop(b) over w, var_pop(c) over w from t window w as (partition by a)").Sort()
-	result.Check(testkit.Rows("1 0.25 0.25", "1 0.25 0.25", "2 0 0"))
+	// not support in release-3.0
+	//result = tk.MustQuery("select a, var_pop(b) over w, var_pop(c) over w from t window w as (partition by a)").Sort()
+	//result.Check(testkit.Rows("1 0.25 0.25", "1 0.25 0.25", "2 0 0"))
 
 	tk.MustExec("delete from t where t.a = 2")
 	tk.MustExec("insert into t values(1, 2, 4, 5, 6, 6.1, 7.2, 9)")
@@ -364,8 +365,9 @@ func (s *testSuite1) TestAggregation(c *C) {
 	result.Check(testkit.Rows("2364075.6875 29.840000178019228 1.1808222222222229 12.666666666666666"))
 
 	tk.MustExec("insert into t values(2, 322, 0.8, 2.22, 6)")
-	result = tk.MustQuery("select a, variance(b) over w from t window w as (partition by a)").Sort()
-	result.Check(testkit.Rows("1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "2 0"))
+	// not support in release-3.0
+	//result = tk.MustQuery("select a, variance(b) over w from t window w as (partition by a)").Sort()
+	//result.Check(testkit.Rows("1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "2 0"))
 
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
