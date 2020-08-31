@@ -2182,92 +2182,6 @@ func (s *testSuite9) TestIssue19112(c *C) {
 		"1 4.064000 1 4.064000",
 		"3 1.010000 3 1.010000"))
 }
-<<<<<<< HEAD
-=======
-
-func (s *testSuiteJoin3) TestIssue11896(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	// compare bigint to bit(64)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 bigint)")
-	tk.MustExec("create table t1(c1 bit(64))")
-	tk.MustExec("insert into t value(1)")
-	tk.MustExec("insert into t1 value(1)")
-	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
-		testkit.Rows("1 \x00\x00\x00\x00\x00\x00\x00\x01"))
-
-	// compare int to bit(32)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 int)")
-	tk.MustExec("create table t1(c1 bit(32))")
-	tk.MustExec("insert into t value(1)")
-	tk.MustExec("insert into t1 value(1)")
-	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
-		testkit.Rows("1 \x00\x00\x00\x01"))
-
-	// compare mediumint to bit(24)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 mediumint)")
-	tk.MustExec("create table t1(c1 bit(24))")
-	tk.MustExec("insert into t value(1)")
-	tk.MustExec("insert into t1 value(1)")
-	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
-		testkit.Rows("1 \x00\x00\x01"))
-
-	// compare smallint to bit(16)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 smallint)")
-	tk.MustExec("create table t1(c1 bit(16))")
-	tk.MustExec("insert into t value(1)")
-	tk.MustExec("insert into t1 value(1)")
-	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
-		testkit.Rows("1 \x00\x01"))
-
-	// compare tinyint to bit(8)
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(c1 tinyint)")
-	tk.MustExec("create table t1(c1 bit(8))")
-	tk.MustExec("insert into t value(1)")
-	tk.MustExec("insert into t1 value(1)")
-	tk.MustQuery("select * from t, t1 where t.c1 = t1.c1").Check(
-		testkit.Rows("1 \x01"))
-}
-
-func (s *testSuiteJoin3) TestIssue19498(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1 (c_int int, primary key (c_int));")
-	tk.MustExec("insert into t1 values (1),(2),(3),(4)")
-	tk.MustExec("drop table if exists t2;")
-	tk.MustExec("create table t2 (c_str varchar(40));")
-	tk.MustExec("insert into t2 values ('zen sammet');")
-	tk.MustExec("insert into t2 values ('happy fermat');")
-	tk.MustExec("insert into t2 values ('happy archimedes');")
-	tk.MustExec("insert into t2 values ('happy hypatia');")
-
-	tk.MustExec("drop table if exists t3;")
-	tk.MustExec("create table t3 (c_int int, c_str varchar(40), primary key (c_int), key (c_str));")
-	tk.MustExec("insert into t3 values (1, 'sweet hoover');")
-	tk.MustExec("insert into t3 values (2, 'awesome elion');")
-	tk.MustExec("insert into t3 values (3, 'hungry khayyam');")
-	tk.MustExec("insert into t3 values (4, 'objective kapitsa');")
-
-	rs := tk.MustQuery("select c_str, (select /*+ INL_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;")
-	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
-
-	rs = tk.MustQuery("select c_str, (select /*+ INL_HASH_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;")
-	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
-
-	rs = tk.MustQuery("select c_str, (select /*+ INL_MERGE_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;")
-	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
-}
 
 func (s *testSuiteJoin3) TestIssue19500(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
@@ -2283,4 +2197,3 @@ func (s *testSuiteJoin3) TestIssue19500(c *C) {
 	tk.MustQuery("select (select (select sum(c_int) from t3 where t3.c_str > t2.c_str) from t2 where t2.c_int > t1.c_int order by c_int limit 1) q from t1 order by q;").
 		Check(testkit.Rows("<nil>", "<nil>", "3", "3", "3"))
 }
->>>>>>> 1e9b519... executor: clean outerMatchedStatus when HashJoin.Close is called (#19510)
