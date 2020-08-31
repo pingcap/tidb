@@ -773,7 +773,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		}
 		// none -> delete only
 		updateChangingInfo(job, changingCol, changingIdxs, model.StateDeleteOnly)
-		job.Args = append(job.Args, changingCol, changingIdxs)
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var ctx sessionctx.Context
@@ -796,6 +795,12 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		})
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != changingCol.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Make job args change behind the `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
+		// be updated in `finishDDLJob` even if it meet a error in `updateVersionAndTableInfoWithCheck`.
+		job.Args = append(job.Args, changingCol, changingIdxs)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
 		if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(changingCol.Flag) {
