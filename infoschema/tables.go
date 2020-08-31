@@ -691,7 +691,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "HOST", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "DB", tp: mysql.TypeVarchar, size: 64},
 	{name: "COMMAND", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag, deflt: ""},
-	{name: "DIGEST",  tp: mysql.TypeVarchar, size: 64, deflt: ""},
+	{name: "DIGEST", tp: mysql.TypeVarchar, size: 64, deflt: ""},
 	{name: "TIME", tp: mysql.TypeLong, size: 7, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 7},
 	{name: "INFO", tp: mysql.TypeString, size: 512},
