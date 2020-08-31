@@ -82,7 +82,7 @@ func (msm *mockSessionManager) UpdateTLSConfig(cfg *tls.Config) {
 
 func (s *testExecSuite) TestShowProcessList(c *C) {
 	// Compose schema.
-	names := []string{"Id", "User", "Host", "db", "Command", "Time", "State", "Info"}
+	names := []string{"Id", "User", "Host", "db", "Command", "digest", "Time", "State", "Info"}
 	ftypes := []byte{mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar,
 		mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLong, mysql.TypeVarchar, mysql.TypeString}
 	schema := buildSchema(names, ftypes)
@@ -95,6 +95,7 @@ func (s *testExecSuite) TestShowProcessList(c *C) {
 		Host:    "127.0.0.1",
 		DB:      "test",
 		Command: 't',
+		Digest:  "",
 		State:   1,
 		Info:    "",
 	}

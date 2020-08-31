@@ -171,6 +171,7 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 		Host:    "www",
 		DB:      "db",
 		Command: mysql.ComSleep,
+		Digest:  "digest1",
 		Plan:    nil,
 		Time:    time.Now(),
 		State:   3,
@@ -182,19 +183,20 @@ func (s *testMiscSuite) TestBasicFunc(c *C) {
 	row := pi.ToRowForShow(false)
 	row2 := pi.ToRowForShow(true)
 	c.Assert(row, DeepEquals, row2)
-	c.Assert(len(row), Equals, 8)
+	c.Assert(len(row), Equals, 9)
 	c.Assert(row[0], Equals, pi.ID)
 	c.Assert(row[1], Equals, pi.User)
 	c.Assert(row[2], Equals, pi.Host)
 	c.Assert(row[3], Equals, pi.DB)
 	c.Assert(row[4], Equals, "Sleep")
-	c.Assert(row[5], Equals, uint64(0))
-	c.Assert(row[6], Equals, "in transaction; autocommit")
-	c.Assert(row[7], Equals, "test")
+	c.Assert(row[5], Equals, pi.Digest)
+	c.Assert(row[6], Equals, uint64(0))
+	c.Assert(row[7], Equals, "in transaction; autocommit")
+	c.Assert(row[8], Equals, "test")
 
 	row3 := pi.ToRow(time.UTC)
-	c.Assert(row3[:8], DeepEquals, row)
-	c.Assert(row3[8], Equals, int64(0))
+	c.Assert(row3[:9], DeepEquals, row)
+	c.Assert(row3[9], Equals, int64(0))
 
 	// Test for RandomBuf.
 	buf := fastrand.Buf(5)
