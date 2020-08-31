@@ -511,6 +511,7 @@ func (s *testStatsSuite) TestPrimaryKeySelectivity(c *C) {
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("set @@tidb_enable_clustered_index=0")
 	testKit.MustExec("create table t(a char(10) primary key, b int)")
 	var input, output [][]string
 	s.testData.GetTestCases(c, &input, &output)
