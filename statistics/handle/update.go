@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/parser/terror"
 	"math"
 	"strconv"
 	"strings"
@@ -510,35 +511,47 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	if len(tables) == 0 {
 		return nil
 	}
-
 	for _, ptbl := range tables {
 		tbl := ptbl.GetInt64(0)
 		sql = fmt.Sprintf("select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%d order by table_id, hist_id, is_index", tbl)
-		rows, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+		rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+		if len(rc) > 0 {
+			defer terror.Call(rc[0].Close)
+		}
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if len(rows) == 0 {
-			continue
-		}
-		var groupedRows [][]chunk.Row
-		preIdx := 0
-		tableID, histID, isIndex := rows[0].GetInt64(0), rows[0].GetInt64(1), rows[0].GetInt64(2)
-		for i := 1; i < len(rows); i++ {
-			row := rows[i]
-			if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex {
-				groupedRows = append(groupedRows, rows[preIdx:i])
-				tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-				preIdx = i
-			}
-		}
-		groupedRows = append(groupedRows, rows[preIdx:])
-
-		for _, rows := range groupedRows {
-			if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
+		req := rc[0].NewChunk()
+		iter := chunk.NewIterator4Chunk(req)
+		tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
+		var rows []chunk.Row
+		for {
+			err := rc[0].Next(context.TODO(), req)
+			if err != nil {
 				return errors.Trace(err)
 			}
+			if req.NumRows() == 0 {
+				if len(rows) > 0 {
+					if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
+						return errors.Trace(err)
+					}
+				}
+				break
+			}
+			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+				if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex {
+					if len(rows) > 0 {
+						if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
+							return errors.Trace(err)
+						}
+					}
+					tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
+					rows = rows[:0]
+				}
+				rows = append(rows, row)
+			}
 		}
+
 	}
 	return nil
 }
