@@ -15,6 +15,7 @@ package expensivequery
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -63,8 +64,26 @@ func initMemoryUsageAlarmRecord() (record *memoryUsageAlarm) {
 		record.isServerMemoryQuotaSetByUser = false
 	}
 	record.lastCheckTime = time.Time{}
-	record.tmpDir = config.GetGlobalConfig().TempStoragePath
+	record.tmpDir = filepath.Join(config.GetGlobalConfig().TempStoragePath,"record")
 	record.lastProfileFileName = make([][]string, 2)
+	// Read last records
+	files , err:= ioutil.ReadDir(record.tmpDir)
+	if err != nil {
+		record.err = err
+		return record
+	}
+	for _, f := range files{
+		if strings.Contains(f.Name(), "running_sql") {
+			record.lastLogFileName = append(record.lastLogFileName, f.Name())
+		}
+		if strings.Contains(f.Name(), "heap") {
+			record.lastProfileFileName[0] = append(record.lastProfileFileName[0], f.Name())
+		}
+		if strings.Contains(f.Name(),"goroutine") {
+			record.lastProfileFileName[1] = append(record.lastProfileFileName[1], f.Name())
+		}
+	}
+
 	return record
 }
 
@@ -84,15 +103,8 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 		}
 	}
 
-	// If we use instance memory usage to check oom risk, we also need use NextGC compared with the quota.
-	// Maybe the instance will oom but the HeapAlloc isn't updated after golang GC.
-	// Go's GC don't take the system memory limit into consideration, that means:
-	//
-	// 1. You have 16G physical memory;
-	// 2. You have 9G live objects;
-	// 3. Go will run GC when memory usage reaches 9G * (1 + GOGC / 100) = 18G, OOM.
-	if float64(memoryUsage) > float64(record.serverMemoryQuota)*config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio ||
-		(record.isServerMemoryQuotaSetByUser && instanceStats.NextGC > record.serverMemoryQuota) {
+	// TODO: Consider NextGC to record SQLs.
+	if float64(memoryUsage) > float64(record.serverMemoryQuota)*config.GetGlobalConfig().Performance.MemoryUsageAlarmRatio {
 		// At least ten seconds between two recordings that memory usage is less than threshold (default 80% system memory).
 		// If the memory is still exceeded, only records once.
 		interval := time.Since(record.lastCheckTime)
