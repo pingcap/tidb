@@ -15,13 +15,13 @@ package expensivequery
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -76,7 +76,7 @@ func (eqh *Handle) Run(ctx sessionctx.Context) {
 			}
 			threshold = atomic.LoadUint64(&variable.ExpensiveQueryTimeThreshold)
 			if record.err == nil {
-				record.alarm4ExcessiveMemUsage(sm,ctx)
+				record.alarm4ExcessiveMemUsage(sm, ctx)
 			}
 		case <-eqh.exitCh:
 			return

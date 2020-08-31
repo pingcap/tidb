@@ -78,9 +78,9 @@ func InitializeTempDir() error {
 	}
 
 	// Create dir for MemoryUsageAlarmRecord.
-	_, err = os.Stat(filepath.Join(tempDir,"record"))
+	_, err = os.Stat(filepath.Join(tempDir, "record"))
 	if err != nil && !os.IsExist(err) {
-		err = os.MkdirAll(filepath.Join(tempDir,"record"), 0755)
+		err = os.MkdirAll(filepath.Join(tempDir, "record"), 0755)
 		if err != nil {
 			return err
 		}

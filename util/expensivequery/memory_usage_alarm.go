@@ -16,9 +16,6 @@ package expensivequery
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -29,11 +26,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
