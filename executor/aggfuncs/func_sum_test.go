@@ -44,13 +44,13 @@ func (s *testSuite) TestSum(c *C) {
 func (s *testSuite) TestMemSum(c *C) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeDouble, 5,
-			aggfuncs.DefPartialResult4SumFloat64Size, defaultUpdateMemDeltaGens, false, nil, 2.0),
+			aggfuncs.DefPartialResult4SumFloat64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5,
-			aggfuncs.DefPartialResult4SumDecimalSize, defaultUpdateMemDeltaGens, false, nil, 2.0),
+			aggfuncs.DefPartialResult4SumDecimalSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeDouble, 5,
-			aggfuncs.DefPartialResult4SumDistinctFloat64Size, distinctUpdateMemDeltaGens, true, nil, 2.0),
+			aggfuncs.DefPartialResult4SumDistinctFloat64Size, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5,
-			aggfuncs.DefPartialResult4SumDistinctDecimalSize, distinctUpdateMemDeltaGens, true, nil, 2.0),
+			aggfuncs.DefPartialResult4SumDistinctDecimalSize, distinctUpdateMemDeltaGens, true),
 	}
 	for _, test := range tests {
 		s.testAggMemFunc(c, test)
