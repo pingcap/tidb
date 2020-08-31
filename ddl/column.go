@@ -793,7 +793,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		return ver, errFileNotFound
 		// Make sure job args change behind the `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
 		// be updated in `finishDDLJob` even if it meet a error in `updateVersionAndTableInfoWithCheck`.
 		job.Args = append(job.Args, changingCol, changingIdxs)
