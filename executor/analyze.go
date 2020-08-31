@@ -556,6 +556,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			return nil, nil, nil, err
 		}
 		hists = append(hists, hg)
+		collectors[i].CMSketch.CalcDefaultValForAnalyze(uint64(hg.NDV))
 		cms = append(cms, collectors[i].CMSketch)
 	}
 	if needExtStats {
