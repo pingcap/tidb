@@ -404,6 +404,12 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 
+	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_change_column_type = 1")
+	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_change_column_type = off")
+	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_step = 120")
 	_, err = tk.Exec("set @@session.tidb_metric_query_step = 9")
@@ -435,6 +441,9 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(tk.ExecToErr("set @@session.tidb_dml_batch_size = -120"), NotNil)
 	c.Assert(tk.ExecToErr("set @@global.tidb_dml_batch_size = 120"), NotNil)
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
+
+	_, err = tk.Exec("set tidb_enable_parallel_apply=-1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
 }
 
 func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
