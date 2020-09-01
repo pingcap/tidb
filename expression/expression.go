@@ -1219,7 +1219,7 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 		RetType:  f.getRetTp(),
 	}
 	if keepNull {
-		f.getRetTp().Flag ^= mysql.IsTureWithKeepNullFlag
+		f.getRetTp().Flag ^= mysql.IsTrueWithKeepNullFlag
 	}
 	return FoldConstant(sf), nil
 }
