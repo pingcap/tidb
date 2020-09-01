@@ -40,7 +40,7 @@ func (e *stdDevPop4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr 
 }
 
 type stdDevPop4DistinctFloat64 struct {
-	baseStdDevPopAggFunc
+	varPop4DistinctFloat64
 }
 
 func (e *stdDevPop4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
