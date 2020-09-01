@@ -333,9 +333,6 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 				lockIdx++
 			}
 		}
-		if len(c.primaryKey) == 0 && op != pb.Op_CheckNotExists {
-			c.primaryKey = k
-		}
 		mutations.push(op, k, value, isPessimisticLock)
 		entrySize := len(k) + len(v)
 		if entrySize > kv.TxnEntrySizeLimit {
@@ -357,6 +354,15 @@ func (c *twoPhaseCommitter) initKeysAndMutations() error {
 		return nil
 	}
 	c.txnSize = size
+
+	if len(c.primaryKey) == 0 {
+		for i, op := range mutations.ops {
+			if op != pb.Op_CheckNotExists {
+				c.primaryKey = mutations.keys[i]
+				break
+			}
+		}
+	}
 
 	if size > int(kv.TxnTotalSizeLimit) {
 		return kv.ErrTxnTooLarge.GenWithStackByArgs(size)
@@ -721,7 +727,7 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
-			if bytes.Equal(c.primary(), batch.mutations.keys[0]) {
+			if batch.isPrimary {
 				// After writing the primary key, if the size of the transaction is large than 32M,
 				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
 				if c.txnSize > 32*1024*1024 {

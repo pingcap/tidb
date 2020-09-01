@@ -64,6 +64,9 @@ type LockResolver struct {
 		resolved       map[uint64]TxnStatus
 		recentResolved *list.List
 	}
+	testingKnobs struct {
+		meetLock func(locks []*Lock)
+	}
 }
 
 func newLockResolver(store Storage) *LockResolver {
@@ -296,6 +299,9 @@ func (lr *LockResolver) resolveLocksLite(bo *Backoffer, callerStartTS uint64, lo
 }
 
 func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks []*Lock, forWrite bool, lite bool) (int64, []uint64 /*pushed*/, error) {
+	if lr.testingKnobs.meetLock != nil {
+		lr.testingKnobs.meetLock(locks)
+	}
 	var msBeforeTxnExpired txnExpireTime
 	if len(locks) == 0 {
 		return msBeforeTxnExpired.value(), nil, nil

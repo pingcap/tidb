@@ -289,13 +289,17 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		return doInsert(s, job.ID, tableID, startKey, endKey, now)
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
-		var physicalTableID int64
-		if err := job.DecodeArgs(&physicalTableID); err != nil {
+		var physicalTableIDs []int64
+		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
 			return errors.Trace(err)
 		}
-		startKey := tablecodec.EncodeTablePrefix(physicalTableID)
-		endKey := tablecodec.EncodeTablePrefix(physicalTableID + 1)
-		return doInsert(s, job.ID, physicalTableID, startKey, endKey, now)
+		for _, physicalTableID := range physicalTableIDs {
+			startKey := tablecodec.EncodeTablePrefix(physicalTableID)
+			endKey := tablecodec.EncodeTablePrefix(physicalTableID + 1)
+			if err := doInsert(s, job.ID, physicalTableID, startKey, endKey, now); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		tableID := job.TableID

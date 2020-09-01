@@ -512,6 +512,16 @@ func (s *testPointGetSuite) TestSelectCheckVisibility(c *C) {
 	checkSelectResultError("select * from t", tikv.ErrGCTooEarly)
 }
 
+func (s *testPointGetSuite) TestNullValues(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t ( id bigint(10) primary key, f varchar(191) default null, unique key `idx_f` (`f`))")
+	tk.MustExec(`insert into t values (1, "")`)
+	rs := tk.MustQuery(`select * from t where f in (null)`).Rows()
+	c.Assert(len(rs), Equals, 0)
+}
+
 func (s *testPointGetSuite) TestReturnValues(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var (
@@ -139,9 +138,11 @@ func (e *HashJoinExec) Close() error {
 
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
-		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
 		if e.rowContainer != nil {
-			e.runtimeStats.SetAdditionalInfo(e.rowContainer.stat.String())
+			runtimeStats.setHashStat(e.rowContainer.stat)
 		}
 	}
 	err := e.baseExecutor.Close()
@@ -244,8 +245,6 @@ func (e *HashJoinExec) wait4BuildSide() (finished bool, err error) {
 	}
 	return false, nil
 }
-
-var buildSideResultLabel fmt.Stringer = stringutil.StringerStr("hashJoin.buildSideResult")
 
 // fetchBuildSideRows fetches all rows from build side executor, and append them
 // to e.buildSideResult.
@@ -682,9 +681,9 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 	var selected []bool
 	e.rowContainer = newHashRowContainer(e.ctx, int(e.buildSideEstCount), hCtx)
 	e.rowContainer.GetMemTracker().AttachTo(e.memTracker)
-	e.rowContainer.GetMemTracker().SetLabel(buildSideResultLabel)
+	e.rowContainer.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	e.rowContainer.GetDiskTracker().AttachTo(e.diskTracker)
-	e.rowContainer.GetDiskTracker().SetLabel(buildSideResultLabel)
+	e.rowContainer.GetDiskTracker().SetLabel(memory.LabelForBuildSideResult)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		actionSpill := e.rowContainer.ActionSpill()
 		failpoint.Inject("testRowContainerSpill", func(val failpoint.Value) {
@@ -761,8 +760,6 @@ func (e *NestedLoopApplyExec) Close() error {
 	return e.outerExec.Close()
 }
 
-var innerListLabel fmt.Stringer = stringutil.StringerStr("innerList")
-
 // Open implements the Executor interface.
 func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	err := e.outerExec.Open(ctx)
@@ -778,7 +775,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
-	e.innerList.GetMemTracker().SetLabel(innerListLabel)
+	e.innerList.GetMemTracker().SetLabel(memory.LabelForInnerList)
 	e.innerList.GetMemTracker().AttachTo(e.memTracker)
 
 	return nil
@@ -879,4 +876,59 @@ func (e *NestedLoopApplyExec) Next(ctx context.Context, req *chunk.Chunk) (err e
 			return err
 		}
 	}
+}
+
+// cacheInfo is used to save the concurrency information of the executor operator
+type cacheInfo struct {
+	hitRatio float64
+	useCache bool
+}
+
+type joinRuntimeStats struct {
+	*execdetails.RuntimeStatsWithConcurrencyInfo
+
+	applyCache  bool
+	cache       cacheInfo
+	hasHashStat bool
+	hashStat    hashStatistic
+}
+
+func newJoinRuntimeStats(basic *execdetails.BasicRuntimeStats) *joinRuntimeStats {
+	stats := &joinRuntimeStats{
+		RuntimeStatsWithConcurrencyInfo: &execdetails.RuntimeStatsWithConcurrencyInfo{
+			BasicRuntimeStats: basic,
+		},
+	}
+	return stats
+}
+
+// setCacheInfo sets the cache information. Only used for apply executor.
+func (e *joinRuntimeStats) setCacheInfo(useCache bool, hitRatio float64) {
+	e.Lock()
+	e.applyCache = true
+	e.cache.useCache = useCache
+	e.cache.hitRatio = hitRatio
+	e.Unlock()
+}
+
+func (e *joinRuntimeStats) setHashStat(hashStat hashStatistic) {
+	e.Lock()
+	e.hasHashStat = true
+	e.hashStat = hashStat
+	e.Unlock()
+}
+
+func (e *joinRuntimeStats) String() string {
+	result := e.RuntimeStatsWithConcurrencyInfo.String()
+	if e.applyCache {
+		if e.cache.useCache {
+			result += fmt.Sprintf(", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100)
+		} else {
+			result += fmt.Sprintf(", cache:OFF")
+		}
+	}
+	if e.hasHashStat {
+		result += ", " + e.hashStat.String()
+	}
+	return result
 }
