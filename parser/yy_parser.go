@@ -74,6 +74,8 @@ type Parser struct {
 	lexer      Scanner
 	hintParser *hintParser
 
+	explicitCharset bool
+
 	// the following fields are used by yyParse to reduce allocation.
 	cache  []yySymType
 	yylval yySymType
