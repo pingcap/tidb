@@ -2751,7 +2751,7 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 		}
 	case mysql.TypeNewDecimal:
 		if origin.Tp != to.Tp {
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
 		// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
 		if to.Flen != origin.Flen || to.Decimal != origin.Decimal {
