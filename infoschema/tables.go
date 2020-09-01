@@ -304,6 +304,7 @@ var tablesCols = []columnInfo{
 	{name: "TABLE_COMMENT", tp: mysql.TypeVarchar, size: 2048},
 	{name: "TIDB_TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_ROW_ID_SHARDING_INFO", tp: mysql.TypeVarchar, size: 255},
+	{name: "TIDB_PK_TYPE", tp: mysql.TypeVarchar, size: 64},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html
@@ -718,6 +719,8 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogUserStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogHostStr, tp: mysql.TypeVarchar, size: 64},
 	{name: variable.SlowLogConnIDStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: variable.SlowLogExecRetryCount, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: variable.SlowLogExecRetryTime, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogQueryTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogParseTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogCompileTimeStr, tp: mysql.TypeDouble, size: 22},
@@ -1108,6 +1111,8 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: "MAX_PREWRITE_REGIONS", tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of involved regions in prewrite phase"},
 	{name: "AVG_TXN_RETRY", tp: mysql.TypeDouble, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average number of transaction retries"},
 	{name: "MAX_TXN_RETRY", tp: mysql.TypeLong, size: 11, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Max number of transaction retries"},
+	{name: "SUM_EXEC_RETRY", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Sum number of execution retries in pessimistic transactions"},
+	{name: "SUM_EXEC_RETRY_TIME", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Sum time of execution retries in pessimistic transactions"},
 	{name: "SUM_BACKOFF_TIMES", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Sum of retries"},
 	{name: "BACKOFF_TYPES", tp: mysql.TypeVarchar, size: 1024, comment: "Types of errors and the number of retries for each type"},
 	{name: "AVG_MEM", tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Average memory(byte) used"},

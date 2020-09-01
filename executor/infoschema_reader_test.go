@@ -513,7 +513,7 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	c.Assert(len(resultT1.Rows()), Greater, 0)
 }
 
-func (s *testInfoschemaTableSuite) TestForServersInfo(c *C) {
+func (s *testInfoschemaTableSerialSuite) TestForServersInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	result := tk.MustQuery("select * from information_schema.TIDB_SERVERS_INFO")
 	c.Assert(len(result.Rows()), Equals, 1)
@@ -532,7 +532,7 @@ func (s *testInfoschemaTableSuite) TestForServersInfo(c *C) {
 	c.Assert(result.Rows()[0][8], Equals, stringutil.BuildStringFromLabels(info.Labels))
 }
 
-func (s *testInfoschemaTableSuite) TestForTableTiFlashReplica(c *C) {
+func (s *testInfoschemaTableSerialSuite) TestForTableTiFlashReplica(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
 
@@ -821,4 +821,17 @@ func (s *testInfoschemaTableSuite) TestTiFlashSystemTables(c *C) {
 	c.Assert(err.Error(), Equals, "Etcd addrs not found")
 	err = tk.QueryToErr("select * from information_schema.TIFLASH_SEGMENTS;")
 	c.Assert(err.Error(), Equals, "Etcd addrs not found")
+}
+
+func (s *testInfoschemaTableSuite) TestTablesPKType(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t_int (a int primary key, b int)")
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_int'").Check(testkit.Rows("INT CLUSTERED"))
+	tk.MustExec("set @@tidb_enable_clustered_index = 0")
+	tk.MustExec("create table t_implicit (a varchar(64) primary key, b int)")
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_implicit'").Check(testkit.Rows("NON-CLUSTERED"))
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("create table t_common (a varchar(64) primary key, b int)")
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_common'").Check(testkit.Rows("COMMON CLUSTERED"))
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES'").Check(testkit.Rows("NON-CLUSTERED"))
 }

@@ -167,6 +167,20 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	_, err = tk.Exec("create table t1(c1 int not null, primary key(c1) invisible);")
 	c.Assert(ddl.ErrPKIndexCantBeInvisible.Equal(err), IsTrue)
 	tk.MustExec("create table t2 (a int, b int not null, primary key(a), unique(b) invisible);")
+
+	// Test drop clustered primary key.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.MustExec("create table t(a int, b varchar(64), primary key(b));")
+	tk.MustExec("insert into t values(1,'a'), (2, 'b');")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
+	errMsg := "[ddl:8200]Unsupported drop primary key when the table is using clustered index"
+	tk.MustGetErrMsg("alter table t drop primary key;", errMsg)
 }
 
 func (s *testSerialSuite) TestDropAutoIncrementIndex(c *C) {
@@ -1424,4 +1438,21 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t7"))
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+}
+
+func (s *testSerialSuite) TestCreateTableNoBlock(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime"), IsNil)
+	}()
+	save := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(1)
+	defer func() {
+		variable.SetDDLErrorCountLimit(save)
+	}()
+
+	tk.MustExec("drop table if exists t")
+	_, err := tk.Exec("create table t(a int)")
+	c.Assert(err, NotNil)
 }
