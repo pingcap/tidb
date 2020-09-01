@@ -33,8 +33,8 @@ require (
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200818080353-7aaed8998596
-	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
-	github.com/pingcap/parser v0.0.0-20200803072748-fdf66528323d
+	github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463
+	github.com/pingcap/parser v0.0.0-20200831060432-37fb52783318
 	github.com/pingcap/pd/v4 v4.0.5-0.20200817114353-e465cafe8a91
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
 	github.com/pingcap/tidb-tools v4.0.1-0.20200530144555-cdec43635625+incompatible
