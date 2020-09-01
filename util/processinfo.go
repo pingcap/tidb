@@ -89,7 +89,7 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 	if pi.StmtCtx != nil && pi.StmtCtx.MemTracker != nil {
 		bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
 	}
-	return append(pi.ToRowForShow(true), bytesConsumed, pi.txnStartTs(tz))
+	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, pi.txnStartTs(tz))
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.
