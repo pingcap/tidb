@@ -7100,6 +7100,7 @@ func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 
 func (s *testIntegrationSerialSuite) TestIssue18674(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select -1.0 % -1.0").Check(testkit.Rows("0.0"))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(`pk` int primary key,`col_float_key_signed` float  ,key (`col_float_key_signed`))")
