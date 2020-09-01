@@ -9,9 +9,6 @@ require (
 	github.com/danjacques/gofslock v0.0.0-20191023191349-0a45f885bc37
 	github.com/dgraph-io/ristretto v0.0.1
 	github.com/dgryski/go-farm v0.0.0-20190423205320-6a90982ecee2
-	github.com/go-openapi/spec v0.19.9 // indirect
-	github.com/go-openapi/swag v0.19.9 // indirect
-	github.com/go-playground/overalls v0.0.0-20191218162659-7df9f728c018 // indirect
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/gogo/protobuf v1.3.1
 	github.com/golang/protobuf v1.3.4
@@ -24,7 +21,6 @@ require (
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
 	github.com/juju/errors v0.0.0-20181118221551-089d3ea4e4d5
 	github.com/klauspost/cpuid v1.2.1
-	github.com/mailru/easyjson v0.7.6 // indirect
 	github.com/mattn/go-colorable v0.1.7 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
@@ -36,7 +32,7 @@ require (
 	github.com/pingcap/badger v1.5.1-0.20200810065601-8c92a97807f9
 	github.com/pingcap/br v0.0.0-20200820083933-d9d6207c0aa7
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
-	github.com/pingcap/errors v0.11.5-0.20200820105733-2b6fabf184ae
+	github.com/pingcap/errors v0.11.5-0.20200901084736-22e4480db80c
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
@@ -49,17 +45,14 @@ require (
 	github.com/prometheus/client_golang v1.5.1
 	github.com/prometheus/client_model v0.2.0
 	github.com/prometheus/common v0.9.1
-	github.com/sergi/go-diff v1.1.0 // indirect
 	github.com/shirou/gopsutil v2.19.10+incompatible
 	github.com/sirupsen/logrus v1.6.0
 	github.com/soheilhy/cmux v0.1.4
-	github.com/swaggo/swag v1.6.7 // indirect
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/pd v1.1.0-beta.0.20200820084926-bcfa77a7a593
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.3.2
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
-	github.com/urfave/cli/v2 v2.2.0 // indirect
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
 	go.uber.org/atomic v1.6.0
 	go.uber.org/automaxprocs v1.2.0
@@ -78,4 +71,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/parser => github.com/imtbkcat/parser v0.0.0-20200820113631-0e488656970d
+replace github.com/pingcap/parser => github.com/imtbkcat/parser v0.0.0-20200901090226-ade32f556e6f
