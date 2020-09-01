@@ -20,9 +20,9 @@
       },
       {
         "SQL": "explain select * from t where b > 'a' order by convert(b, unsigned) limit 2",
-        "Plan": [
+        "Result": [
           "Projection_17 2.00 root  test.t.a, test.t.b",
-          "└─TopN_8 2.00 root  Column#3, offset:0, count:2",
+          "└─TopN_8 2.00 root  Column#3:asc, offset:0, count:2",
           "  └─Projection_18 3333.33 root  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
           "    └─TableReader_13 3333.33 root  data:Selection_12",
 	  "      └─Selection_12 3333.33 cop[tiflash]  gt(test.t.b, \"a\")",
@@ -31,10 +31,10 @@
       },
       {
         "SQL": "explain select * from t where b > 'a' order by b limit 2",
-        "Plan": [
-          "TopN_8 2.00 root  test.t.b, offset:0, count:2",
+        "Result": [
+          "TopN_8 2.00 root  test.t.b:asc, offset:0, count:2",
           "└─TableReader_17 2.00 root  data:TopN_16",
-          "  └─TopN_16 2.00 cop[tiflash]  test.t.b, offset:0, count:2",
+          "  └─TopN_16 2.00 cop[tiflash]  test.t.b:asc, offset:0, count:2",
 	  "    └─Selection_15 3333.33 cop[tiflash]  gt(test.t.b, \"a\")",
           "      └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
