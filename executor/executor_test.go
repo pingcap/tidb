@@ -6286,7 +6286,7 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		conf.OOMAction = config.OOMActionCancel
 	})
 	tk.MustExec("set tidb_distsql_scan_concurrency = 15")
-	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", count*20))
+	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", count*10))
 	var expect []string
 	for i := 0; i < count; i++ {
 		expect = append(expect, fmt.Sprintf("%v", i))
