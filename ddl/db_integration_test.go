@@ -2184,3 +2184,129 @@ func (s *testIntegrationSuite3) TestCreateTableWithAutoIdCache(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "table option auto_id_cache overflows int64")
 }
+<<<<<<< HEAD
+=======
+
+func (s *testIntegrationSuite4) TestAlterIndexVisibility(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create database if not exists alter_index_test")
+	tk.MustExec("USE alter_index_test;")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+
+	tk.MustExec("create table t(a int NOT NULL, b int, key(a), unique(b) invisible)")
+	query := queryIndexOnTable("alter_index_test", "t")
+	tk.MustQuery(query).Check(testkit.Rows("a YES", "b NO"))
+
+	tk.MustExec("alter table t alter index a invisible")
+	tk.MustQuery(query).Check(testkit.Rows("a NO", "b NO"))
+
+	tk.MustExec("alter table t alter index b visible")
+	tk.MustQuery(query).Check(testkit.Rows("a NO", "b YES"))
+
+	tk.MustExec("alter table t alter index b invisible")
+	tk.MustQuery(query).Check(testkit.Rows("a NO", "b NO"))
+
+	tk.MustGetErrMsg("alter table t alter index non_exists_idx visible", "[schema:1176]Key 'non_exists_idx' doesn't exist in table 't'")
+
+	// Alter implicit primary key to invisible index should throw error
+	tk.MustExec("create table t1(a int NOT NULL, unique(a))")
+	tk.MustGetErrMsg("alter table t1 alter index a invisible", "[ddl:3522]A primary key index cannot be invisible")
+
+	// Alter explicit primary key to invisible index should throw error
+	tk.MustExec("create table t2(a int, primary key(a))")
+	tk.MustGetErrMsg("alter table t2 alter index PRIMARY invisible", `[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible" `)
+
+	// Alter expression index
+	tk.MustExec("create table t3(a int NOT NULL, b int)")
+	tk.MustExec("alter table t3 add index idx((a+b));")
+	query = queryIndexOnTable("alter_index_test", "t3")
+	tk.MustQuery(query).Check(testkit.Rows("idx YES"))
+
+	tk.MustExec("alter table t3 alter index idx invisible")
+	tk.MustQuery(query).Check(testkit.Rows("idx NO"))
+}
+
+func queryIndexOnTable(dbName, tableName string) string {
+	return fmt.Sprintf("select distinct index_name, is_visible from information_schema.statistics where table_schema = '%s' and table_name = '%s' order by index_name", dbName, tableName)
+}
+
+func (s *testIntegrationSuite5) TestDropColumnWithCompositeIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	query := queryIndexOnTable("drop_composite_index_test", "t_drop_column_with_comp_idx")
+	tk.MustExec("create database if not exists drop_composite_index_test")
+	tk.MustExec("use drop_composite_index_test")
+	tk.MustExec("create table t_drop_column_with_comp_idx(a int, b int, c int)")
+	defer tk.MustExec("drop table if exists t_drop_column_with_comp_idx")
+	tk.MustExec("create index idx_bc on t_drop_column_with_comp_idx(b, c)")
+	tk.MustExec("create index idx_b on t_drop_column_with_comp_idx(b)")
+	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
+	tk.MustQuery(query).Check(testkit.Rows("idx_b YES", "idx_bc YES"))
+	tk.MustExec("alter table t_drop_column_with_comp_idx alter index idx_bc invisible")
+	tk.MustExec("alter table t_drop_column_with_comp_idx alter index idx_b invisible")
+	tk.MustGetErrMsg("alter table t_drop_column_with_comp_idx drop column b", "[ddl:8200]can't drop column b with composite index covered or Primary Key covered now")
+	tk.MustQuery(query).Check(testkit.Rows("idx_b NO", "idx_bc NO"))
+}
+
+func (s *testIntegrationSuite5) TestDropColumnWithIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")
+	defer tk.MustExec("drop table if exists t_drop_column_with_idx")
+	tk.MustExec("create index idx on t_drop_column_with_idx(b)")
+	tk.MustExec("alter table t_drop_column_with_idx drop column b")
+	query := queryIndexOnTable("test_db", "t_drop_column_with_idx")
+	tk.MustQuery(query).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite5) TestDropColumnWithMultiIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_column_with_idx(a int, b int, c int)")
+	defer tk.MustExec("drop table if exists t_drop_column_with_idx")
+	tk.MustExec("create index idx_1 on t_drop_column_with_idx(b)")
+	tk.MustExec("create index idx_2 on t_drop_column_with_idx(b)")
+	tk.MustExec("alter table t_drop_column_with_idx drop column b")
+	query := queryIndexOnTable("test_db", "t_drop_column_with_idx")
+	tk.MustQuery(query).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite5) TestDropColumnsWithMultiIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t_drop_columns_with_idx(a int, b int, c int)")
+	defer tk.MustExec("drop table if exists t_drop_columns_with_idx")
+	tk.MustExec("create index idx_1 on t_drop_columns_with_idx(b)")
+	tk.MustExec("create index idx_2 on t_drop_columns_with_idx(b)")
+	tk.MustExec("create index idx_3 on t_drop_columns_with_idx(c)")
+	tk.MustExec("alter table t_drop_columns_with_idx drop column b, drop column c")
+	query := queryIndexOnTable("test_db", "t_drop_columns_with_idx")
+	tk.MustQuery(query).Check(testkit.Rows())
+}
+
+func (s *testIntegrationSuite7) TestAutoIncrementTableOption(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		// Make sure the integer primary key is the handle(PkIsHandle).
+		conf.AlterPrimaryKey = false
+	})
+	tk.MustExec("drop database if exists test_auto_inc_table_opt;")
+	tk.MustExec("create database test_auto_inc_table_opt;")
+	tk.MustExec("use test_auto_inc_table_opt;")
+
+	// Empty auto_inc allocator should not cause error.
+	tk.MustExec("create table t (a bigint primary key) auto_increment = 10;")
+	tk.MustExec("alter table t auto_increment = 10;")
+	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
+
+	// Rebase the auto_inc allocator to a large integer should work.
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a bigint unsigned auto_increment, unique key idx(a));")
+	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
+	tk.MustExec("insert into t values ();")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
+}
+>>>>>>> 2ae1cc1... ddl: allow altering auto_increment to a large number (#19241)
