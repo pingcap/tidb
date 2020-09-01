@@ -2392,7 +2392,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
 		// and TiDB-B finds 100 < 30001 but returns without any handling,
 		// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
-		newBase = mathutil.MaxInt64(newBase, autoID)
+		newBase = int64(mathutil.MaxUint64(uint64(newBase), uint64(autoID)))
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
