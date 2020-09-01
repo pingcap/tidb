@@ -2923,6 +2923,7 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 	if err != nil {
 		return nil, err
 	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	return &SelectInto{
 		TargetPlan: targetPlan,
 		IntoOpt:    selectIntoInfo,

@@ -5951,3 +5951,17 @@ func (s *testSuite) TestIssue19372(c *C) {
 	tk.MustExec("insert into t2 select * from t1;")
 	tk.MustQuery("select (select t2.c_str from t2 where t2.c_str <= t1.c_str and t2.c_int in (1, 2) order by t2.c_str limit 1) x from t1 order by c_int;").Check(testkit.Rows("a", "a", "a"))
 }
+
+func (s *testSuite) TestIssue13758(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (pk int(11) primary key, a int(11) not null, b int(11), key idx_b(b), key idx_a(a))")
+	tk.MustExec("insert into `t1` values (1,1,0),(2,7,6),(3,2,null),(4,1,null),(5,4,5)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("insert into t2 values (1),(null)")
+	tk.MustQuery("select (select a from t1 use index(idx_a) where b >= t2.a order by a limit 1) as field from t2").Check(testkit.Rows(
+		"4",
+		"<nil>",
+	))
+}
