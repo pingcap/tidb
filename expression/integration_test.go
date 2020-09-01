@@ -7113,9 +7113,9 @@ func (s *testIntegrationSerialSuite) TestIssue19315(c *C) {
 
 func (s *testIntegrationSerialSuite) TestIssue18674(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select -1.0 % -1.0").Check(testkit.Rows("0.0"))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.MustQuery("select -1.0 % -1.0").Check(testkit.Rows("0.0"))
 	tk.MustExec("create table t1(`pk` int primary key,`col_float_key_signed` float  ,key (`col_float_key_signed`))")
 	tk.MustExec("insert into t1 values (0, null), (1, 0), (2, -0), (3, 1), (-1,-1)")
 	tk.MustQuery("select * from t1 where ( `col_float_key_signed` % `col_float_key_signed`) IS FALSE").Sort().Check(testkit.Rows("-1 -1", "3 1"))
