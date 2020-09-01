@@ -197,7 +197,7 @@ type Table interface {
 	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID int64, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
-	UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error
+	UpdateRecord(ctx context.Context, sctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error
 
 	// RemoveRecord removes a row in the table.
 	RemoveRecord(ctx sessionctx.Context, h int64, r []types.Datum) error

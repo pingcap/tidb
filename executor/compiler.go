@@ -70,6 +70,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (*ExecStm
 		lowerPriority = needLowerPriority(finalPlan)
 	}
 	return &ExecStmt{
+		GoCtx:         ctx,
 		InfoSchema:    infoSchema,
 		Plan:          finalPlan,
 		LowerPriority: lowerPriority,
