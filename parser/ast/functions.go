@@ -538,6 +538,8 @@ type FuncCastExpr struct {
 	Tp *types.FieldType
 	// FunctionType is either Cast, Convert or Binary.
 	FunctionType CastFunctionType
+	// ExplicitCharSet is true when charset is explicit indicated.
+	ExplicitCharSet bool
 }
 
 // Restore implements Node interface.
@@ -550,7 +552,7 @@ func (n *FuncCastExpr) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore FuncCastExpr.Expr")
 		}
 		ctx.WriteKeyWord(" AS ")
-		n.Tp.RestoreAsCastType(ctx)
+		n.Tp.RestoreAsCastType(ctx, n.ExplicitCharSet)
 		ctx.WritePlain(")")
 	case CastConvertFunction:
 		ctx.WriteKeyWord("CONVERT")
@@ -559,7 +561,7 @@ func (n *FuncCastExpr) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore FuncCastExpr.Expr")
 		}
 		ctx.WritePlain(", ")
-		n.Tp.RestoreAsCastType(ctx)
+		n.Tp.RestoreAsCastType(ctx, n.ExplicitCharSet)
 		ctx.WritePlain(")")
 	case CastBinaryOperator:
 		ctx.WriteKeyWord("BINARY ")
@@ -577,13 +579,13 @@ func (n *FuncCastExpr) Format(w io.Writer) {
 		fmt.Fprint(w, "CAST(")
 		n.Expr.Format(w)
 		fmt.Fprint(w, " AS ")
-		n.Tp.FormatAsCastType(w)
+		n.Tp.FormatAsCastType(w, n.ExplicitCharSet)
 		fmt.Fprint(w, ")")
 	case CastConvertFunction:
 		fmt.Fprint(w, "CONVERT(")
 		n.Expr.Format(w)
 		fmt.Fprint(w, ", ")
-		n.Tp.FormatAsCastType(w)
+		n.Tp.FormatAsCastType(w, n.ExplicitCharSet)
 		fmt.Fprint(w, ")")
 	case CastBinaryOperator:
 		fmt.Fprint(w, "BINARY ")
