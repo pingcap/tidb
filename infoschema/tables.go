@@ -234,7 +234,7 @@ type columnInfo struct {
 func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
-	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
+	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
 	}

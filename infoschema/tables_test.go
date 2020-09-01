@@ -300,7 +300,7 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 			"  `COMMAND` varchar(16) NOT NULL DEFAULT '',\n" +
 			"  `TIME` int(7) NOT NULL DEFAULT 0,\n" +
 			"  `STATE` varchar(7) DEFAULT NULL,\n" +
-			"  `INFO` longblob DEFAULT NULL,\n" +
+			"  `INFO` longtext DEFAULT NULL,\n" +
 			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `TxnStart` varchar(64) NOT NULL DEFAULT ''\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
@@ -311,7 +311,7 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 			"  `TYPE` varchar(64) DEFAULT NULL,\n" +
 			"  `INSTANCE` varchar(64) DEFAULT NULL,\n" +
 			"  `LEVEL` varchar(8) DEFAULT NULL,\n" +
-			"  `MESSAGE` longblob DEFAULT NULL\n" +
+			"  `MESSAGE` longtext DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
