@@ -300,11 +300,9 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 	}
 	switch tp.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		flag = varintFlag
-		if mysql.HasUnsignedFlag(tp.Flag) {
-			if integer := row.GetInt64(idx); integer < 0 {
-				flag = uvarintFlag
-			}
+		flag = uvarintFlag
+		if !mysql.HasUnsignedFlag(tp.Flag) && row.GetInt64(idx) < 0 {
+			flag = varintFlag
 		}
 		b = row.GetRaw(idx)
 	case mysql.TypeFloat:
@@ -406,9 +404,9 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 				buf[0], b = NilFlag, nil
 				isNull[i] = true
 			} else {
-				buf[0] = varintFlag
-				if mysql.HasUnsignedFlag(tp.Flag) && v < 0 {
-					buf[0] = uvarintFlag
+				buf[0] = uvarintFlag
+				if !mysql.HasUnsignedFlag(tp.Flag) && v < 0 {
+					buf[0] = varintFlag
 				}
 				b = column.GetRaw(i)
 			}
