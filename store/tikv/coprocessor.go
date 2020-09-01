@@ -539,6 +539,13 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 			}
 			worker.actionOnExceed.workersCond.L.Unlock()
 		}
+
+		// After check exceed, we should check finishCh again because finishCh can be set during worker's waiting
+		select {
+		case <-worker.finishCh:
+			return
+		default:
+		}
 	}
 }
 
@@ -1193,6 +1200,8 @@ func (it *copIterator) Close() error {
 	}
 	it.rpcCancel.CancelAll()
 	it.wg.Wait()
+	// broadcast the signal in order not to leak worker goroutine
+	it.actionOnExceed.workersCond.Broadcast()
 	return nil
 }
 
