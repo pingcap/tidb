@@ -672,5 +672,6 @@ func (e *IndexLookUpJoin) Close() error {
 	}
 	e.workerWg.Wait()
 	e.memTracker = nil
+	e.task = nil
 	return e.children[0].Close()
 }
