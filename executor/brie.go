@@ -15,14 +15,12 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/br/pkg/backup"
 	"github.com/pingcap/br/pkg/glue"
 	"github.com/pingcap/br/pkg/storage"
 	"github.com/pingcap/br/pkg/task"
@@ -45,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // brieTaskProgress tracks a task's current progress.
@@ -170,11 +167,9 @@ func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 	return variable.GoTimeToTS(t1), nil
 }
 
-var brieStmtLabel fmt.Stringer = stringutil.StringerStr("BRIEStmt")
-
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
 	e := &BRIEExec{
-		baseExecutor: newBaseExecutor(b.ctx, schema, brieStmtLabel),
+		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
 		info: &brieTaskInfo{
 			kind: s.Kind,
 		},
@@ -250,8 +245,6 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	switch s.Kind {
 	case ast.BRIEKindBackup:
 		e.backupCfg = &task.BackupConfig{Config: cfg}
-		// TODO adapt new backup config in br.
-		e.backupCfg.GCTTL = backup.DefaultBRGCSafePointTTL
 
 		for _, opt := range s.Options {
 			switch opt.Tp {
@@ -280,10 +273,6 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	case ast.BRIEKindRestore:
 		e.restoreCfg = &task.RestoreConfig{Config: cfg}
-		// TODO adapt new restore config in br. now give these with default value
-		e.restoreCfg.SwitchModeInterval = backup.DefaultBRGCSafePointTTL
-		e.restoreCfg.CheckRequirements = false
-		e.restoreCfg.RemoveTiFlash = true
 		for _, opt := range s.Options {
 			switch opt.Tp {
 			case ast.BRIEOptionOnline:

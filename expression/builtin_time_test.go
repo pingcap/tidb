@@ -534,7 +534,7 @@ func (s *testEvaluatorSuite) TestDayOfMonth(c *C) {
 		getErr   bool
 	}{
 		{"2017-12-01", 1, false, false},
-		{"0000-00-00", 1, true, false},
+		{"0000-00-00", 0, false, false},
 		{"2018-00-00", 0, false, false},
 		{"2017-00-00 12:12:12", 0, false, false},
 		{"0000-00-00 12:12:12", 0, false, false},
@@ -761,10 +761,12 @@ func (s *testEvaluatorSuite) TestClock(c *C) {
 		c.Assert(err, IsNil)
 
 		fc = funcs[ast.Time]
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err = fc.getFunction(s.ctx, s.datumsToConstants(td))
 		c.Assert(err, IsNil)
 		_, err = evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, NotNil)
+		c.Assert(err, IsNil)
+		c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
 	}
 }
 
@@ -1538,11 +1540,11 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 	sc.IgnoreZeroInDate = true
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 	tests := []struct {
-		args      []interface{}
-		expectStr string
-		isNil     bool
-		fsp       int8
-		getErr    bool
+		args       []interface{}
+		expectStr  string
+		isNil      bool
+		fsp        int8
+		getWarning bool
 	}{
 		{[]interface{}{"2000:01:01 00:00:00", "2000:01:01 00:00:00.000001"}, "-00:00:00.000001", false, 6, false},
 		{[]interface{}{"2008-12-31 23:59:59.000001", "2008-12-30 01:01:01.000002"}, "46:58:57.999999", false, 6, false},
@@ -1553,6 +1555,7 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 	}
 
 	for _, t := range tests {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(s.ctx, ast.TimeDiff, s.primitiveValsToConstants(t.args)...)
 		c.Assert(err, IsNil)
 		tp := f.GetType()
@@ -1562,8 +1565,9 @@ func (s *testEvaluatorSuite) TestTimeDiff(c *C) {
 		c.Assert(tp.Flag, Equals, uint(mysql.BinaryFlag))
 		c.Assert(tp.Flen, Equals, mysql.MaxDurationWidthWithFsp)
 		d, err := f.Eval(chunk.Row{})
-		if t.getErr {
-			c.Assert(err, NotNil)
+		if t.getWarning {
+			c.Assert(err, IsNil)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
 		} else {
 			c.Assert(err, IsNil)
 			if t.isNil {
@@ -2222,8 +2226,8 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		Args []interface{}
 		Want interface{}
 	}{
-		{[]interface{}{"", "", ""}, "00:00:00"},
-		{[]interface{}{"h", "m", "s"}, "00:00:00"},
+		{[]interface{}{"", "", ""}, "00:00:00.000000"},
+		{[]interface{}{"h", "m", "s"}, "00:00:00.000000"},
 	}
 	Dtbl = tblToDtbl(tbl)
 	maketime = funcs[ast.MakeTime]
@@ -2231,7 +2235,7 @@ func (s *testEvaluatorSuite) TestMakeTime(c *C) {
 		f, err := maketime.getFunction(s.ctx, s.datumsToConstants(t["Args"]))
 		c.Assert(err, IsNil)
 		got, err := evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, NotNil)
+		c.Assert(err, IsNil)
 		want, err := t["Want"][0].ToString()
 		c.Assert(err, IsNil)
 		c.Assert(got.GetMysqlDuration().String(), Equals, want, Commentf("[%v] - args:%v", idx, t["Args"]))

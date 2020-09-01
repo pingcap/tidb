@@ -74,7 +74,7 @@ func sleepWithCtx(ctx context.Context, d time.Duration) {
 
 func (s *Server) listenStatusHTTPServer() error {
 	s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
-	if s.cfg.Status.StatusPort == 0 {
+	if s.cfg.Status.StatusPort == 0 && !runInGoTest {
 		s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
 	}
 
@@ -151,6 +151,8 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/mvcc/hex/{hexKey}", mvccTxnHandler{tikvHandlerTool, opMvccGetByHex})
 	router.Handle("/mvcc/index/{db}/{table}/{index}/{handle}", mvccTxnHandler{tikvHandlerTool, opMvccGetByIdx})
 
+	// HTTP path for generate metric profile.
+	router.Handle("/metrics/profile", profileHandler{tikvHandlerTool})
 	// HTTP path for web UI.
 	if host, port, err := net.SplitHostPort(s.statusAddr); err == nil {
 		if host == "" {
