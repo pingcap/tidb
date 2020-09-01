@@ -2496,7 +2496,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 			origColName = tableInfo.View.Cols[i]
 		}
 		projSchema.Append(&expression.Column{
-			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID:    cols[i].UniqueID,
 			TblName:     tableInfo.Name,
 			OrigTblName: col.OrigTblName,
 			ColName:     columnInfo[i].Name,
