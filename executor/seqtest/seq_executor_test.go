@@ -1421,3 +1421,43 @@ func (s *seqTestSuite) TestOOMPanicInHashJoinWhenFetchBuildRows(c *C) {
 	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
 	c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 }
+
+func (s *seqTestSuite) TestIssue19410(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+	tk.MustExec("create table t(a int, b enum('A', 'B'));")
+	tk.MustExec("create table t1(a1 int, b1 enum('B', 'A') NOT NULL, UNIQUE KEY (b1));")
+	tk.MustExec("insert into t values (1, 'A');")
+	tk.MustExec("insert into t1 values (1, 'A');")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
+	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
+
+	tk.MustExec("create table t2(a1 int, b1 enum('C', 'D') NOT NULL, UNIQUE KEY (b1));")
+	tk.MustExec("insert into t2 values (1, 'C');")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t2) */ * from t join t2 on t.b = t2.b1;").Check(testkit.Rows())
+	tk.MustQuery("select /*+ INL_JOIN(t2) */ * from t join t2 on t.b = t2.b1;").Check(testkit.Rows())
+
+	tk.MustExec("create table t3(a1 int, b1 enum('A', 'B') NOT NULL, UNIQUE KEY (b1));")
+	tk.MustExec("insert into t3 values (1, 'A');")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
+	tk.MustQuery("select /*+ INL_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
+
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	tk.MustExec("drop table t, t1")
+	tk.MustExec(`CREATE TABLE t (
+  a int(11) DEFAULT NULL,
+  b enum('B', 'A') 
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;`)
+	tk.MustExec("insert into t values(1, 'A');")
+	tk.MustExec(`CREATE TABLE t1 (
+  a int(11) DEFAULT NULL,
+  b enum('a', 'b') not null  collate utf8mb4_bin,
+  unique(b)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;`)
+	tk.MustExec("insert into t1 values(1, 'a');")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1) */ * from t join t1 on t.b = t1.b;").Check(testkit.Rows())
+	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t join t1 on t.b = t1.b;").Check(testkit.Rows())
+	tk.MustQuery("select /*+ HASH_JOIN(t1) */ * from t join t1 on t.b = t1.b;").Check(testkit.Rows())
+}
