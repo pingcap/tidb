@@ -545,7 +545,6 @@ func (iw *indexHashJoinInnerWorker) fetchInnerResults(ctx context.Context, task 
 	if err != nil {
 		return err
 	}
-	lookUpContents = iw.sortAndDedupLookUpContents(lookUpContents)
 	return iw.innerWorker.fetchInnerResults(ctx, task, lookUpContents)
 }
 

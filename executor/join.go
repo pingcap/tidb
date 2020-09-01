@@ -14,11 +14,13 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"runtime/trace"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -87,6 +89,8 @@ type HashJoinExec struct {
 	// joinWorkerWaitGroup is for sync multiple join workers.
 	joinWorkerWaitGroup sync.WaitGroup
 	finished            atomic.Value
+
+	stats *joinRuntimeStats
 }
 
 // probeChkResource stores the result of the join probe side fetch worker,
@@ -140,14 +144,8 @@ func (e *HashJoinExec) Close() error {
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
 
-	if e.runtimeStats != nil {
-		concurrency := cap(e.joiners)
-		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
-		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
-		if e.rowContainer != nil {
-			runtimeStats.setHashStat(e.rowContainer.stat)
-		}
+	if e.stats != nil && e.rowContainer != nil {
+		e.stats.setHashStat(e.rowContainer.stat)
 	}
 	err := e.baseExecutor.Close()
 	return err
@@ -175,6 +173,12 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 	if e.buildTypes == nil {
 		e.buildTypes = retTypes(e.buildSideExec)
+	}
+	if e.runtimeStats != nil {
+		e.stats = newJoinRuntimeStats(e.runtimeStats)
+		concurrency := cap(e.joiners)
+		e.stats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	return nil
 }
@@ -422,6 +426,12 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 		allTypes:  e.probeTypes,
 		keyColIdx: probeKeyColIdx,
 	}
+	probeTime := int64(0)
+	if e.stats != nil {
+		defer func() {
+			atomic.AddInt64(&e.stats.probe, probeTime)
+		}()
+	}
 	for ok := true; ok; {
 		if e.finished.Load().(bool) {
 			break
@@ -434,11 +444,13 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 		if !ok {
 			break
 		}
+		start := time.Now()
 		if e.useOuterToBuild {
 			ok, joinResult = e.join2ChunkForOuterHashJoin(workerID, probeSideResult, hCtx, joinResult)
 		} else {
 			ok, joinResult = e.join2Chunk(workerID, probeSideResult, hCtx, joinResult, selected)
 		}
+		probeTime += int64(time.Since(start))
 		if !ok {
 			break
 		}
@@ -969,6 +981,7 @@ type joinRuntimeStats struct {
 	cache       cacheInfo
 	hasHashStat bool
 	hashStat    hashStatistic
+	probe       int64
 }
 
 func newJoinRuntimeStats(basic *execdetails.BasicRuntimeStats) *joinRuntimeStats {
@@ -997,16 +1010,21 @@ func (e *joinRuntimeStats) setHashStat(hashStat hashStatistic) {
 }
 
 func (e *joinRuntimeStats) String() string {
-	result := e.RuntimeStatsWithConcurrencyInfo.String()
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	buf.WriteString(e.RuntimeStatsWithConcurrencyInfo.String())
 	if e.applyCache {
 		if e.cache.useCache {
-			result += fmt.Sprintf(", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100)
+			buf.WriteString(fmt.Sprintf(", cache:ON, cacheHitRatio:%.3f%%", e.cache.hitRatio*100))
 		} else {
-			result += fmt.Sprintf(", cache:OFF")
+			buf.WriteString(fmt.Sprintf(", cache:OFF"))
 		}
 	}
 	if e.hasHashStat {
-		result += ", " + e.hashStat.String()
+		buf.WriteString(", " + e.hashStat.String())
 	}
-	return result
+	if e.probe > 0 {
+		buf.WriteString(", probe:")
+		buf.WriteString(time.Duration(e.probe).String())
+	}
+	return buf.String()
 }
