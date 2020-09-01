@@ -6284,15 +6284,17 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	tk.MustExec("set tidb_distsql_scan_concurrency = 15")
-	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", count*10))
+	// let ticket count be great enough to handle the query during oom action
+	tk.MustExec("set tidb_distsql_scan_concurrency = 100")
+	quota := count*15
+	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 	var expect []string
 	for i := 0; i < count; i++ {
 		expect = append(expect, fmt.Sprintf("%v", i))
 	}
 	tk.MustQuery("select * from t5").Sort().Check(testkit.Rows(expect...))
 	// assert oom action worked by max consumed > memory quota
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(count*10))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
 
 	// assert delegate to fallback action
 	tk.MustExec("set tidb_distsql_scan_concurrency = 2")
