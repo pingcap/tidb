@@ -178,7 +178,7 @@ type ddl struct {
 	m          sync.RWMutex
 	ctx        context.Context
 	cancel     context.CancelFunc
-	wg         sync.WaitGroup // It's only used to deal with data race in state_test and schema_test.
+	wg         sync.WaitGroup // It's only used to deal with data race in restart_test.
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
@@ -469,14 +469,16 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 }
 
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	if isChanClosed(d.ctx.Done()) {
+		return d.ctx.Err()
+	}
+
 	// Get a global job ID and put the DDL job in the queue.
 	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	task := &limitJobTask{job, make(chan error)}
 	d.limitJobCh <- task
 	err := <-task.err
-	if err != nil {
-		return errors.Trace(err)
-	}
+
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
@@ -497,9 +499,17 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
+		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
+			d.cancel()
+		})
+
 		select {
 		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
+		case <-d.ctx.Done():
+			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done", zap.Error(d.ctx.Err()))
+			err := d.ctx.Err()
+			return err
 		}
 
 		historyJob, err = d.getHistoryDDLJob(jobID)
