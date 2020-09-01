@@ -376,6 +376,12 @@ func (s *tikvStore) GetClient() kv.Client {
 	}
 }
 
+func (s *tikvStore) GetMPPClient() kv.MPPClient {
+	return &MPPClient{
+		store: s,
+	}
+}
+
 func (s *tikvStore) GetOracle() oracle.Oracle {
 	return s.oracle
 }

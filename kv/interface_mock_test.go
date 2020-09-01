@@ -181,6 +181,10 @@ func (s *mockStorage) GetClient() Client {
 	return nil
 }
 
+func (s *mockStorage) GetMPPClient() MPPClient {
+	return nil
+}
+
 func (s *mockStorage) GetOracle() oracle.Oracle {
 	return nil
 }

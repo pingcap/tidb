@@ -27,6 +27,30 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType) (SelectResult, error) {
+	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, tasks)
+	if resp == nil {
+		err := errors.New("client returns nil response")
+		return nil, err
+	}
+
+	encodeType := tipb.EncodeType_TypeDefault
+	if canUseChunkRPC(sctx) {
+		encodeType = tipb.EncodeType_TypeChunk
+	}
+	// TODO: Add metric label and set open tracing.
+	return &selectResult{
+		label:      "mpp",
+		resp:       resp,
+		rowLen:     len(fieldTypes),
+		fieldTypes: fieldTypes,
+		ctx:        sctx,
+		feedback:   statistics.NewQueryFeedback(0, nil, 0, false),
+		encodeType: encodeType,
+	}, nil
+
+}
+
 // Select sends a DAG request, returns SelectResult.
 // In kvReq, KeyRanges is required, Concurrency/KeepOrder/Desc/IsolationLevel/Priority are optional.
 func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fieldTypes []*types.FieldType, fb *statistics.QueryFeedback) (SelectResult, error) {

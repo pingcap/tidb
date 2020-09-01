@@ -1382,6 +1382,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
+	ts.PartitionInfo = copTask.partitionInfo
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true

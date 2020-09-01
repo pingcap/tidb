@@ -70,6 +70,7 @@ func (s *tiflashTestSuite) SetUpSuite(c *C) {
 func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null) partition by hash(a) partitions 2")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := testGetTableByName(c, tk.Se, "test", "t")
@@ -90,4 +91,6 @@ func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("5"))
 	tk.MustExec("insert into t values(6,0)")
 	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("6"))
+	tk.MustExec("commit")
 }
+

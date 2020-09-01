@@ -477,6 +477,10 @@ func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, of
 	return &p
 }
 
+func (p *PhysicalExchangerBase) InitBasePlan(ctx sessionctx.Context, tp string) {
+	p.basePlan = newBasePlan(ctx, tp, 0)
+}
+
 func flattenTreePlan(plan PhysicalPlan, plans []PhysicalPlan) []PhysicalPlan {
 	plans = append(plans, plan)
 	for _, child := range plan.Children() {

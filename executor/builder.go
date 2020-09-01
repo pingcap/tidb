@@ -2193,10 +2193,10 @@ func constructDistExecForTiFlash(sctx sessionctx.Context, p plannercore.Physical
 
 }
 
-func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan, storeType kv.StoreType) (dagReq *tipb.DAGRequest, streaming bool, err error) {
+func constructDAGReq(ctx sessionctx.Context, plans []plannercore.PhysicalPlan, storeType kv.StoreType) (dagReq *tipb.DAGRequest, streaming bool, err error) {
 	dagReq = &tipb.DAGRequest{}
-	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(b.ctx.GetSessionVars().Location())
-	sc := b.ctx.GetSessionVars().StmtCtx
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(ctx.GetSessionVars().Location())
+	sc := ctx.GetSessionVars().StmtCtx
 	if sc.RuntimeStatsColl != nil {
 		collExec := true
 		dagReq.CollectExecutionSummaries = &collExec
@@ -2204,13 +2204,13 @@ func (b *executorBuilder) constructDAGReq(plans []plannercore.PhysicalPlan, stor
 	dagReq.Flags = sc.PushDownFlags()
 	if storeType == kv.TiFlash {
 		var executors []*tipb.Executor
-		executors, streaming, err = constructDistExecForTiFlash(b.ctx, plans[0])
+		executors, streaming, err = constructDistExecForTiFlash(ctx, plans[0])
 		dagReq.RootExecutor = executors[0]
 	} else {
-		dagReq.Executors, streaming, err = constructDistExec(b.ctx, plans)
+		dagReq.Executors, streaming, err = constructDistExec(ctx, plans)
 	}
 
-	distsql.SetEncodeType(b.ctx, dagReq)
+	distsql.SetEncodeType(ctx, dagReq)
 	return dagReq, streaming, err
 }
 
@@ -2453,7 +2453,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	if v.StoreType == kv.TiFlash {
 		tablePlans = []plannercore.PhysicalPlan{v.GetTablePlan()}
 	}
-	dagReq, streaming, err := b.constructDAGReq(tablePlans, v.StoreType)
+	dagReq, streaming, err := constructDAGReq(b.ctx, tablePlans, v.StoreType)
 	if err != nil {
 		return nil, err
 	}
@@ -2510,6 +2510,21 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 	return e, nil
 }
 
+func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) Executor {
+	startTs, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	gather := &MPPGather{
+		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		is:           b.is,
+		originalPlan: v.GetTablePlan(),
+		startTS:      startTs,
+	}
+	return gather
+}
+
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) Executor {
@@ -2518,6 +2533,9 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 			b.err = err
 			return nil
 		}
+	}
+	if useMPPExecution(b.ctx, v) {
+		return b.buildMPPGather(v)
 	}
 	ret, err := buildNoRangeTableReader(b, v)
 	if err != nil {
@@ -2601,7 +2619,7 @@ func buildPartitionTable(b *executorBuilder, tblInfo *model.TableInfo, partition
 }
 
 func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexReader) (*IndexReaderExecutor, error) {
-	dagReq, streaming, err := b.constructDAGReq(v.IndexPlans, kv.TiKV)
+	dagReq, streaming, err := constructDAGReq(b.ctx, v.IndexPlans, kv.TiKV)
 	if err != nil {
 		return nil, err
 	}
@@ -2690,7 +2708,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) E
 }
 
 func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, val table.Table, err error) {
-	tableReq, tableStreaming, err := b.constructDAGReq(plans, kv.TiKV)
+	tableReq, tableStreaming, err := constructDAGReq(b.ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, false, nil, err
 	}
@@ -2708,7 +2726,7 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []plannercore.Physic
 }
 
 func buildIndexReq(b *executorBuilder, schemaLen, handleLen int, plans []plannercore.PhysicalPlan) (dagReq *tipb.DAGRequest, streaming bool, err error) {
-	indexReq, indexStreaming, err := b.constructDAGReq(plans, kv.TiKV)
+	indexReq, indexStreaming, err := constructDAGReq(b.ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, false, err
 	}

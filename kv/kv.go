@@ -277,6 +277,16 @@ type ReturnedValue struct {
 	AlreadyLocked bool
 }
 
+// MPPClient accepts and processes mpp requests.
+type MPPClient interface {
+	// ScheduleMPPTasks schedules task for a plan fragment.
+	// TODO:: This interface will be refined after we support more executors.
+	ScheduleMPPTasks(context.Context, *MPPScheduleRequest) ([]MPPTask, error)
+
+	// DispatchMPPTasks dispatches ALL mpp requests at once, and returns an iterator that transfers the data.
+	DispatchMPPTasks(context.Context, []*MPPDispatchRequest) Response
+}
+
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
@@ -372,6 +382,31 @@ type Request struct {
 	TaskID uint64
 }
 
+// MPPTask stands for a min execution unit for mpp.
+type MPPTask interface {
+	// GetAddress indicates which node this task should execute on.
+	GetAddress() string
+}
+
+// MPPScheduleRequest request the stores allocation for a mpp plan fragment.
+// However, the request doesn't contain the particular plan, because only key ranges take effect on the location assignment.
+type MPPScheduleRequest struct {
+	KeyRanges []KeyRange
+	StartTS   uint64
+}
+
+// MPPDispatchRequest stands for a dispatching task.
+type MPPDispatchRequest struct {
+	Data    []byte  // data encodes the dag coprocessor request.
+	Task    MPPTask // mpp store is the location of tiflash store.
+	IsRoot  bool    // root task returns data to tidb directly.
+	Timeout uint64  // If task is assigned but doesn't receive a connect request during timeout, the task should be destroyed.
+	// SchemaVer is for any schema-ful storage (like tiflash) to validate schema correctness if necessary.
+	SchemaVar int64
+	StartTs   uint64
+	ID        int64 // identify a single task
+}
+
 // ResultSubset represents a result subset from a single storage unit.
 // TODO: Find a better interface for ResultSubset that can reuse bytes.
 type ResultSubset interface {
@@ -431,6 +466,8 @@ type Storage interface {
 	GetSnapshot(ver Version) (Snapshot, error)
 	// GetClient gets a client instance.
 	GetClient() Client
+	// GetClient gets a mpp client instance.
+	GetMPPClient() MPPClient
 	// Close store
 	Close() error
 	// UUID return a unique ID which represents a Storage.

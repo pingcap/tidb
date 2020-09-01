@@ -47,7 +47,7 @@ type nextPartitionForTableReader struct {
 func (n nextPartitionForTableReader) nextPartition(ctx context.Context, tbl table.PhysicalTable) (Executor, error) {
 	n.exec.table = tbl
 	n.exec.kvRanges = n.exec.kvRanges[:0]
-	if err := updateDAGRequestTableID(ctx, n.exec.dagPB, tbl.Meta().ID, tbl.GetPhysicalID()); err != nil {
+	if err := updateDAGRequestTableID(ctx, n.exec.dagPB, tbl.GetPhysicalID()); err != nil {
 		return nil, err
 	}
 	return n.exec, nil
@@ -114,14 +114,14 @@ func nextPartitionWithTrace(ctx context.Context, n nextPartition, tbl table.Phys
 
 // updateDAGRequestTableID update the table ID in the DAG request to partition ID.
 // TiKV only use that table ID for log, but TiFlash use it.
-func updateDAGRequestTableID(ctx context.Context, dag *tipb.DAGRequest, tableID, partitionID int64) error {
+func updateDAGRequestTableID(ctx context.Context, dag *tipb.DAGRequest, partitionID int64) error {
 	// TiFlash set RootExecutor field and ignore Executors field.
 	if dag.RootExecutor != nil {
-		return updateExecutorTableID(ctx, dag.RootExecutor, tableID, partitionID, true)
+		return updateExecutorTableID(ctx, dag.RootExecutor, partitionID, true)
 	}
 	for i := 0; i < len(dag.Executors); i++ {
 		exec := dag.Executors[i]
-		err := updateExecutorTableID(ctx, exec, tableID, partitionID, false)
+		err := updateExecutorTableID(ctx, exec, partitionID, false)
 		if err != nil {
 			return err
 		}
@@ -129,7 +129,7 @@ func updateDAGRequestTableID(ctx context.Context, dag *tipb.DAGRequest, tableID,
 	return nil
 }
 
-func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, tableID, partitionID int64, recursive bool) error {
+func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, partitionID int64, recursive bool) error {
 	var child *tipb.Executor
 	switch exec.Tp {
 	case tipb.ExecType_TypeTableScan:
@@ -158,7 +158,7 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, tableID, pa
 		return errors.Trace(fmt.Errorf("unknown new tipb protocol %d", exec.Tp))
 	}
 	if child != nil && recursive {
-		return updateExecutorTableID(ctx, child, tableID, partitionID, recursive)
+		return updateExecutorTableID(ctx, child, partitionID, recursive)
 	}
 	return nil
 }

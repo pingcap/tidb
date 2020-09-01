@@ -16,6 +16,7 @@ package tikvrpc
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"sync/atomic"
 	"time"
 
@@ -69,6 +70,8 @@ const (
 	CmdCop CmdType = 512 + iota
 	CmdCopStream
 	CmdBatchCop
+	CmdMPPTask
+	CmdMPPConn
 
 	CmdMvccGetByKey CmdType = 1024 + iota
 	CmdMvccGetByStartTs
@@ -139,6 +142,10 @@ func (t CmdType) String() string {
 		return "CopStream"
 	case CmdBatchCop:
 		return "BatchCop"
+	case CmdMPPTask:
+		return "DispatchMPPTask"
+	case CmdMPPConn:
+		return "EstablishMPPConnection"
 	case CmdMvccGetByKey:
 		return "MvccGetByKey"
 	case CmdMvccGetByStartTs:
@@ -312,9 +319,19 @@ func (req *Request) Cop() *coprocessor.Request {
 	return req.Req.(*coprocessor.Request)
 }
 
-// BatchCop returns coprocessor request in request.
+// BatchCop returns BatchCop request in request.
 func (req *Request) BatchCop() *coprocessor.BatchRequest {
 	return req.Req.(*coprocessor.BatchRequest)
+}
+
+// DispatchMPPTask returns dispatch task request in request.
+func (req *Request) DispatchMPPTask() *mpp.DispatchTaskRequest {
+	return req.Req.(*mpp.DispatchTaskRequest)
+}
+
+// EsitablishMPPConn returns stablishMPPConnectionRequest in request.
+func (req *Request) EstablishMPPConn() *mpp.EstablishMPPConnectionRequest {
+	return req.Req.(*mpp.EstablishMPPConnectionRequest)
 }
 
 // MvccGetByKey returns MvccGetByKeyRequest in request.
@@ -511,6 +528,14 @@ type BatchCopStreamResponse struct {
 	Lease   // Shared by this object and a background goroutine.
 }
 
+// MPPStreamResponse is indeed a wrapped client that can receive data packet from tiflash mpp server.
+type MPPStreamResponse struct {
+	tikvpb.Tikv_EstablishMPPConnectionClient
+	*mpp.MPPDataPacket
+	Timeout time.Duration
+	Lease
+}
+
 // SetContext set the Context field for the given req to the specified ctx.
 func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 	ctx := &req.Context
@@ -579,6 +604,8 @@ func SetContext(req *Request, region *metapb.Region, peer *metapb.Peer) error {
 		req.Cop().Context = ctx
 	case CmdBatchCop:
 		req.BatchCop().Context = ctx
+	case CmdMPPTask:
+		// Dispatching MPP tasks don't need a region context, because it's a request for store but not region.
 	case CmdMvccGetByKey:
 		req.MvccGetByKey().Context = ctx
 	case CmdMvccGetByStartTs:
@@ -809,6 +836,14 @@ func CallRPC(ctx context.Context, client tikvpb.TikvClient, req *Request) (*Resp
 		resp.Resp, err = client.PhysicalScanLock(ctx, req.PhysicalScanLock())
 	case CmdCop:
 		resp.Resp, err = client.Coprocessor(ctx, req.Cop())
+	case CmdMPPTask:
+		resp.Resp, err = client.DispatchMPPTask(ctx, req.DispatchMPPTask())
+	case CmdMPPConn:
+		var streamClient tikvpb.Tikv_EstablishMPPConnectionClient
+		streamClient, err = client.EstablishMPPConnection(ctx, req.EstablishMPPConn())
+		resp.Resp = &MPPStreamResponse{
+			Tikv_EstablishMPPConnectionClient: streamClient,
+		}
 	case CmdCopStream:
 		var streamClient tikvpb.Tikv_CoprocessorStreamClient
 		streamClient, err = client.CoprocessorStream(ctx, req.Cop())
@@ -893,8 +928,29 @@ func (resp *BatchCopStreamResponse) Recv() (*coprocessor.BatchResponse, error) {
 	return ret, errors.Trace(err)
 }
 
-// Close closes the CopStreamResponse object.
+// Close closes the BatchCopStreamResponse object.
 func (resp *BatchCopStreamResponse) Close() {
+	atomic.StoreInt64(&resp.Lease.deadline, 1)
+	// We also call cancel here because CheckStreamTimeoutLoop
+	// is not guaranteed to cancel all items when it exits.
+	if resp.Lease.Cancel != nil {
+		resp.Lease.Cancel()
+	}
+}
+
+// Recv overrides the stream client Recv() function.
+func (resp *MPPStreamResponse) Recv() (*mpp.MPPDataPacket, error) {
+	deadline := time.Now().Add(resp.Timeout).UnixNano()
+	atomic.StoreInt64(&resp.Lease.deadline, deadline)
+
+	ret, err := resp.Tikv_EstablishMPPConnectionClient.Recv()
+
+	atomic.StoreInt64(&resp.Lease.deadline, 0) // Stop the lease check.
+	return ret, errors.Trace(err)
+}
+
+// Close closes the MPPStreamResponse object.
+func (resp *MPPStreamResponse) Close() {
 	atomic.StoreInt64(&resp.Lease.deadline, 1)
 	// We also call cancel here because CheckStreamTimeoutLoop
 	// is not guaranteed to cancel all items when it exits.

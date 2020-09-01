@@ -464,6 +464,9 @@ type SessionVars struct {
 	// If value is set to 2 , which means to force to send batch cop for any query. Value is set to 0 means never use batch cop.
 	AllowBatchCop int
 
+	// AllowMPPExecution will prefer using mpp way to execute a query.
+	AllowMPPExecution bool
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -850,6 +853,7 @@ func NewSessionVars() *SessionVars {
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
 
 	vars.AllowBatchCop = DefTiDBAllowBatchCop
+	vars.AllowMPPExecution = DefTiDBAllowMPPExecution
 
 	var enableChunkRPC string
 	if config.GetGlobalConfig().TiKVClient.EnableChunkRPC {
@@ -1226,6 +1230,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.IndexJoinBatchSize = tidbOptPositiveInt32(val, DefIndexJoinBatchSize)
 	case TiDBAllowBatchCop:
 		s.AllowBatchCop = int(tidbOptInt64(val, DefTiDBAllowBatchCop))
+	case TiDBAllowMPPExecution:
+		s.AllowMPPExecution = TiDBOptOn(val)
 	case TiDBIndexLookupSize:
 		s.IndexLookupSize = tidbOptPositiveInt32(val, DefIndexLookupSize)
 	case TiDBHashJoinConcurrency:

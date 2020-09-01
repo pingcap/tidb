@@ -16,6 +16,7 @@ package tikv
 
 import (
 	"context"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"io"
 	"math"
 	"strconv"
@@ -364,13 +365,15 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 
 	client := tikvpb.NewTikvClient(clientConn)
 
-	if req.Type == tikvrpc.CmdBatchCop {
+	switch req.Type {
+	case tikvrpc.CmdBatchCop:
 		return c.getBatchCopStreamResponse(ctx, client, req, timeout, connArray)
-	}
-
-	if req.Type == tikvrpc.CmdCopStream {
+	case tikvrpc.CmdCopStream:
 		return c.getCopStreamResponse(ctx, client, req, timeout, connArray)
+	case tikvrpc.CmdMPPConn:
+		return c.getMPPStreamResponse(ctx, client, req, timeout, connArray)
 	}
+	// Or else it's a unary call.
 	ctx1, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return tikvrpc.CallRPC(ctx1, client, req)
@@ -443,7 +446,39 @@ func (c *rpcClient) getBatchCopStreamResponse(ctx context.Context, client tikvpb
 	}
 	copStream.BatchResponse = first
 	return resp, nil
+}
 
+func (c *rpcClient) getMPPStreamResponse(ctx context.Context, client tikvpb.TikvClient, req *tikvrpc.Request, timeout time.Duration, connArray *connArray) (*tikvrpc.Response, error) {
+	// MPP streaming request.
+	// Use context to support timeout for grpc streaming client.
+	ctx1, cancel := context.WithCancel(ctx)
+	// Should NOT call defer cancel() here because it will cancel further stream.Recv()
+	// We put it in copStream.Lease.Cancel call this cancel at copStream.Close
+	// TODO: add unit test for SendRequest.
+	resp, err := tikvrpc.CallRPC(ctx1, client, req)
+	if err != nil {
+		cancel()
+		return nil, errors.Trace(err)
+	}
+
+	// Put the lease object to the timeout channel, so it would be checked periodically.
+	copStream := resp.Resp.(*tikvrpc.MPPStreamResponse)
+	copStream.Timeout = timeout
+	copStream.Lease.Cancel = cancel
+	connArray.streamTimeout <- &copStream.Lease
+
+	// Read the first streaming response to get CopStreamResponse.
+	// This can make error handling much easier, because SendReq() retry on
+	// region error automatically.
+	var first *mpp.MPPDataPacket
+	first, err = copStream.Recv()
+	if err != nil {
+		if errors.Cause(err) != io.EOF {
+			return nil, errors.Trace(err)
+		}
+	}
+	copStream.MPPDataPacket = first
+	return resp, nil
 }
 
 func (c *rpcClient) Close() error {

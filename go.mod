@@ -1,5 +1,11 @@
 module github.com/pingcap/tidb
 
+replace github.com/pingcap/kvproto => github.com/hanfei1991/kvproto v0.0.0-20200910071523-7782b86f085c
+
+replace github.com/pingcap/tipb => github.com/hanfei1991/tipb v0.0.0-20200911095318-f78c6c244146
+
+replace github.com/ngaut/unistore => github.com/hanfei1991/unistore v0.0.0-20200902025450-39fe3975bab3
+
 require (
 	github.com/BurntSushi/toml v0.3.1
 	github.com/Jeffail/gabs/v2 v2.5.1
@@ -21,6 +27,7 @@ require (
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
 	github.com/juju/errors v0.0.0-20181118221551-089d3ea4e4d5
 	github.com/juju/testing v0.0.0-20200706033705-4c23f9c453cd // indirect
+	github.com/kisielk/godepgraph v0.0.0-20190626013829-57a7e4a651a9 // indirect
 	github.com/klauspost/cpuid v1.2.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
