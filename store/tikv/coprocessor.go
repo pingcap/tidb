@@ -534,7 +534,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 		if worker.actionOnExceed != nil {
 			worker.actionOnExceed.workersCond.L.Lock()
-			for worker.actionOnExceed.exceed {
+			if worker.actionOnExceed.exceed {
 				worker.actionOnExceed.workersCond.Wait()
 			}
 			worker.actionOnExceed.workersCond.L.Unlock()
