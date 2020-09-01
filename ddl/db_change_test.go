@@ -16,6 +16,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -1603,4 +1605,62 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 	sql1 = "flashback table t_flashback"
 	sql2 := "flashback table t_flashback to t_flashback2"
 	s.testControlParallelExecSQL(c, sql1, sql2, f)
+}
+
+// TestModifyColumnTypeArgs test job raw args won't be updated when error occurs in `updateVersionAndTableInfo`.
+func (s *serialTestStateChangeSuite) TestModifyColumnTypeArgs(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"), IsNil)
+	}()
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_modify_column_args")
+	tk.MustExec("create table t_modify_column_args(a int, unique(a))")
+
+	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+	}()
+
+	_, err := tk.Exec("alter table t_modify_column_args modify column a tinyint")
+	c.Assert(err, NotNil)
+	// error goes like `mock update version and tableInfo error,jobID=xx`
+	strs := strings.Split(err.Error(), ",")
+	c.Assert(strs[0], Equals, "[ddl:-1]mock update version and tableInfo error")
+	jobID := strings.Split(strs[1], "=")[1]
+
+	tbl := testGetTableByName(c, tk.Se, "test", "t_modify_column_args")
+	c.Assert(len(tbl.Meta().Columns), Equals, 1)
+	c.Assert(len(tbl.Meta().Indices), Equals, 1)
+
+	ID, err := strconv.Atoi(jobID)
+	c.Assert(err, IsNil)
+	var historyJob *model.Job
+	err = kv.RunInNewTxn(s.store, false, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		historyJob, err = t.GetHistoryDDLJob(int64(ID))
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	c.Assert(err, IsNil)
+	c.Assert(historyJob, NotNil)
+
+	var (
+		newCol                *model.ColumnInfo
+		oldColName            *model.CIStr
+		modifyColumnTp        byte
+		updatedAutoRandomBits uint64
+		changingCol           *model.ColumnInfo
+		changingIdxs          []*model.IndexInfo
+	)
+	pos := &ast.ColumnPosition{}
+	err = historyJob.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+	c.Assert(err, IsNil)
+	c.Assert(changingCol, IsNil)
+	c.Assert(changingIdxs, IsNil)
 }

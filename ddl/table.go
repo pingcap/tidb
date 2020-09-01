@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"fmt"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -960,6 +961,12 @@ func updateVersionAndTableInfoWithCheck(t *meta.Meta, job *model.Job, tblInfo *m
 // updateVersionAndTableInfo updates the schema version and the table information.
 func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
 	ver int64, err error) {
+	failpoint.Inject("mockUpdateVersionAndTableInfoErr", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("mock update version and tableInfo error,jobID="+strconv.Itoa(int(job.ID))))
+		}
+	})
 	if shouldUpdateVer {
 		ver, err = updateSchemaVersion(t, job)
 		if err != nil {
