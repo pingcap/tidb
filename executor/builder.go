@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/sirupsen/logrus"
 	"go.uber.org/zap"
 )
 
@@ -3121,7 +3120,6 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return e, err
 	}
 
-	logrus.Warning("indexRanges", indexRanges)
 	e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 	if err != nil {
 		return nil, err
@@ -3250,7 +3248,6 @@ func buildKvRangesForIndexJoin(ctx sessionctx.Context, tableID, indexID int64, l
 				ran.HighVal[idxOff] = content.keys[keyOff]
 			}
 		}
-		logrus.Warning(ranges)
 		if cwc == nil {
 			// Index id is -1 means it's a common handle.
 			var tmpKvRanges []kv.KeyRange
