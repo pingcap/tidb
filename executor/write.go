@@ -124,6 +124,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				for _, idxCol := range pkIdx.Columns {
 					pkDts = append(pkDts, newData[idxCol.Offset])
 				}
+				tablecodec.TruncateIndexValues(t.Meta(), pkIdx, pkDts)
 				handleBytes, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, pkDts...)
 				if err != nil {
 					return false, err

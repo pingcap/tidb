@@ -766,7 +766,9 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// we can't construct index merge join.
 	if us == nil {
 		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt, maxOneRow)
-		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+		if innerTask2 != nil {
+			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+		}
 	}
 	return joins
 }
@@ -825,6 +827,12 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	desc bool,
 	rowCount float64,
 ) task {
+	// If `ds.tableInfo.GetPartitionInfo() != nil`,
+	// it means the data source is a partition table reader.
+	// If the inner task need to keep order, the partition table reader can't satisfy it.
+	if keepOrder && ds.tableInfo.GetPartitionInfo() != nil {
+		return nil
+	}
 	var ranges []*ranger.Range
 	// pk is nil means the table uses the common handle.
 	if pk == nil {
@@ -877,6 +885,12 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
 	}
+	copTask.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+	}
 	selStats := ts.stats.Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
 	t := finishCopTask(ds.ctx, copTask).(*rootTask)
@@ -912,6 +926,12 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	rowCount float64,
 	maxOneRow bool,
 ) task {
+	// If `ds.tableInfo.GetPartitionInfo() != nil`,
+	// it means the data source is a partition table reader.
+	// If the inner task need to keep order, the partition table reader can't satisfy it.
+	if keepOrder && ds.tableInfo.GetPartitionInfo() != nil {
+		return nil
+	}
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
@@ -933,6 +953,12 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
 		keepOrder:   is.KeepOrder,
+	}
+	cop.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
 	}
 	if !ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table) {
 		// On this way, it's double read case.
@@ -1574,6 +1600,15 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 	}
 	if prop.TaskTp != property.RootTaskType && !prop.IsFlashOnlyProp() {
 		return nil
+	}
+
+	// Disable broadcast join on partition table for TiFlash.
+	for _, child := range p.children {
+		if ds, isDataSource := child.(*DataSource); isDataSource {
+			if ds.tableInfo.GetPartitionInfo() != nil {
+				return nil
+			}
+		}
 	}
 
 	// for left join the global idx must be 1, and for right join the global idx must be 0

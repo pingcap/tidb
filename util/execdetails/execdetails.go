@@ -14,6 +14,7 @@
 package execdetails
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strconv"
@@ -364,25 +365,25 @@ func (e *BasicRuntimeStats) String() string {
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
 	mu        sync.Mutex
-	rootStats map[string]RuntimeStats
-	copStats  map[string]*CopRuntimeStats
+	rootStats map[int]RuntimeStats
+	copStats  map[int]*CopRuntimeStats
 }
 
 // NewRuntimeStatsColl creates new executor collector.
 func NewRuntimeStatsColl() *RuntimeStatsColl {
-	return &RuntimeStatsColl{rootStats: make(map[string]RuntimeStats),
-		copStats: make(map[string]*CopRuntimeStats)}
+	return &RuntimeStatsColl{rootStats: make(map[int]RuntimeStats),
+		copStats: make(map[int]*CopRuntimeStats)}
 }
 
 // RegisterStats register execStat for a executor.
-func (e *RuntimeStatsColl) RegisterStats(planID string, info RuntimeStats) {
+func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 	e.mu.Lock()
 	e.rootStats[planID] = info
 	e.mu.Unlock()
 }
 
 // GetRootStats gets execStat for a executor.
-func (e *RuntimeStatsColl) GetRootStats(planID string) RuntimeStats {
+func (e *RuntimeStatsColl) GetRootStats(planID int) RuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	runtimeStats, exists := e.rootStats[planID]
@@ -394,7 +395,7 @@ func (e *RuntimeStatsColl) GetRootStats(planID string) RuntimeStats {
 }
 
 // GetCopStats gets the CopRuntimeStats specified by planID.
-func (e *RuntimeStatsColl) GetCopStats(planID string) *CopRuntimeStats {
+func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
@@ -406,13 +407,13 @@ func (e *RuntimeStatsColl) GetCopStats(planID string) *CopRuntimeStats {
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tipb.ExecutorExecutionSummary) {
+func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary *tipb.ExecutorExecutionSummary) {
 	copStats := e.GetCopStats(planID)
 	copStats.RecordOneCopTask(address, summary)
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
-func (e *RuntimeStatsColl) ExistsRootStats(planID string) bool {
+func (e *RuntimeStatsColl) ExistsRootStats(planID int) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, exists := e.rootStats[planID]
@@ -420,7 +421,7 @@ func (e *RuntimeStatsColl) ExistsRootStats(planID string) bool {
 }
 
 // ExistsCopStats checks if the planID exists in the copStats collection.
-func (e *RuntimeStatsColl) ExistsCopStats(planID string) bool {
+func (e *RuntimeStatsColl) ExistsCopStats(planID int) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	_, exists := e.copStats[planID]
@@ -475,4 +476,85 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 		}
 	}
 	return result
+}
+
+// RuntimeStatsWithCommit is the RuntimeStats with commit detail.
+type RuntimeStatsWithCommit struct {
+	RuntimeStats
+	Commit *CommitDetails
+}
+
+func (e *RuntimeStatsWithCommit) String() string {
+	var result string
+	if e.RuntimeStats != nil {
+		result = e.RuntimeStats.String()
+	}
+	if e.Commit == nil {
+		return result
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, len(result)+32))
+	buf.WriteString(result)
+	if e.Commit.PrewriteTime > 0 {
+		buf.WriteString(", prewrite:")
+		buf.WriteString(e.Commit.PrewriteTime.String())
+	}
+	if e.Commit.WaitPrewriteBinlogTime > 0 {
+		buf.WriteString(", wait_prewrite_binlog:")
+		buf.WriteString(e.Commit.WaitPrewriteBinlogTime.String())
+	}
+	if e.Commit.GetCommitTsTime > 0 {
+		buf.WriteString(", get_commit_ts:")
+		buf.WriteString(e.Commit.GetCommitTsTime.String())
+	}
+	if e.Commit.CommitTime > 0 {
+		buf.WriteString(", commit:")
+		buf.WriteString(e.Commit.CommitTime.String())
+	}
+	commitBackoffTime := atomic.LoadInt64(&e.Commit.CommitBackoffTime)
+	if commitBackoffTime > 0 {
+		buf.WriteString(", commit_backoff: {time: ")
+		buf.WriteString(time.Duration(commitBackoffTime).String())
+		tpMap := make(map[string]struct{})
+		tpArray := []string{}
+		e.Commit.Mu.Lock()
+		if len(e.Commit.Mu.BackoffTypes) > 0 {
+			for _, tp := range e.Commit.Mu.BackoffTypes {
+				tpStr := tp.String()
+				_, ok := tpMap[tpStr]
+				if ok {
+					continue
+				}
+				tpMap[tpStr] = struct{}{}
+				tpArray = append(tpArray, tpStr)
+			}
+			buf.WriteString(", type: ")
+			sort.Strings(tpArray)
+			buf.WriteString(fmt.Sprintf("%v", tpArray))
+		}
+		e.Commit.Mu.Unlock()
+		buf.WriteString("}")
+	}
+	if e.Commit.ResolveLockTime > 0 {
+		buf.WriteString(", resolve_lock: ")
+		buf.WriteString(time.Duration(e.Commit.ResolveLockTime).String())
+	}
+
+	prewriteRegionNum := atomic.LoadInt32(&e.Commit.PrewriteRegionNum)
+	if prewriteRegionNum > 0 {
+		buf.WriteString(", region_num:")
+		buf.WriteString(strconv.FormatInt(int64(prewriteRegionNum), 10))
+	}
+	if e.Commit.WriteKeys > 0 {
+		buf.WriteString(", write_keys:")
+		buf.WriteString(strconv.FormatInt(int64(e.Commit.WriteKeys), 10))
+	}
+	if e.Commit.WriteSize > 0 {
+		buf.WriteString(", write_byte:")
+		buf.WriteString(strconv.FormatInt(int64(e.Commit.WriteSize), 10))
+	}
+	if e.Commit.TxnRetry > 0 {
+		buf.WriteString(", txn_retry:")
+		buf.WriteString(strconv.FormatInt(int64(e.Commit.TxnRetry), 10))
+	}
+	return buf.String()
 }

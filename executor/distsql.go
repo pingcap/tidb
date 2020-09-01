@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"runtime/trace"
 	"sort"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -464,7 +463,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		e.dagPB.CollectExecutionSummaries = &collExec
 	}
 
-	tracker := memory.NewTracker(stringutil.StringerStr("IndexWorker"), -1)
+	tracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	tracker.AttachTo(e.memTracker)
 	var builder distsql.RequestBuilder
 	kvReq, err := builder.SetKeyRanges(kvRanges).
@@ -503,6 +502,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	e.idxWorkerWg.Add(1)
 	go func() {
+		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
 		ctx1, cancel := context.WithCancel(ctx)
 		_, err := worker.fetchHandles(ctx1, result)
 		if err != nil {
@@ -534,11 +534,12 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			keepOrder:       e.keepOrder,
 			handleIdx:       e.handleIdx,
 			checkIndexValue: e.checkIndexValue,
-			memTracker:      memory.NewTracker(stringutil.MemoizeStr(func() string { return "TableWorker_" + strconv.Itoa(workerID) }), -1),
+			memTracker:      memory.NewTracker(workerID, -1),
 		}
 		worker.memTracker.AttachTo(e.memTracker)
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
+			defer trace.StartRegion(ctx1, "IndexLookUpTableWorker").End()
 			worker.pickAndExecTask(ctx1)
 			cancel()
 			e.tblWorkerWg.Done()
@@ -548,7 +549,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 
 func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv.Handle) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor:   newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
+		baseExecutor:   newBaseExecutor(e.ctx, e.schema, 0),
 		table:          e.table,
 		dagPB:          e.tableRequest,
 		startTS:        e.startTS,
@@ -583,6 +584,7 @@ func (e *IndexLookUpExecutor) Close() error {
 	e.finished = nil
 	e.workerStarted = false
 	e.memTracker = nil
+	e.resultCurr = nil
 	return nil
 }
 
@@ -962,6 +964,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		}
 	}
 
+	defer trace.StartRegion(ctx, "IndexLookUpTableCompute").End()
 	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
 	task.memUsage += memUsage
 	task.memTracker.Consume(memUsage)
@@ -1030,10 +1033,10 @@ func GetLackHandles(expectedHandles []kv.Handle, obtainedHandlesMap *kv.HandleMa
 	return diffHandles
 }
 
-func getPhysicalPlanIDs(plans []plannercore.PhysicalPlan) []fmt.Stringer {
-	planIDs := make([]fmt.Stringer, 0, len(plans))
+func getPhysicalPlanIDs(plans []plannercore.PhysicalPlan) []int {
+	planIDs := make([]int, 0, len(plans))
 	for _, p := range plans {
-		planIDs = append(planIDs, p.ExplainID())
+		planIDs = append(planIDs, p.ID())
 	}
 	return planIDs
 }

@@ -9,7 +9,7 @@ advertise-address = ""
 # TiDB server port.
 port = 4000
 
-# Registered store name, [tikv, unistore]
+# Registered store name, [tikv, mocktikv, unistore]
 store = "unistore"
 
 # TiDB storage path.
@@ -119,6 +119,10 @@ skip-register-to-dashboard = false
 # See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
 enable-telemetry = true
 
+# deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
+# a warning like `Integer display width is deprecated and will be removed in a future release`.
+deprecate-integer-display-length = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -183,6 +187,11 @@ cluster-ssl-cert = ""
 
 # Path of file that contains X509 key in PEM format for connection with cluster components.
 cluster-ssl-key = ""
+
+# Configurations of the encryption method to use for encrypting the spilled data files.
+# Possible values are "plaintext", "aes128-ctr", if not set, it will be "plaintext" by default.
+# "plaintext" means encryption is disabled.
+spilled-file-encryption-method = "plaintext"
 
 [status]
 # If enable status report HTTP service.

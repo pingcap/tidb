@@ -16,6 +16,7 @@ package planner
 import (
 	"context"
 	"math"
+	"runtime/trace"
 	"strings"
 	"time"
 
@@ -345,7 +346,7 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 	}
 
 	v, ok := p.(*plannercore.PointGetPlan)
-	return ok && v.IndexInfo == nil
+	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle))
 }
 
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement
@@ -353,6 +354,7 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 // for point select like plan which does not need extra things
 func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
+	defer trace.StartRegion(ctx, "Optimize").End()
 	var err error
 	builder := plannercore.NewPlanBuilder(sctx, is, nil)
 	p, err := builder.Build(ctx, execAst)
