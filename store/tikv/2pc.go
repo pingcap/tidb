@@ -211,6 +211,7 @@ func (c *twoPhaseCommitter) extractKeyExistsErr(key kv.Key) error {
 		if err == nil {
 			return kv.ErrKeyExists.FastGenByArgs(strings.Join(values, "-"), "PRIMARY")
 		}
+		//..
 	}
 
 	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
