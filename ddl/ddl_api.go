@@ -491,6 +491,30 @@ func isExplicitTimeStamp() bool {
 	return true
 }
 
+// processColumnFlags is used by columnDefToCol and processColumnOptions. It is intended to unify behaviors on `create/add` and `modify/change` statements. Check tidb#issue#19342.
+func processColumnFlags(col *table.Column) {
+	if col.FieldType.EvalType().IsStringKind() && col.Charset == charset.CharsetBin {
+		col.Flag |= mysql.BinaryFlag
+	}
+	if col.Tp == mysql.TypeBit {
+		// For BIT field, it's charset is binary but does not have binary flag.
+		col.Flag &= ^mysql.BinaryFlag
+		col.Flag |= mysql.UnsignedFlag
+	}
+	if col.Tp == mysql.TypeYear {
+		// For Year field, it's charset is binary but does not have binary flag.
+		col.Flag &= ^mysql.BinaryFlag
+		col.Flag |= mysql.ZerofillFlag
+	}
+
+	// If you specify ZEROFILL for a numeric column, MySQL automatically adds the UNSIGNED attribute to the column.
+	// See https://dev.mysql.com/doc/refman/5.7/en/numeric-type-overview.html for more details.
+	// But some types like bit and year, won't show its unsigned flag in `show create table`.
+	if mysql.HasZerofillFlag(col.Flag) {
+		col.Flag |= mysql.UnsignedFlag
+	}
+}
+
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
@@ -603,26 +627,9 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
 	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
 	setNoDefaultValueFlag(col, hasDefaultValue)
-	if col.FieldType.EvalType().IsStringKind() && col.Charset == charset.CharsetBin {
-		col.Flag |= mysql.BinaryFlag
-	}
-	if col.Tp == mysql.TypeBit {
-		// For BIT field, it's charset is binary but does not have binary flag.
-		col.Flag &= ^mysql.BinaryFlag
-		col.Flag |= mysql.UnsignedFlag
-	}
-	if col.Tp == mysql.TypeYear {
-		// For Year field, it's charset is binary but does not have binary flag.
-		col.Flag &= ^mysql.BinaryFlag
-		col.Flag |= mysql.ZerofillFlag
-	}
 
-	// If you specify ZEROFILL for a numeric column, MySQL automatically adds the UNSIGNED attribute to the column.
-	// See https://dev.mysql.com/doc/refman/5.7/en/numeric-type-overview.html for more details.
-	// But some types like bit and year, won't show its unsigned flag in `show create table`.
-	if mysql.HasZerofillFlag(col.Flag) {
-		col.Flag |= mysql.UnsignedFlag
-	}
+	processColumnFlags(col)
+
 	err = checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -3399,9 +3406,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
 	setNoDefaultValueFlag(col, hasDefaultValue)
 
-	if col.Tp == mysql.TypeBit {
-		col.Flag |= mysql.UnsignedFlag
-	}
+	processColumnFlags(col)
 
 	if hasDefaultValue {
 		return errors.Trace(checkDefaultValue(ctx, col, true))
