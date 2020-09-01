@@ -6207,7 +6207,6 @@ func (s *testSerialSuite) TestKillTableReader(c *C) {
 	wg.Wait()
 }
 
-
 func (s *testSuite) TestPrevStmtDesensitization(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
