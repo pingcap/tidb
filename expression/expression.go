@@ -39,6 +39,9 @@ const (
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 
+// RewriteAstExpr rewrite ast expression directly.
+var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema) (Expression, error)
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/generate_expr"
 	"github.com/pingcap/tidb/util/logutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"github.com/spaolacci/murmur3"
@@ -111,11 +112,11 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
-			expr, err := parseExpression(colInfo.GeneratedExprString)
+			expr, err := generateExpr.ParseExpression(colInfo.GeneratedExprString)
 			if err != nil {
 				return nil, err
 			}
-			expr, err = simpleResolveName(expr, tblInfo)
+			expr, err = generateExpr.SimpleResolveName(expr, tblInfo)
 			if err != nil {
 				return nil, err
 			}
