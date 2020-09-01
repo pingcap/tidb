@@ -921,6 +921,8 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 			buildSide = plan.InnerChildIdx ^ 1
 		case *PhysicalIndexHashJoin:
 			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalBroadCastJoin:
+			buildSide = plan.InnerChildIdx
 		}
 
 		if buildSide != -1 {
