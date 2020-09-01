@@ -771,24 +771,20 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 	return nil
 }
 
-func (e *AnalyzeFastExec) decodeValues(handle kv.Handle, sValue []byte) (values map[int64]types.Datum, err error) {
+func (e *AnalyzeFastExec) decodeValues(handle kv.Handle, sValue []byte, wantCols map[int64]*types.FieldType) (values map[int64]types.Datum, err error) {
 	loc := e.ctx.GetSessionVars().Location()
-	colID2FieldTypes := make(map[int64]*types.FieldType, len(e.colsInfo))
-	for _, col := range e.colsInfo {
-		colID2FieldTypes[col.ID] = &col.FieldType
-	}
-	values, err = tablecodec.DecodeRowToDatumMap(sValue, colID2FieldTypes, loc)
+	values, err = tablecodec.DecodeRowToDatumMap(sValue, wantCols, loc)
 	if err != nil || e.handleCols == nil {
 		return values, err
 	}
-	colID2FieldTypes = make(map[int64]*types.FieldType, len(e.colsInfo))
+	wantCols = make(map[int64]*types.FieldType, e.handleCols.NumCols())
 	handleColIDs := make([]int64, e.handleCols.NumCols())
 	for i := 0; i < e.handleCols.NumCols(); i++ {
 		c := e.handleCols.GetCol(i)
 		handleColIDs[i] = c.ID
-		colID2FieldTypes[c.ID] = c.RetType
+		wantCols[c.ID] = c.RetType
 	}
-	return tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, colID2FieldTypes, loc, values)
+	return tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, wantCols, loc, values)
 }
 
 func (e *AnalyzeFastExec) getValueByInfo(colInfo *model.ColumnInfo, values map[int64]types.Datum) (types.Datum, error) {
@@ -805,9 +801,29 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 	if err != nil {
 		return err
 	}
+
+	// Decode cols for analyze table
+	wantCols := make(map[int64]*types.FieldType, len(e.colsInfo))
+	for _, col := range e.colsInfo {
+		wantCols[col.ID] = &col.FieldType
+	}
+
+	// Pre-build index->cols relationship and refill wantCols if not exists(analyze index)
+	index2Cols := make([][]*model.ColumnInfo, len(e.idxsInfo))
+	for i, idxInfo := range e.idxsInfo {
+		for _, idxCol := range idxInfo.Columns {
+			for _, colInfo := range e.tblInfo.Columns {
+				if colInfo.Name == idxCol.Name {
+					index2Cols[i] = append(index2Cols[i], colInfo)
+					wantCols[colInfo.ID] = &colInfo.FieldType
+				}
+			}
+		}
+	}
+
 	// Decode the cols value in order.
 	var values map[int64]types.Datum
-	values, err = e.decodeValues(handle, sValue)
+	values, err = e.decodeValues(handle, sValue, wantCols)
 	if err != nil {
 		return err
 	}
@@ -841,17 +857,13 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 	// Update the indexes' collectors.
 	for j, idxInfo := range e.idxsInfo {
 		idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
-		for _, idxCol := range idxInfo.Columns {
-			for _, colInfo := range e.tblInfo.Columns {
-				if colInfo.Name == idxCol.Name {
-					v, err := e.getValueByInfo(colInfo, values)
-					if err != nil {
-						return err
-					}
-					idxVals = append(idxVals, v)
-					break
-				}
+		cols := index2Cols[j]
+		for _, colInfo := range cols {
+			v, err := e.getValueByInfo(colInfo, values)
+			if err != nil {
+				return err
 			}
+			idxVals = append(idxVals, v)
 		}
 		var bytes []byte
 		bytes, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, bytes, idxVals...)
