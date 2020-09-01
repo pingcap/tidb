@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -235,7 +236,11 @@ type LockCtx struct {
 	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
+<<<<<<< HEAD
 	CheckKeyExists        map[string]struct{}
+=======
+	Stats                 *execdetails.LockKeysDetails
+>>>>>>> 915d84d... executor: add pessimistic lock keys runtime information (#19547)
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
