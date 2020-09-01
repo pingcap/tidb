@@ -472,13 +472,13 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit abc1 9223372036 %s %s", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB abc2 9223372036 %s %s", "autocommit", strings.Repeat("x", 100)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 100)),
 		))
 	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit abc1 9223372036 %s %s", "in transaction", "do something"),
-			fmt.Sprintf("2 user-2 localhost test Init DB abc2 9223372036 %s %s", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "do something"),
+			fmt.Sprintf("2 user-2 localhost test Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 101)),
 		))
 
 	sm = &mockSessionManager{make(map[uint64]*util.ProcessInfo, 2)}
@@ -512,13 +512,13 @@ func (s *testTableSuite) TestSomeTables(c *C) {
 		))
 	tk.MustQuery("SHOW PROCESSLIST;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit abc1 9223372036 %s %s", "in transaction", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB abc2 9223372036 %s %s", "autocommit", strings.Repeat("x", 100)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 100)),
 		))
 	tk.MustQuery("SHOW FULL PROCESSLIST;").Sort().Check(
 		testkit.Rows(
-			fmt.Sprintf("1 user-1 localhost information_schema Quit abc1 9223372036 %s %s", "in transaction", "<nil>"),
-			fmt.Sprintf("2 user-2 localhost <nil> Init DB abc2 9223372036 %s %s", "autocommit", strings.Repeat("x", 101)),
+			fmt.Sprintf("1 user-1 localhost information_schema Quit 9223372036 %s %s", "in transaction", "<nil>"),
+			fmt.Sprintf("2 user-2 localhost <nil> Init DB 9223372036 %s %s", "autocommit", strings.Repeat("x", 101)),
 		))
 	tk.MustQuery("select * from information_schema.PROCESSLIST where db is null;").Check(
 		testkit.Rows(

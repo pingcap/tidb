@@ -68,7 +68,6 @@ func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 		pi.Host,
 		db,
 		mysql.Command2Str[pi.Command],
-		pi.Digest,
 		t,
 		serverStatus2Str(pi.State),
 		info,
