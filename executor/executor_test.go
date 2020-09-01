@@ -6170,13 +6170,15 @@ func (s *testSuite) TestKillTableReader(c *C) {
 	wg.Wait()
 }
 
-func (s *testSuite) TestTableReaderOOMAction(c *C) {
+func (s *testSuite) TestCoprocessorOOMAction(c *C) {
+	// Assert Coprocessor OOMAction
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t5")
 	tk.MustExec("create table t5(id int)")
 	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
 	tk.MustQuery(`split table t5 between (0) and (10000) regions 10`).Check(testkit.Rows("9 1"))
+	// assert oom action worked in non keep order case
 	count := 10
 	for i := 0; i < count; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t5 (id) values (%v)", i))
@@ -6185,17 +6187,20 @@ func (s *testSuite) TestTableReaderOOMAction(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	tk.MustExec("set tidb_distsql_scan_concurrency = 5")
-	// assert delegate to fallback action
-	tk.MustExec("set @@tidb_mem_quota_query=1;")
-	err := tk.QueryToErr("select * from t5")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
-	// assert 
-	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", count * 20))
+	tk.MustExec("set tidb_distsql_scan_concurrency = 15")
+	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", count*20))
 	var expect []string
 	for i := 0; i < count; i++ {
 		expect = append(expect, fmt.Sprintf("%v", i))
 	}
 	tk.MustQuery("select * from t5").Sort().Check(testkit.Rows(expect...))
+	// assert oom action worked by max consumed > memory quota
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(count*20))
+
+	// assert delegate to fallback action
+	tk.MustExec("set tidb_distsql_scan_concurrency = 2")
+	tk.MustExec("set @@tidb_mem_quota_query=1;")
+	err := tk.QueryToErr("select * from t5")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 }
