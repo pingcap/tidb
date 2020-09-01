@@ -52,6 +52,7 @@ func DecodePlan(planString string) (string, error) {
 	pd := decoderPool.Get().(*planDecoder)
 	defer decoderPool.Put(pd)
 	pd.buf.Reset()
+	pd.addHeader = true
 	return pd.decode(planString)
 }
 
@@ -63,14 +64,17 @@ func DecodeNormalizedPlan(planString string) (string, error) {
 	pd := decoderPool.Get().(*planDecoder)
 	defer decoderPool.Put(pd)
 	pd.buf.Reset()
+	pd.addHeader = false
 	return pd.buildPlanTree(planString)
 }
 
 type planDecoder struct {
-	buf       bytes.Buffer
-	depths    []int
-	indents   [][]rune
-	planInfos []*planInfo
+	buf              bytes.Buffer
+	depths           []int
+	indents          [][]rune
+	planInfos        []*planInfo
+	addHeader        bool
+	cacheParentIdent map[int]int
 }
 
 type planInfo struct {
@@ -95,7 +99,6 @@ func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
 	}
 	pd.depths = pd.depths[:0]
 	pd.planInfos = pd.planInfos[:0]
-	planInfos := pd.planInfos
 	for _, node := range nodes {
 		p, err := decodePlanInfo(node)
 		if err != nil {
@@ -104,20 +107,26 @@ func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
 		if p == nil {
 			continue
 		}
-		planInfos = append(planInfos, p)
+		pd.planInfos = append(pd.planInfos, p)
 		pd.depths = append(pd.depths, p.depth)
+	}
+
+	if pd.addHeader {
+		pd.addPlanHeader()
 	}
 
 	// Calculated indentation of plans.
 	pd.initPlanTreeIndents()
+	pd.cacheParentIdent = make(map[int]int)
 	for i := 1; i < len(pd.depths); i++ {
 		parentIndex := pd.findParentIndex(i)
 		pd.fillIndent(parentIndex, i)
 	}
-	// Align the value of plan fields.
-	pd.alignFields(planInfos)
 
-	for i, p := range planInfos {
+	// Align the value of plan fields.
+	pd.alignFields()
+
+	for i, p := range pd.planInfos {
 		if i > 0 {
 			pd.buf.WriteByte(lineBreaker)
 		}
@@ -132,6 +141,28 @@ func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
 		}
 	}
 	return pd.buf.String(), nil
+}
+
+func (pd *planDecoder) addPlanHeader() {
+	if len(pd.planInfos) == 0 {
+		return
+	}
+	header := &planInfo{
+		depth:  0,
+		fields: []string{"id", "task", "estRows", "operator info", "actRows", "execution info", "memory", "disk"},
+	}
+	if len(pd.planInfos[0].fields) < len(header.fields) {
+		// plan without runtime information.
+		header.fields = header.fields[:len(pd.planInfos[0].fields)]
+	}
+	planInfos := make([]*planInfo, 0, len(pd.planInfos)+1)
+	depths := make([]int, 0, len(pd.planInfos)+1)
+	planInfos = append(planInfos, header)
+	planInfos = append(planInfos, pd.planInfos...)
+	depths = append(depths, header.depth)
+	depths = append(depths, pd.depths...)
+	pd.planInfos = planInfos
+	pd.depths = depths
 }
 
 func (pd *planDecoder) initPlanTreeIndents() {
@@ -151,13 +182,20 @@ func (pd *planDecoder) initPlanTreeIndents() {
 }
 
 func (pd *planDecoder) findParentIndex(childIndex int) int {
+	pd.cacheParentIdent[pd.depths[childIndex]] = childIndex
+	parentDepth := pd.depths[childIndex] - 1
+	if parentIdx, ok := pd.cacheParentIdent[parentDepth]; ok {
+		return parentIdx
+	}
 	for i := childIndex - 1; i > 0; i-- {
-		if pd.depths[i]+1 == pd.depths[childIndex] {
+		if pd.depths[i] == parentDepth {
+			pd.cacheParentIdent[pd.depths[i]] = i
 			return i
 		}
 	}
 	return 0
 }
+
 func (pd *planDecoder) fillIndent(parentIndex, childIndex int) {
 	depth := pd.depths[childIndex]
 	if depth == 0 {
@@ -173,27 +211,43 @@ func (pd *planDecoder) fillIndent(parentIndex, childIndex int) {
 	}
 }
 
-func (pd *planDecoder) alignFields(planInfos []*planInfo) {
-	if len(planInfos) == 0 {
+func (pd *planDecoder) alignFields() {
+	if len(pd.planInfos) == 0 {
 		return
 	}
-	fieldsLen := len(planInfos[0].fields)
+	// Align fields length. Some plan may doesn't have runtime info, need append `` to align with other plan fields.
+	maxLen := -1
+	for _, p := range pd.planInfos {
+		if len(p.fields) > maxLen {
+			maxLen = len(p.fields)
+		}
+	}
+	for _, p := range pd.planInfos {
+		for len(p.fields) < maxLen {
+			p.fields = append(p.fields, "")
+		}
+	}
+
+	fieldsLen := len(pd.planInfos[0].fields)
 	// Last field no need to align.
 	fieldsLen--
+	var buf []byte
 	for colIdx := 0; colIdx < fieldsLen; colIdx++ {
-		maxFieldLen := pd.getMaxFieldLength(colIdx, planInfos)
-		for rowIdx, p := range planInfos {
+		maxFieldLen := pd.getMaxFieldLength(colIdx)
+		for rowIdx, p := range pd.planInfos {
 			fillLen := maxFieldLen - pd.getPlanFieldLen(rowIdx, colIdx, p)
-			for i := 0; i < fillLen; i++ {
-				p.fields[colIdx] += " "
+			for len(buf) < fillLen {
+				buf = append(buf, ' ')
 			}
+			buf = buf[:fillLen]
+			p.fields[colIdx] += string(buf)
 		}
 	}
 }
 
-func (pd *planDecoder) getMaxFieldLength(idx int, planInfos []*planInfo) int {
+func (pd *planDecoder) getMaxFieldLength(idx int) int {
 	maxLength := -1
-	for rowIdx, p := range planInfos {
+	for rowIdx, p := range pd.planInfos {
 		l := pd.getPlanFieldLen(rowIdx, idx, p)
 		if l > maxLength {
 			maxLength = l
@@ -253,7 +307,8 @@ func decodePlanInfo(str string) (*planInfo, error) {
 }
 
 // EncodePlanNode is used to encode the plan to a string.
-func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float64, explainInfo string, buf *bytes.Buffer) {
+func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float64,
+	explainInfo, actRows, analyzeInfo, memoryInfo, diskInfo string, buf *bytes.Buffer) {
 	buf.WriteString(strconv.Itoa(depth))
 	buf.WriteByte(separator)
 	buf.WriteString(encodeID(planType, pid))
@@ -267,6 +322,17 @@ func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float
 	buf.WriteString(strconv.FormatFloat(rowCount, 'f', -1, 64))
 	buf.WriteByte(separator)
 	buf.WriteString(explainInfo)
+	// Check whether has runtime info.
+	if len(actRows) > 0 || len(analyzeInfo) > 0 || len(memoryInfo) > 0 || len(diskInfo) > 0 {
+		buf.WriteByte(separator)
+		buf.WriteString(actRows)
+		buf.WriteByte(separator)
+		buf.WriteString(analyzeInfo)
+		buf.WriteByte(separator)
+		buf.WriteString(memoryInfo)
+		buf.WriteByte(separator)
+		buf.WriteString(diskInfo)
+	}
 	buf.WriteByte(lineBreaker)
 }
 

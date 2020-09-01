@@ -106,6 +106,7 @@ const (
 	preferRightAsINLMJInner
 	preferHashJoin
 	preferMergeJoin
+	preferBCJoin
 	preferHashAgg
 	preferStreamAgg
 )
@@ -659,6 +660,8 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 		return false, nil
 	}
 
+	path.PkCol = pkCol
+
 	path.Ranges = ranger.FullIntRange(isUnsigned)
 	if len(conds) == 0 {
 		return false, nil
@@ -729,8 +732,17 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
 		handleCol := ds.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
-			path.IdxCols = append(path.IdxCols, handleCol)
-			path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+			alreadyHandle := false
+			for _, col := range path.IdxCols {
+				if col.ID == model.ExtraHandleID || col.Equal(nil, handleCol) {
+					alreadyHandle = true
+				}
+			}
+			// Don't add one column twice to the index. May cause unexpected errors.
+			if !alreadyHandle {
+				path.IdxCols = append(path.IdxCols, handleCol)
+				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+			}
 		}
 	}
 	if len(path.IdxCols) != 0 {

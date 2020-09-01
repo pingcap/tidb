@@ -162,7 +162,7 @@ Loop:
 		default:
 		}
 
-		bo := NewBackoffer(ctx, locateRegionMaxBackoff)
+		bo := NewBackofferWithVars(ctx, locateRegionMaxBackoff, nil)
 
 		rangeEndKey, err := s.store.GetRegionCache().BatchLoadRegionsFromKey(bo, key, s.regionsPerTask)
 		if err != nil {

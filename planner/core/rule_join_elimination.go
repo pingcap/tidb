@@ -164,7 +164,8 @@ func GetDupAgnosticAggCols(
 		if !aggDesc.HasDistinct &&
 			aggDesc.Name != ast.AggFuncFirstRow &&
 			aggDesc.Name != ast.AggFuncMax &&
-			aggDesc.Name != ast.AggFuncMin {
+			aggDesc.Name != ast.AggFuncMin &&
+			aggDesc.Name != ast.AggFuncApproxCountDistinct {
 			// If not all aggregate functions are duplicate agnostic,
 			// we should clean the aggCols, so `return true, newAggCols[:0]`.
 			return true, newAggCols[:0]

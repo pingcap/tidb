@@ -436,6 +436,17 @@
         ]
       },
       {
+        "SQL": "select approx_count_distinct(case when a > 0 and a <= 1000 then b end) from t",
+        "Plan": [
+          "HashAgg_10 1.00 root  funcs:approx_count_distinct(test.t.b)->Column#3",
+          "└─TableReader_11 250.00 root  data:TableRangeScan_12",
+          "  └─TableRangeScan_12 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "4"
+        ]
+      },
+      {
         "SQL": "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b",
         "Plan": [
           "Projection_13 8000.00 root  Column#3, Column#4, Column#5, test.t.b, Column#6, Column#7, Column#8, Column#9, Column#10",

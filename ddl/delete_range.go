@@ -34,15 +34,21 @@ import (
 )
 
 const (
-	insertDeleteRangeSQL = `INSERT IGNORE INTO mysql.gc_delete_range VALUES ("%d", "%d", "%s", "%s", "%d")`
+	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
+	insertDeleteRangeSQLValue  = `("%d", "%d", "%s", "%s", "%d")`
+	insertDeleteRangeSQL       = insertDeleteRangeSQLPrefix + insertDeleteRangeSQLValue
 
 	delBatchSize = 65536
 	delBackLog   = 128
 )
 
-// enableEmulatorGC means whether to enable emulator GC. The default is enable.
-// In some unit tests, we want to stop emulator GC, then wen can set enableEmulatorGC to 0.
-var emulatorGCEnable = int32(1)
+var (
+	// enableEmulatorGC means whether to enable emulator GC. The default is enable.
+	// In some unit tests, we want to stop emulator GC, then wen can set enableEmulatorGC to 0.
+	emulatorGCEnable = int32(1)
+	// batchInsertDeleteRangeSize is the maximum size for each batch insert statement in the delete-range.
+	batchInsertDeleteRangeSize = 256
+)
 
 type delRangeManager interface {
 	// addDelRangeJob add a DDL job into gc_delete_range table.
@@ -90,6 +96,7 @@ func (dr *delRange) addDelRangeJob(job *model.Job) error {
 
 	err = insertJobIntoDeleteRangeTable(ctx, job)
 	if err != nil {
+		logutil.BgLogger().Error("[ddl] add job into delete-range table failed", zap.Int64("jobID", job.ID), zap.String("jobType", job.Type.String()), zap.Error(err))
 		return errors.Trace(err)
 	}
 	if !dr.storeSupport {
@@ -251,10 +258,12 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		if err := job.DecodeArgs(&tableIDs); err != nil {
 			return errors.Trace(err)
 		}
-		for _, tableID := range tableIDs {
-			startKey := tablecodec.EncodeTablePrefix(tableID)
-			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-			if err := doInsert(s, job.ID, tableID, startKey, endKey, now); err != nil {
+		for i := 0; i < len(tableIDs); i += batchInsertDeleteRangeSize {
+			batchEnd := len(tableIDs)
+			if batchEnd > i+batchInsertDeleteRangeSize {
+				batchEnd = i + batchInsertDeleteRangeSize
+			}
+			if err := doBatchInsert(s, job.ID, tableIDs[i:batchEnd], now); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -263,7 +272,7 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
 		var startKey kv.Key
 		var physicalTableIDs []int64
-		if err := job.DecodeArgs(startKey, &physicalTableIDs); err != nil {
+		if err := job.DecodeArgs(&startKey, &physicalTableIDs); err != nil {
 			return errors.Trace(err)
 		}
 		if len(physicalTableIDs) > 0 {
@@ -280,13 +289,17 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
 		return doInsert(s, job.ID, tableID, startKey, endKey, now)
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
-		var physicalTableID int64
-		if err := job.DecodeArgs(&physicalTableID); err != nil {
+		var physicalTableIDs []int64
+		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
 			return errors.Trace(err)
 		}
-		startKey := tablecodec.EncodeTablePrefix(physicalTableID)
-		endKey := tablecodec.EncodeTablePrefix(physicalTableID + 1)
-		return doInsert(s, job.ID, physicalTableID, startKey, endKey, now)
+		for _, physicalTableID := range physicalTableIDs {
+			startKey := tablecodec.EncodeTablePrefix(physicalTableID)
+			endKey := tablecodec.EncodeTablePrefix(physicalTableID + 1)
+			if err := doInsert(s, job.ID, physicalTableID, startKey, endKey, now); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		tableID := job.TableID
@@ -338,6 +351,23 @@ func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, end
 	startKeyEncoded := hex.EncodeToString(startKey)
 	endKeyEncoded := hex.EncodeToString(endKey)
 	sql := fmt.Sprintf(insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
+	_, err := s.Execute(context.Background(), sql)
+	return errors.Trace(err)
+}
+
+func doBatchInsert(s sqlexec.SQLExecutor, jobID int64, tableIDs []int64, ts uint64) error {
+	logutil.BgLogger().Info("[ddl] batch insert into delete-range table", zap.Int64("jobID", jobID), zap.Int64s("elementIDs", tableIDs))
+	sql := insertDeleteRangeSQLPrefix
+	for i, tableID := range tableIDs {
+		startKey := tablecodec.EncodeTablePrefix(tableID)
+		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+		startKeyEncoded := hex.EncodeToString(startKey)
+		endKeyEncoded := hex.EncodeToString(endKey)
+		sql += fmt.Sprintf(insertDeleteRangeSQLValue, jobID, tableID, startKeyEncoded, endKeyEncoded, ts)
+		if i != len(tableIDs)-1 {
+			sql += ","
+		}
+	}
 	_, err := s.Execute(context.Background(), sql)
 	return errors.Trace(err)
 }
