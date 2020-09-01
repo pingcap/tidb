@@ -45,6 +45,7 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	TiDBOptBCJ = "tidb_opt_broadcast_join"
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -201,6 +202,8 @@ const (
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
 	// tidb_opt_copcpu_factor is the CPU cost of processing one expression for one row in coprocessor.
 	TiDBOptCopCPUFactor = "tidb_opt_copcpu_factor"
+	// tidb_opt_tiflash_concurrency_factor is concurrency number of tiflash computation.
+	TiDBOptTiFlashConcurrencyFactor = "tidb_opt_tiflash_concurrency_factor"
 	// tidb_opt_network_factor is the network cost of transferring 1 byte data.
 	TiDBOptNetworkFactor = "tidb_opt_network_factor"
 	// tidb_opt_scan_factor is the IO cost of scanning 1 byte data on TiKV.
@@ -426,11 +429,13 @@ const (
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
 	DefOptAggPushDown                  = false
+	DefOptBCJ                          = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
 	DefOptCPUFactor                    = 3.0
 	DefOptCopCPUFactor                 = 3.0
+	DefOptTiFlashConcurrencyFactor     = 24.0
 	DefOptNetworkFactor                = 1.0
 	DefOptScanFactor                   = 1.5
 	DefOptDescScanFactor               = 3.0

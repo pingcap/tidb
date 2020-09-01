@@ -171,7 +171,9 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 		initPdAddrs()
 		s.pdAddr = <-pdAddrChan
 		var d tikv.Driver
-		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TxnLocalLatches.Enabled = false
+		})
 		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
@@ -2462,11 +2464,10 @@ func (s *testSessionSuite2) TestStatementErrorInTransaction(c *C) {
 func (s *testSessionSerialSuite) TestStatementCountLimit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table stmt_count_limit (id int)")
-	saved := config.GetGlobalConfig().Performance.StmtCountLimit
-	config.GetGlobalConfig().Performance.StmtCountLimit = 3
-	defer func() {
-		config.GetGlobalConfig().Performance.StmtCountLimit = saved
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.StmtCountLimit = 3
+	})
 	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin")
 	tk.MustExec("insert into stmt_count_limit values (1)")
@@ -2488,11 +2489,10 @@ func (s *testSessionSerialSuite) TestBatchCommit(c *C) {
 	tk.MustExec("set tidb_batch_commit = 1")
 	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("create table t (id int)")
-	saved := config.GetGlobalConfig().Performance
-	config.GetGlobalConfig().Performance.StmtCountLimit = 3
-	defer func() {
-		config.GetGlobalConfig().Performance = saved
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.StmtCountLimit = 3
+	})
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("SET SESSION autocommit = 1")
 	tk.MustExec("begin")
@@ -2756,11 +2756,10 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 
 	// test for disable transaction local latch
 	tk1.Se.GetSessionVars().InRestrictedSQL = false
-	orgCfg := config.GetGlobalConfig()
-	disableLatchCfg := *orgCfg
-	disableLatchCfg.TxnLocalLatches.Enabled = false
-	config.StoreGlobalConfig(&disableLatchCfg)
-	defer config.StoreGlobalConfig(orgCfg)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TxnLocalLatches.Enabled = false
+	})
 	tk1.MustExec("begin")
 	tk1.MustExec("update no_retry set id = 9")
 
@@ -2772,9 +2771,9 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 
-	enableLatchCfg := *orgCfg
-	enableLatchCfg.TxnLocalLatches.Enabled = true
-	config.StoreGlobalConfig(&enableLatchCfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TxnLocalLatches.Enabled = true
+	})
 	tk1.MustExec("begin")
 	tk2.MustExec("alter table no_retry add index idx(id)")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
