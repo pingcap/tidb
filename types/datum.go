@@ -1407,7 +1407,7 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		if ok {
 			e.Value, e.Name = origValue, origName
 		} else {
-			e, err = ParseEnumValue(target.Elems, uint64(e.Value))
+			e, err = ParseEnumValue(target.Elems, origValue)
 		}
 	default:
 		var uintDatum Datum
