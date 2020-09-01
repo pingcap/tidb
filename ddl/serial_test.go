@@ -167,6 +167,20 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	_, err = tk.Exec("create table t1(c1 int not null, primary key(c1) invisible);")
 	c.Assert(ddl.ErrPKIndexCantBeInvisible.Equal(err), IsTrue)
 	tk.MustExec("create table t2 (a int, b int not null, primary key(a), unique(b) invisible);")
+
+	// Test drop clustered primary key.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.MustExec("create table t(a int, b varchar(64), primary key(b));")
+	tk.MustExec("insert into t values(1,'a'), (2, 'b');")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
+	errMsg := "[ddl:8200]Unsupported drop primary key when the table is using clustered index"
+	tk.MustGetErrMsg("alter table t drop primary key;", errMsg)
 }
 
 func (s *testSerialSuite) TestDropAutoIncrementIndex(c *C) {
@@ -364,6 +378,8 @@ func (s *testSerialSuite) TestGetTableEndCommonHandle(c *C) {
 	tk.MustExec("set @@tidb_enable_clustered_index = true")
 
 	tk.MustExec("create table t(a varchar(15), b bigint, c int, primary key (a, b))")
+	tk.MustExec("create table t1(a varchar(15), b bigint, c int, primary key (a(2), b))")
+
 	is := s.dom.InfoSchema()
 	d := s.dom.DDL()
 	tbl, err := is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t"))
@@ -372,17 +388,28 @@ func (s *testSerialSuite) TestGetTableEndCommonHandle(c *C) {
 
 	// test empty table
 	checkGetMaxTableRowID(testCtx, s.store, true, nil)
-
 	tk.MustExec("insert into t values('abc', 1, 10)")
 	expectedHandle := MustNewCommonHandle(c, "abc", 1)
 	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
-
 	tk.MustExec("insert into t values('abchzzzzzzzz', 1, 10)")
 	expectedHandle = MustNewCommonHandle(c, "abchzzzzzzzz", 1)
 	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
-
 	tk.MustExec("insert into t values('a', 1, 10)")
 	tk.MustExec("insert into t values('ab', 1, 10)")
+	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
+
+	// Test MaxTableRowID with prefixed primary key.
+	tbl, err = is.TableByName(model.NewCIStr("test_get_endhandle"), model.NewCIStr("t1"))
+	c.Assert(err, IsNil)
+	is = s.dom.InfoSchema()
+	d = s.dom.DDL()
+	testCtx = newTestMaxTableRowIDContext(c, d, tbl)
+	checkGetMaxTableRowID(testCtx, s.store, true, nil)
+	tk.MustExec("insert into t1 values('abccccc', 1, 10)")
+	expectedHandle = MustNewCommonHandle(c, "ab", 1)
+	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
+	tk.MustExec("insert into t1 values('azzzz', 1, 10)")
+	expectedHandle = MustNewCommonHandle(c, "az", 1)
 	checkGetMaxTableRowID(testCtx, s.store, false, expectedHandle)
 }
 
@@ -992,6 +1019,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	assertDefault("create table t (a bigint auto_random(2) primary key default 5)")
 	mustExecAndDrop("create table t (a bigint auto_random primary key)", func() {
 		assertDefault("alter table t modify column a bigint auto_random default 3")
+		assertDefault("alter table t alter column a set default 3")
 	})
 
 	// Overflow data type max length.
@@ -1351,6 +1379,8 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t6 values (1, 2)")
 	tk.MustQuery("select * from t6").Check(testkit.Rows("1 2"))
 	tk.MustGetErrCode("alter table t6 drop primary key", errno.ErrPKIndexCantBeInvisible)
+	res := tk.MustQuery("show index from t6 where Key_name='PRIMARY';")
+	c.Check(len(res.Rows()), Equals, 1)
 }
 
 func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
@@ -1408,4 +1438,21 @@ func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t7"))
 	c.Assert(err, IsNil)
 	c.Assert(tbl.Meta().IsCommonHandle, IsFalse)
+}
+
+func (s *testSerialSuite) TestCreateTableNoBlock(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkOwnerCheckAllVersionsWaitTime"), IsNil)
+	}()
+	save := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(1)
+	defer func() {
+		variable.SetDDLErrorCountLimit(save)
+	}()
+
+	tk.MustExec("drop table if exists t")
+	_, err := tk.Exec("create table t(a int)")
+	c.Assert(err, NotNil)
 }

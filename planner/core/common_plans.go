@@ -521,6 +521,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 			x.Handle = kv.IntHandle(iv)
 			if x.PartitionInfo != nil {
+				if x.TblInfo.Partition.Type != model.PartitionTypeHash {
+					return errors.New("range partition table can not use plan cache")
+				}
 				num := x.TblInfo.Partition.Num
 				pos := math.Abs(iv) % int64(num)
 				x.PartitionInfo = &x.TblInfo.Partition.Definitions[pos]
@@ -533,6 +536,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 		}
 		if x.PartitionInfo != nil {
+			if x.TblInfo.Partition.Type != model.PartitionTypeHash {
+				return errors.New("range partition table can not use plan cache")
+			}
 			val := x.IndexValues[x.partitionColumnPos].GetInt64()
 			partitionID := val % int64(x.TblInfo.Partition.Num)
 			x.PartitionInfo = &x.TblInfo.Partition.Definitions[partitionID]
@@ -1197,12 +1203,22 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		return indexScan.IsPointGetByUniqueKey(ctx.GetSessionVars().StmtCtx), nil
 	case *PhysicalTableReader:
 		tableScan := v.TablePlans[0].(*PhysicalTableScan)
-		return len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx), nil
+		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPoint(ctx.GetSessionVars().StmtCtx)
+		if !isPointRange {
+			return false, nil
+		}
+		pkLength := 1
+		if tableScan.Table.IsCommonHandle {
+			pkIdx := tables.FindPrimaryIndex(tableScan.Table)
+			pkLength = len(pkIdx.Columns)
+		}
+		return len(tableScan.Ranges[0].LowVal) == pkLength, nil
 	case *PointGetPlan:
 		// If the PointGetPlan needs to read data using unique index (double read), we
 		// can't use max uint64, because using math.MaxUint64 can't guarantee repeatable-read
 		// and the data and index would be inconsistent!
-		return v.IndexInfo == nil, nil
+		isPointGet := v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle)
+		return isPointGet, nil
 	default:
 		return false, nil
 	}

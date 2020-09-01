@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	parsertypes "github.com/pingcap/parser/types"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
@@ -50,10 +51,12 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/admin"
+	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -1807,6 +1810,141 @@ func (s *testDBSuite4) TestAddIndexWithDupCols(c *C) {
 	tk.MustExec("drop table test_add_index_with_dup")
 }
 
+// checkGlobalIndexRow reads one record from global index and check. Only support int handle.
+func checkGlobalIndexRow(c *C, ctx sessionctx.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo,
+	pid int64, idxVals []types.Datum, rowVals []types.Datum) {
+	ctx.NewTxn(context.Background())
+	txn, err := ctx.Txn(true)
+	sc := ctx.GetSessionVars().StmtCtx
+	c.Assert(err, IsNil)
+
+	tblColMap := make(map[int64]*types.FieldType, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		tblColMap[col.ID] = &col.FieldType
+	}
+	idxColInfos := make([]rowcodec.ColInfo, 0, len(indexInfo.Columns))
+	for _, idxCol := range indexInfo.Columns {
+		col := tblInfo.Columns[idxCol.Offset]
+		idxColInfos = append(idxColInfos, rowcodec.ColInfo{
+			ID:         col.ID,
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.Flag),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
+		})
+	}
+
+	// Check local index entry does not exist.
+	localPrefix := tablecodec.EncodeTableIndexPrefix(pid, indexInfo.ID)
+	it, err := txn.Iter(localPrefix, nil)
+	c.Assert(err, IsNil)
+	// no local index entry.
+	c.Assert(it.Valid() && it.Key().HasPrefix(localPrefix), IsFalse)
+	it.Close()
+
+	// Check global index entry.
+	encodedValue, err := codec.EncodeKey(sc, nil, idxVals...)
+	c.Assert(err, IsNil)
+	key := tablecodec.EncodeIndexSeekKey(tblInfo.ID, indexInfo.ID, encodedValue)
+	c.Assert(err, IsNil)
+	value, err := txn.Get(context.Background(), key)
+	c.Assert(err, IsNil)
+	colVals, err := tablecodec.DecodeIndexKV(key, value, len(indexInfo.Columns),
+		tablecodec.HandleDefault, idxColInfos)
+	c.Assert(err, IsNil)
+	c.Assert(colVals, HasLen, len(idxVals)+2)
+	for i, val := range idxVals {
+		_, d, err := codec.DecodeOne(colVals[i])
+		c.Assert(err, IsNil)
+		c.Assert(d, DeepEquals, val)
+	}
+	_, d, err := codec.DecodeOne(colVals[len(idxVals)+1]) //pid
+	c.Assert(err, IsNil)
+	c.Assert(d.GetInt64(), Equals, pid)
+
+	_, d, err = codec.DecodeOne(colVals[len(idxVals)]) //handle
+	c.Assert(err, IsNil)
+	h := kv.IntHandle(d.GetInt64())
+	rowKey := tablecodec.EncodeRowKey(pid, h.Encoded())
+	rowValue, err := txn.Get(context.Background(), rowKey)
+	c.Assert(err, IsNil)
+	rowValueDatums, err := tablecodec.DecodeRowToDatumMap(rowValue, tblColMap, time.UTC)
+	c.Assert(err, IsNil)
+	c.Assert(rowValueDatums, NotNil)
+	for i, val := range rowVals {
+		c.Assert(rowValueDatums[tblInfo.Columns[i].ID], DeepEquals, val)
+	}
+}
+
+func (s *testSerialDBSuite) TestAddGlobalIndex(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table test_t1 (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("insert test_t1 values (1, 1)")
+	tk.MustExec("alter table test_t1 add unique index p_a (a);")
+	tk.MustExec("insert test_t1 values (2, 11)")
+	t := s.testGetTable(c, "test_t1")
+	tblInfo := t.Meta()
+	indexInfo := tblInfo.FindIndexByName("p_a")
+	c.Assert(indexInfo, NotNil)
+	c.Assert(indexInfo.Global, IsTrue)
+
+	ctx := s.s.(sessionctx.Context)
+	ctx.NewTxn(context.Background())
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+
+	// check row 1
+	pid := tblInfo.Partition.Definitions[0].ID
+	idxVals := []types.Datum{types.NewDatum(1)}
+	rowVals := []types.Datum{types.NewDatum(1), types.NewDatum(1)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	// check row 2
+	pid = tblInfo.Partition.Definitions[1].ID
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
+	txn.Commit(context.Background())
+
+	// Test add global Primary Key index
+	tk.MustExec("create table test_t2 (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("insert test_t2 values (1, 1)")
+	tk.MustExec("alter table test_t2 add primary key (a);")
+	tk.MustExec("insert test_t2 values (2, 11)")
+	t = s.testGetTable(c, "test_t2")
+	tblInfo = t.Meta()
+	indexInfo = t.Meta().FindIndexByName("primary")
+	c.Assert(indexInfo, NotNil)
+	c.Assert(indexInfo.Global, IsTrue)
+
+	ctx.NewTxn(context.Background())
+	txn, err = ctx.Txn(true)
+	c.Assert(err, IsNil)
+
+	// check row 1
+	pid = tblInfo.Partition.Definitions[0].ID
+	idxVals = []types.Datum{types.NewDatum(1)}
+	rowVals = []types.Datum{types.NewDatum(1), types.NewDatum(1)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	// check row 2
+	pid = tblInfo.Partition.Definitions[1].ID
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(11)}
+	checkGlobalIndexRow(c, ctx, tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	txn.Commit(context.Background())
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = false
+	})
+}
+
 func (s *testDBSuite) showColumns(tk *testkit.TestKit, c *C, tableName string) [][]interface{} {
 	return s.mustQuery(tk, c, fmt.Sprintf("show columns from %s", tableName))
 }
@@ -2393,6 +2531,10 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	failSQL = "create table t_enum (a enum('abc','Abc')) charset=utf8 collate=utf8_general_ci;"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_unicode_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	// test for set column
 	failSQL = "create table t_enum (a set('e','e'));"
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
@@ -2402,6 +2544,12 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
 	_, err = tk.Exec("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;")
 	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
+	failSQL = "create table t_enum (a set('e','E')) charset=utf8 collate=utf8_unicode_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	failSQL = "create table t_enum (a set('ss','ß')) charset=utf8 collate=utf8_unicode_ci;"
+	tk.MustGetErrCode(failSQL, errno.ErrDuplicatedValueInType)
+	_, err = tk.Exec("create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;")
+	c.Assert(err.Error(), Equals, "[types:1291]Column 'a' has duplicated value 'ß' in ENUM")
 
 	// test for table option "union" not supported
 	tk.MustExec("use test")
@@ -3526,7 +3674,49 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 	s.mustExec(tk, c, "drop table t1")
 }
 
+func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull", `return("insert into test.tt values (NULL, NULL)")`), IsNil)
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+		failpoint.Disable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull")
+	}()
+
+	tk.MustExec(`create table tt (a bigint, b int, unique index idx(a));`)
+	tk.MustExec("insert into tt values (1,1),(2,2),(3,3);")
+	_, err := tk.Exec("alter table tt modify a int not null;")
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 1")
+	tk.MustExec("drop table tt")
+}
+
 func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
+	sql1 := "alter table t1 change c2 c2 int not null;"
+	sql2 := "alter table t1 change c2 c2 int not null;"
+	testModifyColumnNullToNotNull(c, s.testDBSuite, false, sql1, sql2)
+}
+
+func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal(c *C) {
+	sql1 := "alter table t1 change c2 c2 tinyint not null;"
+	sql2 := "alter table t1 change c2 c2 tinyint not null;"
+	testModifyColumnNullToNotNull(c, s.testDBSuite, true, sql1, sql2)
+	c2 := getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2")
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeTiny)
+}
+
+func getModifyColumn(c *C, ctx sessionctx.Context, db, tbl, colName string) *table.Column {
+	t := testGetTableByName(c, ctx, db, tbl)
+	for _, col := range t.Cols() {
+		if col.Name.L == colName {
+			return col
+		}
+	}
+	return nil
+}
+
+func testModifyColumnNullToNotNull(c *C, s *testDBSuite, enableChangeColumnType bool, sql1, sql2 string) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk2 := testkit.NewTestKit(c, s.store)
 	tk2.MustExec("use test_db")
@@ -3534,16 +3724,16 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	s.mustExec(tk, c, "drop table if exists t1")
 	s.mustExec(tk, c, "create table t1 (c1 int, c2 int);")
 
-	tbl := s.testGetTable(c, "t1")
-	getModifyColumn := func() *table.Column {
-		t := s.testGetTable(c, "t1")
-		for _, col := range t.Cols() {
-			if col.Name.L == "c2" {
-				return col
-			}
-		}
-		return nil
+	if enableChangeColumnType {
+		enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
+		tk.Se.GetSessionVars().EnableChangeColumnType = true
+		defer func() {
+			tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+		}()
 	}
+
+	tbl := s.testGetTable(c, "t1")
+	getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2")
 
 	originalHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -3563,10 +3753,14 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 		times++
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	_, err := tk.Exec("alter table t1 change c2 c2 int not null;")
+	_, err := tk.Exec(sql1)
 	c.Assert(checkErr, IsNil)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
+	if enableChangeColumnType {
+		c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'c2' at row 1")
+	} else {
+		c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
+	}
 	tk.MustQuery("select * from t1").Check(testkit.Rows("<nil> <nil>"))
 
 	// Check insert error when column has PreventNullInsertFlag.
@@ -3582,10 +3776,10 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 		_, checkErr = tk2.Exec("insert into t1 values ();")
 	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
-	tk.MustExec("alter table t1 change c2 c2 bigint not null;")
+	tk.MustExec(sql2)
 	c.Assert(checkErr.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
 
-	c2 := getModifyColumn()
+	c2 := getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2")
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
 	c.Assert(mysql.HasPreventNullInsertFlag(c2.Flag), IsFalse)
 	_, err = tk.Exec("insert into t1 values ();")
@@ -4073,6 +4267,44 @@ func (s *testDBSuite4) TestIssue9100(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:1503]A UNIQUE INDEX must include all columns in the table's partitioning function")
 	_, err = tk.Exec("alter table issue9100t2 add primary key p_col1 (col1)")
 	c.Assert(err.Error(), Equals, "[ddl:1503]A PRIMARY must include all columns in the table's partitioning function")
+}
+
+func (s *testSerialDBSuite) TestProcessColumnFlags(c *C) {
+	// check `processColumnFlags()`
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t(a year(4) comment 'xxx', b year, c bit)")
+	defer s.mustExec(tk, c, "drop table t;")
+
+	check := func(n string, f func(uint) bool) {
+		t := testGetTableByName(c, tk.Se, "test_db", "t")
+		for _, col := range t.Cols() {
+			if strings.EqualFold(col.Name.L, n) {
+				c.Assert(f(col.Flag), IsTrue)
+				break
+			}
+		}
+	}
+
+	yearcheck := func(f uint) bool {
+		return mysql.HasUnsignedFlag(f) && mysql.HasZerofillFlag(f) && !mysql.HasBinaryFlag(f)
+	}
+
+	tk.MustExec("alter table t modify a year(4)")
+	check("a", yearcheck)
+
+	tk.MustExec("alter table t modify a year(4) unsigned")
+	check("a", yearcheck)
+
+	tk.MustExec("alter table t modify a year(4) zerofill")
+
+	tk.MustExec("alter table t modify b year")
+	check("b", yearcheck)
+
+	tk.MustExec("alter table t modify c bit")
+	check("c", func(f uint) bool {
+		return mysql.HasUnsignedFlag(f) && !mysql.HasBinaryFlag(f)
+	})
 }
 
 func (s *testSerialDBSuite) TestModifyColumnCharset(c *C) {
@@ -5139,8 +5371,81 @@ func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 	tk.MustExec("admin check table t1")
 }
 
+// TestAddIndexFailOnCaseWhenCanExit is used to close #19325.
+func (s *testSerialDBSuite) TestAddIndexFailOnCaseWhenCanExit(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 1)")
+	_, err := tk.Exec("alter table t add index idx(b)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:-1]DDL job rollback, error msg: job.ErrCount:512, mock unknown type: ast.whenClause.")
+	tk.MustExec("drop table if exists t")
+}
+
 func init() {
 	// Make sure it will only be executed once.
 	domain.SchemaOutOfDateRetryInterval = int64(50 * time.Millisecond)
 	domain.SchemaOutOfDateRetryTimes = int32(50)
+}
+
+func (s *testSerialDBSuite) TestCreateTableWithIntegerLengthWaring(c *C) {
+	// Inject the strict-integer-display-width variable in parser directly.
+	parsertypes.TiDBStrictIntegerDisplayWidth = true
+	defer func() {
+		parsertypes.TiDBStrictIntegerDisplayWidth = false
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	tk.MustExec("create table t(a tinyint(1))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a smallint(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a mediumint(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a integer(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int1(1))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int2(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int3(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int4(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int8(2))")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
 }
