@@ -162,7 +162,7 @@ func (record *memoryUsageAlarm) recordSQLAndSummaryTable(sm util.SessionManager,
 		}
 	}
 
-	fileName := filepath.Join(config.GetGlobalConfig().TempStoragePath, "running_sql"+record.lastCheckTime.Format(time.RFC3339))
+	fileName := filepath.Join(record.tmpDir, "running_sql"+record.lastCheckTime.Format(time.RFC3339))
 	record.lastLogFileName = append(record.lastLogFileName, fileName)
 	f, err := os.Create(fileName)
 	if err != nil {
@@ -197,6 +197,7 @@ func (record *memoryUsageAlarm) recordSQLAndSummaryTable(sm util.SessionManager,
 				buf.WriteString("\n")
 			}
 		}
+		buf.WriteString("\n")
 		_, err = f.WriteString(buf.String())
 	}
 
