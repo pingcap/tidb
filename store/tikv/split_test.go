@@ -16,6 +16,8 @@ package tikv
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
+	"unsafe"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -120,12 +122,27 @@ func (s *testSplitSuite) TestSplitBatchRegionsReq(c *C) {
 		keys = append(keys, []byte(fmt.Sprintf("%v", i)))
 	}
 	// let one region store all the keys above
-	s.store.regionCache.insertRegionToCache(&Region{
-		meta: &metapb.Region{
-			StartKey: []byte("0"),
-			EndKey:   []byte(fmt.Sprintf("%v", splitBatchRegionLimit*3+1)),
+	meta := &metapb.Region{
+		StartKey: []byte("0"),
+		EndKey:   []byte(fmt.Sprintf("%v", splitBatchRegionLimit*3+1)),
+		Peers: []*metapb.Peer{
+			{
+				Id:      1,
+				StoreId: 1,
+			},
 		},
-	})
+	}
+	rs := &RegionStore{
+		workTiKVIdx:    0,
+		workTiFlashIdx: 0,
+		stores:         make([]*Store, 0, len(meta.Peers)),
+		storeEpochs:    make([]uint32, 0, len(meta.Peers)),
+	}
+	r := &Region{
+		meta: meta,
+	}
+	atomic.StorePointer(&r.store, unsafe.Pointer(rs))
+	s.store.regionCache.insertRegionToCache(r)
 	_, err := s.store.splitBatchRegionsReq(s.bo, keys, false)
 	c.Assert(err, IsNil)
 }
