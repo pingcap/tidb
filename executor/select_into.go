@@ -33,14 +33,14 @@ type SelectIntoExec struct {
 	baseExecutor
 	intoOpt *ast.SelectIntoOption
 
-	lineBuf []byte
-	realBuf []byte
-	fieldBuf []byte
+	lineBuf   []byte
+	realBuf   []byte
+	fieldBuf  []byte
 	escapeBuf []byte
-	writer  *bufio.Writer
-	dstFile *os.File
-	chk     *chunk.Chunk
-	started bool
+	writer    *bufio.Writer
+	dstFile   *os.File
+	chk       *chunk.Chunk
+	started   bool
 }
 
 // Open implements the Executor Open interface.
