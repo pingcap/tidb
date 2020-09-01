@@ -7141,3 +7141,20 @@ func (s *testIntegrationSuite) TestIssue19504(c *C) {
 	tk.MustQuery("select (select count(c_int) from t2 where c_int = t1.c_int) c1, (select count(1) from t2 where c_int = t1.c_int) c2 from t1;").
 		Check(testkit.Rows("1 1", "0 0", "0 0"))
 }
+
+func (s *testIntegrationSerialSuite) TestIssue17720(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1, 2), (3, 4)")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0 (c int, d int)")
+	tk.MustExec("insert into t0 values (5, 6), (7, 8)")
+	tk.MustQuery("select * from t right join t0 on null where (a or false) is null").
+		Check(testkit.Rows("<nil> <nil> 5 6", "<nil> <nil> 7 8"))
+	tk.MustQuery("select * from t right join t0 on null where (a and true) is null").
+		Check(testkit.Rows("<nil> <nil> 5 6", "<nil> <nil> 7 8"))
+	tk.MustQuery("select * from t right join t0 on null where (null xor null) is null").
+		Check(testkit.Rows("<nil> <nil> 5 6", "<nil> <nil> 7 8"))
+}
