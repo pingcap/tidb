@@ -167,6 +167,20 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	_, err = tk.Exec("create table t1(c1 int not null, primary key(c1) invisible);")
 	c.Assert(ddl.ErrPKIndexCantBeInvisible.Equal(err), IsTrue)
 	tk.MustExec("create table t2 (a int, b int not null, primary key(a), unique(b) invisible);")
+
+	// Test drop clustered primary key.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.MustExec("create table t(a int, b varchar(64), primary key(b));")
+	tk.MustExec("insert into t values(1,'a'), (2, 'b');")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
+	errMsg := "[ddl:8200]Unsupported drop primary key when the table is using clustered index"
+	tk.MustGetErrMsg("alter table t drop primary key;", errMsg)
 }
 
 func (s *testSerialSuite) TestDropAutoIncrementIndex(c *C) {
