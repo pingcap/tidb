@@ -711,6 +711,13 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 	// Network cost of transferring rows of table scan to TiDB.
 	if t.tablePlan != nil {
 		t.cst += t.count() * sessVars.NetworkFactor * t.tblColHists.GetAvgRowSize(ctx, t.tablePlan.Schema().Columns, false, false)
+
+		tp := t.tablePlan
+		for len(tp.Children()) > 0 {
+			tp = tp.Children()[0]
+		}
+		ts := tp.(*PhysicalTableScan)
+		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 	}
 	t.cst /= copIterWorkers
 	newTask := &rootTask{
@@ -744,7 +751,6 @@ func finishCopTask(ctx sessionctx.Context, task task) task {
 			StoreType: ts.StoreType,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
 		p.stats = t.tablePlan.statsInfo()
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		newTask.p = p
 	}
 
