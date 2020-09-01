@@ -994,6 +994,15 @@ func (s *testPrivilegeSuite) TestLoadDataPrivilege(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testPrivilegeSuite) TestSelectIntoNoPremissions(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'nofile'@'localhost';`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nofile", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `select 1 into outfile '/tmp/doesntmatter-no-permissions'`)
+	message := "Access denied; you need (at least one of) the FILE privilege(s) for this operation"
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
+}
+
 func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER 'test_encode_u'@'localhost' identified by 'root';`)
