@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
+	"go.uber.org/zap"
 )
 
 var _ = SerialSuites(&testPessimisticSuite{})
@@ -1087,6 +1089,7 @@ func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
 	tk2.MustExec("set innodb_lock_wait_timeout = 1")
 	tk2.MustExec("begin pessimistic")
 	err := tk2.ExecToErr("insert into t1 values(2, 2, 2)")
+	logutil.BgLogger().Error("[for debug] expect lock wait timeout error", zap.Error(err))
 	c.Assert(tikv.ErrLockWaitTimeout.Equal(err), IsTrue)
 	err = tk2.ExecToErr("select * from t1 where c2 = 3 for update nowait")
 	c.Assert(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
@@ -1203,6 +1206,7 @@ func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 		tk2 := testkit.NewTestKitWithInit(c, s.store)
 		tk2.MustExec("begin pessimistic")
 		err := tk2.ExecToErr("select * from tu where z = 3 for update nowait")
+		logutil.BgLogger().Error("[for debug] expect lock wait nowait error", zap.Error(err))
 		c.Assert(terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into tu(x, y) values(2, 2);")
