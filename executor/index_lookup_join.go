@@ -681,6 +681,7 @@ func (e *IndexLookUpJoin) Close() error {
 	}
 	e.workerWg.Wait()
 	e.memTracker = nil
+	e.task = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
