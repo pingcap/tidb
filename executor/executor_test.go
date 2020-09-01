@@ -6292,7 +6292,7 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 	}
 	tk.MustQuery("select * from t5").Sort().Check(testkit.Rows(expect...))
 	// assert oom action worked by max consumed > memory quota
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(count*20))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(count*10))
 
 	// assert delegate to fallback action
 	tk.MustExec("set tidb_distsql_scan_concurrency = 2")
