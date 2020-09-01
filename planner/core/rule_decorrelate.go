@@ -175,9 +175,19 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan) (Logica
 					outerCol.RetType = first.RetTp
 					outerColsInSchema = append(outerColsInSchema, outerCol)
 				}
-				newAggFuncs = append(newAggFuncs, agg.AggFuncs...)
-				agg.AggFuncs = newAggFuncs
 				apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
+				resetNotNullFlag(apply.schema, outerPlan.Schema().Len(), apply.schema.Len())
+
+				for i, aggFunc := range agg.AggFuncs {
+					if idx := apply.schema.ColumnIndex(aggFunc.Args[0].(*expression.Column)); idx != -1 {
+						desc, err := aggregation.NewAggFuncDesc(agg.ctx, agg.AggFuncs[i].Name, []expression.Expression{apply.schema.Columns[idx]}, false)
+						if err != nil {
+							return nil, err
+						}
+						newAggFuncs = append(newAggFuncs, desc)
+					}
+				}
+				agg.AggFuncs = newAggFuncs
 				np, err := s.optimize(ctx, p)
 				if err != nil {
 					return nil, err
