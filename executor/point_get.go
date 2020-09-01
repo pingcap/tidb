@@ -21,12 +21,14 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -43,7 +45,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) Executor {
 		return nil
 	}
 	e := &PointGetExecutor{
-		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ExplainID()),
+		baseExecutor: newBaseExecutor(b.ctx, p.Schema(), p.ID()),
 	}
 	e.base().initCap = 1
 	e.base().maxChunkSize = 1
@@ -80,6 +82,8 @@ type PointGetExecutor struct {
 
 	// virtualColumnRetFieldTypes records the RetFieldTypes of virtual columns.
 	virtualColumnRetFieldTypes []*types.FieldType
+
+	stats *pointGetRuntimeStats
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -117,6 +121,10 @@ func (e *PointGetExecutor) Open(context.Context) error {
 
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
+	if e.runtimeStats != nil && e.snapshot != nil {
+		e.snapshot.DelOption(kv.CollectRuntimeStats)
+	}
+	e.done = false
 	return nil
 }
 
@@ -146,6 +154,15 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			return err
 		}
 	}
+	if e.runtimeStats != nil {
+		snapshotStats := &tikv.SnapshotRuntimeStats{}
+		e.stats = &pointGetRuntimeStats{
+			BasicRuntimeStats:    e.runtimeStats,
+			SnapshotRuntimeStats: snapshotStats,
+		}
+		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		e.snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
@@ -157,7 +174,11 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		tblID = e.tblInfo.ID
 	}
 	if e.idxInfo != nil {
-		e.idxKey, err = encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
+		hasNull := false
+		e.idxKey, hasNull, err = encodeIndexKey(e.base(), e.tblInfo, e.idxInfo, e.idxVals, tblID)
+		if hasNull {
+			return nil
+		}
 		if err != nil && !kv.ErrNotExist.Equal(err) {
 			return err
 		}
@@ -299,9 +320,13 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	return e.snapshot.Get(ctx, key)
 }
 
-func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, err error) {
+func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, idxVals []types.Datum, tID int64) (_ []byte, hasNull bool, err error) {
 	sc := e.ctx.GetSessionVars().StmtCtx
 	for i := range idxVals {
+		if idxVals[i].IsNull() {
+			hasNull = true
+			continue
+		}
 		colInfo := tblInfo.Columns[idxInfo.Columns[i].Offset]
 		// table.CastValue will append 0x0 if the string value's length is smaller than the BINARY column's length.
 		// So we don't use CastValue for string value for now.
@@ -313,19 +338,19 @@ func encodeIndexKey(e *baseExecutor, tblInfo *model.TableInfo, idxInfo *model.In
 		} else {
 			idxVals[i], err = table.CastValue(e.ctx, idxVals[i], colInfo, true, false)
 			if types.ErrOverflow.Equal(err) {
-				return nil, kv.ErrNotExist
+				return nil, false, kv.ErrNotExist
 			}
 		}
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 
 	encodedIdxVals, err := codec.EncodeKey(sc, nil, idxVals...)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), nil
+	return tablecodec.EncodeIndexSeekKey(tID, idxInfo.ID, encodedIdxVals), hasNull, nil
 }
 
 func decodeRowValToChunk(e *baseExecutor, tblInfo *model.TableInfo, handle int64, rowVal []byte, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
@@ -389,4 +414,26 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 		}
 	}
 	return nil
+}
+
+type pointGetRuntimeStats struct {
+	*execdetails.BasicRuntimeStats
+	*tikv.SnapshotRuntimeStats
+}
+
+func (e *pointGetRuntimeStats) String() string {
+	var basic, rpcStatsStr string
+	if e.BasicRuntimeStats != nil {
+		basic = e.BasicRuntimeStats.String()
+	}
+	if e.SnapshotRuntimeStats != nil {
+		rpcStatsStr = e.SnapshotRuntimeStats.String()
+	}
+	if rpcStatsStr == "" {
+		return basic
+	}
+	if basic == "" {
+		return rpcStatsStr
+	}
+	return basic + ", " + rpcStatsStr
 }

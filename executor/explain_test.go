@@ -240,3 +240,25 @@ func (s *testSuite2) checkExecutionInfo(c *C, tk *testkit.TestKit, sql string) {
 		c.Assert(strs[executionInfoCol], Not(Equals), "time:0s, loops:0, rows:0")
 	}
 }
+
+func (s *testSuite2) TestExplainAnalyzeActRowsNotEmpty(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index (a))")
+	tk.MustExec("insert into t values (1, 1)")
+
+	s.checkActRowsNotEmpty(c, tk, "explain analyze select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333")
+}
+
+func (s *testSuite2) checkActRowsNotEmpty(c *C, tk *testkit.TestKit, sql string) {
+	actRowsCol := 2
+	rows := tk.MustQuery(sql).Rows()
+	for _, row := range rows {
+		strs := make([]string, len(row))
+		for i, c := range row {
+			strs[i] = c.(string)
+		}
+
+		c.Assert(strs[actRowsCol], Not(Equals), "")
+	}
+}

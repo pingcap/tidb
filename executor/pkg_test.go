@@ -15,7 +15,7 @@ import (
 )
 
 var _ = Suite(&pkgTestSuite{})
-var _ = SerialSuites(&pkgTestSuite{})
+var _ = SerialSuites(&pkgTestSerialSuite{})
 
 type pkgTestSuite struct {
 }
@@ -59,7 +59,7 @@ func (s *pkgTestSuite) TestNestedLoopApply(c *C) {
 		retTypes(outerExec), retTypes(innerExec), nil)
 	joinSchema := expression.NewSchema(col0, col1)
 	join := &NestedLoopApplyExec{
-		baseExecutor: newBaseExecutor(sctx, joinSchema, nil),
+		baseExecutor: newBaseExecutor(sctx, joinSchema, 0),
 		outerExec:    outerExec,
 		innerExec:    innerExec,
 		outerFilter:  []expression.Expression{outerFilter},

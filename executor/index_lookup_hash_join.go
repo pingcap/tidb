@@ -298,7 +298,9 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	}
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joinChkResourceCh)
-		e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	for i := range e.joinChkResourceCh {
 		close(e.joinChkResourceCh[i])
@@ -316,10 +318,11 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 		})
 		if err != nil {
 			task = &indexHashJoinTask{err: err}
-			ow.pushToChan(ctx, task, ow.innerCh)
 			if ow.keepOuterOrder {
+				task.keepOuterOrder, task.resultCh = true, make(chan *indexHashJoinResult, 1)
 				ow.pushToChan(ctx, task, ow.taskCh)
 			}
+			ow.pushToChan(ctx, task, ow.innerCh)
 			return
 		}
 		if task == nil {
@@ -447,12 +450,13 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		if !ok {
 			break
 		}
+		// We need to init resultCh before the err is returned.
+		if task.keepOuterOrder {
+			resultCh = task.resultCh
+		}
 		if task.err != nil {
 			joinResult.err = task.err
 			break
-		}
-		if task.keepOuterOrder {
-			resultCh = task.resultCh
 		}
 		err := iw.handleTask(ctx, task, joinResult, h, resultCh)
 		if err != nil {
@@ -587,6 +591,7 @@ func (iw *indexHashJoinInnerWorker) doJoinUnordered(ctx context.Context, task *i
 				select {
 				case resultCh <- joinResult:
 				case <-ctx.Done():
+					return ctx.Err()
 				}
 				joinResult, ok = iw.getNewJoinResult(ctx)
 				if !ok {
@@ -734,7 +739,7 @@ func (iw *indexHashJoinInnerWorker) doJoinInOrder(ctx context.Context, task *ind
 					select {
 					case resultCh <- joinResult:
 					case <-ctx.Done():
-						return nil
+						return ctx.Err()
 					}
 					joinResult, ok = iw.getNewJoinResult(ctx)
 					if !ok {

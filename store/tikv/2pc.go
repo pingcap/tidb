@@ -727,7 +727,7 @@ func (actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, bat
 		prewriteResp := resp.Resp.(*pb.PrewriteResponse)
 		keyErrs := prewriteResp.GetErrors()
 		if len(keyErrs) == 0 {
-			if bytes.Equal(c.primary(), batch.mutations.keys[0]) {
+			if batch.isPrimary {
 				// After writing the primary key, if the size of the transaction is large than 32M,
 				// start the ttlManager. The ttlManager will be closed in tikvTxn.Commit().
 				if c.txnSize > 32*1024*1024 {

@@ -96,7 +96,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Tabl
 func newPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	ctx := mock.NewContext()
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Columns)
+	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Columns, tblInfo)
 	pi := tblInfo.GetPartitionInfo()
 	switch pi.Type {
 	case model.PartitionTypeRange:
@@ -302,7 +302,8 @@ func (t *partitionedTable) PartitionExpr() (*PartitionExpr, error) {
 	return t.partitionExpr, nil
 }
 
-func partitionRecordKey(pid int64, handle int64) kv.Key {
+// PartitionRecordKey is exported for test.
+func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
 	return tablecodec.EncodeRecordKey(recordPrefix, handle)
 }
@@ -375,10 +376,11 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 	if isNull {
 		return 0, nil
 	}
+	ret = ret % int64(t.meta.Partition.Num)
 	if ret < 0 {
-		ret = 0 - ret
+		ret = -ret
 	}
-	return int(ret % int64(t.meta.Partition.Num)), nil
+	return int(ret), nil
 }
 
 // GetPartition returns a Table, which is actually a partition.

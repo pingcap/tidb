@@ -430,9 +430,10 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(ts.store)
 	cfg := config.NewConfig()
-	cfg.Port = genPort()
+	cfg.Port = 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
+
 	c.Assert(err, IsNil)
 	defer server.Close()
 

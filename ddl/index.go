@@ -1160,19 +1160,12 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 		indexedCols[i] = cols[v.Offset]
 	}
 
-	var containsVirtualCol bool
-	decodeColMap, err := decoder.BuildFullDecodeColMap(indexedCols, t, func(genCol *table.Column) (expression.Expression, error) {
-		containsVirtualCol = true
-		return expression.ParseSimpleExprCastWithTableInfo(sessCtx, genCol.GeneratedExprString, t.Meta(), &genCol.FieldType)
-	})
-	if err != nil {
-		return nil, err
-	}
+	dbName := model.NewCIStr(sessCtx.GetSessionVars().CurrentDB)
+	exprCols, _ := expression.ColumnInfos2ColumnsAndNames(sessCtx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
+	mockSchema := expression.NewSchema(exprCols...)
 
-	if containsVirtualCol {
-		decoder.SubstituteGenColsInDecodeColMap(decodeColMap)
-		decoder.RemoveUnusedVirtualCols(decodeColMap, indexedCols)
-	}
+	decodeColMap := decoder.BuildFullDecodeColMap(t, mockSchema)
+
 	return decodeColMap, nil
 }
 
@@ -1367,6 +1360,16 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 	job := reorgInfo.Job
 	logutil.BgLogger().Info("[ddl] start to add table index", zap.String("job", job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	totalAddedCount := job.GetRowCount()
+
+	if err := w.isReorgRunnable(reorgInfo.d); err != nil {
+		return errors.Trace(err)
+	}
+
+	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
+		}
+	})
 
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
 	sessCtx := newContext(reorgInfo.d.store)
