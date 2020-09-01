@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -182,6 +183,9 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 		return BuildCastFunction(ctx, args[0], retType), nil
 	}
 	fc, ok := funcs[funcName]
+	if funcName == ast.IsTruth && retType.Flag&mysql.IsTureWithKeepNullFlag > 0 {
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, true}
+	}
 	if !ok {
 		db := ctx.GetSessionVars().CurrentDB
 		if db == "" {
