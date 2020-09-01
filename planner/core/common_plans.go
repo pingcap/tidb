@@ -982,7 +982,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 	if runtimeStatsColl == nil {
 		return
 	}
-	explainID := p.ExplainID().String()
+	explainID := p.ID()
 
 	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 	// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.
@@ -996,6 +996,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 		actRows = fmt.Sprint(rootstats.GetActRows())
 	} else {
 		analyzeInfo = "time:0ns, loops:0"
+		actRows = "0"
 	}
 	switch p.(type) {
 	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
@@ -1005,13 +1006,13 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 	}
 
 	memoryInfo = "N/A"
-	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
+	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
 	if memTracker != nil {
 		memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
 	}
 
 	diskInfo = "N/A"
-	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
+	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
 	if diskTracker != nil {
 		diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
 	}

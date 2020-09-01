@@ -188,7 +188,9 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *kv.Var
 			Client:            c.store.client,
 			minCommitTSPushed: &minCommitTSPushed{data: make(map[uint64]struct{}, 5)},
 		},
+		rpcCancel: NewRPCanceller(),
 	}
+	ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	it.tasks = tasks
 	it.respChan = make(chan *batchCopResponse, 2048)
 	go it.run(ctx)
@@ -212,6 +214,8 @@ type batchCopIterator struct {
 	memTracker *memory.Tracker
 
 	replicaReadSeed uint32
+
+	rpcCancel *RPCCanceller
 
 	wg sync.WaitGroup
 	// closed represents when the Close is called.
@@ -258,18 +262,30 @@ func (b *batchCopIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 func (b *batchCopIterator) recvFromRespCh(ctx context.Context) (resp *batchCopResponse, ok bool, exit bool) {
-	select {
-	case resp, ok = <-b.respChan:
-	case <-b.finishCh:
-		exit = true
-	case <-ctx.Done():
-		// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
-		if atomic.CompareAndSwapUint32(&b.closed, 0, 1) {
-			close(b.finishCh)
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case resp, ok = <-b.respChan:
+			return
+		case <-ticker.C:
+			if atomic.LoadUint32(b.vars.Killed) == 1 {
+				resp = &batchCopResponse{err: ErrQueryInterrupted}
+				ok = true
+				return
+			}
+		case <-b.finishCh:
+			exit = true
+			return
+		case <-ctx.Done():
+			// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
+			if atomic.CompareAndSwapUint32(&b.closed, 0, 1) {
+				close(b.finishCh)
+			}
+			exit = true
+			return
 		}
-		exit = true
 	}
-	return
 }
 
 // Close releases the resource.
@@ -277,6 +293,7 @@ func (b *batchCopIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&b.closed, 0, 1) {
 		close(b.finishCh)
 	}
+	b.rpcCancel.CancelAll()
 	b.wg.Wait()
 	return nil
 }
@@ -341,7 +358,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 	req.StoreTp = kv.TiFlash
 
 	logutil.BgLogger().Debug("send batch request to ", zap.String("req info", req.String()), zap.Int("cop task len", len(task.copTasks)))
-	resp, retry, err := sender.sendReqToAddr(bo, task.copTasks, req, ReadTimeoutUltraLong)
+	resp, retry, cancel, err := sender.sendStreamReqToAddr(bo, task.copTasks, req, ReadTimeoutUltraLong)
 	// If there are store errors, we should retry for all regions.
 	if retry {
 		return b.retryBatchCopTask(ctx, bo, task)
@@ -349,6 +366,7 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *Backoffer, ta
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	defer cancel()
 	return nil, b.handleStreamedBatchCopResponse(ctx, bo, resp.Resp.(*tikvrpc.BatchCopStreamResponse), task)
 }
 

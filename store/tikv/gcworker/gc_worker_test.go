@@ -829,6 +829,39 @@ func (s *testGCWorkerSuite) TestResolveLockRangeInfine(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testGCWorkerSuite) TestResolveLockRangeMeetRegionCacheMiss(c *C) {
+	var (
+		scanCnt       int
+		scanCntRef    = &scanCnt
+		resolveCnt    int
+		resolveCntRef = &resolveCnt
+	)
+	s.gcWorker.testingKnobs.scanLocks = func(key []byte) []*tikv.Lock {
+		*scanCntRef++
+		return []*tikv.Lock{
+			{
+				Key: []byte{1},
+			},
+			{
+				Key: []byte{1},
+			},
+		}
+	}
+	s.gcWorker.testingKnobs.resolveLocks = func(regionID tikv.RegionVerID) (ok bool, err error) {
+		*resolveCntRef++
+		if *resolveCntRef == 1 {
+			s.gcWorker.store.GetRegionCache().InvalidateCachedRegion(regionID)
+			// mock the region cache miss error
+			return false, nil
+		}
+		return true, nil
+	}
+	_, err := s.gcWorker.resolveLocksForRange(context.Background(), 1, []byte{0}, []byte{10})
+	c.Assert(err, IsNil)
+	c.Assert(resolveCnt, Equals, 2)
+	c.Assert(scanCnt, Equals, 1)
+}
+
 func (s *testGCWorkerSuite) TestRunGCJob(c *C) {
 	gcSafePointCacheInterval = 0
 
