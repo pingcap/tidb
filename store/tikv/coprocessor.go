@@ -1200,8 +1200,10 @@ func (it *copIterator) Close() error {
 	}
 	it.rpcCancel.CancelAll()
 	it.wg.Wait()
-	// broadcast the signal in order not to leak worker goroutine
-	it.actionOnExceed.workersCond.Broadcast()
+	if it.actionOnExceed != nil {
+		// broadcast the signal in order not to leak worker goroutine
+		it.actionOnExceed.workersCond.Broadcast()
+	}
 	return nil
 }
 
