@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 	"strings"
 	"sync"
@@ -44,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // brieTaskProgress tracks a task's current progress.
@@ -169,11 +167,9 @@ func (b *executorBuilder) parseTSString(ts string) (uint64, error) {
 	return variable.GoTimeToTS(t1), nil
 }
 
-var brieStmtLabel fmt.Stringer = stringutil.StringerStr("BRIEStmt")
-
 func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) Executor {
 	e := &BRIEExec{
-		baseExecutor: newBaseExecutor(b.ctx, schema, brieStmtLabel),
+		baseExecutor: newBaseExecutor(b.ctx, schema, 0),
 		info: &brieTaskInfo{
 			kind: s.Kind,
 		},

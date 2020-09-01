@@ -149,7 +149,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		e.snapshot = snapshot
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {

@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -38,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -240,7 +238,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 
 func (e *IndexMergeReaderExecutor) buildPartialTableReader(ctx context.Context, workID int) Executor {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
+		baseExecutor: newBaseExecutor(e.ctx, e.schema, 0),
 		table:        e.table,
 		dagPB:        e.dagPBs[workID],
 		startTS:      e.startTS,
@@ -394,7 +392,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 			finished:       e.finished,
 			buildTblReader: e.buildFinalTableReader,
 			tblPlans:       e.tblPlans,
-			memTracker:     memory.NewTracker(stringutil.MemoizeStr(func() string { return "TableWorker_" + strconv.Itoa(i) }), -1),
+			memTracker:     memory.NewTracker(memory.LabelForSimpleTask, -1),
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
@@ -411,7 +409,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 
 func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, handles []int64) (Executor, error) {
 	tableReaderExec := &TableReaderExecutor{
-		baseExecutor: newBaseExecutor(e.ctx, e.schema, stringutil.MemoizeStr(func() string { return e.id.String() + "_tableReader" })),
+		baseExecutor: newBaseExecutor(e.ctx, e.schema, 0),
 		table:        e.table,
 		dagPB:        e.tableRequest,
 		startTS:      e.startTS,
