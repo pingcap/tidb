@@ -539,7 +539,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 				break
 			}
 			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-				if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex {
+				if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex || len(rows) > 100000 {
 					if len(rows) > 0 {
 						if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
 							return errors.Trace(err)
