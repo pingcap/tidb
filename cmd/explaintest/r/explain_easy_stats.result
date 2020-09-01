@@ -56,12 +56,14 @@ MergeJoin_7	2481.25	root	left outer join, left key:test.t1.c2, right key:test.t2
     └─TableScan_20	1985.00	cop	table:t2, keep order:false
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
-Point_Get_1	1.00	root	table:t1, handle:1
+Update_2	N/A	root	N/A
+└─Point_Get_1	1.00	root	table:t1, handle:1
 explain delete from t1 where t1.c2 = 1;
 id	count	task	operator info
-IndexLookUp_9	0.00	root	
-├─IndexScan_7	0.00	cop	table:t1, index:c2, range:[1,1], keep order:false
-└─TableScan_8	0.00	cop	table:t1, keep order:false
+Delete_3	N/A	root	N/A
+└─IndexLookUp_9	0.00	root	
+  ├─IndexScan_7	0.00	cop	table:t1, index:c2, range:[1,1], keep order:false
+  └─TableScan_8	0.00	cop	table:t1, keep order:false
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	1985.00	root	cast(join_agg_0)

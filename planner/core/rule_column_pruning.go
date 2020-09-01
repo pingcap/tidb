@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -120,6 +121,10 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	var selfUsedCols []*expression.Column
 	for _, aggrFunc := range la.AggFuncs {
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
+
+		var cols []*expression.Column
+		aggrFunc.OrderByItems, cols = pruneByItems(aggrFunc.OrderByItems)
+		selfUsedCols = append(selfUsedCols, cols...)
 	}
 	if len(la.AggFuncs) == 0 {
 		// If all the aggregate functions are pruned, we should add an aggregate function to keep the correctness.
@@ -154,22 +159,32 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column) 
 	return child.PruneColumns(selfUsedCols)
 }
 
-// PruneColumns implements LogicalPlan interface.
-func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
-	child := ls.children[0]
-	for i := len(ls.ByItems) - 1; i >= 0; i-- {
-		cols := expression.ExtractColumns(ls.ByItems[i].Expr)
+func pruneByItems(old []*util.ByItems) (new []*util.ByItems, parentUsedCols []*expression.Column) {
+	new = make([]*util.ByItems, 0, len(old))
+	for _, byItem := range old {
+		cols := expression.ExtractColumns(byItem.Expr)
 		if len(cols) == 0 {
-			if !expression.IsRuntimeConstExpr(ls.ByItems[i].Expr) {
-				continue
+			if !expression.IsRuntimeConstExpr(byItem.Expr) {
+				new = append(new, byItem)
 			}
-			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
-		} else if ls.ByItems[i].Expr.GetType().Tp == mysql.TypeNull {
-			ls.ByItems = append(ls.ByItems[:i], ls.ByItems[i+1:]...)
+		} else if byItem.Expr.GetType().Tp == mysql.TypeNull {
+			// do nothing, should be filtered
 		} else {
 			parentUsedCols = append(parentUsedCols, cols...)
+			new = append(new, byItem)
 		}
 	}
+	return
+}
+
+// PruneColumns implements LogicalPlan interface.
+// If any expression can view as a constant in execution stage, such as correlated column, constant,
+// we do prune them. Note that we can't prune the expressions contain non-deterministic functions, such as rand().
+func (ls *LogicalSort) PruneColumns(parentUsedCols []*expression.Column) error {
+	child := ls.children[0]
+	var cols []*expression.Column
+	ls.ByItems, cols = pruneByItems(ls.ByItems)
+	parentUsedCols = append(parentUsedCols, cols...)
 	return child.PruneColumns(parentUsedCols)
 }
 

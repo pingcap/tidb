@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -33,6 +34,7 @@ import (
 type Plan interface {
 	// Get the schema.
 	Schema() *expression.Schema
+
 	// Get the ID.
 	ID() int
 
@@ -41,6 +43,10 @@ type Plan interface {
 
 	// Get the ID in explain statement
 	ExplainID() fmt.Stringer
+
+	// ExplainInfo returns operator information to be explained.
+	ExplainInfo() string
+
 	// replaceExprColumns replace all the column reference in the plan's expression node.
 	replaceExprColumns(replace map[string]*expression.Column)
 
@@ -56,9 +62,9 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	}
 	tsk = finishCopTask(ctx, tsk)
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, Items: p.Items, ExpectedCnt: math.MaxFloat64}
-	sort := PhysicalSort{ByItems: make([]*ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), sortReqProp)
+	sort := PhysicalSort{ByItems: make([]*util.ByItems, 0, len(p.Items))}.Init(ctx, tsk.plan().statsInfo(), sortReqProp)
 	for _, col := range p.Items {
-		sort.ByItems = append(sort.ByItems, &ByItems{col.Col, col.Desc})
+		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
 	return sort.attach2Task(tsk)
 }
@@ -132,9 +138,6 @@ type PhysicalPlan interface {
 
 	// ToPB converts physical plan to tipb executor.
 	ToPB(ctx sessionctx.Context) (*tipb.Executor, error)
-
-	// ExplainInfo returns operator information to be explained.
-	ExplainInfo() string
 
 	// getChildReqProps gets the required property by child index.
 	GetChildReqProps(idx int) *property.PhysicalProperty
@@ -287,6 +290,9 @@ func (p *basePlan) ExplainID() fmt.Stringer {
 // TP implements Plan interface.
 func (p *basePlan) TP() string {
 	return p.tp
+}
+func (p *basePlan) ExplainInfo() string {
+	return "N/A"
 }
 
 // Schema implements Plan Schema interface.

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
@@ -34,6 +35,8 @@ type AggFuncDesc struct {
 	Mode AggFunctionMode
 	// HasDistinct represents whether the aggregation function contains distinct attribute.
 	HasDistinct bool
+	// OrderByItems represents the order by clause used in GROUP_CONCAT
+	OrderByItems []*util.ByItems
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
@@ -50,6 +53,14 @@ func (a *AggFuncDesc) Equal(ctx sessionctx.Context, other *AggFuncDesc) bool {
 	if a.HasDistinct != other.HasDistinct {
 		return false
 	}
+	if len(a.OrderByItems) != len(other.OrderByItems) {
+		return false
+	}
+	for i := range a.OrderByItems {
+		if !a.OrderByItems[i].Equal(ctx, other.OrderByItems[i]) {
+			return false
+		}
+	}
 	return a.baseFuncDesc.equal(ctx, &other.baseFuncDesc)
 }
 
@@ -57,6 +68,10 @@ func (a *AggFuncDesc) Equal(ctx sessionctx.Context, other *AggFuncDesc) bool {
 func (a *AggFuncDesc) Clone() *AggFuncDesc {
 	clone := *a
 	clone.baseFuncDesc = *a.baseFuncDesc.clone()
+	clone.OrderByItems = make([]*util.ByItems, len(a.OrderByItems))
+	for i, byItem := range a.OrderByItems {
+		clone.OrderByItems[i] = byItem.Clone()
+	}
 	return &clone
 }
 

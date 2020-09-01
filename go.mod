@@ -34,14 +34,14 @@ require (
 	github.com/opentracing/opentracing-go v1.0.2
 	github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8
 	github.com/pingcap/errors v0.11.4
-	github.com/pingcap/failpoint v0.0.0-20190512135322-30cc7431d99c
+	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
 	github.com/pingcap/goleveldb v0.0.0-20171020122428-b9ff6c35079e
 	github.com/pingcap/kvproto v0.0.0-20200311073257-e53d835099b0
 	github.com/pingcap/log v0.0.0-20190715063458-479153f07ebd
-	github.com/pingcap/parser v3.0.13-0.20200428073321-7e525711e35d+incompatible
+	github.com/pingcap/parser v3.0.17-0.20200720062348-6dc68ab12230+incompatible
 	github.com/pingcap/pd v1.1.0-beta.0.20191223090411-ea2b748f6ee2
 	github.com/pingcap/tidb-tools v3.0.6-0.20191119150227-ff0a3c6e5763+incompatible
-	github.com/pingcap/tipb v0.0.0-20200401051346-bec3080a5428
+	github.com/pingcap/tipb v0.0.0-20200426072559-d2c068e96eb3
 	github.com/prometheus/client_golang v0.9.0
 	github.com/prometheus/client_model v0.0.0-20180712105110-5c3871d89910
 	github.com/prometheus/common v0.0.0-20181020173914-7e9e6cabbd39 // indirect

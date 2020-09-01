@@ -111,5 +111,94 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestPartitionPruningForInExpr",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where a in (1, 2,'11')",
+        "Plan": [
+          "Union_8 60.00 root ",
+          "├─TableReader_11 30.00 root data:Selection_10",
+          "│ └─Selection_10 30.00 cop in(test.t.a, 1, 2, 11)",
+          "│   └─TableScan_9 10000.00 cop table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_14 30.00 root data:Selection_13",
+          "  └─Selection_13 30.00 cop in(test.t.a, 1, 2, 11)",
+          "    └─TableScan_12 10000.00 cop table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a in (17, null)",
+        "Plan": [
+          "Union_8 20.00 root ",
+          "├─TableReader_11 10.00 root data:Selection_10",
+          "│ └─Selection_10 10.00 cop in(test.t.a, 17, NULL)",
+          "│   └─TableScan_9 10000.00 cop table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_14 10.00 root data:Selection_13",
+          "  └─Selection_13 10.00 cop in(test.t.a, 17, NULL)",
+          "    └─TableScan_12 10000.00 cop table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a in (16, 'abc')",
+        "Plan": [
+          "Union_8 40.00 root ",
+          "├─TableReader_11 20.00 root data:Selection_10",
+          "│ └─Selection_10 20.00 cop in(test.t.a, 16, 0)",
+          "│   └─TableScan_9 10000.00 cop table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_14 20.00 root data:Selection_13",
+          "  └─Selection_13 20.00 cop in(test.t.a, 16, 0)",
+          "    └─TableScan_12 10000.00 cop table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a in (15, 0.12, 3.47)",
+        "Plan": [
+          "Union_9 30.00 root ",
+          "├─TableReader_12 10.00 root data:Selection_11",
+          "│ └─Selection_11 10.00 cop or(eq(test.t.a, 15), 0)",
+          "│   └─TableScan_10 10000.00 cop table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "├─TableReader_15 10.00 root data:Selection_14",
+          "│ └─Selection_14 10.00 cop or(eq(test.t.a, 15), 0)",
+          "│   └─TableScan_13 10000.00 cop table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_18 10.00 root data:Selection_17",
+          "  └─Selection_17 10.00 cop or(eq(test.t.a, 15), 0)",
+          "    └─TableScan_16 10000.00 cop table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a in (0.12, 3.47)",
+        "Plan": [
+          "TableDual_6 0.00 root rows:0"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where a in (14, floor(3.47))",
+        "Plan": [
+          "Union_8 40.00 root ",
+          "├─TableReader_11 20.00 root data:Selection_10",
+          "│ └─Selection_10 20.00 cop in(test.t.a, 14, 3)",
+          "│   └─TableScan_9 10000.00 cop table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_14 20.00 root data:Selection_13",
+          "  └─Selection_13 20.00 cop in(test.t.a, 14, 3)",
+          "    └─TableScan_12 10000.00 cop table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where b in (3, 4)",
+        "Plan": [
+          "Union_9 60.00 root ",
+          "├─TableReader_12 20.00 root data:Selection_11",
+          "│ └─Selection_11 20.00 cop in(test.t.b, 3, 4)",
+          "│   └─TableScan_10 10000.00 cop table:t, partition:p0, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "├─TableReader_15 20.00 root data:Selection_14",
+          "│ └─Selection_14 20.00 cop in(test.t.b, 3, 4)",
+          "│   └─TableScan_13 10000.00 cop table:t, partition:p1, range:[-inf,+inf], keep order:false, stats:pseudo",
+          "└─TableReader_18 20.00 root data:Selection_17",
+          "  └─Selection_17 20.00 cop in(test.t.b, 3, 4)",
+          "    └─TableScan_16 10000.00 cop table:t, partition:p2, range:[-inf,+inf], keep order:false, stats:pseudo"
+        ]
+      }
+    ]
   }
 ]

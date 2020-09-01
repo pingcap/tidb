@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var zeroSet = Set{Name: "", Value: 0}
@@ -36,6 +37,14 @@ func (e Set) String() string {
 // ToNumber changes Set to float64 for numeric operation.
 func (e Set) ToNumber() float64 {
 	return float64(e.Value)
+}
+
+// Copy deep copy a Set.
+func (e Set) Copy() Set {
+	return Set{
+		Name:  stringutil.Copy(e.Name),
+		Value: e.Value,
+	}
 }
 
 // ParseSetName creates a Set with name.

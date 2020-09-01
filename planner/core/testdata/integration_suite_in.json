@@ -40,5 +40,17 @@
       "explain select * from t order by a limit 3",
       "select * from t order by a limit 3"
     ]
+  },
+  {
+    "name": "TestPartitionPruningForInExpr",
+    "cases": [
+      "explain select * from t where a in (1, 2,'11')",
+      "explain select * from t where a in (17, null)",
+      "explain select * from t where a in (16, 'abc')",
+      "explain select * from t where a in (15, 0.12, 3.47)",
+      "explain select * from t where a in (0.12, 3.47)",
+      "explain select * from t where a in (14, floor(3.47))",
+      "explain select * from t where b in (3, 4)"
+    ]
   }
 ]

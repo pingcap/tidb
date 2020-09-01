@@ -80,6 +80,7 @@ type CheckTable struct {
 	Table              table.Table
 	IndexInfos         []*model.IndexInfo
 	IndexLookUpReaders []*PhysicalIndexLookUpReader
+	CheckIndex         bool
 }
 
 // RecoverIndex is used for backfilling corrupted index data.
@@ -96,15 +97,6 @@ type CleanupIndex struct {
 
 	Table     *ast.TableName
 	IndexName string
-}
-
-// CheckIndex is used for checking index data, built from the 'admin check index' statement.
-type CheckIndex struct {
-	baseSchemaProducer
-
-	IndexLookUpReader *PhysicalIndexLookUpReader
-	DBName            string
-	IdxName           string
 }
 
 // CheckIndexRange is used for checking index data, output the index values that handle within begin and end.
@@ -235,17 +227,28 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	if prepared.UseCache {
 		cacheKey = NewPSTMTPlanCacheKey(sessionVars, e.ExecID, prepared.SchemaVersion)
 		if cacheValue, exists := sctx.PreparedPlanCache().Get(cacheKey); exists {
-			if metrics.ResettablePlanCacheCounterFortTest {
-				metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
-			} else {
-				planCacheCounter.Inc()
+			cachedVal := cacheValue.(*PSTMTPlanCacheValue)
+			planValid := true
+			for tblInfo, unionScan := range cachedVal.TblInfo2UnionScan {
+				if !unionScan && tableHasDirtyContent(sctx, tblInfo) {
+					planValid = false
+					sctx.PreparedPlanCache().Delete(cacheKey)
+					break
+				}
 			}
-			plan := cacheValue.(*PSTMTPlanCacheValue).Plan
-			err := e.rebuildRange(plan)
-			if err != nil {
-				return nil, err
+			if planValid {
+				if metrics.ResettablePlanCacheCounterFortTest {
+					metrics.PlanCacheCounter.WithLabelValues("prepare").Inc()
+				} else {
+					planCacheCounter.Inc()
+				}
+				plan := cacheValue.(*PSTMTPlanCacheValue).Plan
+				err := e.rebuildRange(plan)
+				if err != nil {
+					return nil, err
+				}
+				return plan, nil
 			}
-			return plan, nil
 		}
 	}
 	p, err := OptimizeAstNode(ctx, sctx, prepared.Stmt, is)
@@ -254,7 +257,7 @@ func (e *Execute) getPhysicalPlan(ctx context.Context, sctx sessionctx.Context, 
 	}
 	_, isTableDual := p.(*PhysicalTableDual)
 	if !isTableDual && prepared.UseCache {
-		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p))
+		sctx.PreparedPlanCache().Put(cacheKey, NewPSTMTPlanCacheValue(p, sctx.GetSessionVars().StmtCtx.TblInfo2UnionScan))
 	}
 	return p, err
 }
@@ -543,52 +546,53 @@ type DDL struct {
 type Explain struct {
 	baseSchemaProducer
 
-	StmtPlan       Plan
+	TargetPlan Plan
+	Format     string
+	Analyze    bool
+	ExecStmt   ast.StmtNode
+
 	Rows           [][]string
 	explainedPlans map[int]bool
-	Format         string
-	Analyze        bool
-	ExecStmt       ast.StmtNode
-	ExecPlan       Plan
 }
 
 // prepareSchema prepares explain's result schema.
 func (e *Explain) prepareSchema() error {
-	switch strings.ToLower(e.Format) {
-	case ast.ExplainFormatROW:
-		retFields := []string{"id", "count", "task", "operator info"}
-		if e.Analyze {
-			retFields = append(retFields, "execution info", "memory")
-		}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
-		}
-		e.SetSchema(schema)
-	case ast.ExplainFormatDOT:
-		retFields := []string{"dot contents"}
-		schema := expression.NewSchema(make([]*expression.Column, 0, len(retFields))...)
-		for _, fieldName := range retFields {
-			schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
-		}
-		e.SetSchema(schema)
+	var fieldNames []string
+	format := strings.ToLower(e.Format)
+
+	switch {
+	case format == ast.ExplainFormatROW && !e.Analyze:
+		fieldNames = []string{"id", "count", "task", "operator info"}
+	case format == ast.ExplainFormatROW && e.Analyze:
+		fieldNames = []string{"id", "count", "task", "operator info", "execution info", "memory"}
+	case format == ast.ExplainFormatDOT:
+		fieldNames = []string{"dot contents"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
+
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(fieldNames))...)
+	for _, fieldName := range fieldNames {
+		schema.Append(buildColumn("", fieldName, mysql.TypeString, mysql.MaxBlobWidth))
+	}
+	e.SetSchema(schema)
 	return nil
 }
 
 // RenderResult renders the explain result as specified format.
 func (e *Explain) RenderResult() error {
-	if e.StmtPlan == nil {
+	if e.TargetPlan == nil {
 		return nil
 	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
 		e.explainedPlans = map[int]bool{}
-		e.explainPlanInRowFormat(e.StmtPlan.(PhysicalPlan), "root", "", true)
+		e.explainPlanInRowFormat(e.TargetPlan, "root", "", true)
 	case ast.ExplainFormatDOT:
-		e.prepareDotInfo(e.StmtPlan.(PhysicalPlan))
+		if _, ok := e.TargetPlan.(PhysicalPlan); !ok {
+			return nil
+		}
+		e.prepareDotInfo(e.TargetPlan.(PhysicalPlan))
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -596,35 +600,58 @@ func (e *Explain) RenderResult() error {
 }
 
 // explainPlanInRowFormat generates explain information for root-tasks.
-func (e *Explain) explainPlanInRowFormat(p PhysicalPlan, taskType, indent string, isLastChild bool) {
+func (e *Explain) explainPlanInRowFormat(p Plan, taskType, indent string, isLastChild bool) {
 	e.prepareOperatorInfo(p, taskType, indent, isLastChild)
 	e.explainedPlans[p.ID()] = true
 
 	// For every child we create a new sub-tree rooted by it.
 	childIndent := texttree.Indent4Child(indent, isLastChild)
-	for i, child := range p.Children() {
-		if e.explainedPlans[child.ID()] {
-			continue
+
+	if physPlan, ok := p.(PhysicalPlan); ok {
+		for i, child := range physPlan.Children() {
+			if e.explainedPlans[child.ID()] {
+				continue
+			}
+			e.explainPlanInRowFormat(child, taskType, childIndent, i == len(physPlan.Children())-1)
 		}
-		e.explainPlanInRowFormat(child.(PhysicalPlan), taskType, childIndent, i == len(p.Children())-1)
 	}
 
-	switch copPlan := p.(type) {
+	switch x := p.(type) {
 	case *PhysicalTableReader:
-		e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
+		e.explainPlanInRowFormat(x.tablePlan, "cop", childIndent, true)
 	case *PhysicalIndexReader:
-		e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, true)
+		e.explainPlanInRowFormat(x.indexPlan, "cop", childIndent, true)
 	case *PhysicalIndexLookUpReader:
-		e.explainPlanInRowFormat(copPlan.indexPlan, "cop", childIndent, false)
-		e.explainPlanInRowFormat(copPlan.tablePlan, "cop", childIndent, true)
+		e.explainPlanInRowFormat(x.indexPlan, "cop", childIndent, false)
+		e.explainPlanInRowFormat(x.tablePlan, "cop", childIndent, true)
+	case *Insert:
+		if x.SelectPlan != nil {
+			e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+		}
+	case *Update:
+		if x.SelectPlan != nil {
+			e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+		}
+	case *Delete:
+		if x.SelectPlan != nil {
+			e.explainPlanInRowFormat(x.SelectPlan, "root", childIndent, true)
+		}
+	case *Execute:
+		if x.Plan != nil {
+			e.explainPlanInRowFormat(x.Plan, "root", childIndent, true)
+		}
 	}
 }
 
 // prepareOperatorInfo generates the following information for every plan:
 // operator id, task type, operator info, and the estemated row count.
-func (e *Explain) prepareOperatorInfo(p PhysicalPlan, taskType string, indent string, isLastChild bool) {
+func (e *Explain) prepareOperatorInfo(p Plan, taskType string, indent string, isLastChild bool) {
 	operatorInfo := p.ExplainInfo()
-	count := string(strconv.AppendFloat([]byte{}, p.statsInfo().RowCount, 'f', 2, 64))
+
+	count := "N/A"
+	if si := p.statsInfo(); si != nil {
+		count = strconv.FormatFloat(si.RowCount, 'f', 2, 64)
+	}
 	explainID := p.ExplainID().String()
 	row := []string{texttree.PrettyIdentifier(explainID, indent, isLastChild), count, taskType, operatorInfo}
 	if e.Analyze {

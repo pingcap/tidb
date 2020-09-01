@@ -14,6 +14,7 @@
 package types
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -47,6 +48,7 @@ func (ts *testDatumSuite) TestDatum(c *C) {
 		d.SetCollation(d.Collation())
 		c.Assert(d.Collation(), NotNil)
 		c.Assert(d.Length(), Equals, int(d.length))
+		c.Assert(fmt.Sprint(d), Equals, d.String())
 	}
 }
 
@@ -67,9 +69,9 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	testDatumToBool(c, float32(0.1), 0)
 	testDatumToBool(c, float64(0.1), 0)
 	testDatumToBool(c, "", 0)
-	testDatumToBool(c, "0.1", 0)
+	testDatumToBool(c, "0.1", 1)
 	testDatumToBool(c, []byte{}, 0)
-	testDatumToBool(c, []byte("0.1"), 0)
+	testDatumToBool(c, []byte("0.1"), 1)
 	testDatumToBool(c, NewBinaryLiteralFromUint(0, -1), 0)
 	testDatumToBool(c, Enum{Name: "a", Value: 1}, 1)
 	testDatumToBool(c, Set{Name: "a", Value: 1}, 1)

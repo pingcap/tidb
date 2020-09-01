@@ -21,6 +21,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -42,6 +43,32 @@ func (s *testSuite1) TestAdminCheckIndexRange(c *C) {
 	tk.MustExec("use mysql")
 	result = tk.MustQuery("admin check index test.check_index_test a_b (2, 3), (4, 5);")
 	result.Check(testkit.Rows("-1 hi 4", "2 cd 2"))
+}
+
+func (s *testSuite2) TestAdminCheckIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	check := func() {
+		tk.MustExec("insert admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11), (NULL, NULL)")
+		tk.MustExec("admin check index admin_test c1")
+		tk.MustExec("admin check index admin_test c2")
+	}
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2))")
+	check()
+
+	// Test for hash partition table.
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2)) partition by hash(c2) partitions 5;")
+	check()
+
+	// Test for range partition table.
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec(`create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2)) PARTITION BY RANGE ( c2 ) (
+		PARTITION p0 VALUES LESS THAN (5),
+		PARTITION p1 VALUES LESS THAN (10),
+		PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
+	check()
 }
 
 func (s *testSuite2) TestAdminRecoverIndex(c *C) {
@@ -156,6 +183,75 @@ func (s *testSuite2) TestAdminRecoverIndex(c *C) {
 
 	tk.MustExec("admin check index admin_test c2")
 	tk.MustExec("admin check table admin_test")
+}
+
+func (s *testSuite2) TestAdminRecoverPartitionTableIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	getTable := func() table.Table {
+		s.ctx = mock.NewContext()
+		s.ctx.Store = s.store
+		is := s.domain.InfoSchema()
+		dbName := model.NewCIStr("test")
+		tblName := model.NewCIStr("admin_test")
+		tbl, err := is.TableByName(dbName, tblName)
+		c.Assert(err, IsNil)
+		return tbl
+	}
+
+	checkFunc := func(tbl table.Table, pid int64, idxValue int) {
+		idxInfo := tbl.Meta().FindIndexByName("c2")
+		indexOpr := tables.NewIndex(pid, tbl.Meta(), idxInfo)
+		sc := s.ctx.GetSessionVars().StmtCtx
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		err = indexOpr.Delete(sc, txn, types.MakeDatums(idxValue), int64(idxValue), txn)
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+		err = tk.ExecToErr("admin check table admin_test")
+		c.Assert(err, NotNil)
+		c.Assert(executor.ErrAdminCheckTable.Equal(err), IsTrue)
+
+		r := tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
+		r.Check(testkit.Rows("2"))
+
+		r = tk.MustQuery("admin recover index admin_test c2")
+		r.Check(testkit.Rows("1 3"))
+
+		r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
+		r.Check(testkit.Rows("3"))
+		tk.MustExec("admin check table admin_test")
+	}
+
+	// Test for hash partition table.
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c2)) partition by hash(c1) partitions 3;")
+	tk.MustExec("insert admin_test (c1, c2) values (0, 0), (1, 1), (2, 2)")
+	r := tk.MustQuery("admin recover index admin_test c2")
+	r.Check(testkit.Rows("0 3"))
+	tbl := getTable()
+	pi := tbl.Meta().GetPartitionInfo()
+	c.Assert(pi, NotNil)
+	for i, p := range pi.Definitions {
+		checkFunc(tbl, p.ID, i)
+	}
+
+	// Test for range partition table.
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec(`create table admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c2)) PARTITION BY RANGE ( c1 ) (
+		PARTITION p0 VALUES LESS THAN (5),
+		PARTITION p1 VALUES LESS THAN (10),
+		PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
+	tk.MustExec("insert admin_test (c1, c2) values (0, 0), (6, 6), (12, 12)")
+	r = tk.MustQuery("admin recover index admin_test c2")
+	r.Check(testkit.Rows("0 3"))
+	tbl = getTable()
+	pi = tbl.Meta().GetPartitionInfo()
+	c.Assert(pi, NotNil)
+	for i, p := range pi.Definitions {
+		checkFunc(tbl, p.ID, i*6)
+	}
 }
 
 func (s *testSuite2) TestAdminRecoverIndex1(c *C) {
@@ -286,6 +382,85 @@ func (s *testSuite2) TestAdminCleanupIndex(c *C) {
 	tk.MustExec("admin check index admin_test c3")
 
 	tk.MustExec("admin check table admin_test")
+}
+
+func (s *testSuite2) TestAdminCleanupIndexForPartitionTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	getTable := func() table.Table {
+		s.ctx = mock.NewContext()
+		s.ctx.Store = s.store
+		is := s.domain.InfoSchema()
+		dbName := model.NewCIStr("test")
+		tblName := model.NewCIStr("admin_test")
+		tbl, err := is.TableByName(dbName, tblName)
+		c.Assert(err, IsNil)
+		return tbl
+	}
+
+	checkFunc := func(tbl table.Table, pid int64, idxValue, handle int) {
+		idxInfo2 := tbl.Meta().FindIndexByName("c2")
+		indexOpr2 := tables.NewIndex(pid, tbl.Meta(), idxInfo2)
+		idxInfo3 := tbl.Meta().FindIndexByName("c3")
+		indexOpr3 := tables.NewIndex(pid, tbl.Meta(), idxInfo3)
+
+		txn, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		_, err = indexOpr2.Create(s.ctx, txn, types.MakeDatums(idxValue), int64(handle))
+		c.Assert(err, IsNil)
+		_, err = indexOpr3.Create(s.ctx, txn, types.MakeDatums(idxValue), int64(handle))
+		c.Assert(err, IsNil)
+		err = txn.Commit(context.Background())
+		c.Assert(err, IsNil)
+
+		err = tk.ExecToErr("admin check table admin_test")
+		c.Assert(err, NotNil)
+
+		r := tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
+		r.Check(testkit.Rows("4"))
+		r = tk.MustQuery("admin cleanup index admin_test c2")
+		r.Check(testkit.Rows("1"))
+		r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c2)")
+		r.Check(testkit.Rows("3"))
+
+		r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c3)")
+		r.Check(testkit.Rows("4"))
+		r = tk.MustQuery("admin cleanup index admin_test c3")
+		r.Check(testkit.Rows("1"))
+		r = tk.MustQuery("SELECT COUNT(*) FROM admin_test USE INDEX(c3)")
+		r.Check(testkit.Rows("3"))
+		tk.MustExec("admin check table admin_test")
+	}
+
+	// Test for hash partition table.
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec("create table admin_test (c1 int, c2 int, c3 int default 1, primary key (c2), unique index c2(c2), index c3(c3)) partition by hash(c2) partitions 3;")
+	tk.MustExec("insert admin_test (c2, c3) values (0, 0), (1, 1), (2, 2)")
+	r := tk.MustQuery("admin cleanup index admin_test c2")
+	r.Check(testkit.Rows("0"))
+	tbl := getTable()
+	pi := tbl.Meta().GetPartitionInfo()
+	c.Assert(pi, NotNil)
+	for i, p := range pi.Definitions {
+		checkFunc(tbl, p.ID, i+6, i+6)
+	}
+
+	// Test for range partition table.
+	tk.MustExec("drop table if exists admin_test")
+	tk.MustExec(`create table admin_test (c1 int, c2 int, c3 int default 1, primary key (c2), unique index c2 (c2), index c3(c3)) PARTITION BY RANGE ( c2 ) (
+		PARTITION p0 VALUES LESS THAN (5),
+		PARTITION p1 VALUES LESS THAN (10),
+		PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
+	tk.MustExec("insert admin_test (c1, c2) values (0, 0), (6, 6), (12, 12)")
+	r = tk.MustQuery("admin cleanup index admin_test c2")
+	r.Check(testkit.Rows("0"))
+	tbl = getTable()
+	pi = tbl.Meta().GetPartitionInfo()
+	c.Assert(pi, NotNil)
+	for i, p := range pi.Definitions {
+		checkFunc(tbl, p.ID, i*6+1, i*6+1)
+	}
 }
 
 func (s *testSuite2) TestAdminCleanupIndexPKNotHandle(c *C) {

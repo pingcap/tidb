@@ -15,6 +15,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/planner/util"
 )
 
 func (ds *DataSource) preparePossibleProperties() [][]*expression.Column {
@@ -57,7 +58,7 @@ func (p *LogicalTopN) preparePossibleProperties() [][]*expression.Column {
 	return [][]*expression.Column{propCols}
 }
 
-func getPossiblePropertyFromByItems(items []*ByItems) []*expression.Column {
+func getPossiblePropertyFromByItems(items []*util.ByItems) []*expression.Column {
 	cols := make([]*expression.Column, 0, len(items))
 	for _, item := range items {
 		if col, ok := item.Expr.(*expression.Column); ok {

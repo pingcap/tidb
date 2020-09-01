@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/generate_expr"
 	"github.com/pingcap/tidb/util/logutil"
 	binlog "github.com/pingcap/tipb/go-binlog"
 	"github.com/spaolacci/murmur3"
@@ -111,11 +112,11 @@ func TableFromMeta(alloc autoid.Allocator, tblInfo *model.TableInfo) (table.Tabl
 
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
-			expr, err := parseExpression(colInfo.GeneratedExprString)
+			expr, err := generateExpr.ParseExpression(colInfo.GeneratedExprString)
 			if err != nil {
 				return nil, err
 			}
-			expr, err = simpleResolveName(expr, tblInfo)
+			expr, err = generateExpr.SimpleResolveName(expr, tblInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -188,6 +189,17 @@ func (t *tableCommon) WritableIndices() []table.Index {
 		}
 	}
 	return writable
+}
+
+// GetWritableIndexByName gets the index meta from the table by the index name.
+func GetWritableIndexByName(idxName string, t table.Table) table.Index {
+	indices := t.WritableIndices()
+	for _, idx := range indices {
+		if idxName == idx.Meta().Name.L {
+			return idx
+		}
+	}
+	return nil
 }
 
 // DeletableIndices implements table.Table DeletableIndices interface.
@@ -590,6 +602,7 @@ func (t *tableCommon) addIndices(ctx sessionctx.Context, recordID int64, r []typ
 			}
 			dupKeyErr = kv.ErrKeyExists.FastGen("Duplicate entry '%s' for key '%s'", entryKey, v.Meta().Name)
 			txn.SetOption(kv.PresumeKeyNotExistsError, dupKeyErr)
+			txn.SetOption(kv.CheckExists, ctx.GetSessionVars().StmtCtx.CheckKeyExists)
 		}
 		if dupHandle, err := v.Create(ctx, rm, indexVals, recordID, opt); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
@@ -1080,6 +1093,7 @@ func CheckHandleExists(ctx sessionctx.Context, t table.Table, recordID int64, da
 	recordKey := t.RecordKey(recordID)
 	e := kv.ErrKeyExists.FastGen("Duplicate entry '%d' for key 'PRIMARY'", recordID)
 	txn.SetOption(kv.PresumeKeyNotExistsError, e)
+	txn.SetOption(kv.CheckExists, ctx.GetSessionVars().StmtCtx.CheckKeyExists)
 	defer txn.DelOption(kv.PresumeKeyNotExistsError)
 	_, err = txn.Get(recordKey)
 	if err == nil {

@@ -51,12 +51,14 @@ IndexJoin_12	4166.67	root	left outer join, inner:IndexLookUp_11, outer key:test.
   └─TableScan_9	9.99	cop	table:t2, keep order:false, stats:pseudo
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	count	task	operator info
-Point_Get_1	1.00	root	table:t1, handle:1
+Update_2	N/A	root	N/A
+└─Point_Get_1	1.00	root	table:t1, handle:1
 explain delete from t1 where t1.c2 = 1;
 id	count	task	operator info
-IndexLookUp_9	10.00	root	
-├─IndexScan_7	10.00	cop	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
-└─TableScan_8	10.00	cop	table:t1, keep order:false, stats:pseudo
+Delete_3	N/A	root	N/A
+└─IndexLookUp_9	10.00	root	
+  ├─IndexScan_7	10.00	cop	table:t1, index:c2, range:[1,1], keep order:false, stats:pseudo
+  └─TableScan_8	10.00	cop	table:t1, keep order:false, stats:pseudo
 explain select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	count	task	operator info
 Projection_11	9990.00	root	cast(join_agg_0)
@@ -696,7 +698,8 @@ begin;
 insert into t values (1, 1);
 explain update t set j = -j where i = 1 and j = 1;
 id	count	task	operator info
-Point_Get_1	1.00	root	table:t, index:i j
+Update_2	N/A	root	N/A
+└─Point_Get_1	1.00	root	table:t, index:i j
 rollback;
 drop table if exists t;
 create table t(a int);
@@ -760,4 +763,17 @@ explain select a, b from t where a = 1 order by b;
 id	count	task	operator info
 IndexReader_12	10.00	root	index:IndexScan_11
 └─IndexScan_11	10.00	cop	table:t, index:a, b, range:[1,1], keep order:true, stats:pseudo
+drop table if exists t;
+create table t(a binary(16) not null, b varchar(2) default null, c varchar(100) default 'aaaa', key (a,b));
+explain select * from t where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+id	count	task	operator info
+IndexLookUp_10	0.10	root	
+├─IndexScan_8	0.10	cop	table:t, index:a, b, range:["[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb","[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb"], keep order:false, stats:pseudo
+└─TableScan_9	0.10	cop	table:t, keep order:false, stats:pseudo
+explain update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+id	count	task	operator info
+Update_3	N/A	root	N/A
+└─IndexLookUp_9	0.10	root	
+  ├─IndexScan_7	0.10	cop	table:t, index:a, b, range:["[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb","[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb"], keep order:false, stats:pseudo
+  └─TableScan_8	0.10	cop	table:t, keep order:false, stats:pseudo
 drop table if exists t;

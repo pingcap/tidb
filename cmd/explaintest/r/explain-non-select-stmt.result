@@ -1,0 +1,29 @@
+use test;
+drop table if exists t;
+create table t(a bigint, b bigint);
+explain insert into t values(1, 1);
+id	count	task	operator info
+Insert_1	N/A	root	N/A
+explain insert into t select * from t;
+id	count	task	operator info
+Insert_1	N/A	root	N/A
+└─TableReader_7	10000.00	root	data:TableScan_6
+  └─TableScan_6	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain delete from t where a > 100;
+id	count	task	operator info
+Delete_3	N/A	root	N/A
+└─TableReader_6	3333.33	root	data:Selection_5
+  └─Selection_5	3333.33	cop	gt(test.t.a, 100)
+    └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain update t set b = 100 where a = 200;
+id	count	task	operator info
+Update_3	N/A	root	N/A
+└─TableReader_6	10.00	root	data:Selection_5
+  └─Selection_5	10.00	cop	eq(test.t.a, 200)
+    └─TableScan_4	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo
+explain replace into t select a, 100 from t;
+id	count	task	operator info
+Insert_1	N/A	root	N/A
+└─Projection_5	10000.00	root	test.t.a, 100
+  └─TableReader_7	10000.00	root	data:TableScan_6
+    └─TableScan_6	10000.00	cop	table:t, range:[-inf,+inf], keep order:false, stats:pseudo

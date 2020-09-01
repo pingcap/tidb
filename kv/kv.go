@@ -51,6 +51,8 @@ const (
 	Pessimistic
 	// SnapshotTS is defined to set snapshot ts.
 	SnapshotTS
+	// CheckExist map for key existence check.
+	CheckExists
 )
 
 // Priority value for transaction priority.
@@ -182,6 +184,8 @@ type LockCtx struct {
 	PessimisticLockWaited *int32
 	LockKeysDuration      *time.Duration
 	LockKeysCount         *int32
+	CheckKeyExists        map[string]struct{}
+	PointGetLock          *bool
 }
 
 // Client is used to send request to KV layer.
@@ -323,7 +327,7 @@ type Iterator interface {
 // SplitableStore is the kv store which supports split regions.
 type SplitableStore interface {
 	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool) (regionID []uint64, err error)
-	WaitScatterRegionFinish(regionID uint64, backOff int) error
+	WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }
 

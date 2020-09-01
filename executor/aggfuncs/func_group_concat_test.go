@@ -14,9 +14,13 @@
 package aggfuncs_test
 
 import (
+	"fmt"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 )
 
 func (s *testSuite) TestMergePartialResult4GroupConcat(c *C) {
@@ -25,6 +29,19 @@ func (s *testSuite) TestMergePartialResult4GroupConcat(c *C) {
 }
 
 func (s *testSuite) TestGroupConcat(c *C) {
-	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, nil, "0 1 2 3 4", "0 1 2 3 4 2 3 4")
+	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, nil, "0 1 2 3 4")
 	s.testAggFunc(c, test)
+
+	test2 := buildMultiArgsAggTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5, nil, "44 33 22 11 00")
+	test2.orderBy = true
+	s.testMultiArgsAggFunc(c, test2)
+
+	defer variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.GroupConcatMaxLen, types.NewStringDatum("1024"))
+	// minimum GroupConcatMaxLen is 4
+	for i := 4; i <= 7; i++ {
+		variable.SetSessionSystemVar(s.ctx.GetSessionVars(), variable.GroupConcatMaxLen, types.NewStringDatum(fmt.Sprint(i)))
+		test2 = buildMultiArgsAggTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5, nil, "44 33 22 11 00"[:i])
+		test2.orderBy = true
+		s.testMultiArgsAggFunc(c, test2)
+	}
 }

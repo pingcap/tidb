@@ -18,6 +18,7 @@ import (
 	"math"
 	"math/rand"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -31,8 +32,9 @@ import (
 
 type testCommitterSuite struct {
 	OneByOneSuite
-	cluster *mocktikv.Cluster
-	store   *tikvStore
+	cluster   *mocktikv.Cluster
+	store     *tikvStore
+	mvccStore mocktikv.MVCCStore
 }
 
 var _ = Suite(&testCommitterSuite{})
@@ -45,9 +47,10 @@ func (s *testCommitterSuite) SetUpSuite(c *C) {
 func (s *testCommitterSuite) SetUpTest(c *C) {
 	s.cluster = mocktikv.NewCluster()
 	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("a"), []byte("b"), []byte("c"))
-	mvccStore, err := mocktikv.NewMVCCLevelDB("")
+	var err error
+	s.mvccStore, err = mocktikv.NewMVCCLevelDB("")
 	c.Assert(err, IsNil)
-	client := mocktikv.NewRPCClient(s.cluster, mvccStore)
+	client := mocktikv.NewRPCClient(s.cluster, s.mvccStore)
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	spkv := NewMockSafePointKV()
 	store, err := newTikvStore("mocktikv-store", pdCli, spkv, client, false)
@@ -230,7 +233,7 @@ func (s *testCommitterSuite) TestContextCancelRetryable(c *C) {
 	c.Assert(err, IsNil)
 	err = txn2.Commit(context.Background())
 	c.Assert(err, NotNil)
-	c.Assert(kv.ErrWriteConflictInTiDB.Equal(err), IsTrue, Commentf("err: %s", err))
+	c.Assert(kv.ErrWriteConflict.Equal(err), IsTrue, Commentf("err: %s", err))
 }
 
 func (s *testCommitterSuite) mustGetRegionID(c *C, key []byte) uint64 {
@@ -591,6 +594,50 @@ func (s *testCommitterSuite) TestElapsedTTL(c *C) {
 	lockInfo := s.getLockInfo(c, key)
 	c.Assert(lockInfo.LockTtl-PessimisticLockTTL, GreaterEqual, uint64(100))
 	c.Assert(lockInfo.LockTtl-PessimisticLockTTL, Less, uint64(150))
+}
+
+func (s *testCommitterSuite) TestDeleteYourWriteCauseGhostPrimary(c *C) {
+	s.cluster.SplitKeys(s.mvccStore, kv.Key("d"), kv.Key("a"), 4)
+	k1 := kv.Key("a") // insert but deleted key at first pos in txn1
+	k2 := kv.Key("b") // insert key at second pos in txn1
+	k3 := kv.Key("c") // insert key in txn1 and will be conflict read by txn2
+
+	// insert k1, k2, k2 and delete k1
+	txn1 := s.begin(c)
+	txn1.DelOption(kv.Pessimistic)
+	txn1.SetOption(kv.PresumeKeyNotExists, nil)
+	txn1.SetOption(kv.PresumeKeyNotExistsError, kv.ErrKeyExists.FastGen(""))
+	txn1.store.txnLatches = nil
+	txn1.Get(k1)
+	txn1.Set(k1, []byte{0})
+	txn1.Set(k2, []byte{1})
+	txn1.Set(k3, []byte{2})
+	txn1.Delete(k1)
+	committer1, err := newTwoPhaseCommitter(txn1, 0)
+	c.Assert(err, IsNil)
+	// setup test knob in txn's committer
+	committer1.testingKnobs.acAfterCommitPrimary = make(chan struct{})
+	committer1.testingKnobs.bkAfterCommitPrimary = make(chan struct{})
+	txn1.committer = committer1
+	var txn1Done sync.WaitGroup
+	txn1Done.Add(1)
+	go func() {
+		err1 := txn1.Commit(context.Background())
+		c.Assert(err1, IsNil)
+		txn1Done.Done()
+	}()
+	// resume after after primary key be committed
+	<-txn1.committer.testingKnobs.acAfterCommitPrimary
+
+	// start txn2 to read k3(prewrite success and primary should be committed)
+	txn2 := s.begin(c)
+	txn2.DelOption(kv.Pessimistic)
+	txn2.store.txnLatches = nil
+	v, err := txn2.Get(k3)
+	c.Assert(err, IsNil) // should resolve lock and read txn1 k3 result instead of rollback it.
+	c.Assert(v[0], Equals, byte(2))
+	txn1.committer.testingKnobs.bkAfterCommitPrimary <- struct{}{}
+	txn1Done.Wait()
 }
 
 // TestAcquireFalseTimeoutLock tests acquiring a key which is a secondary key of another transaction.

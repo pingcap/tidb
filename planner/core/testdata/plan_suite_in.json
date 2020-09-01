@@ -401,6 +401,15 @@
     ]
   },
   {
+    "name": "TestGroupConcatOrderby",
+    "cases": [
+      "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;",
+      "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;",
+      "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from test;",
+      "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;"
+    ]
+  },
+  {
     "name": "TestIndexJoinUnionScan",
     "cases": [
       [
