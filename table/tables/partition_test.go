@@ -310,6 +310,23 @@ func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 }
 
+func (ts *testSuite) TestLocatePartitionWithExtraHandle(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_extra (
+		id int(20) NOT NULL AUTO_INCREMENT,
+		x int(10) not null,
+		PRIMARY KEY (id, x)
+	) PARTITION BY RANGE(id) (
+		PARTITION p0 VALUES LESS THAN (1024),
+		PARTITION p1 VALUES LESS THAN (4096)
+	)`)
+	tk.MustExec("INSERT INTO t_extra VALUES (1000, 1000), (2000, 2000)")
+	tk.MustExec("set autocommit=0;")
+	tk.MustQuery("select * from t_extra where id = 1000 for update").Check(testkit.Rows("1000 1000"))
+	tk.MustExec("commit")
+}
+
 func (ts *testSuite) TestMultiTableUpdate(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")

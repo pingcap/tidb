@@ -137,12 +137,8 @@ type PartitionExpr struct {
 func initEvalBufferType(t *partitionedTable) {
 	hasExtraHandle := false
 	numCols := len(t.Cols())
-	for _, col := range t.Cols() {
-		if col.Name.L == model.ExtraHandleName.L {
-			hasExtraHandle = true
-		}
-	}
-	if hasExtraHandle {
+	if !t.Meta().PKIsHandle {
+		hasExtraHandle = true
 		numCols++
 	}
 	t.evalBufferTypes = make([]*types.FieldType, numCols)
@@ -379,17 +375,8 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 	defer t.evalBufferPool.Put(evalBuffer)
 	idx := sort.Search(len(partitionExprs), func(i int) bool {
-		var (
-			ret    int64
-			isNull bool
-			err    error
-		)
 		evalBuffer.SetDatums(r...)
-		if len(r) > evalBuffer.Len() {
-			ret, isNull, err = partitionExprs[i].EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
-		} else {
-			ret, isNull, err = partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
-		}
+		ret, isNull, err := partitionExprs[i].EvalInt(ctx, evalBuffer.ToRow())
 		if err != nil {
 			return true // Break the search.
 		}
@@ -441,13 +428,8 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 	} else {
 		evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 		defer t.evalBufferPool.Put(evalBuffer)
-		if len(r) > evalBuffer.Len() {
-			// For some case such as `SELECT .. FOR UPDATE`, datum will contain handle column.
-			val, isNull, err = t.partitionExpr.Expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
-		} else {
-			evalBuffer.SetDatums(r...)
-			val, isNull, err = t.partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
-		}
+		evalBuffer.SetDatums(r...)
+		val, isNull, err = t.partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
 		if err != nil {
 			return 0, err
 		}
@@ -462,7 +444,6 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 		}
 		return ranges.compare(i, ret, unsigned) > 0
 	})
-	fmt.Println(ret, unsigned, pos)
 	if isNull {
 		pos = 0
 	}
@@ -498,18 +479,8 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 	}
 	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 	defer t.evalBufferPool.Put(evalBuffer)
-	var (
-		ret    int64
-		isNull bool
-		err    error
-	)
-	if len(r) > evalBuffer.Len() {
-		// For some case such as `SELECT .. FOR UPDATE`, datum will contain handle column.
-		ret, isNull, err = t.partitionExpr.Expr.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
-	} else {
-		evalBuffer.SetDatums(r...)
-		ret, isNull, err = t.partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
-	}
+	evalBuffer.SetDatums(r...)
+	ret, isNull, err := t.partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
 	if err != nil {
 		return 0, err
 	}
