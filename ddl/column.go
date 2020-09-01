@@ -794,7 +794,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 		// Make sure job args change behind the `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
-		// be updated in `finishDDLJob` even if it meet a error in `updateVersionAndTableInfoWithCheck`.
+		// be updated in `updateDDLJob` even if it meet a error in `updateVersionAndTableInfoWithCheck`.
 		job.Args = append(job.Args, changingCol, changingIdxs)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
