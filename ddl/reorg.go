@@ -161,6 +161,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		job.SetRowCount(rowCount)
 		if err == nil {
 			metrics.AddIndexProgress.Set(100)
+			t.RemoveDDLReorgHandle(job, reorgInfo.elements)
 		}
 		w.reorgCtx.clean()
 		return errors.Trace(err)
@@ -176,7 +177,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		job.SetRowCount(rowCount)
 		updateAddIndexProgress(w, tblInfo, rowCount)
 		// Update a reorgInfo's handle.
-		err := t.UpdateDDLReorgStartHandle(job, doneHandle)
+		err := t.UpdateDDLReorgStartHandle(job, reorgInfo.currentEle, doneHandle)
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout", zap.Duration("waitTime", waitTimeout),
 			zap.Int64("totalAddedRowCount", rowCount), zap.String("doneHandle", toString(doneHandle)), zap.Error(err))
 		// If timeout, we will return, check the owner and retry to wait job done again.
@@ -258,6 +259,8 @@ type reorgInfo struct {
 	// PhysicalTableID is used to trace the current partition we are handling.
 	// If the table is not partitioned, PhysicalTableID would be TableID.
 	PhysicalTableID int64
+	elements        []*meta.Element
+	currentEle      *meta.Element
 }
 
 func (r *reorgInfo) String() string {
@@ -444,7 +447,7 @@ func getValidCurrentVersion(store kv.Storage) (ver kv.Version, err error) {
 	return ver, nil
 }
 
-func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*reorgInfo, error) {
+func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elements []*meta.Element) (*reorgInfo, error) {
 	var (
 		start kv.Handle
 		end   kv.Handle
@@ -479,15 +482,16 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
 			return &info, errors.New("occur an error when update reorg handle")
 		})
-		err = t.UpdateDDLReorgHandle(job, start, end, pid)
+		err = t.UpdateDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
 			return &info, errors.Trace(err)
 		}
 		// Update info should after data persistent.
 		job.SnapshotVer = ver.Ver
+		info.currentEle = elements[0]
 	} else {
 		var err error
-		start, end, pid, err = t.GetDDLReorgHandle(job, tbl.Meta().IsCommonHandle)
+		start, end, pid, err = t.GetDDLReorgHandle(job, elements[0], tbl.Meta().IsCommonHandle)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -497,14 +501,15 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table) (*re
 	info.StartHandle = start
 	info.EndHandle = end
 	info.PhysicalTableID = pid
+	info.elements = elements
 
 	return &info, nil
 }
 
-func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle kv.Handle, physicalTableID int64) error {
+func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle kv.Handle, physicalTableID int64, element *meta.Element) error {
 	if startHandle == nil && endHandle == nil {
 		return nil
 	}
 	t := meta.NewMeta(txn)
-	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalTableID))
+	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalTableID, element))
 }

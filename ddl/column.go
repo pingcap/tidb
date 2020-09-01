@@ -820,7 +820,8 @@ func (w *worker) doModifyColumnTypeWithData(
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		reorgInfo, err := getReorgInfo(d, t, job, tbl)
+
+		reorgInfo, err := getReorgInfo(d, t, job, tbl, buildElements(changingCol, changingIdxs))
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
@@ -882,13 +883,21 @@ func (w *worker) doModifyColumnTypeWithData(
 
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		// TODO: Change column ID.
-		// asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{changingCol}})
+		asyncNotifyEvent(d, &ddlutil.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{changingCol}})
 	default:
 		err = ErrInvalidDDLState.GenWithStackByArgs("column", changingCol.State)
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func buildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
+	elements := make([]*meta.Element, 0, len(changingIdxs)+1)
+	elements = append(elements, &meta.Element{changingCol.ID, meta.ColumnElementKey})
+	for _, idx := range changingIdxs {
+		elements = append(elements, &meta.Element{idx.ID, meta.IndexElementKey})
+	}
+	return elements
 }
 
 func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colInfo *model.ColumnInfo, reorgInfo *reorgInfo) error {
@@ -898,14 +907,15 @@ func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colIn
 
 // updateColumnAndIndexes handles the modify column reorganization state for a table.
 func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.ColumnInfo, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
-	// TODO: Consider rebuild ReorgInfo key to mDDLJobReorgKey_jobID_elementID(colID/idxID).
 	// TODO: Support partition tables.
+	reorgInfo.currentEle = reorgInfo.elements[0]
 	err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	for _, idx := range idxes {
+	for i, idx := range idxes {
+		reorgInfo.currentEle = reorgInfo.elements[i+1]
 		err = w.addTableIndex(t, idx, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)

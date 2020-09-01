@@ -535,7 +535,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, errors.Trace(err)
 		}
 
-		reorgInfo, err := getReorgInfo(d, t, job, tbl)
+		elements := []*meta.Element{&meta.Element{indexInfo.ID, meta.IndexElementKey}}
+		reorgInfo, err := getReorgInfo(d, t, job, tbl, elements)
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
@@ -1288,7 +1289,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	if err != nil {
 		// update the reorg handle that has been processed.
 		err1 := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
-			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, nextHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID))
+			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, nextHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID, reorgInfo.currentEle))
 		})
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
 		logutil.BgLogger().Warn("[ddl] add index worker handle batch tasks failed",
@@ -1497,6 +1498,7 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 // addTableIndex handles the add index reorganization state for a table.
 func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *reorgInfo) error {
 	var err error
+	reorgInfo.currentEle = reorgInfo.elements[0]
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		var finish bool
 		for !finish {
@@ -1560,7 +1562,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
 	err = kv.RunInNewTxn(reorg.d.store, true, func(txn kv.Transaction) error {
-		return errors.Trace(reorg.UpdateReorgMeta(txn, reorg.StartHandle, reorg.EndHandle, reorg.PhysicalTableID))
+		return errors.Trace(reorg.UpdateReorgMeta(txn, reorg.StartHandle, reorg.EndHandle, reorg.PhysicalTableID, reorg.currentEle))
 	})
 	logutil.BgLogger().Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID),
 		zap.Int64("partitionTableID", pid), zap.String("startHandle", toString(start)),

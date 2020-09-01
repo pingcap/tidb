@@ -333,15 +333,16 @@ func (s *testSuite) TestDDL(c *C) {
 	err = t.UpdateDDLJob(0, job, true)
 	c.Assert(err, IsNil)
 
+	element := &meta.Element{ID: 123, TypeKey: meta.IndexElementKey}
 	// There are 3 meta key relate to index reorganization:
 	// start_handle, end_handle and physical_table_id.
 	// Only start_handle is initialized.
-	err = t.UpdateDDLReorgStartHandle(job, kv.IntHandle(1))
+	err = t.UpdateDDLReorgStartHandle(job, element, kv.IntHandle(1))
 	c.Assert(err, IsNil)
 
 	// Since physical_table_id is uninitialized, we simulate older TiDB version that doesn't store them.
 	// In this case GetDDLReorgHandle always return maxInt64 as end_handle.
-	i, j, k, err := t.GetDDLReorgHandle(job, false)
+	i, j, k, err := t.GetDDLReorgHandle(job, element, false)
 	c.Assert(err, IsNil)
 	c.Assert(i, HandleEquals, kv.IntHandle(1))
 	c.Assert(j, HandleEquals, kv.IntHandle(math.MaxInt64))
@@ -349,20 +350,25 @@ func (s *testSuite) TestDDL(c *C) {
 
 	startHandle := s.NewHandle().Int(1).Common("abc", 1222, "string")
 	endHandle := s.NewHandle().Int(2).Common("dddd", 1222, "string")
-	err = t.UpdateDDLReorgHandle(job, startHandle, endHandle, 3)
+	err = t.UpdateDDLReorgHandle(job, startHandle, endHandle, 3, element)
 	c.Assert(err, IsNil)
 
-	i, j, k, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
+	i, j, k, err = t.GetDDLReorgHandle(job, element, s.IsCommonHandle)
 	c.Assert(err, IsNil)
 	c.Assert(i, HandleEquals, startHandle)
 	c.Assert(j, HandleEquals, endHandle)
 	c.Assert(k, Equals, int64(3))
 
-	err = t.RemoveDDLReorgHandle(job)
+	err = t.RemoveDDLReorgHandle(job, []*meta.Element{element})
 	c.Assert(err, IsNil)
+	i, j, k, err = t.GetDDLReorgHandle(job, element, false)
+	c.Assert(err, IsNil)
+	c.Assert(i, IsNil)
+	c.Assert(j, HandleEquals, kv.IntHandle(math.MaxInt64))
+	c.Assert(k, Equals, int64(0))
 
 	// new TiDB binary running on old TiDB DDL reorg data.
-	i, j, k, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
+	i, j, k, err = t.GetDDLReorgHandle(job, element, s.IsCommonHandle)
 	c.Assert(err, IsNil)
 	c.Assert(i, IsNil)
 	// The default value for endHandle is MaxInt64, not 0.
@@ -370,7 +376,7 @@ func (s *testSuite) TestDDL(c *C) {
 	c.Assert(k, Equals, int64(0))
 
 	// Test GetDDLReorgHandle failed.
-	_, _, _, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
+	_, _, _, err = t.GetDDLReorgHandle(job, element, s.IsCommonHandle)
 	c.Assert(err, IsNil)
 
 	v, err = t.DeQueueDDLJob()
