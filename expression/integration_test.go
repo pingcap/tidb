@@ -7111,6 +7111,20 @@ func (s *testIntegrationSerialSuite) TestIssue19315(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testIntegrationSerialSuite) TestIssue18674(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustQuery("select -1.0 % -1.0").Check(testkit.Rows("0.0"))
+	tk.MustExec("create table t1(`pk` int primary key,`col_float_key_signed` float  ,key (`col_float_key_signed`))")
+	tk.MustExec("insert into t1 values (0, null), (1, 0), (2, -0), (3, 1), (-1,-1)")
+	tk.MustQuery("select * from t1 where ( `col_float_key_signed` % `col_float_key_signed`) IS FALSE").Sort().Check(testkit.Rows("-1 -1", "3 1"))
+	tk.MustQuery("select  `col_float_key_signed` , `col_float_key_signed` % `col_float_key_signed` from t1").Sort().Check(testkit.Rows(
+		"-1 -0", "0 <nil>", "0 <nil>", "1 0", "<nil> <nil>"))
+	tk.MustQuery("select  `col_float_key_signed` , (`col_float_key_signed` % `col_float_key_signed`) IS FALSE from t1").Sort().Check(testkit.Rows(
+		"-1 1", "0 0", "0 0", "1 1", "<nil> 0"))
+}
+
 func (s *testIntegrationSerialSuite) TestIssue17063(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -7126,4 +7140,17 @@ func (s *testIntegrationSerialSuite) TestIssue17063(c *C) {
 	tk.MustQuery(`select coercibility(if(a='x', a, b)) from t;`).Check(testkit.Rows("2", "2"))
 	tk.MustQuery(`select collation(lag(b, 1, 'B') over w) from t window w as (order by b);`).Check(testkit.Rows("utf8mb4_general_ci", "utf8mb4_general_ci"))
 	tk.MustQuery(`select coercibility(lag(b, 1, 'B') over w) from t window w as (order by b);`).Check(testkit.Rows("2", "2"))
+}
+
+func (s *testIntegrationSuite) TestIssue19504(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c_int int, primary key (c_int));")
+	tk.MustExec("insert into t1 values (1), (2), (3);")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (c_int int, primary key (c_int));")
+	tk.MustExec("insert into t2 values (1);")
+	tk.MustQuery("select (select count(c_int) from t2 where c_int = t1.c_int) c1, (select count(1) from t2 where c_int = t1.c_int) c2 from t1;").
+		Check(testkit.Rows("1 1", "0 0", "0 0"))
 }
