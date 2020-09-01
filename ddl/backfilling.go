@@ -57,7 +57,7 @@ func (bWT backfillWorkerType) String() string {
 }
 
 type backfiller interface {
-	BackfillDataInTxn(handleRange reorgIndexTask) (taskCtx backfillTaskContext, errInTxn error)
+	BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error)
 	AddMetricInfo(float64)
 }
 
@@ -82,7 +82,7 @@ type backfillWorker struct {
 	ddlWorker *worker
 	batchCnt  int
 	sessCtx   sessionctx.Context
-	taskCh    chan *reorgIndexTask
+	taskCh    chan *reorgBackfillTask
 	resultCh  chan *backfillResult
 	table     table.Table
 	closed    bool
@@ -96,7 +96,7 @@ func newBackfillWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 		ddlWorker: worker,
 		batchCnt:  int(variable.GetDDLReorgBatchSize()),
 		sessCtx:   sessCtx,
-		taskCh:    make(chan *reorgIndexTask, 1),
+		taskCh:    make(chan *reorgBackfillTask, 1),
 		resultCh:  make(chan *backfillResult, 1),
 		priority:  kv.PriorityLow,
 	}
@@ -115,7 +115,7 @@ func closeBackfillWorkers(workers []*backfillWorker) {
 	}
 }
 
-type reorgIndexTask struct {
+type reorgBackfillTask struct {
 	physicalTableID int64
 	startHandle     kv.Handle
 	endHandle       kv.Handle
@@ -125,7 +125,7 @@ type reorgIndexTask struct {
 	endIncluded bool
 }
 
-func (r *reorgIndexTask) String() string {
+func (r *reorgBackfillTask) String() string {
 	rightParenthesis := ")"
 	if r.endIncluded {
 		rightParenthesis = "]"
@@ -151,7 +151,7 @@ func mergeBackfillCtxToResult(taskCtx *backfillTaskContext, result *backfillResu
 }
 
 // handleBackfillTask backfills range [task.startHandle, task.endHandle) handle's index to table.
-func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgIndexTask, bf backfiller) *backfillResult {
+func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, bf backfiller) *backfillResult {
 	handleRange := *task
 	result := &backfillResult{addedCount: 0, nextHandle: handleRange.startHandle, err: nil}
 	lastLogCount := 0
@@ -287,7 +287,7 @@ func (w *worker) waitTaskResults(workers []*backfillWorker, taskCnt int, totalAd
 
 // handleReorgTasks sends tasks to workers, and waits for all the running workers to return results,
 // there are taskCnt running workers.
-func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, workers []*backfillWorker, batchTasks []*reorgIndexTask) error {
+func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, workers []*backfillWorker, batchTasks []*reorgBackfillTask) error {
 	for i, task := range batchTasks {
 		workers[i].taskCh <- task
 	}
@@ -339,7 +339,7 @@ func decodeHandleRange(keyRange kv.KeyRange) (kv.Handle, kv.Handle, error) {
 // sendRangeTaskToWorkers sends tasks to workers, and returns remaining kvRanges that is not handled.
 func (w *worker) sendRangeTaskToWorkers(workers []*backfillWorker, reorgInfo *reorgInfo,
 	totalAddedCount *int64, kvRanges []kv.KeyRange, globalEndHandle kv.Handle) ([]kv.KeyRange, error) {
-	batchTasks := make([]*reorgIndexTask, 0, len(workers))
+	batchTasks := make([]*reorgBackfillTask, 0, len(workers))
 	physicalTableID := reorgInfo.PhysicalTableID
 
 	// Build reorg tasks.
@@ -353,7 +353,7 @@ func (w *worker) sendRangeTaskToWorkers(workers []*backfillWorker, reorgInfo *re
 		if endHandle.Equal(globalEndHandle) {
 			endIncluded = true
 		}
-		task := &reorgIndexTask{physicalTableID, startHandle, endHandle, endIncluded}
+		task := &reorgBackfillTask{physicalTableID, startHandle, endHandle, endIncluded}
 		batchTasks = append(batchTasks, task)
 
 		if len(batchTasks) >= len(workers) {

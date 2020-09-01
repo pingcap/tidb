@@ -950,7 +950,7 @@ type rowRecord struct {
 }
 
 // getNextHandle gets next handle of entry that we are going to process.
-func (w *updateColumnWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool, lastAccessedHandle kv.Handle) (nextHandle kv.Handle) {
+func (w *updateColumnWorker) getNextHandle(taskRange reorgBackfillTask, taskDone bool, lastAccessedHandle kv.Handle) (nextHandle kv.Handle) {
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
 		return lastAccessedHandle.Next()
@@ -967,7 +967,7 @@ func (w *updateColumnWorker) getNextHandle(taskRange reorgIndexTask, taskDone bo
 	return taskRange.endHandle.Next()
 }
 
-func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*rowRecord, kv.Handle, bool, error) {
+func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*rowRecord, kv.Handle, bool, error) {
 	w.rowRecords = w.rowRecords[:0]
 	startTime := time.Now()
 
@@ -1053,7 +1053,7 @@ func (w *updateColumnWorker) cleanRowMap() {
 }
 
 // BackfillDataInTxn will backfill the table record in a transaction, lock corresponding rowKey, if the value of rowKey is changed.
-func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgIndexTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		taskCtx.addedCount = 0

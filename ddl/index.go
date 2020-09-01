@@ -855,7 +855,7 @@ func (w *addIndexWorker) cleanRowMap() {
 }
 
 // getNextHandle gets next handle of entry that we are going to process.
-func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) (nextHandle kv.Handle) {
+func (w *addIndexWorker) getNextHandle(taskRange reorgBackfillTask, taskDone bool) (nextHandle kv.Handle) {
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
 		return w.idxRecords[len(w.idxRecords)-1].handle.Next()
@@ -878,7 +878,7 @@ func (w *addIndexWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool) 
 // 2. Next handle of entry that we need to process.
 // 3. Boolean indicates whether the task is done.
 // 4. error occurs in fetchRowColVals. nil if no error occurs.
-func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*indexRecord, kv.Handle, bool, error) {
+func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*indexRecord, kv.Handle, bool, error) {
 	// TODO: use tableScan to prune columns.
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
@@ -993,7 +993,7 @@ func (w *addIndexWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*i
 // indicate that index columns values may changed, index is not allowed to be added, so the txn will rollback and retry.
 // BackfillDataInTxn will add w.batchCnt indices once, default value of w.batchCnt is 128.
 // TODO: make w.batchCnt can be modified by system variable.
-func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgIndexTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	failpoint.Inject("errorMockPanic", func(val failpoint.Value) {
 		if val.(bool) {
 			panic("panic test")
