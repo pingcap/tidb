@@ -1394,6 +1394,21 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 	switch d.k {
 	case KindString, KindBytes:
 		e, err = ParseEnumName(target.Elems, d.GetString(), target.Collate)
+	case KindMysqlEnum:
+		var ok bool
+		origName, origValue := d.GetMysqlEnum().Name, d.GetMysqlEnum().Value
+		for value, name := range target.Elems {
+			if strings.Compare(name, origName) == 0 {
+				origValue = uint64(value + 1)
+				ok = true
+				break
+			}
+		}
+		if ok {
+			e.Value, e.Name = origValue, origName
+		} else {
+			e, err = ParseEnumValue(target.Elems, uint64(e.Value))
+		}
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
