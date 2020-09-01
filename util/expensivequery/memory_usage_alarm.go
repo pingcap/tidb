@@ -136,20 +136,20 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, sm util.SessionManager
 	record.recordSQLAndSummaryTable(sm, ctx)
 	record.recordProfile()
 
-	tryRemove := func(filename []string) {
+	tryRemove := func(filename *[]string) {
 		// Keep the last 5 files
-		for len(filename) > 5 {
-			err := os.Remove(filename[0])
+		for len(*filename) > 5 {
+			err := os.Remove((*filename)[0])
 			if err != nil {
 				logutil.BgLogger().Error("remove temp files failed", zap.Error(err))
 				return
 			}
-			filename = filename[1:]
+			*filename = (*filename)[1:]
 		}
 	}
-	tryRemove(record.lastLogFileName)
+	tryRemove(&record.lastLogFileName)
 	for i := range record.lastProfileFileName {
-		tryRemove(record.lastProfileFileName[i])
+		tryRemove(&record.lastProfileFileName[i])
 	}
 }
 
