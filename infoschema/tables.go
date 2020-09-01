@@ -874,7 +874,7 @@ var tableClusterLogCols = []columnInfo{
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
 	{name: "LEVEL", tp: mysql.TypeVarchar, size: 8},
-	{name: "MESSAGE", tp: mysql.TypeVarString, size: 1024},
+	{name: "MESSAGE", tp: mysql.TypeVarchar, size: 1024},
 }
 
 var tableClusterLoadCols = []columnInfo{
