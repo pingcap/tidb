@@ -318,6 +318,16 @@ func (p PhysicalHashJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo
 	return &p
 }
 
+// Init initializes BatchPointGetPlan.
+func (p PhysicalBroadCastJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalBroadCastJoin {
+	tp := plancodec.TypeBroadcastJoin
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, tp, &p, offset)
+	p.childrenReqProps = props
+	p.stats = stats
+	return &p
+
+}
+
 // Init initializes PhysicalMergeJoin.
 func (p PhysicalMergeJoin) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int) *PhysicalMergeJoin {
 	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeMergeJoin, &p, offset)
@@ -467,16 +477,18 @@ func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, of
 	return &p
 }
 
+func flattenTreePlan(plan PhysicalPlan, plans []PhysicalPlan) []PhysicalPlan {
+	plans = append(plans, plan)
+	for _, child := range plan.Children() {
+		plans = flattenTreePlan(child, plans)
+	}
+	return plans
+}
+
 // flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
 func flattenPushDownPlan(p PhysicalPlan) []PhysicalPlan {
 	plans := make([]PhysicalPlan, 0, 5)
-	for {
-		plans = append(plans, p)
-		if len(p.Children()) == 0 {
-			break
-		}
-		p = p.Children()[0]
-	}
+	plans = flattenTreePlan(p, plans)
 	for i := 0; i < len(plans)/2; i++ {
 		j := len(plans) - i - 1
 		plans[i], plans[j] = plans[j], plans[i]
