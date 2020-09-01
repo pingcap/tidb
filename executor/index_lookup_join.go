@@ -548,6 +548,8 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 			return nil, nil
 		}
 		innerColType := iw.rowTypes[iw.keyCols[i]]
+		// TODO: collate should be taken into consideration
+		// https://github.com/pingcap/tidb/issues/19654
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
 		if err != nil {
 			// If the converted outerValue overflows, we don't need to lookup it.
