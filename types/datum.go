@@ -14,7 +14,6 @@
 package types
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"sort"
@@ -30,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // Kind constants.
@@ -654,6 +651,10 @@ func (d *Datum) compareMysqlDecimal(sc *stmtctx.StatementContext, dec *MyDecimal
 
 func (d *Datum) compareMysqlDuration(sc *stmtctx.StatementContext, dur Duration) (int, error) {
 	switch d.k {
+	case KindNull, KindMinNotNull:
+		return -1, nil
+	case KindMaxValue:
+		return 1, nil
 	case KindMysqlDuration:
 		return d.GetMysqlDuration().Compare(dur), nil
 	case KindString, KindBytes:
@@ -666,6 +667,10 @@ func (d *Datum) compareMysqlDuration(sc *stmtctx.StatementContext, dur Duration)
 
 func (d *Datum) compareMysqlEnum(sc *stmtctx.StatementContext, enum Enum) (int, error) {
 	switch d.k {
+	case KindNull, KindMinNotNull:
+		return -1, nil
+	case KindMaxValue:
+		return 1, nil
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), enum.String()), nil
 	default:
@@ -675,6 +680,10 @@ func (d *Datum) compareMysqlEnum(sc *stmtctx.StatementContext, enum Enum) (int, 
 
 func (d *Datum) compareBinaryLiteral(sc *stmtctx.StatementContext, b BinaryLiteral) (int, error) {
 	switch d.k {
+	case KindNull, KindMinNotNull:
+		return -1, nil
+	case KindMaxValue:
+		return 1, nil
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), b.ToString()), nil
 	case KindBinaryLiteral, KindMysqlBit:
@@ -691,6 +700,10 @@ func (d *Datum) compareBinaryLiteral(sc *stmtctx.StatementContext, b BinaryLiter
 
 func (d *Datum) compareMysqlSet(sc *stmtctx.StatementContext, set Set) (int, error) {
 	switch d.k {
+	case KindNull, KindMinNotNull:
+		return -1, nil
+	case KindMaxValue:
+		return 1, nil
 	case KindString, KindBytes:
 		return CompareString(d.GetString(), set.String()), nil
 	default:
@@ -708,6 +721,10 @@ func (d *Datum) compareMysqlJSON(sc *stmtctx.StatementContext, target json.Binar
 
 func (d *Datum) compareMysqlTime(sc *stmtctx.StatementContext, time Time) (int, error) {
 	switch d.k {
+	case KindNull, KindMinNotNull:
+		return -1, nil
+	case KindMaxValue:
+		return 1, nil
 	case KindString, KindBytes:
 		dt, err := ParseDatetime(sc, d.GetString())
 		return dt.Compare(time), errors.Trace(err)
@@ -1296,8 +1313,7 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
-		logutil.Logger(context.Background()).Error("convert to MySQL enum failed", zap.Error(err))
-		err = errors.Trace(ErrTruncated)
+		err = errors.Wrap(ErrTruncated, "convert to MySQL enum failed: "+err.Error())
 	}
 	ret.SetValue(e)
 	return ret, err
@@ -1322,10 +1338,10 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 	}
 
 	if err != nil {
-		return invalidConv(d, target.Tp)
+		err = errors.Wrap(ErrTruncated, "convert to MySQL set failed: "+err.Error())
 	}
 	ret.SetValue(s)
-	return ret, nil
+	return ret, err
 }
 
 func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldType) (ret Datum, err error) {

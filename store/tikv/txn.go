@@ -61,7 +61,7 @@ type tikvTxn struct {
 	commitTS  uint64
 	valid     bool
 	lockKeys  [][]byte
-	lockedMap map[string]struct{}
+	lockedMap map[string]bool
 	mu        sync.Mutex // For thread-safe LockKeys function.
 	dirty     bool
 	setCnt    int64
@@ -88,7 +88,7 @@ func newTikvTxnWithStartTS(store *tikvStore, startTS uint64) (*tikvTxn, error) {
 	return &tikvTxn{
 		snapshot:  snapshot,
 		us:        kv.NewUnionStore(snapshot),
-		lockedMap: map[string]struct{}{},
+		lockedMap: make(map[string]bool),
 		store:     store,
 		startTS:   startTS,
 		startTime: time.Now(),
@@ -225,6 +225,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.snapshot.keyOnly = val.(bool)
 	case kv.SnapshotTS:
 		txn.snapshot.setSnapshotTS(val.(uint64))
+	case kv.CheckExists:
+		txn.us.SetOption(kv.CheckExists, val.(map[string]struct{}))
 	}
 }
 
@@ -354,6 +356,8 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	// Exclude keys that are already locked.
 	var err error
 	keys := make([][]byte, 0, len(keysInput))
+	txn.mu.Lock()
+	defer txn.mu.Unlock()
 	defer func() {
 		if err == nil {
 			if lockCtx.PessimisticLockWaited != nil {
@@ -368,13 +372,26 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			*lockCtx.LockKeysCount += int32(len(keys))
 		}
 	}()
-	txn.mu.Lock()
 	for _, key := range keysInput {
-		if _, ok := txn.lockedMap[string(key)]; !ok {
+		// The value of lockedMap is only used by pessimistic transactions.
+		valueExist, locked := txn.lockedMap[string(key)]
+		_, checkKeyExists := lockCtx.CheckKeyExists[string(key)]
+		if !locked {
 			keys = append(keys, key)
+		} else if txn.IsPessimistic() {
+			if checkKeyExists && valueExist {
+				existErrInfo := txn.us.LookupConditionPair(key)
+				if existErrInfo == nil {
+					logutil.Logger(ctx).Error("key exist error not found",
+						zap.Uint64("connID", txn.committer.connID),
+						zap.Uint64("startTS", txn.startTS),
+						zap.ByteString("key", key))
+					return errors.Errorf("conn %d, existErr for key:%s should not be nil", txn.committer.connID, key)
+				}
+				return existErrInfo.Err()
+			}
 		}
 	}
-	txn.mu.Unlock()
 	if len(keys) == 0 {
 		return nil
 	}
@@ -437,13 +454,15 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			txn.committer.ttlManager.run(txn.committer, lockCtx.Killed)
 		}
 	}
-	txn.mu.Lock()
 	txn.lockKeys = append(txn.lockKeys, keys...)
 	for _, key := range keys {
-		txn.lockedMap[string(key)] = struct{}{}
+		if lockCtx.PointGetLock != nil {
+			txn.lockedMap[string(key)] = *lockCtx.PointGetLock
+		} else {
+			txn.lockedMap[string(key)] = true
+		}
 	}
 	txn.dirty = true
-	txn.mu.Unlock()
 	return nil
 }
 

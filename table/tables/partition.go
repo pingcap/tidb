@@ -301,7 +301,8 @@ func (t *partitionedTable) PartitionExpr(ctx sessionctx.Context, columns []*expr
 	return newPartitionExprBySchema(ctx, t.meta, columns)
 }
 
-func partitionRecordKey(pid int64, handle int64) kv.Key {
+// PartitionRecordKey returns the partition recordKey.
+func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
 	return tablecodec.EncodeRecordKey(recordPrefix, handle)
 }

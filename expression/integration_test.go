@@ -483,6 +483,21 @@ func (s *testIntegrationSuite) TestMathBuiltin(c *C) {
 	result.Check(testkit.Rows("100 123.45 123.4 123.456 1.230000000000000000000000000000 123.45"))
 	result = tk.MustQuery("SELECT truncate(9223372036854775807, -7), truncate(9223372036854775808, -10), truncate(cast(-1 as unsigned), -10);")
 	result.Check(testkit.Rows("9223372036850000000 9223372030000000000 18446744070000000000"))
+	// issue 17181,19390
+	tk.MustQuery("select truncate(42, -9223372036854775808);").Check(testkit.Rows("0"))
+	tk.MustQuery("select truncate(42, 9223372036854775808);").Check(testkit.Rows("42"))
+	tk.MustQuery("select truncate(42, -2147483648);").Check(testkit.Rows("0"))
+	tk.MustQuery("select truncate(42, 2147483648);").Check(testkit.Rows("42"))
+	tk.MustQuery("select truncate(42, 18446744073709551615);").Check(testkit.Rows("42"))
+	tk.MustQuery("select truncate(42, 4294967295);").Check(testkit.Rows("42"))
+	tk.MustQuery("select truncate(42, -0);").Check(testkit.Rows("42"))
+	tk.MustQuery("select truncate(42, -307);").Check(testkit.Rows("0"))
+	tk.MustQuery("select truncate(42, -308);").Check(testkit.Rows("0"))
+	tk.MustQuery("select truncate(42, -309);").Check(testkit.Rows("0"))
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec("create table t (a bigint unsigned);")
+	tk.MustExec("insert into t values (18446744073709551615), (4294967295), (9223372036854775808), (2147483648);")
+	tk.MustQuery("select truncate(42, a) from t;").Check(testkit.Rows("42", "42", "42", "42"))
 
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a date, b datetime, c timestamp, d varchar(20));`)
@@ -5069,6 +5084,14 @@ func (s *testIntegrationSuite) TestIssue15986(c *C) {
 		"00000000000000000000000000000000000000000000000000000000000000000000000000000000000009';").Check(testkit.Rows("0"))
 }
 
+func (s *testIntegrationSuite) TestGenerateColumnIndexCase(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 int, c1 int as (case when c0 > 0 then 0 else -1 end))")
+	tk.MustExec("alter table t0 add index idx(c1);")
+}
+
 func (s *testIntegrationSuite) TestIssue19012(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -5099,7 +5122,25 @@ func (s *testIntegrationSuite) TestIssue19012(c *C) {
 	tk.Se.GetSessionVars().MaxChunkSize = 1
 	tk.Se.GetSessionVars().InitChunkSize = 1
 	rs := tk.MustQuery(`select a.province, a.city, case when sum(s1should_count) = 0 then 0 else sum(s1complete_count)/sum(s1should_count) end as aa from t a where a.province = "江苏省" group by a.province, a.city
-union all 
+union all
 select a.province, a.province city, case when sum(s1should_count) = 0 then 0 else sum(s1complete_count)/sum(s1should_count) end as aa from t a where a.province = "江苏省" group by a.province, a.province;`)
 	rs.Sort().Check(testkit.Rows("江苏省 南京市 9.0000", "江苏省 南通市 9.0000", "江苏省 宿迁市 9.0000", "江苏省 常州市 9.0000", "江苏省 徐州市 -8.0000", "江苏省 扬州市 9.0000", "江苏省 无锡市 6.0000", "江苏省 江苏省 10.0000", "江苏省 泰州市 9.0000", "江苏省 淮安市 9.0000", "江苏省 盐城市 6.0000", "江苏省 苏州市 9.0000", "江苏省 连云港市 9.0000", "江苏省 镇江市 9.0000"))
+}
+
+func (s *testIntegrationSuite) TestIssue18850(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1")
+	tk.MustExec("create table t(a int, b enum('A', 'B'));")
+	tk.MustExec("create table t1(a1 int, b1 enum('B', 'A'));")
+	tk.MustExec("insert into t values (1, 'A');")
+	tk.MustExec("insert into t1 values (1, 'A');")
+	tk.MustQuery("select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
+
+	tk.MustExec("drop table t, t1")
+	tk.MustExec("create table t(a int, b set('A', 'B'));")
+	tk.MustExec("create table t1(a1 int, b1 set('B', 'A'));")
+	tk.MustExec("insert into t values (1, 'A');")
+	tk.MustExec("insert into t1 values (1, 'A');")
+	tk.MustQuery("select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
 }
