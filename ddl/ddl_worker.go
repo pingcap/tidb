@@ -662,7 +662,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionUnlockTable:
 		ver, err = onUnlockTables(t, job)
 	case model.ActionSetTiFlashReplica:
-		ver, err = onSetTableFlashReplica(t, job)
+		ver, err = w.onSetTableFlashReplica(t, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
 		ver, err = onUpdateFlashReplicaStatus(t, job)
 	case model.ActionCreateSequence:

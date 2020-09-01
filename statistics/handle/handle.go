@@ -61,8 +61,8 @@ type Handle struct {
 		schemaVersion int64
 	}
 
-	// It can be read by multiply readers at the same time without acquire lock, but it can be
-	// written only after acquire the lock.
+	// It can be read by multiple readers at the same time without acquiring lock, but it can be
+	// written only after acquiring the lock.
 	statsCache struct {
 		sync.Mutex
 		atomic.Value
@@ -78,7 +78,7 @@ type Handle struct {
 	// globalMap contains all the delta map from collectors when we dump them to KV.
 	globalMap tableDeltaMap
 	// feedback is used to store query feedback info.
-	feedback []*statistics.QueryFeedback
+	feedback *statistics.QueryFeedbackMap
 
 	lease atomic2.Duration
 }
@@ -90,7 +90,7 @@ func (h *Handle) Clear() {
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
-	h.feedback = h.feedback[:0]
+	h.feedback = statistics.NewQueryFeedbackMap()
 	h.mu.ctx.GetSessionVars().InitChunkSize = 1
 	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
 	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
@@ -101,16 +101,13 @@ func (h *Handle) Clear() {
 	h.mu.Unlock()
 }
 
-// MaxQueryFeedbackCount is the max number of feedback that cache in memory.
-var MaxQueryFeedbackCount = atomic2.NewInt64(1 << 10)
-
 // NewHandle creates a Handle for update stats.
 func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	handle := &Handle{
 		ddlEventCh: make(chan *util.Event, 100),
 		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
 		globalMap:  make(tableDeltaMap),
-		feedback:   make([]*statistics.QueryFeedback, 0, MaxQueryFeedbackCount.Load()),
+		feedback:   statistics.NewQueryFeedbackMap(),
 	}
 	handle.lease.Store(lease)
 	// It is safe to use it concurrently because the exec won't touch the ctx.
@@ -133,10 +130,10 @@ func (h *Handle) SetLease(lease time.Duration) {
 	h.lease.Store(lease)
 }
 
-// GetQueryFeedback gets the query feedback. It is only use in test.
-func (h *Handle) GetQueryFeedback() []*statistics.QueryFeedback {
+// GetQueryFeedback gets the query feedback. It is only used in test.
+func (h *Handle) GetQueryFeedback() *statistics.QueryFeedbackMap {
 	defer func() {
-		h.feedback = h.feedback[:0]
+		h.feedback = statistics.NewQueryFeedbackMap()
 	}()
 	return h.feedback
 }

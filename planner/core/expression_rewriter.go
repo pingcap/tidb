@@ -46,17 +46,30 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
+	NewExpr, err := rewriteAstExpr(sctx, expr, nil, nil)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return NewExpr.Eval(chunk.Row{})
+}
+
+// rewriteAstExpr rewrite ast expression directly.
+func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
 	var is infoschema.InfoSchema
 	if sctx.GetSessionVars().TxnCtx.InfoSchema != nil {
 		is = sctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
 	}
 	b := NewPlanBuilder(sctx, is, &hint.BlockHintProcessor{})
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
+	if schema != nil {
+		fakePlan.schema = schema
+		fakePlan.names = names
+	}
 	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
 	if err != nil {
-		return types.Datum{}, err
+		return nil, err
 	}
-	return newExpr.Eval(chunk.Row{})
+	return newExpr, nil
 }
 
 func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
@@ -774,12 +787,12 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 		// For AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, we cannot treat `in` expression as
 		// normal column equal condition, so we specially mark the inner operand here.
 		if v.Not || asScalar {
-			rCol.InOperand = true
 			// If both input columns of `in` expression are not null, we can treat the expression
 			// as normal column equal condition instead.
-			lCol, ok := lexpr.(*expression.Column)
-			if ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
-				rCol.InOperand = false
+			if !mysql.HasNotNullFlag(lexpr.GetType().Flag) || !mysql.HasNotNullFlag(rCol.GetType().Flag) {
+				rColCopy := *rCol
+				rColCopy.InOperand = true
+				rexpr = &rColCopy
 			}
 		}
 	} else {

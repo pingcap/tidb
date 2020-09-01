@@ -542,7 +542,7 @@ func (s *testSuite5) TestSetCharset(c *C) {
 	tk.MustExec(`SET CHARACTER SET latin1`)
 	check(
 		"latin1",
-		"latin1",
+		"utf8mb4",
 		"latin1",
 		"utf8mb4",
 		"utf8mb4",
@@ -915,6 +915,9 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
 	_, err = tk.Exec("set @@tx_isolation='SERIALIZABLE'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set global allow_auto_random_explicit_insert=on;")
+	tk.MustQuery("select @@global.allow_auto_random_explicit_insert;").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite5) TestSelectGlobalVar(c *C) {

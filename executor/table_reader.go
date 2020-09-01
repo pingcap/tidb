@@ -15,11 +15,9 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -43,11 +41,11 @@ var _ Executor = &TableReaderExecutor{}
 // selectResultHook is used to hack distsql.SelectWithRuntimeStats safely for testing.
 type selectResultHook struct {
 	selectResultFunc func(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer) (distsql.SelectResult, error)
+		fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int) (distsql.SelectResult, error)
 }
 
 func (sr selectResultHook) SelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer, rootPlanID fmt.Stringer) (distsql.SelectResult, error) {
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int, rootPlanID int) (distsql.SelectResult, error) {
 	if sr.selectResultFunc == nil {
 		return distsql.SelectWithRuntimeStats(ctx, sctx, kvReq, fieldTypes, fb, copPlanIDs, rootPlanID)
 	}
@@ -72,6 +70,7 @@ type TableReaderExecutor struct {
 	resultHandler *tableResultHandler
 	feedback      *statistics.QueryFeedback
 	plans         []plannercore.PhysicalPlan
+	tablePlan     plannercore.PhysicalPlan
 
 	memTracker       *memory.Tracker
 	selectResultHook // for testing
@@ -106,9 +105,17 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 
 	var err error
 	if e.corColInFilter {
-		e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
-		if err != nil {
-			return err
+		if e.storeType == kv.TiFlash {
+			execs, _, err := constructDistExecForTiFlash(e.ctx, e.tablePlan)
+			if err != nil {
+				return err
+			}
+			e.dagPB.RootExecutor = execs[0]
+		} else {
+			e.dagPB.Executors, _, err = constructDistExec(e.ctx, e.plans)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if e.runtimeStats != nil {
@@ -140,14 +147,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
-
-	actionExceed := e.memTracker.GetActionOnExceed()
-	if actionExceed != nil {
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
-	} else {
-		return errors.Trace(fmt.Errorf("failed to find actionExceed in TableReaderExecutor Open phase"))
-	}
-
 	if len(secondPartRanges) == 0 {
 		e.resultHandler.open(nil, firstResult)
 		return nil
@@ -191,10 +190,7 @@ func (e *TableReaderExecutor) Close() error {
 	if e.resultHandler != nil {
 		err = e.resultHandler.Close()
 	}
-	if e.runtimeStats != nil {
-		copStats := e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(e.plans[0].ExplainID().String())
-		copStats.SetRowNum(e.feedback.Actual())
-	}
+	e.kvRanges = e.kvRanges[:0]
 	e.ctx.StoreQueryFeedback(e.feedback)
 	return err
 }

@@ -175,7 +175,9 @@ func (s stats) Stats(vars *variable.SessionVars) (map[string]interface{}, error)
 }
 
 func (s *seqTestSuite) TestShow(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -285,7 +287,7 @@ func (s *seqTestSuite) TestShow(c *C) {
 		d int UNIQUE KEY,
 		index (b) invisible,
 		index (d) invisible)`)
-	excepted :=
+	expected :=
 		"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) DEFAULT NULL,\n" +
 			"  `b` int(11) DEFAULT NULL,\n" +
@@ -296,7 +298,8 @@ func (s *seqTestSuite) TestShow(c *C) {
 			"  UNIQUE KEY `c` (`c`),\n" +
 			"  UNIQUE KEY `d_2` (`d`)\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
-	tk.MustQuery("show create table t").Check(testkit.Rows(excepted))
+	tk.MustQuery("show create table t").Check(testkit.Rows(expected))
+	tk.MustExec("drop table t")
 
 	testSQL = "SHOW VARIABLES LIKE 'character_set_results';"
 	result = tk.MustQuery(testSQL)
@@ -831,11 +834,8 @@ func HelperTestAdminShowNextID(c *C, s *seqTestSuite, str string) {
 	r.Check(testkit.Rows("test1 tt id 41 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
 
-	oldAutoRandom := config.GetGlobalConfig().Experimental.AllowAutoRandom
-	config.GetGlobalConfig().Experimental.AllowAutoRandom = true
-	defer func() {
-		config.GetGlobalConfig().Experimental.AllowAutoRandom = oldAutoRandom
-	}()
+	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
+	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
 	// Test for a table with auto_random primary key.
@@ -1013,13 +1013,10 @@ func (s *seqTestSuite) TestBatchInsertDelete(c *C) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	newCfg.EnableBatchDML = true
-	config.StoreGlobalConfig(&newCfg)
-	defer func() {
-		config.StoreGlobalConfig(cfg)
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableBatchDML = true
+	})
 
 	// Change to batch inset mode and batch size to 50.
 	tk.MustExec("set @@session.tidb_batch_insert=1;")
@@ -1177,9 +1174,10 @@ func (s *seqTestSuite1) TestCoprocessorPriority(c *C) {
 	// Insert some data to make sure plan build IndexLookup for t.
 	tk.MustExec("insert into t values (1), (2)")
 
-	oldThreshold := config.GetGlobalConfig().Log.ExpensiveThreshold
-	config.GetGlobalConfig().Log.ExpensiveThreshold = 0
-	defer func() { config.GetGlobalConfig().Log.ExpensiveThreshold = oldThreshold }()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.ExpensiveThreshold = 0
+	})
 
 	cli.setCheckPriority(pb.CommandPri_High)
 	tk.MustQuery("select id from t where id = 1")
@@ -1422,4 +1420,50 @@ func (s *seqTestSuite) TestOOMPanicInHashJoinWhenFetchBuildRows(c *C) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
 	c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
+}
+
+func (s *seqTestSuite) TestIssue18744(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t, t1;`)
+	tk.MustExec(`CREATE TABLE t (
+  id int(11) NOT NULL,
+  a bigint(20) DEFAULT NULL,
+  b char(20) DEFAULT NULL,
+  c datetime DEFAULT NULL,
+  d double DEFAULT NULL,
+  e json DEFAULT NULL,
+  f decimal(40,6) DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY a (a),
+  KEY b (b),
+  KEY c (c),
+  KEY d (d),
+  KEY f (f)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`CREATE TABLE t1 (
+  id int(11) NOT NULL,
+  a bigint(20) DEFAULT NULL,
+  b char(20) DEFAULT NULL,
+  c datetime DEFAULT NULL,
+  d double DEFAULT NULL,
+  e json DEFAULT NULL,
+  f decimal(40,6) DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY a (a),
+  KEY b (b),
+  KEY c (c),
+  KEY d (d),
+  KEY f (f)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`insert into t1(id) values(0),(1),(2);`)
+	tk.MustExec(`insert into t values(0, 2010,  "2010-01-01 01:01:00" , "2010-01-01 01:01:00" , 2010 , 2010 , 2010.000000);`)
+	tk.MustExec(`insert into t values(1 , NULL , NULL                , NULL                , NULL , NULL ,        NULL);`)
+	tk.MustExec(`insert into t values(2 , 2012 , "2012-01-01 01:01:00" , "2012-01-01 01:01:00" , 2012 , 2012 , 2012.000000);`)
+	tk.MustExec(`set tidb_mem_quota_query=400;`)
+	tk.MustExec(`set tidb_index_lookup_join_concurrency=1`)
+	config.GetGlobalConfig().OOMAction = config.OOMActionCancel
+	defer func() { config.GetGlobalConfig().OOMAction = config.OOMActionLog }()
+	err := tk.QueryToErr(`select /*+ inl_hash_join(t2) */ t1.id, t2.id from t1 join t t2 on t1.a = t2.a order by t1.a ASC limit 1;`)
+	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
 }

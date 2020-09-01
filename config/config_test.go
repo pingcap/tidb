@@ -205,7 +205,6 @@ max-sql-length=1024
 refresh-interval=100
 history-size=100
 [experimental]
-allow-auto-random = true
 allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
@@ -245,7 +244,6 @@ engines = ["tiflash"]
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
 	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
-	c.Assert(conf.Experimental.AllowAutoRandom, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
@@ -414,19 +412,6 @@ func (s *testConfigSuite) TestTxnTotalSizeLimitValid(c *C) {
 	}
 }
 
-func (s *testConfigSuite) TestAllowAutoRandomValid(c *C) {
-	conf := NewConfig()
-	checkValid := func(allowAlterPK, allowAutoRand, shouldBeValid bool) {
-		conf.AlterPrimaryKey = allowAlterPK
-		conf.Experimental.AllowAutoRandom = allowAutoRand
-		c.Assert(conf.Valid() == nil, Equals, shouldBeValid)
-	}
-	checkValid(true, true, false)
-	checkValid(true, false, true)
-	checkValid(false, true, true)
-	checkValid(false, false, true)
-}
-
 func (s *testConfigSuite) TestPreparePlanCacheValid(c *C) {
 	conf := NewConfig()
 	tests := map[PreparedPlanCache]bool{
@@ -490,7 +475,7 @@ func (s *testConfigSuite) TestEncodeDefTempStorageDir(c *C) {
 
 	dirPrefix := filepath.Join(os.TempDir(), osUID+"_tidb")
 	for _, test := range tests {
-		tempStorageDir := encodeDefTempStorageDir(test.host, test.statusHost, test.port, test.statusPort)
+		tempStorageDir := encodeDefTempStorageDir(os.TempDir(), test.host, test.statusHost, test.port, test.statusPort)
 		c.Assert(tempStorageDir, Equals, filepath.Join(dirPrefix, test.expect, "tmp-storage"))
 	}
 }

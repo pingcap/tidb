@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -152,11 +153,11 @@ type TransactionContext struct {
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
-	ForUpdate      bool
 	CouldRetry     bool
 	IsPessimistic  bool
 	Isolation      string
 	LockExpire     uint32
+	ForUpdate      uint32
 }
 
 // AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
@@ -384,6 +385,8 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
+	// AllowBCJ means allow broadcast join.
+	AllowBCJ bool
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -408,6 +411,8 @@ type SessionVars struct {
 	CPUFactor float64
 	// CopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
 	CopCPUFactor float64
+	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
+	CopTiFlashConcurrencyFactor float64
 	// NetworkFactor is the network cost of transferring 1 byte data.
 	NetworkFactor float64
 	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
@@ -657,6 +662,7 @@ func NewSessionVars() *SessionVars {
 		Status:                      mysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
+		AllowBCJ:                    false,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
@@ -666,6 +672,7 @@ func NewSessionVars() *SessionVars {
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		CPUFactor:                   DefOptCPUFactor,
 		CopCPUFactor:                DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
 		NetworkFactor:               DefOptNetworkFactor,
 		ScanFactor:                  DefOptScanFactor,
 		DescScanFactor:              DefOptDescScanFactor,
@@ -1075,6 +1082,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
+	case TiDBOptBCJ:
+		s.AllowBCJ = TiDBOptOn(val)
 	case TiDBOptDistinctAggPushDown:
 		s.AllowDistinctAggPushDown = TiDBOptOn(val)
 	case TiDBOptWriteRowID:
@@ -1089,6 +1098,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.CPUFactor = tidbOptFloat64(val, DefOptCPUFactor)
 	case TiDBOptCopCPUFactor:
 		s.CopCPUFactor = tidbOptFloat64(val, DefOptCopCPUFactor)
+	case TiDBOptTiFlashConcurrencyFactor:
+		s.CopTiFlashConcurrencyFactor = tidbOptFloat64(val, DefOptTiFlashConcurrencyFactor)
 	case TiDBOptNetworkFactor:
 		s.NetworkFactor = tidbOptFloat64(val, DefOptNetworkFactor)
 	case TiDBOptScanFactor:
@@ -1262,7 +1273,25 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
 	case CollationConnection, CollationDatabase, CollationServer:
 		if _, err := collate.GetCollationByName(val); err != nil {
-			return errors.Trace(err)
+			var ok bool
+			var charsetVal string
+			var err2 error
+			if name == CollationConnection {
+				charsetVal, ok = s.systems[CharacterSetConnection]
+			} else if name == CollationDatabase {
+				charsetVal, ok = s.systems[CharsetDatabase]
+			} else {
+				// CollationServer
+				charsetVal, ok = s.systems[CharacterSetServer]
+			}
+			if !ok {
+				return err
+			}
+			val, err2 = charset.GetDefaultCollation(charsetVal)
+			if err2 != nil {
+				return err2
+			}
+			logutil.BgLogger().Warn(err.Error())
 		}
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
