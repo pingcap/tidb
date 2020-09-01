@@ -879,13 +879,9 @@ func (w *worker) doModifyColumnTypeWithData(
 				// If timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
 			}
-			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) {
+			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) || types.ErrOverflow.Equal(err) {
 				logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				// When encounter these error above, we change the job to rolling back job directly.
-				job.State = model.JobStateRollingback
-				return ver, errors.Trace(err)
-			}
-			if types.ErrOverflow.Equal(err) {
 				job.State = model.JobStateRollingback
 				return ver, errors.Trace(err)
 			}
