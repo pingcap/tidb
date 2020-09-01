@@ -857,6 +857,7 @@ func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 	return
 }
 
+// GetIndexKeyBuf reuse or allocate buffer.
 func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	if buf != nil {
 		return buf[:0]
@@ -865,6 +866,7 @@ func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
 	return make([]byte, 0, defaultCap)
 }
 
+// GenIndexKey generates index key using input physical table id.
 func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
 	phyTblID int64, indexedValues []types.Datum, h int64, buf []byte) (key []byte, distinct bool, err error) {
 	if idxInfo.Unique {
