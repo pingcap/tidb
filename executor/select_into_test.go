@@ -144,6 +144,44 @@ func (s *testSuite1) TestSelectIntoOutfileConstant(c *C) {
 `, outfile, c)
 }
 
+func (s *testSuite1) TestDeliminators(c *C) {
+	tmpDir := os.TempDir()
+	outfile := filepath.Join(tmpDir, "TestDeliminators.data")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("CREATE TABLE `tx` (`a` varbinary(20) DEFAULT NULL,`b` int DEFAULT NULL)")
+	err := tk.ExecToErr(fmt.Sprintf("select * from `tx` into outfile %q fields enclosed by '\"\"'", outfile))
+	// enclosed by must be a single character
+	c.Check(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "Field separator argument is not what is expected"), IsTrue, Commentf("err: %v", err))
+	err = tk.ExecToErr(fmt.Sprintf("select * from `tx` into outfile %q fields escaped by 'gg'", outfile))
+	// so does escaped by
+	c.Check(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "Field separator argument is not what is expected"), IsTrue, Commentf("err: %v", err))
+
+	// since the above two test cases failed, it should not has outfile remained on disk
+	_, err = os.Stat(outfile)
+	c.Check(os.IsNotExist(err), IsTrue, Commentf("err: %v", err))
+
+	tk.MustExec("insert into tx values (NULL, NULL);\n")
+	tk.MustExec(fmt.Sprintf("select * from `tx` into outfile %q fields escaped by ''", outfile))
+	// if escaped by is set as empty, then NULL should not be escaped
+	cmpAndRm("NULL\tNULL\n", outfile, c)
+
+	tk.MustExec("delete from tx")
+	tk.MustExec("insert into tx values ('d\",\"e\",', 3), ('\\\\', 2)")
+	tk.MustExec(fmt.Sprintf("select * from `tx` into outfile %q FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES TERMINATED BY '\\n'", outfile))
+	// enclosed by character & escaped by characters should be escaped, no matter what
+	cmpAndRm("\"d\\\",\\\"e\\\",\",\"3\"\n\"\\\\\",\"2\"\n", outfile, c)
+
+	tk.MustExec("delete from tx")
+	tk.MustExec("insert into tx values ('a\tb', 1)")
+	tk.MustExec(fmt.Sprintf("select * from `tx` into outfile %q FIELDS TERMINATED BY ',' ENCLOSED BY '\"' escaped by '\t' LINES TERMINATED BY '\\n'", outfile))
+	// enclosed by character & escaped by characters should be escaped, no matter what
+	cmpAndRm("\"a\t\tb\",\"1\"\n", outfile, c)
+}
+
 func (s *testSuite1) TestDumpReal(c *C) {
 	cases := []struct {
 		val    float64
