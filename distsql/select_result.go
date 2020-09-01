@@ -372,7 +372,6 @@ func (s *selectResultRuntimeStats) String() string {
 			return stats.String()
 		}
 		buf.WriteString(s.RuntimeStats.String())
-
 	}
 	if len(s.copRespTime) > 0 {
 		size := len(s.copRespTime)
