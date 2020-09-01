@@ -2182,3 +2182,33 @@ func (s *testSuite9) TestIssue19112(c *C) {
 		"1 4.064000 1 4.064000",
 		"3 1.010000 3 1.010000"))
 }
+
+func (s *testSuiteJoin3) TestIssue19498(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1 (c_int int, primary key (c_int));")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4)")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t2 (c_str varchar(40));")
+	tk.MustExec("insert into t2 values ('zen sammet');")
+	tk.MustExec("insert into t2 values ('happy fermat');")
+	tk.MustExec("insert into t2 values ('happy archimedes');")
+	tk.MustExec("insert into t2 values ('happy hypatia');")
+
+	tk.MustExec("drop table if exists t3;")
+	tk.MustExec("create table t3 (c_int int, c_str varchar(40), primary key (c_int), key (c_str));")
+	tk.MustExec("insert into t3 values (1, 'sweet hoover');")
+	tk.MustExec("insert into t3 values (2, 'awesome elion');")
+	tk.MustExec("insert into t3 values (3, 'hungry khayyam');")
+	tk.MustExec("insert into t3 values (4, 'objective kapitsa');")
+
+	rs := tk.MustQuery("select c_str, (select /*+ INL_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;")
+	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
+
+	rs = tk.MustQuery("select c_str, (select /*+ INL_HASH_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;")
+	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
+
+	rs = tk.MustQuery("select c_str, (select /*+ INL_MERGE_JOIN(t1,t3) */ max(t1.c_int) from t1, t3 where t1.c_int = t3.c_int and t2.c_str > t3.c_str) q from t2 order by c_str;")
+	rs.Check(testkit.Rows("happy archimedes 2", "happy fermat 2", "happy hypatia 2", "zen sammet 4"))
+}

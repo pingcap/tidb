@@ -20,13 +20,13 @@ import (
 	"io"
 	"io/ioutil"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,18 +44,8 @@ import (
 )
 
 var (
-	portGenerator       uint32 = 4001
-	statusPortGenerator uint32 = 7090
-	regression                 = true
+	regression = true
 )
-
-func genPort() uint {
-	return uint(atomic.AddUint32(&portGenerator, 1))
-}
-
-func genStatusPort() uint {
-	return uint(atomic.AddUint32(&statusPortGenerator, 1))
-}
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
@@ -77,10 +67,14 @@ type testServerClient struct {
 // newTestServerClient return a testServerClient with unique address
 func newTestServerClient() *testServerClient {
 	return &testServerClient{
-		port:         genPort(),
-		statusPort:   genStatusPort(),
+		port:         0,
+		statusPort:   0,
 		statusScheme: "http",
 	}
+}
+
+func getPortFromTCPAddr(addr net.Addr) uint {
+	return uint(addr.(*net.TCPAddr).Port)
 }
 
 // statusURL return the full URL of a status path
