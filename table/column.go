@@ -139,25 +139,6 @@ func truncateTrailingSpaces(v *types.Datum) {
 	v.SetString(str, v.Collation())
 }
 
-// CastValues casts values based on columns type.
-func CastValues(ctx sessionctx.Context, rec []types.Datum, cols []*Column) (err error) {
-	sc := ctx.GetSessionVars().StmtCtx
-	for _, c := range cols {
-		var converted types.Datum
-		converted, err = CastValue(ctx, rec[c.Offset], c.ToInfo(), false, false)
-		if err != nil {
-			if sc.DupKeyAsWarning {
-				sc.AppendWarning(err)
-				logutil.BgLogger().Warn("CastValues failed", zap.Error(err))
-			} else {
-				return err
-			}
-		}
-		rec[c.Offset] = converted
-	}
-	return nil
-}
-
 func handleWrongASCIIValue(ctx sessionctx.Context, col *model.ColumnInfo, casted *types.Datum, str string, i int) (types.Datum, error) {
 	sc := ctx.GetSessionVars().StmtCtx
 	err := ErrTruncatedWrongValueForField.FastGen("incorrect ascii value %x(%s) for column %s", casted.GetBytes(), str, col.Name)
