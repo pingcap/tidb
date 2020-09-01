@@ -73,14 +73,6 @@ type nameValuePair struct {
 	param   *driver.ParamMarkerExpr
 }
 
-// Init initializes PointGetPlan.
-func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PointGetPlan {
-	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet, offset)
-	p.stats = stats
-	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
-	return &p
-}
-
 // Schema implements the Plan interface.
 func (p *PointGetPlan) Schema() *expression.Schema {
 	return p.schema
