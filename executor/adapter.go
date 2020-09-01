@@ -178,6 +178,7 @@ type ExecStmt struct {
 	isPreparedStmt    bool
 	isSelectForUpdate bool
 	retryCount        uint
+	retryStartTime    time.Time
 
 	// OutputNames will be set if using cached plan
 	OutputNames []*types.FieldName
@@ -623,6 +624,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
+	a.retryStartTime = time.Now()
 	err = UpdateForUpdateTS(a.Ctx, newForUpdateTS)
 	if err != nil {
 		return nil, err
@@ -775,8 +777,14 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
 	sessVars := a.Ctx.GetSessionVars()
-	pps := types.CloneRow(sessVars.PreparedParams)
-	sessVars.PrevStmt = FormatSQL(a.OriginText(), pps)
+	prevStmt := a.GetTextToLog()
+	if sessVars.EnableLogDesensitization {
+		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
+	} else {
+		pps := types.CloneRow(sessVars.PreparedParams)
+		sessVars.PrevStmt = FormatSQL(prevStmt, pps)
+	}
+
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
 		sessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
@@ -835,6 +843,16 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
+
+	// Attach commit runtime stats to executor runtime stats.
+	if execDetail.CommitDetail != nil && sessVars.StmtCtx.RuntimeStatsColl != nil {
+		stats := sessVars.StmtCtx.RuntimeStatsColl.GetRootStats(a.Plan.ID())
+		statsWithCommit := &execdetails.RuntimeStatsWithCommit{
+			RuntimeStats: stats,
+			Commit:       execDetail.CommitDetail,
+		}
+		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
+	}
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()
@@ -866,6 +884,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		PDTotal:           time.Duration(atomic.LoadInt64(&stmtDetail.WaitPDRespDuration)),
 		BackoffTotal:      time.Duration(atomic.LoadInt64(&stmtDetail.BackoffDuration)),
 		WriteSQLRespTotal: stmtDetail.WriteSQLRespDuration,
+		ExecRetryCount:    a.retryCount,
+	}
+	if a.retryCount > 0 {
+		slowItems.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
@@ -942,7 +964,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 	stmtCtx := sessVars.StmtCtx
 	normalizedSQL, digest := stmtCtx.SQLDigest()
-	costTime := time.Since(sessVars.StartTime)
+	costTime := time.Since(sessVars.StartTime) + sessVars.DurationParse
 
 	var prevSQL, prevSQLDigest string
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
@@ -978,7 +1000,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	memMax := stmtCtx.MemTracker.MaxConsumed()
 	diskMax := stmtCtx.DiskTracker.MaxConsumed()
 	sql := a.GetTextToLog()
-	stmtsummary.StmtSummaryByDigestMap.AddStatement(&stmtsummary.StmtExecInfo{
+	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:     strings.ToLower(sessVars.CurrentDB),
 		OriginalSQL:    sql,
 		NormalizedSQL:  normalizedSQL,
@@ -1001,7 +1023,12 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		IsInternal:     sessVars.InRestrictedSQL,
 		Succeed:        succ,
 		PlanInCache:    sessVars.FoundInPlanCache,
-	})
+		ExecRetryCount: a.retryCount,
+	}
+	if a.retryCount > 0 {
+		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
+	}
+	stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
 }
 
 // GetTextToLog return the query text to log.

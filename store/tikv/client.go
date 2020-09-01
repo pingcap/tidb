@@ -18,12 +18,13 @@ import (
 	"context"
 	"io"
 	"math"
+	"runtime/trace"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
+	grpc_opentracing "github.com/grpc-ecosystem/go-grpc-middleware/tracing/opentracing"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -242,7 +243,7 @@ func NewTestRPCClient(security config.Security) Client {
 	return newRPCClient(security)
 }
 
-func (c *rpcClient) getConnArray(addr string, enableBatch bool) (*connArray, error) {
+func (c *rpcClient) getConnArray(addr string, enableBatch bool, opt ...func(cfg *config.TiKVClient)) (*connArray, error) {
 	c.RLock()
 	if c.isClosed {
 		c.RUnlock()
@@ -252,7 +253,7 @@ func (c *rpcClient) getConnArray(addr string, enableBatch bool) (*connArray, err
 	c.RUnlock()
 	if !ok {
 		var err error
-		array, err = c.createConnArray(addr, enableBatch)
+		array, err = c.createConnArray(addr, enableBatch, opt...)
 		if err != nil {
 			return nil, err
 		}
@@ -260,14 +261,17 @@ func (c *rpcClient) getConnArray(addr string, enableBatch bool) (*connArray, err
 	return array, nil
 }
 
-func (c *rpcClient) createConnArray(addr string, enableBatch bool) (*connArray, error) {
+func (c *rpcClient) createConnArray(addr string, enableBatch bool, opts ...func(cfg *config.TiKVClient)) (*connArray, error) {
 	c.Lock()
 	defer c.Unlock()
 	array, ok := c.conns[addr]
 	if !ok {
 		var err error
-		connCount := config.GetGlobalConfig().TiKVClient.GrpcConnectionCount
-		array, err = newConnArray(connCount, addr, c.security, &c.idleNotify, enableBatch, c.dialTimeout)
+		client := config.GetGlobalConfig().TiKVClient
+		for _, opt := range opts {
+			opt(&client)
+		}
+		array, err = newConnArray(client.GrpcConnectionCount, addr, c.security, &c.idleNotify, enableBatch, c.dialTimeout)
 		if err != nil {
 			return nil, err
 		}
@@ -345,6 +349,7 @@ func (c *rpcClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	// request to TiDB is not high frequency.
 	if config.GetGlobalConfig().TiKVClient.MaxBatchSize > 0 && enableBatch {
 		if batchReq := req.ToBatchCommandsRequest(); batchReq != nil {
+			defer trace.StartRegion(ctx, req.Type.String()).End()
 			return sendBatchRequest(ctx, addr, connArray.batchConn, batchReq, timeout)
 		}
 	}

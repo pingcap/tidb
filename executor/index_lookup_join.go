@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"runtime"
+	"runtime/trace"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -291,7 +292,7 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 	select {
 	case task = <-e.resultCh:
 	case <-ctx.Done():
-		return nil, nil
+		return nil, ctx.Err()
 	}
 	if task == nil {
 		return nil, nil
@@ -303,7 +304,7 @@ func (e *IndexLookUpJoin) getFinishedTask(ctx context.Context) (*lookUpJoinTask,
 			return nil, err
 		}
 	case <-ctx.Done():
-		return nil, nil
+		return nil, ctx.Err()
 	}
 
 	e.task = task
@@ -323,6 +324,7 @@ func (e *IndexLookUpJoin) lookUpMatchedInners(task *lookUpJoinTask, rowPtr chunk
 }
 
 func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
+	defer trace.StartRegion(ctx, "IndexLookupJoinOuterWorker").End()
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -438,6 +440,7 @@ func (ow *outerWorker) increaseBatchSize() {
 }
 
 func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
+	defer trace.StartRegion(ctx, "IndexLookupJoinInnerWorker").End()
 	var task *lookUpJoinTask
 	defer func() {
 		if r := recover(); r != nil {
@@ -548,10 +551,15 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 			return nil, nil
 		}
 		innerColType := iw.rowTypes[iw.keyCols[i]]
+		// TODO: collate should be taken into consideration
+		// https://github.com/pingcap/tidb/issues/19654
 		innerValue, err := outerValue.ConvertTo(sc, innerColType)
 		if err != nil {
 			// If the converted outerValue overflows, we don't need to lookup it.
 			if terror.ErrorEqual(err, types.ErrOverflow) {
+				return nil, nil
+			}
+			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.Tp == mysql.TypeSet || innerColType.Tp == mysql.TypeEnum) {
 				return nil, nil
 			}
 			return nil, err
@@ -617,7 +625,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return ctx.Err()
 		default:
 		}
 		err := Next(ctx, innerExec, iw.executorChk)
@@ -678,6 +686,7 @@ func (e *IndexLookUpJoin) Close() error {
 	}
 	e.workerWg.Wait()
 	e.memTracker = nil
+	e.task = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
