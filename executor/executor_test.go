@@ -6280,13 +6280,18 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 	for i := 0; i < count; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t5 (id) values (%v)", i))
 	}
+	sm := &mockSessionManager1{
+		PS: make([]*util.ProcessInfo, 0),
+	}
+	tk.Se.SetSessionManager(sm)
+	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
 	// let ticket count be great enough to handle the query during oom action
-	tk.MustExec("set tidb_distsql_scan_concurrency = 100")
-	quota := count*15
+	tk.MustExec("set tidb_distsql_scan_concurrency = 30")
+	quota := count * 15
 	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 	var expect []string
 	for i := 0; i < count; i++ {
