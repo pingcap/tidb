@@ -270,7 +270,7 @@ func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
 }
 
 // RestoreAsCastType is used for write AST back to string.
-func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx) {
+func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx, explicitCharset bool) {
 	switch ft.Tp {
 	case mysql.TypeVarString:
 		skipWriteBinary := false
@@ -282,6 +282,9 @@ func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx) {
 		}
 		if ft.Flen != UnspecifiedLength {
 			ctx.WritePlainf("(%d)", ft.Flen)
+		}
+		if !explicitCharset {
+			return
 		}
 		if !skipWriteBinary && ft.Flag&mysql.BinaryFlag != 0 {
 			ctx.WriteKeyWord(" BINARY")
@@ -325,10 +328,10 @@ func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx) {
 }
 
 // FormatAsCastType is used for write AST back to string.
-func (ft *FieldType) FormatAsCastType(w io.Writer) {
+func (ft *FieldType) FormatAsCastType(w io.Writer, explicitCharset bool) {
 	var sb strings.Builder
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-	ft.RestoreAsCastType(restoreCtx)
+	ft.RestoreAsCastType(restoreCtx, explicitCharset)
 	fmt.Fprint(w, sb.String())
 }
 

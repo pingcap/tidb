@@ -80,7 +80,7 @@ func (ts *testAstFormatSuite) TestAstFormat(c *C) {
 		// see: https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html
 		{` cast( a as signed ) `, "CAST(`a` AS SIGNED)"},
 		{` cast( a as unsigned integer) `, "CAST(`a` AS UNSIGNED)"},
-		{` cast( a as char(3) binary) `, "CAST(`a` AS CHAR(3) BINARY)"},
+		{` cast( a as char(3) binary) `, "CAST(`a` AS BINARY(3))"},
 		{` cast( a as decimal ) `, "CAST(`a` AS DECIMAL(11))"},
 		{` cast( a as decimal (3) ) `, "CAST(`a` AS DECIMAL(3))"},
 		{` cast( a as decimal (3,3) ) `, "CAST(`a` AS DECIMAL(3, 3))"},
