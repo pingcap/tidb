@@ -1263,7 +1263,7 @@ func buildTableInfo(
 		Charset: charset,
 		Collate: collate,
 	}
-	tblColumns := make([]*table.Column, 0)
+	tblColumns := make([]*table.Column, 0, len(cols))
 	for _, v := range cols {
 		v.ID = allocateColumnID(tbInfo)
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
