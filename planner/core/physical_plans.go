@@ -52,6 +52,7 @@ var (
 	_ PhysicalPlan = &PhysicalStreamAgg{}
 	_ PhysicalPlan = &PhysicalApply{}
 	_ PhysicalPlan = &PhysicalIndexJoin{}
+	_ PhysicalPlan = &PhysicalBroadCastJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
@@ -71,6 +72,27 @@ type PhysicalTableReader struct {
 
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
+}
+
+// GetTablePlan exports the tablePlan.
+func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
+	return p.tablePlan
+}
+
+// GetTableScan exports the tableScan that contained in tablePlan.
+func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
+	curPlan := p.tablePlan
+	for {
+		chCnt := len(curPlan.Children())
+		if chCnt == 0 {
+			return curPlan.(*PhysicalTableScan)
+		} else if chCnt == 1 {
+			curPlan = curPlan.Children()[0]
+		} else {
+			join := curPlan.(*PhysicalBroadCastJoin)
+			curPlan = join.children[1-join.globalChildIndex]
+		}
+	}
 }
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
@@ -245,6 +267,8 @@ type PhysicalTableScan struct {
 	HandleIdx int
 
 	StoreType kv.StoreType
+
+	IsGlobalRead bool
 
 	// The table scan may be a partition, rather than a real table.
 	isPartition bool
@@ -427,6 +451,12 @@ type PhysicalMergeJoin struct {
 	CompareFuncs []expression.CompareFunc
 	// Desc means whether inner child keep desc order.
 	Desc bool
+}
+
+// PhysicalBroadCastJoin only works for TiFlash Engine, which broadcast the small table to every replica of probe side of tables.
+type PhysicalBroadCastJoin struct {
+	basePhysicalJoin
+	globalChildIndex int
 }
 
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
