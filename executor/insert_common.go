@@ -18,6 +18,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -75,7 +76,7 @@ type InsertValues struct {
 	lazyFillAutoID bool
 	memTracker     *memory.Tracker
 
-	stats *runtimeStatsWithSnapshot
+	stats *insertValueStat
 }
 
 type defaultVal struct {
@@ -932,9 +933,12 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
 			snapshotStats := &tikv.SnapshotRuntimeStats{}
-			e.stats = &runtimeStatsWithSnapshot{
+			runtimeStats := &runtimeStatsWithSnapshot{
 				BasicRuntimeStats:    e.runtimeStats,
 				SnapshotRuntimeStats: snapshotStats,
+			}
+			e.stats = &insertValueStat{
+				runtimeStatsWithSnapshot: runtimeStats,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -948,7 +952,11 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum, addRecord func(ctx context.Context, row []types.Datum) error) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
-	start := time.Now()
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("InsertValues.batchCheckAndInsert", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(ctx, span1)
+	}
 	// Get keys need to be checked.
 	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, rows)
 	if err != nil {
@@ -966,7 +974,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}
 	}
-
+	start := time.Now()
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
@@ -998,11 +1006,22 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 	}
-	end := time.Now()
-	e.stats.check = end.Sub(start)
+	e.stats.check = time.Since(start)
 	// If row was checked with no duplicate keys,
 	// it should be add to values map for the further` row check.
 	// There may be duplicate keys inside the insert statement.
+	e.insertRecord(ctx, rows, addRecord, skiplist)
+	return nil
+}
+
+func (e *InsertValues) insertRecord(ctx context.Context, rows [][]types.Datum, addRecord func(ctx context.Context, row []types.Datum) error, skiplist []bool) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("InsertValues.insertRecord", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(ctx, span1)
+	}
+	var err error
+	start := time.Now()
 	for index, skip := range skiplist {
 		if !skip {
 			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
@@ -1012,7 +1031,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 	}
-	e.stats.insert = time.Since(end)
+	e.stats.insert = time.Since(start)
 	return nil
 }
 

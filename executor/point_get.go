@@ -466,26 +466,36 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 	return nil
 }
 
-type runtimeStatsWithSnapshot struct {
-	*execdetails.BasicRuntimeStats
-	*tikv.SnapshotRuntimeStats
+type insertValueStat struct {
+	*runtimeStatsWithSnapshot
 	check  time.Duration
 	insert time.Duration
 }
 
+type runtimeStatsWithSnapshot struct {
+	*execdetails.BasicRuntimeStats
+	*tikv.SnapshotRuntimeStats
+}
+
+func (e *insertValueStat) String() string {
+	var checkStr, insertStr string
+	if e.check != 0 {
+		checkStr = "check:" + e.check.String()
+	}
+	if e.insert != 0 {
+		insertStr = "write_txn_mem:" + e.insert.String()
+	}
+	runtimeStatsStr := e.runtimeStatsWithSnapshot.String()
+	return runtimeStatsStr + ", " + checkStr + ", " + insertStr
+}
+
 func (e *runtimeStatsWithSnapshot) String() string {
-	var basic, rpcStatsStr, checkStr, insertStr string
+	var basic, rpcStatsStr string
 	if e.BasicRuntimeStats != nil {
 		basic = e.BasicRuntimeStats.String()
 	}
 	if e.SnapshotRuntimeStats != nil {
 		rpcStatsStr = e.SnapshotRuntimeStats.String()
-	}
-	if e.check != 0 {
-		checkStr = "check use:" + e.check.String()
-	}
-	if e.insert != 0 {
-		insertStr = "insert use:" + e.insert.String()
 	}
 	if rpcStatsStr == "" {
 		return basic
@@ -493,5 +503,5 @@ func (e *runtimeStatsWithSnapshot) String() string {
 	if basic == "" {
 		return rpcStatsStr
 	}
-	return basic + ", " + rpcStatsStr + "," + checkStr + "," + insertStr
+	return basic + ", " + rpcStatsStr
 }
