@@ -86,6 +86,8 @@ func (e *BatchPointGetExec) Close() error {
 	if e.runtimeStats != nil && e.snapshot != nil {
 		e.snapshot.DelOption(kv.CollectRuntimeStats)
 	}
+	e.inited = false
+	e.index = 0
 	return nil
 }
 
@@ -147,7 +149,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		e.snapshot = snapshot
 	}
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
