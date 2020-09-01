@@ -124,7 +124,7 @@ func (d *planDigester) normalizePlanTree(p PhysicalPlan) {
 }
 
 func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, depth int) {
-	plancodec.NormalizePlanNode(depth, p.ID(), p.TP(), isRoot, p.ExplainNormalizedInfo(), &d.buf)
+	plancodec.NormalizePlanNode(depth, p.TP(), isRoot, p.ExplainNormalizedInfo(), &d.buf)
 	d.encodedPlans[p.ID()] = true
 
 	depth++

@@ -284,14 +284,18 @@ func decodePlanInfo(str string) (*planInfo, error) {
 		// plan ID
 		case 1:
 			ids := strings.Split(v, idSeparator)
-			if len(ids) != 2 {
+			if len(ids) != 1 && len(ids) != 2 {
 				return nil, errors.Errorf("decode plan: %v error, invalid plan id: %v", str, v)
 			}
 			planID, err := strconv.Atoi(ids[0])
 			if err != nil {
 				return nil, errors.Errorf("decode plan: %v, plan id: %v, error: %v", str, v, err)
 			}
-			p.fields = append(p.fields, PhysicalIDToTypeString(planID)+idSeparator+ids[1])
+			if len(ids) == 1 {
+				p.fields = append(p.fields, PhysicalIDToTypeString(planID))
+			} else {
+				p.fields = append(p.fields, PhysicalIDToTypeString(planID)+idSeparator+ids[1])
+			}
 		// task type
 		case 2:
 			if v == rootTaskType {
@@ -337,10 +341,11 @@ func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float
 }
 
 // NormalizePlanNode is used to normalize the plan to a string.
-func NormalizePlanNode(depth, pid int, planType string, isRoot bool, explainInfo string, buf *bytes.Buffer) {
+func NormalizePlanNode(depth int, planType string, isRoot bool, explainInfo string, buf *bytes.Buffer) {
 	buf.WriteString(strconv.Itoa(depth))
 	buf.WriteByte(separator)
-	buf.WriteString(encodeID(planType, pid))
+	planID := TypeStringToPhysicalID(planType)
+	buf.WriteString(strconv.Itoa(planID))
 	buf.WriteByte(separator)
 	if isRoot {
 		buf.WriteString(rootTaskType)
