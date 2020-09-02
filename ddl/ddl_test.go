@@ -94,14 +94,13 @@ func TestT(t *testing.T) {
 	ReorgWaitTimeout = 30 * time.Millisecond
 	batchInsertDeleteRangeSize = 2
 
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	// Test for table lock.
-	newCfg.EnableTableLock = true
-	newCfg.Log.SlowThreshold = 10000
-	// Test for add/drop primary key.
-	newCfg.AlterPrimaryKey = true
-	config.StoreGlobalConfig(&newCfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		// Test for table lock.
+		conf.EnableTableLock = true
+		conf.Log.SlowThreshold = 10000
+		// Test for add/drop primary key.
+		conf.AlterPrimaryKey = true
+	})
 
 	testleak.BeforeTest()
 	TestingT(t)
