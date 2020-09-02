@@ -645,13 +645,15 @@ type AnalyzeFastExec struct {
 	collectors      []*statistics.SampleCollector
 	randSeed        int64
 	job             *statistics.AnalyzeJob
+	estSampStep     uint32
 }
 
-func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
+func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	sql := fmt.Sprintf("select flag from mysql.stats_histograms where table_id = %d;", e.physicalTableID)
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	var rows []chunk.Row
+	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	var historyRowCount uint64
 	hasBeenAnalyzed := len(rows) != 0 && rows[0].GetInt64(0) == statistics.AnalyzeFlag
@@ -660,12 +662,17 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
 	} else {
 		dbInfo, ok := domain.GetDomain(e.ctx).InfoSchema().SchemaByTable(e.tblInfo)
 		if !ok {
-			return 0, errors.Trace(errors.Errorf("database not found for table '%s'", e.tblInfo.Name))
+			return errors.Trace(errors.Errorf("database not found for table '%s'", e.tblInfo.Name))
 		}
 		rollbackFn, err := e.activateTxnForRowCount()
 		if err != nil {
-			return 0, err
+			return err
 		}
+		defer func() {
+			if rollbackFn != nil {
+				err = rollbackFn()
+			}
+		}()
 		var partition string
 		if e.tblInfo.ID != e.physicalTableID {
 			for _, definition := range e.tblInfo.Partition.Definitions {
@@ -679,32 +686,30 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
 		if len(partition) > 0 {
 			sql += partition
 		}
-		recordSets, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+		var recordSets []sqlexec.RecordSet
+		recordSets, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
 		if err != nil || len(recordSets) == 0 {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if len(recordSets) == 0 {
-			return 0, errors.Trace(errors.Errorf("empty record set"))
+			return errors.Trace(errors.Errorf("empty record set"))
 		}
+		defer func() {
+			for _, r := range recordSets {
+				terror.Call(r.Close)
+			}
+		}()
 		chk := recordSets[0].NewChunk()
 		err = recordSets[0].Next(context.TODO(), chk)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		e.rowCount = chk.GetRow(0).GetInt64(0)
 		historyRowCount = uint64(e.rowCount)
-		if rollbackFn != nil {
-			err := rollbackFn()
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-		}
-		for _, r := range recordSets {
-			terror.Call(r.Close)
-		}
 	}
 	totalSampSize := e.opts[ast.AnalyzeOptNumSamples]
-	return uint32(historyRowCount / totalSampSize), nil
+	e.estSampStep = uint32(historyRowCount / totalSampSize)
+	return nil
 }
 
 func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err error) {
@@ -1047,13 +1052,9 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	e.wg.Add(e.concurrency)
-	estSampStep, err := e.calculateEstimateSampleStep()
-	if err != nil {
-		return nil, nil, err
-	}
 	bo := tikv.NewBackofferWithVars(context.Background(), 500, nil)
 	for i := 0; i < e.concurrency; i++ {
-		go e.handleSampTasks(i, estSampStep, &errs[i])
+		go e.handleSampTasks(i, e.estSampStep, &errs[i])
 	}
 	e.wg.Wait()
 	for _, err := range errs {
