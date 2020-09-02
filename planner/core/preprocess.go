@@ -963,6 +963,12 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 			p.flag |= inCreateOrDropTable
 			break
 		}
+		if spec.Tp == ast.AlterTableAddConstraint && spec.Constraint.Refer != nil {
+			table := spec.Constraint.Refer.Table
+			if table.Schema.L == "" && node.Table.Schema.L != "" {
+				table.Schema = model.NewCIStr(node.Table.Schema.L)
+			}
+		}
 	}
 }
 
