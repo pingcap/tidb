@@ -352,6 +352,7 @@ var tokenMap = map[string]int{
 	"HAVING":                   having,
 	"HIGH_PRIORITY":            highPriority,
 	"HISTORY":                  history,
+	"HISTOGRAM":                histogram,
 	"HOSTS":                    hosts,
 	"HOUR_MICROSECOND":         hourMicrosecond,
 	"HOUR_MINUTE":              hourMinute,
