@@ -1896,6 +1896,7 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 					}
 					_, err = util.InternalHTTPClient().Do(req)
 					if err != nil {
+						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 						continue
 					}
 					e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
