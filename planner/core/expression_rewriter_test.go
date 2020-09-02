@@ -137,6 +137,7 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 	tk.MustExec(`insert into t7 values (0, 0), (1, 1), (2, 2)`)
 
 	tk.MustQuery(`select a from t6 where a > (select default(a) from t7 where t6.a = t7.a)`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select a, default(a) from t6 where a > (select default(a) from t7 where t6.a = t7.a)`).Check(testkit.Rows("2 -1"))
 
 	tk.MustExec("create table t8(a int default 1, b int default -1)")
 	tk.MustExec(`insert into t8 values (0, 0), (1, 1)`)
