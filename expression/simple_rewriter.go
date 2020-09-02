@@ -78,7 +78,7 @@ func ParseSimpleExprCastWithTableInfo(ctx sessionctx.Context, exprStr string, ta
 // RewriteSimpleExprWithTableInfo rewrites simple ast.ExprNode to expression.Expression.
 func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo, expr ast.ExprNode) (Expression, error) {
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns, tbl)
+	columns, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
 	if err != nil {
 		return nil, err
 	}
@@ -300,6 +300,7 @@ func (sr *simpleRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok boo
 			arg.GetType().Collate = v.Collate
 		}
 		sr.stack[len(sr.stack)-1].SetCoercibility(CoercibilityExplicit)
+		sr.stack[len(sr.stack)-1].SetCharsetAndCollation(arg.GetType().Charset, arg.GetType().Collate)
 	default:
 		sr.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false

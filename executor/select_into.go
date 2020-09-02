@@ -121,26 +121,31 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				(encloseFlag && encloseOpt && s.considerEncloseOpt(et)) {
 				s.lineBuf = append(s.lineBuf, encloseByte)
 			}
-			switch col.GetType().EvalType() {
-			case types.ETInt:
+			switch col.GetType().Tp {
+			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
+				s.lineBuf = strconv.AppendInt(s.lineBuf, row.GetInt64(j), 10)
+			case mysql.TypeLonglong:
 				if mysql.HasUnsignedFlag(col.GetType().Flag) {
 					s.lineBuf = strconv.AppendUint(s.lineBuf, row.GetUint64(j), 10)
 				} else {
 					s.lineBuf = strconv.AppendInt(s.lineBuf, row.GetInt64(j), 10)
 				}
-			case types.ETReal:
+			case mysql.TypeFloat, mysql.TypeDouble:
 				s.realBuf, s.lineBuf = DumpRealOutfile(s.realBuf, s.lineBuf, row.GetFloat64(j), col.RetType)
-			case types.ETDecimal:
+			case mysql.TypeNewDecimal:
 				s.lineBuf = append(s.lineBuf, row.GetMyDecimal(j).String()...)
-			case types.ETString:
+			case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
+				mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 				s.lineBuf = append(s.lineBuf, row.GetBytes(j)...)
-			case types.ETDatetime:
+			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 				s.lineBuf = append(s.lineBuf, row.GetTime(j).String()...)
-			case types.ETTimestamp:
-				s.lineBuf = append(s.lineBuf, row.GetTime(j).String()...)
-			case types.ETDuration:
+			case mysql.TypeDuration:
 				s.lineBuf = append(s.lineBuf, row.GetDuration(j, col.GetType().Decimal).String()...)
-			case types.ETJson:
+			case mysql.TypeEnum:
+				s.lineBuf = append(s.lineBuf, row.GetEnum(j).String()...)
+			case mysql.TypeSet:
+				s.lineBuf = append(s.lineBuf, row.GetSet(j).String()...)
+			case mysql.TypeJSON:
 				s.lineBuf = append(s.lineBuf, row.GetJSON(j).String()...)
 			}
 			if (encloseFlag && !encloseOpt) ||

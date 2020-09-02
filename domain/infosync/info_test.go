@@ -21,6 +21,7 @@ import (
 	"os"
 	"path"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -74,6 +75,9 @@ type testSuite struct {
 }
 
 func TestTopology(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	currentID := "test"
@@ -104,6 +108,9 @@ func TestTopology(t *testing.T) {
 
 	if topo.StartTimestamp != 1282967700000 {
 		t.Fatal("start_timestamp of topology info does not match")
+	}
+	if v, ok := topo.Labels["foo"]; !ok || v != "bar" {
+		t.Fatal("labels of topology info does not match")
 	}
 
 	if !reflect.DeepEqual(*topo, info.getTopologyInfo()) {

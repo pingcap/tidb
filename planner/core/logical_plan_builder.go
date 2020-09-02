@@ -1238,14 +1238,15 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	copy(joinPlan.names, leftPlan.OutputNames())
 	for j := 0; j < len(rightPlan.Schema().Columns); j++ {
 		leftCol, rightCol := leftPlan.Schema().Columns[j], rightPlan.Schema().Columns[j]
-		if leftCol.RetType.Tp != rightCol.RetType.Tp {
-			return nil, errors.New("set operator doesn't support different column type")
-		}
 		eqCond, err := expression.NewFunction(b.ctx, ast.NullEQ, types.NewFieldType(mysql.TypeTiny), leftCol, rightCol)
 		if err != nil {
 			return nil, err
 		}
-		joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
+		if leftCol.RetType.Tp != rightCol.RetType.Tp {
+			joinPlan.OtherConditions = append(joinPlan.OtherConditions, eqCond)
+		} else {
+			joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
+		}
 	}
 	return joinPlan, nil
 }
@@ -3245,7 +3246,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 			DBName:      dbName,
 		})
 		projSchema.Append(&expression.Column{
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID: cols[i].UniqueID,
 			RetType:  cols[i].GetType(),
 		})
 		projExprs = append(projExprs, cols[i])
