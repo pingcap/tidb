@@ -236,7 +236,8 @@ var (
 	// ErrInvalidPlacementSpec is returned when add/alter an invalid placement rule
 	ErrInvalidPlacementSpec = terror.ClassDDL.New(mysql.ErrInvalidPlacementSpec, mysql.MySQLErrName[mysql.ErrInvalidPlacementSpec])
 
-	// ErrCantCreateColumnarTable returns when the table can't meet constraints of columnar tables.
-	ErrCantCreateColumnarTable        = terror.ClassDDL.New(mysql.ErrCantCreateColumnarTable, mysql.MySQLErrName[mysql.ErrCantCreateColumnarTable])
+	// ErrCantCreateColumnarTable is returned when the table can't meet constraints of columnar tables.
+	ErrCantCreateColumnarTable = terror.ClassDDL.New(mysql.ErrCantCreateColumnarTable, mysql.MySQLErrName[mysql.ErrCantCreateColumnarTable])
+	// ErrUnsupportedAddIndexForColumnar is returned when adds index for columnar tables.
 	ErrUnsupportedAddIndexForColumnar = terror.ClassDDL.New(mysql.ErrUnsupportedDDLOperation, fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation], "add index for columnar table"))
 )
