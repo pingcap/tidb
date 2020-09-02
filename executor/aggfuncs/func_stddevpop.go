@@ -20,12 +20,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-type baseStdDevPopAggFunc struct {
-	varPop4Float64
-}
-
 type stdDevPop4Float64 struct {
-	baseStdDevPopAggFunc
+	varPop4Float64
 }
 
 func (e *stdDevPop4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

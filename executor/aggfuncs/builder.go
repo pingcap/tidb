@@ -462,7 +462,7 @@ func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		if aggFuncDesc.HasDistinct {
 			return &stdDevPop4DistinctFloat64{varPop4DistinctFloat64{base}}
 		}
-		return &stdDevPop4Float64{baseStdDevPopAggFunc{varPop4Float64{base}}}
+		return &stdDevPop4Float64{varPop4Float64{base}}
 	}
 }
 
