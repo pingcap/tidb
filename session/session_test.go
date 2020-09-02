@@ -171,7 +171,9 @@ func (s *testSessionSuiteBase) SetUpSuite(c *C) {
 		initPdAddrs()
 		s.pdAddr = <-pdAddrChan
 		var d tikv.Driver
-		config.GetGlobalConfig().TxnLocalLatches.Enabled = false
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.TxnLocalLatches.Enabled = false
+		})
 		store, err := d.Open(fmt.Sprintf("tikv://%s", s.pdAddr))
 		c.Assert(err, IsNil)
 		err = clearStorage(store)
@@ -2462,11 +2464,10 @@ func (s *testSessionSuite2) TestStatementErrorInTransaction(c *C) {
 func (s *testSessionSerialSuite) TestStatementCountLimit(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("create table stmt_count_limit (id int)")
-	saved := config.GetGlobalConfig().Performance.StmtCountLimit
-	config.GetGlobalConfig().Performance.StmtCountLimit = 3
-	defer func() {
-		config.GetGlobalConfig().Performance.StmtCountLimit = saved
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.StmtCountLimit = 3
+	})
 	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("begin")
 	tk.MustExec("insert into stmt_count_limit values (1)")
@@ -2488,11 +2489,10 @@ func (s *testSessionSerialSuite) TestBatchCommit(c *C) {
 	tk.MustExec("set tidb_batch_commit = 1")
 	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
 	tk.MustExec("create table t (id int)")
-	saved := config.GetGlobalConfig().Performance
-	config.GetGlobalConfig().Performance.StmtCountLimit = 3
-	defer func() {
-		config.GetGlobalConfig().Performance = saved
-	}()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.StmtCountLimit = 3
+	})
 	tk1 := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("SET SESSION autocommit = 1")
 	tk.MustExec("begin")
@@ -2756,11 +2756,10 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 
 	// test for disable transaction local latch
 	tk1.Se.GetSessionVars().InRestrictedSQL = false
-	orgCfg := config.GetGlobalConfig()
-	disableLatchCfg := *orgCfg
-	disableLatchCfg.TxnLocalLatches.Enabled = false
-	config.StoreGlobalConfig(&disableLatchCfg)
-	defer config.StoreGlobalConfig(orgCfg)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TxnLocalLatches.Enabled = false
+	})
 	tk1.MustExec("begin")
 	tk1.MustExec("update no_retry set id = 9")
 
@@ -2772,9 +2771,9 @@ func (s *testSchemaSuite) TestDisableTxnAutoRetry(c *C) {
 	c.Assert(strings.Contains(err.Error(), kv.TxnRetryableMark), IsTrue, Commentf("error: %s", err))
 	tk1.MustExec("rollback")
 
-	enableLatchCfg := *orgCfg
-	enableLatchCfg.TxnLocalLatches.Enabled = true
-	config.StoreGlobalConfig(&enableLatchCfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TxnLocalLatches.Enabled = true
+	})
 	tk1.MustExec("begin")
 	tk2.MustExec("alter table no_retry add index idx(id)")
 	tk2.MustQuery("select * from no_retry").Check(testkit.Rows("8"))
@@ -3162,6 +3161,7 @@ func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 		tk1.MustExec("update forupdate_on_partition set first_name='sw' where age=25")
 		ch <- 0
 		tk1.MustExec("commit")
+		ch <- 0
 	}()
 
 	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
@@ -3172,6 +3172,7 @@ func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 	// tk1 should be blocked until tk commit, check the order.
 	c.Assert(<-ch, Equals, int32(1))
 	c.Assert(<-ch, Equals, int32(0))
+	<-ch // wait for goroutine to quit.
 
 	// Once again...
 	// This time, test for the update-update conflict.
@@ -3183,6 +3184,7 @@ func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 		tk1.MustExec("update forupdate_on_partition set first_name = 'xxx' where age=25")
 		ch <- 0
 		tk1.MustExec("commit")
+		ch <- 0
 	}()
 
 	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
@@ -3193,6 +3195,7 @@ func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 	// tk1 should be blocked until tk commit, check the order.
 	c.Assert(<-ch, Equals, int32(1))
 	c.Assert(<-ch, Equals, int32(0))
+	<-ch // wait for goroutine to quit.
 }
 
 func (s *testSchemaSuite) TestTxnSize(c *C) {
@@ -3236,21 +3239,26 @@ func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 		tk.MustExec("insert into t1 values (1)")
 		tk.MustExec("insert into t1 values (2)")
 		tk.MustExec("insert into t1 values (3)")
-
 		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
+
+		tk.MustExec("create database if not exists br02")
+		tk.MustExec("use br02")
+		tk.MustExec("create table t1(v int)")
 
 		tmpDir := path.Join(os.TempDir(), "bk1")
 		os.RemoveAll(tmpDir)
 		// backup database to tmp dir
-		tk.MustQuery("backup database br to 'local://" + tmpDir + "'")
+		tk.MustQuery("backup database * to 'local://" + tmpDir + "'")
 
 		// remove database for recovery
 		tk.MustExec("drop database br")
+		tk.MustExec("drop database br02")
 
 		// restore database with backup data
-		tk.MustQuery("restore database br from 'local://" + tmpDir + "'")
+		tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
 		tk.MustExec("use br")
 		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
 		tk.MustExec("drop database br")
+		tk.MustExec("drop database br02")
 	}
 }
