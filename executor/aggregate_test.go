@@ -441,6 +441,13 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustQuery(`select stddev(all a) from t1;`).Check(testkit.Rows("1.707825127659933"))
 	tk.MustQuery(`select stddev(a) from t1 group by grp order by grp;`).Check(testkit.Rows("0", "0.5", "0.816496580927726"))
 	tk.MustQuery(`select sum(a)+count(a)+avg(a)+stddev(a) as sum from t1 group by grp order by grp;`).Check(testkit.Rows("3", "10", "23.816496580927726"))
+
+	tk.MustExec(`insert into t1 values (2,3,"c");`)
+	tk.MustExec(`insert into t1 values (3,4,"E");`)
+	tk.MustQuery(`select std(distinct a) from t1 group by grp order by grp;`).Check(testkit.Rows("0", "0.5", "0.816496580927726"))
+	tk.MustExec(`insert into t1 values (3,7,"f");`)
+	tk.MustQuery(`select std(distinct a) from t1 group by grp order by grp;`).Check(testkit.Rows("0", "0.5", "1.118033988749895"))
+
 	// test null
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("CREATE TABLE t1 (a int, b int);")
