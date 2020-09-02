@@ -32,7 +32,7 @@ require (
 	github.com/pingcap/badger v1.5.1-0.20200810065601-8c92a97807f9
 	github.com/pingcap/br v0.0.0-20200820083933-d9d6207c0aa7
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
-	github.com/pingcap/errors v0.11.5-0.20200901084736-22e4480db80c
+	github.com/pingcap/errors v0.11.5-0.20200902104258-eba4f1d8f6de
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
@@ -71,4 +71,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/parser => github.com/imtbkcat/parser v0.0.0-20200901090226-ade32f556e6f
+replace github.com/pingcap/parser => github.com/imtbkcat/parser v0.0.0-20200902110115-704316c99473
