@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -134,7 +133,7 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 	for _, r := range rows {
 		for _, uk := range r.uniqueKeys {
 			if val, found := values[string(uk.newKV.key)]; found {
-				handle, err := tables.DecodeHandle(val)
+				handle, err := tablecodec.DecodeHandle(val)
 				if err != nil {
 					return err
 				}
@@ -217,7 +216,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				}
 				return err
 			}
-			handle, err := tables.DecodeHandle(val)
+			handle, err := tablecodec.DecodeHandle(val)
 			if err != nil {
 				return err
 			}

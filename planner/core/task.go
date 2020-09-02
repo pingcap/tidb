@@ -887,11 +887,7 @@ func (p *PhysicalTopN) canPushDown(cop *copTask) bool {
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	storeType := kv.TiKV
-	if tableScan, ok := cop.tablePlan.(*PhysicalTableScan); ok {
-		storeType = tableScan.StoreType
-	}
-	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), storeType)
+	return expression.CanExprsPushDown(p.ctx.GetSessionVars().StmtCtx, exprs, p.ctx.GetClient(), cop.getStoreType())
 }
 
 func (p *PhysicalTopN) allColsFromSchema(schema *expression.Schema) bool {
