@@ -63,17 +63,11 @@ func (p *partition) GetPhysicalID() int64 {
 // partitionedTable implements the table.PartitionedTable interface.
 // partitionedTable is a table, it contains many Partitions.
 type partitionedTable struct {
-<<<<<<< HEAD
 	Table
-	partitionExpr *PartitionExpr
-	partitions    map[int64]*partition
-=======
-	TableCommon
 	partitionExpr   *PartitionExpr
 	partitions      map[int64]*partition
 	evalBufferTypes []*types.FieldType
 	evalBufferPool  sync.Pool
->>>>>>> 349adf8... table: use evalBuffer to improve performance of locatePartition (#18818)
 }
 
 func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, error) {
@@ -83,18 +77,8 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 		return nil, errors.Trace(err)
 	}
 	ret.partitionExpr = partitionExpr
-<<<<<<< HEAD
 
 	if err := initTableIndices(&ret.tableCommon); err != nil {
-=======
-	initEvalBufferType(ret)
-	ret.evalBufferPool = sync.Pool{
-		New: func() interface{} {
-			return initEvalBuffer(ret)
-		},
-	}
-	if err := initTableIndices(&ret.TableCommon); err != nil {
->>>>>>> 349adf8... table: use evalBuffer to improve performance of locatePartition (#18818)
 		return nil, errors.Trace(err)
 	}
 	partitions := make(map[int64]*partition)
@@ -108,6 +92,12 @@ func newPartitionedTable(tbl *Table, tblInfo *model.TableInfo) (table.Table, err
 		partitions[p.ID] = &t
 	}
 	ret.partitions = partitions
+	initEvalBufferType(ret)
+	ret.evalBufferPool = sync.Pool{
+		New: func() interface{} {
+			return initEvalBuffer(ret)
+		},
+	}
 	return ret, nil
 }
 
@@ -147,12 +137,8 @@ type PartitionExpr struct {
 	UpperBounds []expression.Expression
 	// Expr is the hash partition expression.
 	Expr expression.Expression
-<<<<<<< HEAD
-=======
-	// Used in the range pruning process.
+	// The new range partition pruning
 	*ForRangePruning
-	// Used in the range column pruning process.
-	*ForRangeColumnsPruning
 }
 
 func initEvalBufferType(t *partitionedTable) {
@@ -175,35 +161,6 @@ func initEvalBufferType(t *partitionedTable) {
 func initEvalBuffer(t *partitionedTable) *chunk.MutRow {
 	evalBuffer := chunk.MutRowFromTypes(t.evalBufferTypes)
 	return &evalBuffer
-}
-
-// ForRangeColumnsPruning is used for range partition pruning.
-type ForRangeColumnsPruning struct {
-	LessThan []expression.Expression
-	MaxValue bool
-}
-
-func dataForRangeColumnsPruning(ctx sessionctx.Context, pi *model.PartitionInfo, schema *expression.Schema, names []*types.FieldName, p *parser.Parser) (*ForRangeColumnsPruning, error) {
-	var res ForRangeColumnsPruning
-	res.LessThan = make([]expression.Expression, len(pi.Definitions))
-	for i := 0; i < len(pi.Definitions); i++ {
-		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
-			// Use a bool flag instead of math.MaxInt64 to avoid the corner cases.
-			res.MaxValue = true
-		} else {
-			tmp, err := parseSimpleExprWithNames(p, ctx, pi.Definitions[i].LessThan[0], schema, names)
-			if err != nil {
-				return nil, err
-			}
-			res.LessThan[i] = tmp
-		}
-	}
-	return &res, nil
-}
->>>>>>> 349adf8... table: use evalBuffer to improve performance of locatePartition (#18818)
-
-	// The new range partition pruning
-	*ForRangePruning
 }
 
 // ForRangePruning is used for range partition pruning.
@@ -262,7 +219,6 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf bytes.Buffer
-	p := parser.New()
 	schema := expression.NewSchema(columns...)
 	partStr := rangePartitionString(pi)
 	for i := 0; i < len(pi.Definitions); i++ {
@@ -281,8 +237,6 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 			return nil, errors.Trace(err)
 		}
 		locateExprs = append(locateExprs, exprs[0])
-
-<<<<<<< HEAD
 		if i > 0 {
 			fmt.Fprintf(&buf, " and ((%s) >= (%s))", partStr, pi.Definitions[i-1].LessThan[0])
 		} else {
@@ -301,21 +255,11 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		}
 
 		exprs, err = expression.ParseSimpleExprsWithSchema(ctx, buf.String(), schema)
-=======
-	switch len(pi.Columns) {
-	case 0:
-		exprs, err := parseSimpleExprWithNames(p, ctx, pi.Expr, schema, names)
-		if err != nil {
-			return nil, err
-		}
-		tmp, err := dataForRangePruning(ctx, pi)
->>>>>>> 349adf8... table: use evalBuffer to improve performance of locatePartition (#18818)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
 			logutil.Logger(context.Background()).Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
-<<<<<<< HEAD
 		// Get a hash code in advance to prevent data race afterwards.
 		exprs[0].HashCode(ctx.GetSessionVars().StmtCtx)
 		partitionPruneExprs = append(partitionPruneExprs, exprs[0])
@@ -323,18 +267,18 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	}
 
 	var rangePruning *ForRangePruning
+	var partitionExpr expression.Expression
 	if len(pi.Columns) == 0 {
+		exprs, err := expression.ParseSimpleExprsWithSchema(ctx, pi.Expr, schema)
+		if err != nil {
+			return nil, err
+		}
 		rangePruning = &ForRangePruning{}
-		err := makeLessThanData(pi, rangePruning)
-=======
-		ret.Expr = exprs
-		ret.ForRangePruning = tmp
-	case 1:
-		tmp, err := dataForRangeColumnsPruning(ctx, pi, schema, names, p)
->>>>>>> 349adf8... table: use evalBuffer to improve performance of locatePartition (#18818)
+		err = makeLessThanData(pi, rangePruning)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		partitionExpr = exprs[0]
 	}
 
 	return &PartitionExpr{
@@ -342,6 +286,7 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		Ranges:          partitionPruneExprs,
 		UpperBounds:     locateExprs,
 		ForRangePruning: rangePruning,
+		Expr:            partitionExpr,
 	}, nil
 }
 
@@ -638,23 +583,6 @@ func FindPartitionByName(meta *model.TableInfo, parName string) (int64, error) {
 	}
 	return -1, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs(parName, meta.Name.O))
 }
-<<<<<<< HEAD
-=======
-
-func parseExpr(p *parser.Parser, exprStr string) (ast.ExprNode, error) {
-	exprStr = "select " + exprStr
-	stmts, _, err := p.Parse(exprStr, "", "")
-	if err != nil {
-		return nil, util.SyntaxWarn(err)
-	}
-	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
-	return fields[0].Expr, nil
-}
-
-func rewritePartitionExpr(ctx sessionctx.Context, field ast.ExprNode, schema *expression.Schema, names types.NameSlice) (expression.Expression, error) {
-	expr, err := expression.RewriteSimpleExprWithNames(ctx, field, schema, names)
-	return expr, err
-}
 
 func compareUnsigned(v1, v2 int64) int {
 	switch {
@@ -683,4 +611,3 @@ func (lt *ForRangePruning) compare(ith int, v int64, unsigned bool) int {
 	}
 	return -1
 }
->>>>>>> 349adf8... table: use evalBuffer to improve performance of locatePartition (#18818)

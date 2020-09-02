@@ -301,18 +301,6 @@ func (e *Execute) rebuildRange(p Plan) error {
 			if err != nil {
 				return err
 			}
-<<<<<<< HEAD
-=======
-			x.Handle = kv.IntHandle(iv)
-			if x.PartitionInfo != nil {
-				if x.TblInfo.Partition.Type != model.PartitionTypeHash {
-					return errors.New("range partition table can not use plan cache")
-				}
-				num := x.TblInfo.Partition.Num
-				pos := math.Abs(iv) % int64(num)
-				x.PartitionInfo = &x.TblInfo.Partition.Definitions[pos]
-			}
->>>>>>> 349adf8... table: use evalBuffer to improve performance of locatePartition (#18818)
 			return nil
 		}
 		for i, param := range x.IndexValueParams {
@@ -320,17 +308,6 @@ func (e *Execute) rebuildRange(p Plan) error {
 				x.IndexValues[i] = param.Datum
 			}
 		}
-<<<<<<< HEAD
-=======
-		if x.PartitionInfo != nil {
-			if x.TblInfo.Partition.Type != model.PartitionTypeHash {
-				return errors.New("range partition table can not use plan cache")
-			}
-			val := x.IndexValues[x.partitionColumnPos].GetInt64()
-			partitionID := val % int64(x.TblInfo.Partition.Num)
-			x.PartitionInfo = &x.TblInfo.Partition.Definitions[partitionID]
-		}
->>>>>>> 349adf8... table: use evalBuffer to improve performance of locatePartition (#18818)
 		return nil
 	case PhysicalPlan:
 		for _, child := range x.Children() {
