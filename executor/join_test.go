@@ -2297,7 +2297,7 @@ func (s *testSuiteJoinSerial) TestExplainAnalyzeJoin(c *C) {
 	rows := tk.MustQuery("explain analyze select /*+ INL_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
 	c.Assert(len(rows), Equals, 8)
 	c.Assert(rows[0][0], Matches, "IndexJoin_.*")
-	c.Assert(rows[0][5], Matches, "time:.*, loops:.*, probe:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*}")
+	c.Assert(rows[0][5], Matches, "time:.*, loops:.*, inner:{total:.*, concurrency:.*, task:.*, construct:.*, fetch:.*, build:.*}, probe:.*")
 	// Test for index lookup hash join.
 	rows = tk.MustQuery("explain analyze select /*+ INL_HASH_JOIN(t1, t2) */ * from t1,t2 where t1.a=t2.a;").Rows()
 	c.Assert(len(rows), Equals, 8)

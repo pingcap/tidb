@@ -760,10 +760,6 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 	if e.BasicRuntimeStats != nil {
 		buf.WriteString(e.BasicRuntimeStats.String())
 	}
-	if e.probe > 0 {
-		buf.WriteString(", probe:")
-		buf.WriteString(time.Duration(e.probe).String())
-	}
 	if e.innerWorker.totalTime > 0 {
 		buf.WriteString(", inner:{total:")
 		buf.WriteString(time.Duration(e.innerWorker.totalTime).String())
@@ -786,6 +782,10 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 			buf.WriteString(time.Duration(e.innerWorker.join).String())
 		}
 		buf.WriteString("}")
+	}
+	if e.probe > 0 {
+		buf.WriteString(", probe:")
+		buf.WriteString(time.Duration(e.probe).String())
 	}
 	return buf.String()
 }
