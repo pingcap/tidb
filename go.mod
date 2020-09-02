@@ -35,8 +35,8 @@ require (
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200828054126-d677e6fd224a
-	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
-	github.com/pingcap/parser v0.0.0-20200821073936-cf85e80665c4
+	github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463
+	github.com/pingcap/parser v0.0.0-20200902041657-5b58dafa3cde
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
 	github.com/pingcap/tidb-tools v4.0.5-0.20200820082341-afeaaaaaa153+incompatible
 	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
@@ -54,7 +54,7 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
 	go.uber.org/atomic v1.6.0
 	go.uber.org/automaxprocs v1.2.0
-	go.uber.org/zap v1.15.0
+	go.uber.org/zap v1.16.0
 	golang.org/x/net v0.0.0-20200520182314-0ba52f642ac2
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
 	golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd
@@ -67,5 +67,3 @@ require (
 )
 
 go 1.13
-
-replace github.com/pingcap/parser => github.com/youjiali1995/parser v0.0.0-20200901063329-40991d154357
