@@ -812,6 +812,9 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 	bufreal := buf.Float64s()
 	resdecimal := result.Decimals()
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		if !b.inUnion || bufreal[i] >= 0 {
 			if err = resdecimal[i].FromFloat64(bufreal[i]); err != nil {
 				if types.ErrOverflow.Equal(err) {
