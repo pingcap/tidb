@@ -344,9 +344,33 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntim
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
 }
 
+func (s *selectResultRuntimeStats) merge(other *selectResultRuntimeStats) {
+	s.copRespTime = append(s.copRespTime, other.copRespTime...)
+	s.procKeys = append(s.procKeys, other.procKeys...)
+
+	for k, v := range other.backoffSleep {
+		s.backoffSleep[k] += v
+	}
+	s.totalProcessTime += other.totalProcessTime
+	s.totalWaitTime += other.totalWaitTime
+	s.rpcStat.Merge(other.rpcStat)
+}
+
 func (s *selectResultRuntimeStats) String() string {
 	buf := bytes.NewBuffer(nil)
 	if s.RuntimeStats != nil {
+		stats, ok := s.RuntimeStats.(*selectResultRuntimeStats)
+		if ok {
+			stats.merge(s)
+			// Clean for idempotence.
+			s.copRespTime = nil
+			s.procKeys = nil
+			s.backoffSleep = nil
+			s.totalWaitTime = 0
+			s.totalProcessTime = 0
+			s.rpcStat = tikv.RegionRequestRuntimeStats{}
+			return stats.String()
+		}
 		buf.WriteString(s.RuntimeStats.String())
 	}
 	if len(s.copRespTime) > 0 {
