@@ -307,12 +307,16 @@ func (e *ProjectionExec) Close() error {
 			e.drainOutputCh(w.outputCh)
 		}
 	}
-	if e.runtimeStats != nil {
-		if e.isUnparallelExec() {
-			e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
-		} else {
-			e.runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", int(e.numWorkers)))
+	if e.baseExecutor.runtimeStats != nil {
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{
+			BasicRuntimeStats: e.runtimeStats,
 		}
+		if e.isUnparallelExec() {
+			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
+		} else {
+			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", int(e.numWorkers)))
+		}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	return e.baseExecutor.Close()
 }

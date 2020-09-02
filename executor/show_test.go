@@ -788,6 +788,7 @@ func (s *testAutoRandomSuite) TestAutoRandomBase(c *C) {
 	}()
 
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 	tk.MustExec("use test")
 
 	tk.MustExec("drop table if exists t")

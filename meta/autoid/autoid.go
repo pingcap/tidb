@@ -61,6 +61,9 @@ const RowIDBitLength = 64
 // DefaultAutoRandomBits is the default value of auto sharding.
 const DefaultAutoRandomBits = 5
 
+// MaxAutoRandomBits is the max value of auto sharding.
+const MaxAutoRandomBits = 15
+
 // Test needs to change it, so it's a variable.
 var step = int64(30000)
 
@@ -873,7 +876,7 @@ func getAutoIDByAllocType(m *meta.Meta, dbID, tableID int64, allocType Allocator
 	case SequenceType:
 		return m.GetSequenceValue(dbID, tableID)
 	default:
-		return 0, errInvalidAllocatorType.GenWithStackByArgs()
+		return 0, ErrInvalidAllocatorType.GenWithStackByArgs()
 	}
 }
 
@@ -886,7 +889,7 @@ func generateAutoIDByAllocType(m *meta.Meta, dbID, tableID, step int64, allocTyp
 	case SequenceType:
 		return m.GenSequenceValue(dbID, tableID, step)
 	default:
-		return 0, errInvalidAllocatorType.GenWithStackByArgs()
+		return 0, ErrInvalidAllocatorType.GenWithStackByArgs()
 	}
 }
 
@@ -911,8 +914,14 @@ func TestModifyBaseAndEndInjection(alloc Allocator, base, end int64) {
 }
 
 // AutoRandomIDLayout is used to calculate the bits length of different section in auto_random id.
-// Layout(64 bits):
-// [zero_padding] [sign_bit] [shard_bits] [incremental_bits]
+// The primary key with auto_random can only be `bigint` column, the total layout length of auto random is 64 bits.
+// These are two type of layout:
+// 1. Signed bigint:
+//   | [sign_bit] | [shard_bits] | [incremental_bits] |
+//   sign_bit(1 fixed) + shard_bits(15 max) + incremental_bits(the rest) = total_layout_bits(64 fixed)
+// 2. Unsigned bigint:
+//   | [shard_bits] | [incremental_bits] |
+//   shard_bits(15 max) + incremental_bits(the rest) = total_layout_bits(64 fixed)
 // Please always use NewAutoRandomIDLayout() to instantiate.
 type AutoRandomIDLayout struct {
 	FieldType *types.FieldType
@@ -925,22 +934,24 @@ type AutoRandomIDLayout struct {
 
 // NewAutoRandomIDLayout create an instance of AutoRandomIDLayout.
 func NewAutoRandomIDLayout(fieldType *types.FieldType, shardBits uint64) *AutoRandomIDLayout {
-	layout := &AutoRandomIDLayout{
-		FieldType: fieldType,
-		ShardBits: shardBits,
+	typeBitsLength := uint64(mysql.DefaultLengthOfMysqlTypes[mysql.TypeLonglong] * 8)
+	incrementalBits := typeBitsLength - shardBits
+	hasSignBit := !mysql.HasUnsignedFlag(fieldType.Flag)
+	if hasSignBit {
+		incrementalBits -= 1
 	}
-	layout.TypeBitsLength = uint64(mysql.DefaultLengthOfMysqlTypes[fieldType.Tp] * 8)
-	layout.HasSignBit = !mysql.HasUnsignedFlag(fieldType.Flag)
-	layout.IncrementalBits = layout.TypeBitsLength - shardBits
-	if layout.HasSignBit {
-		layout.IncrementalBits -= 1
+	return &AutoRandomIDLayout{
+		FieldType:       fieldType,
+		ShardBits:       shardBits,
+		TypeBitsLength:  typeBitsLength,
+		IncrementalBits: incrementalBits,
+		HasSignBit:      hasSignBit,
 	}
-	return layout
 }
 
 // IncrementalBitsCapacity returns the max capacity of incremental section of the current layout.
 func (l *AutoRandomIDLayout) IncrementalBitsCapacity() uint64 {
-	return uint64(math.Pow(2, float64(l.IncrementalBits)) - 1)
+	return uint64(math.Pow(2, float64(l.IncrementalBits))) - 1
 }
 
 // IncrementalMask returns 00..0[11..1], where [xxx] is the incremental section of the current layout.

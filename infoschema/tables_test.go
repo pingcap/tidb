@@ -133,9 +133,9 @@ func (s *testClusterTableSuite) setUpRPCService(c *C, addr string) (*grpc.Server
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
 	}()
-	cfg := config.GetGlobalConfig()
-	cfg.Status.StatusPort = uint(port)
-	config.StoreGlobalConfig(cfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Status.StatusPort = uint(port)
+	})
 	return srv, addr
 }
 
@@ -600,10 +600,10 @@ func (s *testTableSuite) TestTableRowIDShardingInfo(c *C) {
 	testutil.ConfigTestUtils.SetupAutoRandomTestConfig()
 	defer testutil.ConfigTestUtils.RestoreAutoRandomTestConfig()
 
-	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t4` (a int key auto_random)")
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t4` (a bigint key auto_random)")
 	assertShardingInfo("t4", "PK_AUTO_RANDOM_BITS=5")
 
-	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a int key auto_random(1))")
+	tk.MustExec("CREATE TABLE `sharding_info_test_db`.`t5` (a bigint key auto_random(1))")
 	assertShardingInfo("t5", "PK_AUTO_RANDOM_BITS=1")
 
 	tk.MustExec("DROP DATABASE `sharding_info_test_db`")
@@ -880,6 +880,7 @@ func (s *testTableSuite) TestSelectHiddenColumn(c *C) {
 func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk := s.newTestKitWithRoot(c)
 
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustQuery("select column_comment from information_schema.columns " +
 		"where table_name='STATEMENTS_SUMMARY' and column_name='STMT_TYPE'",
 	).Check(testkit.Rows("Statement type"))
@@ -952,10 +953,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t100    \t\n" +
-		"\t├─IndexScan_8 \tcop \t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop \t100    \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t100    \t\n" +
+		"\t├─IndexScan_8 \tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -973,10 +974,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t100    \t\n" +
-		"\t├─IndexScan_8 \tcop \t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop \t100    \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t100    \t\n" +
+		"\t├─IndexScan_8 \tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -1023,10 +1024,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t1000   \t\n" +
-		"\t├─IndexScan_8 \tcop \t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop \t1000   \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t1000   \t\n" +
+		"\t├─IndexScan_8 \tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -1042,10 +1043,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t1000   \t\n" +
-		"\t├─IndexScan_8 \tcop \t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop \t1000   \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t1000   \t\n" +
+		"\t├─IndexScan_8 \tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Unset session variable.
 	tk.MustExec("set session tidb_enable_stmt_summary = ''")
@@ -1121,6 +1122,18 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		AuthUsername: "root",
 		AuthHostname: "%",
 	}, nil, nil)
+}
+
+func (s *testTableSuite) TestIssue18845(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`CREATE USER 'user18845'@'localhost';`)
+	tk.Se.Auth(&auth.UserIdentity{
+		Username:     "user18845",
+		Hostname:     "localhost",
+		AuthUsername: "user18845",
+		AuthHostname: "localhost",
+	}, nil, nil)
+	tk.MustQuery(`select count(*) from information_schema.columns;`)
 }
 
 // Test statements_summary_history.
@@ -1200,10 +1213,11 @@ func (s *testTableSuite) TestStmtSummaryInternalQuery(c *C) {
 	tk.MustExec("admin flush bindings")
 	tk.MustExec("admin evolve bindings")
 
-	tk.MustQuery(`select exec_count, digest_text
+	// `exec_count` may be bigger than 1 because other cases are also running.
+	tk.MustQuery(`select digest_text
 		from information_schema.statements_summary
 		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows(
-		"1 select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation , source from mysql . bind_info" +
+		"select original_sql , bind_sql , default_db , status , create_time , update_time , charset , collation , source from mysql . bind_info" +
 			" where update_time > ? order by update_time"))
 }
 
@@ -1295,4 +1309,22 @@ func (s *testTableSuite) TestPerformanceSchemaforPlanCache(c *C) {
 	tk.MustExec("execute stmt")
 	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
 		testkit.Rows("3 1"))
+}
+
+func (s *testTableSuite) TestFormatVersion(c *C) {
+	// Test for defaultVersions.
+	defaultVersions := []string{"5.7.25-TiDB-None", "5.7.25-TiDB-8.0.18", "5.7.25-TiDB-8.0.18-beta.1", "5.7.25-TiDB-v4.0.0-beta-446-g5268094af"}
+	defaultRes := []string{"None", "8.0.18", "8.0.18-beta.1", "4.0.0-beta"}
+	for i, v := range defaultVersions {
+		version := infoschema.FormatVersion(v, true)
+		c.Assert(version, Equals, defaultRes[i])
+	}
+
+	// Test for versions user set.
+	versions := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
+	res := []string{"8.0.18", "5.7.25-TiDB", "8.0.18-TiDB-4.0.0-beta.1"}
+	for i, v := range versions {
+		version := infoschema.FormatVersion(v, false)
+		c.Assert(version, Equals, res[i])
+	}
 }
