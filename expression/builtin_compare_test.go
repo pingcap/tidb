@@ -212,7 +212,7 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		sc.IgnoreTruncate = origin
 	}()
 
-	for i, t := range []struct {
+	for _, t := range []struct {
 		args   []types.Datum
 		ret    int64
 		getErr bool
