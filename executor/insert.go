@@ -229,7 +229,6 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			val, err := txn.Get(ctx, uk.newKV.key)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
-					newRows[i] = nil
 					continue
 				}
 				return err
