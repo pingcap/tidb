@@ -1295,6 +1295,7 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		TblInfo:   ds.TableInfo(),
 		KeepOrder: !prop.IsEmpty(),
 		Columns:   ds.Columns,
+		Path:      candidate.path,
 	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(float64(len(candidate.path.Ranges))), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.Items[0].Desc

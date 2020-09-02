@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -58,11 +59,6 @@ func (pn *planEncoder) encodePlanTree(p Plan) string {
 	return plancodec.Compress(pn.buf.Bytes())
 }
 
-<<<<<<< HEAD
-func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {
-	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p)
-	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), isRoot, p.statsInfo().RowCount, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
-=======
 func (pn *planEncoder) encodePlan(p Plan, isRoot bool, depth int) {
 	var storeType kv.StoreType = kv.UnSpecified
 	if !isRoot {
@@ -82,7 +78,6 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, depth int) {
 		rowCount = p.statsInfo().RowCount
 	}
 	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), rowCount, taskTypeInfo, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
->>>>>>> 67214e7...  planner: encode insert/delete/update executor plan information in slow log plan field  (#19176)
 	pn.encodedPlans[p.ID()] = true
 	depth++
 
