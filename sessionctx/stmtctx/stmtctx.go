@@ -505,6 +505,17 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 	sc.mu.Unlock()
 }
 
+// MergeLockKeysExecDetails merges lock keys execution details into self.
+func (sc *StatementContext) MergeLockKeysExecDetails(lockKeys *execdetails.LockKeysDetails) {
+	sc.mu.Lock()
+	if sc.mu.execDetails.LockKeysDetail == nil {
+		sc.mu.execDetails.LockKeysDetail = lockKeys
+	} else {
+		sc.mu.execDetails.LockKeysDetail.Merge(lockKeys)
+	}
+	sc.mu.Unlock()
+}
+
 // GetExecDetails gets the execution details for the statement.
 func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	var details execdetails.ExecDetails
