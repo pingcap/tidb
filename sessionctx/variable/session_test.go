@@ -227,6 +227,11 @@ select * from t;`
 		BackoffTotal:      12 * time.Second,
 		WriteSQLRespTotal: 1 * time.Second,
 		Succ:              true,
+		RewriteInfo: variable.RewritePhaseInfo{
+			DurationRewrite:            3,
+			DurationPreprocessSubQuery: 2,
+			PreprocessSubQueries:       2,
+		},
 	})
 	c.Assert(logString, Equals, resultString)
 }
