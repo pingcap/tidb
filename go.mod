@@ -68,4 +68,4 @@ require (
 
 go 1.13
 
-replace github.com/pingcap/parser => github.com/rebelice/parser v0.0.0-20200901092110-6d45f4a18360
+replace github.com/pingcap/parser => github.com/rebelice/parser master
