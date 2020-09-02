@@ -217,6 +217,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 
 			err = e.updateDupRow(ctx, txn, r, handle, e.OnDuplicate)
 			if err == nil {
+				newRows[i] = nil
 				continue
 			}
 			if !kv.IsErrNotFound(err) {
@@ -228,6 +229,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			val, err := txn.Get(ctx, uk.newKV.key)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
+					newRows[i] = nil
 					continue
 				}
 				return err
@@ -254,8 +256,8 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			break
 		}
 	}
-	end := time.Now()
-	e.stats.check = end.Sub(start)
+	e.stats.check = time.Since(start)
+	start = time.Now()
 	// If row was checked with no duplicate keys,
 	// we should do insert the row,
 	// and key-values should be filled back to dupOldRowValues for the further row check,
@@ -268,7 +270,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			}
 		}
 	}
-	e.stats.insert = time.Since(end)
+	e.stats.insert = time.Since(start)
 	return nil
 }
 
