@@ -779,8 +779,10 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 		buf.WriteString(time.Duration(e.innerWorker.fetch).String())
 		buf.WriteString(", build:")
 		buf.WriteString(time.Duration(e.innerWorker.build).String())
-		buf.WriteString(", join:")
-		buf.WriteString(time.Duration(e.innerWorker.join).String())
+		if e.innerWorker.join > 0 {
+			buf.WriteString(", join:")
+			buf.WriteString(time.Duration(e.innerWorker.join).String())
+		}
 		buf.WriteString("}")
 	}
 	return buf.String()
