@@ -14,11 +14,24 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/set"
+)
+
+const (
+	// DefPartialResult4SumFloat64Size is the size of partialResult4SumFloat64
+	DefPartialResult4SumFloat64Size = int64(unsafe.Sizeof(partialResult4SumFloat64{}))
+	// DefPartialResult4SumDecimalSize is the size of partialResult4SumDecimal
+	DefPartialResult4SumDecimalSize = int64(unsafe.Sizeof(partialResult4SumDecimal{}))
+	// DefPartialResult4SumDistinctFloat64Size is the size of partialResult4SumDistinctFloat64
+	DefPartialResult4SumDistinctFloat64Size = int64(unsafe.Sizeof(partialResult4SumDistinctFloat64{}))
+	// DefPartialResult4SumDistinctDecimalSize is the size of partialResult4SumDistinctDecimal
+	DefPartialResult4SumDistinctDecimalSize = int64(unsafe.Sizeof(partialResult4SumDistinctDecimal{}))
 )
 
 type partialResult4SumFloat64 struct {
@@ -53,7 +66,7 @@ type baseSum4Float64 struct {
 
 func (e *baseSum4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumFloat64)
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4SumFloat64Size
 }
 
 func (e *baseSum4Float64) ResetPartialResult(pr PartialResult) {
@@ -139,7 +152,7 @@ type sum4Decimal struct {
 
 func (e *sum4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDecimal)
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4SumDecimalSize
 }
 
 func (e *sum4Decimal) ResetPartialResult(pr PartialResult) {
@@ -249,7 +262,7 @@ func (e *sum4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta i
 	p := new(partialResult4SumDistinctFloat64)
 	p.isNull = true
 	p.valSet = set.NewFloat64Set()
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4SumDistinctFloat64Size
 }
 
 func (e *sum4DistinctFloat64) ResetPartialResult(pr PartialResult) {
@@ -263,12 +276,13 @@ func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if isNull || p.valSet.Exist(input) {
 			continue
 		}
 		p.valSet.Insert(input)
+		memDelta += DefFloat64Size
 		if p.isNull {
 			p.val = input
 			p.isNull = false
@@ -276,7 +290,7 @@ func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		}
 		p.val += input
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *sum4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -297,7 +311,7 @@ func (e *sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta i
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
 	p.valSet = set.NewStringSet()
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize
 }
 
 func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
@@ -311,20 +325,21 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if isNull {
 			continue
 		}
 		hash, err := input.ToHashKey()
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		decStr := string(hack.String(hash))
 		if p.valSet.Exist(decStr) {
 			continue
 		}
 		p.valSet.Insert(decStr)
+		memDelta += int64(len(decStr))
 		if p.isNull {
 			p.val = *input
 			p.isNull = false
@@ -332,11 +347,11 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		}
 		newSum := new(types.MyDecimal)
 		if err = types.DecimalAdd(&p.val, input, newSum); err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		p.val = *newSum
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *sum4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
