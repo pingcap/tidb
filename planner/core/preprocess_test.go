@@ -22,7 +22,9 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -34,6 +36,42 @@ import (
 var _ = Suite(&testValidatorSuite{})
 
 type testValidatorSuite struct {
+	store kv.Storage
+	dom   *domain.Domain
+	se    session.Session
+	ctx   sessionctx.Context
+	is    infoschema.InfoSchema
+}
+
+func (s *testValidatorSuite) SetUpTest(c *C) {
+	var err error
+	s.store, s.dom, err = newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+
+	s.se, err = session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+
+	s.ctx = s.se.(sessionctx.Context)
+
+	s.is = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+}
+
+func (s *testValidatorSuite) TearDownTest(c *C) {
+	s.dom.Close()
+	s.store.Close()
+}
+
+func (s *testValidatorSuite) runSQL(c *C, sql string, inPrepare bool, terr error) {
+	stmts, err1 := session.Parse(s.ctx, sql)
+	c.Assert(err1, IsNil)
+	c.Assert(stmts, HasLen, 1)
+	stmt := stmts[0]
+	var opts []core.PreprocessOpt
+	if inPrepare {
+		opts = append(opts, core.InPrepare)
+	}
+	err := core.Preprocess(s.ctx, stmt, s.is, opts...)
+	c.Assert(terror.ErrorEqual(err, terr), IsTrue, Commentf("sql: %s, err:%v", sql, err))
 }
 
 func (s *testValidatorSuite) TestValidator(c *C) {
@@ -220,28 +258,37 @@ func (s *testValidatorSuite) TestValidator(c *C) {
 		{"CREATE TABLE origin (a int key auto_increment, b int);", false, nil},
 	}
 
-	store, dom, err := newStoreWithBootstrap()
+	_, err := s.se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	se, err := session.CreateSession4Test(store)
-	c.Assert(err, IsNil)
-	_, err = se.Execute(context.Background(), "use test")
-	c.Assert(err, IsNil)
-	ctx := se.(sessionctx.Context)
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
+
 	for _, tt := range tests {
-		stmts, err1 := session.Parse(ctx, tt.sql)
-		c.Assert(err1, IsNil)
-		c.Assert(stmts, HasLen, 1)
-		stmt := stmts[0]
-		var opts []core.PreprocessOpt
-		if tt.inPrepare {
-			opts = append(opts, core.InPrepare)
-		}
-		err = core.Preprocess(ctx, stmt, is, opts...)
-		c.Assert(terror.ErrorEqual(err, tt.err), IsTrue, Commentf("sql: %s, err:%v", tt.sql, err))
+		s.runSQL(c, tt.sql, tt.inPrepare, tt.err)
 	}
+}
+
+func (s *testValidatorSuite) TestForeignKey(c *C) {
+	defer testleak.AfterTest(c)()
+
+	_, err := s.se.Execute(context.Background(), "create table test.t1(a int, b int, c int)")
+	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), "create table test.t2(d int)")
+	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), "create database test2")
+	c.Assert(err, IsNil)
+
+	_, err = s.se.Execute(context.Background(), "create table test2.t(e int)")
+	c.Assert(err, IsNil)
+
+	s.is = s.dom.InfoSchema()
+
+	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES t2 (d)", false, nil)
+
+	_, err = s.se.Execute(context.Background(), "use test")
+	c.Assert(err, IsNil)
+
+	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (b) REFERENCES t2 (d)", false, nil)
+
+	s.runSQL(c, "ALTER TABLE test.t1 ADD CONSTRAINT fk FOREIGN KEY (c) REFERENCES test2.t (e)", false, nil)
 }
