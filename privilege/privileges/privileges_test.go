@@ -951,7 +951,8 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	_, err = se.Execute(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.Execute(context.Background(), "create table performance_schema.t(a int)")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
 
 	// Test metric_schema.
 	mustExec(c, se, `select * from metrics_schema.tidb_query_duration`)
@@ -962,7 +963,8 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	_, err = se.Execute(context.Background(), "delete from metrics_schema.tidb_query_duration")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.Execute(context.Background(), "create table metric_schema.t(a int)")
-	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
 }
 
 func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
