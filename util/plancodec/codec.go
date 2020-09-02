@@ -22,6 +22,7 @@ import (
 
 	"github.com/golang/snappy"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/texttree"
 )
 
@@ -298,11 +299,11 @@ func decodePlanInfo(str string) (*planInfo, error) {
 			}
 		// task type
 		case 2:
-			if v == rootTaskType {
-				p.fields = append(p.fields, "root")
-			} else {
-				p.fields = append(p.fields, "cop")
+			task, err := decodeTaskType(v)
+			if err != nil {
+				return nil, errors.Errorf("decode plan: %v, task type: %v, error: %v", str, v, err)
 			}
+			p.fields = append(p.fields, task)
 		default:
 			p.fields = append(p.fields, v)
 		}
@@ -311,17 +312,13 @@ func decodePlanInfo(str string) (*planInfo, error) {
 }
 
 // EncodePlanNode is used to encode the plan to a string.
-func EncodePlanNode(depth, pid int, planType string, isRoot bool, rowCount float64,
-	explainInfo, actRows, analyzeInfo, memoryInfo, diskInfo string, buf *bytes.Buffer) {
+func EncodePlanNode(depth, pid int, planType string, rowCount float64,
+	taskTypeInfo, explainInfo, actRows, analyzeInfo, memoryInfo, diskInfo string, buf *bytes.Buffer) {
 	buf.WriteString(strconv.Itoa(depth))
 	buf.WriteByte(separator)
 	buf.WriteString(encodeID(planType, pid))
 	buf.WriteByte(separator)
-	if isRoot {
-		buf.WriteString(rootTaskType)
-	} else {
-		buf.WriteString(copTaskType)
-	}
+	buf.WriteString(taskTypeInfo)
 	buf.WriteByte(separator)
 	buf.WriteString(strconv.FormatFloat(rowCount, 'f', -1, 64))
 	buf.WriteByte(separator)
@@ -360,6 +357,29 @@ func NormalizePlanNode(depth int, planType string, isRoot bool, explainInfo stri
 func encodeID(planType string, id int) string {
 	planID := TypeStringToPhysicalID(planType)
 	return strconv.Itoa(planID) + idSeparator + strconv.Itoa(id)
+}
+
+// EncodeTaskType is used to encode task type to a string.
+func EncodeTaskType(isRoot bool, storeType kv.StoreType) string {
+	if isRoot {
+		return rootTaskType
+	}
+	return copTaskType + idSeparator + strconv.Itoa((int)(storeType))
+}
+
+func decodeTaskType(str string) (string, error) {
+	segs := strings.Split(str, idSeparator)
+	if segs[0] == rootTaskType {
+		return "root", nil
+	}
+	if len(segs) == 1 { // be compatible to `NormalizePlanNode`, which doesn't encode storeType in task field.
+		return "cop", nil
+	}
+	storeType, err := strconv.Atoi(segs[1])
+	if err != nil {
+		return "", err
+	}
+	return "cop[" + ((kv.StoreType)(storeType)).Name() + "]", nil
 }
 
 // Compress is used to compress the input with zlib.

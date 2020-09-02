@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -57,8 +58,20 @@ func (pn *planEncoder) encodePlanTree(p PhysicalPlan) string {
 }
 
 func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {
+	var storeType kv.StoreType = kv.UnSpecified
+	if !isRoot {
+		switch copPlan := p.(type) {
+		case *PhysicalTableReader:
+			storeType = copPlan.StoreType
+		case *PhysicalTableScan:
+			storeType = copPlan.StoreType
+		default:
+			storeType = kv.TiKV
+		}
+	}
+	taskTypeInfo := plancodec.EncodeTaskType(isRoot, storeType)
 	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p)
-	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), isRoot, p.statsInfo().RowCount, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
+	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), p.statsInfo().RowCount, taskTypeInfo, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
 	pn.encodedPlans[p.ID()] = true
 
 	depth++
