@@ -59,7 +59,8 @@ type Scanner struct {
 
 	// lastKeyword records the previous keyword returned by scan().
 	// determine whether an optimizer hint should be parsed or ignored.
-	lastKeyword int
+	lastKeyword               int
+	keywoardBeforeLastKeyword int
 
 	// hintPos records the start position of the previous optimizer hint.
 	lastHintPos Pos
@@ -128,6 +129,7 @@ func (s *Scanner) AppendError(err error) {
 func (s *Scanner) Lex(v *yySymType) int {
 	tok, pos, lit := s.scan()
 	s.lastScanOffset = pos.Offset
+	s.keywoardBeforeLastKeyword = s.lastKeyword
 	s.lastKeyword = 0
 	v.offset = pos.Offset
 	v.ident = lit
@@ -376,8 +378,13 @@ func startWithSlash(s *Scanner) (tok int, pos Pos, lit string) {
 		// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html
 		if _, ok := hintedTokens[s.lastKeyword]; ok {
 			// only recognize optimizers hints directly followed by certain
-			// keywords like SELECT, INSERT, etc.
-			isOptimizerHint = true
+			// keywords like SELECT, INSERT, etc., only a special case "FOR UPDATE" needs to be handled
+			// we will report a warning in order to match MySQL's behavior, but the hint content will be ignored
+			if s.keywoardBeforeLastKeyword == forKwd {
+				s.warns = append(s.warns, ParseErrorWith(s.r.data(&pos), s.r.p.Line))
+			} else {
+				isOptimizerHint = true
+			}
 		}
 
 	case '*': // '/**' if the next char is '/' it would close the comment.
