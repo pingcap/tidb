@@ -254,6 +254,14 @@ func (s *tikvStore) WaitScatterRegionFinish(ctx context.Context, regionID uint64
 					zap.Uint64("regionID", regionID))
 				return nil
 			}
+			if resp.GetHeader().GetError() != nil {
+				err = errors.AddStack(&PDError{
+					Err: resp.Header.Error,
+				})
+				logutil.BgLogger().Warn("wait scatter region error",
+					zap.Uint64("regionID", regionID), zap.Error(err))
+				return err
+			}
 			if logFreq%10 == 0 {
 				logutil.BgLogger().Info("wait scatter region",
 					zap.Uint64("regionID", regionID),
