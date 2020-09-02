@@ -52,7 +52,7 @@ func (bWT backfillWorkerType) String() string {
 	case typeUpdateColumnWorker:
 		return "update column"
 	default:
-		return "unknow"
+		return "unknown"
 	}
 }
 
