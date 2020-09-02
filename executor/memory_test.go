@@ -29,15 +29,9 @@ import (
 
 var _ = SerialSuites(&testMemoryLeak{})
 
-var _ = SerialSuites(&testGlobalTracker{&baseTestSuite{}})
-
 type testMemoryLeak struct {
 	store  kv.Storage
 	domain *domain.Domain
-}
-
-type testGlobalTracker struct {
-	*baseTestSuite
 }
 
 func (s *testMemoryLeak) SetUpSuite(c *C) {
@@ -123,7 +117,7 @@ func (s *testMemoryLeak) memDiff(m1, m2 uint64) uint64 {
 	return m2 - m1
 }
 
-func (s *testGlobalTracker) TestGlobalMemoryTrackerOnCleanUp(c *C) {
+func (s *testMemoryLeak) TestGlobalMemoryTrackerOnCleanUp(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
