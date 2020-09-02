@@ -3037,6 +3037,11 @@ func (s *testParserSuite) TestHintError(c *C) {
 	stmt, _, err = parser.Parse("insert /*+ memory_quota(1 MB) */ into t select * from t;", "", "")
 	c.Assert(err, IsNil)
 	c.Assert(len(stmt[0].(*ast.InsertStmt).TableHints), Equals, 1)
+
+	stmt, warns, err = parser.Parse("SELECT id FROM tbl WHERE id = 0 FOR UPDATE /*+ xyz */", "", "")
+	c.Assert(err, IsNil)
+	c.Assert(len(warns), Equals, 1)
+	c.Assert(warns[0], ErrorMatches, `.*near '/\*\+' at line 1`)
 }
 
 func (s *testParserSuite) TestErrorMsg(c *C) {
