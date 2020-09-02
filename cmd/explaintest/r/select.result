@@ -359,7 +359,7 @@ insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
 insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
 desc select * from th where a=-2;
 id	estRows	task	access object	operator info
-TableReader_7	10.00	root	partition:all	data:Selection_6
+TableReader_7	10.00	root	partition:p2	data:Selection_6
 └─Selection_6	10.00	cop[tikv]		eq(test.th.a, -2)
   └─TableFullScan_5	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
 desc select * from th;

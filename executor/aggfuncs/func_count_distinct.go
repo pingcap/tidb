@@ -32,6 +32,23 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
+const (
+	// DefPartialResult4CountDistinctIntSize is the size of partialResult4CountDistinctInt
+	DefPartialResult4CountDistinctIntSize = int64(unsafe.Sizeof(partialResult4CountDistinctInt{}))
+	// DefPartialResult4CountDistinctRealSize is the size of partialResult4CountDistinctReal
+	DefPartialResult4CountDistinctRealSize = int64(unsafe.Sizeof(partialResult4CountDistinctReal{}))
+	// DefPartialResult4CountDistinctDecimalSize is the size of partialResult4CountDistinctDecimal
+	DefPartialResult4CountDistinctDecimalSize = int64(unsafe.Sizeof(partialResult4CountDistinctDecimal{}))
+	// DefPartialResult4CountDistinctDurationSize is the size of partialResult4CountDistinctDuration
+	DefPartialResult4CountDistinctDurationSize = int64(unsafe.Sizeof(partialResult4CountDistinctDuration{}))
+	// DefPartialResult4CountDistinctStringSize is the size of partialResult4CountDistinctString
+	DefPartialResult4CountDistinctStringSize = int64(unsafe.Sizeof(partialResult4CountDistinctString{}))
+	// DefPartialResult4CountWithDistinctSize is the size of partialResult4CountWithDistinct
+	DefPartialResult4CountWithDistinctSize = int64(unsafe.Sizeof(partialResult4CountWithDistinct{}))
+	// DefPartialResult4ApproxCountDistinctSize is the size of partialResult4ApproxCountDistinct
+	DefPartialResult4ApproxCountDistinctSize = int64(unsafe.Sizeof(partialResult4ApproxCountDistinct{}))
+)
+
 type partialResult4CountDistinctInt struct {
 	valSet set.Int64Set
 }
@@ -43,7 +60,7 @@ type countOriginalWithDistinct4Int struct {
 func (e *countOriginalWithDistinct4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4CountDistinctInt{
 		valSet: set.NewInt64Set(),
-	}), 0
+	}), DefPartialResult4CountDistinctIntSize
 }
 
 func (e *countOriginalWithDistinct4Int) ResetPartialResult(pr PartialResult) {
@@ -63,7 +80,7 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if isNull {
 			continue
@@ -72,9 +89,10 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 			continue
 		}
 		p.valSet.Insert(input)
+		memDelta += DefInt64Size
 	}
 
-	return 0, nil
+	return memDelta, nil
 }
 
 type partialResult4CountDistinctReal struct {
@@ -88,7 +106,7 @@ type countOriginalWithDistinct4Real struct {
 func (e *countOriginalWithDistinct4Real) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4CountDistinctReal{
 		valSet: set.NewFloat64Set(),
-	}), 0
+	}), DefPartialResult4CountDistinctRealSize
 }
 
 func (e *countOriginalWithDistinct4Real) ResetPartialResult(pr PartialResult) {
@@ -108,7 +126,7 @@ func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Con
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if isNull {
 			continue
@@ -117,9 +135,10 @@ func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Con
 			continue
 		}
 		p.valSet.Insert(input)
+		memDelta += DefFloat64Size
 	}
 
-	return 0, nil
+	return memDelta, nil
 }
 
 type partialResult4CountDistinctDecimal struct {
@@ -133,7 +152,7 @@ type countOriginalWithDistinct4Decimal struct {
 func (e *countOriginalWithDistinct4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4CountDistinctDecimal{
 		valSet: set.NewStringSet(),
-	}), 0
+	}), DefPartialResult4CountDistinctDecimalSize
 }
 
 func (e *countOriginalWithDistinct4Decimal) ResetPartialResult(pr PartialResult) {
@@ -153,23 +172,24 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if isNull {
 			continue
 		}
 		hash, err := input.ToHashKey()
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		decStr := string(hack.String(hash))
 		if p.valSet.Exist(decStr) {
 			continue
 		}
 		p.valSet.Insert(decStr)
+		memDelta += int64(len(decStr))
 	}
 
-	return 0, nil
+	return memDelta, nil
 }
 
 type partialResult4CountDistinctDuration struct {
@@ -183,7 +203,7 @@ type countOriginalWithDistinct4Duration struct {
 func (e *countOriginalWithDistinct4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4CountDistinctDuration{
 		valSet: set.NewInt64Set(),
-	}), 0
+	}), DefPartialResult4CountDistinctDurationSize
 }
 
 func (e *countOriginalWithDistinct4Duration) ResetPartialResult(pr PartialResult) {
@@ -203,7 +223,7 @@ func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDuration(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if isNull {
 			continue
@@ -213,9 +233,10 @@ func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx
 			continue
 		}
 		p.valSet.Insert(int64(input.Duration))
+		memDelta += DefInt64Size
 	}
 
-	return 0, nil
+	return memDelta, nil
 }
 
 type partialResult4CountDistinctString struct {
@@ -229,7 +250,7 @@ type countOriginalWithDistinct4String struct {
 func (e *countOriginalWithDistinct4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4CountDistinctString{
 		valSet: set.NewStringSet(),
-	}), 0
+	}), DefPartialResult4CountDistinctStringSize
 }
 
 func (e *countOriginalWithDistinct4String) ResetPartialResult(pr PartialResult) {
@@ -250,7 +271,7 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if isNull {
 			continue
@@ -262,9 +283,10 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 		}
 		input = stringutil.Copy(input)
 		p.valSet.Insert(input)
+		memDelta += int64(len(input))
 	}
 
-	return 0, nil
+	return memDelta, nil
 }
 
 type countOriginalWithDistinct struct {
@@ -278,7 +300,7 @@ type partialResult4CountWithDistinct struct {
 func (e *countOriginalWithDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	return PartialResult(&partialResult4CountWithDistinct{
 		valSet: set.NewStringSet(),
-	}), 0
+	}), DefPartialResult4CountWithDistinctSize
 }
 
 func (e *countOriginalWithDistinct) ResetPartialResult(pr PartialResult) {
@@ -307,7 +329,7 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 		for i := 0; i < len(e.args) && !hasNull; i++ {
 			encodedBytes, isNull, err = evalAndEncode(sctx, e.args[i], row, buf, encodedBytes)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			if isNull {
 				hasNull = true
@@ -319,9 +341,10 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 			continue
 		}
 		p.valSet.Insert(encodedString)
+		memDelta += int64(len(encodedString))
 	}
 
-	return 0, nil
+	return memDelta, nil
 }
 
 type countPartialWithDistinct4Int struct {
@@ -577,6 +600,10 @@ func (p *partialResult4ApproxCountDistinct) InsertHash64(x uint64) {
 	p.insertHash(approxCountDistinctHashValue(x))
 }
 
+func (p *partialResult4ApproxCountDistinct) MemUsage() int64 {
+	return int64(len(p.buf)) * DefUint32Size
+}
+
 func (p *partialResult4ApproxCountDistinct) alloc(newSizeDegree uint8) {
 	p.size = 0
 	p.skipDegree = 0
@@ -815,7 +842,7 @@ func (e *baseApproxCountDistinct) AppendFinalResult2Chunk(sctx sessionctx.Contex
 }
 
 func (e *baseApproxCountDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return (PartialResult)(NewPartialResult4ApproxCountDistinct()), 0
+	return (PartialResult)(NewPartialResult4ApproxCountDistinct()), DefPartialResult4ApproxCountDistinctSize
 }
 
 func (e *baseApproxCountDistinct) ResetPartialResult(pr PartialResult) {
@@ -847,7 +874,7 @@ func (e *approxCountDistinctOriginal) UpdatePartialResult(sctx sessionctx.Contex
 		for i := 0; i < len(e.args) && !hasNull; i++ {
 			encodedBytes, isNull, err = evalAndEncode(sctx, e.args[i], row, buf, encodedBytes)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			if isNull {
 				hasNull = true
@@ -857,12 +884,14 @@ func (e *approxCountDistinctOriginal) UpdatePartialResult(sctx sessionctx.Contex
 		if hasNull {
 			continue
 		}
-
+		oldMemUsage := p.MemUsage()
 		x := farm.Hash64(encodedBytes)
 		p.InsertHash64(x)
+		newMemUsage := p.MemUsage()
+		memDelta += newMemUsage - oldMemUsage
 	}
 
-	return 0, nil
+	return memDelta, nil
 }
 
 type approxCountDistinctPartial1 struct {
@@ -884,19 +913,22 @@ func (e *approxCountDistinctPartial2) UpdatePartialResult(sctx sessionctx.Contex
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 
 		if isNull {
 			continue
 		}
 
+		oldMemUsage := p.MemUsage()
 		err = p.readAndMerge(hack.Slice(input))
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
+		newMemUsage := p.MemUsage()
+		memDelta += newMemUsage - oldMemUsage
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 type approxCountDistinctFinal struct {

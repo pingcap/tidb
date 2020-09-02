@@ -45,24 +45,23 @@ func (s *server) BatchCommands(ss tikvpb.Tikv_BatchCommandsServer) error {
 
 // Try to start a gRPC server and retrun the server instance and binded port.
 func startMockTikvService() (*grpc.Server, int) {
-	for port := 40000; port < 50000; port++ {
-		lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", "127.0.0.1", port))
-		if err != nil {
-			logutil.BgLogger().Error("can't listen", zap.Error(err))
-			continue
-		}
-		s := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
-		tikvpb.RegisterTikvServer(s, &server{})
-		go func() {
-			if err = s.Serve(lis); err != nil {
-				logutil.BgLogger().Error(
-					"can't serve gRPC requests",
-					zap.Error(err),
-				)
-			}
-		}()
-		return s, port
+	port := -1
+	lis, err := net.Listen("tcp", fmt.Sprintf("%s:%d", "127.0.0.1", 0))
+	if err != nil {
+		logutil.BgLogger().Error("can't listen", zap.Error(err))
+		logutil.BgLogger().Error("can't start mock tikv service because no available ports")
+		return nil, port
 	}
-	logutil.BgLogger().Error("can't start mock tikv service because no available ports")
-	return nil, -1
+	port = lis.Addr().(*net.TCPAddr).Port
+	s := grpc.NewServer(grpc.ConnectionTimeout(time.Minute))
+	tikvpb.RegisterTikvServer(s, &server{})
+	go func() {
+		if err = s.Serve(lis); err != nil {
+			logutil.BgLogger().Error(
+				"can't serve gRPC requests",
+				zap.Error(err),
+			)
+		}
+	}()
+	return s, port
 }

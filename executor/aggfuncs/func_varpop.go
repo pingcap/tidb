@@ -51,8 +51,8 @@ func (e *varPop4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	varicance := p.variance / float64(p.count)
-	chk.AppendFloat64(e.ordinal, varicance)
+	variance := p.variance / float64(p.count)
+	chk.AppendFloat64(e.ordinal, variance)
 	return nil
 }
 
