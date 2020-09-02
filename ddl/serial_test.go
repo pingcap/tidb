@@ -1457,6 +1457,10 @@ func (s *testSerialSuite) TestCreateTableNoBlock(c *C) {
 
 func (s *testSerialSuite) TestCreateColumnarTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	defer func() {
+		tk.Se.GetSessionVars().EnableClusteredIndex = false
+		config.RestoreFunc()()
+	}()
 
 	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	canCreate := []string{
@@ -1480,9 +1484,9 @@ func (s *testSerialSuite) TestCreateColumnarTable(c *C) {
 			c.Assert(tbl.Meta().IsColumnar, IsTrue)
 			dropTable()
 		}
-		if enableAlterPK {
-			config.RestoreFunc()()
-		}
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.AlterPrimaryKey = false
+		})
 	}
 
 	// Test must have explicit handle.
