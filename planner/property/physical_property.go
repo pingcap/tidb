@@ -20,6 +20,10 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 )
 
+// wholeTaskTypes records all possible kinds of task that a plan can return. For Agg, TopN and Limit, we will try to get
+// these tasks one by one.
+var wholeTaskTypes = []TaskType{CopSingleReadTaskType, CopDoubleReadTaskType, RootTaskType}
+
 // Item wraps the column and its order.
 type Item struct {
 	Col  *expression.Column
@@ -81,6 +85,20 @@ func (p *PhysicalProperty) AllColsFromSchema(schema *expression.Schema) bool {
 		}
 	}
 	return true
+}
+
+// IsFlashOnlyProp return true if this physical property is only allowed to generate flash related task
+func (p *PhysicalProperty) IsFlashOnlyProp() bool {
+	return p.TaskTp == CopTiFlashLocalReadTaskType || p.TaskTp == CopTiFlashGlobalReadTaskType
+}
+
+// GetAllPossibleChildTaskTypes enumrates the possible types of tasks for children.
+func (p *PhysicalProperty) GetAllPossibleChildTaskTypes() []TaskType {
+	if p.TaskTp == RootTaskType {
+		return wholeTaskTypes
+	}
+	// TODO: For CopSingleReadTaskType and CopDoubleReadTaskType, this function should never be called
+	return []TaskType{p.TaskTp}
 }
 
 // IsPrefix checks whether the order property is the prefix of another.

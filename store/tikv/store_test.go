@@ -24,7 +24,7 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -61,9 +61,9 @@ func (s *testStoreSuite) TestOracle(c *C) {
 	s.store.oracle = o
 
 	ctx := context.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
 	c.Assert(err, IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
 	c.Assert(err, IsNil)
 	c.Assert(t1, Less, t2)
 
@@ -89,7 +89,7 @@ func (s *testStoreSuite) TestOracle(c *C) {
 
 	go func() {
 		defer wg.Done()
-		t3, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, tsoMaxBackoff))
+		t3, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, tsoMaxBackoff, nil))
 		c.Assert(err, IsNil)
 		c.Assert(t2, Less, t3)
 		expired := s.store.oracle.IsExpired(t2, 50)
@@ -103,10 +103,6 @@ type mockPDClient struct {
 	sync.RWMutex
 	client pd.Client
 	stop   bool
-}
-
-func (c *mockPDClient) ConfigClient() pd.ConfigClient {
-	return nil
 }
 
 func (c *mockPDClient) enable() {
@@ -289,10 +285,10 @@ func (s *testStoreSerialSuite) TestOracleChangeByFailpoint(c *C) {
 	o := &mockoracle.MockOracle{}
 	s.store.oracle = o
 	ctx := context.Background()
-	t1, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	t1, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
 	c.Assert(err, IsNil)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/oracle/changeTSFromPD"), IsNil)
-	t2, err := s.store.getTimestampWithRetry(NewBackoffer(ctx, 100))
+	t2, err := s.store.getTimestampWithRetry(NewBackofferWithVars(ctx, 100, nil))
 	c.Assert(err, IsNil)
 	c.Assert(t1, Greater, t2)
 }

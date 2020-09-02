@@ -712,7 +712,7 @@ func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) 
 // and need to rebuild.
 func (e *AnalyzeFastExec) buildSampTask() (needRebuild bool, err error) {
 	// Do get regions row count.
-	bo := tikv.NewBackoffer(context.Background(), 500)
+	bo := tikv.NewBackofferWithVars(context.Background(), 500, nil)
 	needRebuildForRoutine := make([]bool, e.concurrency)
 	errs := make([]error, e.concurrency)
 	sampTasksForRoutine := make([][]*AnalyzeFastTask, e.concurrency)
@@ -1076,7 +1076,7 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	e.wg.Add(e.concurrency)
-	bo := tikv.NewBackoffer(context.Background(), 500)
+	bo := tikv.NewBackofferWithVars(context.Background(), 500, nil)
 	for i := 0; i < e.concurrency; i++ {
 		go e.handleSampTasks(bo, i, &errs[i])
 	}

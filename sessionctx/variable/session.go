@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
@@ -152,11 +153,11 @@ type TransactionContext struct {
 	// CreateTime For metrics.
 	CreateTime     time.Time
 	StatementCount int
-	ForUpdate      bool
 	CouldRetry     bool
 	IsPessimistic  bool
 	Isolation      string
 	LockExpire     uint32
+	ForUpdate      uint32
 }
 
 // AddUnchangedRowKey adds an unchanged row key in update statement for pessimistic lock.
@@ -384,6 +385,8 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
+	// AllowBCJ means allow broadcast join.
+	AllowBCJ bool
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -395,6 +398,9 @@ type SessionVars struct {
 	// If value is set to 2 , which means to force to send batch cop for any query. Value is set to 0 means never use batch cop.
 	AllowBatchCop int
 
+	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
+	AllowAutoRandExplicitInsert bool
+
 	// CorrelationThreshold is the guard to enable row count estimation using column order correlation.
 	CorrelationThreshold float64
 
@@ -405,6 +411,8 @@ type SessionVars struct {
 	CPUFactor float64
 	// CopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
 	CopCPUFactor float64
+	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
+	CopTiFlashConcurrencyFactor float64
 	// NetworkFactor is the network cost of transferring 1 byte data.
 	NetworkFactor float64
 	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
@@ -603,8 +611,8 @@ type SessionVars struct {
 	// SelectLimit limits the max counts of select statement's output
 	SelectLimit uint64
 
-	// EnableSlowLogMasking indicates that whether masking the query data when log slow query.
-	EnableSlowLogMasking bool
+	// EnableLogDesensitization indicates that whether desensitization when log query.
+	EnableLogDesensitization bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -654,6 +662,7 @@ func NewSessionVars() *SessionVars {
 		Status:                      mysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
+		AllowBCJ:                    false,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
@@ -663,6 +672,7 @@ func NewSessionVars() *SessionVars {
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		CPUFactor:                   DefOptCPUFactor,
 		CopCPUFactor:                DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
 		NetworkFactor:               DefOptNetworkFactor,
 		ScanFactor:                  DefOptScanFactor,
 		DescScanFactor:              DefOptDescScanFactor,
@@ -693,7 +703,8 @@ func NewSessionVars() *SessionVars {
 		PrevFoundInPlanCache:        DefTiDBFoundInPlanCache,
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
 		SelectLimit:                 math.MaxUint64,
-		EnableSlowLogMasking:        DefTiDBSlowLogMasking,
+		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
+		EnableLogDesensitization:    DefTiDBLogDesensitization,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1055,12 +1066,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		}
 	case AutoIncrementIncrement:
 		// AutoIncrementIncrement is valid in [1, 65535].
-		temp := tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
-		s.AutoIncrementIncrement = adjustAutoIncrementParameter(temp)
+		s.AutoIncrementIncrement = tidbOptPositiveInt32(val, DefAutoIncrementIncrement)
 	case AutoIncrementOffset:
 		// AutoIncrementOffset is valid in [1, 65535].
-		temp := tidbOptPositiveInt32(val, DefAutoIncrementOffset)
-		s.AutoIncrementOffset = adjustAutoIncrementParameter(temp)
+		s.AutoIncrementOffset = tidbOptPositiveInt32(val, DefAutoIncrementOffset)
 	case MaxExecutionTime:
 		timeoutMS := tidbOptPositiveInt32(val, 0)
 		s.MaxExecutionTime = uint64(timeoutMS)
@@ -1073,6 +1082,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
+	case TiDBOptBCJ:
+		s.AllowBCJ = TiDBOptOn(val)
 	case TiDBOptDistinctAggPushDown:
 		s.AllowDistinctAggPushDown = TiDBOptOn(val)
 	case TiDBOptWriteRowID:
@@ -1087,6 +1098,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.CPUFactor = tidbOptFloat64(val, DefOptCPUFactor)
 	case TiDBOptCopCPUFactor:
 		s.CopCPUFactor = tidbOptFloat64(val, DefOptCopCPUFactor)
+	case TiDBOptTiFlashConcurrencyFactor:
+		s.CopTiFlashConcurrencyFactor = tidbOptFloat64(val, DefOptTiFlashConcurrencyFactor)
 	case TiDBOptNetworkFactor:
 		s.NetworkFactor = tidbOptFloat64(val, DefOptNetworkFactor)
 	case TiDBOptScanFactor:
@@ -1260,7 +1273,25 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.MetricSchemaRangeDuration = tidbOptInt64(val, DefTiDBMetricSchemaRangeDuration)
 	case CollationConnection, CollationDatabase, CollationServer:
 		if _, err := collate.GetCollationByName(val); err != nil {
-			return errors.Trace(err)
+			var ok bool
+			var charsetVal string
+			var err2 error
+			if name == CollationConnection {
+				charsetVal, ok = s.systems[CharacterSetConnection]
+			} else if name == CollationDatabase {
+				charsetVal, ok = s.systems[CharsetDatabase]
+			} else {
+				// CollationServer
+				charsetVal, ok = s.systems[CharacterSetServer]
+			}
+			if !ok {
+				return err
+			}
+			val, err2 = charset.GetDefaultCollation(charsetVal)
+			if err2 != nil {
+				return err2
+			}
+			logutil.BgLogger().Warn(err.Error())
 		}
 	case TiDBSlowLogThreshold:
 		atomic.StoreUint64(&config.GetGlobalConfig().Log.SlowThreshold, uint64(tidbOptInt64(val, logutil.DefaultSlowThreshold)))
@@ -1280,10 +1311,12 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			return errors.Trace(err)
 		}
 		s.SelectLimit = result
-	case TiDBSlowLogMasking:
-		s.EnableSlowLogMasking = TiDBOptOn(val)
+	case TiDBSlowLogMasking, TiDBLogDesensitization:
+		s.EnableLogDesensitization = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
+	case TiDBAllowAutoRandExplicitInsert:
+		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -1507,6 +1540,8 @@ const (
 	SlowLogCopBackoffPrefix = "Cop_backoff_"
 	// SlowLogMemMax is the max number bytes of memory used in this statement.
 	SlowLogMemMax = "Mem_max"
+	// SlowLogDiskMax is the nax number bytes of disk used in this statement.
+	SlowLogDiskMax = "Disk_max"
 	// SlowLogPrepared is used to indicate whether this sql execute in prepare.
 	SlowLogPrepared = "Prepared"
 	// SlowLogPlanFromCache is used to indicate whether this plan is from plan cache.
@@ -1527,29 +1562,42 @@ const (
 	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
 	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
+	// SlowLogKVTotal is the total time waiting for kv.
+	SlowLogKVTotal = "KV_total"
+	// SlowLogPDTotal is the total time waiting for pd.
+	SlowLogPDTotal = "PD_total"
+	// SlowLogBackoffTotal is the total time doing backoff.
+	SlowLogBackoffTotal = "Backoff_total"
+	// SlowLogWriteSQLRespTotal is the total time used to write response to client.
+	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
-	TxnTS          uint64
-	SQL            string
-	Digest         string
-	TimeTotal      time.Duration
-	TimeParse      time.Duration
-	TimeCompile    time.Duration
-	IndexNames     string
-	StatsInfos     map[string]uint64
-	CopTasks       *stmtctx.CopTasksDetails
-	ExecDetail     execdetails.ExecDetails
-	MemMax         int64
-	Succ           bool
-	Prepared       bool
-	PlanFromCache  bool
-	HasMoreResults bool
-	PrevStmt       string
-	Plan           string
-	PlanDigest     string
+	TxnTS             uint64
+	SQL               string
+	Digest            string
+	TimeTotal         time.Duration
+	TimeParse         time.Duration
+	TimeCompile       time.Duration
+	IndexNames        string
+	StatsInfos        map[string]uint64
+	CopTasks          *stmtctx.CopTasksDetails
+	ExecDetail        execdetails.ExecDetails
+	MemMax            int64
+	DiskMax           int64
+	Succ              bool
+	Prepared          bool
+	PlanFromCache     bool
+	HasMoreResults    bool
+	PrevStmt          string
+	Plan              string
+	PlanDigest        string
+	KVTotal           time.Duration
+	PDTotal           time.Duration
+	BackoffTotal      time.Duration
+	WriteSQLRespTotal time.Duration
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1569,6 +1617,7 @@ type SlowQueryLogItems struct {
 // # Cop_process: Avg_time: 1s P90_time: 2s Max_time: 3s Max_addr: 10.6.131.78
 // # Cop_wait: Avg_time: 10ms P90_time: 20ms Max_time: 30ms Max_Addr: 10.6.131.79
 // # Memory_max: 4096
+// # Disk_max: 65535
 // # Succ: true
 // # Prev_stmt: begin;
 // select * from t_slim;
@@ -1677,10 +1726,17 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.MemMax > 0 {
 		writeSlowLogItem(&buf, SlowLogMemMax, strconv.FormatInt(logItems.MemMax, 10))
 	}
+	if logItems.DiskMax > 0 {
+		writeSlowLogItem(&buf, SlowLogDiskMax, strconv.FormatInt(logItems.DiskMax, 10))
+	}
 
 	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
 	writeSlowLogItem(&buf, SlowLogPlanFromCache, strconv.FormatBool(logItems.PlanFromCache))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
+	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(logItems.KVTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(logItems.PDTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(logItems.BackoffTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogWriteSQLRespTotal, strconv.FormatFloat(logItems.WriteSQLRespTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)
@@ -1703,16 +1759,4 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 // writeSlowLogItem writes a slow log item in the form of: "# ${key}:${value}"
 func writeSlowLogItem(buf *bytes.Buffer, key, value string) {
 	buf.WriteString(SlowLogRowPrefixStr + key + SlowLogSpaceMarkStr + value + "\n")
-}
-
-// adjustAutoIncrementParameter adjust the increment and offset of AutoIncrement.
-// AutoIncrementIncrement / AutoIncrementOffset is valid in [1, 65535].
-func adjustAutoIncrementParameter(temp int) int {
-	if temp <= 0 {
-		return 1
-	} else if temp > math.MaxUint16 {
-		return math.MaxUint16
-	} else {
-		return temp
-	}
 }

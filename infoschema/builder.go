@@ -56,7 +56,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	var oldTableID, newTableID int64
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable, model.ActionRepairTable:
+	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
@@ -74,7 +74,12 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable {
+		if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
+			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
+			// For normal node's information schema, repaired table is existed.
+			// For repair node's information schema, repaired table is filtered (couldn't find it in `is`).
+			// So here skip to reserve the allocators when repairing table.
+			diff.Type != model.ActionRepairTable {
 			oldAllocs, _ := b.is.AllocByID(oldTableID)
 			allocs = filterAllocators(diff, oldAllocs)
 		}
@@ -182,7 +187,7 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.S
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDbInfo := b.copySchemaTables(di.Name.O)
+	newDbInfo := b.copySchemaTables(di.Name.L)
 	newDbInfo.Charset = di.Charset
 	newDbInfo.Collate = di.Collate
 	return nil
@@ -357,6 +362,7 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 
 // copySchemaTables creates a new schemaTables instance when a table in the database has changed.
 // It also does modifications on the new one because old schemaTables must be read-only.
+// Note: please make sure the dbName is in lowercase.
 func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 	oldSchemaTables := b.is.schemaMap[dbName]
 	newSchemaTables := &schemaTables{

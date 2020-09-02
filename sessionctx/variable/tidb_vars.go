@@ -45,6 +45,7 @@ const (
 	// tidb_opt_agg_push_down is used to enable/disable the optimizer rule of aggregation push down.
 	TiDBOptAggPushDown = "tidb_opt_agg_push_down"
 
+	TiDBOptBCJ = "tidb_opt_broadcast_join"
 	// tidb_opt_distinct_agg_push_down is used to decide whether agg with distinct should be pushed to tikv/tiflash.
 	TiDBOptDistinctAggPushDown = "tidb_opt_distinct_agg_push_down"
 
@@ -171,6 +172,9 @@ const (
 
 	// TiDBFoundInPlanCache indicates whether the last statement was found in plan cache
 	TiDBFoundInPlanCache = "last_plan_from_cache"
+
+	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
+	TiDBAllowAutoRandExplicitInsert = "allow_auto_random_explicit_insert"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -198,6 +202,8 @@ const (
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
 	// tidb_opt_copcpu_factor is the CPU cost of processing one expression for one row in coprocessor.
 	TiDBOptCopCPUFactor = "tidb_opt_copcpu_factor"
+	// tidb_opt_tiflash_concurrency_factor is concurrency number of tiflash computation.
+	TiDBOptTiFlashConcurrencyFactor = "tidb_opt_tiflash_concurrency_factor"
 	// tidb_opt_network_factor is the network cost of transferring 1 byte data.
 	TiDBOptNetworkFactor = "tidb_opt_network_factor"
 	// tidb_opt_scan_factor is the IO cost of scanning 1 byte data on TiKV.
@@ -392,10 +398,14 @@ const (
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
 
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
+	// Deprecated: use TiDBLogDesensitization instead.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
 
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
+
+	// TiDBLogDesensitization indicates that whether desensitization when log query.
+	TiDBLogDesensitization = "tidb_log_desensitization"
 
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
@@ -419,11 +429,13 @@ const (
 	DefChecksumTableConcurrency        = 4
 	DefSkipUTF8Check                   = false
 	DefOptAggPushDown                  = false
+	DefOptBCJ                          = false
 	DefOptWriteRowID                   = false
 	DefOptCorrelationThreshold         = 0.9
 	DefOptCorrelationExpFactor         = 1
 	DefOptCPUFactor                    = 3.0
 	DefOptCopCPUFactor                 = 3.0
+	DefOptTiFlashConcurrencyFactor     = 24.0
 	DefOptNetworkFactor                = 1.0
 	DefOptScanFactor                   = 1.5
 	DefOptDescScanFactor               = 3.0
@@ -457,7 +469,7 @@ const (
 	DefTiDBHashJoinConcurrency         = 5
 	DefTiDBProjectionConcurrency       = 4
 	DefTiDBOptimizerSelectivityLevel   = 0
-	DefTiDBAllowBatchCop               = 0
+	DefTiDBAllowBatchCop               = 1
 	DefTiDBTxnMode                     = ""
 	DefTiDBRowFormatV1                 = 1
 	DefTiDBRowFormatV2                 = 2
@@ -493,7 +505,9 @@ const (
 	DefTiDBMetricSchemaRangeDuration   = 60 // 60s
 	DefTiDBFoundInPlanCache            = false
 	DefTiDBSlowLogMasking              = false
-	DefTiDBEnableCollectExecutionInfo  = false
+	DefTiDBEnableCollectExecutionInfo  = true
+	DefTiDBAllowAutoRandExplicitInsert = false
+	DefTiDBLogDesensitization          = false
 	DefTiDBEnableTelemetry             = true
 )
 

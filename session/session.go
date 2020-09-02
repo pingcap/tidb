@@ -74,14 +74,14 @@ import (
 )
 
 var (
-	statementPerTransactionInternalOK    = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "ok")
-	statementPerTransactionInternalError = metrics.StatementPerTransaction.WithLabelValues(metrics.LblInternal, "error")
-	statementPerTransactionGeneralOK     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "ok")
-	statementPerTransactionGeneralError  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblGeneral, "error")
-	transactionDurationInternalCommit    = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblCommit)
-	transactionDurationInternalAbort     = metrics.TransactionDuration.WithLabelValues(metrics.LblInternal, metrics.LblAbort)
-	transactionDurationGeneralCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblCommit)
-	transactionDurationGeneralAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblGeneral, metrics.LblAbort)
+	statementPerTransactionPessimisticOK    = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblOK)
+	statementPerTransactionPessimisticError = metrics.StatementPerTransaction.WithLabelValues(metrics.LblPessimistic, metrics.LblError)
+	statementPerTransactionOptimisticOK     = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblOK)
+	statementPerTransactionOptimisticError  = metrics.StatementPerTransaction.WithLabelValues(metrics.LblOptimistic, metrics.LblError)
+	transactionDurationPessimisticCommit    = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblCommit)
+	transactionDurationPessimisticAbort     = metrics.TransactionDuration.WithLabelValues(metrics.LblPessimistic, metrics.LblAbort)
+	transactionDurationOptimisticCommit     = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblCommit)
+	transactionDurationOptimisticAbort      = metrics.TransactionDuration.WithLabelValues(metrics.LblOptimistic, metrics.LblAbort)
 
 	sessionExecuteCompileDurationInternal = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblInternal)
 	sessionExecuteCompileDurationGeneral  = metrics.SessionExecuteCompileDuration.WithLabelValues(metrics.LblGeneral)
@@ -318,12 +318,7 @@ func (s *session) SetCollation(coID int) error {
 	for _, v := range variable.SetNamesVariables {
 		terror.Log(s.sessionVars.SetSystemVar(v, cs))
 	}
-	err = s.sessionVars.SetSystemVar(variable.CollationConnection, co)
-	if err != nil {
-		// Some clients may use the unsupported collations, such as utf8mb4_0900_ai_ci, We shouldn't return error or use the ERROR level log.
-		logutil.BgLogger().Warn(err.Error())
-	}
-	return nil
+	return s.sessionVars.SetSystemVar(variable.CollationConnection, co)
 }
 
 func (s *session) PreparedPlanCache() *kvcache.SimpleLRUCache {
@@ -629,7 +624,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 
 	connID := s.sessionVars.ConnectionID
 	s.sessionVars.RetryInfo.Retrying = true
-	if s.sessionVars.TxnCtx.ForUpdate {
+	if atomic.LoadUint32(&s.sessionVars.TxnCtx.ForUpdate) == 1 {
 		err = ErrForUpdateCantRetry.GenWithStackByArgs(connID)
 		return err
 	}
@@ -823,6 +818,7 @@ func (s *session) ExecRestrictedSQLWithSnapshot(sql string) ([]chunk.Row, []*ast
 }
 
 func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Row, []*ast.ResultField, error) {
+	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	startTime := time.Now()
 	recordSets, err := se.Execute(ctx, sql)
 	if err != nil {
@@ -1033,8 +1029,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
-func (s *session) executeStatement(ctx context.Context, connID uint64, stmtNode ast.StmtNode, stmt sqlexec.Statement, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
-	logStmt(stmtNode, s.sessionVars)
+func (s *session) executeStatement(ctx context.Context, stmt *executor.ExecStmt, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
+	logStmt(stmt, s.sessionVars)
 	recordSet, err := runStmt(ctx, s, stmt)
 	if err != nil {
 		if !kv.ErrKeyExists.Equal(err) {
@@ -1086,7 +1082,6 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec.RecordSet, err error) {
 	s.PrepareTxnCtx(ctx)
-	connID := s.sessionVars.ConnectionID
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
 		return nil, err
@@ -1148,7 +1143,7 @@ func (s *session) execute(ctx context.Context, sql string) (recordSets []sqlexec
 		s.currentPlan = stmt.Plan
 
 		// Step3: Execute the physical plan.
-		if recordSets, err = s.executeStatement(ctx, connID, stmtNode, stmt, recordSets, multiQuery); err != nil {
+		if recordSets, err = s.executeStatement(ctx, stmt, recordSets, multiQuery); err != nil {
 			return nil, err
 		}
 	}
@@ -1229,6 +1224,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 
 	stmtCtx := s.GetSessionVars().StmtCtx
 	stmt := &executor.ExecStmt{
+		GoCtx:       ctx,
 		InfoSchema:  is,
 		Plan:        execPlan,
 		StmtNode:    execAst,
@@ -1244,7 +1240,7 @@ func (s *session) CachedPlanExec(ctx context.Context,
 	stmtCtx.OriginalSQL = stmt.Text
 	stmtCtx.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 	stmtCtx.SetPlanDigest(prepareStmt.NormalizedPlan, prepareStmt.PlanDigest)
-	logQuery(stmt.OriginText(), s.sessionVars)
+	logQuery(stmt.GetTextToLog(), s.sessionVars)
 
 	// run ExecStmt
 	var resultSet sqlexec.RecordSet
@@ -1950,6 +1946,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEnableIndexMerge,
 	variable.TiDBTxnMode,
 	variable.TiDBAllowBatchCop,
+	variable.TiDBOptBCJ,
 	variable.TiDBRowFormatVersion,
 	variable.TiDBEnableStmtSummary,
 	variable.TiDBStmtSummaryInternalQuery,
@@ -1963,7 +1960,9 @@ var builtinGlobalVariable = []string{
 	variable.TiDBEvolvePlanBaselines,
 	variable.TiDBIsolationReadEngines,
 	variable.TiDBStoreLimit,
+	variable.TiDBAllowAutoRandExplicitInsert,
 	variable.TiDBSlowLogMasking,
+	variable.TiDBLogDesensitization,
 	variable.TiDBEnableTelemetry,
 }
 
@@ -2088,6 +2087,7 @@ func (s *session) InitTxnWithStartTS(startTS uint64) error {
 	if err != nil {
 		return err
 	}
+	txn.SetVars(s.sessionVars.KVVars)
 	s.txn.changeInvalidToValid(txn)
 	err = s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
@@ -2112,14 +2112,14 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 
 // logStmt logs some crucial SQL including: CREATE USER/GRANT PRIVILEGE/CHANGE PASSWORD/DDL etc and normal SQL
 // if variable.ProcessGeneralLog is set.
-func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
-	switch stmt := node.(type) {
+func logStmt(execStmt *executor.ExecStmt, vars *variable.SessionVars) {
+	switch stmt := execStmt.StmtNode.(type) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
 		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateIndexStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropIndexStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt:
 		user := vars.User
 		schemaVersion := vars.TxnCtx.SchemaVersion
-		if ss, ok := node.(ast.SensitiveStmtNode); ok {
+		if ss, ok := execStmt.StmtNode.(ast.SensitiveStmtNode); ok {
 			logutil.BgLogger().Info("CRUCIAL OPERATION",
 				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
@@ -2134,13 +2134,16 @@ func logStmt(node ast.StmtNode, vars *variable.SessionVars) {
 				zap.Stringer("user", user))
 		}
 	default:
-		logQuery(node.Text(), vars)
+		logQuery(execStmt.GetTextToLog(), vars)
 	}
 }
 
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
+		if !vars.EnableLogDesensitization {
+			query = query + vars.PreparedParams.String()
+		}
 		logutil.BgLogger().Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
 			zap.Stringer("user", vars.User),
@@ -2150,26 +2153,26 @@ func logQuery(query string, vars *variable.SessionVars) {
 			zap.Bool("isReadConsistency", vars.IsReadConsistencyTxn()),
 			zap.String("current_db", vars.CurrentDB),
 			zap.String("txn_mode", vars.GetReadableTxnMode()),
-			zap.String("sql", query+vars.PreparedParams.String()))
+			zap.String("sql", query))
 	}
 }
 
 func (s *session) recordOnTransactionExecution(err error, counter int, duration float64) {
-	if s.isInternal() {
+	if s.sessionVars.TxnCtx.IsPessimistic {
 		if err != nil {
-			statementPerTransactionInternalError.Observe(float64(counter))
-			transactionDurationInternalAbort.Observe(duration)
+			statementPerTransactionPessimisticError.Observe(float64(counter))
+			transactionDurationPessimisticAbort.Observe(duration)
 		} else {
-			statementPerTransactionInternalOK.Observe(float64(counter))
-			transactionDurationInternalCommit.Observe(duration)
+			statementPerTransactionPessimisticOK.Observe(float64(counter))
+			transactionDurationPessimisticCommit.Observe(duration)
 		}
 	} else {
 		if err != nil {
-			statementPerTransactionGeneralError.Observe(float64(counter))
-			transactionDurationGeneralAbort.Observe(duration)
+			statementPerTransactionOptimisticError.Observe(float64(counter))
+			transactionDurationOptimisticAbort.Observe(duration)
 		} else {
-			statementPerTransactionGeneralOK.Observe(float64(counter))
-			transactionDurationGeneralCommit.Observe(duration)
+			statementPerTransactionOptimisticOK.Observe(float64(counter))
+			transactionDurationOptimisticCommit.Observe(duration)
 		}
 	}
 }

@@ -350,6 +350,7 @@ type slowQueryTuple struct {
 	maxWaitTime            float64
 	maxWaitAddress         string
 	memMax                 int64
+	diskMax                int64
 	prevStmt               string
 	sql                    string
 	isInternal             bool
@@ -490,6 +491,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		st.planDigest = value
 	case variable.SlowLogQuerySQLStr:
 		st.sql = value
+	case variable.SlowLogDiskMax:
+		st.diskMax, err = strconv.ParseInt(value, 10, 64)
 	}
 	if err != nil {
 		return valid, errors.Wrap(err, "Parse slow log at line "+strconv.FormatInt(int64(lineNum), 10)+" failed. Field: `"+field+"`, error")
@@ -541,6 +544,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record = append(record, types.NewFloat64Datum(st.maxWaitTime))
 	record = append(record, types.NewStringDatum(st.maxWaitAddress))
 	record = append(record, types.NewIntDatum(st.memMax))
+	record = append(record, types.NewIntDatum(st.diskMax))
 	if st.succ {
 		record = append(record, types.NewIntDatum(1))
 	} else {
