@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
@@ -427,6 +428,11 @@ func (r *mockResultSubset) GetData() []byte { return r.data }
 
 // GetStartKey implements kv.ResultSubset interface.
 func (r *mockResultSubset) GetStartKey() kv.Key { return nil }
+
+// GetExecDetails implements kv.ResultSubset interface.
+func (r *mockResultSubset) GetExecDetails() *execdetails.ExecDetails {
+	return &execdetails.ExecDetails{}
+}
 
 // MemSize implements kv.ResultSubset interface.
 func (r *mockResultSubset) MemSize() int64 { return int64(cap(r.data)) }

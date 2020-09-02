@@ -236,9 +236,9 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		Client:            s.store.client,
 	}
 	if s.mu.stats != nil {
-		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
+		cli.stats = make(map[tikvrpc.CmdType]*RegionRequestRuntimeStats)
 		defer func() {
-			s.mergeRegionRequestStats(cli.Stats)
+			s.mergeRegionRequestStats(cli.stats)
 		}()
 	}
 
@@ -364,9 +364,9 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		resolveLite:       true,
 	}
 	if s.mu.stats != nil {
-		cli.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
+		cli.stats = make(map[tikvrpc.CmdType]*RegionRequestRuntimeStats)
 		defer func() {
-			s.mergeRegionRequestStats(cli.Stats)
+			s.mergeRegionRequestStats(cli.stats)
 		}()
 	}
 
@@ -591,30 +591,30 @@ func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
 	}
 }
 
-func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats) {
+func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RegionRequestRuntimeStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.mu.stats == nil {
 		return
 	}
-	if s.mu.stats.rpcStats.Stats == nil {
-		s.mu.stats.rpcStats.Stats = stats
+	if s.mu.stats.rpcStats == nil {
+		s.mu.stats.rpcStats = stats
 		return
 	}
 	for k, v := range stats {
-		stat, ok := s.mu.stats.rpcStats.Stats[k]
+		stat, ok := s.mu.stats.rpcStats[k]
 		if !ok {
-			s.mu.stats.rpcStats.Stats[k] = v
+			s.mu.stats.rpcStats[k] = v
 			continue
 		}
-		stat.Count += v.Count
-		stat.Consume += v.Consume
+		stat.count += v.count
+		stat.consume += v.consume
 	}
 }
 
 // SnapshotRuntimeStats records the runtime stats of snapshot.
 type SnapshotRuntimeStats struct {
-	rpcStats       RegionRequestRuntimeStats
+	rpcStats       map[tikvrpc.CmdType]*RegionRequestRuntimeStats
 	backoffSleepMS map[backoffType]int
 	backoffTimes   map[backoffType]int
 }
@@ -622,7 +622,12 @@ type SnapshotRuntimeStats struct {
 // String implements fmt.Stringer interface.
 func (rs *SnapshotRuntimeStats) String() string {
 	var buf bytes.Buffer
-	buf.WriteString(rs.rpcStats.String())
+	for k, v := range rs.rpcStats {
+		if buf.Len() > 0 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(fmt.Sprintf("%s:{num_rpc:%d, total_time:%s}", k.String(), v.count, time.Duration(v.consume)))
+	}
 	for k, v := range rs.backoffTimes {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')

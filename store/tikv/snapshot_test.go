@@ -303,13 +303,13 @@ func (s *testSnapshotSuite) TestSnapshotThreadSafe(c *C) {
 }
 
 func (s *testSnapshotSuite) TestSnapshotRuntimeStats(c *C) {
-	reqStats := NewRegionRequestRuntimeStats()
-	recordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Second)
-	recordRegionRequestRuntimeStats(reqStats.Stats, tikvrpc.CmdGet, time.Millisecond)
+	reqStats := make(map[tikvrpc.CmdType]*RegionRequestRuntimeStats)
+	recordRegionRequestRuntimeStats(reqStats, tikvrpc.CmdGet, time.Second)
+	recordRegionRequestRuntimeStats(reqStats, tikvrpc.CmdGet, time.Millisecond)
 	snapshot := newTiKVSnapshot(s.store, kv.Version{Ver: 0}, 0)
 	snapshot.SetOption(kv.CollectRuntimeStats, &SnapshotRuntimeStats{})
-	snapshot.mergeRegionRequestStats(reqStats.Stats)
-	snapshot.mergeRegionRequestStats(reqStats.Stats)
+	snapshot.mergeRegionRequestStats(reqStats)
+	snapshot.mergeRegionRequestStats(reqStats)
 	bo := NewBackofferWithVars(context.Background(), 2000, nil)
 	err := bo.BackoffWithMaxSleep(boTxnLockFast, 30, errors.New("test"))
 	c.Assert(err, IsNil)
