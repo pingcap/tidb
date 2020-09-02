@@ -150,6 +150,16 @@ type AdminPlugins struct {
 	Plugins []string
 }
 
+// AdminShowTelemetry displays telemetry status including tracking ID, status and so on.
+type AdminShowTelemetry struct {
+	baseSchemaProducer
+}
+
+// AdminResetTelemetryID regenerates a new telemetry tracking ID.
+type AdminResetTelemetryID struct {
+	baseSchemaProducer
+}
+
 // Change represents a change plan.
 type Change struct {
 	baseSchemaProducer
@@ -503,6 +513,30 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 		return nil
 	case *BatchPointGetPlan:
+		if x.Path != nil {
+			if x.Path.IsTablePath {
+				x.Path.Ranges, err = ranger.BuildTableRange(x.Path.AccessConds, sc, x.Path.PkCol.RetType)
+				// For col = NULL case, the length of the final ranges could be empty.
+				if err != nil || len(x.Path.Ranges) != 1 {
+					return errors.Errorf("Rebuilding range for PointGet failed")
+				}
+				x.Handles = make([]int64, len(x.Path.Ranges))
+				for i, ran := range x.Path.Ranges {
+					x.Handles[i] = ran.LowVal[0].GetInt64()
+				}
+				return nil
+			}
+			res, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), x.Path.AccessConds, x.Path.IdxCols, x.Path.IdxColLens)
+			// For col = NULL case, the length of the final ranges could be empty.
+			if err != nil || len(res.Ranges) != 1 {
+				return errors.Errorf("Rebuilding range for BatchPointGet failed")
+			}
+			x.IndexValues = make([][]types.Datum, 0, len(res.Ranges))
+			for _, ran := range res.Ranges {
+				x.IndexValues = append(x.IndexValues, ran.LowVal)
+			}
+			return nil
+		}
 		for i, param := range x.HandleParams {
 			if param != nil {
 				x.Handles[i], err = param.Datum.ToInt64(sc)
@@ -798,6 +832,19 @@ type Explain struct {
 	explainedPlans map[int]bool
 }
 
+// GetExplainRowsForPlan get explain rows for plan.
+func GetExplainRowsForPlan(plan Plan) (rows [][]string) {
+	explain := &Explain{
+		TargetPlan: plan,
+		Format:     ast.ExplainFormatROW,
+		Analyze:    false,
+	}
+	if err := explain.RenderResult(); err != nil {
+		return rows
+	}
+	return explain.Rows
+}
+
 // prepareSchema prepares explain's result schema.
 func (e *Explain) prepareSchema() error {
 	var fieldNames []string
@@ -836,10 +883,12 @@ func (e *Explain) RenderResult() error {
 	}
 	switch strings.ToLower(e.Format) {
 	case ast.ExplainFormatROW:
-		e.explainedPlans = map[int]bool{}
-		err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
-		if err != nil {
-			return err
+		if e.Rows == nil || e.Analyze {
+			e.explainedPlans = map[int]bool{}
+			err := e.explainPlanInRowFormat(e.TargetPlan, "root", "", "", true)
+			if err != nil {
+				return err
+			}
 		}
 	case ast.ExplainFormatDOT:
 		if physicalPlan, ok := e.TargetPlan.(PhysicalPlan); ok {
@@ -890,6 +939,8 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 			buildSide = plan.InnerChildIdx ^ 1
 		case *PhysicalIndexHashJoin:
 			buildSide = plan.InnerChildIdx ^ 1
+		case *PhysicalBroadCastJoin:
+			buildSide = plan.InnerChildIdx
 		}
 
 		if buildSide != -1 {
@@ -957,7 +1008,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 	if runtimeStatsColl == nil {
 		return
 	}
-	explainID := p.ExplainID().String()
+	explainID := p.ID()
 
 	// There maybe some mock information for cop task to let runtimeStatsColl.Exists(p.ExplainID()) is true.
 	// So check copTaskEkxecDetail first and print the real cop task information if it's not empty.
@@ -971,6 +1022,7 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 		actRows = fmt.Sprint(rootstats.GetActRows())
 	} else {
 		analyzeInfo = "time:0ns, loops:0"
+		actRows = "0"
 	}
 	switch p.(type) {
 	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
@@ -980,13 +1032,13 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 	}
 
 	memoryInfo = "N/A"
-	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTracker(p.ExplainID().String())
+	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
 	if memTracker != nil {
 		memoryInfo = memTracker.BytesToString(memTracker.MaxConsumed())
 	}
 
 	diskInfo = "N/A"
-	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTracker(p.ExplainID().String())
+	diskTracker := ctx.GetSessionVars().StmtCtx.DiskTracker.SearchTrackerWithoutLock(p.ID())
 	if diskTracker != nil {
 		diskInfo = diskTracker.BytesToString(diskTracker.MaxConsumed())
 	}

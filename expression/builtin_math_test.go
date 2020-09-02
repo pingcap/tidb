@@ -119,11 +119,11 @@ func (s *testEvaluatorSuite) TestCeil(c *C) {
 
 func (s *testEvaluatorSuite) TestExp(c *C) {
 	tests := []struct {
-		args   interface{}
-		expect float64
-		isNil  bool
-		getErr bool
-		errMsg string
+		args       interface{}
+		expect     float64
+		isNil      bool
+		getWarning bool
+		errMsg     string
 	}{
 		{nil, 0, true, false, ""},
 		{int64(1), 2.718281828459045, false, false, ""},
@@ -140,14 +140,18 @@ func (s *testEvaluatorSuite) TestExp(c *C) {
 	}
 
 	for _, test := range tests {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(s.ctx, ast.Exp, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getErr {
-			c.Assert(err, NotNil)
+		if test.getWarning {
 			if test.errMsg != "" {
+				c.Assert(err, NotNil)
 				c.Assert(err.Error(), Equals, test.errMsg)
+			} else {
+				c.Assert(err, IsNil)
+				c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
 			}
 		} else {
 			c.Assert(err, IsNil)
@@ -234,37 +238,39 @@ func (s *testEvaluatorSuite) TestFloor(c *C) {
 
 func (s *testEvaluatorSuite) TestLog(c *C) {
 	tests := []struct {
-		args   []interface{}
-		expect float64
-		isNil  bool
-		getErr bool
+		args         []interface{}
+		expect       float64
+		isNil        bool
+		warningCount uint16
 	}{
-		{[]interface{}{nil}, 0, true, false},
-		{[]interface{}{nil, nil}, 0, true, false},
-		{[]interface{}{int64(100)}, 4.605170185988092, false, false},
-		{[]interface{}{float64(100)}, 4.605170185988092, false, false},
-		{[]interface{}{int64(10), int64(100)}, 2, false, false},
-		{[]interface{}{float64(10), float64(100)}, 2, false, false},
-		{[]interface{}{float64(-1)}, 0, true, false},
-		{[]interface{}{float64(1), float64(2)}, 0, true, false},
-		{[]interface{}{float64(0.5), float64(0.25)}, 2, false, false},
-		{[]interface{}{"abc"}, 0, false, true},
+		{[]interface{}{nil}, 0, true, 0},
+		{[]interface{}{nil, nil}, 0, true, 0},
+		{[]interface{}{int64(100)}, 4.605170185988092, false, 0},
+		{[]interface{}{float64(100)}, 4.605170185988092, false, 0},
+		{[]interface{}{int64(10), int64(100)}, 2, false, 0},
+		{[]interface{}{float64(10), float64(100)}, 2, false, 0},
+		{[]interface{}{float64(-1)}, 0, true, 1},
+		{[]interface{}{float64(2), float64(-1)}, 0, true, 1},
+		{[]interface{}{float64(-1), float64(2)}, 0, true, 1},
+		{[]interface{}{float64(1), float64(2)}, 0, true, 1},
+		{[]interface{}{float64(0.5), float64(0.25)}, 2, false, 0},
+		{[]interface{}{"abc"}, 0, true, 2},
 	}
 
 	for _, test := range tests {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(s.ctx, ast.Log, s.primitiveValsToConstants(test.args)...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getErr {
-			c.Assert(err, NotNil)
+		c.Assert(err, IsNil)
+		if test.warningCount > 0 {
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
+		}
+		if test.isNil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
 		} else {
-			c.Assert(err, IsNil)
-			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
-			}
+			c.Assert(result.GetFloat64(), Equals, test.expect)
 		}
 	}
 
@@ -274,33 +280,34 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 
 func (s *testEvaluatorSuite) TestLog2(c *C) {
 	tests := []struct {
-		args   interface{}
-		expect float64
-		isNil  bool
-		getErr bool
+		args         interface{}
+		expect       float64
+		isNil        bool
+		warningCount uint16
 	}{
-		{nil, 0, true, false},
-		{int64(16), 4, false, false},
-		{float64(16), 4, false, false},
-		{int64(5), 2.321928094887362, false, false},
-		{int64(-1), 0, true, false},
-		{"4abc", 0, false, true},
+		{nil, 0, true, 0},
+		{int64(16), 4, false, 0},
+		{float64(16), 4, false, 0},
+		{int64(5), 2.321928094887362, false, 0},
+		{int64(-1), 0, true, 1},
+		{"4abc", 2, false, 1},
+		{"abc", 0, true, 2},
 	}
 
 	for _, test := range tests {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(s.ctx, ast.Log2, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getErr {
-			c.Assert(err, NotNil)
+		c.Assert(err, IsNil)
+		if test.warningCount > 0 {
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
+		}
+		if test.isNil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
 		} else {
-			c.Assert(err, IsNil)
-			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
-			}
+			c.Assert(result.GetFloat64(), Equals, test.expect)
 		}
 	}
 
@@ -310,33 +317,34 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 
 func (s *testEvaluatorSuite) TestLog10(c *C) {
 	tests := []struct {
-		args   interface{}
-		expect float64
-		isNil  bool
-		getErr bool
+		args         interface{}
+		expect       float64
+		isNil        bool
+		warningCount uint16
 	}{
-		{nil, 0, true, false},
-		{int64(100), 2, false, false},
-		{float64(100), 2, false, false},
-		{int64(101), 2.0043213737826426, false, false},
-		{int64(-1), 0, true, false},
-		{"100abc", 0, false, true},
+		{nil, 0, true, 0},
+		{int64(100), 2, false, 0},
+		{float64(100), 2, false, 0},
+		{int64(101), 2.0043213737826426, false, 0},
+		{int64(-1), 0, true, 1},
+		{"100abc", 2, false, 1},
+		{"abc", 0, true, 2},
 	}
 
 	for _, test := range tests {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(s.ctx, ast.Log10, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getErr {
-			c.Assert(err, NotNil)
+		c.Assert(err, IsNil)
+		if test.warningCount > 0 {
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+test.warningCount)
+		}
+		if test.isNil {
+			c.Assert(result.Kind(), Equals, types.KindNull)
 		} else {
-			c.Assert(err, IsNil)
-			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
-			}
+			c.Assert(result.GetFloat64(), Equals, test.expect)
 		}
 	}
 
@@ -395,13 +403,19 @@ func (s *testEvaluatorSuite) TestPow(c *C) {
 	}
 
 	errDtbl := tblToDtbl(errTbl)
-	for _, t := range errDtbl {
+	for i, t := range errDtbl {
 		fc := funcs[ast.Pow]
 		f, err := fc.getFunction(s.ctx, s.datumsToConstants(t["Arg"]))
 		c.Assert(err, IsNil)
 		_, err = evalBuiltinFunc(f, chunk.Row{})
-		c.Assert(err, NotNil)
+		if i == 2 {
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[types:1690]DOUBLE value is out of range in 'pow(10, 700)'")
+		} else {
+			c.Assert(err, IsNil)
+		}
 	}
+	c.Assert(int(s.ctx.GetSessionVars().StmtCtx.WarningCount()), Equals, 3)
 }
 
 func (s *testEvaluatorSuite) TestRound(c *C) {
@@ -625,10 +639,10 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 	sc := s.ctx.GetSessionVars().StmtCtx
 	sc.IgnoreTruncate = false
 	cases := []struct {
-		args     interface{}
-		expected float64
-		isNil    bool
-		getErr   bool
+		args       interface{}
+		expected   float64
+		isNil      bool
+		getWarning bool
 	}{
 		{nil, 0, true, false},
 		{int64(0), float64(0), false, false},
@@ -636,18 +650,20 @@ func (s *testEvaluatorSuite) TestDegrees(c *C) {
 		{float64(1), float64(57.29577951308232), false, false},
 		{float64(math.Pi), float64(180), false, false},
 		{float64(-math.Pi / 2), float64(-90), false, false},
-		{"", float64(0), false, true},
+		{"", float64(0), false, false},
 		{"-2", float64(-114.59155902616465), false, false},
 		{"abc", float64(0), false, true},
 		{"+1abc", 57.29577951308232, false, true},
 	}
 
 	for _, t := range cases {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(s.ctx, ast.Degrees, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 		d, err := f.Eval(chunk.Row{})
-		if t.getErr {
-			c.Assert(err, NotNil)
+		if t.getWarning {
+			c.Assert(err, IsNil)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
 		} else {
 			c.Assert(err, IsNil)
 			if t.isNil {
@@ -721,15 +737,16 @@ func (s *testEvaluatorSuite) TestRadians(c *C) {
 	f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{types.NewDatum(invalidArg)}))
 	c.Assert(err, IsNil)
 	_, err = evalBuiltinFunc(f, chunk.Row{})
-	c.Assert(err, NotNil)
+	c.Assert(err, IsNil)
+	c.Assert(int(s.ctx.GetSessionVars().StmtCtx.WarningCount()), Equals, 1)
 }
 
 func (s *testEvaluatorSuite) TestSin(c *C) {
 	cases := []struct {
-		args     interface{}
-		expected float64
-		isNil    bool
-		getErr   bool
+		args       interface{}
+		expected   float64
+		isNil      bool
+		getWarning bool
 	}{
 		{nil, 0, true, false},
 		{int64(0), float64(0), false, false},
@@ -745,12 +762,14 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 	}
 
 	for _, t := range cases {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(s.ctx, ast.Sin, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
 		d, err := f.Eval(chunk.Row{})
-		if t.getErr {
-			c.Assert(err, NotNil)
+		if t.getWarning {
+			c.Assert(err, IsNil)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
 		} else {
 			c.Assert(err, IsNil)
 			if t.isNil {
@@ -767,10 +786,10 @@ func (s *testEvaluatorSuite) TestSin(c *C) {
 
 func (s *testEvaluatorSuite) TestCos(c *C) {
 	cases := []struct {
-		args     interface{}
-		expected float64
-		isNil    bool
-		getErr   bool
+		args       interface{}
+		expected   float64
+		isNil      bool
+		getWarning bool
 	}{
 		{nil, 0, true, false},
 		{int64(0), float64(1), false, false},
@@ -783,12 +802,14 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 	}
 
 	for _, t := range cases {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(s.ctx, ast.Cos, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
 		d, err := f.Eval(chunk.Row{})
-		if t.getErr {
-			c.Assert(err, NotNil)
+		if t.getWarning {
+			c.Assert(err, IsNil)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
 		} else {
 			c.Assert(err, IsNil)
 			if t.isNil {
@@ -805,10 +826,10 @@ func (s *testEvaluatorSuite) TestCos(c *C) {
 
 func (s *testEvaluatorSuite) TestAcos(c *C) {
 	tests := []struct {
-		args   interface{}
-		expect float64
-		isNil  bool
-		getErr bool
+		args       interface{}
+		expect     float64
+		isNil      bool
+		getWarning bool
 	}{
 		{nil, 0, true, false},
 		{float64(1), 0, false, false},
@@ -819,12 +840,14 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 	}
 
 	for _, test := range tests {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(s.ctx, ast.Acos, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getErr {
-			c.Assert(err, NotNil)
+		if test.getWarning {
+			c.Assert(err, IsNil)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
 		} else {
 			c.Assert(err, IsNil)
 			if test.isNil {
@@ -841,10 +864,10 @@ func (s *testEvaluatorSuite) TestAcos(c *C) {
 
 func (s *testEvaluatorSuite) TestAsin(c *C) {
 	tests := []struct {
-		args   interface{}
-		expect float64
-		isNil  bool
-		getErr bool
+		args       interface{}
+		expect     float64
+		isNil      bool
+		getWarning bool
 	}{
 		{nil, 0, true, false},
 		{float64(1), 1.5707963267948966, false, false},
@@ -855,12 +878,14 @@ func (s *testEvaluatorSuite) TestAsin(c *C) {
 	}
 
 	for _, test := range tests {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(s.ctx, ast.Asin, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getErr {
-			c.Assert(err, NotNil)
+		if test.getWarning {
+			c.Assert(err, IsNil)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
 		} else {
 			c.Assert(err, IsNil)
 			if test.isNil {
@@ -877,10 +902,10 @@ func (s *testEvaluatorSuite) TestAsin(c *C) {
 
 func (s *testEvaluatorSuite) TestAtan(c *C) {
 	tests := []struct {
-		args   []interface{}
-		expect float64
-		isNil  bool
-		getErr bool
+		args       []interface{}
+		expect     float64
+		isNil      bool
+		getWarning bool
 	}{
 		{[]interface{}{nil}, 0, true, false},
 		{[]interface{}{nil, nil}, 0, true, false},
@@ -891,12 +916,14 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 	}
 
 	for _, test := range tests {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(s.ctx, ast.Atan, s.primitiveValsToConstants(test.args)...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getErr {
-			c.Assert(err, NotNil)
+		if test.getWarning {
+			c.Assert(err, IsNil)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
 		} else {
 			c.Assert(err, IsNil)
 			if test.isNil {
@@ -913,10 +940,10 @@ func (s *testEvaluatorSuite) TestAtan(c *C) {
 
 func (s *testEvaluatorSuite) TestTan(c *C) {
 	cases := []struct {
-		args     interface{}
-		expected float64
-		isNil    bool
-		getErr   bool
+		args       interface{}
+		expected   float64
+		isNil      bool
+		getWarning bool
 	}{
 		{nil, 0, true, false},
 		{int64(0), float64(0), false, false},
@@ -928,12 +955,14 @@ func (s *testEvaluatorSuite) TestTan(c *C) {
 	}
 
 	for _, t := range cases {
+		preWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
 		f, err := newFunctionForTest(s.ctx, ast.Tan, s.primitiveValsToConstants([]interface{}{t.args})...)
 		c.Assert(err, IsNil)
 
 		d, err := f.Eval(chunk.Row{})
-		if t.getErr {
-			c.Assert(err, NotNil)
+		if t.getWarning {
+			c.Assert(err, IsNil)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
 		} else {
 			c.Assert(err, IsNil)
 			if t.isNil {

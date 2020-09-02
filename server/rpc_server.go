@@ -16,7 +16,6 @@ package server
 import (
 	"context"
 	"fmt"
-
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -41,7 +39,8 @@ import (
 func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionManager) *grpc.Server {
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Any("stack", v))
+			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Reflect("r", v),
+				zap.Stack("stack trace"))
 		}
 	}()
 
@@ -76,7 +75,8 @@ func (s *rpcServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (r
 	resp = &coprocessor.Response{}
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic when RPC server handing coprocessor", zap.Any("stack", v))
+			logutil.BgLogger().Error("panic when RPC server handing coprocessor", zap.Reflect("r", v),
+				zap.Stack("stack trace"))
 			resp.OtherError = fmt.Sprintf("panic when RPC server handing coprocessor, stack:%v", v)
 		}
 	}()
@@ -89,7 +89,8 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 	resp := &coprocessor.Response{}
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic when RPC server handing coprocessor stream", zap.Any("stack", v))
+			logutil.BgLogger().Error("panic when RPC server handing coprocessor stream", zap.Reflect("r", v),
+				zap.Stack("stack trace"))
 			resp.OtherError = fmt.Sprintf("panic when when RPC server handing coprocessor stream, stack:%v", v)
 			err = stream.Send(resp)
 			if err != nil {
@@ -113,7 +114,8 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 func (s *rpcServer) BatchCommands(ss tikvpb.Tikv_BatchCommandsServer) error {
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic when RPC server handing batch commands", zap.Any("stack", v))
+			logutil.BgLogger().Error("panic when RPC server handing batch commands", zap.Reflect("r", v),
+				zap.Stack("stack trace"))
 		}
 	}()
 	for {
@@ -198,7 +200,7 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	// TODO: remove this.
 	se.GetSessionVars().HashAggPartialConcurrency = 1
 	se.GetSessionVars().HashAggFinalConcurrency = 1
-	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("coprocessor"), -1)
+	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForCoprocessor, -1)
 	se.SetSessionManager(s.sm)
 	return se, nil
 }

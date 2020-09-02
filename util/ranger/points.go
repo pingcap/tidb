@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Error instances.
@@ -312,8 +313,16 @@ func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (type
 	return val, op, false
 }
 
-func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []point {
+func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, keepNull bool) []point {
 	if isNot == 1 {
+		if keepNull {
+			// Range is {[0, 0]}
+			startPoint := point{start: true}
+			startPoint.value.SetInt64(0)
+			endPoint := point{}
+			endPoint.value.SetInt64(0)
+			return []point{startPoint, endPoint}
+		}
 		// NOT TRUE range is {[null null] [0, 0]}
 		startPoint1 := point{start: true}
 		endPoint1 := point{}
@@ -490,7 +499,8 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	switch n := expr.FuncName.L; n {
 	case ast.IsTruth:
-		return r.buildFromIsTrue(expr, 1)
+		keepNull := r.isTrueKeepNull(expr)
+		return r.buildFromIsTrue(expr, 1, keepNull)
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
@@ -546,7 +556,8 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []point {
 	case ast.LogicOr:
 		return r.union(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	case ast.IsTruth:
-		return r.buildFromIsTrue(expr, 0)
+		keepNull := r.isTrueKeepNull(expr)
+		return r.buildFromIsTrue(expr, 0, keepNull)
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 0)
 	case ast.In:
@@ -632,4 +643,12 @@ func (r *builder) merge(a, b []point, union bool) []point {
 		}
 	}
 	return mergedPoints[:curTail]
+}
+
+func (r *builder) isTrueKeepNull(expr *expression.ScalarFunction) bool {
+	switch expr.Function.PbCode() {
+	case tipb.ScalarFuncSig_DecimalIsTrueWithNull, tipb.ScalarFuncSig_RealIsTrueWithNull, tipb.ScalarFuncSig_IntIsTrueWithNull:
+		return true
+	}
+	return false
 }
