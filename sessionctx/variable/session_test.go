@@ -197,37 +197,44 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Prepared: true
 # Plan_from_cache: true
 # Has_more_results: true
+# KV_total: 10
+# PD_total: 11
+# Backoff_total: 12
+# Write_sql_response_total: 1
 # Succ: true
 select * from t;`
 	sql := "select * from t"
 	_, digest := parser.NormalizeDigest(sql)
 	logString := seVar.SlowLogFormat(&variable.SlowQueryLogItems{
-		TxnTS:          txnTS,
-		SQL:            sql,
-		Digest:         digest,
-		TimeTotal:      costTime,
-		TimeParse:      time.Duration(10),
-		TimeCompile:    time.Duration(10),
-		IndexNames:     "[t1:a,t2:b]",
-		StatsInfos:     statsInfos,
-		CopTasks:       copTasks,
-		ExecDetail:     execDetail,
-		MemMax:         memMax,
-		DiskMax:        diskMax,
-		Prepared:       true,
-		PlanFromCache:  true,
-		HasMoreResults: true,
-		Succ:           true,
+		TxnTS:             txnTS,
+		SQL:               sql,
+		Digest:            digest,
+		TimeTotal:         costTime,
+		TimeParse:         time.Duration(10),
+		TimeCompile:       time.Duration(10),
+		IndexNames:        "[t1:a,t2:b]",
+		StatsInfos:        statsInfos,
+		CopTasks:          copTasks,
+		ExecDetail:        execDetail,
+		MemMax:            memMax,
+		DiskMax:           diskMax,
+		Prepared:          true,
+		PlanFromCache:     true,
+		HasMoreResults:    true,
+		KVTotal:           10 * time.Second,
+		PDTotal:           11 * time.Second,
+		BackoffTotal:      12 * time.Second,
+		WriteSQLRespTotal: 1 * time.Second,
+		Succ:              true,
 	})
 	c.Assert(logString, Equals, resultString)
 }
 
 func (*testSessionSuite) TestIsolationRead(c *C) {
-	originIsolationEngines := config.GetGlobalConfig().IsolationRead.Engines
-	defer func() {
-		config.GetGlobalConfig().IsolationRead.Engines = originIsolationEngines
-	}()
-	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash", "tidb"}
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.IsolationRead.Engines = []string{"tiflash", "tidb"}
+	})
 	sessVars := variable.NewSessionVars()
 	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
 	c.Assert(ok, Equals, true)

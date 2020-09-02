@@ -15,6 +15,7 @@ package tables
 
 import (
 	"bytes"
+	"context"
 	stderr "errors"
 	"fmt"
 	"sort"
@@ -96,7 +97,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Tabl
 func newPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	ctx := mock.NewContext()
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Columns)
+	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Columns, tblInfo)
 	pi := tblInfo.GetPartitionInfo()
 	switch pi.Type {
 	case model.PartitionTypeRange:
@@ -302,7 +303,8 @@ func (t *partitionedTable) PartitionExpr() (*PartitionExpr, error) {
 	return t.partitionExpr, nil
 }
 
-func partitionRecordKey(pid int64, handle int64) kv.Key {
+// PartitionRecordKey is exported for test.
+func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	recordPrefix := tablecodec.GenTableRecordPrefix(pid)
 	return tablecodec.EncodeRecordKey(recordPrefix, handle)
 }
@@ -462,21 +464,21 @@ func (t *partitionedTable) RemoveRecord(ctx sessionctx.Context, h int64, r []typ
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-func (t *partitionedTable) UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error {
-	return partitionedTableUpdateRecord(ctx, t, h, currData, newData, touched, nil)
+func (t *partitionedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error {
+	return partitionedTableUpdateRecord(ctx, sctx, t, h, currData, newData, touched, nil)
 }
 
-func (t *partitionTableWithGivenSets) UpdateRecord(ctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error {
-	return partitionedTableUpdateRecord(ctx, t.partitionedTable, h, currData, newData, touched, t.partitions)
+func (t *partitionTableWithGivenSets) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h int64, currData, newData []types.Datum, touched []bool) error {
+	return partitionedTableUpdateRecord(ctx, sctx, t.partitionedTable, h, currData, newData, touched, t.partitions)
 }
 
-func partitionedTableUpdateRecord(ctx sessionctx.Context, t *partitionedTable, h int64, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}) error {
+func partitionedTableUpdateRecord(ctx context.Context, sctx sessionctx.Context, t *partitionedTable, h int64, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}) error {
 	partitionInfo := t.meta.GetPartitionInfo()
-	from, err := t.locatePartition(ctx, partitionInfo, currData)
+	from, err := t.locatePartition(sctx, partitionInfo, currData)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	to, err := t.locatePartition(ctx, partitionInfo, newData)
+	to, err := t.locatePartition(sctx, partitionInfo, newData)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -489,7 +491,7 @@ func partitionedTableUpdateRecord(ctx sessionctx.Context, t *partitionedTable, h
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
 	if from != to {
-		_, err = t.GetPartition(to).AddRecord(ctx, newData)
+		_, err = t.GetPartition(to).AddRecord(sctx, newData)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -499,7 +501,7 @@ func partitionedTableUpdateRecord(ctx sessionctx.Context, t *partitionedTable, h
 		// So this special order is chosen: add record first, errors such as
 		// 'Key Already Exists' will generally happen during step1, errors are
 		// unlikely to happen in step2.
-		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
+		err = t.GetPartition(from).RemoveRecord(sctx, h, currData)
 		if err != nil {
 			logutil.BgLogger().Error("update partition record fails", zap.String("message", "new record inserted while old record is not removed"), zap.Error(err))
 			return errors.Trace(err)
@@ -508,7 +510,7 @@ func partitionedTableUpdateRecord(ctx sessionctx.Context, t *partitionedTable, h
 	}
 
 	tbl := t.GetPartition(to)
-	return tbl.UpdateRecord(ctx, h, currData, newData, touched)
+	return tbl.UpdateRecord(ctx, sctx, h, currData, newData, touched)
 }
 
 // FindPartitionByName finds partition in table meta by name.
