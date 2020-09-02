@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -339,6 +340,13 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 		b.backoffTimes = make(map[backoffType]int)
 	}
 	b.backoffTimes[typ]++
+
+	stmtExec := b.ctx.Value(execdetails.StmtExecDetailKey)
+	if stmtExec != nil {
+		detail := stmtExec.(*execdetails.StmtExecDetails)
+		atomic.AddInt64(&detail.BackoffDuration, int64(realSleep)*int64(time.Millisecond))
+		atomic.AddInt64(&detail.BackoffCount, 1)
+	}
 
 	if b.vars != nil && b.vars.Killed != nil {
 		if atomic.LoadUint32(b.vars.Killed) == 1 {
