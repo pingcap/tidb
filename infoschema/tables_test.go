@@ -139,7 +139,6 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 	tk.MustQuery("SELECT user,host,command FROM information_schema.processlist;").Check(testkit.Rows("root 127.0.0.1 Query"))
 }
 
-<<<<<<< HEAD
 func (s *testTableSuite) TestDataForTableStatsField(c *C) {
 	s.dom.SetStatsUpdating(true)
 	oldExpiryTime := infoschema.TableStatsCacheExpiry
@@ -188,36 +187,6 @@ func (s *testTableSuite) TestDataForTableStatsField(c *C) {
 	c.Assert(h.Update(is), IsNil)
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 17 51 3"))
-=======
-	// Test for all system tables `TABLE_TYPE` is `SYSTEM VIEW`.
-	rows1 := tk.MustQuery("select count(*) from information_schema.tables where table_schema in ('INFORMATION_SCHEMA','PERFORMANCE_SCHEMA','METRICS_SCHEMA');").Rows()
-	rows2 := tk.MustQuery("select count(*) from information_schema.tables where table_schema in ('INFORMATION_SCHEMA','PERFORMANCE_SCHEMA','METRICS_SCHEMA') and  table_type = 'SYSTEM VIEW';").Rows()
-	c.Assert(rows1, DeepEquals, rows2)
-	// Test for system table default value
-	tk.MustQuery("show create table information_schema.PROCESSLIST").Check(
-		testkit.Rows("" +
-			"PROCESSLIST CREATE TABLE `PROCESSLIST` (\n" +
-			"  `ID` bigint(21) unsigned NOT NULL DEFAULT 0,\n" +
-			"  `USER` varchar(16) NOT NULL DEFAULT '',\n" +
-			"  `HOST` varchar(64) NOT NULL DEFAULT '',\n" +
-			"  `DB` varchar(64) DEFAULT NULL,\n" +
-			"  `COMMAND` varchar(16) NOT NULL DEFAULT '',\n" +
-			"  `TIME` int(7) NOT NULL DEFAULT 0,\n" +
-			"  `STATE` varchar(7) DEFAULT NULL,\n" +
-			"  `INFO` longtext DEFAULT NULL,\n" +
-			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
-			"  `TxnStart` varchar(64) NOT NULL DEFAULT ''\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-	tk.MustQuery("show create table information_schema.cluster_log").Check(
-		testkit.Rows("" +
-			"CLUSTER_LOG CREATE TABLE `CLUSTER_LOG` (\n" +
-			"  `TIME` varchar(32) DEFAULT NULL,\n" +
-			"  `TYPE` varchar(64) DEFAULT NULL,\n" +
-			"  `INSTANCE` varchar(64) DEFAULT NULL,\n" +
-			"  `LEVEL` varchar(8) DEFAULT NULL,\n" +
-			"  `MESSAGE` longtext DEFAULT NULL\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
->>>>>>> 729fdcb... infoschema: fix query processlist and cluster_log bug in mysql8 client (#19648)
 }
 
 func (s *testTableSuite) TestCharacterSetCollations(c *C) {
