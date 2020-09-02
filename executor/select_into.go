@@ -90,6 +90,8 @@ func (s *SelectIntoExec) escapeField(f []byte) []byte {
 	s.escapeBuf = s.escapeBuf[:0]
 	for _, b := range f {
 		switch b {
+		case 0:
+			break // we will never escape 0, because escaped by and enclosed by character can't be 0
 		case s.intoOpt.FieldsInfo.Escaped, s.intoOpt.FieldsInfo.Enclosed:
 			s.escapeBuf = append(s.escapeBuf, s.intoOpt.FieldsInfo.Escaped)
 		}
