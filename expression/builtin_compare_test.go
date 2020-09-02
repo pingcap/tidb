@@ -14,7 +14,6 @@
 package expression
 
 import (
-	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -255,9 +254,6 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		}
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
-		if v.GetInt64() != t.ret {
-			fmt.Println(i, t)
-		}
 		c.Assert(v.GetInt64(), Equals, t.ret)
 	}
 }
