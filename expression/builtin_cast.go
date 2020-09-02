@@ -117,7 +117,7 @@ func (c *castAsIntFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +167,7 @@ func (c *castAsRealFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (c *castAsDecimalFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	b, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	b, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -277,7 +277,7 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +326,7 @@ func (c *castAsTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +370,7 @@ func (c *castAsDurationFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -414,7 +414,7 @@ func (c *castAsJSONFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args)
+	bf, err := newBaseBuiltinFunc(ctx, c.funcName, args, c.tp.EvalType())
 	if err != nil {
 		return nil, err
 	}
@@ -1776,10 +1776,6 @@ func BuildCastFunction4Union(ctx sessionctx.Context, expr Expression, tp *types.
 func BuildCastFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
 	if hasSpecialCast(ctx, expr, tp) {
 		return expr
-	}
-
-	if tp.Flen == types.UnspecifiedLength {
-		tp.Flen = expr.GetType().Flen
 	}
 
 	var fc functionClass

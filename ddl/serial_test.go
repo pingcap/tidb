@@ -167,6 +167,20 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	_, err = tk.Exec("create table t1(c1 int not null, primary key(c1) invisible);")
 	c.Assert(ddl.ErrPKIndexCantBeInvisible.Equal(err), IsTrue)
 	tk.MustExec("create table t2 (a int, b int not null, primary key(a), unique(b) invisible);")
+
+	// Test drop clustered primary key.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = false
+	})
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set tidb_enable_clustered_index=1")
+	tk.MustExec("create table t(a int, b varchar(64), primary key(b));")
+	tk.MustExec("insert into t values(1,'a'), (2, 'b');")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
+	errMsg := "[ddl:8200]Unsupported drop primary key when the table is using clustered index"
+	tk.MustGetErrMsg("alter table t drop primary key;", errMsg)
 }
 
 func (s *testSerialSuite) TestDropAutoIncrementIndex(c *C) {
@@ -917,6 +931,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	tk.MustExec("create database if not exists auto_random_db")
 	defer tk.MustExec("drop database if exists auto_random_db")
 	tk.MustExec("use auto_random_db")
+	databaseName, tableName := "auto_random_db", "t"
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
@@ -955,6 +970,11 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	}
 	assertBigIntOnly := func(sql, colType string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOnNonBigIntColumn, colType)
+	}
+	assertAddColumn := func(sql, colName string) {
+		{
+			assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterAddColumn, colName, databaseName, tableName)
+		}
 	}
 	mustExecAndDrop := func(sql string, fns ...func()) {
 		tk.MustExec(sql)
@@ -1055,6 +1075,18 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	mustExecAndDrop("create table t (a bigint, b bigint, primary key(a, b))", func() {
 		assertAlterValue("alter table t modify column a bigint auto_random(3)")
 		assertAlterValue("alter table t modify column b bigint auto_random(3)")
+	})
+
+	// Add auto_random column is not allowed.
+	mustExecAndDrop("create table t (a bigint)", func() {
+		assertAddColumn("alter table t add column b int auto_random", "b")
+		assertAddColumn("alter table t add column b bigint auto_random", "b")
+		assertAddColumn("alter table t add column b bigint auto_random primary key", "b")
+	})
+	mustExecAndDrop("create table t (a bigint, b bigint primary key)", func() {
+		assertAddColumn("alter table t add column c int auto_random", "c")
+		assertAddColumn("alter table t add column c bigint auto_random", "c")
+		assertAddColumn("alter table t add column c bigint auto_random primary key", "c")
 	})
 
 	// Decrease auto_random bits is not allowed.
@@ -1365,6 +1397,8 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t6 values (1, 2)")
 	tk.MustQuery("select * from t6").Check(testkit.Rows("1 2"))
 	tk.MustGetErrCode("alter table t6 drop primary key", errno.ErrPKIndexCantBeInvisible)
+	res := tk.MustQuery("show index from t6 where Key_name='PRIMARY';")
+	c.Check(len(res.Rows()), Equals, 1)
 }
 
 func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
