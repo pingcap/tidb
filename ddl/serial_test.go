@@ -113,6 +113,7 @@ func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
 func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index = 0")
 
 	tk.MustExec("create table primary_key_test (a int, b varchar(10))")
 	tk.MustExec("create table primary_key_test_1 (a int, b varchar(10), primary key(a))")
@@ -130,9 +131,6 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk.MustExec("create table primary_key_test1 (a int, b varchar(10), primary key(a))")
 	tk.MustExec("create table primary_key_test2 (a int, b varchar(10), primary key(b))")
 	tk.MustExec("create table primary_key_test3 (a int, b varchar(10))")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
-	tk.MustExec("create table primary_key_test4 (a varchar(255), b varchar(10), primary key(a))")
-	tk.Se.GetSessionVars().EnableClusteredIndex = false
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = true
@@ -147,19 +145,17 @@ func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	c.Assert(infoschema.ErrMultiplePriKey.Equal(err), IsTrue)
 
 	_, err = tk.Exec("alter table primary_key_test1 drop primary key")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's primary key is handle")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's pkIsHandle is true")
 	tk.MustExec("alter table primary_key_test2 drop primary key")
 	_, err = tk.Exec("alter table primary_key_test3 drop primary key")
 	c.Assert(err.Error(), Equals, "[ddl:1091]Can't DROP 'PRIMARY'; check that column/key exists")
-	_, err = tk.Exec("alter table primary_key_test4 drop primary key")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when the table's primary key is handle")
 
 	// for "drop index `primary` on ..." syntax
-	tk.MustExec("create table primary_key_test5 (a int, b varchar(10), primary key(a))")
+	tk.MustExec("create table primary_key_test4 (a int, b varchar(10), primary key(a))")
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = false
 	})
-	_, err = tk.Exec("drop index `primary` on primary_key_test5")
+	_, err = tk.Exec("drop index `primary` on primary_key_test4")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported drop primary key when alter-primary-key is false")
 	// for the index name is `primary`
 	tk.MustExec("create table tt(`primary` int);")
@@ -936,6 +932,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	tk.MustExec("create database if not exists auto_random_db")
 	defer tk.MustExec("drop database if exists auto_random_db")
 	tk.MustExec("use auto_random_db")
+	databaseName, tableName := "auto_random_db", "t"
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
@@ -974,6 +971,11 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	}
 	assertBigIntOnly := func(sql, colType string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOnNonBigIntColumn, colType)
+	}
+	assertAddColumn := func(sql, colName string) {
+		{
+			assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterAddColumn, colName, databaseName, tableName)
+		}
 	}
 	mustExecAndDrop := func(sql string, fns ...func()) {
 		tk.MustExec(sql)
@@ -1074,6 +1076,18 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	mustExecAndDrop("create table t (a bigint, b bigint, primary key(a, b))", func() {
 		assertAlterValue("alter table t modify column a bigint auto_random(3)")
 		assertAlterValue("alter table t modify column b bigint auto_random(3)")
+	})
+
+	// Add auto_random column is not allowed.
+	mustExecAndDrop("create table t (a bigint)", func() {
+		assertAddColumn("alter table t add column b int auto_random", "b")
+		assertAddColumn("alter table t add column b bigint auto_random", "b")
+		assertAddColumn("alter table t add column b bigint auto_random primary key", "b")
+	})
+	mustExecAndDrop("create table t (a bigint, b bigint primary key)", func() {
+		assertAddColumn("alter table t add column c int auto_random", "c")
+		assertAddColumn("alter table t add column c bigint auto_random", "c")
+		assertAddColumn("alter table t add column c bigint auto_random primary key", "c")
 	})
 
 	// Decrease auto_random bits is not allowed.
@@ -1384,6 +1398,8 @@ func (s *testSerialSuite) TestInvisibleIndex(c *C) {
 	tk.MustExec("insert into t6 values (1, 2)")
 	tk.MustQuery("select * from t6").Check(testkit.Rows("1 2"))
 	tk.MustGetErrCode("alter table t6 drop primary key", errno.ErrPKIndexCantBeInvisible)
+	res := tk.MustQuery("show index from t6 where Key_name='PRIMARY';")
+	c.Check(len(res.Rows()), Equals, 1)
 }
 
 func (s *testSerialSuite) TestCreateClusteredIndex(c *C) {
@@ -1462,6 +1478,10 @@ func (s *testSerialSuite) TestCreateTableNoBlock(c *C) {
 
 func (s *testSerialSuite) TestCreateColumnarTable(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	defer func() {
+		tk.Se.GetSessionVars().EnableClusteredIndex = false
+		config.RestoreFunc()()
+	}()
 
 	tk.Se.GetSessionVars().EnableClusteredIndex = true
 	canCreate := []string{
@@ -1485,9 +1505,9 @@ func (s *testSerialSuite) TestCreateColumnarTable(c *C) {
 			c.Assert(tbl.Meta().IsColumnar, IsTrue)
 			dropTable()
 		}
-		if enableAlterPK {
-			config.RestoreFunc()()
-		}
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.AlterPrimaryKey = false
+		})
 	}
 
 	// Test must have explicit handle.
