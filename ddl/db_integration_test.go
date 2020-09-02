@@ -1252,14 +1252,14 @@ func (s *testIntegrationSuite3) TestChangeColumnPosition(c *C) {
 	s.tk.MustExec("alter table position4 add index t(b)")
 	s.tk.MustExec("alter table position4 change column b c int first")
 	createSQL := s.tk.MustQuery("show create table position4").Rows()[0][1]
-	exceptedSQL := []string{
+	expectedSQL := []string{
 		"CREATE TABLE `position4` (",
 		"  `c` int(11) DEFAULT NULL,",
 		"  `a` int(11) DEFAULT NULL,",
 		"  KEY `t` (`c`)",
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	}
-	c.Assert(createSQL, Equals, strings.Join(exceptedSQL, "\n"))
+	c.Assert(createSQL, Equals, strings.Join(expectedSQL, "\n"))
 }
 
 func (s *testIntegrationSuite2) TestAddIndexAfterAddColumn(c *C) {
@@ -1477,7 +1477,7 @@ func (s *testIntegrationSuite3) TestAlterAlgorithm(c *C) {
 		PARTITION p2 VALUES LESS THAN (16),
 		PARTITION p3 VALUES LESS THAN (21)
 	)`)
-	s.assertAlterErrorExec(c, "alter table t modify column a bigint, ALGORITHM=INPLACE;")
+	s.assertAlterWarnExec(c, "alter table t modify column a bigint, ALGORITHM=INPLACE;")
 	s.tk.MustExec("alter table t modify column a bigint, ALGORITHM=INPLACE, ALGORITHM=INSTANT;")
 	s.tk.MustExec("alter table t modify column a bigint, ALGORITHM=DEFAULT;")
 
@@ -1485,43 +1485,44 @@ func (s *testIntegrationSuite3) TestAlterAlgorithm(c *C) {
 	s.assertAlterErrorExec(c, "alter table t add index idx_b(b), ALGORITHM=INSTANT")
 	s.assertAlterWarnExec(c, "alter table t add index idx_b1(b), ALGORITHM=COPY")
 	s.tk.MustExec("alter table t add index idx_b2(b), ALGORITHM=INPLACE")
-	s.assertAlterErrorExec(c, "alter table t drop index idx_b, ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t add index idx_b3(b), ALGORITHM=DEFAULT")
+	s.assertAlterWarnExec(c, "alter table t drop index idx_b3, ALGORITHM=INPLACE")
 	s.assertAlterWarnExec(c, "alter table t drop index idx_b1, ALGORITHM=COPY")
 	s.tk.MustExec("alter table t drop index idx_b2, ALGORITHM=INSTANT")
 
 	// Test rename
 	s.assertAlterWarnExec(c, "alter table t rename to t1, ALGORITHM=COPY")
-	s.assertAlterErrorExec(c, "alter table t1 rename to t, ALGORITHM=INPLACE")
-	s.tk.MustExec("alter table t1 rename to t, ALGORITHM=INSTANT")
+	s.assertAlterWarnExec(c, "alter table t1 rename to t2, ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t2 rename to t, ALGORITHM=INSTANT")
 	s.tk.MustExec("alter table t rename to t1, ALGORITHM=DEFAULT")
 	s.tk.MustExec("alter table t1 rename to t")
 
 	// Test rename index
 	s.assertAlterWarnExec(c, "alter table t rename index idx_c to idx_c1, ALGORITHM=COPY")
-	s.assertAlterErrorExec(c, "alter table t rename index idx_c1 to idx_c, ALGORITHM=INPLACE")
-	s.tk.MustExec("alter table t rename index idx_c1 to idx_c, ALGORITHM=INSTANT")
+	s.assertAlterWarnExec(c, "alter table t rename index idx_c1 to idx_c2, ALGORITHM=INPLACE")
+	s.tk.MustExec("alter table t rename index idx_c2 to idx_c, ALGORITHM=INSTANT")
 	s.tk.MustExec("alter table t rename index idx_c to idx_c1, ALGORITHM=DEFAULT")
 
 	// partition.
 	s.assertAlterWarnExec(c, "alter table t ALGORITHM=COPY, truncate partition p1")
-	s.assertAlterErrorExec(c, "alter table t ALGORITHM=INPLACE, truncate partition p2")
+	s.assertAlterWarnExec(c, "alter table t ALGORITHM=INPLACE, truncate partition p2")
 	s.tk.MustExec("alter table t ALGORITHM=INSTANT, truncate partition p3")
 
 	s.assertAlterWarnExec(c, "alter table t add partition (partition p4 values less than (2002)), ALGORITHM=COPY")
-	s.assertAlterErrorExec(c, "alter table t add partition (partition p5 values less than (3002)), ALGORITHM=INPLACE")
+	s.assertAlterWarnExec(c, "alter table t add partition (partition p5 values less than (3002)), ALGORITHM=INPLACE")
 	s.tk.MustExec("alter table t add partition (partition p6 values less than (4002)), ALGORITHM=INSTANT")
 
 	s.assertAlterWarnExec(c, "alter table t ALGORITHM=COPY, drop partition p4")
-	s.assertAlterErrorExec(c, "alter table t ALGORITHM=INPLACE, drop partition p5")
+	s.assertAlterWarnExec(c, "alter table t ALGORITHM=INPLACE, drop partition p5")
 	s.tk.MustExec("alter table t ALGORITHM=INSTANT, drop partition p6")
 
 	// Table options
 	s.assertAlterWarnExec(c, "alter table t comment = 'test', ALGORITHM=COPY")
-	s.assertAlterErrorExec(c, "alter table t comment = 'test', ALGORITHM=INPLACE")
+	s.assertAlterWarnExec(c, "alter table t comment = 'test', ALGORITHM=INPLACE")
 	s.tk.MustExec("alter table t comment = 'test', ALGORITHM=INSTANT")
 
 	s.assertAlterWarnExec(c, "alter table t default charset = utf8mb4, ALGORITHM=COPY")
-	s.assertAlterErrorExec(c, "alter table t default charset = utf8mb4, ALGORITHM=INPLACE")
+	s.assertAlterWarnExec(c, "alter table t default charset = utf8mb4, ALGORITHM=INPLACE")
 	s.tk.MustExec("alter table t default charset = utf8mb4, ALGORITHM=INSTANT")
 }
 
@@ -1614,8 +1615,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		"  `b` varchar(10) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL,\n" +
 		"  `c` varchar(10) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = false
+	})
 	s.tk.MustExec("alter table t drop column c;") //  reload schema.
 	s.tk.MustGetErrCode("insert into t set a= x'f09f8c80'", errno.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1632,7 +1634,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
 	updateTableInfo(tblInfo)
 
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = true
+	})
 	s.tk.MustExec("alter table t add column c varchar(10);") //  load latest schema.
 	s.tk.MustExec("insert into t set a= x'f09f8c80'")
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1641,7 +1645,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		"  `c` varchar(10) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = false
+	})
 	s.tk.MustExec("alter table t drop column c;") //  reload schema.
 	s.tk.MustGetErrCode("insert into t set a= x'f09f8c80'", errno.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1650,7 +1656,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
 	// Test modify column charset.
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = true
+	})
 	s.tk.MustExec("alter table t modify column a varchar(10) character set utf8mb4") //  change column charset.
 	tbl = testGetTableByName(c, s.ctx, "test", "t")
 	c.Assert(tbl.Meta().Columns[0].Charset, Equals, charset.CharsetUTF8MB4)
@@ -1686,7 +1694,9 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		"  `b` varchar(20) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = false
+	})
 	s.tk.MustExec("alter table t change column b b varchar(30) character set ascii") // reload schema.
 	s.tk.MustGetErrCode("insert into t set a= x'f09f8c80'", errno.ErrTruncatedWrongValueForField)
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1695,11 +1705,15 @@ func (s *testIntegrationSuite1) TestTreatOldVersionUTF8AsUTF8MB4(c *C) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin"))
 
 	// Test for alter table convert charset
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = true
+	})
 	s.tk.MustExec("alter table t drop column b") // reload schema.
 	s.tk.MustExec("alter table t convert to charset utf8mb4;")
 
-	config.GetGlobalConfig().TreatOldVersionUTF8AsUTF8MB4 = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TreatOldVersionUTF8AsUTF8MB4 = false
+	})
 	s.tk.MustExec("alter table t add column b varchar(50);") // reload schema.
 	s.tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` varchar(20) DEFAULT NULL,\n" +
@@ -1820,6 +1834,13 @@ func (s *testIntegrationSuite5) TestChangingDBCharset(c *C) {
 
 	tk.MustExec("ALTER SCHEMA CHARACTER SET = 'utf8mb4' COLLATE = 'utf8mb4_general_ci'")
 	verifyDBCharsetAndCollate("alterdb2", "utf8mb4", "utf8mb4_general_ci")
+
+	// Test changing charset of schema with uppercase name. See https://github.com/pingcap/tidb/issues/19273.
+	tk.MustExec("drop database if exists TEST_UPPERCASE_DB_CHARSET;")
+	tk.MustExec("create database TEST_UPPERCASE_DB_CHARSET;")
+	tk.MustExec("use TEST_UPPERCASE_DB_CHARSET;")
+	tk.MustExec("alter database TEST_UPPERCASE_DB_CHARSET default character set utf8;")
+	tk.MustExec("alter database TEST_UPPERCASE_DB_CHARSET default character set utf8mb4;")
 }
 
 func (s *testIntegrationSuite4) TestDropAutoIncrementIndex(c *C) {
@@ -1946,7 +1967,9 @@ func (s *testIntegrationSuite3) TestParserIssue284(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -1992,12 +2015,16 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2.1"))
 
 	// Test experiment switch.
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = false
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = false
+	})
 	tk.MustGetErrMsg("create index d on t((a+1))", "[ddl:8200]Unsupported creating expression index without allow-expression-index in config")
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

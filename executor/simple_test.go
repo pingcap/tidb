@@ -549,10 +549,10 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 	c.Assert(err, IsNil)
 	defer store.Close()
 
-	saveConf := config.GetGlobalConfig()
-	conf := *saveConf
-	conf.Security.SkipGrantTable = true
-	config.StoreGlobalConfig(&conf)
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Security.SkipGrantTable = true
+	})
 
 	dom, err := session.BootstrapSession(store)
 	c.Assert(err, IsNil)
@@ -560,8 +560,6 @@ func (s *testFlushSuite) TestFlushPrivilegesPanic(c *C) {
 
 	tk := testkit.NewTestKit(c, store)
 	tk.MustExec("FLUSH PRIVILEGES")
-
-	config.StoreGlobalConfig(saveConf)
 }
 
 func (s *testSuite3) TestDropStats(c *C) {
@@ -594,6 +592,42 @@ func (s *testSuite3) TestDropStats(c *C) {
 	statsTbl = h.GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsTrue)
 	h.SetLease(0)
+}
+
+func (s *testSuite3) TestDropStatsFromKV(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 varchar(20), c2 varchar(20))")
+	tk.MustExec(`insert into t values("1","1"),("2","2"),("3","3"),("4","4")`)
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("analyze table t")
+	tblID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_name = "t" and table_schema = "test"`).Rows()[0][0].(string)
+	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
+		testkit.Rows("0 16"))
+	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
+		testkit.Rows("1", "2"))
+	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
+		testkit.Rows("1 0",
+			"1 1",
+			"1 2",
+			"1 3",
+			"2 0",
+			"2 1",
+			"2 2",
+			"2 3"))
+	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
+		testkit.Rows("1", "1", "1", "1", "2", "2", "2", "2"))
+
+	tk.MustExec("drop stats t")
+	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
+		testkit.Rows("0 16"))
+	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
+		testkit.Rows())
+	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
+		testkit.Rows())
+	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
+		testkit.Rows())
 }
 
 func (s *testSuite3) TestFlushTables(c *C) {
