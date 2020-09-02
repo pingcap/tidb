@@ -118,6 +118,9 @@ func (s *testMemoryLeak) memDiff(m1, m2 uint64) uint64 {
 }
 
 func (s *testMemoryLeak) TestGlobalMemoryTrackerOnCleanUp(c *C) {
+	originMaxConsumed := executor.GlobalMemoryUsageTracker.MaxConsumed()
+	defer executor.GlobalMemoryUsageTracker.SetMaxConsumed(originMaxConsumed)
+	executor.GlobalMemoryUsageTracker.SetMaxConsumed(0)
 	originConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -129,7 +132,8 @@ func (s *testMemoryLeak) TestGlobalMemoryTrackerOnCleanUp(c *C) {
 	tk.MustExec("update t set id = 4 where id = 1")
 	tk.MustExec("update t set id = 5 where id = 2")
 	tk.MustExec("update t set id = 6 where id = 3")
-	tk.MustExec("select * from t")
 	afterConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
+	afterMaxConsumed := executor.GlobalMemoryUsageTracker.MaxConsumed()
 	c.Assert(originConsume, Equals, afterConsume)
+	c.Assert(afterMaxConsumed, Greater, int64(0))
 }

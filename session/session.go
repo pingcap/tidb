@@ -1144,6 +1144,19 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	defer func() {
+		// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
+		sc := s.GetSessionVars().StmtCtx
+		if sc != nil {
+			if sc.DiskTracker != nil {
+				sc.DiskTracker.DetachFromGlobalTracker()
+			}
+			if sc.MemTracker != nil {
+				sc.MemTracker.DetachFromGlobalTracker()
+			}
+		}
+	}()
+
 	s.PrepareTxnCtx(ctx)
 	err := s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {

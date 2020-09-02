@@ -911,20 +911,6 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd, 0)
 	}
 
-	detachSessionTracker := func() {
-		sc := cc.ctx.GetSessionVars().StmtCtx
-		if sc != nil {
-			if sc.DiskTracker != nil {
-				sc.DiskTracker.DetachFromGlobalTracker()
-			}
-			if sc.MemTracker != nil {
-				sc.MemTracker.DetachFromGlobalTracker()
-			}
-		}
-	}
-	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
-	defer detachSessionTracker()
-
 	switch cmd {
 	case mysql.ComSleep:
 		// TODO: According to mysql document, this command is supposed to be used only internally.
