@@ -149,7 +149,39 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		RuntimeStats: basicStats,
 		Commit:       commitDetail,
 	}
-	expect := "time:1s, loops:1, prewrite:1s, get_commit_ts:1s, commit:1s, commit_backoff: {time: 1s, type: [backoff1 backoff2]}, resolve_lock: 1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2"
+	expect := "time:1s, loops:1, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, type: [backoff1 backoff2]}, resolve_lock: 1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
+	if stats.String() != expect {
+		t.Fatalf("%v != %v", stats.String(), expect)
+	}
+	lockDetail := &LockKeysDetails{
+		TotalTime:       time.Second,
+		RegionNum:       2,
+		LockKeys:        10,
+		ResolveLockTime: int64(time.Second * 2),
+		BackoffTime:     int64(time.Second * 3),
+		Mu: struct {
+			sync.Mutex
+			BackoffTypes []fmt.Stringer
+		}{BackoffTypes: []fmt.Stringer{
+			stringutil.MemoizeStr(func() string {
+				return "backoff4"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff5"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff5"
+			}),
+		}},
+		LockRPCTime:  int64(time.Second * 5),
+		LockRPCCount: 50,
+		RetryCount:   2,
+	}
+	stats = &RuntimeStatsWithCommit{
+		RuntimeStats: basicStats,
+		LockKeys:     lockDetail,
+	}
+	expect = "time:1s, loops:1, lock_keys: {time:1s, region:2, keys:10, resolve_lock:2s, backoff: {time: 3s, type: [backoff4 backoff5]}, lock_rpc:5s, rpc_count:50, retry_count:2}"
 	if stats.String() != expect {
 		t.Fatalf("%v != %v", stats.String(), expect)
 	}
