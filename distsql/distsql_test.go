@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -154,6 +156,26 @@ func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
 	c.Assert(numAllRows, Equals, 2)
 	err := response.Close()
 	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
+	basic := &execdetails.BasicRuntimeStats{}
+	basic.Record(time.Second, 20)
+	s1 := &selectResultRuntimeStats{
+		RuntimeStats:     basic,
+		copRespTime:      []time.Duration{time.Second, time.Millisecond},
+		procKeys:         []int64{100, 200},
+		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
+		totalProcessTime: time.Second,
+		totalWaitTime:    time.Second,
+		rpcStat:          tikv.RegionRequestRuntimeStats{},
+	}
+	s2 := *s1
+	s2.RuntimeStats = s1
+	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s}, backoff{RegionMiss: 2ms}"
+	c.Assert(s2.String(), Equals, expect)
+	// Test for idempotence.
+	c.Assert(s2.String(), Equals, expect)
 }
 
 func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
