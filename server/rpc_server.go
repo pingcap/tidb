@@ -16,7 +16,6 @@ package server
 import (
 	"context"
 	"fmt"
-
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -202,7 +200,7 @@ func (s *rpcServer) createSession() (session.Session, error) {
 	// TODO: remove this.
 	se.GetSessionVars().HashAggPartialConcurrency = 1
 	se.GetSessionVars().HashAggFinalConcurrency = 1
-	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(stringutil.StringerStr("coprocessor"), -1)
+	se.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForCoprocessor, -1)
 	se.SetSessionManager(s.sm)
 	return se, nil
 }

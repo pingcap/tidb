@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -92,7 +91,7 @@ var (
 
 type baseExecutor struct {
 	ctx           sessionctx.Context
-	id            fmt.Stringer
+	id            int
 	schema        *expression.Schema // output schema
 	initCap       int
 	maxChunkSize  int
@@ -125,7 +124,7 @@ const (
 )
 
 func init() {
-	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(stringutil.StringerStr("GlobalStorageLabel"), -1)
+	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
 	action := &globalPanicOnExceed{}
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 }
@@ -188,7 +187,7 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.Stringer, children ...Executor) baseExecutor {
+func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
@@ -198,9 +197,9 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		if e.id != nil {
+		if e.id > 0 {
 			e.runtimeStats = &execdetails.BasicRuntimeStats{}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id.String(), e.runtimeStats)
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, e.runtimeStats)
 		}
 	}
 	if schema != nil {
@@ -763,15 +762,13 @@ func (e *CheckTableExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 	idxInfo := e.indexInfos[idxOffset]
-	// TODO: Fix me later, can not use genExprs in indexLookUpReader, because the schema of expression is different.
-	genExprs := e.srcs[idxOffset].genExprs
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
 	}
 	if e.table.Meta().GetPartitionInfo() == nil {
 		idx := tables.NewIndex(e.table.Meta().ID, e.table.Meta(), idxInfo)
-		return admin.CheckRecordAndIndex(e.ctx, txn, e.table, idx, genExprs)
+		return admin.CheckRecordAndIndex(e.ctx, txn, e.table, idx)
 	}
 
 	info := e.table.Meta().GetPartitionInfo()
@@ -779,7 +776,7 @@ func (e *CheckTableExec) checkTableRecord(idxOffset int) error {
 		pid := def.ID
 		partition := e.table.(table.PartitionedTable).GetPartition(pid)
 		idx := tables.NewIndex(def.ID, e.table.Meta(), idxInfo)
-		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx, genExprs); err != nil {
+		if err := admin.CheckRecordAndIndex(e.ctx, txn, partition, idx); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1534,8 +1531,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
-		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
-		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
+		MemTracker:  memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
+		DiskTracker: disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:      stmtctx.AllocateTaskID(),
 	}
 	globalConfig := config.GetGlobalConfig()
