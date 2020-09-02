@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strconv"
@@ -429,6 +430,37 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 }
 
+func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	testCases := []struct {
+		sessionVarName string
+		minValue       int
+		maxValue       int
+	}{
+		{"auto_increment_increment", 1, 65535},
+		{"auto_increment_offset", 1, 65535},
+	}
+
+	for _, tc := range testCases {
+		name := tc.sessionVarName
+		selectSQL := fmt.Sprintf("select @@%s;", name)
+		validValue := tc.minValue + (tc.maxValue-tc.minValue)/2
+		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, validValue))
+		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", validValue)))
+
+		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, tc.minValue-1))
+		warnMsg := fmt.Sprintf("Warning 1292 Truncated incorrect %s value: '%d'", name, tc.minValue-1)
+		tk.MustQuery("show warnings").Check(testkit.Rows(warnMsg))
+		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", tc.minValue)))
+
+		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, tc.maxValue+1))
+		warnMsg = fmt.Sprintf("Warning 1292 Truncated incorrect %s value: '%d'", name, tc.maxValue+1)
+		tk.MustQuery("show warnings").Check(testkit.Rows(warnMsg))
+		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", tc.maxValue)))
+	}
+}
+
 func (s *testSuite5) TestSetCharset(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	ctx := tk.Se.(sessionctx.Context)
@@ -510,7 +542,7 @@ func (s *testSuite5) TestSetCharset(c *C) {
 	tk.MustExec(`SET CHARACTER SET latin1`)
 	check(
 		"latin1",
-		"latin1",
+		"utf8mb4",
 		"latin1",
 		"utf8mb4",
 		"utf8mb4",
@@ -883,6 +915,9 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
 	_, err = tk.Exec("set @@tx_isolation='SERIALIZABLE'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set global allow_auto_random_explicit_insert=on;")
+	tk.MustQuery("select @@global.allow_auto_random_explicit_insert;").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite5) TestSelectGlobalVar(c *C) {

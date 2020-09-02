@@ -56,6 +56,10 @@ const (
 	ReplicaRead
 	// Set task ID
 	TaskID
+	// CollectRuntimeStats is used to enable collect runtime stats.
+	CollectRuntimeStats
+	// CheckExist map for key existence check.
+	CheckExists
 )
 
 // Priority value for transaction priority.
@@ -198,10 +202,14 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
+	// GetMemBufferSnapshot is used to return a snapshot of MemBuffer without any statement modify.
+	GetMemBufferSnapshot() MemBuffer
 	// GetSnapshot returns the Snapshot binding to this transaction.
 	GetSnapshot() Snapshot
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
+	// GetVars gets variables from the transaction.
+	GetVars() *Variables
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
 	// Do not use len(value) == 0 or value == nil to represent non-exist.
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
@@ -216,12 +224,13 @@ type LockCtx struct {
 	LockWaitTime          int64
 	WaitStartTime         time.Time
 	PessimisticLockWaited *int32
-	LockKeysDuration      *time.Duration
+	LockKeysDuration      *int64
 	LockKeysCount         *int32
 	ReturnValues          bool
 	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
+	CheckKeyExists        map[string]struct{}
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.

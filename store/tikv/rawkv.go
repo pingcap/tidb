@@ -129,7 +129,7 @@ func (c *RawKVClient) BatchGet(keys [][]byte) ([][]byte, error) {
 		tikvRawkvCmdHistogramWithBatchGet.Observe(time.Since(start).Seconds())
 	}()
 
-	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	resp, err := c.sendBatchReq(bo, keys, tikvrpc.CmdRawBatchGet)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -196,7 +196,7 @@ func (c *RawKVClient) BatchPut(keys, values [][]byte) error {
 			return errors.New("empty value is not supported")
 		}
 	}
-	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	err := c.sendBatchPut(bo, keys, values)
 	return errors.Trace(err)
 }
@@ -230,7 +230,7 @@ func (c *RawKVClient) BatchDelete(keys [][]byte) error {
 		tikvRawkvCmdHistogramWithBatchDelete.Observe(time.Since(start).Seconds())
 	}()
 
-	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	resp, err := c.sendBatchReq(bo, keys, tikvrpc.CmdRawBatchDelete)
 	if err != nil {
 		return errors.Trace(err)
@@ -362,7 +362,7 @@ func (c *RawKVClient) ReverseScan(startKey, endKey []byte, limit int) (keys [][]
 }
 
 func (c *RawKVClient) sendReq(key []byte, req *tikvrpc.Request, reverse bool) (*tikvrpc.Response, *KeyLocation, error) {
-	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
 		var loc *KeyLocation
@@ -502,7 +502,7 @@ func (c *RawKVClient) doBatchReq(bo *Backoffer, batch batch, cmdType tikvrpc.Cmd
 // We can't use sendReq directly, because we need to know the end of the region before we send the request
 // TODO: Is there any better way to avoid duplicating code with func `sendReq` ?
 func (c *RawKVClient) sendDeleteRangeReq(startKey []byte, endKey []byte) (*tikvrpc.Response, []byte, error) {
-	bo := NewBackoffer(context.Background(), rawkvMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), rawkvMaxBackoff, nil)
 	sender := NewRegionRequestSender(c.regionCache, c.rpcClient)
 	for {
 		loc, err := c.regionCache.LocateKey(bo, startKey)

@@ -72,14 +72,16 @@ type indexNestedLoopJoinTables struct {
 
 type tableHintInfo struct {
 	indexNestedLoopJoinTables
-	sortMergeJoinTables []hintTableInfo
-	hashJoinTables      []hintTableInfo
-	indexHintList       []indexHintInfo
-	tiflashTables       []hintTableInfo
-	tikvTables          []hintTableInfo
-	aggHints            aggHintInfo
-	indexMergeHintList  []indexHintInfo
-	timeRangeHint       ast.HintTimeRange
+	sortMergeJoinTables         []hintTableInfo
+	broadcastJoinTables         []hintTableInfo
+	broadcastJoinPreferredLocal []hintTableInfo
+	hashJoinTables              []hintTableInfo
+	indexHintList               []indexHintInfo
+	tiflashTables               []hintTableInfo
+	tikvTables                  []hintTableInfo
+	aggHints                    aggHintInfo
+	indexMergeHintList          []indexHintInfo
+	timeRangeHint               ast.HintTimeRange
 }
 
 type hintTableInfo struct {
@@ -157,8 +159,28 @@ func tableNames2HintTableInfo(ctx sessionctx.Context, hintTables []ast.HintTable
 	return hintTableInfos
 }
 
+// ifPreferAsLocalInBCJoin checks if there is a data source specified as local read by hint
+func (info *tableHintInfo) ifPreferAsLocalInBCJoin(p LogicalPlan, blockOffset int) bool {
+	alias := extractTableAlias(p, blockOffset)
+	if alias != nil {
+		tableNames := make([]*hintTableInfo, 1)
+		tableNames[0] = alias
+		return info.matchTableName(tableNames, info.broadcastJoinPreferredLocal)
+	}
+	for _, c := range p.Children() {
+		if info.ifPreferAsLocalInBCJoin(c, blockOffset) {
+			return true
+		}
+	}
+	return false
+}
+
 func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*hintTableInfo) bool {
 	return info.matchTableName(tableNames, info.sortMergeJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferBroadcastJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.broadcastJoinTables)
 }
 
 func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
@@ -713,6 +735,11 @@ func isPrimaryIndex(indexName model.CIStr) bool {
 	return indexName.L == "primary"
 }
 
+func genTiFlashPath(tblInfo *model.TableInfo, isGlobalRead bool) *util.AccessPath {
+	tiFlashPath := &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash, IsTiFlashGlobalRead: isGlobalRead}
+	return tiFlashPath
+}
+
 func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
@@ -722,7 +749,8 @@ func (b *PlanBuilder) getPossibleAccessPaths(indexHints []*ast.IndexHint, tbl ta
 	}
 	publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: tp})
 	if tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Available {
-		publicPaths = append(publicPaths, &util.AccessPath{IsTablePath: true, StoreType: kv.TiFlash})
+		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, false))
+		publicPaths = append(publicPaths, genTiFlashPath(tblInfo, true))
 	}
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
@@ -869,7 +897,7 @@ func (b *PlanBuilder) buildPrepare(x *ast.PrepareStmt) Plan {
 		Name: x.Name,
 	}
 	if x.SQLVar != nil {
-		if v, ok := b.ctx.GetSessionVars().Users[x.SQLVar.Name]; ok {
+		if v, ok := b.ctx.GetSessionVars().Users[strings.ToLower(x.SQLVar.Name)]; ok {
 			p.SQLText = v.GetString()
 		} else {
 			p.SQLText = "NULL"
@@ -959,6 +987,12 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, nil
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
+	case ast.AdminShowTelemetry:
+		p := &AdminShowTelemetry{}
+		p.setSchemaAndNames(buildShowTelemetrySchema())
+		ret = p
+	case ast.AdminResetTelemetryID:
+		return &AdminResetTelemetryID{}, nil
 	default:
 		return nil, ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -988,7 +1022,6 @@ func (b *PlanBuilder) getGenExprs(ctx context.Context, dbName model.CIStr, tbl t
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
 			found := false
 			for _, column := range idx.Columns {
 				if strings.EqualFold(col.Name.L, column.Name.L) {
@@ -1025,70 +1058,24 @@ func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInf
 }
 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
-	// Get generated columns.
-	var genCols []*expression.Column
 	pkOffset := -1
 	tblInfo := tbl.Meta()
-	colsMap := set.NewInt64Set()
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
 	idxReaderCols := make([]*model.ColumnInfo, 0, len(idx.Columns))
 	tblReaderCols := make([]*model.ColumnInfo, 0, len(tbl.Cols()))
-	fullExprCols, fullColNames := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
-	genExprsMap, err := b.getGenExprs(ctx, dbName, tbl, idx, fullExprCols, fullColNames)
-	if err != nil {
-		return nil, err
-	}
+	fullExprCols, _ := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
 	for _, idxCol := range idx.Columns {
 		for i, col := range tblInfo.Columns {
 			if idxCol.Name.L == col.Name.L {
 				idxReaderCols = append(idxReaderCols, col)
 				tblReaderCols = append(tblReaderCols, col)
 				schema.Append(fullExprCols.Columns[i])
-				colsMap.Insert(col.ID)
-				if mysql.HasPriKeyFlag(col.Flag) {
-					pkOffset = len(tblReaderCols) - 1
-				}
-				genColumnID := model.TableColumnID{TableID: tblInfo.ID, ColumnID: col.ID}
-				if expr, ok := genExprsMap[genColumnID]; ok {
-					cols := expression.ExtractColumns(expr)
-					genCols = append(genCols, cols...)
-				}
 			}
 		}
 	}
 	idxCols, idxColLens := expression.IndexInfo2PrefixCols(tblReaderCols, schema.Columns, idx)
 	fullIdxCols, _ := expression.IndexInfo2Cols(tblReaderCols, schema.Columns, idx)
 	// Add generated columns to tblSchema and tblReaderCols.
-	tblSchema := schema.Clone()
-	for _, col := range genCols {
-		if !colsMap.Exist(col.ID) {
-			info := FindColumnInfoByID(tblInfo.Columns, col.ID)
-			if info != nil {
-				tblReaderCols = append(tblReaderCols, info)
-				tblSchema.Append(col)
-				colsMap.Insert(col.ID)
-				if mysql.HasPriKeyFlag(col.RetType.Flag) {
-					pkOffset = len(tblReaderCols) - 1
-				}
-			}
-		}
-	}
-	for k, expr := range genExprsMap {
-		genExprsMap[k], err = expr.ResolveIndices(tblSchema)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if !tbl.Meta().PKIsHandle || pkOffset == -1 {
-		tblReaderCols = append(tblReaderCols, model.NewExtraHandleColInfo())
-		handleCol := &expression.Column{
-			RetType:  types.NewFieldType(mysql.TypeLonglong),
-			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-			ID:       model.ExtraHandleID,
-		}
-		tblSchema.Append(handleCol)
-		pkOffset = len(tblReaderCols) - 1
-	}
 
 	is := PhysicalIndexScan{
 		Table:            tblInfo,
@@ -1100,13 +1087,29 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 		IdxColLens:       idxColLens,
 		dataSourceSchema: schema,
 		Ranges:           ranger.FullRange(),
-		GenExprs:         genExprsMap,
 	}.Init(b.ctx, b.getSelectOffset())
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
 	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
 	// It's double read case.
 	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx, b.getSelectOffset())
-	ts.SetSchema(tblSchema.Clone())
+	ts.SetSchema(schema.Clone())
+	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+	for offset, col := range ts.Columns {
+		if mysql.HasPriKeyFlag(col.Flag) {
+			pkOffset = offset
+		}
+	}
+	if !tbl.Meta().PKIsHandle || pkOffset == -1 {
+		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
+		handleCol := &expression.Column{
+			RetType:  types.NewFieldType(mysql.TypeLonglong),
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       model.ExtraHandleID,
+		}
+		ts.schema.Append(handleCol)
+		pkOffset = len(ts.Columns) - 1
+	}
+
 	if tbl.Meta().GetPartitionInfo() != nil {
 		pid := tbl.(table.PhysicalTable).GetPhysicalID()
 		is.physicalTableID = pid
@@ -1122,6 +1125,9 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName
 	ts.HandleIdx = pkOffset
 	is.initSchema(idx, fullIdxCols, true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
+	if err := rootT.p.ResolveIndices(); err != nil {
+		return nil, err
+	}
 	return rootT.p, nil
 }
 
@@ -1500,6 +1506,7 @@ func buildShowNextRowID() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "TABLE_NAME", mysql.TypeVarchar, mysql.MaxTableNameLength))
 	schema.Append(buildColumnWithName("", "COLUMN_NAME", mysql.TypeVarchar, mysql.MaxColumnNameLength))
 	schema.Append(buildColumnWithName("", "NEXT_GLOBAL_ROW_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "ID_TYPE", mysql.TypeVarchar, 15))
 	return schema.col2Schema(), schema.names
 }
 
@@ -1614,6 +1621,14 @@ func buildBRIESchema() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "BackupTS", mysql.TypeLonglong, longlongSize))
 	schema.Append(buildColumnWithName("", "Queue Time", mysql.TypeDatetime, datetimeSize))
 	schema.Append(buildColumnWithName("", "Execution Time", mysql.TypeDatetime, datetimeSize))
+	return schema.col2Schema(), schema.names
+}
+
+func buildShowTelemetrySchema() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "TRACKING_ID", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "LAST_STATUS", mysql.TypeString, mysql.MaxBlobWidth))
+	schema.Append(buildColumnWithName("", "DATA_PREVIEW", mysql.TypeString, mysql.MaxBlobWidth))
 	return schema.col2Schema(), schema.names
 }
 
@@ -1940,7 +1955,6 @@ func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*ta
 		if err != nil {
 			return igc, err
 		}
-		expr = expression.BuildCastFunction(b.ctx, expr, colExpr.GetType())
 
 		igc.Columns = append(igc.Columns, columnName)
 		igc.Exprs = append(igc.Exprs, expr)
@@ -2909,6 +2923,7 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 	if err != nil {
 		return nil, err
 	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	return &SelectInto{
 		TargetPlan: targetPlan,
 		IntoOpt:    selectIntoInfo,

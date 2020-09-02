@@ -804,6 +804,13 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 	res = new(types.MyDecimal)
 	if !b.inUnion || val >= 0 {
 		err = res.FromFloat64(val)
+		if types.ErrOverflow.Equal(err) {
+			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
+			err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
+		} else if types.ErrTruncated.Equal(err) {
+			// This behavior is consistent with MySQL.
+			err = nil
+		}
 		if err != nil {
 			return res, false, err
 		}
@@ -1110,7 +1117,7 @@ func (b *builtinCastStringAsIntSig) handleOverflow(origRes int64, origStr string
 	}
 
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if sc.InSelectStmt && types.ErrOverflow.Equal(origErr) {
+	if types.ErrOverflow.Equal(origErr) {
 		if isNegative {
 			res = math.MinInt64
 		} else {
@@ -1137,15 +1144,11 @@ func (b *builtinCastStringAsIntSig) evalInt(row chunk.Row) (res int64, isNull bo
 	if len(val) > 1 && val[0] == '-' { // negative number
 		isNegative = true
 	}
-	sctx := b.ctx.GetSessionVars().StmtCtx
-	if val == "" && (sctx.InInsertStmt || sctx.InUpdateStmt) {
-		return 0, false, nil
-	}
 
 	var ures uint64
 	sc := b.ctx.GetSessionVars().StmtCtx
 	if !isNegative {
-		ures, err = types.StrToUint(sc, val)
+		ures, err = types.StrToUint(sc, val, true)
 		res = int64(ures)
 
 		if err == nil && !mysql.HasUnsignedFlag(b.tp.Flag) && ures > uint64(math.MaxInt64) {
@@ -1154,7 +1157,7 @@ func (b *builtinCastStringAsIntSig) evalInt(row chunk.Row) (res int64, isNull bo
 	} else if b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) {
 		res = 0
 	} else {
-		res, err = types.StrToInt(sc, val)
+		res, err = types.StrToInt(sc, val, true)
 		if err == nil && mysql.HasUnsignedFlag(b.tp.Flag) {
 			// If overflow, don't append this warnings
 			sc.AppendWarning(types.ErrCastNegIntAsUnsigned)
@@ -1188,7 +1191,7 @@ func (b *builtinCastStringAsRealSig) evalReal(row chunk.Row) (res float64, isNul
 		return 0, false, nil
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.StrToFloat(sc, val)
+	res, err = types.StrToFloat(sc, val, true)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1217,9 +1220,11 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(row chunk.Row) (res *types.M
 	if isNull || err != nil {
 		return res, isNull, err
 	}
+	val = strings.TrimSpace(val)
+	isNegative := len(val) > 1 && val[0] == '-'
 	res = new(types.MyDecimal)
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && res.IsNegative()) {
+	if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.Flag) && isNegative) {
 		err = sc.HandleTruncate(res.FromString([]byte(val)))
 		if err != nil {
 			return res, false, err

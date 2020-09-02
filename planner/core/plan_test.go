@@ -14,7 +14,10 @@
 package core_test
 
 import (
+	"bytes"
+	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -189,6 +192,11 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 			sql2:   "SELECT * from t1 where a!=2 order by c limit 2",
 			isSame: true,
 		},
+		{ // test for union
+			sql1:   "select count(1) as num,a from t1 where a=1 group by a union select count(1) as num,a from t1 where a=3 group by a;",
+			sql2:   "select count(1) as num,a from t1 where a=2 group by a union select count(1) as num,a from t1 where a=4 group by a;",
+			isSame: true,
+		},
 	}
 	for _, testCase := range normalizedDigestCases {
 		testNormalizeDigest(tk, c, testCase.sql1, testCase.sql2, testCase.isSame)
@@ -231,4 +239,35 @@ func compareStringSlice(c *C, ss1, ss2 []string) {
 	for i, s := range ss1 {
 		c.Assert(s, Equals, ss2[i])
 	}
+}
+
+func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10) key,b int);")
+	tk.MustExec("set @@tidb_slow_log_threshold=200000")
+
+	// generate SQL
+	buf := bytes.NewBuffer(make([]byte, 0, 1024*1024*4))
+	for i := 0; i < 50000; i++ {
+		if i > 0 {
+			buf.WriteString(" union ")
+		}
+		buf.WriteString(fmt.Sprintf("select count(1) as num,a from t where a='%v' group by a", i))
+	}
+	query := buf.String()
+	tk.Se.GetSessionVars().PlanID = 0
+	tk.MustExec(query)
+	info := tk.Se.ShowProcess()
+	c.Assert(info, NotNil)
+	p, ok := info.Plan.(core.PhysicalPlan)
+	c.Assert(ok, IsTrue)
+	// TODO: optimize the encode plan performance when encode plan with runtimeStats
+	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+	encodedPlanStr := core.EncodePlan(p)
+	start := time.Now()
+	_, err := plancodec.DecodePlan(encodedPlanStr)
+	c.Assert(err, IsNil)
+	c.Assert(time.Since(start).Seconds(), Less, 3.0)
 }

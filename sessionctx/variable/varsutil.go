@@ -393,6 +393,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		return checkUInt64SystemVar(name, value, 0, 31536000, vars)
 	case MaxPreparedStmtCount:
 		return checkInt64SystemVar(name, value, -1, 1048576, vars)
+	case AutoIncrementIncrement, AutoIncrementOffset:
+		return checkUInt64SystemVar(name, value, 1, math.MaxUint16, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil
@@ -433,6 +435,11 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return "ON", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBOptBCJ:
+		if (strings.EqualFold(value, "ON") || value == "1") && vars.AllowBatchCop == 0 {
+			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set Broadcast Join to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")
+		}
+		return value, nil
 	case TiDBSkipUTF8Check, TiDBOptAggPushDown, TiDBOptDistinctAggPushDown,
 		TiDBOptInSubqToJoinAndAgg, TiDBEnableFastAnalyze,
 		TiDBBatchInsert, TiDBDisableTxnAutoRetry, TiDBEnableStreaming, TiDBEnableChunkRPC,
@@ -440,7 +447,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		TiDBLowResolutionTSO, TiDBEnableIndexMerge, TiDBEnableNoopFuncs,
 		TiDBCheckMb4ValueInUTF8, TiDBEnableSlowLog, TiDBRecordPlanInSlowLog,
 		TiDBScatterRegion, TiDBGeneralLog, TiDBConstraintCheckInPlace,
-		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo:
+		TiDBEnableVectorizedExpression, TiDBFoundInPlanCache, TiDBEnableCollectExecutionInfo,
+		TiDBAllowAutoRandExplicitInsert, TiDBEnableTelemetry:
 		fallthrough
 	case GeneralLog, AvoidTemporalUpgrade, BigTables, CheckProxyUsers, LogBin,
 		CoreFile, EndMakersInJSON, SQLLogBin, OfflineMode, PseudoSlaveMode, LowPriorityUpdates,
@@ -544,11 +552,15 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 		}
+		if v == 0 && vars.AllowBCJ {
+			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set batch cop 0 but tidb_opt_broadcast_join is 1, please set tidb_opt_broadcast_join 0 at first")
+		}
 		if v < 0 || v > 2 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
 		return value, nil
 	case TiDBOptCPUFactor,
+		TiDBOptTiFlashConcurrencyFactor,
 		TiDBOptCopCPUFactor,
 		TiDBOptNetworkFactor,
 		TiDBOptScanFactor,
