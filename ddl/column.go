@@ -662,7 +662,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
 	}
-	return false
+	return oldCol.Tp != newCol.Tp
 }
 
 func isElemsChangedToModifyColumn(oldElems, newElems []string) bool {

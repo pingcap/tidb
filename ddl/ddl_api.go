@@ -3336,14 +3336,16 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 // field length and precision.
 func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (allowedChangeColumnValueMsg string, err error) {
 	unsupportedMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
-	var canChange bool
+	var skipSignCheck bool
+	var skipLenCheck bool
 	switch origin.Tp {
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob,
 		mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		switch to.Tp {
 		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString,
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			canChange = true
+			skipSignCheck = true
+			skipLenCheck = true
 		case mysql.TypeEnum, mysql.TypeSet:
 			return unsupportedMsg, errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		default:
@@ -3352,7 +3354,8 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		switch to.Tp {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			canChange = true
+			skipSignCheck = true
+			skipLenCheck = true
 		default:
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
@@ -3395,6 +3398,14 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
+		switch to.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
+			skipSignCheck = true
+			skipLenCheck = true
+		default:
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
 	default:
 		if origin.Tp != to.Tp {
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
@@ -3403,7 +3414,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 
 	if to.Flen > 0 && to.Flen < origin.Flen {
 		msg := fmt.Sprintf("length %d is less than origin %d", to.Flen, origin.Flen)
-		if canChange {
+		if skipLenCheck {
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
@@ -3417,7 +3428,7 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	originUnsigned := mysql.HasUnsignedFlag(origin.Flag)
 	if originUnsigned != toUnsigned {
 		msg := fmt.Sprintf("can't change unsigned integer to signed or vice versa")
-		if canChange {
+		if skipSignCheck {
 			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
