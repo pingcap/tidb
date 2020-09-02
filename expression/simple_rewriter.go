@@ -178,7 +178,7 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 			if idx == -1 {
 				idx = i
 			} else {
-				return -1, errNonUniq.GenWithStackByArgs(name.String(), "field list")
+				return -1, errNonUniq.GenWithStackByArgs(astCol.String(), "field list")
 			}
 		}
 	}

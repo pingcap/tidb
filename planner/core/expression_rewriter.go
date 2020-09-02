@@ -157,6 +157,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	rewriter.ctxStack = rewriter.ctxStack[:0]
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
 	rewriter.ctx = ctx
+	rewriter.allNames = b.allNames
 	return
 }
 
@@ -226,6 +227,8 @@ type expressionRewriter struct {
 	// leaving the scope(enable again), the counter will -1.
 	// NOTE: This value can be changed during expression rewritten.
 	disableFoldCounter int
+
+	allNames [][]*types.FieldName
 }
 
 func (er *expressionRewriter) ctxStackLen() int {
@@ -1620,25 +1623,31 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 }
 
 func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
-	stkLen := len(er.ctxStack)
-	name := er.ctxNameStk[stkLen-1]
-	switch er.ctxStack[stkLen-1].(type) {
-	case *expression.Column:
-	case *expression.CorrelatedColumn:
-	default:
+	var name *types.FieldName
+	for i := len(er.allNames) - 1; i >= 0; i-- {
+		idx, err := expression.FindFieldName(er.allNames[i], v.Name)
+		if err != nil {
+			er.err = err
+			return
+		}
+		if idx >= 0 {
+			name = er.allNames[i][idx]
+			break
+		}
+	}
+	if name == nil {
 		idx, err := expression.FindFieldName(er.names, v.Name)
 		if err != nil {
 			er.err = err
 			return
 		}
-		if er.err != nil {
-			return
-		}
 		if idx < 0 {
-			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), "field_list")
+			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), "field list")
 			return
 		}
+		name = er.names[idx]
 	}
+
 	dbName := name.DBName
 	if dbName.O == "" {
 		// if database name is not specified, use current database name
@@ -1686,7 +1695,6 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	if er.err != nil {
 		return
 	}
-	er.ctxStackPop(1)
 	er.ctxStackAppend(val, types.EmptyName)
 }
 

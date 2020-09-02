@@ -2656,6 +2656,9 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		return nil, err
 	}
 
+	b.allNames = append(b.allNames, p.OutputNames())
+	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
+
 	if sel.Where != nil {
 		p, err = b.buildSelection(ctx, p, sel.Where, nil)
 		if err != nil {
