@@ -304,6 +304,7 @@ var tablesCols = []columnInfo{
 	{name: "TABLE_COMMENT", tp: mysql.TypeVarchar, size: 2048},
 	{name: "TIDB_TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 	{name: "TIDB_ROW_ID_SHARDING_INFO", tp: mysql.TypeVarchar, size: 255},
+	{name: "TIDB_PK_TYPE", tp: mysql.TypeVarchar, size: 64},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/columns-table.html

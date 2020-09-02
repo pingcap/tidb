@@ -6063,6 +6063,8 @@ func (s *testIntegrationSerialSuite) TestMixCollation(c *C) {
 	tk.MustQuery("select coercibility(concat(mb4unicode, mb4bin, concat(mb4general))) from t;").Check(testkit.Rows("2"))
 	tk.MustQuery("select collation(concat(mb4unicode, mb4bin, concat(mb4general))) from t;").Check(testkit.Rows("utf8mb4_bin"))
 	tk.MustQuery("select coercibility(concat(mb4unicode, mb4general)) from t;").Check(testkit.Rows("1"))
+	tk.MustQuery("select collation(coalesce(mb4unicode, mb4general)) from t;").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select coercibility(coalesce(mb4unicode, mb4general)) from t;").Check(testkit.Rows("1"))
 	tk.MustQuery("select collation(CONCAT(concat(mb4unicode), concat(mb4general))) from t;").Check(testkit.Rows("utf8mb4_bin"))
 	tk.MustQuery("select coercibility(cONcat(unicode, general)) from t;").Check(testkit.Rows("1"))
 	tk.MustQuery("select collation(concAt(unicode, general)) from t;").Check(testkit.Rows("utf8_bin"))
@@ -7105,6 +7107,20 @@ func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 	tk.MustQuery("select collation(1);").Check(testkit.Rows("binary"))
 	tk.MustQuery("select coercibility(1);").Check(testkit.Rows("5"))
 	tk.MustQuery("select coercibility(1=1);").Check(testkit.Rows("5"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue18674(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("select -1.0 % -1.0").Check(testkit.Rows("0.0"))
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(`pk` int primary key,`col_float_key_signed` float  ,key (`col_float_key_signed`))")
+	tk.MustExec("insert into t1 values (0, null), (1, 0), (2, -0), (3, 1), (-1,-1)")
+	tk.MustQuery("select * from t1 where ( `col_float_key_signed` % `col_float_key_signed`) IS FALSE").Sort().Check(testkit.Rows("-1 -1", "3 1"))
+	tk.MustQuery("select  `col_float_key_signed` , `col_float_key_signed` % `col_float_key_signed` from t1").Sort().Check(testkit.Rows(
+		"-1 -0", "0 <nil>", "0 <nil>", "1 0", "<nil> <nil>"))
+	tk.MustQuery("select  `col_float_key_signed` , (`col_float_key_signed` % `col_float_key_signed`) IS FALSE from t1").Sort().Check(testkit.Rows(
+		"-1 1", "0 0", "0 0", "1 1", "<nil> 0"))
 }
 
 func (s *testIntegrationSerialSuite) TestIssue17063(c *C) {
