@@ -203,11 +203,7 @@ const (
 	ErrErrorDuringCheckpoint                                        = 1183
 	ErrNewAbortingConnection                                        = 1184
 	ErrDumpNotImplemented                                           = 1185
-	ErrFlushMasterBinlogClosed                                      = 1186
 	ErrIndexRebuild                                                 = 1187
-	ErrMaster                                                       = 1188
-	ErrMasterNetRead                                                = 1189
-	ErrMasterNetWrite                                               = 1190
 	ErrFtMatchingKeyNotFound                                        = 1191
 	ErrLockOrActiveTransaction                                      = 1192
 	ErrUnknownSystemVariable                                        = 1193
@@ -215,11 +211,6 @@ const (
 	ErrCrashedOnRepair                                              = 1195
 	ErrWarningNotCompleteRollback                                   = 1196
 	ErrTransCacheFull                                               = 1197
-	ErrSlaveMustStop                                                = 1198
-	ErrSlaveNotRunning                                              = 1199
-	ErrBadSlave                                                     = 1200
-	ErrMasterInfo                                                   = 1201
-	ErrSlaveThread                                                  = 1202
 	ErrTooManyUserConnections                                       = 1203
 	ErrSetConstantsOnly                                             = 1204
 	ErrLockWaitTimeout                                              = 1205
@@ -235,8 +226,6 @@ const (
 	ErrCannotAddForeign                                             = 1215
 	ErrNoReferencedRow                                              = 1216
 	ErrRowIsReferenced                                              = 1217
-	ErrConnectToMaster                                              = 1218
-	ErrQueryOnMaster                                                = 1219
 	ErrErrorWhenExecutingCommand                                    = 1220
 	ErrWrongUsage                                                   = 1221
 	ErrWrongNumberOfColumnsInSelect                                 = 1222
@@ -253,8 +242,6 @@ const (
 	ErrVarCantBeRead                                                = 1233
 	ErrCantUseOptionHere                                            = 1234
 	ErrNotSupportedYet                                              = 1235
-	ErrMasterFatalErrorReadingBinlog                                = 1236
-	ErrSlaveIgnoredTable                                            = 1237
 	ErrIncorrectGlobalLocalVar                                      = 1238
 	ErrWrongFkDef                                                   = 1239
 	ErrKeyRefDoNotMatchTableRef                                     = 1240
@@ -271,8 +258,6 @@ const (
 	ErrNotSupportedAuthMode                                         = 1251
 	ErrSpatialCantHaveNull                                          = 1252
 	ErrCollationCharsetMismatch                                     = 1253
-	ErrSlaveWasRunning                                              = 1254
-	ErrSlaveWasNotRunning                                           = 1255
 	ErrTooBigForUncompress                                          = 1256
 	ErrZlibZMem                                                     = 1257
 	ErrZlibZBuf                                                     = 1258
@@ -291,11 +276,8 @@ const (
 	ErrCantAggregateNcollations                                     = 1271
 	ErrVariableIsNotStruct                                          = 1272
 	ErrUnknownCollation                                             = 1273
-	ErrSlaveIgnoredSslParams                                        = 1274
 	ErrServerIsInSecureAuthMode                                     = 1275
 	ErrWarnFieldResolved                                            = 1276
-	ErrBadSlaveUntilCond                                            = 1277
-	ErrMissingSkipSlave                                             = 1278
 	ErrUntilCondIgnored                                             = 1279
 	ErrWrongNameForIndex                                            = 1280
 	ErrWrongNameForCatalog                                          = 1281
@@ -607,14 +589,8 @@ const (
 	ErrBinlogPurgeEmFile                                            = 1587
 	ErrEventCannotCreateInThePast                                   = 1588
 	ErrEventCannotAlterInThePast                                    = 1589
-	ErrSlaveIncident                                                = 1590
 	ErrNoPartitionForGivenValueSilent                               = 1591
 	ErrBinlogUnsafeStatement                                        = 1592
-	ErrSlaveFatal                                                   = 1593
-	ErrSlaveRelayLogReadFailure                                     = 1594
-	ErrSlaveRelayLogWriteFailure                                    = 1595
-	ErrSlaveCreateEventFailure                                      = 1596
-	ErrSlaveMasterComFailure                                        = 1597
 	ErrBinlogLoggingImpossible                                      = 1598
 	ErrViewNoCreationCtx                                            = 1599
 	ErrViewInvalidCreationCtx                                       = 1600
@@ -627,21 +603,17 @@ const (
 	ErrCantCreateSroutine                                           = 1607
 	ErrNeverUsed                                                    = 1608
 	ErrNoFormatDescriptionEventBeforeBinlogStatement                = 1609
-	ErrSlaveCorruptEvent                                            = 1610
 	ErrLoadDataInvalidColumn                                        = 1611
 	ErrLogPurgeNoFile                                               = 1612
 	ErrXaRbtimeout                                                  = 1613
 	ErrXaRbdeadlock                                                 = 1614
 	ErrNeedReprepare                                                = 1615
 	ErrDelayedNotSupported                                          = 1616
-	WarnNoMasterInfo                                                = 1617
 	WarnOptionIgnored                                               = 1618
 	WarnPluginDeleteBuiltin                                         = 1619
 	WarnPluginBusy                                                  = 1620
 	ErrVariableIsReadonly                                           = 1621
 	ErrWarnEngineTransactionRollback                                = 1622
-	ErrSlaveHeartbeatFailure                                        = 1623
-	ErrSlaveHeartbeatValueOutOfRange                                = 1624
 	ErrNdbReplicationSchema                                         = 1625
 	ErrConflictFnParse                                              = 1626
 	ErrExceptionsWrite                                              = 1627
@@ -667,7 +639,6 @@ const (
 	WarnCondItemTruncated                                           = 1647
 	ErrCondItemTooLong                                              = 1648
 	ErrUnknownLocale                                                = 1649
-	ErrSlaveIgnoreServerIds                                         = 1650
 	ErrQueryCacheDisabled                                           = 1651
 	ErrSameNamePartitionField                                       = 1652
 	ErrPartitionColumnList                                          = 1653
@@ -694,8 +665,6 @@ const (
 	ErrBinlogUnsafeSystemFunction                                   = 1674
 	ErrBinlogUnsafeNontransAfterTrans                               = 1675
 	ErrMessageAndStatement                                          = 1676
-	ErrSlaveConversionFailed                                        = 1677
-	ErrSlaveCantCreateConversion                                    = 1678
 	ErrInsideTransactionPreventsSwitchBinlogFormat                  = 1679
 	ErrPathLength                                                   = 1680
 	ErrWarnDeprecatedSyntaxNoReplacement                            = 1681
@@ -720,8 +689,6 @@ const (
 	ErrGrantPluginUserExists                                        = 1700
 	ErrTruncateIllegalFk                                            = 1701
 	ErrPluginIsPermanent                                            = 1702
-	ErrSlaveHeartbeatValueOutOfRangeMin                             = 1703
-	ErrSlaveHeartbeatValueOutOfRangeMax                             = 1704
 	ErrStmtCacheFull                                                = 1705
 	ErrMultiUpdateKeyConflict                                       = 1706
 	ErrTableNeedsRebuild                                            = 1707
@@ -746,7 +713,6 @@ const (
 	ErrUnsupportedEngine                                            = 1726
 	ErrBinlogUnsafeAutoincNotFirst                                  = 1727
 	ErrCannotLoadFromTableV2                                        = 1728
-	ErrMasterDelayValueOutOfRange                                   = 1729
 	ErrOnlyFdAndRbrEventsAllowedInBinlogStatement                   = 1730
 	ErrPartitionExchangeDifferentOption                             = 1731
 	ErrPartitionExchangePartTable                                   = 1732
@@ -777,10 +743,8 @@ const (
 	ErrFulltextNotSupportedWithPartitioning                         = 1757
 	ErrDaInvalidConditionNumber                                     = 1758
 	ErrInsecurePlainText                                            = 1759
-	ErrInsecureChangeMaster                                         = 1760
 	ErrForeignDuplicateKeyWithChildInfo                             = 1761
 	ErrForeignDuplicateKeyWithoutChildInfo                          = 1762
-	ErrSQLthreadWithSecureSlave                                     = 1763
 	ErrTableHasNoFt                                                 = 1764
 	ErrVariableNotSettableInSfOrTrigger                             = 1765
 	ErrVariableNotSettableInTransaction                             = 1766
@@ -793,7 +757,6 @@ const (
 	ErrMalformedGtidSetEncoding                                     = 1773
 	ErrMalformedGtidSpecification                                   = 1774
 	ErrGnoExhausted                                                 = 1775
-	ErrBadSlaveAutoPosition                                         = 1776
 	ErrAutoPositionRequiresGtidModeOn                               = 1777
 	ErrCantDoImplicitCommitInTrxWhenGtidNextIsSet                   = 1778
 	ErrGtidMode2Or3RequiresEnforceGtidConsistencyOn                 = 1779
@@ -806,12 +769,10 @@ const (
 	ErrGtidUnsafeCreateSelect                                       = 1786
 	ErrGtidUnsafeCreateDropTemporaryTableInTransaction              = 1787
 	ErrGtidModeCanOnlyChangeOneStepAtATime                          = 1788
-	ErrMasterHasPurgedRequiredGtids                                 = 1789
 	ErrCantSetGtidNextWhenOwningGtid                                = 1790
 	ErrUnknownExplainFormat                                         = 1791
 	ErrCantExecuteInReadOnlyTransaction                             = 1792
 	ErrTooLongTablePartitionComment                                 = 1793
-	ErrSlaveConfiguration                                           = 1794
 	ErrInnodbFtLimit                                                = 1795
 	ErrInnodbNoFtTempTable                                          = 1796
 	ErrInnodbFtWrongDocidColumn                                     = 1797
@@ -819,11 +780,9 @@ const (
 	ErrInnodbOnlineLogTooBig                                        = 1799
 	ErrUnknownAlterAlgorithm                                        = 1800
 	ErrUnknownAlterLock                                             = 1801
-	ErrMtsChangeMasterCantRunWithGaps                               = 1802
 	ErrMtsRecoveryFailure                                           = 1803
 	ErrMtsResetWorkers                                              = 1804
 	ErrColCountDoesntMatchCorruptedV2                               = 1805
-	ErrSlaveSilentRetryTransaction                                  = 1806
 	ErrDiscardFkChecksRunning                                       = 1807
 	ErrTableSchemaMismatch                                          = 1808
 	ErrTableInSystemTablespace                                      = 1809
@@ -875,7 +834,6 @@ const (
 	ErrAlterOperationNotSupportedReasonHiddenFts                    = 1855
 	ErrAlterOperationNotSupportedReasonChangeFts                    = 1856
 	ErrAlterOperationNotSupportedReasonFts                          = 1857
-	ErrSQLSlaveSkipCounterNotSettableInGtidMode                     = 1858
 	ErrDupUnknownInIndex                                            = 1859
 	ErrIdentCausesTooLongPath                                       = 1860
 	ErrAlterOperationNotSupportedReasonNotNull                      = 1861
@@ -951,7 +909,6 @@ const (
 	ErrJSONValueOutOfRangeForFuncIndex                              = 3904
 	ErrFunctionalIndexDataIsTooLong                                 = 3907
 	ErrFunctionalIndexNotApplicable                                 = 3909
-
 	// MariaDB errors.
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113
@@ -963,7 +920,6 @@ const (
 	ErrUnknownSequence                      = 4139
 	ErrWrongInsertIntoSequence              = 4140
 	ErrSequenceInvalidTableStructure        = 4141
-
 	// TiDB self-defined errors.
 	ErrMemExceedThreshold                  = 8001
 	ErrForUpdateCantRetry                  = 8002
