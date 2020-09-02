@@ -1195,8 +1195,11 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 
 // wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not
 // type int, otherwise, returns `arg` directly.
+// The `keepNull` controls what the istrue function will return when `arg` is null:
+// 1. keepNull is true and arg is null, the istrue function returns null.
+// 2. keepNull is false and arg is null, the istrue function returns 0.
 // The `wrapForInt` indicates whether we need to wrapIsTrue for non-logical Expression with int type.
-func wrapWithIsTrue(ctx sessionctx.Context, arg Expression, wrapForInt bool) Expression {
+func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapForInt bool) Expression {
 	if arg.GetType().EvalType() == types.ETInt {
 		if !wrapForInt {
 			return arg
@@ -1206,6 +1209,10 @@ func wrapWithIsTrue(ctx sessionctx.Context, arg Expression, wrapForInt bool) Exp
 				return arg
 			}
 		}
+	}
+	if keepNull {
+		ctx.SetValue(isTrueKeepNullKey, struct{}{})
+		defer ctx.SetValue(isTrueKeepNullKey, nil)
 	}
 	return NewFunctionInternal(ctx, ast.IsTruth, types.NewFieldType(mysql.TypeUnspecified), arg)
 }

@@ -185,12 +185,10 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		types.SetBinChsClnFlag(fieldTp)
 	}
 	argTps := make([]types.EvalType, 0, l)
-	ctx.SetValue(isTrueKeepNullKey, struct{}{})
 	for i := 0; i < l-1; i += 2 {
-		args[i] = wrapWithIsTrue(ctx, args[i], false)
+		args[i] = wrapWithIsTrue(ctx, true, args[i], false)
 		argTps = append(argTps, types.ETInt, tp)
 	}
-	ctx.SetValue(isTrueKeepNullKey, nil)
 	if l%2 == 1 {
 		argTps = append(argTps, tp)
 	}
@@ -489,9 +487,7 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	}
 	retTp := InferType4ControlFuncs(args[1], args[2])
 	evalTps := retTp.EvalType()
-	ctx.SetValue(isTrueKeepNullKey, struct{}{})
-	args[0] = wrapWithIsTrue(ctx, args[0], false)
-	ctx.SetValue(isTrueKeepNullKey, nil)
+	args[0] = wrapWithIsTrue(ctx, true, args[0], false)
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, types.ETInt, evalTps, evalTps)
 	if err != nil {
 		return nil, err

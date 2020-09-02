@@ -67,10 +67,8 @@ func (c *logicAndFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	ctx.SetValue(isTrueKeepNullKey, struct{}{})
-	args[0] = wrapWithIsTrue(ctx, args[0], false)
-	args[1] = wrapWithIsTrue(ctx, args[1], false)
-	ctx.SetValue(isTrueKeepNullKey, nil)
+	args[0] = wrapWithIsTrue(ctx, true, args[0], false)
+	args[1] = wrapWithIsTrue(ctx, true, args[1], false)
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
@@ -116,10 +114,8 @@ func (c *logicOrFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err != nil {
 		return nil, err
 	}
-	ctx.SetValue(isTrueKeepNullKey, struct{}{})
-	args[0] = wrapWithIsTrue(ctx, args[0], false)
-	args[1] = wrapWithIsTrue(ctx, args[1], false)
-	ctx.SetValue(isTrueKeepNullKey, nil)
+	args[0] = wrapWithIsTrue(ctx, true, args[0], false)
+	args[1] = wrapWithIsTrue(ctx, true, args[1], false)
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
@@ -171,10 +167,8 @@ func (c *logicXorFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	ctx.SetValue(isTrueKeepNullKey, struct{}{})
-	args[0] = wrapWithIsTrue(ctx, args[0], false)
-	args[1] = wrapWithIsTrue(ctx, args[1], false)
-	ctx.SetValue(isTrueKeepNullKey, nil)
+	args[0] = wrapWithIsTrue(ctx, true, args[0], false)
+	args[1] = wrapWithIsTrue(ctx, true, args[1], false)
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, types.ETInt)
 	if err != nil {
