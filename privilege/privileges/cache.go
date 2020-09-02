@@ -899,16 +899,14 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	var currentPriv mysql.PrivilegeType
 	var hasGrantOptionPriv, userExists = false, false
 	// Check whether user exists.
-	if userList, ok := p.UserMap[user]; ok {
-		for _, record := range userList {
-			if host == record.Host || record.hostMatch(host) {
-				userExists = true
+	for _, record := range p.User {
+		if host == record.Host {
+			userExists = true
 				break
-			}
 		}
-		if !userExists {
-			return gs
-		}
+	}
+	if !userExists {
+		return gs
 	}
 	var g string
 	for _, record := range p.User {
