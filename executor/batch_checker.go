@@ -28,20 +28,14 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-type keyValue struct {
-	key   kv.Key
-	value []byte
-}
-
 type keyValueWithDupInfo struct {
-	newKV        keyValue
+	newKey       kv.Key
 	dupErr       error
 	commonHandle bool
 }
 
 type toBeCheckedRow struct {
 	row        []types.Datum
-	rowValue   []byte
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
 	// t is the table or partition this row belongs to.
@@ -110,10 +104,6 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	}
 
 	uniqueKeys := make([]*keyValueWithDupInfo, 0, nUnique)
-	newRowValue, err := encodeNewRow(ctx, t, row)
-	if err != nil {
-		return nil, err
-	}
 	// Append record keys and errors.
 	var handle kv.Handle
 	if t.Meta().IsCommonHandle {
@@ -131,12 +121,12 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	}
 	var handleKey *keyValueWithDupInfo
 	if handle != nil {
+		fn := func() string {
+			return kv.GetDuplicateErrorHandleString(handle)
+		}
 		handleKey = &keyValueWithDupInfo{
-			newKV: keyValue{
-				key:   t.RecordKey(handle),
-				value: newRowValue,
-			},
-			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(handle.String), "PRIMARY"),
+			newKey: t.RecordKey(handle),
+			dupErr: kv.ErrKeyExists.FastGenByArgs(stringutil.MemoizeStr(fn), "PRIMARY"),
 		}
 	}
 
@@ -176,7 +166,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			return nil, err1
 		}
 		uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
-			newKV:        keyValue{key: key},
+			newKey:       key,
 			dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, v.Meta().Name),
 			commonHandle: t.Meta().IsCommonHandle,
 		})
@@ -186,7 +176,6 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	}
 	result = append(result, toBeCheckedRow{
 		row:        row,
-		rowValue:   newRowValue,
 		handleKey:  handleKey,
 		uniqueKeys: uniqueKeys,
 		t:          t,
