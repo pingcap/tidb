@@ -253,6 +253,14 @@ func buildAggMemTester(funcName string, tp byte, numRows int, allocMemDelta int6
 }
 
 func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
+	s.testMergePartialResultWithDistinctOption(c, p, false)
+}
+
+func (s *testSuite) testMergePartialResultWithDistinct(c *C, p aggTest) {
+	s.testMergePartialResultWithDistinctOption(c, p, true)
+}
+
+func (s *testSuite) testMergePartialResultWithDistinctOption(c *C, p aggTest, hasDistinct bool) {
 	srcChk := p.genSrcChk()
 	iter := chunk.NewIterator4Chunk(srcChk)
 
@@ -260,7 +268,7 @@ func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
 	}
-	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, hasDistinct)
 	c.Assert(err, IsNil)
 	if p.orderBy {
 		desc.OrderByItems = []*util.ByItems{

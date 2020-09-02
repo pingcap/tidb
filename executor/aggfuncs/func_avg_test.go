@@ -30,6 +30,14 @@ func (s *testSuite) TestMergePartialResult4Avg(c *C) {
 	for _, test := range tests {
 		s.testMergePartialResult(c, test)
 	}
+
+	tests2 := []aggTest{
+		buildAggTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5, 2.0, 3.0, 2.0),
+		buildAggTester(ast.AggFuncAvg, mysql.TypeDouble, 5, 2.0, 3.0, 2.0),
+	}
+	for _, test := range tests2 {
+		s.testMergePartialResultWithDistinct(c, test)
+	}
 }
 
 func (s *testSuite) TestAvg(c *C) {

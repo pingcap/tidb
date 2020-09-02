@@ -55,8 +55,8 @@ type partialResult4SumDistinctDecimal struct {
 	val     types.MyDecimal
 	isNull  bool
 	valSet  set.StringSet
-	valList []*types.MyDecimal // ordered value set
-	keyList []string           // ordered key set
+	valList []types.MyDecimal // ordered value set
+	keyList []string          // ordered key set
 }
 
 type baseSumAggFunc struct {
@@ -334,7 +334,7 @@ func (e *sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta i
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
 	p.valSet = set.NewStringSet()
-	p.valList = make([]*types.MyDecimal, 0)
+	p.valList = make([]types.MyDecimal, 0)
 	p.keyList = make([]string, 0)
 	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize
 }
@@ -365,7 +365,7 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 		p.valSet.Insert(decStr)
-		p.valList = append(p.valList, input)
+		p.valList = append(p.valList, *input)
 		p.keyList = append(p.keyList, decStr)
 		memDelta += int64(len(decStr))
 		if p.isNull {
@@ -405,10 +405,12 @@ func (e *sum4DistinctDecimal) MergePartialResult(sctx sessionctx.Context, src, d
 		p2.valSet.Insert(p1.keyList[i])
 		p2.valList = append(p2.valList, p1.valList[i])
 		p2.keyList = append(p2.keyList, p1.keyList[i])
-		err = types.DecimalAdd(&p2.val, p1.valList[i], &p2.val)
+		newSum := new(types.MyDecimal)
+		err = types.DecimalAdd(&p2.val, &p1.valList[i], newSum)
 		if err != nil {
 			return 0, err
 		}
+		p2.val = *newSum
 	}
 	return 0, nil
 }

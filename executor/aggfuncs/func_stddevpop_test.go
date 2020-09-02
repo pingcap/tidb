@@ -13,6 +13,13 @@ func (s *testSuite) TestMergePartialResult4Stddevpop(c *C) {
 	for _, test := range tests {
 		s.testMergePartialResult(c, test)
 	}
+
+	tests2 := []aggTest{
+		buildAggTester(ast.AggFuncStddevPop, mysql.TypeDouble, 5, 1.4142135623730951, 0.816496580927726, 1.4142135623730951),
+	}
+	for _, test := range tests2 {
+		s.testMergePartialResultWithDistinct(c, test)
+	}
 }
 
 func (s *testSuite) TestStddevpop(c *C) {

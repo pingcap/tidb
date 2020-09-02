@@ -14,6 +14,8 @@
 package aggfuncs_test
 
 import (
+	"testing"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -28,6 +30,14 @@ func (s *testSuite) TestMergePartialResult4Sum(c *C) {
 	}
 	for _, test := range tests {
 		s.testMergePartialResult(c, test)
+	}
+
+	tests2 := []aggTest{
+		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, types.NewDecFromInt(10), types.NewDecFromInt(9), types.NewDecFromInt(10)),
+		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, 10.0, 9.0, 10.0),
+	}
+	for _, test := range tests2 {
+		s.testMergePartialResultWithDistinct(c, test)
 	}
 }
 
@@ -54,5 +64,19 @@ func (s *testSuite) TestMemSum(c *C) {
 	}
 	for _, test := range tests {
 		s.testAggMemFunc(c, test)
+	}
+}
+
+func BenchmarkSum(b *testing.B) {
+	s := testSuite{}
+	s.SetUpSuite(nil)
+
+	rowNum := 50000
+	tests := []aggTest{
+		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, rowNum, 0),
+		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, rowNum, 0),
+	}
+	for _, test := range tests {
+		s.benchmarkAggFunc(b, test)
 	}
 }

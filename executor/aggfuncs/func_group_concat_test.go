@@ -15,6 +15,7 @@ package aggfuncs_test
 
 import (
 	"fmt"
+	"testing"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
@@ -26,6 +27,9 @@ import (
 func (s *testSuite) TestMergePartialResult4GroupConcat(c *C) {
 	test := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, "0 1 2 3 4", "2 3 4", "0 1 2 3 4 2 3 4")
 	s.testMergePartialResult(c, test)
+
+	test2 := buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, 5, "0 1 2 3 4", "2 3 4", "0 1 2 3 4")
+	s.testMergePartialResultWithDistinct(c, test2)
 }
 
 func (s *testSuite) TestGroupConcat(c *C) {
@@ -43,5 +47,18 @@ func (s *testSuite) TestGroupConcat(c *C) {
 		test2 = buildMultiArgsAggTester(ast.AggFuncGroupConcat, []byte{mysql.TypeString, mysql.TypeString}, mysql.TypeString, 5, nil, "44 33 22 11 00"[:i])
 		test2.orderBy = true
 		s.testMultiArgsAggFunc(c, test2)
+	}
+}
+
+func BenchmarkGroupConcat(b *testing.B) {
+	s := testSuite{}
+	s.SetUpSuite(nil)
+
+	rowNum := 50000
+	tests := []aggTest{
+		buildAggTester(ast.AggFuncGroupConcat, mysql.TypeString, rowNum, nil, ""),
+	}
+	for _, test := range tests {
+		s.benchmarkAggFunc(b, test)
 	}
 }

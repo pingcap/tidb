@@ -354,9 +354,10 @@ type countPartialWithDistinct4Int struct {
 func (e *countPartialWithDistinct4Int) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4CountDistinctInt)(src), (*partialResult4CountDistinctInt)(dst)
 	for k := range p1.valSet {
-		if !p2.valSet.Exist(k) {
-			p2.valSet.Insert(k)
+		if p2.valSet.Exist(k) {
+			continue
 		}
+		p2.valSet.Insert(k)
 	}
 	return 0, nil
 }
@@ -368,9 +369,10 @@ type countPartialWithDistinct4Real struct {
 func (e *countPartialWithDistinct4Real) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4CountDistinctReal)(src), (*partialResult4CountDistinctReal)(dst)
 	for k := range p1.valSet {
-		if !p2.valSet.Exist(k) {
-			p2.valSet.Insert(k)
+		if p2.valSet.Exist(k) {
+			continue
 		}
+		p2.valSet.Insert(k)
 	}
 	return 0, nil
 }
@@ -382,9 +384,10 @@ type countPartialWithDistinct4Decimal struct {
 func (e *countPartialWithDistinct4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4CountDistinctDecimal)(src), (*partialResult4CountDistinctDecimal)(dst)
 	for k := range p1.valSet {
-		if !p2.valSet.Exist(k) {
-			p2.valSet.Insert(k)
+		if p2.valSet.Exist(k) {
+			continue
 		}
+		p2.valSet.Insert(k)
 	}
 	return 0, nil
 }
@@ -396,9 +399,10 @@ type countPartialWithDistinct4Duration struct {
 func (e *countPartialWithDistinct4Duration) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4CountDistinctDuration)(src), (*partialResult4CountDistinctDuration)(dst)
 	for k := range p1.valSet {
-		if !p2.valSet.Exist(k) {
-			p2.valSet.Insert(k)
+		if p2.valSet.Exist(k) {
+			continue
 		}
+		p2.valSet.Insert(k)
 	}
 	return 0, nil
 }
@@ -410,9 +414,10 @@ type countPartialWithDistinct4String struct {
 func (e *countPartialWithDistinct4String) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4CountDistinctString)(src), (*partialResult4CountDistinctString)(dst)
 	for k := range p1.valSet {
-		if !p2.valSet.Exist(k) {
-			p2.valSet.Insert(k)
+		if p2.valSet.Exist(k) {
+			continue
 		}
+		p2.valSet.Insert(k)
 	}
 	return 0, nil
 }
@@ -424,9 +429,10 @@ type countPartialWithDistinct struct {
 func (e *countPartialWithDistinct) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4CountWithDistinct)(src), (*partialResult4CountWithDistinct)(dst)
 	for k := range p1.valSet {
-		if !p2.valSet.Exist(k) {
-			p2.valSet.Insert(k)
+		if p2.valSet.Exist(k) {
+			continue
 		}
+		p2.valSet.Insert(k)
 	}
 	return 0, nil
 }

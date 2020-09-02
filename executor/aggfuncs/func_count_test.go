@@ -39,6 +39,9 @@ func (s *testSuite) TestMergePartialResult4Count(c *C) {
 	tester := buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 5, 5, 3, 8)
 	s.testMergePartialResult(c, tester)
 
+	tester = buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 5, 5, 3, 5)
+	s.testMergePartialResultWithDistinct(c, tester)
+
 	tester = buildAggTester(ast.AggFuncApproxCountDistinct, mysql.TypeLonglong, 5, genApproxDistinctMergePartialResult(0, 5), genApproxDistinctMergePartialResult(2, 5), 5)
 	s.testMergePartialResult(c, tester)
 }

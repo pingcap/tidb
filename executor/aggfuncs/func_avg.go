@@ -205,8 +205,8 @@ func (e *avgPartial4Decimal) MergePartialResult(sctx sessionctx.Context, src, ds
 type partialResult4AvgDistinctDecimal struct {
 	partialResult4AvgDecimal
 	valSet  set.StringSet
-	valList []*types.MyDecimal // ordered value set
-	keyList []string           // ordered key set
+	valList []types.MyDecimal // ordered value set
+	keyList []string          // ordered key set
 }
 
 type avgOriginal4DistinctDecimal struct {
@@ -216,7 +216,7 @@ type avgOriginal4DistinctDecimal struct {
 func (e *avgOriginal4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := &partialResult4AvgDistinctDecimal{
 		valSet:  set.NewStringSet(),
-		valList: make([]*types.MyDecimal, 0),
+		valList: make([]types.MyDecimal, 0),
 		keyList: make([]string, 0),
 	}
 	return PartialResult(p), DefPartialResult4AvgDistinctDecimalSize
@@ -249,7 +249,7 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 			continue
 		}
 		p.valSet.Insert(decStr)
-		p.valList = append(p.valList, input)
+		p.valList = append(p.valList, *input)
 		p.keyList = append(p.keyList, decStr)
 		memDelta += int64(len(decStr))
 		newSum := new(types.MyDecimal)
@@ -309,7 +309,7 @@ func (e *avgPartial4DistinctDecimal) MergePartialResult(sctx sessionctx.Context,
 		p2.valList = append(p2.valList, p1.valList[i])
 		p2.keyList = append(p2.keyList, p1.keyList[i])
 		newSum := new(types.MyDecimal)
-		err = types.DecimalAdd(&p2.sum, p1.valList[i], newSum)
+		err = types.DecimalAdd(&p2.sum, &p1.valList[i], newSum)
 		if err != nil {
 			return 0, err
 		}
