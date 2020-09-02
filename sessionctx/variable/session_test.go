@@ -175,8 +175,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	var memMax int64 = 2333
 	var diskMax int64 = 6666
 	resultFields := `# Txn_start_ts: 406649736972468225
-# User@Host: root[root] @ 192.168.0.1 [192.168.0.1]
-# Conn_ID: 1
+# User: root@192.168.0.1# Conn_ID: 1
 # Query_time: 1
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
@@ -227,11 +226,6 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		BackoffTotal:      12 * time.Second,
 		WriteSQLRespTotal: 1 * time.Second,
 		Succ:              true,
-		RewriteInfo: variable.RewritePhaseInfo{
-			DurationRewrite:            3,
-			DurationPreprocessSubQuery: 2,
-			PreprocessSubQueries:       2,
-		},
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	c.Assert(logString, Equals, resultFields+"\n"+sql)
