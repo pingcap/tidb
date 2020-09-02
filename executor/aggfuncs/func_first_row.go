@@ -488,7 +488,7 @@ func (e *firstRow4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		if err != nil {
 			return err
 		}
-		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlEnum()
+		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlEnum().Copy()
 		break
 	}
 	return nil
@@ -501,6 +501,7 @@ func (*firstRow4Enum) MergePartialResult(sctx sessionctx.Context, src PartialRes
 	}
 	return nil
 }
+
 func (e *firstRow4Enum) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4FirstRowEnum)(pr)
 	if p.isNull || !p.gotFirstRow {
@@ -534,7 +535,7 @@ func (e *firstRow4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 		if err != nil {
 			return err
 		}
-		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlSet()
+		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlSet().Copy()
 		break
 	}
 	return nil

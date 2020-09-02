@@ -1445,3 +1445,33 @@ func (s *testStatsUpdateSuite) TestUnsignedFeedbackRanges(c *C) {
 		c.Assert(tbl.Columns[1].ToString(0), Equals, tests[i].hist)
 	}
 }
+
+func (s *testStatsUpdateSuite) TestDeleteUpdateFeedback(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+
+	oriProbability := statistics.FeedbackProbability
+	defer func() {
+		statistics.FeedbackProbability = oriProbability
+	}()
+	statistics.FeedbackProbability = 1
+
+	h := s.do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (a bigint(64), b bigint(64), index idx_ab(a,b))")
+	for i := 0; i < 20; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i/5, i))
+	}
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	testKit.MustExec("analyze table t with 3 buckets")
+
+	testKit.MustExec("delete from t where a = 1")
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(len(h.GetQueryFeedback()), Equals, 0)
+	testKit.MustExec("update t set a = 6 where a = 2")
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(len(h.GetQueryFeedback()), Equals, 0)
+	testKit.MustExec("explain analyze delete from t where a = 3")
+	c.Assert(h.DumpStatsDeltaToKV(statistics.DumpAll), IsNil)
+	c.Assert(len(h.GetQueryFeedback()), Equals, 0)
+}

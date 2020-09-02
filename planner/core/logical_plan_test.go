@@ -2215,3 +2215,26 @@ func (s *testPlanSuite) TestFastPlanContextTables(c *C) {
 		}
 	}
 }
+
+func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
+	defer testleak.AfterTest(c)()
+	sql := "select * from t t1 right join t t0 ON TRUE where CONCAT_WS(t0.e=t0.e, 0, NULL) IS NULL"
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	Preprocess(s.ctx, stmt, s.is, false)
+	builder := &planBuilder{
+		ctx:       mockContext(),
+		is:        s.is,
+		colMapper: make(map[*ast.ColumnNameExpr]int),
+	}
+	p, err := builder.build(stmt)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(builder.optFlag, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+	proj, ok := p.(*LogicalProjection)
+	c.Assert(ok, IsTrue)
+	join, ok := proj.Children()[0].(*LogicalJoin)
+	c.Assert(ok, IsTrue)
+	// previous wrong JoinType is InnerJoin
+	c.Assert(join.JoinType, Equals, RightOuterJoin)
+}
