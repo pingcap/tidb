@@ -897,9 +897,6 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	allRoles := p.FindAllRole(roles)
 	// Show global grants.
 	var currentPriv mysql.PrivilegeType
-<<<<<<< HEAD
-	var hasGrantOptionPriv bool = false
-=======
 	var hasGrantOptionPriv, userExists = false, false
 	// Check whether user exists.
 	if userList, ok := p.UserMap[user]; ok {
@@ -913,7 +910,6 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			return gs
 		}
 	}
->>>>>>> 6fdd609... privilege: fix user change after `show grants` and add user existed check for `show grants` (#19568)
 	var g string
 	for _, record := range p.User {
 		if record.User == user && record.Host == host {
