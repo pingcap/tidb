@@ -32,11 +32,7 @@ func ExplainAggFunc(agg *AggFuncDesc, normalized bool) string {
 			if len(agg.OrderByItems) > 0 {
 				buffer.WriteString(" order by ")
 				for i, item := range agg.OrderByItems {
-					order := "asc"
 					if item.Desc {
-<<<<<<< HEAD
-						order = "desc"
-=======
 						if normalized {
 							fmt.Fprintf(&buffer, "%s desc", item.Expr.ExplainNormalizedInfo())
 						} else {
@@ -44,13 +40,11 @@ func ExplainAggFunc(agg *AggFuncDesc, normalized bool) string {
 						}
 					} else {
 						if normalized {
-							fmt.Fprintf(&buffer, "%s", item.Expr.ExplainNormalizedInfo())
+							fmt.Fprintf(&buffer, "%s asc", item.Expr.ExplainNormalizedInfo())
 						} else {
-							fmt.Fprintf(&buffer, "%s", item.Expr.ExplainInfo())
+							fmt.Fprintf(&buffer, "%s asc", item.Expr.ExplainInfo())
 						}
->>>>>>> 1cab3d5... *: fix bug of same type plans with different plan digest (#19519)
 					}
-					fmt.Fprintf(&buffer, "%s %s", item.Expr.ExplainInfo(), order)
 					if i+1 < len(agg.OrderByItems) {
 						buffer.WriteString(", ")
 					}

@@ -70,17 +70,10 @@
       {
         "SQL": "SELECT * from t1 where a!=1 order by c limit 1",
         "Plan": [
-<<<<<<< HEAD
-          " TopN_8             root test.t1.c:asc",
-          " └─TableReader_16   root data:TopN_15",
-          "   └─TopN_15        cop  test.t1.c:asc",
-          "     └─TableScan_14 cop  table:t1, range:[?,?], keep order:false"
-=======
-          " TopN            root test.t1.c",
+          " TopN            root test.t1.c:asc",
           " └─TableReader   root ",
-          "   └─TopN        cop  test.t1.c",
+          "   └─TopN        cop  test.t1.c:asc",
           "     └─TableScan cop  table:t1, range:[?,?], keep order:false"
->>>>>>> 1cab3d5... *: fix bug of same type plans with different plan digest (#19519)
         ]
       },
       {
@@ -97,21 +90,12 @@
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-<<<<<<< HEAD
-          " IndexJoin_10       root inner join, inner:TableReader_9, outer key:test.t1.a, inner key:test.t2.a",
-          " ├─TableReader_30   root data:Selection_29",
-          " │ └─Selection_29   cop  gt(test.t1.c, ?)",
-          " │   └─TableScan_28 cop  table:t1, range:[?,?], keep order:false",
-          " └─TableReader_9    root data:TableRangeScan_8",
-          "   └─TableScan_8    cop  table:t2, range: decided by [test.t1.a], keep order:false"
-=======
           " IndexJoin       root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a",
           " ├─TableReader   root ",
           " │ └─Selection   cop  gt(test.t1.c, ?)",
           " │   └─TableScan cop  table:t1, range:[?,?], keep order:false",
           " └─TableReader   root ",
           "   └─TableScan   cop  table:t2, range: decided by [test.t1.a], keep order:false"
->>>>>>> 1cab3d5... *: fix bug of same type plans with different plan digest (#19519)
         ]
       },
       {
@@ -139,21 +123,12 @@
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-<<<<<<< HEAD
-          " IndexJoin_10       root inner join, inner:TableReader_9, outer key:test.t1.a, inner key:test.t2.a",
-          " ├─TableReader_30   root data:Selection_29",
-          " │ └─Selection_29   cop  gt(test.t1.c, ?)",
-          " │   └─TableScan_28 cop  table:t1, range:[?,?], keep order:false",
-          " └─TableReader_9    root data:TableRangeScan_8",
-          "   └─TableScan_8    cop  table:t2, range: decided by [test.t1.a], keep order:false"
-=======
           " IndexJoin       root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a",
           " ├─TableReader   root ",
           " │ └─Selection   cop  gt(test.t1.c, ?)",
           " │   └─TableScan cop  table:t1, range:[?,?], keep order:false",
           " └─TableReader   root ",
           "   └─TableScan   cop  table:t2, range: decided by [test.t1.a], keep order:false"
->>>>>>> 1cab3d5... *: fix bug of same type plans with different plan digest (#19519)
         ]
       },
       {
