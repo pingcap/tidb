@@ -385,6 +385,8 @@ type SessionVars struct {
 	// AllowAggPushDown can be set to false to forbid aggregation push down.
 	AllowAggPushDown bool
 
+	// AllowBCJ means allow broadcast join.
+	AllowBCJ bool
 	// AllowDistinctAggPushDown can be set true to allow agg with distinct push down to tikv/tiflash.
 	AllowDistinctAggPushDown bool
 
@@ -409,6 +411,8 @@ type SessionVars struct {
 	CPUFactor float64
 	// CopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
 	CopCPUFactor float64
+	// CopTiFlashConcurrencyFactor is the concurrency number of computation in tiflash coprocessor.
+	CopTiFlashConcurrencyFactor float64
 	// NetworkFactor is the network cost of transferring 1 byte data.
 	NetworkFactor float64
 	// ScanFactor is the IO cost of scanning 1 byte data on TiKV and TiFlash.
@@ -658,6 +662,7 @@ func NewSessionVars() *SessionVars {
 		Status:                      mysql.ServerStatusAutocommit,
 		StmtCtx:                     new(stmtctx.StatementContext),
 		AllowAggPushDown:            false,
+		AllowBCJ:                    false,
 		OptimizerSelectivityLevel:   DefTiDBOptimizerSelectivityLevel,
 		RetryLimit:                  DefTiDBRetryLimit,
 		DisableTxnAutoRetry:         DefTiDBDisableTxnAutoRetry,
@@ -667,6 +672,7 @@ func NewSessionVars() *SessionVars {
 		CorrelationExpFactor:        DefOptCorrelationExpFactor,
 		CPUFactor:                   DefOptCPUFactor,
 		CopCPUFactor:                DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor: DefOptTiFlashConcurrencyFactor,
 		NetworkFactor:               DefOptNetworkFactor,
 		ScanFactor:                  DefOptScanFactor,
 		DescScanFactor:              DefOptDescScanFactor,
@@ -1076,6 +1082,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.SkipUTF8Check = TiDBOptOn(val)
 	case TiDBOptAggPushDown:
 		s.AllowAggPushDown = TiDBOptOn(val)
+	case TiDBOptBCJ:
+		s.AllowBCJ = TiDBOptOn(val)
 	case TiDBOptDistinctAggPushDown:
 		s.AllowDistinctAggPushDown = TiDBOptOn(val)
 	case TiDBOptWriteRowID:
@@ -1090,6 +1098,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.CPUFactor = tidbOptFloat64(val, DefOptCPUFactor)
 	case TiDBOptCopCPUFactor:
 		s.CopCPUFactor = tidbOptFloat64(val, DefOptCopCPUFactor)
+	case TiDBOptTiFlashConcurrencyFactor:
+		s.CopTiFlashConcurrencyFactor = tidbOptFloat64(val, DefOptTiFlashConcurrencyFactor)
 	case TiDBOptNetworkFactor:
 		s.NetworkFactor = tidbOptFloat64(val, DefOptNetworkFactor)
 	case TiDBOptScanFactor:
@@ -1550,30 +1560,42 @@ const (
 	SlowLogPlanSuffix = "')"
 	// SlowLogPrevStmtPrefix is the prefix of Prev_stmt in slow log file.
 	SlowLogPrevStmtPrefix = SlowLogPrevStmt + SlowLogSpaceMarkStr
+	// SlowLogKVTotal is the total time waiting for kv.
+	SlowLogKVTotal = "KV_total"
+	// SlowLogPDTotal is the total time waiting for pd.
+	SlowLogPDTotal = "PD_total"
+	// SlowLogBackoffTotal is the total time doing backoff.
+	SlowLogBackoffTotal = "Backoff_total"
+	// SlowLogWriteSQLRespTotal is the total time used to write response to client.
+	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
 // slow query log.
 type SlowQueryLogItems struct {
-	TxnTS          uint64
-	SQL            string
-	Digest         string
-	TimeTotal      time.Duration
-	TimeParse      time.Duration
-	TimeCompile    time.Duration
-	IndexNames     string
-	StatsInfos     map[string]uint64
-	CopTasks       *stmtctx.CopTasksDetails
-	ExecDetail     execdetails.ExecDetails
-	MemMax         int64
-	DiskMax        int64
-	Succ           bool
-	Prepared       bool
-	PlanFromCache  bool
-	HasMoreResults bool
-	PrevStmt       string
-	Plan           string
-	PlanDigest     string
+	TxnTS             uint64
+	SQL               string
+	Digest            string
+	TimeTotal         time.Duration
+	TimeParse         time.Duration
+	TimeCompile       time.Duration
+	IndexNames        string
+	StatsInfos        map[string]uint64
+	CopTasks          *stmtctx.CopTasksDetails
+	ExecDetail        execdetails.ExecDetails
+	MemMax            int64
+	DiskMax           int64
+	Succ              bool
+	Prepared          bool
+	PlanFromCache     bool
+	HasMoreResults    bool
+	PrevStmt          string
+	Plan              string
+	PlanDigest        string
+	KVTotal           time.Duration
+	PDTotal           time.Duration
+	BackoffTotal      time.Duration
+	WriteSQLRespTotal time.Duration
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1705,6 +1727,10 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	writeSlowLogItem(&buf, SlowLogPrepared, strconv.FormatBool(logItems.Prepared))
 	writeSlowLogItem(&buf, SlowLogPlanFromCache, strconv.FormatBool(logItems.PlanFromCache))
 	writeSlowLogItem(&buf, SlowLogHasMoreResults, strconv.FormatBool(logItems.HasMoreResults))
+	writeSlowLogItem(&buf, SlowLogKVTotal, strconv.FormatFloat(logItems.KVTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogPDTotal, strconv.FormatFloat(logItems.PDTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogBackoffTotal, strconv.FormatFloat(logItems.BackoffTotal.Seconds(), 'f', -1, 64))
+	writeSlowLogItem(&buf, SlowLogWriteSQLRespTotal, strconv.FormatFloat(logItems.WriteSQLRespTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogSucc, strconv.FormatBool(logItems.Succ))
 	if len(logItems.Plan) != 0 {
 		writeSlowLogItem(&buf, SlowLogPlan, logItems.Plan)

@@ -322,8 +322,8 @@ func (t *TableCommon) FirstKey() kv.Key {
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
-func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
-	txn, err := ctx.Txn(true)
+func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+	txn, err := sctx.Txn(true)
 	if err != nil {
 		return err
 	}
@@ -332,7 +332,7 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	defer execBuf.Discard()
 
 	// rebuild index
-	err = t.rebuildIndices(ctx, execBuf, h, touched, oldData, newData)
+	err = t.rebuildIndices(sctx, execBuf, h, touched, oldData, newData, table.WithCtx(ctx))
 	if err != nil {
 		return err
 	}
@@ -342,7 +342,7 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	var row, binlogOldRow, binlogNewRow []types.Datum
 	colIDs = make([]int64, 0, numColsCap)
 	row = make([]types.Datum, 0, numColsCap)
-	if shouldWriteBinlog(ctx) {
+	if shouldWriteBinlog(sctx) {
 		binlogColIDs = make([]int64, 0, numColsCap)
 		binlogOldRow = make([]types.Datum, 0, numColsCap)
 		binlogNewRow = make([]types.Datum, 0, numColsCap)
@@ -362,7 +362,7 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 			colIDs = append(colIDs, col.ID)
 			row = append(row, value)
 		}
-		if shouldWriteBinlog(ctx) && !t.canSkipUpdateBinlog(col, value) {
+		if shouldWriteBinlog(sctx) && !t.canSkipUpdateBinlog(col, value) {
 			binlogColIDs = append(binlogColIDs, col.ID)
 			binlogOldRow = append(binlogOldRow, oldData[col.Offset])
 			binlogNewRow = append(binlogNewRow, value)
@@ -370,7 +370,7 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	}
 
 	key := t.RecordKey(h)
-	sessVars := ctx.GetSessionVars()
+	sessVars := sctx.GetSessionVars()
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, rd)
 	if err != nil {
@@ -382,15 +382,15 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	if _, err := execBuf.Flush(); err != nil {
 		return err
 	}
-	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
-	ctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, h)
-	if shouldWriteBinlog(ctx) {
+	sctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
+	sctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, h)
+	if shouldWriteBinlog(sctx) {
 		if !t.meta.PKIsHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
 			binlogOldRow = append(binlogOldRow, types.NewIntDatum(h))
 			binlogNewRow = append(binlogNewRow, types.NewIntDatum(h))
 		}
-		err = t.addUpdateBinlog(ctx, binlogOldRow, binlogNewRow, binlogColIDs)
+		err = t.addUpdateBinlog(sctx, binlogOldRow, binlogNewRow, binlogColIDs)
 		if err != nil {
 			return err
 		}
@@ -413,7 +413,7 @@ func (t *TableCommon) UpdateRecord(ctx sessionctx.Context, h int64, oldData, new
 	return nil
 }
 
-func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, touched []bool, oldData []types.Datum, newData []types.Datum) error {
+func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, touched []bool, oldData []types.Datum, newData []types.Datum, opts ...table.CreateIdxOptFunc) error {
 	txn, err := ctx.Txn(true)
 	if err != nil {
 		return err
@@ -450,7 +450,7 @@ func (t *TableCommon) rebuildIndices(ctx sessionctx.Context, rm kv.RetrieverMuta
 		if err != nil {
 			return err
 		}
-		if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn, untouched); err != nil {
+		if err := t.buildIndexForRow(ctx, rm, h, newVs, idx, txn, untouched, opts...); err != nil {
 			return err
 		}
 	}
@@ -905,8 +905,9 @@ func (t *TableCommon) removeRowIndex(sc *stmtctx.StatementContext, rm kv.Retriev
 }
 
 // buildIndexForRow implements table.Table BuildIndexForRow interface.
-func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction, untouched bool) error {
+func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, rm kv.RetrieverMutator, h int64, vals []types.Datum, idx table.Index, txn kv.Transaction, untouched bool, popts ...table.CreateIdxOptFunc) error {
 	var opts []table.CreateIdxOptFunc
+	opts = append(opts, popts...)
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}
