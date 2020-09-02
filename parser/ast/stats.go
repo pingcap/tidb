@@ -37,6 +37,9 @@ type AnalyzeTableStmt struct {
 	// IndexFlag is true when we only analyze indices for a table.
 	IndexFlag   bool
 	Incremental bool
+	// HistogramOperation is set in "ANALYZE TABLE ... UPDATE/DROP HISTOGRAM ..." statement.
+	HistogramOperation HistogramOperationType
+	ColumnNames        []*ColumnName
 }
 
 // AnalyzeOptType is the type for analyze options.
@@ -58,6 +61,28 @@ var AnalyzeOptionString = map[AnalyzeOptionType]string{
 	AnalyzeOptCMSketchWidth: "CMSKETCH WIDTH",
 	AnalyzeOptCMSketchDepth: "CMSKETCH DEPTH",
 	AnalyzeOptNumSamples:    "SAMPLES",
+}
+
+// HistogramOperationType is the type for histogram operation.
+type HistogramOperationType int
+
+// Histogram operation types.
+const (
+	// HistogramOperationNop shows no operation in histogram. Default value.
+	HistogramOperationNop HistogramOperationType = iota
+	HistogramOperationUpdate
+	HistogramOperationDrop
+)
+
+// String implements fmt.Stringer for HistogramOperationType.
+func (hot HistogramOperationType) String() string {
+	switch hot {
+	case HistogramOperationUpdate:
+		return "UPDATE HISTOGRAM"
+	case HistogramOperationDrop:
+		return "DROP HISTOGRAM"
+	}
+	return ""
 }
 
 // AnalyzeOpt stores the analyze option type and value.
@@ -89,6 +114,20 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain(",")
 		}
 		ctx.WriteName(partition.O)
+	}
+	if n.HistogramOperation != HistogramOperationNop {
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord(n.HistogramOperation.String())
+		ctx.WritePlain(" ")
+	}
+	if len(n.ColumnNames) > 0 {
+		ctx.WriteKeyWord("ON ")
+		for i, columnName := range n.ColumnNames {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WriteName(columnName.Name.O)
+		}
 	}
 	if n.IndexFlag {
 		ctx.WriteKeyWord(" INDEX")
