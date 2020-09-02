@@ -126,14 +126,27 @@ func (s *testMemoryLeak) TestGlobalMemoryTrackerOnCleanUp(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int)")
+
+	// assert insert
 	tk.MustExec("insert t (id) values (1)")
 	tk.MustExec("insert t (id) values (2)")
 	tk.MustExec("insert t (id) values (3)")
+	afterConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
+	c.Assert(originConsume, Equals, afterConsume)
+
+	// assert update
 	tk.MustExec("update t set id = 4 where id = 1")
 	tk.MustExec("update t set id = 5 where id = 2")
 	tk.MustExec("update t set id = 6 where id = 3")
-	afterConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
-	afterMaxConsumed := executor.GlobalMemoryUsageTracker.MaxConsumed()
+	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
 	c.Assert(originConsume, Equals, afterConsume)
+
+	// assert select
+	tk.MustExec("select * from t")
+	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
+	c.Assert(originConsume, Equals, afterConsume)
+
+	// assert consume happened
+	afterMaxConsumed := executor.GlobalMemoryUsageTracker.MaxConsumed()
 	c.Assert(afterMaxConsumed, Greater, int64(0))
 }
