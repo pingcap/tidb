@@ -38,7 +38,7 @@ import (
 )
 
 var _ = Suite(&testDDLSuite{})
-var _ = Suite(&testDDLSerialSuite{})
+var _ = SerialSuites(&testDDLSerialSuite{})
 
 type testDDLSuite struct {
 	testutil.CommonHandleSuite
@@ -510,11 +510,11 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 	return tests
 }
 
-func (s *testDDLSuite) checkDropIdx(c *C, d *ddl, schemaID int64, tableID int64, idxName string, success bool) {
+func (s *testDDLSerialSuite) checkDropIdx(c *C, d *ddl, schemaID int64, tableID int64, idxName string, success bool) {
 	checkIdxExist(c, d, schemaID, tableID, idxName, !success)
 }
 
-func (s *testDDLSuite) checkAddIdx(c *C, d *ddl, schemaID int64, tableID int64, idxName string, success bool) {
+func (s *testDDLSerialSuite) checkAddIdx(c *C, d *ddl, schemaID int64, tableID int64, idxName string, success bool) {
 	checkIdxExist(c, d, schemaID, tableID, idxName, success)
 }
 
@@ -530,13 +530,13 @@ func checkIdxExist(c *C, d *ddl, schemaID int64, tableID int64, idxName string, 
 	c.Assert(found, Equals, expectedExist)
 }
 
-func (s *testDDLSuite) checkAddColumns(c *C, d *ddl, schemaID int64, tableID int64, colNames []string, success bool) {
+func (s *testDDLSerialSuite) checkAddColumns(c *C, d *ddl, schemaID int64, tableID int64, colNames []string, success bool) {
 	changedTable := testGetTable(c, d, schemaID, tableID)
 	found := !checkColumnsNotFound(changedTable, colNames)
 	c.Assert(found, Equals, success)
 }
 
-func (s *testDDLSuite) checkCancelDropColumns(c *C, d *ddl, schemaID int64, tableID int64, colNames []string, success bool) {
+func (s *testDDLSerialSuite) checkCancelDropColumns(c *C, d *ddl, schemaID int64, tableID int64, colNames []string, success bool) {
 	changedTable := testGetTable(c, d, schemaID, tableID)
 	notFound := checkColumnsNotFound(changedTable, colNames)
 	c.Assert(notFound, Equals, success)
@@ -563,7 +563,7 @@ func checkIdxVisibility(changedTable table.Table, idxName string, expected bool)
 	return false
 }
 
-func (s *testDDLSuite) TestCancelJob(c *C) {
+func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	store := testCreateStore(c, "test_cancel_job")
 	defer store.Close()
 	d := testNewDDLAndStart(
