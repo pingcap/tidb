@@ -992,7 +992,6 @@ type joinRuntimeStats struct {
 	cache       cacheInfo
 	hasHashStat bool
 	hashStat    hashStatistic
-	probe       int64
 }
 
 func newJoinRuntimeStats(basic *execdetails.BasicRuntimeStats) *joinRuntimeStats {
@@ -1032,10 +1031,6 @@ func (e *joinRuntimeStats) String() string {
 	}
 	if e.hasHashStat {
 		buf.WriteString(", " + e.hashStat.String())
-	}
-	if e.probe > 0 {
-		buf.WriteString(", probe:")
-		buf.WriteString(time.Duration(e.probe).String())
 	}
 	return buf.String()
 }
