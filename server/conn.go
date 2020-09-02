@@ -910,7 +910,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	case mysql.ComInitDB:
 		cc.ctx.SetProcessInfo("use "+dataStr, t, cmd, 0)
 	}
-	
+
 	detachSessionTracker := func() {
 		sc := cc.ctx.GetSessionVars().StmtCtx
 		if sc != nil {
