@@ -49,6 +49,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
+
+// NOTE: Control expressions optionally evaluate some branches depending on conditions, but vectorization executes all
+// branches, during which the unnecessary branches may return errors or warnings. To avoid this case, when branches 
+// meet errors or warnings, the vectorization falls back the scalar execution.
+
 `
 
 var builtinCaseWhenVec = template.Must(template.New("builtinCaseWhenVec").Parse(`

@@ -22,6 +22,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
+// NOTE: Control expressions optionally evaluate some branches depending on conditions, but vectorization executes all
+// branches, during which the unnecessary branches may return errors or warnings. To avoid this case, when branches
+// meet errors or warnings, the vectorization falls back the scalar execution.
+
 func (b *builtinCaseWhenIntSig) fallbackEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
