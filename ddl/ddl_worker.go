@@ -108,7 +108,7 @@ func (w *worker) typeStr() string {
 	case addIdxWorker:
 		str = model.AddIndexStr
 	default:
-		str = "unknow"
+		str = "unknown"
 	}
 	return str
 }
