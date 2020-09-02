@@ -143,6 +143,12 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 			switch col.GetType().Tp {
 			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
 				s.fieldBuf = strconv.AppendInt(s.fieldBuf, row.GetInt64(j), 10)
+			case mysql.TypeLonglong:
+				if mysql.HasUnsignedFlag(col.GetType().Flag) {
+					s.fieldBuf = strconv.AppendUint(s.fieldBuf, row.GetUint64(j), 10)
+				} else {
+					s.fieldBuf = strconv.AppendInt(s.fieldBuf, row.GetInt64(j), 10)
+				}
 			case mysql.TypeFloat, mysql.TypeDouble:
 				s.realBuf, s.fieldBuf = DumpRealOutfile(s.realBuf, s.fieldBuf, row.GetFloat64(j), col.RetType)
 			case mysql.TypeNewDecimal:
