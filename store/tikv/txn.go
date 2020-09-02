@@ -343,6 +343,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 	// Exclude keys that are already locked.
 	var err error
 	keys := make([][]byte, 0, len(keysInput))
+	startTime := time.Now()
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 	defer func() {
@@ -357,6 +358,14 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		}
 		if lockCtx.LockKeysCount != nil {
 			*lockCtx.LockKeysCount += int32(len(keys))
+		}
+		if lockCtx.Stats != nil {
+			lockCtx.Stats.TotalTime = time.Since(startTime)
+			ctxValue := ctx.Value(execdetails.LockKeysDetailCtxKey)
+			if ctxValue != nil {
+				lockKeysDetail := ctxValue.(**execdetails.LockKeysDetails)
+				*lockKeysDetail = lockCtx.Stats
+			}
 		}
 	}()
 	memBuf := txn.us.GetMemBuffer()
@@ -405,12 +414,21 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			assignedPrimaryKey = true
 		}
 
+		lockCtx.Stats = &execdetails.LockKeysDetails{
+			LockKeys: int32(len(keys)),
+		}
 		bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, txn.vars)
 		txn.committer.forUpdateTS = lockCtx.ForUpdateTS
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = txn.lockedCnt == 0 && len(keys) == 1
 		err = txn.committer.pessimisticLockMutations(bo, lockCtx, CommitterMutations{keys: keys})
+		if bo.totalSleep > 0 {
+			atomic.AddInt64(&lockCtx.Stats.BackoffTime, int64(bo.totalSleep)*int64(time.Millisecond))
+			lockCtx.Stats.Mu.Lock()
+			lockCtx.Stats.Mu.BackoffTypes = append(lockCtx.Stats.Mu.BackoffTypes, bo.types...)
+			lockCtx.Stats.Mu.Unlock()
+		}
 		if lockCtx.Killed != nil {
 			// If the kill signal is received during waiting for pessimisticLock,
 			// pessimisticLockKeys would handle the error but it doesn't reset the flag.
