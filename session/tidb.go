@@ -23,7 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
@@ -185,10 +184,10 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 
 func recordAbortTxnDuration(sessVars *variable.SessionVars) {
 	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
-	if sessVars.InRestrictedSQL {
-		transactionDurationInternalAbort.Observe(duration)
+	if sessVars.TxnCtx.IsPessimistic {
+		transactionDurationPessimisticAbort.Observe(duration)
 	} else {
-		transactionDurationGeneralAbort.Observe(duration)
+		transactionDurationOptimisticAbort.Observe(duration)
 	}
 }
 
@@ -258,58 +257,6 @@ func checkStmtLimit(ctx context.Context, se *session) error {
 		sessVars.SetStatusFlag(mysql.ServerStatusInTrans, true)
 	}
 	return err
-}
-
-// runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
-func runStmt(ctx context.Context, sctx sessionctx.Context, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("session.runStmt", opentracing.ChildOf(span.Context()))
-		span1.LogKV("sql", s.OriginText())
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-	sctx.SetValue(sessionctx.QueryString, s.OriginText())
-	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DDLNode); ok {
-		sctx.SetValue(sessionctx.LastExecuteDDL, true)
-	} else {
-		sctx.ClearValue(sessionctx.LastExecuteDDL)
-	}
-
-	se := sctx.(*session)
-	sessVars := se.GetSessionVars()
-	// Save origTxnCtx here to avoid it reset in the transaction retry.
-	origTxnCtx := sessVars.TxnCtx
-	defer func() {
-		// If it is not a select statement, we record its slow log here,
-		// then it could include the transaction commit time.
-		if rs == nil {
-			s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err == nil, false)
-		}
-	}()
-
-	err = se.checkTxnAborted(s)
-	if err != nil {
-		return nil, err
-	}
-	rs, err = s.Exec(ctx)
-	sessVars.TxnCtx.StatementCount++
-	if !s.IsReadOnly(sessVars) {
-		// All the history should be added here.
-		if err == nil && sessVars.TxnCtx.CouldRetry {
-			GetHistory(sctx).Add(s, sessVars.StmtCtx)
-		}
-
-		// Handle the stmt commit/rollback.
-		if se.txn.Valid() {
-			if err != nil {
-				sctx.StmtRollback()
-			} else {
-				err = sctx.StmtCommit(sctx.GetSessionVars().StmtCtx.MemTracker)
-			}
-		}
-	}
-	err = finishStmt(ctx, se, err, s)
-	return rs, err
 }
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.

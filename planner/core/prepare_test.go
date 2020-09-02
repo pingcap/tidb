@@ -96,7 +96,7 @@ func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 	tk.MustExec(`insert into tp values(1, 1), (2, 2), (3, 3)`)
 
 	tk.MustExec(`create user 'u_tp'@'localhost'`)
-	tk.MustExec(`grant select on test.tp to u_tp@'localhost';flush privileges;`)
+	tk.MustExec(`grant select on test.tp to u_tp@'localhost';`)
 
 	// user u_tp
 	userSess := newSession(c, store, "test")
@@ -110,7 +110,7 @@ func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 
 	// root revoke
 	tk.Se = rootSe
-	tk.MustExec(`revoke all on test.tp from 'u_tp'@'localhost';flush privileges;`)
+	tk.MustExec(`revoke all on test.tp from 'u_tp'@'localhost';`)
 
 	// user u_tp
 	tk.Se = userSess
@@ -119,7 +119,7 @@ func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 
 	// grant again
 	tk.Se = rootSe
-	tk.MustExec(`grant select on test.tp to u_tp@'localhost';flush privileges;`)
+	tk.MustExec(`grant select on test.tp to u_tp@'localhost';`)
 
 	// user u_tp
 	tk.Se = userSess
@@ -242,7 +242,7 @@ func (s *testPrepareSerialSuite) TestPrepareCacheNow(c *C) {
 	c.Assert(rs[0][3].(string), Equals, rs[0][8].(string))
 }
 
-func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
+func (s *testPrepareSerialSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -749,6 +749,43 @@ func (s *testPlanSerialSuite) TestPlanCacheUnsignedHandleOverflow(c *C) {
 	tk.MustExec("set @p = 18446744073709551615")
 	tk.MustQuery("execute stmt using @p").Check(testkit.Rows("18446744073709551615"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func (s *testPlanSerialSuite) TestIssue18066(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+	tk.GetConnectionID()
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("prepare stmt from 'select * from t'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+		testkit.Rows("1 0 0"))
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+		testkit.Rows("2 1 1"))
+	tk.MustExec("prepare stmt from 'select * from t'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+		testkit.Rows("3 1 0"))
 }
 
 func (s *testPrepareSuite) TestPrepareForGroupByMultiItems(c *C) {

@@ -63,8 +63,19 @@ func compilePatternGeneralCI(pattern string, escape byte) (patWeights []uint16, 
 				}
 			}
 		case '_':
-			tp = stringutil.PatOne
+			// %_ => _%
+			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
+				tp = stringutil.PatAny
+				r = '%'
+				patWeights[patLen-1], patTypes[patLen-1] = '_', stringutil.PatOne
+			} else {
+				tp = stringutil.PatOne
+			}
 		case '%':
+			// %% => %
+			if patLen > 0 && patTypes[patLen-1] == stringutil.PatAny {
+				continue
+			}
 			tp = stringutil.PatAny
 		default:
 			tp = stringutil.PatMatch
@@ -97,7 +108,7 @@ func doMatchGeneralCI(str string, patWeights []uint16, patTypes []byte) bool {
 					continue
 				}
 			case stringutil.PatOne:
-				if rIdx < len(str) {
+				if rIdx < lenRunes {
 					pIdx++
 					rIdx++
 					continue
@@ -113,7 +124,7 @@ func doMatchGeneralCI(str string, patWeights []uint16, patTypes []byte) bool {
 			}
 		}
 		// Mismatch. Maybe restart.
-		if 0 < nextRIdx && nextRIdx <= len(str) {
+		if 0 < nextRIdx && nextRIdx <= lenRunes {
 			pIdx = nextPIdx
 			rIdx = nextRIdx
 			continue

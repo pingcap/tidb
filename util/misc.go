@@ -14,11 +14,13 @@
 package util
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -143,6 +145,16 @@ func CompatibleParseGCTime(value string) (time.Time, error) {
 	return t, err
 }
 
+// HasCancelled checks whether context has be cancelled.
+func HasCancelled(ctx context.Context) (cancel bool) {
+	select {
+	case <-ctx.Done():
+		cancel = true
+	default:
+	}
+	return
+}
+
 const (
 	// syntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
 	syntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
@@ -185,10 +197,25 @@ var (
 
 // IsMemOrSysDB uses to check whether dbLowerName is memory database or system database.
 func IsMemOrSysDB(dbLowerName string) bool {
+	return IsMemDB(dbLowerName) || dbLowerName == mysql.SystemDB
+}
+
+// IsMemDB checks whether dbLowerName is memory database.
+func IsMemDB(dbLowerName string) bool {
 	switch dbLowerName {
 	case InformationSchemaName.L,
 		PerformanceSchemaName.L,
-		mysql.SystemDB,
+		MetricSchemaName.L:
+		return true
+	}
+	return false
+}
+
+// IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
+func IsSystemView(dbLowerName string) bool {
+	switch dbLowerName {
+	case InformationSchemaName.L,
+		PerformanceSchemaName.L,
 		MetricSchemaName.L:
 		return true
 	}
@@ -509,4 +536,18 @@ func initInternalClient() {
 	internalHTTPClient = &http.Client{
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
+}
+
+// GetLocalIP will return a local IP(non-loopback, non 0.0.0.0), if there is one
+func GetLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err == nil {
+		for _, address := range addrs {
+			ipnet, ok := address.(*net.IPNet)
+			if ok && ipnet.IP.IsGlobalUnicast() {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return ""
 }

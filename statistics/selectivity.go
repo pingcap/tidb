@@ -25,7 +25,9 @@ import (
 	planutil "github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
+	"go.uber.org/zap"
 )
 
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
@@ -237,7 +239,7 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 	}
 	id2Paths := make(map[int64]*planutil.AccessPath)
 	for _, path := range filledPaths {
-		if path.IsTablePath {
+		if path.IsIntHandlePath {
 			continue
 		}
 		id2Paths[path.Index.ID] = path
@@ -283,6 +285,55 @@ func (coll *HistColl) Selectivity(ctx sessionctx.Context, exprs []expression.Exp
 			ret *= selectionFactor
 		}
 	}
+
+	// Now we try to cover those still not covered DNF conditions using independence assumption,
+	// i.e., sel(condA or condB) = sel(condA) + sel(condB) - sel(condA) * sel(condB)
+	if mask > 0 {
+		for i, expr := range remainedExprs {
+			if mask&(1<<uint64(i)) == 0 {
+				continue
+			}
+			scalarCond, ok := expr.(*expression.ScalarFunction)
+			// Make sure we only handle DNF condition.
+			if !ok || scalarCond.FuncName.L != ast.LogicOr {
+				continue
+			}
+			dnfItems := expression.FlattenDNFConditions(scalarCond)
+			dnfItems = ranger.MergeDNFItems4Col(ctx, dnfItems)
+
+			selectivity := 0.0
+			for _, cond := range dnfItems {
+				// In selectivity calculation, we don't handle CorrelatedColumn, so we directly skip over it.
+				// Other kinds of `Expression`, i.e., Constant, Column and ScalarFunction all can possibly be built into
+				// ranges and used to calculation selectivity, so we accept them all.
+				_, ok := cond.(*expression.CorrelatedColumn)
+				if ok {
+					continue
+				}
+
+				var cnfItems []expression.Expression
+				if scalar, ok := cond.(*expression.ScalarFunction); ok && scalar.FuncName.L == ast.LogicAnd {
+					cnfItems = expression.FlattenCNFConditions(scalar)
+				} else {
+					cnfItems = append(cnfItems, cond)
+				}
+
+				curSelectivity, _, err := coll.Selectivity(ctx, cnfItems, nil)
+				if err != nil {
+					logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+					selectivity = selectionFactor
+				}
+
+				selectivity = selectivity + curSelectivity - selectivity*curSelectivity
+			}
+
+			if selectivity != 0 {
+				ret *= selectivity
+				mask &^= 1 << uint64(i)
+			}
+		}
+	}
+
 	// If there's still conditions which cannot be calculated, we will multiply a selectionFactor.
 	if mask > 0 {
 		ret *= selectionFactor

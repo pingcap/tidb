@@ -66,11 +66,10 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"-123456789123456789123456789.12345 > a", "0"},
 		{"123456789123456789123456789.12345 < a", "0"},
 		{"-123456789123456789123456789.12345 < a", "1"},
-		// This cast can not be eliminated,
-		// since converting "aaaa" to an int will cause DataTruncate error.
-		{"'aaaa'=a", "eq(cast(aaaa, double BINARY), cast(a, double BINARY))"},
+		{"'aaaa'=a", "eq(0, a)"},
 	}
-	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns)
+	cols, names, err := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
+	c.Assert(err, IsNil)
 	schema := NewSchema(cols...)
 	for _, t := range tests {
 		f, err := ParseSimpleExprsWithNames(s.ctx, t.exprStr, schema, names)
@@ -289,6 +288,18 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 		{
 			[]interface{}{tm, 123},
 			curTimeInt, int64(123), false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time_1", "invalid_time_2", tmWithFsp},
+			curTimeWithFspString, "invalid_time_1", false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time_2", "invalid_time_1", tmWithFsp},
+			curTimeWithFspString, "invalid_time_2", false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time", nil, tmWithFsp},
+			nil, nil, true, false,
 		},
 		{
 			[]interface{}{duration, "123"},

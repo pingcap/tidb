@@ -48,7 +48,7 @@ func (s *testSplitSuite) SetUpTest(c *C) {
 	// )
 	// c.Assert(err, IsNil)
 	s.store = store.(*tikvStore)
-	s.bo = NewBackoffer(context.Background(), 5000)
+	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
 func (s *testSplitSuite) begin(c *C) *tikvTxn {

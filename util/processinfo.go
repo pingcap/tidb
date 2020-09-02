@@ -26,16 +26,17 @@ import (
 
 // ProcessInfo is a struct used for show processlist statement.
 type ProcessInfo struct {
-	ID            uint64
-	User          string
-	Host          string
-	DB            string
-	Plan          interface{}
-	Time          time.Time
-	Info          string
-	CurTxnStartTS uint64
-	StmtCtx       *stmtctx.StatementContext
-	StatsInfo     func(interface{}) map[string]uint64
+	ID              uint64
+	User            string
+	Host            string
+	DB              string
+	Plan            interface{}
+	PlanExplainRows [][]string
+	Time            time.Time
+	Info            string
+	CurTxnStartTS   uint64
+	StmtCtx         *stmtctx.StatementContext
+	StatsInfo       func(interface{}) map[string]uint64
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the query takes too long, kill it.
 	MaxExecutionTime uint64
@@ -111,7 +112,7 @@ var mapServerStatus2Str = map[uint16]string{
 	mysql.ServerStatusInTrans:            "in transaction",
 	mysql.ServerStatusAutocommit:         "autocommit",
 	mysql.ServerMoreResultsExists:        "more results exists",
-	mysql.ServerStatusNoGoodIndexUsed:    "no goods index used",
+	mysql.ServerStatusNoGoodIndexUsed:    "no good index used",
 	mysql.ServerStatusNoIndexUsed:        "no index used",
 	mysql.ServerStatusCursorExists:       "cursor exists",
 	mysql.ServerStatusLastRowSend:        "last row send",

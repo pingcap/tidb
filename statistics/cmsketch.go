@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 // topNThreshold is the minimum ratio of the number of topn elements in CMSketch, 10 means 1 / 10 = 10%.
@@ -178,6 +178,15 @@ func (c *CMSketch) findTopNMeta(h1, h2 uint64, d []byte) *TopNMeta {
 		}
 	}
 	return nil
+}
+
+// MemoryUsage returns the total memory usage of a CMSketch.
+// only calc the hashtable size(CMSketch.table) and the CMSketch.topN
+// data are not tracked because size of CMSketch.topN take little influence
+// We ignore the size of other metadata in CMSketch.
+func (c *CMSketch) MemoryUsage() (sum int64) {
+	sum = int64(c.depth * c.width * 4)
+	return
 }
 
 // queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.

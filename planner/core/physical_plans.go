@@ -16,6 +16,7 @@ package core
 import (
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
@@ -52,6 +53,7 @@ var (
 	_ PhysicalPlan = &PhysicalStreamAgg{}
 	_ PhysicalPlan = &PhysicalApply{}
 	_ PhysicalPlan = &PhysicalIndexJoin{}
+	_ PhysicalPlan = &PhysicalBroadCastJoin{}
 	_ PhysicalPlan = &PhysicalHashJoin{}
 	_ PhysicalPlan = &PhysicalMergeJoin{}
 	_ PhysicalPlan = &PhysicalUnionScan{}
@@ -71,11 +73,51 @@ type PhysicalTableReader struct {
 
 	// StoreType indicates table read from which type of store.
 	StoreType kv.StoreType
+
+	IsCommonHandle bool
+
+	// Used by partition table.
+	PartitionInfo PartitionInfo
+}
+
+// PartitionInfo indicates partition helper info in physical plan.
+type PartitionInfo struct {
+	PruningConds   []expression.Expression
+	PartitionNames []model.CIStr
+	Columns        []*expression.Column
+	ColumnNames    types.NameSlice
+}
+
+// GetTablePlan exports the tablePlan.
+func (p *PhysicalTableReader) GetTablePlan() PhysicalPlan {
+	return p.tablePlan
+}
+
+// GetTableScan exports the tableScan that contained in tablePlan.
+func (p *PhysicalTableReader) GetTableScan() *PhysicalTableScan {
+	curPlan := p.tablePlan
+	for {
+		chCnt := len(curPlan.Children())
+		if chCnt == 0 {
+			return curPlan.(*PhysicalTableScan)
+		} else if chCnt == 1 {
+			curPlan = curPlan.Children()[0]
+		} else {
+			join := curPlan.(*PhysicalBroadCastJoin)
+			curPlan = join.children[1-join.globalChildIndex]
+		}
+	}
 }
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
 func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.ctx, sg.blockOffset)
+	reader.PartitionInfo = PartitionInfo{
+		PruningConds:   sg.Source.allConds,
+		PartitionNames: sg.Source.partitionNames,
+		Columns:        sg.Source.TblCols,
+		ColumnNames:    sg.Source.names,
+	}
 	reader.stats = stats
 	reader.SetSchema(schema)
 	reader.childrenReqProps = props
@@ -89,6 +131,25 @@ func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, st
 	reader.SetSchema(schema)
 	reader.childrenReqProps = props
 	return reader
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalTableReader) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalTableReader)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.StoreType = p.StoreType
+	cloned.IsCommonHandle = p.IsCommonHandle
+	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
+		return nil, err
+	}
+	if cloned.TablePlans, err = clonePhysicalPlan(p.TablePlans); err != nil {
+		return nil, err
+	}
+	return cloned, nil
 }
 
 // SetChildren overrides PhysicalPlan SetChildren interface.
@@ -115,6 +176,27 @@ type PhysicalIndexReader struct {
 
 	// OutputColumns represents the columns that index reader should return.
 	OutputColumns []*expression.Column
+
+	// Used by partition table.
+	PartitionInfo PartitionInfo
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalIndexReader) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalIndexReader)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	if cloned.indexPlan, err = p.indexPlan.Clone(); err != nil {
+		return nil, err
+	}
+	if cloned.IndexPlans, err = clonePhysicalPlan(p.IndexPlans); err != nil {
+		return nil, err
+	}
+	cloned.OutputColumns = cloneCols(p.OutputColumns)
+	return cloned, err
 }
 
 // SetSchema overrides PhysicalPlan SetSchema interface.
@@ -152,6 +234,13 @@ type PushedDownLimit struct {
 	Count  uint64
 }
 
+// Clone clones this pushed-down list.
+func (p *PushedDownLimit) Clone() *PushedDownLimit {
+	cloned := new(PushedDownLimit)
+	*cloned = *p
+	return cloned
+}
+
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
 type PhysicalIndexLookUpReader struct {
 	physicalSchemaProducer
@@ -166,6 +255,40 @@ type PhysicalIndexLookUpReader struct {
 	ExtraHandleCol *expression.Column
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
 	PushedLimit *PushedDownLimit
+
+	CommonHandleCols []*expression.Column
+
+	// Used by partition table.
+	PartitionInfo PartitionInfo
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalIndexLookUpReader) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalIndexLookUpReader)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	if cloned.IndexPlans, err = clonePhysicalPlan(p.IndexPlans); err != nil {
+		return nil, err
+	}
+	if cloned.TablePlans, err = clonePhysicalPlan(p.TablePlans); err != nil {
+		return nil, err
+	}
+	if cloned.indexPlan, err = p.indexPlan.Clone(); err != nil {
+		return nil, err
+	}
+	if cloned.tablePlan, err = p.tablePlan.Clone(); err != nil {
+		return nil, err
+	}
+	if p.ExtraHandleCol != nil {
+		cloned.ExtraHandleCol = p.ExtraHandleCol.Clone().(*expression.Column)
+	}
+	if p.PushedLimit != nil {
+		cloned.PushedLimit = p.PushedLimit.Clone()
+	}
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -191,6 +314,9 @@ type PhysicalIndexMergeReader struct {
 	partialPlans []PhysicalPlan
 	// tablePlan is a PhysicalTableScan to get the table tuples. Current, it must be not nil.
 	tablePlan PhysicalPlan
+
+	// Used by partition table.
+	PartitionInfo PartitionInfo
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -247,6 +373,38 @@ type PhysicalIndexScan struct {
 	// DoubleRead means if the index executor will read kv two times.
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
+
+	NeedCommonHandle bool
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalIndexScan) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalIndexScan)
+	*cloned = *p
+	base, err := p.physicalSchemaProducer.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.AccessCondition = cloneExprs(p.AccessCondition)
+	if p.Table != nil {
+		cloned.Table = p.Table.Clone()
+	}
+	if p.Index != nil {
+		cloned.Index = p.Index.Clone()
+	}
+	cloned.IdxCols = cloneCols(p.IdxCols)
+	cloned.IdxColLens = make([]int, len(p.IdxColLens))
+	copy(cloned.IdxColLens, p.IdxColLens)
+	cloned.Ranges = cloneRanges(p.Ranges)
+	cloned.Columns = cloneColInfos(p.Columns)
+	if p.dataSourceSchema != nil {
+		cloned.dataSourceSchema = p.dataSourceSchema.Clone()
+	}
+	if p.Hist != nil {
+		cloned.Hist = p.Hist.Copy()
+	}
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -281,7 +439,7 @@ type PhysicalTableScan struct {
 	Columns []*model.ColumnInfo
 	DBName  model.CIStr
 	Ranges  []*ranger.Range
-	pkCol   *expression.Column
+	PkCols  []*expression.Column
 
 	TableAsName *model.CIStr
 
@@ -294,9 +452,12 @@ type PhysicalTableScan struct {
 	rangeDecidedBy []*expression.Column
 
 	// HandleIdx is the index of handle, which is only used for admin check table.
-	HandleIdx int
+	HandleIdx  []int
+	HandleCols HandleCols
 
 	StoreType kv.StoreType
+
+	IsGlobalRead bool
 
 	// The table scan may be a partition, rather than a real table.
 	isPartition bool
@@ -305,6 +466,31 @@ type PhysicalTableScan struct {
 	Desc      bool
 
 	isChildOfIndexLookUp bool
+}
+
+// Clone implements PhysicalPlan interface.
+func (ts *PhysicalTableScan) Clone() (PhysicalPlan, error) {
+	clonedScan := new(PhysicalTableScan)
+	*clonedScan = *ts
+	prod, err := ts.physicalSchemaProducer.cloneWithSelf(clonedScan)
+	if err != nil {
+		return nil, err
+	}
+	clonedScan.physicalSchemaProducer = *prod
+	clonedScan.AccessCondition = cloneExprs(ts.AccessCondition)
+	clonedScan.filterCondition = cloneExprs(ts.filterCondition)
+	if ts.Table != nil {
+		clonedScan.Table = ts.Table.Clone()
+	}
+	clonedScan.Columns = cloneColInfos(ts.Columns)
+	clonedScan.Ranges = cloneRanges(ts.Ranges)
+	clonedScan.PkCols = cloneCols(ts.PkCols)
+	clonedScan.TableAsName = ts.TableAsName
+	if ts.Hist != nil {
+		clonedScan.Hist = ts.Hist.Copy()
+	}
+	clonedScan.rangeDecidedBy = cloneCols(ts.rangeDecidedBy)
+	return clonedScan, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -327,6 +513,16 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
 func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
+	copyColumn := make([]*model.ColumnInfo, len(columns))
+	copy(copyColumn, columns)
+	var extraColumn *expression.Column
+	var extraColumnModel *model.ColumnInfo
+	if schema.Columns[len(schema.Columns)-1].ID == model.ExtraHandleID {
+		extraColumn = schema.Columns[len(schema.Columns)-1]
+		extraColumnModel = copyColumn[len(copyColumn)-1]
+		schema.Columns = schema.Columns[:len(schema.Columns)-1]
+		copyColumn = copyColumn[:len(copyColumn)-1]
+	}
 	schemaColumns := schema.Columns
 	for _, col := range schemaColumns {
 		if col.VirtualExpr == nil {
@@ -337,11 +533,15 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 		for _, baseCol := range baseCols {
 			if !schema.Contains(baseCol) {
 				schema.Columns = append(schema.Columns, baseCol)
-				columns = append(columns, FindColumnInfoByID(colsInfo, baseCol.ID))
+				copyColumn = append(copyColumn, FindColumnInfoByID(colsInfo, baseCol.ID))
 			}
 		}
 	}
-	return columns
+	if extraColumn != nil {
+		schema.Columns = append(schema.Columns, extraColumn)
+		copyColumn = append(copyColumn, extraColumnModel)
+	}
+	return copyColumn
 }
 
 //SetIsChildOfIndexLookUp is to set the bool if is a child of IndexLookUpReader
@@ -356,6 +556,19 @@ type PhysicalProjection struct {
 	Exprs                []expression.Expression
 	CalculateNoDelay     bool
 	AvoidColumnEvaluator bool
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalProjection) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalProjection)
+	*cloned = *p
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	cloned.Exprs = cloneExprs(p.Exprs)
+	return cloned, err
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -376,6 +589,22 @@ type PhysicalTopN struct {
 	Count   uint64
 }
 
+// Clone implements PhysicalPlan interface.
+func (lt *PhysicalTopN) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalTopN)
+	*cloned = *lt
+	base, err := lt.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	cloned.ByItems = make([]*util.ByItems, 0, len(lt.ByItems))
+	for _, it := range lt.ByItems {
+		cloned.ByItems = append(cloned.ByItems, it.Clone())
+	}
+	return cloned, nil
+}
+
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (lt *PhysicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(lt.ByItems))
@@ -389,7 +618,26 @@ func (lt *PhysicalTopN) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type PhysicalApply struct {
 	PhysicalHashJoin
 
+	CanUseCache bool
+	Concurrency int
 	OuterSchema []*expression.CorrelatedColumn
+}
+
+// Clone implements PhysicalPlan interface.
+func (la *PhysicalApply) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalApply)
+	base, err := la.PhysicalHashJoin.Clone()
+	if err != nil {
+		return nil, err
+	}
+	hj := base.(*PhysicalHashJoin)
+	cloned.PhysicalHashJoin = *hj
+	cloned.CanUseCache = la.CanUseCache
+	cloned.Concurrency = la.Concurrency
+	for _, col := range la.OuterSchema {
+		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
+	}
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -417,7 +665,30 @@ type basePhysicalJoin struct {
 	InnerJoinKeys []*expression.Column
 	LeftJoinKeys  []*expression.Column
 	RightJoinKeys []*expression.Column
+	IsNullEQ      []bool
 	DefaultValues []types.Datum
+}
+
+func (p *basePhysicalJoin) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalJoin, error) {
+	cloned := new(basePhysicalJoin)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(newSelf)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	cloned.JoinType = p.JoinType
+	cloned.LeftConditions = cloneExprs(p.LeftConditions)
+	cloned.RightConditions = cloneExprs(p.RightConditions)
+	cloned.OtherConditions = cloneExprs(p.OtherConditions)
+	cloned.InnerChildIdx = p.InnerChildIdx
+	cloned.OuterJoinKeys = cloneCols(p.OuterJoinKeys)
+	cloned.InnerJoinKeys = cloneCols(p.InnerJoinKeys)
+	cloned.LeftJoinKeys = cloneCols(p.LeftJoinKeys)
+	cloned.RightJoinKeys = cloneCols(p.RightJoinKeys)
+	for _, d := range p.DefaultValues {
+		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
+	}
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -446,6 +717,22 @@ type PhysicalHashJoin struct {
 	UseOuterToBuild bool
 }
 
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalHashJoin) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalHashJoin)
+	base, err := p.basePhysicalJoin.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalJoin = *base
+	cloned.Concurrency = p.Concurrency
+	cloned.UseOuterToBuild = p.UseOuterToBuild
+	for _, c := range p.EqualConditions {
+		cloned.EqualConditions = append(cloned.EqualConditions, c.Clone().(*expression.ScalarFunction))
+	}
+	return cloned, nil
+}
+
 // ExtractCorrelatedCols implements PhysicalPlan interface.
 func (p *PhysicalHashJoin) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := make([]*expression.CorrelatedColumn, 0, len(p.EqualConditions)+len(p.LeftConditions)+len(p.RightConditions)+len(p.OtherConditions))
@@ -466,13 +753,14 @@ func (p *PhysicalHashJoin) ExtractCorrelatedCols() []*expression.CorrelatedColum
 
 // NewPhysicalHashJoin creates a new PhysicalHashJoin from LogicalJoin.
 func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, newStats *property.StatsInfo, prop ...*property.PhysicalProperty) *PhysicalHashJoin {
-	leftJoinKeys, rightJoinKeys := p.GetJoinKeys()
+	leftJoinKeys, rightJoinKeys, isNullEQ, _ := p.GetJoinKeys()
 	baseJoin := basePhysicalJoin{
 		LeftConditions:  p.LeftConditions,
 		RightConditions: p.RightConditions,
 		OtherConditions: p.OtherConditions,
 		LeftJoinKeys:    leftJoinKeys,
 		RightJoinKeys:   rightJoinKeys,
+		IsNullEQ:        isNullEQ,
 		JoinType:        p.JoinType,
 		DefaultValues:   p.DefaultValues,
 		InnerChildIdx:   innerIdx,
@@ -480,7 +768,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 	hashJoin := PhysicalHashJoin{
 		basePhysicalJoin: baseJoin,
 		EqualConditions:  p.EqualConditions,
-		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency),
+		Concurrency:      uint(p.ctx.GetSessionVars().HashJoinConcurrency()),
 		UseOuterToBuild:  useOuterToBuild,
 	}.Init(p.ctx, newStats, p.blockOffset, prop...)
 	return hashJoin
@@ -541,13 +829,34 @@ type PhysicalMergeJoin struct {
 	Desc bool
 }
 
+// PhysicalBroadCastJoin only works for TiFlash Engine, which broadcast the small table to every replica of probe side of tables.
+type PhysicalBroadCastJoin struct {
+	basePhysicalJoin
+	globalChildIndex int
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalMergeJoin) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalMergeJoin)
+	base, err := p.basePhysicalJoin.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalJoin = *base
+	for _, cf := range p.CompareFuncs {
+		cloned.CompareFuncs = append(cloned.CompareFuncs, cf)
+	}
+	cloned.Desc = p.Desc
+	return cloned, nil
+}
+
 // PhysicalLock is the physical operator of lock, which is used for `select ... for update` clause.
 type PhysicalLock struct {
 	basePhysicalPlan
 
 	Lock ast.SelectLockType
 
-	TblID2Handle     map[int64][]*expression.Column
+	TblID2Handle     map[int64][]HandleCols
 	PartitionedTable []table.PartitionedTable
 }
 
@@ -557,6 +866,18 @@ type PhysicalLimit struct {
 
 	Offset uint64
 	Count  uint64
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalLimit)
+	*cloned = *p
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	return cloned, nil
 }
 
 // PhysicalUnionAll is the physical operator of UnionAll.
@@ -569,6 +890,20 @@ type basePhysicalAgg struct {
 
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
+}
+
+func (p *basePhysicalAgg) cloneWithSelf(newSelf PhysicalPlan) (*basePhysicalAgg, error) {
+	cloned := new(basePhysicalAgg)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(newSelf)
+	if err != nil {
+		return nil, err
+	}
+	cloned.physicalSchemaProducer = *base
+	for _, aggDesc := range p.AggFuncs {
+		cloned.AggFuncs = append(cloned.AggFuncs, aggDesc.Clone())
+	}
+	cloned.GroupByItems = cloneExprs(p.GroupByItems)
+	return cloned, nil
 }
 
 func (p *basePhysicalAgg) numDistinctFunc() (num int) {
@@ -614,6 +949,17 @@ type PhysicalHashAgg struct {
 	basePhysicalAgg
 }
 
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalHashAgg) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalHashAgg)
+	base, err := p.basePhysicalAgg.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalAgg = *base
+	return cloned, nil
+}
+
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
 func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
 	agg := basePhysicalAgg{
@@ -628,11 +974,36 @@ type PhysicalStreamAgg struct {
 	basePhysicalAgg
 }
 
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalStreamAgg) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalStreamAgg)
+	base, err := p.basePhysicalAgg.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalAgg = *base
+	return cloned, nil
+}
+
 // PhysicalSort is the physical operator of sort, which implements a memory sort.
 type PhysicalSort struct {
 	basePhysicalPlan
 
 	ByItems []*util.ByItems
+}
+
+// Clone implements PhysicalPlan interface.
+func (ls *PhysicalSort) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalSort)
+	base, err := ls.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	for _, it := range ls.ByItems {
+		cloned.ByItems = append(cloned.ByItems, it.Clone())
+	}
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -662,7 +1033,16 @@ type PhysicalUnionScan struct {
 
 	Conditions []expression.Expression
 
-	HandleCol *expression.Column
+	HandleCols HandleCols
+}
+
+// ExtractCorrelatedCols implements PhysicalPlan interface.
+func (p *PhysicalUnionScan) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
+	corCols := make([]*expression.CorrelatedColumn, 0)
+	for _, cond := range p.Conditions {
+		corCols = append(corCols, expression.ExtractCorColumns(cond)...)
+	}
+	return corCols
 }
 
 // IsPartition returns true and partition ID if it works on a partition.
@@ -683,6 +1063,18 @@ type PhysicalSelection struct {
 	basePhysicalPlan
 
 	Conditions []expression.Expression
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PhysicalSelection) Clone() (PhysicalPlan, error) {
+	cloned := new(PhysicalSelection)
+	base, err := p.basePhysicalPlan.cloneWithSelf(cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalPlan = *base
+	cloned.Conditions = cloneExprs(p.Conditions)
+	return cloned, nil
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -835,4 +1227,14 @@ func BuildMergeJoinPlan(ctx sessionctx.Context, joinType JoinType, leftKeys, rig
 		RightJoinKeys: rightKeys,
 	}
 	return PhysicalMergeJoin{basePhysicalJoin: baseJoin}.Init(ctx, nil, 0)
+}
+
+// SafeClone clones this PhysicalPlan and handles its panic.
+func SafeClone(v PhysicalPlan) (_ PhysicalPlan, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Errorf("%v", r)
+		}
+	}()
+	return v.Clone()
 }

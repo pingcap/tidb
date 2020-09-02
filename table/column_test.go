@@ -115,18 +115,19 @@ func (t *testTableSuite) TestCheck(c *C) {
 func (t *testTableSuite) TestHandleBadNull(c *C) {
 	col := newCol("a")
 	sc := new(stmtctx.StatementContext)
-	d, err := col.HandleBadNull(types.Datum{}, sc)
+	d := types.Datum{}
+	err := col.HandleBadNull(&d, sc)
 	c.Assert(err, IsNil)
 	cmp, err := d.CompareDatum(sc, &types.Datum{})
 	c.Assert(err, IsNil)
 	c.Assert(cmp, Equals, 0)
 
 	col.Flag |= mysql.NotNullFlag
-	d, err = col.HandleBadNull(types.Datum{}, sc)
+	err = col.HandleBadNull(&types.Datum{}, sc)
 	c.Assert(err, NotNil)
 
 	sc.BadNullAsWarning = true
-	d, err = col.HandleBadNull(types.Datum{}, sc)
+	err = col.HandleBadNull(&types.Datum{}, sc)
 	c.Assert(err, IsNil)
 }
 
@@ -265,18 +266,6 @@ func (t *testTableSuite) TestCastValue(c *C) {
 	c.Assert(err, Not(Equals), nil)
 	c.Assert(val.GetInt64(), Equals, int64(0))
 
-	col := ToColumn(&model.ColumnInfo{
-		FieldType: *types.NewFieldType(mysql.TypeTiny),
-		State:     model.StatePublic,
-	})
-
-	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col})
-	c.Assert(err, NotNil)
-	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
-	err = CastValues(ctx, []types.Datum{types.NewDatum("test")}, []*Column{col})
-	c.Assert(err, IsNil)
-	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = false
-
 	colInfoS := model.ColumnInfo{
 		FieldType: *types.NewFieldType(mysql.TypeString),
 		State:     model.StatePublic,
@@ -289,9 +278,25 @@ func (t *testTableSuite) TestCastValue(c *C) {
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x8c, 0x80}), &colInfoS, false, false)
 	c.Assert(err, NotNil)
 
+	colInfoS.Charset = mysql.UTF8Charset
+	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x8c, 0x80}), &colInfoS, false, true)
+	c.Assert(err, IsNil)
+
 	colInfoS.Charset = mysql.UTF8MB4Charset
 	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x80}), &colInfoS, false, false)
 	c.Assert(err, NotNil)
+
+	colInfoS.Charset = mysql.UTF8MB4Charset
+	_, err = CastValue(ctx, types.NewDatum([]byte{0xf0, 0x9f, 0x80}), &colInfoS, false, true)
+	c.Assert(err, IsNil)
+
+	colInfoS.Charset = charset.CharsetASCII
+	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, false)
+	c.Assert(err, NotNil)
+
+	colInfoS.Charset = charset.CharsetASCII
+	_, err = CastValue(ctx, types.NewDatum([]byte{0x32, 0xf0}), &colInfoS, false, true)
+	c.Assert(err, IsNil)
 }
 
 func (t *testTableSuite) TestGetDefaultValue(c *C) {
