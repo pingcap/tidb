@@ -3928,6 +3928,7 @@ func (s *testSuite3) TestRowID(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`set @@tidb_enable_clustered_index=0;`)
 	tk.MustExec(`create table t(a varchar(10), b varchar(10), c varchar(1), index idx(a, b, c));`)
 	tk.MustExec(`insert into t values('a', 'b', 'c');`)
 	tk.MustExec(`insert into t values('a', 'b', 'c');`)
@@ -6245,15 +6246,29 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 		"update t1 set a=a+1 where a=6;",
 	}
 
-	for _, sql := range testSQLs {
-		tk.MustExec(sql)
+	getRootStats := func() string {
 		info := tk.Se.ShowProcess()
 		c.Assert(info, NotNil)
 		p, ok := info.Plan.(plannercore.Plan)
 		c.Assert(ok, IsTrue)
 		stats := tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(p.ID())
-		c.Assert(stats.String(), Matches, "time.*loops.*Get.*num_rpc.*total_time.*")
+		return stats.String()
 	}
+	for _, sql := range testSQLs {
+		tk.MustExec(sql)
+		c.Assert(getRootStats(), Matches, "time.*loops.*Get.*num_rpc.*total_time.*")
+	}
+
+	// Test for lock keys stats.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t1 set b=b+1")
+	c.Assert(getRootStats(), Matches, "time.*lock_keys.*time.* region.* keys.* lock_rpc:.* rpc_count.*")
+	tk.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 for update").Check(testkit.Rows("5 6", "7 7"))
+	c.Assert(getRootStats(), Matches, "time.*lock_keys.*time.* region.* keys.* lock_rpc:.* rpc_count.*")
+	tk.MustExec("rollback")
 }
 
 func (s *testSuite) TestIssue13758(c *C) {
