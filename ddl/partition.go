@@ -620,6 +620,8 @@ func checkPartitionExprValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 			return errors.Trace(err)
 		}
 		return nil
+	case *ast.ParenthesesExpr:
+		return checkPartitionExprValid(ctx, tblInfo, v.Expr)
 	}
 	return nil
 }
@@ -902,21 +904,20 @@ func onDropTablePartition(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 
 	rules := buildPlacementDropRules(job.SchemaID, tblInfo.ID, physicalTableIDs)
-
 	err = infosync.UpdatePlacementRules(nil, rules)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	// Finish this job.
 	if job.IsRollingback() {
 		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	} else {
-		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 	}
 

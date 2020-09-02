@@ -203,7 +203,11 @@ func (c *twoPhaseCommitter) extractKeyExistsErr(key kv.Key) error {
 		if handle.IsInt() {
 			return kv.ErrKeyExists.FastGenByArgs(handle.String(), "PRIMARY")
 		}
-		values, err := tablecodec.DecodeValuesBytesToStrings(handle.Encoded())
+		trimLen := 0
+		for i := 0; i < handle.NumCols(); i++ {
+			trimLen += len(handle.EncodedCol(i))
+		}
+		values, err := tablecodec.DecodeValuesBytesToStrings(handle.Encoded()[:trimLen])
 		if err == nil {
 			return kv.ErrKeyExists.FastGenByArgs(strings.Join(values, "-"), "PRIMARY")
 		}
@@ -426,7 +430,9 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	action.tiKVTxnRegionsNumHistogram().Observe(float64(len(groups)))
 
 	var sizeFunc = c.keySize
-	if _, ok := action.(actionPrewrite); ok {
+
+	switch act := action.(type) {
+	case actionPrewrite:
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
 		if len(bo.errors) == 0 {
 			for _, group := range groups {
@@ -435,6 +441,10 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		}
 		sizeFunc = c.keyValueSize
 		atomic.AddInt32(&c.getDetail().PrewriteRegionNum, int32(len(groups)))
+	case actionPessimisticLock:
+		if act.LockCtx.Stats != nil {
+			act.LockCtx.Stats.RegionNum = int32(len(groups))
+		}
 	}
 
 	batchBuilder := newBatched(c.primary())
