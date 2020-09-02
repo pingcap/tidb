@@ -931,6 +931,7 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	tk.MustExec("create database if not exists auto_random_db")
 	defer tk.MustExec("drop database if exists auto_random_db")
 	tk.MustExec("use auto_random_db")
+	databaseName, tableName := "auto_random_db", "t"
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
@@ -969,6 +970,11 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	}
 	assertBigIntOnly := func(sql, colType string) {
 		assertInvalidAutoRandomErr(sql, autoid.AutoRandomOnNonBigIntColumn, colType)
+	}
+	assertAddColumn := func(sql, colName string) {
+		{
+			assertInvalidAutoRandomErr(sql, autoid.AutoRandomAlterAddColumn, colName, databaseName, tableName)
+		}
 	}
 	mustExecAndDrop := func(sql string, fns ...func()) {
 		tk.MustExec(sql)
@@ -1069,6 +1075,18 @@ func (s *testSerialSuite) TestAutoRandom(c *C) {
 	mustExecAndDrop("create table t (a bigint, b bigint, primary key(a, b))", func() {
 		assertAlterValue("alter table t modify column a bigint auto_random(3)")
 		assertAlterValue("alter table t modify column b bigint auto_random(3)")
+	})
+
+	// Add auto_random column is not allowed.
+	mustExecAndDrop("create table t (a bigint)", func() {
+		assertAddColumn("alter table t add column b int auto_random", "b")
+		assertAddColumn("alter table t add column b bigint auto_random", "b")
+		assertAddColumn("alter table t add column b bigint auto_random primary key", "b")
+	})
+	mustExecAndDrop("create table t (a bigint, b bigint primary key)", func() {
+		assertAddColumn("alter table t add column c int auto_random", "c")
+		assertAddColumn("alter table t add column c bigint auto_random", "c")
+		assertAddColumn("alter table t add column c bigint auto_random primary key", "c")
 	})
 
 	// Decrease auto_random bits is not allowed.
