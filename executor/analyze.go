@@ -812,12 +812,9 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 	index2Cols := make([][]*model.ColumnInfo, len(e.idxsInfo))
 	for i, idxInfo := range e.idxsInfo {
 		for _, idxCol := range idxInfo.Columns {
-			for _, colInfo := range e.tblInfo.Columns {
-				if colInfo.Name == idxCol.Name {
-					index2Cols[i] = append(index2Cols[i], colInfo)
-					wantCols[colInfo.ID] = &colInfo.FieldType
-				}
-			}
+			colInfo := e.tblInfo.Columns[idxCol.Offset]
+			index2Cols[i] = append(index2Cols[i], colInfo)
+			wantCols[colInfo.ID] = &colInfo.FieldType
 		}
 	}
 
