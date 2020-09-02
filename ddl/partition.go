@@ -773,6 +773,8 @@ func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (int
 			if err2 == nil && !isNull {
 				return uint64(res), true, nil
 			}
+		} else {
+			return 0, false, err1
 		}
 	} else {
 		if value, err := strconv.ParseInt(str, 10, 64); err == nil {
@@ -787,6 +789,8 @@ func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (int
 			if err2 == nil && !isNull {
 				return res, true, nil
 			}
+		} else {
+			return 0, false, err1
 		}
 	}
 	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
