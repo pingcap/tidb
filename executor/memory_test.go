@@ -131,4 +131,5 @@ func (s *testMemoryLeak) TestGlobalMemoryTrackerOnCleanUp(c *C) {
 	tk.MustExec("select * from t")
 	c.Assert(executor.GlobalMemoryUsageTracker.MaxConsumed(), Greater, int64(0))
 	c.Assert(executor.GlobalMemoryUsageTracker.BytesConsumed(), Equals, int64(0))
+	c.Assert(executor.GlobalMemoryUsageTracker.String(), Equals, "")
 }
