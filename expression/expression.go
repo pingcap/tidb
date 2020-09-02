@@ -892,6 +892,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.IsNull,
 		ast.Like,
 		ast.IsTruth,
+		ast.IsTruthWithNull,
 		ast.IsFalsity,
 
 		// arithmetical functions.
