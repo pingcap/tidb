@@ -228,6 +228,7 @@ type expressionRewriter struct {
 	// NOTE: This value can be changed during expression rewritten.
 	disableFoldCounter int
 
+	// evalDefaultExpr needs this information to find the corresponding column.
 	allNames [][]*types.FieldName
 }
 
