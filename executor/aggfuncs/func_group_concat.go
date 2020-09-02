@@ -166,6 +166,8 @@ func (e *groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta i
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
 	p.valSet = set.NewStringSet()
+	p.valList = make([]string, 0)
+	p.keyList = make([]string, 0)
 	return PartialResult(p), 0
 }
 
@@ -239,6 +241,16 @@ func (e *groupConcatDistinct) MergePartialResult(sctx sessionctx.Context, src, d
 		return 0, e.truncatePartialResultIfNeed(sctx, p2.buffer)
 	}
 	return 0, nil
+}
+
+func (e *groupConcatDistinct) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4GroupConcatDistinct)(pr)
+	if p.buffer == nil {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendString(e.ordinal, p.buffer.String())
+	return nil
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.

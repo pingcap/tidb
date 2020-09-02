@@ -215,7 +215,9 @@ type avgOriginal4DistinctDecimal struct {
 
 func (e *avgOriginal4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := &partialResult4AvgDistinctDecimal{
-		valSet: set.NewStringSet(),
+		valSet:  set.NewStringSet(),
+		valList: make([]*types.MyDecimal, 0),
+		keyList: make([]string, 0),
 	}
 	return PartialResult(p), DefPartialResult4AvgDistinctDecimalSize
 }
@@ -476,7 +478,8 @@ type avgOriginal4DistinctFloat64 struct {
 
 func (e *avgOriginal4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := &partialResult4AvgDistinctFloat64{
-		valSet: set.NewFloat64Set(),
+		valSet:  set.NewFloat64Set(),
+		valList: make([]float64, 0),
 	}
 	return PartialResult(p), DefPartialResult4AvgDistinctFloat64Size
 }

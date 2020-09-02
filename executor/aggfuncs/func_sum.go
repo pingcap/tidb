@@ -265,6 +265,7 @@ func (e *sum4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta i
 	p := new(partialResult4SumDistinctFloat64)
 	p.isNull = true
 	p.valSet = set.NewFloat64Set()
+	p.valList = make([]float64, 0)
 	return PartialResult(p), DefPartialResult4SumDistinctFloat64Size
 }
 
@@ -333,6 +334,8 @@ func (e *sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta i
 	p := new(partialResult4SumDistinctDecimal)
 	p.isNull = true
 	p.valSet = set.NewStringSet()
+	p.valList = make([]*types.MyDecimal, 0)
+	p.keyList = make([]string, 0)
 	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize
 }
 

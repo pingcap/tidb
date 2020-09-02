@@ -127,6 +127,7 @@ func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelt
 	p.sum = 0
 	p.variance = 0
 	p.valSet = set.NewFloat64Set()
+	p.valList = make([]float64, 0)
 	return PartialResult(p), 0
 }
 
