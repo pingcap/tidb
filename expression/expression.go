@@ -706,13 +706,19 @@ func SplitDNFItems(onExpr Expression) []Expression {
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	switch x := expr.(type) {
 	case *ScalarFunction:
-		if ctx.Value(isTrueKeepNullKey) == nil {
-			ctx.SetValue(isTrueKeepNullKey, struct{}{})
-			defer ctx.SetValue(isTrueKeepNullKey, nil)
+		isTrueKeepNull := false
+		if _, ok := isTrueKeepNullFunctions[x.FuncName.L]; ok {
+			isTrueKeepNull = true
 		}
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
+			if isTrueKeepNull {
+				ctx.SetValue(isTrueKeepNullKey, struct{}{})
+			}
 			args[i] = EvaluateExprWithNull(ctx, schema, arg)
+			if isTrueKeepNull {
+				ctx.SetValue(isTrueKeepNullKey, nil)
+			}
 		}
 		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType, args...)
 	case *Column:

@@ -172,3 +172,12 @@ var noopFuncs = map[string]struct{}{
 	ast.GetLock:     {},
 	ast.ReleaseLock: {},
 }
+
+// isTrueKeepNullFunctions stores functions in which "istrue" function at argument positions should keep null values
+var isTrueKeepNullFunctions = map[string]struct{}{
+	ast.LogicAnd: {},
+	ast.LogicOr:  {},
+	ast.LogicXor: {},
+	ast.Case:     {},
+	ast.If:       {},
+}
