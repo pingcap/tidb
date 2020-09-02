@@ -35,8 +35,12 @@ func cmpAndRm(expected, outfile string, c *C) {
 	c.Assert(os.Remove(outfile), IsNil)
 }
 
+func randomSelectFilePath(testName string) string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("select-into-%v-%v.data", testName, time.Now().Nanosecond()))
+}
+
 func (s *testSuite1) TestSelectIntoFileExists(c *C) {
-	outfile := filepath.Join(os.TempDir(), fmt.Sprintf("TestSelectIntoFileExists-%v.data", time.Now().Nanosecond()))
+	outfile := randomSelectFilePath("TestSelectIntoFileExists")
 	defer func() {
 		c.Assert(os.Remove(outfile), IsNil)
 	}()
@@ -50,9 +54,45 @@ func (s *testSuite1) TestSelectIntoFileExists(c *C) {
 	c.Assert(strings.Contains(err.Error(), outfile), IsTrue)
 }
 
+<<<<<<< HEAD
+=======
+func (s *testSuite1) TestSelectIntoOutfileTypes(c *C) {
+	outfile := randomSelectFilePath("TestSelectIntoOutfileTypes")
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` ( `a` bit(10) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("INSERT INTO `t` VALUES (_binary '\\0'), (_binary '\\1'), (_binary '\\2'), (_binary '\\3');")
+	tk.MustExec(fmt.Sprintf("SELECT * FROM t INTO OUTFILE %q", outfile))
+	cmpAndRm("\x00\x00\n\x001\n\x002\n\x003\n", outfile, c)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (col ENUM ('value1','value2','value3'));")
+	tk.MustExec("INSERT INTO t values ('value1'), ('value2');")
+	tk.MustExec(fmt.Sprintf("SELECT * FROM t INTO OUTFILE %q", outfile))
+	cmpAndRm("value1\nvalue2\n", outfile, c)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t ( v json);")
+	tk.MustExec(`insert into t values ('{"id": 1, "name": "aaa"}'), ('{"id": 2, "name": "xxx"}');`)
+	tk.MustExec(fmt.Sprintf("SELECT * FROM t INTO OUTFILE %q", outfile))
+	cmpAndRm(`{"id": 1, "name": "aaa"}
+{"id": 2, "name": "xxx"}
+`, outfile, c)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v tinyint unsigned)")
+	tk.MustExec("insert into t values (0), (1)")
+	tk.MustExec(fmt.Sprintf("SELECT * FROM t INTO OUTFILE %q", outfile))
+	cmpAndRm(`0
+1
+`, outfile, c)
+}
+
+>>>>>>> 0fd81a8... executor: fix file exists errors in tests for `select into outfile` (#19717)
 func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
-	tmpDir := os.TempDir()
-	outfile := filepath.Join(tmpDir, "TestSelectIntoOutfileFromTable.data")
+	outfile := randomSelectFilePath("TestSelectIntoOutfileFromTable")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -93,8 +133,7 @@ func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
 }
 
 func (s *testSuite1) TestSelectIntoOutfileConstant(c *C) {
-	tmpDir := os.TempDir()
-	outfile := filepath.Join(tmpDir, "TestSelectIntoOutfileConstant.data")
+	outfile := randomSelectFilePath("TestSelectIntoOutfileConstant")
 	tk := testkit.NewTestKit(c, s.store)
 	// On windows the outfile name looks like "C:\Users\genius\AppData\Local\Temp\select-into-outfile.data",
 	// fmt.Sprintf("%q") is used otherwise the string become
