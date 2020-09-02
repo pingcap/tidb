@@ -189,7 +189,9 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 
 func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
-	e.stats.concurrency = concurrency
+	if e.stats != nil {
+		e.stats.concurrency = concurrency
+	}
 	resultCh := make(chan *lookUpJoinTask, concurrency)
 	e.resultCh = resultCh
 	workerCtx, cancelFunc := context.WithCancel(ctx)
@@ -682,10 +684,12 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 }
 
 func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
-	start := time.Now()
-	defer func() {
-		atomic.AddInt64(&iw.stats.build, int64(time.Since(start)))
-	}()
+	if iw.stats != nil {
+		start := time.Now()
+		defer func() {
+			atomic.AddInt64(&iw.stats.build, int64(time.Since(start)))
+		}()
+	}
 	keyBuf := make([]byte, 0, 64)
 	valBuf := make([]byte, 8)
 	for i := 0; i < task.innerResult.NumChunks(); i++ {
@@ -746,6 +750,7 @@ type innerWorkerRuntimeStats struct {
 	construct int64
 	fetch     int64
 	build     int64
+	join      int64
 }
 
 func (e *indexLookUpJoinRuntimeStats) String() string {
@@ -774,6 +779,8 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 		buf.WriteString(time.Duration(e.innerWorker.fetch).String())
 		buf.WriteString(", build:")
 		buf.WriteString(time.Duration(e.innerWorker.build).String())
+		buf.WriteString(", join:")
+		buf.WriteString(time.Duration(e.innerWorker.join).String())
 		buf.WriteString("}")
 	}
 	return buf.String()
