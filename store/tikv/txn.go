@@ -538,6 +538,10 @@ func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return txn.us.GetMemBuffer()
 }
 
+func (txn *tikvTxn) GetMemBufferSnapshot() kv.MemBuffer {
+	panic("unsupported operation")
+}
+
 func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 	return txn.snapshot
 }
