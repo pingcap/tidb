@@ -87,7 +87,7 @@ func (s *testSuite1) TestSelectIntoOutfileTypes(c *C) {
 
 func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
 	tmpDir := os.TempDir()
-	outfile := filepath.Join(tmpDir, "select-into-outfile.data")
+	outfile := filepath.Join(tmpDir, "TestSelectIntoOutfileFromTable.data")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -129,7 +129,7 @@ func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
 
 func (s *testSuite1) TestSelectIntoOutfileConstant(c *C) {
 	tmpDir := os.TempDir()
-	outfile := filepath.Join(tmpDir, "select-into-outfile.data")
+	outfile := filepath.Join(tmpDir, "TestSelectIntoOutfileConstant.data")
 	tk := testkit.NewTestKit(c, s.store)
 	// On windows the outfile name looks like "C:\Users\genius\AppData\Local\Temp\select-into-outfile.data",
 	// fmt.Sprintf("%q") is used otherwise the string become
