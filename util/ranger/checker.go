@@ -32,8 +32,7 @@ func (c *conditionChecker) check(condition expression.Expression) bool {
 	case *expression.ScalarFunction:
 		return c.checkScalarFunction(x)
 	case *expression.Column:
-		s, _ := condition.(*expression.Column)
-		if s.RetType.EvalType() == types.ETString {
+		if x.RetType.EvalType() == types.ETString {
 			return false
 		}
 		return c.checkColumn(x)
@@ -48,7 +47,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 	switch scalar.FuncName.L {
 	case ast.LogicOr, ast.LogicAnd:
 		return c.check(scalar.GetArgs()[0]) && c.check(scalar.GetArgs()[1])
-	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT:
+	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT, ast.NullEQ:
 		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[1]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.

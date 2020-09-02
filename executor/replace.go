@@ -16,11 +16,11 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/trace"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -96,12 +96,12 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 	}
 
 	if r.handleKey != nil {
-		handle, err := tablecodec.DecodeRowKey(r.handleKey.newKV.key)
+		handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
 		if err != nil {
 			return err
 		}
 
-		if _, err := txn.Get(ctx, r.handleKey.newKV.key); err == nil {
+		if _, err := txn.Get(ctx, r.handleKey.newKey); err == nil {
 			rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
 			if err != nil {
 				return err
@@ -147,19 +147,18 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 //     3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (bool, bool, error) {
 	for _, uk := range r.uniqueKeys {
-		val, err := txn.Get(ctx, uk.newKV.key)
+		val, err := txn.Get(ctx, uk.newKey)
 		if err != nil {
 			if kv.IsErrNotFound(err) {
 				continue
 			}
 			return false, false, err
 		}
-
-		handle, err := tables.DecodeHandleInUniqueIndexValue(val)
+		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, uk.commonHandle)
 		if err != nil {
 			return false, true, err
 		}
-		rowUnchanged, err := e.removeRow(ctx, txn, kv.IntHandle(handle), r)
+		rowUnchanged, err := e.removeRow(ctx, txn, handle, r)
 		if err != nil {
 			return false, true, err
 		}
@@ -182,6 +181,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	 * See http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
 	 */
 
+	defer trace.StartRegion(ctx, "ReplaceExec").End()
 	// Get keys need to be checked.
 	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, newRows)
 	if err != nil {
@@ -191,6 +191,14 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return err
+	}
+	txnSize := txn.Size()
+
+	if e.collectRuntimeStatsEnabled() {
+		if snapshot := txn.GetSnapshot(); snapshot != nil {
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(kv.CollectRuntimeStats)
+		}
 	}
 
 	// Use BatchGet to fill cache.
@@ -206,7 +214,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			return err
 		}
 	}
-	e.memTracker.Consume(int64(txn.Size()))
+	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
 }
 

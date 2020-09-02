@@ -14,7 +14,6 @@
 package executor_test
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"net"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -82,10 +82,9 @@ func (s *testInfoschemaTableSuiteBase) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.store = store
 	s.dom = dom
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMAction = config.OOMActionLog
-	config.StoreGlobalConfig(&newConf)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionLog
+	})
 }
 
 func (s *testInfoschemaTableSuiteBase) TearDownSuite(c *C) {
@@ -514,27 +513,29 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	c.Assert(len(resultT1.Rows()), Greater, 0)
 }
 
-func (s *testInfoschemaTableSuite) TestForServersInfo(c *C) {
+func (s *testInfoschemaTableSerialSuite) TestForServersInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	result := tk.MustQuery("select * from information_schema.TIDB_SERVERS_INFO")
 	c.Assert(len(result.Rows()), Equals, 1)
 
-	serversInfo, err := infosync.GetAllServerInfo(context.Background())
+	info, err := infosync.GetServerInfo()
 	c.Assert(err, IsNil)
-	c.Assert(len(serversInfo), Equals, 1)
-
-	for _, info := range serversInfo {
-		c.Assert(result.Rows()[0][0], Equals, info.ID)
-		c.Assert(result.Rows()[0][1], Equals, info.IP)
-		c.Assert(result.Rows()[0][2], Equals, strconv.FormatInt(int64(info.Port), 10))
-		c.Assert(result.Rows()[0][3], Equals, strconv.FormatInt(int64(info.StatusPort), 10))
-		c.Assert(result.Rows()[0][4], Equals, info.Lease)
-		c.Assert(result.Rows()[0][5], Equals, info.Version)
-		c.Assert(result.Rows()[0][6], Equals, info.GitHash)
-	}
+	c.Assert(info, NotNil)
+	c.Assert(result.Rows()[0][0], Equals, info.ID)
+	c.Assert(result.Rows()[0][1], Equals, info.IP)
+	c.Assert(result.Rows()[0][2], Equals, strconv.FormatInt(int64(info.Port), 10))
+	c.Assert(result.Rows()[0][3], Equals, strconv.FormatInt(int64(info.StatusPort), 10))
+	c.Assert(result.Rows()[0][4], Equals, info.Lease)
+	c.Assert(result.Rows()[0][5], Equals, info.Version)
+	c.Assert(result.Rows()[0][6], Equals, info.GitHash)
+	c.Assert(result.Rows()[0][7], Equals, info.BinlogStatus)
+	c.Assert(result.Rows()[0][8], Equals, stringutil.BuildStringFromLabels(info.Labels))
 }
 
-func (s *testInfoschemaTableSuite) TestForTableTiFlashReplica(c *C) {
+func (s *testInfoschemaTableSerialSuite) TestForTableTiFlashReplica(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	tk := testkit.NewTestKit(c, s.store)
 	statistics.ClearHistoryJobs()
 	tk.MustExec("use test")
@@ -561,7 +562,7 @@ type testInfoschemaClusterTableSuite struct {
 
 func (s *testInfoschemaClusterTableSuite) SetUpSuite(c *C) {
 	s.testInfoschemaTableSuiteBase.SetUpSuite(c)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(c, ":0")
+	s.rpcserver, s.listenAddr = s.setUpRPCService(c, "127.0.0.1:0")
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 }
@@ -584,9 +585,9 @@ func (s *testInfoschemaClusterTableSuite) setUpRPCService(c *C, addr string) (*g
 		err = srv.Serve(lis)
 		c.Assert(err, IsNil)
 	}()
-	cfg := config.GetGlobalConfig()
-	cfg.Status.StatusPort = uint(port)
-	config.StoreGlobalConfig(cfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Status.StatusPort = uint(port)
+	})
 	return srv, addr
 }
 
@@ -721,6 +722,10 @@ func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 		row("tikv", "store1", ""),
 	))
 
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockStoreTombstone", `return(true)`), IsNil)
+	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type = 'tikv'").Check(testkit.Rows())
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/mockStoreTombstone"), IsNil)
+
 	// information_schema.cluster_config
 	instances := []string{
 		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash",
@@ -808,4 +813,25 @@ func (s *testInfoschemaTableSuite) TestSequences(c *C) {
 	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq'").Check(testkit.Rows("def test seq 1 10 0 1 10 -1 -1 "))
 	tk.MustExec("CREATE SEQUENCE test.seq2 start = -9 minvalue -10 maxvalue 10 increment -1 cache 15")
 	tk.MustQuery("SELECT * FROM information_schema.sequences WHERE sequence_schema='test' AND sequence_name='seq2'").Check(testkit.Rows("def test seq2 1 15 0 -1 10 -10 -9 "))
+}
+
+func (s *testInfoschemaTableSuite) TestTiFlashSystemTables(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	err := tk.QueryToErr("select * from information_schema.TIFLASH_TABLES;")
+	c.Assert(err.Error(), Equals, "Etcd addrs not found")
+	err = tk.QueryToErr("select * from information_schema.TIFLASH_SEGMENTS;")
+	c.Assert(err.Error(), Equals, "Etcd addrs not found")
+}
+
+func (s *testInfoschemaTableSuite) TestTablesPKType(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t_int (a int primary key, b int)")
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_int'").Check(testkit.Rows("INT CLUSTERED"))
+	tk.MustExec("set @@tidb_enable_clustered_index = 0")
+	tk.MustExec("create table t_implicit (a varchar(64) primary key, b int)")
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_implicit'").Check(testkit.Rows("NON-CLUSTERED"))
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("create table t_common (a varchar(64) primary key, b int)")
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_common'").Check(testkit.Rows("COMMON CLUSTERED"))
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES'").Check(testkit.Rows("NON-CLUSTERED"))
 }

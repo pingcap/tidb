@@ -226,8 +226,8 @@ type partialResult4FirstValue struct {
 	evaluator     valueEvaluator
 }
 
-func (v *firstValue) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4FirstValue{evaluator: buildValueEvaluator(v.tp)})
+func (v *firstValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	return PartialResult(&partialResult4FirstValue{evaluator: buildValueEvaluator(v.tp)}), 0
 }
 
 func (v *firstValue) ResetPartialResult(pr PartialResult) {
@@ -235,19 +235,19 @@ func (v *firstValue) ResetPartialResult(pr PartialResult) {
 	p.gotFirstValue = false
 }
 
-func (v *firstValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (v *firstValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4FirstValue)(pr)
 	if p.gotFirstValue {
-		return nil
+		return 0, nil
 	}
 	if len(rowsInGroup) > 0 {
 		p.gotFirstValue = true
 		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[0])
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 func (v *firstValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -271,8 +271,8 @@ type partialResult4LastValue struct {
 	evaluator    valueEvaluator
 }
 
-func (v *lastValue) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4LastValue{evaluator: buildValueEvaluator(v.tp)})
+func (v *lastValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	return PartialResult(&partialResult4LastValue{evaluator: buildValueEvaluator(v.tp)}), 0
 }
 
 func (v *lastValue) ResetPartialResult(pr PartialResult) {
@@ -280,16 +280,16 @@ func (v *lastValue) ResetPartialResult(pr PartialResult) {
 	p.gotLastValue = false
 }
 
-func (v *lastValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (v *lastValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4LastValue)(pr)
 	if len(rowsInGroup) > 0 {
 		p.gotLastValue = true
 		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[len(rowsInGroup)-1])
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return 0, nil
 }
 
 func (v *lastValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -314,8 +314,8 @@ type partialResult4NthValue struct {
 	evaluator valueEvaluator
 }
 
-func (v *nthValue) AllocPartialResult() PartialResult {
-	return PartialResult(&partialResult4NthValue{evaluator: buildValueEvaluator(v.tp)})
+func (v *nthValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	return PartialResult(&partialResult4NthValue{evaluator: buildValueEvaluator(v.tp)}), 0
 }
 
 func (v *nthValue) ResetPartialResult(pr PartialResult) {
@@ -323,20 +323,20 @@ func (v *nthValue) ResetPartialResult(pr PartialResult) {
 	p.seenRows = 0
 }
 
-func (v *nthValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error {
+func (v *nthValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	if v.nth == 0 {
-		return nil
+		return 0, nil
 	}
 	p := (*partialResult4NthValue)(pr)
 	numRows := uint64(len(rowsInGroup))
 	if v.nth > p.seenRows && v.nth-p.seenRows <= numRows {
 		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[v.nth-p.seenRows-1])
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
 	p.seenRows += numRows
-	return nil
+	return 0, nil
 }
 
 func (v *nthValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {

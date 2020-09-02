@@ -17,6 +17,7 @@ package tikv
 import (
 	"context"
 	"math"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -203,6 +204,7 @@ type batchCommandsClient struct {
 
 	tikvClientCfg config.TiKVClient
 	tikvLoad      *uint64
+	dialTimeout   time.Duration
 
 	// closed indicates the batch client is closed explicitly or not.
 	closed int32
@@ -217,6 +219,9 @@ func (c *batchCommandsClient) isStopped() bool {
 func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries []*batchCommandsEntry) {
 	for i, requestID := range request.RequestIds {
 		c.batched.Store(requestID, entries[i])
+		if trace.IsEnabled() {
+			trace.Log(entries[i].ctx, "rpc", "send")
+		}
 	}
 
 	if err := c.initBatchClient(); err != nil {
@@ -239,12 +244,23 @@ func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries
 	}
 }
 
-func (c *batchCommandsClient) recv() (*tikvpb.BatchCommandsResponse, error) {
-	failpoint.Inject("gotErrorInRecvLoop", func(_ failpoint.Value) (*tikvpb.BatchCommandsResponse, error) {
-		return nil, errors.New("injected error in batchRecvLoop")
+func (c *batchCommandsClient) recv() (resp *tikvpb.BatchCommandsResponse, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			metrics.PanicCounter.WithLabelValues(metrics.LabelBatchRecvLoop).Inc()
+			logutil.BgLogger().Error("batchCommandsClient.recv panic",
+				zap.Reflect("r", r),
+				zap.Stack("stack"))
+			err = errors.SuspendStack(errors.New("batch conn recv paniced"))
+		}
+	}()
+	failpoint.Inject("gotErrorInRecvLoop", func(_ failpoint.Value) (resp *tikvpb.BatchCommandsResponse, err error) {
+		err = errors.New("injected error in batchRecvLoop")
+		return
 	})
 	// When `conn.Close()` is called, `client.Recv()` will return an error.
-	return c.client.Recv()
+	resp, err = c.client.Recv()
+	return
 }
 
 // `failPendingRequests` must be called in locked contexts in order to avoid double closing channels.
@@ -268,7 +284,7 @@ func (c *batchCommandsClient) waitConnReady() (err error) {
 	defer func() {
 		metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
 	}()
-	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	dialCtx, cancel := context.WithTimeout(context.Background(), c.dialTimeout)
 	for {
 		s := c.conn.GetState()
 		if s == connectivity.Ready {
@@ -352,6 +368,9 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 				continue
 			}
 			entry := value.(*batchCommandsEntry)
+			if trace.IsEnabled() {
+				trace.Log(entry.ctx, "rpc", "received")
+			}
 			logutil.Eventf(entry.ctx, "receive %T response with other %d batched requests from %s", responses[i].GetCmd(), len(responses), c.target)
 			if atomic.LoadInt32(&entry.canceled) == 0 {
 				// Put the response only if the request is not canceled.
@@ -373,7 +392,7 @@ func (c *batchCommandsClient) reCreateStreamingClient(err error) (stopped bool) 
 	c.lockForRecreate()
 	defer c.unlockForRecreate()
 
-	b := NewBackoffer(context.Background(), math.MaxInt32)
+	b := NewBackofferWithVars(context.Background(), math.MaxInt32, nil)
 	for { // try to re-create the streaming in the loop.
 		if c.isStopped() {
 			return true
@@ -451,6 +470,13 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 
 		a.pendingRequests.Set(float64(len(a.batchCommandsCh)))
 		a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests)
+
+		// curl -XPUT -d 'return(true)' http://0.0.0.0:10080/fail/github.com/pingcap/tidb/store/tikv/mockBlockOnBatchClient
+		failpoint.Inject("mockBlockOnBatchClient", func(val failpoint.Value) {
+			if val.(bool) {
+				time.Sleep(1 * time.Hour)
+			}
+		})
 
 		if len(entries) < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
 			// If the target TiKV is overload, wait a while to collect more requests.
@@ -592,7 +618,7 @@ func sendBatchRequest(
 			zap.String("to", addr), zap.String("cause", ctx.Err().Error()))
 		return nil, errors.Trace(ctx.Err())
 	case <-timer.C:
-		return nil, context.DeadlineExceeded
+		return nil, errors.SuspendStack(errors.Annotate(context.DeadlineExceeded, "wait sendLoop"))
 	}
 
 	select {
@@ -607,7 +633,7 @@ func sendBatchRequest(
 			zap.String("to", addr), zap.String("cause", ctx.Err().Error()))
 		return nil, errors.Trace(ctx.Err())
 	case <-timer.C:
-		return nil, context.DeadlineExceeded
+		return nil, errors.SuspendStack(errors.Annotate(context.DeadlineExceeded, "wait recvLoop"))
 	}
 }
 

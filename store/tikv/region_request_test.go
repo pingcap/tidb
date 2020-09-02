@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/storeutil"
+	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -123,7 +124,7 @@ func (s *testRegionRequestSuite) TestOnRegionError(c *C) {
 			}}
 			return staleResp, nil
 		}}
-		bo := NewBackoffer(context.Background(), 5)
+		bo := NewBackofferWithVars(context.Background(), 5, nil)
 		resp, err := s.regionRequestSender.SendReq(bo, req, region.Region, time.Second)
 		c.Assert(err, NotNil)
 		c.Assert(resp, IsNil)
@@ -202,7 +203,7 @@ func (s *testRegionRequestSuite) TestOnSendFailedWithCloseKnownStoreThenUseNewOn
 	s.cluster.ChangeLeader(s.region, s.peer)
 
 	// send to store2 fail and send to new leader store1.
-	bo2 := NewBackoffer(context.Background(), 100)
+	bo2 := NewBackofferWithVars(context.Background(), 100, nil)
 	resp, err = s.regionRequestSender.SendReq(bo2, req, region.Region, time.Second)
 	c.Assert(err, IsNil)
 	regionErr, err := resp.GetRegionError()
@@ -446,6 +447,10 @@ func (s *mockTikvGrpcServer) VerDeleteRange(context.Context, *kvrpcpb.VerDeleteR
 	return nil, errors.New("unreachable")
 }
 
+func (s *mockTikvGrpcServer) KvCheckSecondaryLocks(c goctx.Context, request *kvrpcpb.CheckSecondaryLocksRequest) (*kvrpcpb.CheckSecondaryLocksResponse, error) {
+	return nil, errors.New("unreachable")
+}
+
 func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) {
 	// prepare a mock tikv grpc server
 	addr := "localhost:56341"
@@ -486,4 +491,36 @@ func (s *testRegionRequestSuite) TestNoReloadRegionForGrpcWhenCtxCanceled(c *C) 
 	// cleanup
 	server.Stop()
 	wg.Wait()
+}
+
+func (s *testRegionRequestSuite) TestOnMaxTimestampNotSyncedError(c *C) {
+	req := tikvrpc.NewRequest(tikvrpc.CmdPrewrite, &kvrpcpb.PrewriteRequest{})
+	region, err := s.cache.LocateRegionByID(s.bo, s.region)
+	c.Assert(err, IsNil)
+	c.Assert(region, NotNil)
+
+	// test retry for max timestamp not synced
+	func() {
+		oc := s.regionRequestSender.client
+		defer func() {
+			s.regionRequestSender.client = oc
+		}()
+		count := 0
+		s.regionRequestSender.client = &fnClient{func(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (response *tikvrpc.Response, err error) {
+			count += 1
+			var resp *tikvrpc.Response
+			if count < 3 {
+				resp = &tikvrpc.Response{Resp: &kvrpcpb.PrewriteResponse{
+					RegionError: &errorpb.Error{MaxTimestampNotSynced: &errorpb.MaxTimestampNotSynced{}},
+				}}
+			} else {
+				resp = &tikvrpc.Response{Resp: &kvrpcpb.PrewriteResponse{}}
+			}
+			return resp, nil
+		}}
+		bo := NewBackofferWithVars(context.Background(), 5, nil)
+		resp, err := s.regionRequestSender.SendReq(bo, req, region.Region, time.Second)
+		c.Assert(err, IsNil)
+		c.Assert(resp, NotNil)
+	}()
 }

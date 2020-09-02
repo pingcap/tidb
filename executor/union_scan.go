@@ -15,11 +15,14 @@ package executor
 
 import (
 	"context"
+	"fmt"
+	"runtime/trace"
 	"sync"
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -103,8 +106,8 @@ type UnionScanExec struct {
 	conditionsWithVirCol []expression.Expression
 	columns              []*model.ColumnInfo
 	table                table.Table
-	// belowHandleIndex is the handle's position of the below scan plan.
-	belowHandleIndex int
+	// belowHandleCols is the handle's position of the below scan plan.
+	belowHandleCols plannercore.HandleCols
 
 	addedRows           [][]types.Datum
 	cursor4AddRows      int
@@ -136,6 +139,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		reader = sel.children[0]
 	}
 
+	defer trace.StartRegion(ctx, "UnionScanBuildRows").End()
 	// 1. select without virtual columns
 	// 2. build virtual columns and select with virtual columns
 	switch x := reader.(type) {
@@ -145,6 +149,8 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 		us.addedRows, err = buildMemIndexReader(us, x).getMemRows()
 	case *IndexLookUpExecutor:
 		us.addedRows, err = buildMemIndexLookUpReader(us, x).getMemRows()
+	default:
+		err = fmt.Errorf("unexpected union scan children:%T", reader)
 	}
 	if err != nil {
 		return err
@@ -193,6 +199,15 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+// Close implements the Executor Close interface.
+func (us *UnionScanExec) Close() error {
+	us.cursor4AddRows = 0
+	us.cursor4SnapshotRows = 0
+	us.addedRows = us.addedRows[:0]
+	us.snapshotRows = us.snapshotRows[:0]
+	return us.children[0].Close()
+}
+
 // getOneRow gets one result row from dirty table or child.
 func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	snapshotRow, err := us.getSnapshotRow(ctx)
@@ -200,6 +215,7 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 		return nil, err
 	}
 	addedRow := us.getAddedRow()
+
 	var row []types.Datum
 	var isSnapshotRow bool
 	if addedRow == nil {
@@ -244,7 +260,11 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		}
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			snapshotHandle := kv.IntHandle(row.GetInt64(us.belowHandleIndex))
+			var snapshotHandle kv.Handle
+			snapshotHandle, err = us.belowHandleCols.BuildHandle(row)
+			if err != nil {
+				return nil, err
+			}
 			if _, ok := us.dirty.deletedRows.Get(snapshotHandle); ok {
 				continue
 			}
@@ -301,15 +321,5 @@ func (us *UnionScanExec) compare(a, b []types.Datum) (int, error) {
 			return cmp, nil
 		}
 	}
-	aHandle := a[us.belowHandleIndex].GetInt64()
-	bHandle := b[us.belowHandleIndex].GetInt64()
-	var cmp int
-	if aHandle == bHandle {
-		cmp = 0
-	} else if aHandle > bHandle {
-		cmp = 1
-	} else {
-		cmp = -1
-	}
-	return cmp, nil
+	return us.belowHandleCols.Compare(a, b)
 }

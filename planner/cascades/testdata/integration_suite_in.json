@@ -44,6 +44,7 @@
       "select count(case when a > 0 and a <= 1000 then b end) from t",
       "select count(case when a <= 0 or a > 1000 then null else b end) from t",
       "select count(distinct case when a > 0 and a <= 1000 then b end) from t",
+      "select approx_count_distinct(case when a > 0 and a <= 1000 then b end) from t",
       "select count(b), sum(b), avg(b), b, max(b), min(b), bit_and(b), bit_or(b), bit_xor(b) from t group by a having sum(b) >= 0 and count(b) >= 0 order by b",
       "select group_concat(a, b), min(b), avg(a / b), a from t group by (a+b), a order by a"
     ]

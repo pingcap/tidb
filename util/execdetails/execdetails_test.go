@@ -79,14 +79,17 @@ func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIteration
 
 func TestCopRuntimeStats(t *testing.T) {
 	stats := NewRuntimeStatsColl()
-	stats.RecordOneCopTask("table_scan", "8.8.8.8", mockExecutorExecutionSummary(1, 1, 1))
-	stats.RecordOneCopTask("table_scan", "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
-	stats.RecordOneCopTask("agg", "8.8.8.8", mockExecutorExecutionSummary(3, 3, 3))
-	stats.RecordOneCopTask("agg", "8.8.8.9", mockExecutorExecutionSummary(4, 4, 4))
-	if stats.ExistsCopStats("table_scan") != true {
+	tableScanID := 1
+	aggID := 2
+	tableReaderID := 3
+	stats.RecordOneCopTask(tableScanID, "8.8.8.8", mockExecutorExecutionSummary(1, 1, 1))
+	stats.RecordOneCopTask(tableScanID, "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
+	stats.RecordOneCopTask(aggID, "8.8.8.8", mockExecutorExecutionSummary(3, 3, 3))
+	stats.RecordOneCopTask(aggID, "8.8.8.9", mockExecutorExecutionSummary(4, 4, 4))
+	if stats.ExistsCopStats(tableScanID) != true {
 		t.Fatal("exist")
 	}
-	cop := stats.GetCopStats("table_scan")
+	cop := stats.GetCopStats(tableScanID)
 	if cop.String() != "proc max:2ns, min:1ns, p80:2ns, p95:2ns, iters:3, tasks:2" {
 		t.Fatal("table_scan")
 	}
@@ -100,35 +103,86 @@ func TestCopRuntimeStats(t *testing.T) {
 		t.Fatalf("cop stats string is not expect, got: %v", copStats[0].String())
 	}
 
-	if stats.GetCopStats("agg").String() != "proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2" {
+	if stats.GetCopStats(aggID).String() != "proc max:4ns, min:3ns, p80:4ns, p95:4ns, iters:7, tasks:2" {
 		t.Fatal("agg")
 	}
-	rootStats := stats.GetRootStats("table_reader")
+	rootStats := stats.GetRootStats(tableReaderID)
 	if rootStats == nil {
 		t.Fatal("table_reader")
 	}
-	if stats.ExistsRootStats("table_reader") == false {
+	if stats.ExistsRootStats(tableReaderID) == false {
 		t.Fatal("table_reader not exists")
 	}
 }
 
-func TestReaderStats(t *testing.T) {
-	r := new(ReaderRuntimeStats)
-	if r.String() != "" {
-		t.Fatal()
+func TestRuntimeStatsWithCommit(t *testing.T) {
+	basicStats := &BasicRuntimeStats{
+		loop:    1,
+		consume: int64(time.Second),
 	}
-
-	r.procKeys = append(r.procKeys, 100)
-	r.copRespTime = append(r.copRespTime, time.Millisecond*100)
-	if r.String() != "rpc num: 1, rpc time:100ms, proc keys:100" {
-		t.Fatal()
+	commitDetail := &CommitDetails{
+		GetCommitTsTime:   time.Second,
+		PrewriteTime:      time.Second,
+		CommitTime:        time.Second,
+		CommitBackoffTime: int64(time.Second),
+		Mu: struct {
+			sync.Mutex
+			BackoffTypes []fmt.Stringer
+		}{BackoffTypes: []fmt.Stringer{
+			stringutil.MemoizeStr(func() string {
+				return "backoff1"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff2"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff1"
+			}),
+		}},
+		ResolveLockTime:   int64(time.Second),
+		WriteKeys:         3,
+		WriteSize:         66,
+		PrewriteRegionNum: 5,
+		TxnRetry:          2,
 	}
-
-	for i := 0; i < 100; i++ {
-		r.procKeys = append(r.procKeys, int64(i))
-		r.copRespTime = append(r.copRespTime, time.Millisecond*time.Duration(i))
+	stats := &RuntimeStatsWithCommit{
+		RuntimeStats: basicStats,
+		Commit:       commitDetail,
 	}
-	if r.String() != "rpc num: 101, rpc max:100ms, min:0s, avg:50ms, p80:80ms, p95:95ms, proc keys max:100, p95:95" {
-		t.Fatal()
+	expect := "time:1s, loops:1, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, type: [backoff1 backoff2]}, resolve_lock: 1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
+	if stats.String() != expect {
+		t.Fatalf("%v != %v", stats.String(), expect)
+	}
+	lockDetail := &LockKeysDetails{
+		TotalTime:       time.Second,
+		RegionNum:       2,
+		LockKeys:        10,
+		ResolveLockTime: int64(time.Second * 2),
+		BackoffTime:     int64(time.Second * 3),
+		Mu: struct {
+			sync.Mutex
+			BackoffTypes []fmt.Stringer
+		}{BackoffTypes: []fmt.Stringer{
+			stringutil.MemoizeStr(func() string {
+				return "backoff4"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff5"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff5"
+			}),
+		}},
+		LockRPCTime:  int64(time.Second * 5),
+		LockRPCCount: 50,
+		RetryCount:   2,
+	}
+	stats = &RuntimeStatsWithCommit{
+		RuntimeStats: basicStats,
+		LockKeys:     lockDetail,
+	}
+	expect = "time:1s, loops:1, lock_keys: {time:1s, region:2, keys:10, resolve_lock:2s, backoff: {time: 3s, type: [backoff4 backoff5]}, lock_rpc:5s, rpc_count:50, retry_count:2}"
+	if stats.String() != expect {
+		t.Fatalf("%v != %v", stats.String(), expect)
 	}
 }

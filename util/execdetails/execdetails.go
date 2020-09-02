@@ -14,6 +14,7 @@
 package execdetails
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strconv"
@@ -27,9 +28,15 @@ import (
 )
 
 type commitDetailCtxKeyType struct{}
+type lockKeysDetailCtxKeyType struct{}
 
-// CommitDetailCtxKey presents CommitDetail info key in context.
-var CommitDetailCtxKey = commitDetailCtxKeyType{}
+var (
+	// CommitDetailCtxKey presents CommitDetail info key in context.
+	CommitDetailCtxKey = commitDetailCtxKeyType{}
+
+	// LockKeysDetailCtxKey presents LockKeysDetail info key in context.
+	LockKeysDetailCtxKey = lockKeysDetailCtxKeyType{}
+)
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
@@ -45,6 +52,21 @@ type ExecDetails struct {
 	TotalKeys        int64
 	ProcessedKeys    int64
 	CommitDetail     *CommitDetails
+	LockKeysDetail   *LockKeysDetails
+}
+
+type stmtExecDetailKeyType struct{}
+
+// StmtExecDetailKey used to carry StmtExecDetail info in context.Context.
+var StmtExecDetailKey = stmtExecDetailKeyType{}
+
+// StmtExecDetails contains stmt level execution detail info.
+type StmtExecDetails struct {
+	BackoffCount         int64
+	BackoffDuration      int64
+	WaitKVRespDuration   int64
+	WaitPDRespDuration   int64
+	WriteSQLRespDuration time.Duration
 }
 
 // CommitDetails contains commit detail information.
@@ -64,6 +86,35 @@ type CommitDetails struct {
 	WriteSize         int
 	PrewriteRegionNum int32
 	TxnRetry          int
+}
+
+// LockKeysDetails contains pessimistic lock keys detail information.
+type LockKeysDetails struct {
+	TotalTime       time.Duration
+	RegionNum       int32
+	LockKeys        int32
+	ResolveLockTime int64
+	BackoffTime     int64
+	Mu              struct {
+		sync.Mutex
+		BackoffTypes []fmt.Stringer
+	}
+	LockRPCTime  int64
+	LockRPCCount int64
+	RetryCount   int
+}
+
+// Merge merges lock keys execution details into self.
+func (ld *LockKeysDetails) Merge(lockKey *LockKeysDetails) {
+	ld.TotalTime += lockKey.TotalTime
+	ld.RegionNum += lockKey.RegionNum
+	ld.LockKeys += lockKey.LockKeys
+	ld.ResolveLockTime += lockKey.ResolveLockTime
+	ld.BackoffTime += lockKey.BackoffTime
+	ld.LockRPCTime += lockKey.LockRPCTime
+	ld.LockRPCCount += ld.LockRPCCount
+	ld.Mu.BackoffTypes = append(ld.Mu.BackoffTypes, lockKey.Mu.BackoffTypes...)
+	ld.RetryCount++
 }
 
 const (
@@ -260,7 +311,7 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats map[string][]*RuntimeStats
+	stats map[string][]*BasicRuntimeStats
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
@@ -268,7 +319,7 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	crs.Lock()
 	defer crs.Unlock()
 	crs.stats[address] = append(crs.stats[address],
-		&RuntimeStats{loop: int32(*summary.NumIterations),
+		&BasicRuntimeStats{loop: int32(*summary.NumIterations),
 			consume: int64(*summary.TimeProcessedNs),
 			rows:    int64(*summary.NumProducedRows)})
 }
@@ -309,55 +360,108 @@ func (crs *CopRuntimeStats) String() string {
 		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
 }
 
-// ReaderRuntimeStats collects stats for TableReader, IndexReader and IndexLookupReader
-type ReaderRuntimeStats struct {
-	sync.Mutex
-
-	copRespTime []time.Duration
-	procKeys    []int64
+// RuntimeStats is used to express the executor runtime information.
+type RuntimeStats interface {
+	GetActRows() int64
+	String() string
 }
 
-// recordOneCopTask record once cop response time to update maxcopRespTime
-func (rrs *ReaderRuntimeStats) recordOneCopTask(t time.Duration, detail *ExecDetails) {
-	rrs.Lock()
-	defer rrs.Unlock()
-	rrs.copRespTime = append(rrs.copRespTime, t)
-	rrs.procKeys = append(rrs.procKeys, detail.ProcessedKeys)
+// BasicRuntimeStats is the basic runtime stats.
+type BasicRuntimeStats struct {
+	// executor's Next() called times.
+	loop int32
+	// executor consume time.
+	consume int64
+	// executor return row count.
+	rows int64
 }
 
-func (rrs *ReaderRuntimeStats) String() string {
-	size := len(rrs.copRespTime)
-	if size == 0 {
-		return ""
-	}
-	if size == 1 {
-		return fmt.Sprintf("rpc num: 1, rpc time:%v, proc keys:%v", rrs.copRespTime[0], rrs.procKeys[0])
-	}
-	sort.Slice(rrs.copRespTime, func(i, j int) bool {
-		return rrs.copRespTime[i] < rrs.copRespTime[j]
-	})
-	vMax, vMin := rrs.copRespTime[size-1], rrs.copRespTime[0]
-	vP80, vP95 := rrs.copRespTime[size*4/5], rrs.copRespTime[size*19/20]
-	sum := 0.0
-	for _, t := range rrs.copRespTime {
-		sum += float64(t)
-	}
-	vAvg := time.Duration(sum / float64(size))
+// GetActRows implements the RuntimeStats interface.
+func (e *BasicRuntimeStats) GetActRows() int64 {
+	return e.rows
+}
 
-	sort.Slice(rrs.procKeys, func(i, j int) bool {
-		return rrs.procKeys[i] < rrs.procKeys[j]
-	})
-	keyMax := rrs.procKeys[size-1]
-	keyP95 := rrs.procKeys[size*19/20]
-	return fmt.Sprintf("rpc num: %v, rpc max:%v, min:%v, avg:%v, p80:%v, p95:%v, proc keys max:%v, p95:%v", size, vMax, vMin, vAvg, vP80, vP95, keyMax, keyP95)
+// Record records executor's execution.
+func (e *BasicRuntimeStats) Record(d time.Duration, rowNum int) {
+	atomic.AddInt32(&e.loop, 1)
+	atomic.AddInt64(&e.consume, int64(d))
+	atomic.AddInt64(&e.rows, int64(rowNum))
+}
+
+// SetRowNum sets the row num.
+func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
+	atomic.StoreInt64(&e.rows, rowNum)
+}
+
+// String implements the RuntimeStats interface.
+func (e *BasicRuntimeStats) String() string {
+	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
 }
 
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
-	mu          sync.Mutex
-	rootStats   map[string]*RuntimeStats
-	copStats    map[string]*CopRuntimeStats
-	readerStats map[string]*ReaderRuntimeStats
+	mu        sync.Mutex
+	rootStats map[int]RuntimeStats
+	copStats  map[int]*CopRuntimeStats
+}
+
+// NewRuntimeStatsColl creates new executor collector.
+func NewRuntimeStatsColl() *RuntimeStatsColl {
+	return &RuntimeStatsColl{rootStats: make(map[int]RuntimeStats),
+		copStats: make(map[int]*CopRuntimeStats)}
+}
+
+// RegisterStats register execStat for a executor.
+func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
+	e.mu.Lock()
+	e.rootStats[planID] = info
+	e.mu.Unlock()
+}
+
+// GetRootStats gets execStat for a executor.
+func (e *RuntimeStatsColl) GetRootStats(planID int) RuntimeStats {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	runtimeStats, exists := e.rootStats[planID]
+	if !exists {
+		runtimeStats = &BasicRuntimeStats{}
+		e.rootStats[planID] = runtimeStats
+	}
+	return runtimeStats
+}
+
+// GetCopStats gets the CopRuntimeStats specified by planID.
+func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	copStats, ok := e.copStats[planID]
+	if !ok {
+		copStats = &CopRuntimeStats{stats: make(map[string][]*BasicRuntimeStats)}
+		e.copStats[planID] = copStats
+	}
+	return copStats
+}
+
+// RecordOneCopTask records a specific cop tasks's execution detail.
+func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary *tipb.ExecutorExecutionSummary) {
+	copStats := e.GetCopStats(planID)
+	copStats.RecordOneCopTask(address, summary)
+}
+
+// ExistsRootStats checks if the planID exists in the rootStats collection.
+func (e *RuntimeStatsColl) ExistsRootStats(planID int) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, exists := e.rootStats[planID]
+	return exists
+}
+
+// ExistsCopStats checks if the planID exists in the copStats collection.
+func (e *RuntimeStatsColl) ExistsCopStats(planID int) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, exists := e.copStats[planID]
+	return exists
 }
 
 // ConcurrencyInfo is used to save the concurrency information of the executor operator
@@ -371,132 +475,33 @@ func NewConcurrencyInfo(name string, num int) *ConcurrencyInfo {
 	return &ConcurrencyInfo{name, num}
 }
 
-// RuntimeStats collects one executor's execution info.
-type RuntimeStats struct {
-	// executor's Next() called times.
-	loop int32
-	// executor consume time.
-	consume int64
-	// executor return row count.
-	rows int64
+// RuntimeStatsWithConcurrencyInfo is the BasicRuntimeStats with ConcurrencyInfo.
+type RuntimeStatsWithConcurrencyInfo struct {
+	*BasicRuntimeStats
 
 	// protect concurrency
-	mu sync.Mutex
+	sync.Mutex
 	// executor concurrency information
 	concurrency []*ConcurrencyInfo
-
-	// additional information for executors
-	additionalInfo string
-}
-
-// NewRuntimeStatsColl creates new executor collector.
-func NewRuntimeStatsColl() *RuntimeStatsColl {
-	return &RuntimeStatsColl{rootStats: make(map[string]*RuntimeStats),
-		copStats: make(map[string]*CopRuntimeStats), readerStats: make(map[string]*ReaderRuntimeStats)}
-}
-
-// GetRootStats gets execStat for a executor.
-func (e *RuntimeStatsColl) GetRootStats(planID string) *RuntimeStats {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	runtimeStats, exists := e.rootStats[planID]
-	if !exists {
-		runtimeStats = &RuntimeStats{}
-		e.rootStats[planID] = runtimeStats
-	}
-	return runtimeStats
-}
-
-// GetCopStats gets the CopRuntimeStats specified by planID.
-func (e *RuntimeStatsColl) GetCopStats(planID string) *CopRuntimeStats {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	copStats, ok := e.copStats[planID]
-	if !ok {
-		copStats = &CopRuntimeStats{stats: make(map[string][]*RuntimeStats)}
-		e.copStats[planID] = copStats
-	}
-	return copStats
-}
-
-// RecordOneCopTask records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordOneCopTask(planID, address string, summary *tipb.ExecutorExecutionSummary) {
-	copStats := e.GetCopStats(planID)
-	copStats.RecordOneCopTask(address, summary)
-}
-
-// RecordOneReaderStats records a specific stats for TableReader, IndexReader and IndexLookupReader.
-func (e *RuntimeStatsColl) RecordOneReaderStats(planID string, copRespTime time.Duration, detail *ExecDetails) {
-	readerStats := e.GetReaderStats(planID)
-	readerStats.recordOneCopTask(copRespTime, detail)
-}
-
-// ExistsRootStats checks if the planID exists in the rootStats collection.
-func (e *RuntimeStatsColl) ExistsRootStats(planID string) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	_, exists := e.rootStats[planID]
-	return exists
-}
-
-// ExistsCopStats checks if the planID exists in the copStats collection.
-func (e *RuntimeStatsColl) ExistsCopStats(planID string) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	_, exists := e.copStats[planID]
-	return exists
-}
-
-// GetReaderStats gets the ReaderRuntimeStats specified by planID.
-func (e *RuntimeStatsColl) GetReaderStats(planID string) *ReaderRuntimeStats {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	stats, exists := e.readerStats[planID]
-	if !exists {
-		stats = &ReaderRuntimeStats{copRespTime: make([]time.Duration, 0, 20)}
-		e.readerStats[planID] = stats
-	}
-	return stats
-}
-
-// Record records executor's execution.
-func (e *RuntimeStats) Record(d time.Duration, rowNum int) {
-	atomic.AddInt32(&e.loop, 1)
-	atomic.AddInt64(&e.consume, int64(d))
-	atomic.AddInt64(&e.rows, int64(rowNum))
-}
-
-// SetRowNum sets the row num.
-func (e *RuntimeStats) SetRowNum(rowNum int64) {
-	atomic.StoreInt64(&e.rows, rowNum)
 }
 
 // SetConcurrencyInfo sets the concurrency informations.
 // We must clear the concurrencyInfo first when we call the SetConcurrencyInfo.
 // When the num <= 0, it means the exector operator is not executed parallel.
-func (e *RuntimeStats) SetConcurrencyInfo(infos ...*ConcurrencyInfo) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+func (e *RuntimeStatsWithConcurrencyInfo) SetConcurrencyInfo(infos ...*ConcurrencyInfo) {
+	e.Lock()
+	defer e.Unlock()
 	e.concurrency = e.concurrency[:0]
 	for _, info := range infos {
 		e.concurrency = append(e.concurrency, info)
 	}
 }
 
-// SetAdditionalInfo sets the additional information.
-func (e *RuntimeStats) SetAdditionalInfo(info string) {
-	e.mu.Lock()
-	e.additionalInfo = info
-	e.mu.Unlock()
-}
-
-// GetActRows return rows of CopRuntimeStats.
-func (e *RuntimeStats) GetActRows() int64 {
-	return e.rows
-}
-
-func (e *RuntimeStats) String() string {
-	result := fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
+func (e *RuntimeStatsWithConcurrencyInfo) String() string {
+	var result string
+	if e.BasicRuntimeStats != nil {
+		result = fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
+	}
 	if len(e.concurrency) > 0 {
 		for _, concurrency := range e.concurrency {
 			if concurrency.concurrencyNum > 0 {
@@ -506,8 +511,136 @@ func (e *RuntimeStats) String() string {
 			}
 		}
 	}
-	if len(e.additionalInfo) > 0 {
-		result += ", " + e.additionalInfo
-	}
 	return result
+}
+
+// RuntimeStatsWithCommit is the RuntimeStats with commit detail.
+type RuntimeStatsWithCommit struct {
+	RuntimeStats
+	Commit   *CommitDetails
+	LockKeys *LockKeysDetails
+}
+
+func (e *RuntimeStatsWithCommit) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	if e.RuntimeStats != nil {
+		buf.WriteString(e.RuntimeStats.String())
+	}
+	if e.Commit != nil {
+		buf.WriteString(", commit_txn: {")
+		if e.Commit.PrewriteTime > 0 {
+			buf.WriteString("prewrite:")
+			buf.WriteString(e.Commit.PrewriteTime.String())
+		}
+		if e.Commit.WaitPrewriteBinlogTime > 0 {
+			buf.WriteString(", wait_prewrite_binlog:")
+			buf.WriteString(e.Commit.WaitPrewriteBinlogTime.String())
+		}
+		if e.Commit.GetCommitTsTime > 0 {
+			buf.WriteString(", get_commit_ts:")
+			buf.WriteString(e.Commit.GetCommitTsTime.String())
+		}
+		if e.Commit.CommitTime > 0 {
+			buf.WriteString(", commit:")
+			buf.WriteString(e.Commit.CommitTime.String())
+		}
+		commitBackoffTime := atomic.LoadInt64(&e.Commit.CommitBackoffTime)
+		if commitBackoffTime > 0 {
+			buf.WriteString(", backoff: {time: ")
+			buf.WriteString(time.Duration(commitBackoffTime).String())
+			e.Commit.Mu.Lock()
+			if len(e.Commit.Mu.BackoffTypes) > 0 {
+				buf.WriteString(", type: ")
+				buf.WriteString(e.formatBackoff(e.Commit.Mu.BackoffTypes))
+			}
+			e.Commit.Mu.Unlock()
+			buf.WriteString("}")
+		}
+		if e.Commit.ResolveLockTime > 0 {
+			buf.WriteString(", resolve_lock: ")
+			buf.WriteString(time.Duration(e.Commit.ResolveLockTime).String())
+		}
+
+		prewriteRegionNum := atomic.LoadInt32(&e.Commit.PrewriteRegionNum)
+		if prewriteRegionNum > 0 {
+			buf.WriteString(", region_num:")
+			buf.WriteString(strconv.FormatInt(int64(prewriteRegionNum), 10))
+		}
+		if e.Commit.WriteKeys > 0 {
+			buf.WriteString(", write_keys:")
+			buf.WriteString(strconv.FormatInt(int64(e.Commit.WriteKeys), 10))
+		}
+		if e.Commit.WriteSize > 0 {
+			buf.WriteString(", write_byte:")
+			buf.WriteString(strconv.FormatInt(int64(e.Commit.WriteSize), 10))
+		}
+		if e.Commit.TxnRetry > 0 {
+			buf.WriteString(", txn_retry:")
+			buf.WriteString(strconv.FormatInt(int64(e.Commit.TxnRetry), 10))
+		}
+		buf.WriteString("}")
+	}
+	if e.LockKeys != nil {
+		buf.WriteString(", lock_keys: {")
+		if e.LockKeys.TotalTime > 0 {
+			buf.WriteString("time:")
+			buf.WriteString(e.LockKeys.TotalTime.String())
+		}
+		if e.LockKeys.RegionNum > 0 {
+			buf.WriteString(", region:")
+			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.RegionNum), 10))
+		}
+		if e.LockKeys.LockKeys > 0 {
+			buf.WriteString(", keys:")
+			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.LockKeys), 10))
+		}
+		if e.LockKeys.ResolveLockTime > 0 {
+			buf.WriteString(", resolve_lock:")
+			buf.WriteString(time.Duration(e.LockKeys.ResolveLockTime).String())
+		}
+		if e.LockKeys.BackoffTime > 0 {
+			buf.WriteString(", backoff: {time: ")
+			buf.WriteString(time.Duration(e.LockKeys.BackoffTime).String())
+			e.LockKeys.Mu.Lock()
+			if len(e.LockKeys.Mu.BackoffTypes) > 0 {
+				buf.WriteString(", type: ")
+				buf.WriteString(e.formatBackoff(e.LockKeys.Mu.BackoffTypes))
+			}
+			e.LockKeys.Mu.Unlock()
+			buf.WriteString("}")
+		}
+		if e.LockKeys.LockRPCTime > 0 {
+			buf.WriteString(", lock_rpc:")
+			buf.WriteString(time.Duration(e.LockKeys.LockRPCTime).String())
+		}
+		if e.LockKeys.LockRPCCount > 0 {
+			buf.WriteString(", rpc_count:")
+			buf.WriteString(strconv.FormatInt(e.LockKeys.LockRPCCount, 10))
+		}
+		if e.LockKeys.RetryCount > 0 {
+			buf.WriteString(", retry_count:")
+			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.RetryCount), 10))
+		}
+		buf.WriteString("}")
+	}
+	return buf.String()
+}
+
+func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []fmt.Stringer) string {
+	if len(backoffTypes) == 0 {
+		return ""
+	}
+	tpMap := make(map[string]struct{})
+	tpArray := []string{}
+	for _, tp := range backoffTypes {
+		tpStr := tp.String()
+		_, ok := tpMap[tpStr]
+		if ok {
+			continue
+		}
+		tpMap[tpStr] = struct{}{}
+		tpArray = append(tpArray, tpStr)
+	}
+	sort.Strings(tpArray)
+	return fmt.Sprintf("%v", tpArray)
 }
