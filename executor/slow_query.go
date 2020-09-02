@@ -231,6 +231,17 @@ func (e *slowQueryRetriever) parseSlowLog(ctx sessionctx.Context, reader *bufio.
 				line = line[len(variable.SlowLogRowPrefixStr):]
 				if strings.HasPrefix(line, variable.SlowLogPrevStmtPrefix) {
 					st.prevStmt = line[len(variable.SlowLogPrevStmtPrefix):]
+				} else if strings.HasPrefix(line, variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr) {
+					// the user and hostname field has a special format, for example, # User@Host: root[root] @ localhost [127.0.0.1]
+					value := line[len(variable.SlowLogUserAndHostStr+variable.SlowLogSpaceMarkStr):]
+					valid, err := st.setFieldValue(tz, variable.SlowLogUserAndHostStr, value, e.fileLine, e.checker)
+					if err != nil {
+						ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						continue
+					}
+					if !valid {
+						startFlag = false
+					}
 				} else {
 					fieldValues := strings.Split(line, " ")
 					for i := 0; i < len(fieldValues)-1; i += 2 {
@@ -369,12 +380,27 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 	case variable.SlowLogTxnStartTSStr:
 		st.txnStartTs, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogUserStr:
+		// the old User format is kept for compatibility
 		fields := strings.SplitN(value, "@", 2)
 		if len(field) > 0 {
 			st.user = fields[0]
 		}
 		if len(field) > 1 {
 			st.host = fields[1]
+		}
+		if checker != nil {
+			valid = checker.hasPrivilege(st.user)
+		}
+	case variable.SlowLogUserAndHostStr:
+		// the new User&Host format: root[root] @ localhost [127.0.0.1]
+		fields := strings.SplitN(value, "@", 2)
+		if len(fields) > 0 {
+			tmp := strings.Split(fields[0], "[")
+			st.user = strings.TrimSpace(tmp[0])
+		}
+		if len(fields) > 1 {
+			tmp := strings.Split(fields[1], "[")
+			st.host = strings.TrimSpace(tmp[0])
 		}
 		if checker != nil {
 			valid = checker.hasPrivilege(st.user)
