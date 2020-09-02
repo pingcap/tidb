@@ -40,7 +40,7 @@ func BenchmarkVarPop(b *testing.B) {
 
 	rowNum := 50000
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncVarPop, mysql.TypeString, rowNum, nil, ""),
+		buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, rowNum, nil, ""),
 	}
 	for _, test := range tests {
 		s.benchmarkAggFunc(b, test)
