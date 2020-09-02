@@ -14,7 +14,10 @@
 package core_test
 
 import (
+	"bytes"
+	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
@@ -96,14 +99,24 @@ func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
 	tk.MustExec("set tidb_enable_collect_execution_info=1;")
 
 	tk.Se.GetSessionVars().PlanID = 0
+	getPlanTree := func() string {
+		info := tk.Se.ShowProcess()
+		c.Assert(info, NotNil)
+		p, ok := info.Plan.(core.Plan)
+		c.Assert(ok, IsTrue)
+		encodeStr := core.EncodePlan(p)
+		planTree, err := plancodec.DecodePlan(encodeStr)
+		c.Assert(err, IsNil)
+		return planTree
+	}
 	tk.MustExec("select max(a) from t1 where a>0;")
-	info := tk.Se.ShowProcess()
-	c.Assert(info, NotNil)
-	p, ok := info.Plan.(core.Plan)
-	c.Assert(ok, IsTrue)
-	encodeStr := core.EncodePlan(p)
-	planTree, err := plancodec.DecodePlan(encodeStr)
-	c.Assert(err, IsNil)
+	planTree := getPlanTree()
+	c.Assert(strings.Contains(planTree, "time"), IsTrue)
+	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
+
+	tk.MustExec("insert into t1 values (1,1,1);")
+	planTree = getPlanTree()
+	c.Assert(strings.Contains(planTree, "Insert"), IsTrue)
 	c.Assert(strings.Contains(planTree, "time"), IsTrue)
 	c.Assert(strings.Contains(planTree, "loops"), IsTrue)
 }
@@ -111,9 +124,56 @@ func (s *testPlanNormalize) TestEncodeDecodePlan(c *C) {
 func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("drop table if exists t1,t2, bmsql_order_line, bmsql_district,bmsql_stock")
 	tk.MustExec("create table t1 (a int key,b int,c int, index (b));")
 	tk.MustExec("create table t2 (a int key,b int,c int, index (b));")
+	tk.MustExec(`CREATE TABLE  bmsql_order_line  (
+	   ol_w_id  int(11) NOT NULL,
+	   ol_d_id  int(11) NOT NULL,
+	   ol_o_id  int(11) NOT NULL,
+	   ol_number  int(11) NOT NULL,
+	   ol_i_id  int(11) NOT NULL,
+	   ol_delivery_d  timestamp NULL DEFAULT NULL,
+	   ol_amount  decimal(6,2) DEFAULT NULL,
+	   ol_supply_w_id  int(11) DEFAULT NULL,
+	   ol_quantity  int(11) DEFAULT NULL,
+	   ol_dist_info  char(24) DEFAULT NULL,
+	  PRIMARY KEY ( ol_w_id , ol_d_id , ol_o_id , ol_number )
+	);`)
+	tk.MustExec(`CREATE TABLE  bmsql_district  (
+	   d_w_id  int(11) NOT NULL,
+	   d_id  int(11) NOT NULL,
+	   d_ytd  decimal(12,2) DEFAULT NULL,
+	   d_tax  decimal(4,4) DEFAULT NULL,
+	   d_next_o_id  int(11) DEFAULT NULL,
+	   d_name  varchar(10) DEFAULT NULL,
+	   d_street_1  varchar(20) DEFAULT NULL,
+	   d_street_2  varchar(20) DEFAULT NULL,
+	   d_city  varchar(20) DEFAULT NULL,
+	   d_state  char(2) DEFAULT NULL,
+	   d_zip  char(9) DEFAULT NULL,
+	  PRIMARY KEY ( d_w_id , d_id )
+	);`)
+	tk.MustExec(`CREATE TABLE  bmsql_stock  (
+	   s_w_id  int(11) NOT NULL,
+	   s_i_id  int(11) NOT NULL,
+	   s_quantity  int(11) DEFAULT NULL,
+	   s_ytd  int(11) DEFAULT NULL,
+	   s_order_cnt  int(11) DEFAULT NULL,
+	   s_remote_cnt  int(11) DEFAULT NULL,
+	   s_data  varchar(50) DEFAULT NULL,
+	   s_dist_01  char(24) DEFAULT NULL,
+	   s_dist_02  char(24) DEFAULT NULL,
+	   s_dist_03  char(24) DEFAULT NULL,
+	   s_dist_04  char(24) DEFAULT NULL,
+	   s_dist_05  char(24) DEFAULT NULL,
+	   s_dist_06  char(24) DEFAULT NULL,
+	   s_dist_07  char(24) DEFAULT NULL,
+	   s_dist_08  char(24) DEFAULT NULL,
+	   s_dist_09  char(24) DEFAULT NULL,
+	   s_dist_10  char(24) DEFAULT NULL,
+	  PRIMARY KEY ( s_w_id , s_i_id )
+	);`)
 	normalizedDigestCases := []struct {
 		sql1   string
 		sql2   string
@@ -189,6 +249,32 @@ func (s *testPlanNormalize) TestNormalizedDigest(c *C) {
 			sql2:   "SELECT * from t1 where a!=2 order by c limit 2",
 			isSame: true,
 		},
+		{ // test for union
+			sql1:   "select count(1) as num,a from t1 where a=1 group by a union select count(1) as num,a from t1 where a=3 group by a;",
+			sql2:   "select count(1) as num,a from t1 where a=2 group by a union select count(1) as num,a from t1 where a=4 group by a;",
+			isSame: true,
+		},
+		{
+			sql1: `SELECT  COUNT(*) AS low_stock
+					FROM
+					(
+						SELECT  *
+						FROM bmsql_stock
+						WHERE s_w_id = 1
+						AND s_quantity < 2
+						AND s_i_id IN ( SELECT /*+ TIDB_INLJ(bmsql_order_line) */ ol_i_id FROM bmsql_district JOIN bmsql_order_line ON ol_w_id = d_w_id AND ol_d_id = d_id AND ol_o_id >= d_next_o_id - 20 AND ol_o_id < d_next_o_id WHERE d_w_id = 1 AND d_id = 2 )
+					) AS L;`,
+			sql2: `SELECT  COUNT(*) AS low_stock
+					FROM
+					(
+						SELECT  *
+						FROM bmsql_stock
+						WHERE s_w_id = 5
+						AND s_quantity < 6
+						AND s_i_id IN ( SELECT /*+ TIDB_INLJ(bmsql_order_line) */ ol_i_id FROM bmsql_district JOIN bmsql_order_line ON ol_w_id = d_w_id AND ol_d_id = d_id AND ol_o_id >= d_next_o_id - 70 AND ol_o_id < d_next_o_id WHERE d_w_id = 5 AND d_id = 6 )
+					) AS L;`,
+			isSame: true,
+		},
 	}
 	for _, testCase := range normalizedDigestCases {
 		testNormalizeDigest(tk, c, testCase.sql1, testCase.sql2, testCase.isSame)
@@ -258,6 +344,10 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 The parameter of nth_plan() is out of range."))
 
+	tk.MustExec("explain format='hint' select /*+ nth_plan(500) */ * from t where a=1 and b=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
+
 	// Test warning for multiply hints.
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
 		"use_index(@`sel_1` `test`.`t` `a_2`), nth_plan(1), nth_plan(2)"))
@@ -277,4 +367,35 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 		"1 1"))
 	tk.MustQuery("select  /*+ nth_plan(3) */ * from tt where a=1 and b=1;").Check(testkit.Rows(
 		"1 1"))
+}
+
+func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a varchar(10) key,b int);")
+	tk.MustExec("set @@tidb_slow_log_threshold=200000")
+
+	// generate SQL
+	buf := bytes.NewBuffer(make([]byte, 0, 1024*1024*4))
+	for i := 0; i < 50000; i++ {
+		if i > 0 {
+			buf.WriteString(" union ")
+		}
+		buf.WriteString(fmt.Sprintf("select count(1) as num,a from t where a='%v' group by a", i))
+	}
+	query := buf.String()
+	tk.Se.GetSessionVars().PlanID = 0
+	tk.MustExec(query)
+	info := tk.Se.ShowProcess()
+	c.Assert(info, NotNil)
+	p, ok := info.Plan.(core.PhysicalPlan)
+	c.Assert(ok, IsTrue)
+	// TODO: optimize the encode plan performance when encode plan with runtimeStats
+	tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+	encodedPlanStr := core.EncodePlan(p)
+	start := time.Now()
+	_, err := plancodec.DecodePlan(encodedPlanStr)
+	c.Assert(err, IsNil)
+	c.Assert(time.Since(start).Seconds(), Less, 3.0)
 }

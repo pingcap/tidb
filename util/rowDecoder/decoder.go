@@ -17,7 +17,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -41,68 +39,42 @@ type Column struct {
 type RowDecoder struct {
 	tbl           table.Table
 	mutRow        chunk.MutRow
-	columns       map[int64]Column
+	colMap        map[int64]Column
 	colTypes      map[int64]*types.FieldType
 	haveGenColumn bool
 	defaultVals   []types.Datum
+	cols          []*table.Column
 	pkCols        []int64
 }
 
 // NewRowDecoder returns a new RowDecoder.
-func NewRowDecoder(tbl table.Table, decodeColMap map[int64]Column) *RowDecoder {
+func NewRowDecoder(tbl table.Table, cols []*table.Column, decodeColMap map[int64]Column) *RowDecoder {
+	tblInfo := tbl.Meta()
 	colFieldMap := make(map[int64]*types.FieldType, len(decodeColMap))
 	for id, col := range decodeColMap {
 		colFieldMap[id] = &col.Col.ColumnInfo.FieldType
 	}
 
-	cols := tbl.Cols()
 	tps := make([]*types.FieldType, len(cols))
 	for _, col := range cols {
 		tps[col.Offset] = &col.FieldType
 	}
+	var pkCols []int64
+	switch {
+	case tblInfo.IsCommonHandle:
+		pkCols = tables.TryGetCommonPkColumnIds(tbl.Meta())
+	case tblInfo.PKIsHandle:
+		pkCols = []int64{tblInfo.GetPkColInfo().ID}
+	}
 	return &RowDecoder{
 		tbl:         tbl,
 		mutRow:      chunk.MutRowFromTypes(tps),
-		columns:     decodeColMap,
+		colMap:      decodeColMap,
 		colTypes:    colFieldMap,
 		defaultVals: make([]types.Datum, len(cols)),
-		pkCols:      tables.TryGetCommonPkColumnIds(tbl.Meta()),
+		cols:        cols,
+		pkCols:      pkCols,
 	}
-}
-
-func (rd *RowDecoder) tryDecodeFromHandleAndSetRow(dCol Column, handle kv.Handle, row map[int64]types.Datum, decodeLoc *time.Location) (bool, error) {
-	if handle == nil {
-		return false, nil
-	}
-	colInfo := dCol.Col.ColumnInfo
-	if dCol.Col.IsPKHandleColumn(rd.tbl.Meta()) {
-		if mysql.HasUnsignedFlag(colInfo.Flag) {
-			row[colInfo.ID] = types.NewUintDatum(uint64(handle.IntValue()))
-			rd.mutRow.SetValue(colInfo.Offset, uint64(handle.IntValue()))
-		} else {
-			row[colInfo.ID] = types.NewIntDatum(handle.IntValue())
-			rd.mutRow.SetValue(colInfo.Offset, handle.IntValue())
-		}
-		return true, nil
-	}
-	// Try to decode common handle.
-	if mysql.HasPriKeyFlag(dCol.Col.Flag) {
-		for i, hid := range rd.pkCols {
-			if dCol.Col.ID == hid {
-				_, d, err := codec.DecodeOne(handle.EncodedCol(i))
-				if err != nil {
-					return false, errors.Trace(err)
-				}
-				if d, err = tablecodec.Unflatten(d, &dCol.Col.FieldType, decodeLoc); err != nil {
-					return false, err
-				}
-				row[colInfo.ID] = d
-				rd.mutRow.SetValue(colInfo.Offset, d)
-				return true, nil
-			}
-		}
-	}
-	return false, nil
 }
 
 // DecodeAndEvalRowWithMap decodes a byte slice into datums and evaluates the generated column value.
@@ -116,22 +88,23 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 	if err != nil {
 		return nil, err
 	}
-	for _, dCol := range rd.columns {
+	row, err = tablecodec.DecodeHandleToDatumMap(handle, rd.pkCols, rd.colTypes, decodeLoc, row)
+	if err != nil {
+		return nil, err
+	}
+	for _, dCol := range rd.colMap {
 		colInfo := dCol.Col.ColumnInfo
 		val, ok := row[colInfo.ID]
 		if ok || dCol.GenExpr != nil {
 			rd.mutRow.SetValue(colInfo.Offset, val.GetValue())
 			continue
 		}
-		ok, err := rd.tryDecodeFromHandleAndSetRow(dCol, handle, row, decodeLoc)
-		if err != nil {
-			return nil, err
+		if dCol.Col.ChangeStateInfo != nil {
+			val, _, err = tables.GetChangingColVal(ctx, rd.cols, dCol.Col, row, rd.defaultVals)
+		} else {
+			// Get the default value of the column in the generated column expression.
+			val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals)
 		}
-		if ok {
-			continue
-		}
-		// Get the default value of the column in the generated column expression.
-		val, err = tables.GetColDefaultValue(ctx, dCol.Col, rd.defaultVals)
 		if err != nil {
 			return nil, err
 		}
@@ -139,13 +112,13 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 	}
 	keys := make([]int, 0)
 	ids := make(map[int]int)
-	for k, col := range rd.columns {
+	for k, col := range rd.colMap {
 		keys = append(keys, col.Col.Offset)
 		ids[col.Col.Offset] = int(k)
 	}
 	sort.Ints(keys)
 	for _, id := range keys {
-		col := rd.columns[int64(ids[id])]
+		col := rd.colMap[int64(ids[id])]
 		if col.GenExpr == nil {
 			continue
 		}
@@ -177,9 +150,9 @@ func (rd *RowDecoder) DecodeAndEvalRowWithMap(ctx sessionctx.Context, handle kv.
 }
 
 // BuildFullDecodeColMap builds a map that contains [columnID -> struct{*table.Column, expression.Expression}] from all columns.
-func BuildFullDecodeColMap(t table.Table, schema *expression.Schema) map[int64]Column {
-	decodeColMap := make(map[int64]Column, len(t.Cols()))
-	for _, col := range t.Cols() {
+func BuildFullDecodeColMap(cols []*table.Column, schema *expression.Schema) map[int64]Column {
+	decodeColMap := make(map[int64]Column, len(cols))
+	for _, col := range cols {
 		decodeColMap[col.ID] = Column{
 			Col:     col,
 			GenExpr: schema.Columns[col.Offset].VirtualExpr,

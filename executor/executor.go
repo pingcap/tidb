@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -94,7 +94,7 @@ var (
 
 type baseExecutor struct {
 	ctx           sessionctx.Context
-	id            fmt.Stringer
+	id            int
 	schema        *expression.Schema // output schema
 	initCap       int
 	maxChunkSize  int
@@ -104,10 +104,6 @@ type baseExecutor struct {
 }
 
 const (
-	// globalStorageLabel represents the label of the GlobalDiskUsageTracker
-	globalStorageLabel string = "GlobalStorageLabel"
-	// globalMemoryLabel represents the label of the GlobalMemoryUsageTracker
-	globalMemoryLabel string = "GlobalMemoryLabel"
 	// globalPanicStorageExceed represents the panic message when out of storage quota.
 	globalPanicStorageExceed string = "Out Of Global Storage Quota!"
 	// globalPanicMemoryExceed represents the panic message when out of memory limit.
@@ -121,9 +117,9 @@ type globalPanicOnExceed struct {
 
 func init() {
 	action := &globalPanicOnExceed{}
-	GlobalMemoryUsageTracker = memory.NewGlobalTracker(stringutil.StringerStr(globalMemoryLabel), -1)
+	GlobalMemoryUsageTracker = memory.NewGlobalTracker(memory.LabelForGlobalMemory, -1)
 	GlobalMemoryUsageTracker.SetActionOnExceed(action)
-	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(stringutil.StringerStr(globalStorageLabel), -1)
+	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 }
 
@@ -135,10 +131,10 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 	msg := ""
-	switch t.Label().String() {
-	case globalStorageLabel:
+	switch t.Label() {
+	case memory.LabelForGlobalStorage:
 		msg = globalPanicStorageExceed
-	case globalMemoryLabel:
+	case memory.LabelForGlobalMemory:
 		msg = globalPanicMemoryExceed
 	default:
 		msg = "Out of Unknown Resource Quota!"
@@ -207,7 +203,7 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.Stringer, children ...Executor) baseExecutor {
+func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
@@ -217,9 +213,9 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		if e.id != nil {
+		if e.id > 0 {
 			e.runtimeStats = &execdetails.BasicRuntimeStats{}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id.String(), e.runtimeStats)
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, e.runtimeStats)
 		}
 	}
 	if schema != nil {
@@ -265,6 +261,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	if trace.IsEnabled() {
+		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
 	}
 	err := e.Next(ctx, req)
 
@@ -942,13 +941,6 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		lockWaitTime = kv.LockNoWait
 	}
 
-	if len(e.keys) > 0 {
-		// This operation is only for schema validator check.
-		for id := range e.tblID2Handle {
-			e.ctx.GetSessionVars().TxnCtx.UpdateDeltaForTable(id, 0, 0, map[int64]int64{})
-		}
-	}
-
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
 }
 
@@ -972,14 +964,20 @@ func newLockCtx(seVars *variable.SessionVars, lockWaitTime int64) *kv.LockCtx {
 func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx, keys ...kv.Key) error {
 	sctx := se.GetSessionVars().StmtCtx
 	if !sctx.InUpdateStmt && !sctx.InDeleteStmt {
-		se.GetSessionVars().TxnCtx.ForUpdate = true
+		atomic.StoreUint32(&se.GetSessionVars().TxnCtx.ForUpdate, 1)
 	}
 	// Lock keys only once when finished fetching all results.
 	txn, err := se.Txn(true)
 	if err != nil {
 		return err
 	}
-	return txn.LockKeys(sessionctx.SetCommitCtx(ctx, se), lockCtx, keys...)
+	var lockKeyStats *execdetails.LockKeysDetails
+	ctx = context.WithValue(ctx, execdetails.LockKeysDetailCtxKey, &lockKeyStats)
+	err = txn.LockKeys(sessionctx.SetCommitCtx(ctx, se), lockCtx, keys...)
+	if lockKeyStats != nil {
+		sctx.MergeLockKeysExecDetails(lockKeyStats)
+	}
+	return err
 }
 
 // LimitExec represents limit executor
@@ -1528,8 +1526,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
-		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
-		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
+		MemTracker:  memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
+		DiskTracker: disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:      stmtctx.AllocateTaskID(),
 	}
 	sc.MemTracker.AttachToGlobalTracker(GlobalMemoryUsageTracker)

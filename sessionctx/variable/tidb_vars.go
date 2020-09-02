@@ -325,6 +325,9 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// TiDBEnableChangeColumnType is used to control whether to enable the change column type.
+	TiDBEnableChangeColumnType = "tidb_enable_change_column_type"
+
 	// tidb_max_delta_schema_count defines the max length of deltaSchemaInfos.
 	// deltaSchemaInfos is a queue that maintains the history of schema changes.
 	TiDBMaxDeltaSchemaCount = "tidb_max_delta_schema_count"
@@ -435,6 +438,9 @@ const (
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
+
+	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
+	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
 )
 
 // Default TiDB system variable values.
@@ -477,7 +483,7 @@ const (
 	DefCurretTS                        = 0
 	DefInitChunkSize                   = 32
 	DefMaxChunkSize                    = 1024
-	DefDMLBatchSize                    = 20000
+	DefDMLBatchSize                    = 0
 	DefMaxPreparedStmtCount            = -1
 	DefWaitTimeout                     = 0
 	DefTiDBMemQuotaHashJoin            = 32 << 30 // 32GB.
@@ -504,6 +510,7 @@ const (
 	DefTiDBDDLReorgBatchSize           = 256
 	DefTiDBDDLErrorCountLimit          = 512
 	DefTiDBMaxDeltaSchemaCount         = 1024
+	DefTiDBChangeColumnType            = false
 	DefTiDBHashAggPartialConcurrency   = ConcurrencyUnset
 	DefTiDBHashAggFinalConcurrency     = ConcurrencyUnset
 	DefTiDBWindowConcurrency           = ConcurrencyUnset
@@ -539,6 +546,7 @@ const (
 	DefTiDBShardAllocateStep           = math.MaxInt64
 	DefTiDBEnableTelemetry             = true
 	DefTiDBEnableParallelApply         = false
+	DefTiDBEnableAmendPessimisticTxn   = true
 )
 
 // Process global variables.
