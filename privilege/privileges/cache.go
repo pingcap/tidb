@@ -902,7 +902,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	for _, record := range p.User {
 		if host == record.Host {
 			userExists = true
-				break
+			break
 		}
 	}
 	if !userExists {
