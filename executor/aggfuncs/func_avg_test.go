@@ -45,13 +45,13 @@ func (s *testSuite) TestAvg(c *C) {
 func (s *testSuite) TestMemAvg(c *C) {
 	tests := []aggMemTest{
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5,
-			aggfuncs.DefPartialResult4AvgDecimalSize, defaultUpdateMemDeltaGens, false, nil, 2.0),
+			aggfuncs.DefPartialResult4AvgDecimalSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeNewDecimal, 5,
-			aggfuncs.DefPartialResult4AvgDistinctDecimalSize, distinctUpdateMemDeltaGens, true, nil, 2.0),
+			aggfuncs.DefPartialResult4AvgDistinctDecimalSize, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeDouble, 5,
-			aggfuncs.DefPartialResult4AvgFloat64Size, defaultUpdateMemDeltaGens, false, nil, 2.0),
+			aggfuncs.DefPartialResult4AvgFloat64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncAvg, mysql.TypeDouble, 5,
-			aggfuncs.DefPartialResult4AvgDistinctFloat64Size, distinctUpdateMemDeltaGens, true, nil, 2.0),
+			aggfuncs.DefPartialResult4AvgDistinctFloat64Size, distinctUpdateMemDeltaGens, true),
 	}
 	for _, test := range tests {
 		s.testAggMemFunc(c, test)
