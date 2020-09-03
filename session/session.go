@@ -1144,19 +1144,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	sc := s.GetSessionVars().StmtCtx
-	defer func() {
-		// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
-		if sc != nil {
-			if sc.DiskTracker != nil {
-				sc.DiskTracker.DetachFromGlobalTracker()
-			}
-			if sc.MemTracker != nil {
-				sc.MemTracker.DetachFromGlobalTracker()
-			}
-		}
-	}()
-
 	s.PrepareTxnCtx(ctx)
 	err := s.loadCommonGlobalVariablesIfNeeded()
 	if err != nil {
@@ -1169,6 +1156,19 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+
+	sc := s.GetSessionVars().StmtCtx
+	defer func() {
+		// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
+		if sc != nil {
+			if sc.DiskTracker != nil {
+				sc.DiskTracker.DetachFromGlobalTracker()
+			}
+			if sc.MemTracker != nil {
+				sc.MemTracker.DetachFromGlobalTracker()
+			}
+		}
+	}()
 
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
