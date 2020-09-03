@@ -1567,13 +1567,15 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		return nil, err
 	}
 	for _, idxName := range as.IndexNames {
-		handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
-		if handleCols != nil {
-			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
-				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+		if isPrimaryIndex(idxName) {
+			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
+			if handleCols != nil {
+				for i, id := range physicalIDs {
+					info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+				}
+				continue
 			}
-			continue
 		}
 		idx := tblInfo.FindIndexByName(idxName.L)
 		if idx == nil || idx.State != model.StatePublic {
@@ -3176,6 +3178,7 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 	if err != nil {
 		return nil, err
 	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	return &SelectInto{
 		TargetPlan: targetPlan,
 		IntoOpt:    selectIntoInfo,
