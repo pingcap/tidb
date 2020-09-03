@@ -591,6 +591,14 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			zap.Stringer("ctx", ctx), zap.Uint32("seed", *seed))
 		*seed = *seed + 1
 	}
+	if regionErr.GetMaxTimestampNotSynced() != nil {
+		logutil.BgLogger().Warn("tikv reports `MaxTimestampNotSynced`", zap.Stringer("ctx", ctx))
+		err = bo.Backoff(boMaxTsNotSynced, errors.Errorf("max timestamp not synced, ctx: %v", ctx))
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+		return true, nil
+	}
 	// For other errors, we only drop cache here.
 	// Because caller may need to re-split the request.
 	logutil.BgLogger().Debug("tikv reports region failed",

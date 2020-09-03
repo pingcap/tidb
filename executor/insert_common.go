@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -75,14 +74,7 @@ type InsertValues struct {
 	lazyFillAutoID bool
 	memTracker     *memory.Tracker
 
-	stats    *RuntimeStatsWithRPCStats
-	snapshot kv.Snapshot
-}
-
-//RuntimeStatsWithRPCStats keeps executor runtime info like rpcstats
-type RuntimeStatsWithRPCStats struct {
-	*execdetails.BasicRuntimeStats
-	*tikv.SnapshotRuntimeStats
+	stats *runtimeStatsWithSnapshot
 }
 
 type defaultVal struct {
@@ -537,7 +529,7 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 		return d, nil
 	}
 	tblInfo := e.Table.Meta()
-	if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() && column.ID == tblInfo.GetPkColInfo().ID {
+	if ddl.IsAutoRandomColumnID(tblInfo, column.ID) {
 		d, err := e.adjustAutoRandomDatum(ctx, datum, hasValue, column)
 		if err != nil {
 			return types.Datum{}, err
@@ -935,6 +927,21 @@ func (e *InsertValues) handleWarning(err error) {
 	sc.AppendWarning(err)
 }
 
+func (e *InsertValues) collectRuntimeStatsEnabled() bool {
+	if e.runtimeStats != nil {
+		if e.stats == nil {
+			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			e.stats = &runtimeStatsWithSnapshot{
+				BasicRuntimeStats:    e.runtimeStats,
+				SnapshotRuntimeStats: snapshotStats,
+			}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		}
+		return true
+	}
+	return false
+}
+
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
 func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum, addRecord func(ctx context.Context, row []types.Datum) error) error {
@@ -952,15 +959,11 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		return err
 	}
 
-	e.snapshot = txn.GetSnapshot()
-	if e.runtimeStats != nil {
-		snapshotStats := &tikv.SnapshotRuntimeStats{}
-		e.stats = &RuntimeStatsWithRPCStats{
-			BasicRuntimeStats:    e.runtimeStats,
-			SnapshotRuntimeStats: snapshotStats,
+	if e.collectRuntimeStatsEnabled() {
+		if snapshot := txn.GetSnapshot(); snapshot != nil {
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}
-		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), e.stats)
 	}
 
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
@@ -972,7 +975,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	for i, r := range toBeCheckedRows {
 		skip := false
 		if r.handleKey != nil {
-			_, err := txn.Get(ctx, r.handleKey.newKV.key)
+			_, err := txn.Get(ctx, r.handleKey.newKey)
 			if err == nil {
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 				continue
@@ -982,7 +985,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 		for _, uk := range r.uniqueKeys {
-			_, err := txn.Get(ctx, uk.newKV.key)
+			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
@@ -1004,7 +1007,6 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 	}
-	defer e.snapshot.DelOption(kv.CollectRuntimeStats)
 	return nil
 }
 
@@ -1030,22 +1032,4 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 		vars.SetLastInsertID(e.lastInsertID)
 	}
 	return nil
-}
-
-//fetches executor runtime info like rpcstats
-func (e *RuntimeStatsWithRPCStats) String() string {
-	var basic, rpcStatsStr string
-	if e.BasicRuntimeStats != nil {
-		basic = e.BasicRuntimeStats.String()
-	}
-	if e.SnapshotRuntimeStats != nil {
-		rpcStatsStr = e.SnapshotRuntimeStats.String()
-	}
-	if rpcStatsStr == "" {
-		return basic
-	}
-	if basic == "" {
-		return rpcStatsStr
-	}
-	return basic + ", " + rpcStatsStr
 }

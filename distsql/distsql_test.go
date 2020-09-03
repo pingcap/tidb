@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -28,21 +27,22 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
-func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []string) (*selectResult, []*types.FieldType) {
+func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []int) (*selectResult, []*types.FieldType) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"), -1)).
+		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 	c.Assert(err, IsNil)
 
@@ -66,12 +66,7 @@ func (s *testSuite) createSelectNormal(batch, totalRows int, c *C, planIDs []str
 	if planIDs == nil {
 		response, err = Select(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false))
 	} else {
-		var planIDFuncs []fmt.Stringer
-		for i := range planIDs {
-			idx := i
-			planIDFuncs = append(planIDFuncs, stringutil.StringerStr(planIDs[idx]))
-		}
-		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDFuncs, stringutil.StringerStr("root_0"))
+		response, err = SelectWithRuntimeStats(context.TODO(), s.sctx, request, colTypes, statistics.NewQueryFeedback(0, nil, 0, false), planIDs, 1)
 	}
 
 	c.Assert(err, IsNil)
@@ -134,13 +129,13 @@ func (s *testSuite) TestSelectNormalChunkSize(c *C) {
 }
 
 func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
-	planIDs := []string{"1", "2", "3"}
+	planIDs := []int{1, 2, 3}
 	response, colTypes := s.createSelectNormal(1, 2, c, planIDs)
 	if len(response.copPlanIDs) != len(planIDs) {
 		c.Fatal("invalid copPlanIDs")
 	}
 	for i := range planIDs {
-		if response.copPlanIDs[i].String() != planIDs[i] {
+		if response.copPlanIDs[i] != planIDs[i] {
 			c.Fatal("invalid copPlanIDs")
 		}
 	}
@@ -161,6 +156,26 @@ func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
 	c.Assert(numAllRows, Equals, 2)
 	err := response.Close()
 	c.Assert(err, IsNil)
+}
+
+func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
+	basic := &execdetails.BasicRuntimeStats{}
+	basic.Record(time.Second, 20)
+	s1 := &selectResultRuntimeStats{
+		RuntimeStats:     basic,
+		copRespTime:      []time.Duration{time.Second, time.Millisecond},
+		procKeys:         []int64{100, 200},
+		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
+		totalProcessTime: time.Second,
+		totalWaitTime:    time.Second,
+		rpcStat:          tikv.RegionRequestRuntimeStats{},
+	}
+	s2 := *s1
+	s2.RuntimeStats = s1
+	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s}, backoff{RegionMiss: 2ms}"
+	c.Assert(s2.String(), Equals, expect)
+	// Test for idempotence.
+	c.Assert(s2.String(), Equals, expect)
 }
 
 func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
@@ -440,7 +455,7 @@ func createSelectNormal(batch, totalRows int, ctx sessionctx.Context) (*selectRe
 		SetDesc(false).
 		SetKeepOrder(false).
 		SetFromSessionVars(variable.NewSessionVars()).
-		SetMemTracker(memory.NewTracker(stringutil.StringerStr("testSuite.createSelectNormal"), -1)).
+		SetMemTracker(memory.NewTracker(-1, -1)).
 		Build()
 
 	/// 4 int64 types.
