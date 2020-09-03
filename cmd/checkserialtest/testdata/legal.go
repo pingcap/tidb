@@ -2,7 +2,7 @@ package testdata
 
 import (
 	"testing"
-	
+
 	"github.com/pingcap/failpoint"
 )
 

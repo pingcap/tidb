@@ -14,6 +14,8 @@
 
 set -uo pipefail
 
-go build ./cmd/checkserialtest -o ./cmd/checkserialtest/checkserialtest
+cd ./cmd/checkserialtest
+go build
+cd ../..
 ./cmd/checkserialtest/checkserialtest
 
