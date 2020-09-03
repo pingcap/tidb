@@ -35,8 +35,12 @@ func cmpAndRm(expected, outfile string, c *C) {
 	c.Assert(os.Remove(outfile), IsNil)
 }
 
+func randomSelectFilePath(testName string) string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("select-into-%v-%v.data", testName, time.Now().Nanosecond()))
+}
+
 func (s *testSuite1) TestSelectIntoFileExists(c *C) {
-	outfile := filepath.Join(os.TempDir(), fmt.Sprintf("TestSelectIntoFileExists-%v.data", time.Now().Nanosecond()))
+	outfile := randomSelectFilePath("TestSelectIntoFileExists")
 	defer func() {
 		c.Assert(os.Remove(outfile), IsNil)
 	}()
@@ -51,8 +55,7 @@ func (s *testSuite1) TestSelectIntoFileExists(c *C) {
 }
 
 func (s *testSuite1) TestSelectIntoOutfileTypes(c *C) {
-	tmpDir := os.TempDir()
-	outfile := filepath.Join(tmpDir, "select-into-outfile.data")
+	outfile := randomSelectFilePath("TestSelectIntoOutfileTypes")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -86,8 +89,7 @@ func (s *testSuite1) TestSelectIntoOutfileTypes(c *C) {
 }
 
 func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
-	tmpDir := os.TempDir()
-	outfile := filepath.Join(tmpDir, "TestSelectIntoOutfileFromTable.data")
+	outfile := randomSelectFilePath("TestSelectIntoOutfileFromTable")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
@@ -128,8 +130,7 @@ func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
 }
 
 func (s *testSuite1) TestSelectIntoOutfileConstant(c *C) {
-	tmpDir := os.TempDir()
-	outfile := filepath.Join(tmpDir, "TestSelectIntoOutfileConstant.data")
+	outfile := randomSelectFilePath("TestSelectIntoOutfileConstant")
 	tk := testkit.NewTestKit(c, s.store)
 	// On windows the outfile name looks like "C:\Users\genius\AppData\Local\Temp\select-into-outfile.data",
 	// fmt.Sprintf("%q") is used otherwise the string become
