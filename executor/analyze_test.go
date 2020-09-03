@@ -384,6 +384,16 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustQuery("show stats_buckets where table_name = 't2'").Check(testkit.Rows(
 		"test t2  a 0 0 1 1 0 0",
 		"test t2  a 0 1 2 1 18446744073709551615 18446744073709551615"))
+
+	tk.MustExec(`set @try_old_partition_implementation=1`)
+	tk.MustExec(`create table t3 (id int, v int, primary key(id), index k(v)) partition by hash (id) partitions 4`)
+	tk.MustExec(`insert into t3 values(1, 1), (2, 2), (5, 1), (9, 3), (13, 3), (17, 5), (3, 0)`)
+	tk.MustExec(`analyze table t3`)
+	tk.MustQuery(`explain select v from t3 partition(p1) where v = 3`).Check(testkit.Rows(
+		"IndexReader_7 2.00 root  index:IndexRangeScan_6",
+		"└─IndexRangeScan_6 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
+	))
+	tk.MustExec(`set @try_old_partition_implementation=0`)
 }
 
 func (s *testSuite1) TestIssue15993(c *C) {
@@ -414,6 +424,16 @@ func (s *testSuite1) TestIssue15752(c *C) {
 	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
 	tk.MustExec("set @@tidb_enable_fast_analyze=1")
 	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
+}
+
+func (s *testSuite1) TestAnalyzeIndex(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (id int, v int, primary key(id), index k(v))")
+	tk.MustExec("insert into t1(id, v) values(1, 2), (2, 2), (3, 2), (4, 2), (5, 1), (6, 3), (7, 4)")
+	tk.MustExec("analyze table t1 index k")
+	c.Assert(len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 0)
 }
 
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
