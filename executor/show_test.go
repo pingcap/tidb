@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -157,6 +158,28 @@ func (s *testSuite2) TestShowGrantsPrivilege(c *C) {
 	c.Assert(se2.Auth(&auth.UserIdentity{Username: "show_grants", Hostname: "127.0.0.1", AuthUsername: "show_grants", AuthHostname: "%"}, nil, nil), IsTrue)
 	tk2.Se = se2
 	tk2.MustQuery("show grants")
+}
+
+func (s *testSuite2) TestIssue18878(c *C) {
+	errNonexistingGrant := terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
+	tk := testkit.NewTestKit(c, s.store)
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "127.0.0.1", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk.Se = se
+	tk.MustQuery("select user()").Check(testkit.Rows("root@127.0.0.1"))
+	tk.MustQuery("show grants")
+	tk.MustQuery("select user()").Check(testkit.Rows("root@127.0.0.1"))
+	err = tk.QueryToErr("show grants for root@127.0.0.1")
+	c.Assert(err.Error(), Equals, errNonexistingGrant.FastGenByArgs("root", "127.0.0.1").Error())
+	err = tk.QueryToErr("show grants for root@localhost")
+	c.Assert(err.Error(), Equals, errNonexistingGrant.FastGenByArgs("root", "localhost").Error())
+	err = tk.QueryToErr("show grants for root@1.1.1.1")
+	c.Assert(err.Error(), Equals, errNonexistingGrant.FastGenByArgs("root", "1.1.1.1").Error())
+	tk.MustExec("create user `show_grants`@`127.0.%`")
+	err = tk.QueryToErr("show grants for `show_grants`@`127.0.0.1`")
+	c.Assert(err.Error(), Equals, errNonexistingGrant.FastGenByArgs("show_grants", "127.0.0.1").Error())
+	tk.MustQuery("show grants for `show_grants`@`127.0.%`")
 }
 
 func (s *testSuite2) TestIssue3641(c *C) {
