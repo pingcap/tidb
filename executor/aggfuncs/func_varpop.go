@@ -18,6 +18,14 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/set"
+	"unsafe"
+)
+
+const (
+	// DefPartialResult4VarPopFloat64Size is the size of partialResult4VarPopFloat64
+	DefPartialResult4VarPopFloat64Size = int64(unsafe.Sizeof(partialResult4VarPopFloat64{}))
+	// DefPartialResult4VarPopDistinctFloat64Size is the size of partialResult4VarPopDistinctFloat64
+	DefPartialResult4VarPopDistinctFloat64Size = int64(unsafe.Sizeof(partialResult4VarPopDistinctFloat64{}))
 )
 
 type baseVarPopAggFunc struct {
@@ -35,7 +43,7 @@ type partialResult4VarPopFloat64 struct {
 }
 
 func (e *varPop4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(&partialResult4VarPopFloat64{}), 0
+	return PartialResult(&partialResult4VarPopFloat64{}), DefPartialResult4VarPopFloat64Size
 }
 
 func (e *varPop4Float64) ResetPartialResult(pr PartialResult) {
@@ -126,7 +134,7 @@ func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelt
 	p.sum = 0
 	p.variance = 0
 	p.valSet = set.NewFloat64Set()
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4VarPopDistinctFloat64Size
 }
 
 func (e *varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
@@ -161,9 +169,11 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 		p.valSet.Insert(input)
 		p.count++
 		p.sum += input
+
+		memDelta += DefFloat64Size
 		if p.count > 1 {
 			p.variance = calculateIntermediate(p.count, p.sum, input, p.variance)
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
