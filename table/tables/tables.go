@@ -731,7 +731,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			_, err = txn.Get(ctx, key)
 		}
 		if err == nil {
-			return recordID, kv.ErrKeyExists.FastGenByArgs(recordID.String(), "PRIMARY")
+			handleStr := kv.GetDuplicateErrorHandleString(recordID)
+			return recordID, kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
 		} else if !kv.ErrNotExist.Equal(err) {
 			return recordID, err
 		}
@@ -989,7 +990,11 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 			colIDs = append(colIDs, model.ExtraHandleID)
 			binlogRow = make([]types.Datum, 0, len(r)+1)
 			binlogRow = append(binlogRow, r...)
-			binlogRow = append(binlogRow, types.NewIntDatum(h.IntValue()))
+			handleData, err := h.Data()
+			if err != nil {
+				return err
+			}
+			binlogRow = append(binlogRow, handleData...)
 		} else {
 			binlogRow = r
 		}
@@ -1010,7 +1015,11 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 
 func (t *TableCommon) addInsertBinlog(ctx sessionctx.Context, h kv.Handle, row []types.Datum, colIDs []int64) error {
 	mutation := t.getMutation(ctx)
-	pk, err := codec.EncodeValue(ctx.GetSessionVars().StmtCtx, nil, types.NewIntDatum(h.IntValue()))
+	handleData, err := h.Data()
+	if err != nil {
+		return err
+	}
+	pk, err := codec.EncodeValue(ctx.GetSessionVars().StmtCtx, nil, handleData...)
 	if err != nil {
 		return err
 	}
@@ -1455,7 +1464,8 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 	recordKey := t.RecordKey(recordID)
 	_, err = txn.Get(ctx, recordKey)
 	if err == nil {
-		return kv.ErrKeyExists.FastGenByArgs(recordID.String(), "PRIMARY")
+		handleStr := kv.GetDuplicateErrorHandleString(recordID)
+		return kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
 	} else if !kv.ErrNotExist.Equal(err) {
 		return err
 	}

@@ -315,6 +315,7 @@ func (s *testPointGetSuite) TestCBOPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_enable_clustered_index=0")
 	tk.MustExec("create table t (a varchar(20), b int, c int, d int, primary key(a), unique key(b, c))")
 	tk.MustExec("insert into t values('1',4,4,1), ('2',3,3,2), ('3',2,2,3), ('4',1,1,4)")
 

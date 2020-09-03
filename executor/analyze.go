@@ -648,7 +648,7 @@ type AnalyzeFastExec struct {
 }
 
 func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
-	sql := fmt.Sprintf("select flag from mysql.stats_histograms where table_id = %d;", e.tblInfo.ID)
+	sql := fmt.Sprintf("select flag from mysql.stats_histograms where table_id = %d;", e.physicalTableID)
 	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -656,7 +656,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
 	var historyRowCount uint64
 	hasBeenAnalyzed := len(rows) != 0 && rows[0].GetInt64(0) == statistics.AnalyzeFlag
 	if hasBeenAnalyzed {
-		historyRowCount = uint64(domain.GetDomain(e.ctx).StatsHandle().GetTableStats(e.tblInfo).Count)
+		historyRowCount = uint64(domain.GetDomain(e.ctx).StatsHandle().GetPartitionStats(e.tblInfo, e.physicalTableID).Count)
 	} else {
 		dbInfo, ok := domain.GetDomain(e.ctx).InfoSchema().SchemaByTable(e.tblInfo)
 		if !ok {
@@ -666,7 +666,19 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
 		if err != nil {
 			return 0, err
 		}
-		sql := fmt.Sprintf("select count(*) from %s.%s;", dbInfo.Name.L, e.tblInfo.Name.L)
+		var partition string
+		if e.tblInfo.ID != e.physicalTableID {
+			for _, definition := range e.tblInfo.Partition.Definitions {
+				if definition.ID == e.physicalTableID {
+					partition = fmt.Sprintf(" partition(%s)", definition.Name.L)
+					break
+				}
+			}
+		}
+		sql := fmt.Sprintf("select count(*) from %s.%s", dbInfo.Name.L, e.tblInfo.Name.L)
+		if len(partition) > 0 {
+			sql += partition
+		}
 		recordSets, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
 		if err != nil || len(recordSets) == 0 {
 			return 0, errors.Trace(err)
@@ -717,61 +729,13 @@ func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err
 	return nil, nil
 }
 
-// getNextSampleKey gets the next sample key after last failed request. It only retries the needed region.
-// Different from other requests, each request range must be the whole region because the region row count
-// is only for a whole region. So we need to first find the longest successive prefix ranges of previous request,
-// then the next sample key should be the last range that could align with the region bound.
-func (e *AnalyzeFastExec) getNextSampleKey(bo *tikv.Backoffer, startKey kv.Key) (kv.Key, error) {
-	if len(e.sampTasks) == 0 {
-		e.scanTasks = e.scanTasks[:0]
-		return startKey, nil
-	}
-	sort.Slice(e.sampTasks, func(i, j int) bool {
-		return bytes.Compare(e.sampTasks[i].StartKey, e.sampTasks[j].StartKey) < 0
-	})
-	// The sample task should be consecutive with scan task.
-	if len(e.scanTasks) > 0 && bytes.Equal(e.scanTasks[0].StartKey, startKey) && !bytes.Equal(e.scanTasks[0].EndKey, e.sampTasks[0].StartKey) {
-		e.scanTasks = e.scanTasks[:0]
-		e.sampTasks = e.sampTasks[:0]
-		return startKey, nil
-	}
-	prefixLen := 0
-	for ; prefixLen < len(e.sampTasks)-1; prefixLen++ {
-		if !bytes.Equal(e.sampTasks[prefixLen].EndKey, e.sampTasks[prefixLen+1].StartKey) {
-			break
-		}
-	}
-	// Find the last one that could align with region bound.
-	for ; prefixLen >= 0; prefixLen-- {
-		loc, err := e.cache.LocateKey(bo, e.sampTasks[prefixLen].EndKey)
-		if err != nil {
-			return nil, err
-		}
-		if bytes.Equal(loc.StartKey, e.sampTasks[prefixLen].EndKey) {
-			startKey = loc.StartKey
-			break
-		}
-	}
-	e.sampTasks = e.sampTasks[:prefixLen+1]
-	for i := len(e.scanTasks) - 1; i >= 0; i-- {
-		if bytes.Compare(startKey, e.scanTasks[i].EndKey) < 0 {
-			e.scanTasks = e.scanTasks[:i]
-		}
-	}
-	return startKey, nil
-}
-
-// buildSampTask returns two variables, the first bool is whether the task meets region error
-// and need to rebuild.
+// buildSampTask build sample tasks.
 func (e *AnalyzeFastExec) buildSampTask() (err error) {
 	bo := tikv.NewBackofferWithVars(context.Background(), 500, nil)
 	store, _ := e.ctx.GetStore().(tikv.Storage)
 	e.cache = store.GetRegionCache()
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(e.physicalTableID)
-	targetKey, err := e.getNextSampleKey(bo, startKey)
-	if err != nil {
-		return err
-	}
+	targetKey := startKey
 	accessRegionsCounter := 0
 	for {
 		// Search for the region which contains the targetKey.
@@ -1107,8 +1071,8 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	stats := domain.GetDomain(e.ctx).StatsHandle()
 	var rowCount int64 = 0
 	if stats.Lease() > 0 {
-		if t := stats.GetTableStats(e.tblInfo); !t.Pseudo {
-			rowCount = stats.GetTableStats(e.tblInfo).Count
+		if t := stats.GetPartitionStats(e.tblInfo, e.physicalTableID); !t.Pseudo {
+			rowCount = t.Count
 		}
 	}
 	hists, cms := make([]*statistics.Histogram, length), make([]*statistics.CMSketch, length)
