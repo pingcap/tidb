@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -105,6 +106,11 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, latestVer 
 	for {
 		select {
 		case <-ctx.Done():
+			failpoint.Inject("checkOwnerCheckAllVersionsWaitTime", func(v failpoint.Value) {
+				if v.(bool) {
+					panic("shouldn't happen")
+				}
+			})
 			return errors.Trace(ctx.Err())
 		case <-ticker.C:
 			ver := atomic.LoadInt64(&s.selfSchemaVersion)

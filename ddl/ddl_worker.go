@@ -482,6 +482,9 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 				// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
 				// Otherwise, we should discard the KV modification when running job.
 				txn.Discard()
+				// If error happens after updateSchemaVersion(), then the schemaVer is updated.
+				// Result in the retry duration is up to 2 * lease.
+				schemaVer = 0
 			}
 			err = w.updateDDLJob(t, job, runJobErr != nil)
 			if err = w.handleUpdateJobError(t, job, err); err != nil {
@@ -507,14 +510,15 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		}
 		w.waitDependencyJobFinished(job, &waitDependencyJobCnt)
 
-		d.mu.RLock()
-		d.mu.hook.OnJobUpdated(job)
-		d.mu.RUnlock()
-
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
 		w.waitSchemaChanged(nil, d, waitTime, schemaVer, job)
+
+		d.mu.RLock()
+		d.mu.hook.OnJobUpdated(job)
+		d.mu.RUnlock()
+
 		if job.IsSynced() || job.IsCancelled() {
 			asyncNotify(d.ddlJobDoneCh)
 		}

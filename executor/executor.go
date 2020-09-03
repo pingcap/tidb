@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync"
@@ -245,6 +246,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	if trace.IsEnabled() {
+		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
 	}
 	err := e.Next(ctx, req)
 
@@ -1058,6 +1062,12 @@ func init() {
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
 	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) ([]types.Datum, error) {
+		defer func(begin time.Time) {
+			s := sctx.GetSessionVars()
+			s.RewritePhaseInfo.PreprocessSubQueries++
+			s.RewritePhaseInfo.DurationPreprocessSubQuery += time.Since(begin)
+		}(time.Now())
+
 		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 			span1 := span.Tracer().StartSpan("executor.EvalSubQuery", opentracing.ChildOf(span.Context()))
 			defer span1.Finish()
