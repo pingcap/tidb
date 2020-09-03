@@ -56,7 +56,7 @@ func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return memDelta, err
+			return DefPartialResult4CountSize, err
 		}
 		if isNull {
 			continue
