@@ -504,6 +504,11 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			zap.String("ctx", ctx.String()))
 
 		if notLeader.GetLeader() == nil {
+			// The peer doesn't know who is the current leader. Generally it's because
+			// the Raft group is in an election, but it's possible that the peer is
+			// isolated and removed from the Raft group. So it's necessary to reload
+			// the region from PD.
+			s.regionCache.InvalidateCachedRegion(ctx.Region)
 			if err = bo.Backoff(BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
 				return false, errors.Trace(err)
 			}
