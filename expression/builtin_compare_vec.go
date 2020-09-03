@@ -254,6 +254,7 @@ func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	src := result
 	arg := buf1
 	dst := buf2
+	dst.ReserveString(n)
 	for j := 1; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
 			return err
@@ -793,11 +794,11 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	src := result
 	arg := buf1
 	dst := buf2
+	dst.ReserveString(n)
 	for j := 1; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
 			return err
 		}
-		dst.ReserveString(n)
 		for i := 0; i < n; i++ {
 			if src.IsNull(i) || arg.IsNull(i) {
 				dst.AppendNull()
