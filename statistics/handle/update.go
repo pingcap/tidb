@@ -513,6 +513,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	}
 
 	for _, ptbl := range tables {
+		// this func lets `defer` works normally, where `Close()` should be called before any return
 		err = func() error {
 			tbl := ptbl.GetInt64(0)
 			sql = fmt.Sprintf("select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%d order by table_id, hist_id, is_index", tbl)
@@ -541,6 +542,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 					break
 				}
 				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+					// len(rows) > 100000 limits the rows to avoid OOM
 					if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex || len(rows) > 100000 {
 						if len(rows) > 0 {
 							if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
