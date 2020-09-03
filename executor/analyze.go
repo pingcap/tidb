@@ -653,7 +653,7 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	var rows []chunk.Row
 	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
-		return errors.Trace(err)
+		return
 	}
 	var historyRowCount uint64
 	hasBeenAnalyzed := len(rows) != 0 && rows[0].GetInt64(0) == statistics.AnalyzeFlag
@@ -662,11 +662,12 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	} else {
 		dbInfo, ok := domain.GetDomain(e.ctx).InfoSchema().SchemaByTable(e.tblInfo)
 		if !ok {
-			return errors.Trace(errors.Errorf("database not found for table '%s'", e.tblInfo.Name))
+			err = errors.Errorf("database not found for table '%s'", e.tblInfo.Name)
+			return
 		}
 		rollbackFn, err := e.activateTxnForRowCount()
 		if err != nil {
-			return err
+			return
 		}
 		defer func() {
 			if rollbackFn != nil {
@@ -689,10 +690,11 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 		var recordSets []sqlexec.RecordSet
 		recordSets, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
 		if err != nil || len(recordSets) == 0 {
-			return errors.Trace(err)
+			return
 		}
 		if len(recordSets) == 0 {
-			return errors.Trace(errors.Errorf("empty record set"))
+			err = errors.Trace(errors.Errorf("empty record set"))
+			return
 		}
 		defer func() {
 			for _, r := range recordSets {
@@ -702,14 +704,14 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 		chk := recordSets[0].NewChunk()
 		err = recordSets[0].Next(context.TODO(), chk)
 		if err != nil {
-			return errors.Trace(err)
+			return
 		}
 		e.rowCount = chk.GetRow(0).GetInt64(0)
 		historyRowCount = uint64(e.rowCount)
 	}
 	totalSampSize := e.opts[ast.AnalyzeOptNumSamples]
 	e.estSampStep = uint32(historyRowCount / totalSampSize)
-	return nil
+	return
 }
 
 func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err error) {
