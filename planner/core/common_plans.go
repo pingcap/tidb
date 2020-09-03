@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/texttree"
 	"go.uber.org/zap"
@@ -483,6 +482,11 @@ func (e *Execute) rebuildRange(p Plan) error {
 				}
 			}
 		}
+		// The code should never run here as long as we're not using point get for partition table.
+		// And if we change the logic one day, here work as defensive programming to cache the error.
+		if x.PartitionInfo != nil {
+			return errors.New("point get for partition table can not use plan cache")
+		}
 		if x.HandleParam != nil {
 			var iv int64
 			iv, err = x.HandleParam.Datum.ToInt64(sc)
@@ -490,28 +494,12 @@ func (e *Execute) rebuildRange(p Plan) error {
 				return err
 			}
 			x.Handle = kv.IntHandle(iv)
-			if x.PartitionInfo != nil {
-				if x.TblInfo.Partition.Type != model.PartitionTypeHash {
-					return errors.New("range partition table can not use plan cache")
-				}
-				num := x.TblInfo.Partition.Num
-				pos := math.Abs(iv) % int64(num)
-				x.PartitionInfo = &x.TblInfo.Partition.Definitions[pos]
-			}
 			return nil
 		}
 		for i, param := range x.IndexValueParams {
 			if param != nil {
 				x.IndexValues[i] = param.Datum
 			}
-		}
-		if x.PartitionInfo != nil {
-			if x.TblInfo.Partition.Type != model.PartitionTypeHash {
-				return errors.New("range partition table can not use plan cache")
-			}
-			val := x.IndexValues[x.partitionColumnPos].GetInt64()
-			partitionID := val % int64(x.TblInfo.Partition.Num)
-			x.PartitionInfo = &x.TblInfo.Partition.Definitions[partitionID]
 		}
 		return nil
 	case *BatchPointGetPlan:
