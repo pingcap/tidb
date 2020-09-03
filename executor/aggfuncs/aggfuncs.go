@@ -106,16 +106,10 @@ const (
 	DefUint32Size = int64(unsafe.Sizeof(uint32(0)))
 	// DefInt64Size is the size of int64
 	DefInt64Size = int64(unsafe.Sizeof(int64(0)))
-	// DefIntSize is the size of int
-	DefIntSize = int64(unsafe.Sizeof(int(0)))
-	// DefFloat32Size is the size of float32
-	DefFloat32Size = int64(unsafe.Sizeof(float32(0)))
 	// DefFloat64Size is the size of float64
 	DefFloat64Size = int64(unsafe.Sizeof(float64(0)))
 	// DefTimeSize is the size of time
 	DefTimeSize = int64(16)
-	// DefStringSize is the size of string
-	DefStringSize = int64(unsafe.Sizeof(string(0)))
 )
 
 // PartialResult represents data structure to store the partial result for the
