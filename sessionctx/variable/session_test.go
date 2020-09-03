@@ -178,6 +178,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	resultFields := `# Txn_start_ts: 406649736972468225
 # User@Host: root[root] @ 192.168.0.1 [192.168.0.1]
 # Conn_ID: 1
+# Exec_retry_count: 3
 # Query_time: 1
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
@@ -236,6 +237,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 			DurationPreprocessSubQuery: 2,
 			PreprocessSubQueries:       2,
 		},
+		ExecRetryCount: 3,
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	c.Assert(logString, Equals, resultFields+"\n"+sql)
