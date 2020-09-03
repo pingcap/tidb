@@ -40,7 +40,7 @@ type ConnTestSuite struct {
 	store kv.Storage
 }
 
-var _ = Suite(&ConnTestSuite{})
+var _ = SerialSuites(&ConnTestSuite{})
 
 func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
