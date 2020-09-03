@@ -28,6 +28,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -5455,6 +5456,80 @@ func (s *testSerialDBSuite) TestCreateTableWithIntegerLengthWaring(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int8(2))")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+}
+
+func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+		config.RestoreFunc()()
+	}()
+
+	hook := &ddl.TestDDLCallback{}
+	var checkErr error
+	assertChangingColName := "_col$_c2_1"
+	assertChangingIdxName := "_idx$_idx_1"
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
+			var (
+				newCol                *model.ColumnInfo
+				oldColName            *model.CIStr
+				modifyColumnTp        byte
+				updatedAutoRandomBits uint64
+				changingCol           *model.ColumnInfo
+				changingIdxs          []*model.IndexInfo
+			)
+			pos := &ast.ColumnPosition{}
+			err := job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+			if err != nil {
+				checkErr = err
+				return
+			}
+			if changingCol.Name.L != assertChangingColName {
+				checkErr = errors.New("changing column name is incorrect")
+			}
+			if changingIdxs[0].Name.L != assertChangingIdxName {
+				checkErr = errors.New("changing index name is incorrect")
+			}
+		}
+	}
+	d := s.dom.DDL()
+	originHook := d.GetHook()
+	d.(ddl.DDLForTest).SetHook(hook)
+	defer d.(ddl.DDLForTest).SetHook(originHook)
+
+	tk.MustExec("create table if not exists t(c1 varchar(256), c2 bigint, `_col$_c2` varchar(10), unique _idx$_idx(c1), unique idx(c2));")
+	tk.MustExec("alter table test.t change column c2 cC2 tinyint after `_col$_c2`")
+	c.Assert(checkErr, IsNil)
+
+	t := testGetTableByName(c, tk.Se, "test", "t")
+	fmt.Println(t.Meta())
+	c.Assert(len(t.Meta().Columns), Equals, 3)
+	c.Assert(t.Meta().Columns[0].Name.O, Equals, "c1")
+	c.Assert(t.Meta().Columns[0].Offset, Equals, 0)
+	c.Assert(t.Meta().Columns[1].Name.O, Equals, "_col$_c2")
+	c.Assert(t.Meta().Columns[1].Offset, Equals, 1)
+	c.Assert(t.Meta().Columns[2].Name.O, Equals, "cC2")
+	c.Assert(t.Meta().Columns[2].Offset, Equals, 2)
+
+	c.Assert(len(t.Meta().Indices), Equals, 2)
+	c.Assert(t.Meta().Indices[0].Name.O, Equals, "_idx$_idx")
+	c.Assert(t.Meta().Indices[1].Name.O, Equals, "idx")
+
+	c.Assert(len(t.Meta().Indices[0].Columns), Equals, 1)
+	c.Assert(t.Meta().Indices[0].Columns[0].Name.O, Equals, "c1")
+	c.Assert(t.Meta().Indices[0].Columns[0].Offset, Equals, 0)
+
+	c.Assert(len(t.Meta().Indices[1].Columns), Equals, 1)
+	c.Assert(t.Meta().Indices[1].Columns[0].Name.O, Equals, "cC2")
+	c.Assert(t.Meta().Indices[1].Columns[0].Offset, Equals, 2)
 
 	tk.MustExec("drop table if exists t")
 }
