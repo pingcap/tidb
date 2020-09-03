@@ -797,6 +797,7 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
 			return err
 		}
+		dst.ReserveString(n)
 		for i := 0; i < n; i++ {
 			if src.IsNull(i) || arg.IsNull(i) {
 				dst.AppendNull()
