@@ -275,7 +275,7 @@ func customizeHookRollbackAtState(hook *ddl.TestDDLCallback, tbl table.Table, st
 		}
 		if job.SchemaState == state {
 			job.State = model.JobStateRollingback
-			job.Error = terror.ClassDDL.New(1, "MockRollingBackInCallBack-"+state.String())
+			job.Error = mockTerrorMap[state.String()]
 		}
 	}
 }
@@ -290,4 +290,14 @@ func assertRollBackedColUnchanged(c *C, tk *testkit.TestKit) {
 	c.Assert(col.Tp, Equals, parser_mysql.TypeLonglong)
 	c.Assert(col.ChangeStateInfo, IsNil)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
+}
+
+var mockTerrorMap = make(map[string]*terror.Error)
+
+func init() {
+	// Since terror new action will cause data race with other test suite (getTerrorCode) in parallel, we init it all here.
+	mockTerrorMap[model.StateNone.String()] = terror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateNone.String())
+	mockTerrorMap[model.StateDeleteOnly.String()] = terror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateDeleteOnly.String())
+	mockTerrorMap[model.StateWriteOnly.String()] = terror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateWriteOnly.String())
+	mockTerrorMap[model.StateWriteReorganization.String()] = terror.ClassDDL.New(1, "MockRollingBackInCallBack-"+model.StateWriteReorganization.String())
 }
