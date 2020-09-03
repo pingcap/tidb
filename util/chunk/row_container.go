@@ -218,6 +218,7 @@ func (c *RowContainer) Close() (err error) {
 	if c.actionSpill != nil {
 		// Set status to spilledYet to avoid spilling.
 		c.actionSpill.setStatus(spilledYet)
+		c.actionSpill.cond.Broadcast()
 	}
 	c.m.RLock()
 	defer c.m.RUnlock()
