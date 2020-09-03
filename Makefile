@@ -187,7 +187,7 @@ ifeq ("$(TRAVIS_COVERAGE)", "1")
 else
 	@echo "Running in native mode."
 	@export log_level=fatal; export TZ='Asia/Shanghai'; \
-	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' -cover $(PACKAGES) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
+	$(GOTEST) -ldflags '$(TEST_LDFLAGS)' $(EXTRA_TEST_ARGS) -cover $(PACKAGES) -check.p true -check.timeout 4s || { $(FAILPOINT_DISABLE); exit 1; }
 endif
 	@$(FAILPOINT_DISABLE)
 

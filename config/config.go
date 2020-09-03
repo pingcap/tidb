@@ -334,7 +334,11 @@ type ErrConfigValidationFailed struct {
 }
 
 func (e *ErrConfigValidationFailed) Error() string {
-	return fmt.Sprintf("config file %s contained unknown configuration options: %s", e.confFile, strings.Join(e.UndecodedItems, ", "))
+	return fmt.Sprintf("config file %s contained invalid configuration options: %s; check "+
+		"TiDB manual to make sure this option has not been deprecated and removed from your TiDB "+
+		"version if the option does not appear to be a typo", e.confFile, strings.Join(
+		e.UndecodedItems, ", "))
+
 }
 
 // ToTLSConfig generates tls's config based on security section of the config.

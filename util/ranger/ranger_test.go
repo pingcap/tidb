@@ -1133,6 +1133,7 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("set @@tidb_enable_clustered_index=0")
 	testKit.MustExec("create table t(a int not null, b int not null, primary key(a,b))")
 	testKit.MustExec("insert into t values(1,2)")
 	testKit.MustExec("analyze table t")

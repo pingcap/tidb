@@ -822,3 +822,16 @@ func (s *testInfoschemaTableSuite) TestTiFlashSystemTables(c *C) {
 	err = tk.QueryToErr("select * from information_schema.TIFLASH_SEGMENTS;")
 	c.Assert(err.Error(), Equals, "Etcd addrs not found")
 }
+
+func (s *testInfoschemaTableSuite) TestTablesPKType(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t_int (a int primary key, b int)")
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_int'").Check(testkit.Rows("INT CLUSTERED"))
+	tk.MustExec("set @@tidb_enable_clustered_index = 0")
+	tk.MustExec("create table t_implicit (a varchar(64) primary key, b int)")
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_implicit'").Check(testkit.Rows("NON-CLUSTERED"))
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("create table t_common (a varchar(64) primary key, b int)")
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_common'").Check(testkit.Rows("COMMON CLUSTERED"))
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES'").Check(testkit.Rows("NON-CLUSTERED"))
+}

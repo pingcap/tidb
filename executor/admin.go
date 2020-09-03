@@ -523,11 +523,12 @@ type CleanupIndexExec struct {
 	table      table.Table
 	physicalID int64
 
-	idxCols          []*model.ColumnInfo
+	columns          []*model.ColumnInfo
 	idxColFieldTypes []*types.FieldType
 	idxChunk         *chunk.Chunk
+	handleCols       plannercore.HandleCols
 
-	idxValues   map[int64][][]types.Datum
+	idxValues   *kv.HandleMap // kv.Handle -> [][]types.Datum
 	batchSize   uint64
 	batchKeys   []kv.Key
 	idxValsBufs [][]types.Datum
@@ -539,17 +540,18 @@ func (e *CleanupIndexExec) getIdxColTypes() []*types.FieldType {
 	if e.idxColFieldTypes != nil {
 		return e.idxColFieldTypes
 	}
-	e.idxColFieldTypes = make([]*types.FieldType, 0, len(e.idxCols))
-	for _, col := range e.idxCols {
+	e.idxColFieldTypes = make([]*types.FieldType, 0, len(e.columns))
+	for _, col := range e.columns {
 		e.idxColFieldTypes = append(e.idxColFieldTypes, &col.FieldType)
 	}
 	return e.idxColFieldTypes
 }
 
 func (e *CleanupIndexExec) batchGetRecord(txn kv.Transaction) (map[string][]byte, error) {
-	for handle := range e.idxValues {
-		e.batchKeys = append(e.batchKeys, e.table.RecordKey(kv.IntHandle(handle)))
-	}
+	e.idxValues.Range(func(h kv.Handle, _ interface{}) bool {
+		e.batchKeys = append(e.batchKeys, e.table.RecordKey(h))
+		return true
+	})
 	values, err := txn.BatchGet(context.Background(), e.batchKeys)
 	if err != nil {
 		return nil, err
@@ -564,8 +566,12 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 			if err != nil {
 				return err
 			}
-			for _, idxVals := range e.idxValues[handle.IntValue()] {
-				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, idxVals, handle); err != nil {
+			handleIdxValsGroup, ok := e.idxValues.Get(handle)
+			if !ok {
+				return errors.Trace(errors.Errorf("batch keys are inconsistent with handles"))
+			}
+			for _, handleIdxVals := range handleIdxValsGroup.([][]types.Datum) {
+				if err := e.index.Delete(e.ctx.GetSessionVars().StmtCtx, txn, handleIdxVals, handle); err != nil {
 					return err
 				}
 				e.removeCnt++
@@ -602,6 +608,7 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 	defer terror.Call(result.Close)
 
 	sc := e.ctx.GetSessionVars().StmtCtx
+	idxColLen := len(e.index.Meta().Columns)
 	for {
 		err := result.Next(ctx, e.idxChunk)
 		if err != nil {
@@ -612,11 +619,20 @@ func (e *CleanupIndexExec) fetchIndex(ctx context.Context, txn kv.Transaction) e
 		}
 		iter := chunk.NewIterator4Chunk(e.idxChunk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle := row.GetInt64(len(e.idxCols) - 1)
-			idxVals := extractIdxVals(row, e.idxValsBufs[e.scanRowCnt], e.idxColFieldTypes, len(e.idxCols)-1)
+			handle, err := e.handleCols.BuildHandle(row)
+			if err != nil {
+				return err
+			}
+			idxVals := extractIdxVals(row, e.idxValsBufs[e.scanRowCnt], e.idxColFieldTypes, idxColLen)
 			e.idxValsBufs[e.scanRowCnt] = idxVals
-			e.idxValues[handle] = append(e.idxValues[handle], idxVals)
-			idxKey, _, err := e.index.GenIndexKey(sc, idxVals, kv.IntHandle(handle), nil)
+			existingIdxVals, ok := e.idxValues.Get(handle)
+			if ok {
+				updatedIdxVals := append(existingIdxVals.([][]types.Datum), idxVals)
+				e.idxValues.Set(handle, updatedIdxVals)
+			} else {
+				e.idxValues.Set(handle, [][]types.Datum{idxVals})
+			}
+			idxKey, _, err := e.index.GenIndexKey(sc, idxVals, handle, nil)
 			if err != nil {
 				return err
 			}
@@ -635,6 +651,13 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.done {
 		return nil
 	}
+	cleaningClusteredPrimaryKey := e.table.Meta().IsCommonHandle && e.index.Meta().Primary
+	if cleaningClusteredPrimaryKey {
+		e.done = true
+		req.AppendUint64(0, 0)
+		return nil
+	}
+
 	var err error
 	if tbl, ok := e.table.(table.PartitionedTable); ok {
 		pi := e.table.Meta().GetPartitionInfo()
@@ -687,9 +710,10 @@ func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
 		}
 		e.scanRowCnt = 0
 		e.batchKeys = e.batchKeys[:0]
-		for k := range e.idxValues {
-			delete(e.idxValues, k)
-		}
+		e.idxValues.Range(func(h kv.Handle, val interface{}) bool {
+			e.idxValues.Delete(h)
+			return true
+		})
 	}
 	return nil
 }
@@ -732,7 +756,7 @@ func (e *CleanupIndexExec) Open(ctx context.Context) error {
 
 func (e *CleanupIndexExec) init() error {
 	e.idxChunk = chunk.New(e.getIdxColTypes(), e.initCap, e.maxChunkSize)
-	e.idxValues = make(map[int64][][]types.Datum, e.batchSize)
+	e.idxValues = kv.NewHandleMap()
 	e.batchKeys = make([]kv.Key, 0, e.batchSize)
 	e.idxValsBufs = make([][]types.Datum, e.batchSize)
 	sc := e.ctx.GetSessionVars().StmtCtx
@@ -749,13 +773,13 @@ func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, 
 	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(e.ctx.GetSessionVars().Location())
 	sc := e.ctx.GetSessionVars().StmtCtx
 	dagReq.Flags = sc.PushDownFlags()
-	for i := range e.idxCols {
+	for i := range e.columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 
 	execPB := e.constructIndexScanPB()
 	dagReq.Executors = append(dagReq.Executors, execPB)
-	err := plannercore.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.idxCols)
+	err := plannercore.SetPBColumnsDefaultValue(e.ctx, dagReq.Executors[0].IdxScan.Columns, e.columns)
 	if err != nil {
 		return nil, err
 	}
@@ -768,9 +792,10 @@ func (e *CleanupIndexExec) buildIdxDAGPB(txn kv.Transaction) (*tipb.DAGRequest, 
 
 func (e *CleanupIndexExec) constructIndexScanPB() *tipb.Executor {
 	idxExec := &tipb.IndexScan{
-		TableId: e.physicalID,
-		IndexId: e.index.Meta().ID,
-		Columns: util.ColumnsToProto(e.idxCols, e.table.Meta().PKIsHandle),
+		TableId:          e.physicalID,
+		IndexId:          e.index.Meta().ID,
+		Columns:          util.ColumnsToProto(e.columns, e.table.Meta().PKIsHandle),
+		PrimaryColumnIds: tables.TryGetCommonPkColumnIds(e.table.Meta()),
 	}
 	return &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: idxExec}
 }
