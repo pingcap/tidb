@@ -103,7 +103,7 @@ func (e *countOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return DefPartialResult4CountSize, err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -112,7 +112,7 @@ func (e *countOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		*p++
 	}
 
-	return DefPartialResult4CountSize, nil
+	return 0, nil
 }
 
 func (e *countOriginal4Real) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
@@ -150,7 +150,7 @@ func (e *countOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, row
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalDecimal(sctx, row)
 		if err != nil {
-			return memDelta, err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -159,7 +159,7 @@ func (e *countOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, row
 		*p++
 	}
 
-	return DefPartialResult4CountSize, nil
+	return 0, nil
 }
 
 func (e *countOriginal4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
@@ -197,7 +197,7 @@ func (e *countOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalTime(sctx, row)
 		if err != nil {
-			return memDelta, err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -206,7 +206,7 @@ func (e *countOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		*p++
 	}
 
-	return DefPartialResult4CountSize, nil
+	return 0, nil
 }
 
 func (e *countOriginal4Time) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
@@ -244,7 +244,7 @@ func (e *countOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, ro
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalDuration(sctx, row)
 		if err != nil {
-			return DefPartialResult4CountSize, err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -253,7 +253,7 @@ func (e *countOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, ro
 		*p++
 	}
 
-	return DefPartialResult4CountSize, nil
+	return 0, nil
 }
 
 func (e *countOriginal4Duration) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
@@ -291,7 +291,7 @@ func (e *countOriginal4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalJSON(sctx, row)
 		if err != nil {
-			return DefPartialResult4CountSize, err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -300,7 +300,7 @@ func (e *countOriginal4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		*p++
 	}
 
-	return DefPartialResult4CountSize, nil
+	return 0, nil
 }
 
 func (e *countOriginal4JSON) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
@@ -338,7 +338,7 @@ func (e *countOriginal4String) UpdatePartialResult(sctx sessionctx.Context, rows
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
-			return DefPartialResult4CountSize, err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -347,7 +347,7 @@ func (e *countOriginal4String) UpdatePartialResult(sctx sessionctx.Context, rows
 		*p++
 	}
 
-	return DefPartialResult4CountSize, nil
+	return 0, nil
 }
 
 func (e *countOriginal4String) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
@@ -384,7 +384,7 @@ func (e *countPartial) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return DefPartialResult4CountSize, err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -392,7 +392,7 @@ func (e *countPartial) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 
 		*p += input
 	}
-	return DefPartialResult4CountSize, nil
+	return 0, nil
 }
 
 func (*countPartial) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
