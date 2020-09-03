@@ -247,37 +247,39 @@ func (s *testEvaluatorSuite) TestLog(c *C) {
 	defer testleak.AfterTest(c)()
 
 	tests := []struct {
-		args   []interface{}
-		expect float64
-		isNil  bool
-		getErr bool
+		args       []interface{}
+		expect     float64
+		isNil      bool
+		getErr     bool
+		warningCnt uint16
 	}{
-		{[]interface{}{nil}, 0, true, false},
-		{[]interface{}{nil, nil}, 0, true, false},
-		{[]interface{}{int64(100)}, 4.605170185988092, false, false},
-		{[]interface{}{float64(100)}, 4.605170185988092, false, false},
-		{[]interface{}{int64(10), int64(100)}, 2, false, false},
-		{[]interface{}{float64(10), float64(100)}, 2, false, false},
-		{[]interface{}{float64(-1)}, 0, true, false},
-		{[]interface{}{float64(1), float64(2)}, 0, true, false},
-		{[]interface{}{float64(0.5), float64(0.25)}, 2, false, false},
-		{[]interface{}{"abc"}, 0, false, true},
+		{[]interface{}{nil}, 0, true, false, 0},
+		{[]interface{}{nil, nil}, 0, true, false, 0},
+		{[]interface{}{int64(100)}, 4.605170185988092, false, false, 0},
+		{[]interface{}{float64(100)}, 4.605170185988092, false, false, 0},
+		{[]interface{}{int64(10), int64(100)}, 2, false, false, 0},
+		{[]interface{}{float64(10), float64(100)}, 2, false, false, 0},
+		{[]interface{}{float64(-1)}, 0, true, false, 1},
+		{[]interface{}{float64(2), float64(-1)}, 0, true, false, 1},
+		{[]interface{}{float64(-1), float64(2)}, 0, true, false, 1},
+		{[]interface{}{float64(1), float64(2)}, 0, true, false, 1},
+		{[]interface{}{float64(0.5), float64(0.25)}, 2, false, false, 0},
+		{[]interface{}{"abc"}, 0, true, true, 2},
 	}
 
-	for _, test := range tests {
+	prevWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
+	for i, test := range tests {
 		f, err := newFunctionForTest(s.ctx, ast.Log, s.primitiveValsToConstants(test.args)...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
 		if test.getErr {
-			c.Assert(err, NotNil)
+			c.Assert(err, NotNil, Commentf("no.%v", i))
 		} else {
 			c.Assert(err, IsNil)
-			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
-			}
+			c.Assert(result.GetFloat64(), Equals, test.expect)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, prevWarningCnt+test.warningCnt)
+			prevWarningCnt += test.warningCnt
 		}
 	}
 
@@ -289,33 +291,34 @@ func (s *testEvaluatorSuite) TestLog2(c *C) {
 	defer testleak.AfterTest(c)()
 
 	tests := []struct {
-		args   interface{}
-		expect float64
-		isNil  bool
-		getErr bool
+		args       interface{}
+		expect     float64
+		isNil      bool
+		getErr     bool
+		warningCnt uint16
 	}{
-		{nil, 0, true, false},
-		{int64(16), 4, false, false},
-		{float64(16), 4, false, false},
-		{int64(5), 2.321928094887362, false, false},
-		{int64(-1), 0, true, false},
-		{"4abc", 0, false, true},
+		{nil, 0, true, false, 0},
+		{int64(16), 4, false, false, 0},
+		{float64(16), 4, false, false, 0},
+		{int64(5), 2.321928094887362, false, false, 0},
+		{int64(-1), 0, true, false, 1},
+		{"4abc", 2, false, true, 1},
+		{"abc", 0, true, true, 2},
 	}
 
-	for _, test := range tests {
+	prevWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
+	for i, test := range tests {
 		f, err := newFunctionForTest(s.ctx, ast.Log2, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
 		if test.getErr {
-			c.Assert(err, NotNil)
+			c.Assert(err, NotNil, Commentf("no.%v", i))
 		} else {
 			c.Assert(err, IsNil)
-			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
-			}
+			c.Assert(result.GetFloat64(), Equals, test.expect)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, prevWarningCnt+test.warningCnt)
+			prevWarningCnt += test.warningCnt
 		}
 	}
 
@@ -327,33 +330,34 @@ func (s *testEvaluatorSuite) TestLog10(c *C) {
 	defer testleak.AfterTest(c)()
 
 	tests := []struct {
-		args   interface{}
-		expect float64
-		isNil  bool
-		getErr bool
+		args       interface{}
+		expect     float64
+		isNil      bool
+		getErr     bool
+		warningCnt uint16
 	}{
-		{nil, 0, true, false},
-		{int64(100), 2, false, false},
-		{float64(100), 2, false, false},
-		{int64(101), 2.0043213737826426, false, false},
-		{int64(-1), 0, true, false},
-		{"100abc", 0, false, true},
+		{nil, 0, true, false, 0},
+		{int64(100), 2, false, false, 0},
+		{float64(100), 2, false, false, 0},
+		{int64(101), 2.0043213737826426, false, false, 0},
+		{int64(-1), 0, true, false, 1},
+		{"100abc", 2, false, true, 1},
+		{"abc", 0, true, true, 2},
 	}
 
-	for _, test := range tests {
+	prevWarningCnt := s.ctx.GetSessionVars().StmtCtx.WarningCount()
+	for i, test := range tests {
 		f, err := newFunctionForTest(s.ctx, ast.Log10, s.primitiveValsToConstants([]interface{}{test.args})...)
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
 		if test.getErr {
-			c.Assert(err, NotNil)
+			c.Assert(err, NotNil, Commentf("no.%v", i))
 		} else {
 			c.Assert(err, IsNil)
-			if test.isNil {
-				c.Assert(result.Kind(), Equals, types.KindNull)
-			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
-			}
+			c.Assert(result.GetFloat64(), Equals, test.expect)
+			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, prevWarningCnt+test.warningCnt)
+			prevWarningCnt += test.warningCnt
 		}
 	}
 
