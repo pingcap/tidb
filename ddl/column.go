@@ -42,6 +42,7 @@ import (
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -839,7 +840,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				// If timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
 			}
-			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeIndex.Equal(err) {
+			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) {
 				logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				// TODO: Do rollback.
 			}
@@ -917,8 +918,9 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 
 type updateColumnWorker struct {
 	*backfillWorker
-	oldColInfo *model.ColumnInfo
-	newColInfo *model.ColumnInfo
+	oldColInfo    *model.ColumnInfo
+	newColInfo    *model.ColumnInfo
+	metricCounter prometheus.Counter
 
 	// The following attributes are used to reduce memory allocation.
 	rowRecords []*rowRecord
@@ -933,9 +935,14 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 		backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
 		oldColInfo:     oldCol,
 		newColInfo:     newCol,
+		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("update_col_speed"),
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
 	}
+}
+
+func (w *updateColumnWorker) AddMetricInfo(cnt float64) {
+	w.metricCounter.Add(cnt)
 }
 
 type rowRecord struct {
@@ -944,7 +951,7 @@ type rowRecord struct {
 }
 
 // getNextHandle gets next handle of entry that we are going to process.
-func (w *updateColumnWorker) getNextHandle(taskRange reorgIndexTask, taskDone bool, lastAccessedHandle kv.Handle) (nextHandle kv.Handle) {
+func (w *updateColumnWorker) getNextHandle(taskRange reorgBackfillTask, taskDone bool, lastAccessedHandle kv.Handle) (nextHandle kv.Handle) {
 	if !taskDone {
 		// The task is not done. So we need to pick the last processed entry's handle and add one.
 		return lastAccessedHandle.Next()
@@ -961,7 +968,7 @@ func (w *updateColumnWorker) getNextHandle(taskRange reorgIndexTask, taskDone bo
 	return taskRange.endHandle.Next()
 }
 
-func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgIndexTask) ([]*rowRecord, kv.Handle, bool, error) {
+func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*rowRecord, kv.Handle, bool, error) {
 	w.rowRecords = w.rowRecords[:0]
 	startTime := time.Now()
 
@@ -985,7 +992,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 				return false, nil
 			}
 
-			if err1 := w.getIndexRecord(handle, recordKey, rawRow); err1 != nil {
+			if err1 := w.getRowRecord(handle, recordKey, rawRow); err1 != nil {
 				return false, errors.Trace(err1)
 			}
 			lastAccessedHandle = handle
@@ -1005,10 +1012,10 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	return w.rowRecords, w.getNextHandle(taskRange, taskDone, lastAccessedHandle), taskDone, errors.Trace(err)
 }
 
-func (w *updateColumnWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawRow []byte) error {
+func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, rawRow []byte) error {
 	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRow, time.UTC, timeutil.SystemLocation(), w.rowMap)
 	if err != nil {
-		return errors.Trace(errCantDecodeIndex.GenWithStackByArgs(err))
+		return errors.Trace(errCantDecodeRecord.GenWithStackByArgs("column", err))
 	}
 
 	if _, ok := w.rowMap[w.newColInfo.ID]; ok {
@@ -1047,7 +1054,7 @@ func (w *updateColumnWorker) cleanRowMap() {
 }
 
 // BackfillDataInTxn will backfill the table record in a transaction, lock corresponding rowKey, if the value of rowKey is changed.
-func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgIndexTask) (taskCtx backfillTaskContext, errInTxn error) {
+func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	errInTxn = kv.RunInNewTxn(w.sessCtx.GetStore(), true, func(txn kv.Transaction) error {
 		taskCtx.addedCount = 0
