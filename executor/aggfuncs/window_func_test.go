@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -149,5 +150,44 @@ func (s *testSuite) TestWindowFunctions(c *C) {
 	}
 	for _, test := range tests {
 		s.testWindowFunc(c, test)
+	}
+}
+
+func (s *testSuite) TestMemNtile(c *C) {
+	tests := []aggMemTest{
+		buildAggMemTester(ast.WindowFuncNtile, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens, false),
+	}
+	for _, test := range tests {
+		s.testWindowAggMemFunc(c, test)
+	}
+}
+
+func (s *testSuite) testWindowAggMemFunc(c *C, p aggMemTest) {
+	srcChk := p.aggTest.genSrcChk()
+
+	args := []expression.Expression{&expression.Column{RetType: p.aggTest.dataType, Index: 0}}
+	if p.aggTest.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+	}
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.aggTest.funcName, args, p.isDistinct)
+	c.Assert(err, IsNil)
+	if p.aggTest.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
+	finalPr, memDelta := finalFunc.AllocPartialResult()
+	c.Assert(memDelta, Equals, p.allocMemDelta)
+
+	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.aggTest.dataType)
+	c.Assert(err, IsNil)
+	iter := chunk.NewIterator4Chunk(srcChk)
+	i := 0
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(memDelta, Equals, updateMemDeltas[i])
+		i++
 	}
 }

@@ -60,8 +60,7 @@ func (n *ntile) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Ro
 		p.quotient = p.numRows / n.n
 		p.remainder = p.numRows % n.n
 	}
-	memDelta += DefUint64Size
-	return memDelta, nil
+	return 0, nil
 }
 
 func (n *ntile) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
