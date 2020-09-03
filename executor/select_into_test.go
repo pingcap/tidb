@@ -54,8 +54,6 @@ func (s *testSuite1) TestSelectIntoFileExists(c *C) {
 	c.Assert(strings.Contains(err.Error(), outfile), IsTrue)
 }
 
-<<<<<<< HEAD
-=======
 func (s *testSuite1) TestSelectIntoOutfileTypes(c *C) {
 	outfile := randomSelectFilePath("TestSelectIntoOutfileTypes")
 	tk := testkit.NewTestKit(c, s.store)
@@ -90,7 +88,6 @@ func (s *testSuite1) TestSelectIntoOutfileTypes(c *C) {
 `, outfile, c)
 }
 
->>>>>>> 0fd81a8... executor: fix file exists errors in tests for `select into outfile` (#19717)
 func (s *testSuite1) TestSelectIntoOutfileFromTable(c *C) {
 	outfile := randomSelectFilePath("TestSelectIntoOutfileFromTable")
 	tk := testkit.NewTestKit(c, s.store)
