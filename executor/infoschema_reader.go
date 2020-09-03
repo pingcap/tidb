@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.etcd.io/etcd/clientv3"
 )
 
@@ -435,7 +436,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-
+			pkType := "NON-CLUSTERED"
 			if !table.IsView() {
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
@@ -465,13 +466,14 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
 				}
-				var tableType string
-				switch schema.Name.L {
-				case util.InformationSchemaName.L, util.PerformanceSchemaName.L,
-					util.MetricSchemaName.L:
+				tableType := "BASE TABLE"
+				if util.IsSystemView(schema.Name.L) {
 					tableType = "SYSTEM VIEW"
-				default:
-					tableType = "BASE TABLE"
+				}
+				if table.PKIsHandle {
+					pkType = "INT CLUSTERED"
+				} else if table.IsCommonHandle {
+					pkType = "COMMON CLUSTERED"
 				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
 				record := types.MakeDatums(
@@ -498,6 +500,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 					table.Comment,         // TABLE_COMMENT
 					table.ID,              // TIDB_TABLE_ID
 					shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
+					pkType,                // TIDB_PK_TYPE
 				)
 				rows = append(rows, record)
 			} else {
@@ -525,6 +528,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 					"VIEW",                // TABLE_COMMENT
 					table.ID,              // TIDB_TABLE_ID
 					nil,                   // TIDB_ROW_ID_SHARDING_INFO
+					pkType,                // TIDB_PK_TYPE
 				)
 				rows = append(rows, record)
 			}
@@ -1660,6 +1664,7 @@ func (e *memtableRetriever) setDataForServersInfo() error {
 			info.Version,         // VERSION
 			info.GitHash,         // GIT_HASH
 			info.BinlogStatus,    // BINLOG_STATUS
+			stringutil.BuildStringFromLabels(info.Labels), // LABELS
 		)
 		rows = append(rows, row)
 	}
