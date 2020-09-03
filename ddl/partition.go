@@ -768,13 +768,13 @@ func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (int
 			return value, false, nil
 		}
 
-		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{}); err1 == nil {
-			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-			if err2 == nil && !isNull {
-				return uint64(res), true, nil
-			}
-		} else {
+		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
+		if err1 != nil {
 			return 0, false, err1
+		}
+		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		if err2 == nil && !isNull {
+			return uint64(res), true, nil
 		}
 	} else {
 		if value, err := strconv.ParseInt(str, 10, 64); err == nil {
@@ -784,13 +784,13 @@ func getRangeValue(ctx sessionctx.Context, str string, unsignedBigint bool) (int
 		// For example, the following two cases are the same:
 		// PARTITION p0 VALUES LESS THAN (TO_SECONDS('2004-01-01'))
 		// PARTITION p0 VALUES LESS THAN (63340531200)
-		if e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{}); err1 == nil {
-			res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
-			if err2 == nil && !isNull {
-				return res, true, nil
-			}
-		} else {
+		e, err1 := expression.ParseSimpleExprWithTableInfo(ctx, str, &model.TableInfo{})
+		if err1 != nil {
 			return 0, false, err1
+		}
+		res, isNull, err2 := e.EvalInt(ctx, chunk.Row{})
+		if err2 == nil && !isNull {
+			return res, true, nil
 		}
 	}
 	return 0, false, ErrNotAllowedTypeInPartition.GenWithStackByArgs(str)
