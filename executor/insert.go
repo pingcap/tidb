@@ -18,7 +18,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"runtime/trace"
-	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/mysql"
@@ -83,6 +82,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			return err
 		}
 	} else {
+		// 在这里计时
 		for i, row := range rows {
 			var err error
 			sizeHintStep := int(sessVars.ShardAllocateStep)
@@ -201,7 +201,6 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}
 	}
-	start := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
 	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
@@ -217,7 +216,6 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 
 			err = e.updateDupRow(ctx, txn, r, handle, e.OnDuplicate)
 			if err == nil {
-				newRows[i] = nil
 				continue
 			}
 			if !kv.IsErrNotFound(err) {
@@ -254,22 +252,17 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			newRows[i] = nil
 			break
 		}
-	}
-	e.stats.check = time.Since(start)
-	start = time.Now()
-	// If row was checked with no duplicate keys,
-	// we should do insert the row,
-	// and key-values should be filled back to dupOldRowValues for the further row check,
-	// due to there may be duplicate keys inside the insert statement.
-	for _, value := range newRows {
-		if value != nil {
-			err := e.addRecord(ctx, value)
+		// If row was checked with no duplicate keys,
+		// we should do insert the row,
+		// and key-values should be filled back to dupOldRowValues for the further row check,
+		// due to there may be duplicate keys inside the insert statement.
+		if newRows[i] != nil {
+			err := e.addRecord(ctx, newRows[i])
 			if err != nil {
 				return err
 			}
 		}
 	}
-	e.stats.insert = time.Since(start)
 	return nil
 }
 
