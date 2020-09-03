@@ -14,12 +14,11 @@
 package disk
 
 import (
+	"github.com/pingcap/check"
+	"github.com/pingcap/tidb/config"
 	"os"
 	"sync"
 	"testing"
-
-	"github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
 )
 
 func TestT(t *testing.T) {
@@ -32,7 +31,7 @@ type testDiskSerialSuite struct {
 }
 
 func (s *testDiskSerialSuite) TestRemoveDir(c *check.C) {
-	err := InitializeTempDir()
+	err := CheckAndInitTempDir()
 	c.Assert(err, check.IsNil)
 	c.Assert(checkTempDirExist(), check.Equals, true)
 	c.Assert(os.RemoveAll(config.GetGlobalConfig().TempStoragePath), check.IsNil)
