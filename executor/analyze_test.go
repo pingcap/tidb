@@ -434,6 +434,14 @@ func (s *testSuite1) TestAnalyzeIndex(c *C) {
 	tk.MustExec("insert into t1(id, v) values(1, 2), (2, 2), (3, 2), (4, 2), (5, 1), (6, 3), (7, 4)")
 	tk.MustExec("analyze table t1 index k")
 	c.Assert(len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 0)
+
+	func() {
+		defer tk.MustExec("set @@session.tidb_enable_fast_analyze=0")
+		tk.MustExec("drop stats t1")
+		tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+		tk.MustExec("analyze table t1 index k")
+		c.Assert(len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 1)
+	}()
 }
 
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
