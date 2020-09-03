@@ -215,13 +215,13 @@ func (c *RowContainer) GetDiskTracker() *disk.Tracker {
 
 // Close close the RowContainer
 func (c *RowContainer) Close() (err error) {
+	c.m.RLock()
+	defer c.m.RUnlock()
 	if c.actionSpill != nil {
 		// Set status to spilledYet to avoid spilling.
 		c.actionSpill.setStatus(spilledYet)
 		c.actionSpill.cond.Broadcast()
 	}
-	c.m.RLock()
-	defer c.m.RUnlock()
 	if c.alreadySpilled() {
 		err = c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil
