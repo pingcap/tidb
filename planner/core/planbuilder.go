@@ -1345,7 +1345,28 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
 		}
+<<<<<<< HEAD
 		p.SetSchema(buildShowSchema(show, isView))
+=======
+	case ast.ShowCreateView:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SHOW VIEW")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShowViewPriv, show.Table.Schema.L, show.Table.Name.L, "", err)
+	case ast.ShowBackups, ast.ShowRestores:
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
+	case ast.ShowTableNextRowId:
+		p := &ShowNextRowID{TableName: show.Table}
+		p.setSchemaAndNames(buildShowNextRowID())
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", ErrPrivilegeCheckFail)
+		return p, nil
+	case ast.ShowStatsBuckets, ast.ShowStatsHistograms, ast.ShowStatsMeta, ast.ShowStatsHealthy:
+		user := b.ctx.GetSessionVars().User
+		var err error
+		if user != nil {
+			err = ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, mysql.SystemDB)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, mysql.SystemDB, "", "", err)
+>>>>>>> 862d8b8... check privileges for show stats (#19702)
 	}
 	for _, col := range p.schema.Columns {
 		col.UniqueID = b.ctx.GetSessionVars().AllocPlanColumnID()
