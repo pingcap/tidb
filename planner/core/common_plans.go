@@ -495,6 +495,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 				return err
 			}
 			if x.PartitionInfo != nil {
+				if x.TblInfo.Partition.Type != model.PartitionTypeHash {
+					return errors.New("range partition table can not use plan cache")
+				}
 				num := x.TblInfo.Partition.Num
 				pos := math.Abs(x.Handle) % int64(num)
 				x.PartitionInfo = &x.TblInfo.Partition.Definitions[pos]
@@ -507,6 +510,9 @@ func (e *Execute) rebuildRange(p Plan) error {
 			}
 		}
 		if x.PartitionInfo != nil {
+			if x.TblInfo.Partition.Type != model.PartitionTypeHash {
+				return errors.New("range partition table can not use plan cache")
+			}
 			val := x.IndexValues[x.partitionColumnPos].GetInt64()
 			partitionID := val % int64(x.TblInfo.Partition.Num)
 			x.PartitionInfo = &x.TblInfo.Partition.Definitions[partitionID]
