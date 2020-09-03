@@ -71,7 +71,7 @@ var ignoreFrameWindowFuncs = map[string]struct{}{
 	ast.WindowFuncRowNumber:   {},
 }
 
-// IgnoreFrame checks if the function ignore frame specification.
+// IgnoreFrame checks if the function ignores frame specification.
 func IgnoreFrame(name string) bool {
 	_, ok := ignoreFrameWindowFuncs[strings.ToLower(name)]
 	return ok
