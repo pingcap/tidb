@@ -4295,6 +4295,10 @@ func (s *testSuiteP2) TestStrToDateBuiltin(c *C) {
 	tk.MustQuery(`select str_to_date('18+10+22','%y+%m+%d') from dual`).Check(testkit.Rows("2018-10-22"))
 	tk.MustQuery(`select str_to_date('18=10=22','%y=%m=%d') from dual`).Check(testkit.Rows("2018-10-22"))
 	tk.MustQuery(`select str_to_date('18_10_22','%y_%m_%d') from dual`).Check(testkit.Rows("2018-10-22"))
+	tk.MustQuery(`SELECT STR_TO_DATE('2020-07-04 11:22:33 PM', '%Y-%m-%d %r')`).Check(testkit.Rows("2020-07-04 23:22:33"))
+	tk.MustQuery(`SELECT STR_TO_DATE('2020-07-04 12:22:33 AM', '%Y-%m-%d %r')`).Check(testkit.Rows("2020-07-04 00:22:33"))
+	tk.MustQuery(`SELECT STR_TO_DATE('2020-07-04 12:22:33', '%Y-%m-%d %T')`).Check(testkit.Rows("2020-07-04 12:22:33"))
+	tk.MustQuery(`SELECT STR_TO_DATE('2020-07-04 00:22:33', '%Y-%m-%d %T')`).Check(testkit.Rows("2020-07-04 00:22:33"))
 }
 
 func (s *testSuiteP2) TestReadPartitionedTable(c *C) {
@@ -6243,15 +6247,29 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 		"update t1 set a=a+1 where a=6;",
 	}
 
-	for _, sql := range testSQLs {
-		tk.MustExec(sql)
+	getRootStats := func() string {
 		info := tk.Se.ShowProcess()
 		c.Assert(info, NotNil)
 		p, ok := info.Plan.(plannercore.Plan)
 		c.Assert(ok, IsTrue)
 		stats := tk.Se.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(p.ID())
-		c.Assert(stats.String(), Matches, "time.*loops.*Get.*num_rpc.*total_time.*")
+		return stats.String()
 	}
+	for _, sql := range testSQLs {
+		tk.MustExec(sql)
+		c.Assert(getRootStats(), Matches, "time.*loops.*Get.*num_rpc.*total_time.*")
+	}
+
+	// Test for lock keys stats.
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("update t1 set b=b+1")
+	c.Assert(getRootStats(), Matches, "time.*lock_keys.*time.* region.* keys.* lock_rpc:.* rpc_count.*")
+	tk.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustQuery("select * from t1 for update").Check(testkit.Rows("5 6", "7 7"))
+	c.Assert(getRootStats(), Matches, "time.*lock_keys.*time.* region.* keys.* lock_rpc:.* rpc_count.*")
+	tk.MustExec("rollback")
 }
 
 func (s *testSuite) TestIssue13758(c *C) {
