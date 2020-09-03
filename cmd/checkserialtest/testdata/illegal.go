@@ -1,6 +1,7 @@
 package testdata
 
 import (
+	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 )
 
@@ -20,7 +21,7 @@ func (ts *TestSuite) Test2(c *C) {
 	failpoint.Enable("github.com/pingcap/tidb/xxxxxxxxxxxx", `return(true)`)
 }
 
-func test3()  {
+func test3() {
 	failpoint.Enable("github.com/pingcap/tidb/xxxxxxxxxxxx", `return(true)`)
 }
 

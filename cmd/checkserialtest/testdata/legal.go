@@ -3,34 +3,35 @@ package testdata
 import (
 	"testing"
 
+	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
 )
 
-type TestSuite struct {
+type TestSuite2 struct {
 }
 
-var _ = SerialSuite(&TestSuite{})
+var _ = SerialSuites(&TestSuite2{})
 
-func (ts *TestSuite) Test1(c *C) {
+func (ts *TestSuite2) Test1(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/xxxxxxxxxxxx", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/xxxxxxxxxxxx"), IsNil)
 	}()
 }
 
-func (ts *TestSuite) Test2(c *C) {
+func (ts *TestSuite2) Test2(c *C) {
 	failpoint.Enable("github.com/pingcap/tidb/xxxxxxxxxxxx", `return(true)`)
 }
 
-func test3()  {
+func test33()  {
 	failpoint.Enable("github.com/pingcap/tidb/xxxxxxxxxxxx", `return(true)`)
 }
 
-func (ts *TestSuite) Test3(c *C) {
-	test3()
+func (ts *TestSuite2) Test3(c *C) {
+	test33()
 }
 
-func (ts *TestSuite) Test4(c *C) {
+func (ts *TestSuite2) Test4(c *C) {
 	go func() {
 		failpoint.Enable("github.com/pingcap/tidb/xxxxxxxxxxxx", `return(true)`)
 	}()
