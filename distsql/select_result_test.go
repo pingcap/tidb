@@ -18,6 +18,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
@@ -29,7 +30,7 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 	sr := selectResult{ctx: ctx}
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, IsNil)
 	sr.rootPlanID = 1234
-	sr.updateCopRuntimeStats(context.Background(), &execdetails.ExecDetails{CalleeAddress: "a"}, 0)
+	sr.updateCopRuntimeStats(context.Background(), &tikv.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "a"}}, 0)
 
 	ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
 	t := uint64(1)
@@ -39,12 +40,12 @@ func (s *testSuite) TestUpdateCopRuntimeStats(c *C) {
 		},
 	}
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()) != len(sr.copPlanIDs), IsTrue)
-	sr.updateCopRuntimeStats(context.Background(), &execdetails.ExecDetails{CalleeAddress: "callee"}, 0)
+	sr.updateCopRuntimeStats(context.Background(), &tikv.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "callee"}}, 0)
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.ExistsCopStats(1234), IsFalse)
 
 	sr.copPlanIDs = []int{sr.rootPlanID}
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl, NotNil)
 	c.Assert(len(sr.selectResp.GetExecutionSummaries()), Equals, len(sr.copPlanIDs))
-	sr.updateCopRuntimeStats(context.Background(), &execdetails.ExecDetails{CalleeAddress: "callee"}, 0)
+	sr.updateCopRuntimeStats(context.Background(), &tikv.CopRuntimeStats{ExecDetails: execdetails.ExecDetails{CalleeAddress: "callee"}}, 0)
 	c.Assert(ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopStats(1234).String(), Equals, "time:1ns, loops:1")
 }

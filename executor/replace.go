@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/trace"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -181,6 +182,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	 * See http://dev.mysql.com/doc/refman/5.7/en/mysql-affected-rows.html
 	 */
 
+	defer trace.StartRegion(ctx, "ReplaceExec").End()
 	// Get keys need to be checked.
 	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, newRows)
 	if err != nil {

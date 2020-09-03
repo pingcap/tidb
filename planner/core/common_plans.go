@@ -1030,12 +1030,6 @@ func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memor
 		analyzeInfo = "time:0ns, loops:0"
 		actRows = "0"
 	}
-	switch p.(type) {
-	case *PhysicalTableReader, *PhysicalIndexReader, *PhysicalIndexLookUpReader:
-		if s := runtimeStatsColl.GetReaderStats(explainID); s != nil && len(s.String()) > 0 {
-			analyzeInfo += ", " + s.String()
-		}
-	}
 
 	memoryInfo = "N/A"
 	memTracker := ctx.GetSessionVars().StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())
