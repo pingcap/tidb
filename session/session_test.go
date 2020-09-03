@@ -3233,6 +3233,27 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	c.Assert(taskID1 != taskID2, IsTrue)
 }
 
+func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
+	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use environment
+	// use isolated store, because in below failpoint we will cancel its context
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.MockTiKV))
+	c.Assert(err, IsNil)
+	defer store.Close()
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+	se, err := session.CreateSession(store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/storeCloseInLoop", `return`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
+
+	// this DDL call will enter deadloop before this fix
+	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil)
+	c.Assert(err.Error(), Equals, "context canceled")
+}
+
 func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
 	// only run BR SQL integration test with tikv store.
 	if *withTiKV {
