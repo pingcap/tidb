@@ -12,6 +12,7 @@ explain_test
 cmd/explaintest/explain-test.out
 cmd/explaintest/explaintest_tidb-server
 cmd/explaintest/portgenerator
+cmd/checkserialtest/checkserialtest
 *.fail.go
 tools/bin/
 vendor
