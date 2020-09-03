@@ -401,8 +401,8 @@ func (s *testIntegrationSerialSuite) TestBroadcastJoin(c *C) {
 		res.Check(testkit.Rows(output[i].Plan...))
 	}
 
-	// out join not supported
-	_, err := tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k")
+	// out table of out join should not be global
+	_, err := tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t), broadcast_join_local(d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 	// join with non-equal condition not supported
