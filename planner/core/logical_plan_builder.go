@@ -4435,12 +4435,12 @@ func extractWindowFuncs(fields []*ast.SelectField) []*ast.WindowFuncExpr {
 }
 
 func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName string) (*ast.WindowSpec, bool) {
-	needFrame := aggregation.NeedFrame(windowFuncName)
+	ignoreFrame := aggregation.IgnoreFrame(windowFuncName)
 	// According to MySQL, In the absence of a frame clause, the default frame depends on whether an ORDER BY clause is present:
 	//   (1) With order by, the default frame is equivalent to "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW";
 	//   (2) Without order by, the default frame is equivalent to "RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING",
 	//       which is the same as an empty frame.
-	if needFrame && spec.Frame == nil && spec.OrderBy != nil {
+	if !ignoreFrame && spec.Frame == nil && spec.OrderBy != nil {
 		newSpec := *spec
 		newSpec.Frame = &ast.FrameClause{
 			Type: ast.Ranges,
@@ -4452,7 +4452,7 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 		return &newSpec, true
 	}
 	// For functions that operate on the entire partition, the frame clause will be ignored.
-	if !needFrame && spec.Frame != nil {
+	if ignoreFrame && spec.Frame != nil {
 		specName := spec.Name.O
 		b.ctx.GetSessionVars().StmtCtx.AppendNote(ErrWindowFunctionIgnoresFrame.GenWithStackByArgs(windowFuncName, getWindowName(specName)))
 		newSpec := *spec

@@ -57,9 +57,10 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 	return &WindowFuncDesc{base}, nil
 }
 
-// noFrameWindowFuncs is the functions that operate on the entire partition,
+// ignoreFrameWindowFuncs is the functions that operate on the entire partition,
 // they should not have frame specifications.
-var noFrameWindowFuncs = map[string]struct{}{
+// see https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html
+var ignoreFrameWindowFuncs = map[string]struct{}{
 	ast.WindowFuncCumeDist:    {},
 	ast.WindowFuncDenseRank:   {},
 	ast.WindowFuncLag:         {},
@@ -70,8 +71,8 @@ var noFrameWindowFuncs = map[string]struct{}{
 	ast.WindowFuncRowNumber:   {},
 }
 
-// NeedFrame checks if the function need frame specification.
-func NeedFrame(name string) bool {
-	_, ok := noFrameWindowFuncs[strings.ToLower(name)]
-	return !ok
+// IgnoreFrame checks if the function ignore frame specification.
+func IgnoreFrame(name string) bool {
+	_, ok := ignoreFrameWindowFuncs[strings.ToLower(name)]
+	return ok
 }
