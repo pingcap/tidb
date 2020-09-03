@@ -511,47 +511,53 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 	if len(tables) == 0 {
 		return nil
 	}
+
 	for _, ptbl := range tables {
-		tbl := ptbl.GetInt64(0)
-		sql = fmt.Sprintf("select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%d order by table_id, hist_id, is_index", tbl)
-		rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
-		if len(rc) > 0 {
-			defer terror.Call(rc[0].Close)
-		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-		req := rc[0].NewChunk()
-		iter := chunk.NewIterator4Chunk(req)
-		tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
-		var rows []chunk.Row
-		for {
-			err := rc[0].Next(context.TODO(), req)
+		err = func() error {
+			tbl := ptbl.GetInt64(0)
+			sql = fmt.Sprintf("select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%d order by table_id, hist_id, is_index", tbl)
+			rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
+			if len(rc) > 0 {
+				defer terror.Call(rc[0].Close)
+			}
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if req.NumRows() == 0 {
-				if len(rows) > 0 {
-					if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
-						return errors.Trace(err)
-					}
+			req := rc[0].NewChunk()
+			iter := chunk.NewIterator4Chunk(req)
+			tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
+			var rows []chunk.Row
+			for {
+				err := rc[0].Next(context.TODO(), req)
+				if err != nil {
+					return errors.Trace(err)
 				}
-				break
-			}
-			for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-				if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex || len(rows) > 100000 {
+				if req.NumRows() == 0 {
 					if len(rows) > 0 {
 						if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
 							return errors.Trace(err)
 						}
 					}
-					tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-					rows = rows[:0]
+					break
 				}
-				rows = append(rows, row)
+				for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+					if row.GetInt64(0) != tableID || row.GetInt64(1) != histID || row.GetInt64(2) != isIndex || len(rows) > 100000 {
+						if len(rows) > 0 {
+							if err := h.handleSingleHistogramUpdate(is, rows); err != nil {
+								return errors.Trace(err)
+							}
+						}
+						tableID, histID, isIndex = row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
+						rows = rows[:0]
+					}
+					rows = append(rows, row)
+				}
 			}
+			return nil
+		}()
+		if err != nil {
+			return err
 		}
-
 	}
 	return nil
 }
