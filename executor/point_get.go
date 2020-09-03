@@ -23,7 +23,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -196,7 +195,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 			}
 			return e.lockKeyIfNeeded(ctx, e.idxKey)
 		}
-		e.handle, err = tables.DecodeHandle(e.handleVal)
+		e.handle, err = tablecodec.DecodeHandle(e.handleVal)
 		if err != nil {
 			return err
 		}
