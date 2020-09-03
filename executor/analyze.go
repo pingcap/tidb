@@ -665,7 +665,8 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 			err = errors.Errorf("database not found for table '%s'", e.tblInfo.Name)
 			return
 		}
-		rollbackFn, err := e.activateTxnForRowCount()
+		var rollbackFn func() error
+		rollbackFn, err = e.activateTxnForRowCount()
 		if err != nil {
 			return
 		}
