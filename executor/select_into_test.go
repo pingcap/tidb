@@ -145,8 +145,7 @@ func (s *testSuite1) TestSelectIntoOutfileConstant(c *C) {
 }
 
 func (s *testSuite1) TestDeliminators(c *C) {
-	tmpDir := os.TempDir()
-	outfile := filepath.Join(tmpDir, "TestDeliminators.data")
+	outfile := randomSelectFilePath("TestDeliminators")
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
