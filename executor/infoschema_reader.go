@@ -436,7 +436,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-
+			pkType := "NON-CLUSTERED"
 			if !table.IsView() {
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
@@ -466,13 +466,14 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
 				}
-				var tableType string
-				switch schema.Name.L {
-				case util.InformationSchemaName.L, util.PerformanceSchemaName.L,
-					util.MetricSchemaName.L:
+				tableType := "BASE TABLE"
+				if util.IsSystemView(schema.Name.L) {
 					tableType = "SYSTEM VIEW"
-				default:
-					tableType = "BASE TABLE"
+				}
+				if table.PKIsHandle {
+					pkType = "INT CLUSTERED"
+				} else if table.IsCommonHandle {
+					pkType = "COMMON CLUSTERED"
 				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
 				record := types.MakeDatums(
@@ -499,6 +500,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 					table.Comment,         // TABLE_COMMENT
 					table.ID,              // TIDB_TABLE_ID
 					shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
+					pkType,                // TIDB_PK_TYPE
 				)
 				rows = append(rows, record)
 			} else {
@@ -526,6 +528,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 					"VIEW",                // TABLE_COMMENT
 					table.ID,              // TIDB_TABLE_ID
 					nil,                   // TIDB_ROW_ID_SHARDING_INFO
+					pkType,                // TIDB_PK_TYPE
 				)
 				rows = append(rows, record)
 			}
@@ -1889,8 +1892,16 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 					if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
 						continue
 					}
-					// TODO: Support https in tiflash
-					url := fmt.Sprintf("http://%s", ev.Value)
+					url := fmt.Sprintf("%s://%s", util.InternalHTTPSchema(), ev.Value)
+					req, err := http.NewRequest(http.MethodGet, url, nil)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					_, err = util.InternalHTTPClient().Do(req)
+					if err != nil {
+						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						continue
+					}
 					e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
 						id:  id,
 						url: url,
@@ -1930,7 +1941,6 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	}
 	sql = fmt.Sprintf("%s LIMIT %d, %d", sql, e.rowIdx, maxCount)
 	notNumber := "nan"
-	httpClient := http.DefaultClient
 	instanceInfo := e.instanceInfos[e.instanceIdx]
 	url := instanceInfo.url
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -1940,7 +1950,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	q := req.URL.Query()
 	q.Add("query", sql)
 	req.URL.RawQuery = q.Encode()
-	resp, err := httpClient.Do(req)
+	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
