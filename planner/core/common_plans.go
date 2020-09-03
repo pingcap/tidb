@@ -519,6 +519,30 @@ func (e *Execute) rebuildRange(p Plan) error {
 		}
 		return nil
 	case *BatchPointGetPlan:
+		if x.Path != nil {
+			if x.Path.IsTablePath {
+				x.Path.Ranges, err = ranger.BuildTableRange(x.Path.AccessConds, sc, x.Path.PkCol.RetType)
+				// For col = NULL case, the length of the final ranges could be empty.
+				if err != nil || len(x.Path.Ranges) != 1 {
+					return errors.Errorf("Rebuilding range for PointGet failed")
+				}
+				x.Handles = make([]int64, len(x.Path.Ranges))
+				for i, ran := range x.Path.Ranges {
+					x.Handles[i] = ran.LowVal[0].GetInt64()
+				}
+				return nil
+			}
+			res, err := ranger.DetachCondAndBuildRangeForIndex(p.SCtx(), x.Path.AccessConds, x.Path.IdxCols, x.Path.IdxColLens)
+			// For col = NULL case, the length of the final ranges could be empty.
+			if err != nil || len(res.Ranges) != 1 {
+				return errors.Errorf("Rebuilding range for BatchPointGet failed")
+			}
+			x.IndexValues = make([][]types.Datum, 0, len(res.Ranges))
+			for _, ran := range res.Ranges {
+				x.IndexValues = append(x.IndexValues, ran.LowVal)
+			}
+			return nil
+		}
 		for i, param := range x.HandleParams {
 			if param != nil {
 				x.Handles[i], err = param.Datum.ToInt64(sc)
