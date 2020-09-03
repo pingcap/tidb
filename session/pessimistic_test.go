@@ -1072,6 +1072,8 @@ func (s *testPessimisticSuite) TestNonAutoCommitWithPessimisticMode(c *C) {
 }
 
 func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000)
+	defer atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("use test")
@@ -1087,8 +1089,10 @@ func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
 	tk2.MustExec("set innodb_lock_wait_timeout = 1")
 	tk2.MustExec("begin pessimistic")
 	err := tk2.ExecToErr("insert into t1 values(2, 2, 2)")
+	c.Assert(err, NotNil)
 	c.Assert(tikv.ErrLockWaitTimeout.Equal(err), IsTrue)
 	err = tk2.ExecToErr("select * from t1 where c2 = 3 for update nowait")
+	c.Assert(err, NotNil)
 	c.Assert(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
@@ -1186,6 +1190,8 @@ func (s *testPessimisticSuite) TestRCSubQuery(c *C) {
 }
 
 func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000)
+	defer atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", variable.DefTiDBRowFormatV2))
@@ -1203,10 +1209,12 @@ func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 		tk2 := testkit.NewTestKitWithInit(c, s.store)
 		tk2.MustExec("begin pessimistic")
 		err := tk2.ExecToErr("select * from tu where z = 3 for update nowait")
+		c.Assert(err, NotNil)
 		c.Assert(terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into tu(x, y) values(2, 2);")
 		err = tk2.ExecToErr("select * from tu where z = 4 for update nowait")
+		c.Assert(err, NotNil)
 		c.Assert(terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 
 		// test batch point get lock
@@ -1215,10 +1223,12 @@ func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 		tk.MustQuery("select * from tu where z in (1, 3, 5) for update").Check(testkit.Rows("1 2 3"))
 		tk2.MustExec("begin pessimistic")
 		err = tk2.ExecToErr("select x from tu where z in (3, 7, 9) for update nowait")
+		c.Assert(err, NotNil)
 		c.Assert(terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into tu(x, y) values(5, 6);")
 		err = tk2.ExecToErr("select * from tu where z = 11 for update nowait")
+		c.Assert(err, NotNil)
 		c.Assert(terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 
 		tk.MustExec("commit")
