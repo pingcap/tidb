@@ -16,9 +16,10 @@ package executor_test
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"math/rand"
 	"strings"
+
+	"github.com/pingcap/tidb/sessionctx/variable"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
@@ -241,12 +242,11 @@ func checkPlanAndRun(tk *testkit.TestKit, c *C, plan string, sql string) *testki
 	return tk.MustQuery(sql)
 }
 
-func (s *testSerialSuite1) TestMergeJoinInDisk(c *C) {
-	originCfg := config.GetGlobalConfig()
-	newConf := *originCfg
-	newConf.OOMUseTmpStorage = true
-	config.StoreGlobalConfig(&newConf)
-	defer config.StoreGlobalConfig(originCfg)
+func (s *testSuite2) TestMergeJoinInDisk(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+	})
 
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill", "return(true)"), IsNil)
 	defer func() {

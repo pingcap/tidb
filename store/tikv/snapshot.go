@@ -72,8 +72,8 @@ type tikvSnapshot struct {
 	mu struct {
 		sync.RWMutex
 		cached map[string][]byte
+		stats  *SnapshotRuntimeStats
 	}
-	stats *SnapshotRuntimeStats
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
@@ -235,7 +235,7 @@ func (s *tikvSnapshot) batchGetSingleRegion(bo *Backoffer, batch batchKeys, coll
 		minCommitTSPushed: &s.minCommitTSPushed,
 		Client:            s.store.client,
 	}
-	if s.stats != nil {
+	if s.mu.stats != nil {
 		cli.stats = make(map[tikvrpc.CmdType]*RegionRequestRuntimeStats)
 		defer func() {
 			s.mergeRegionRequestStats(cli.stats)
@@ -363,7 +363,7 @@ func (s *tikvSnapshot) get(bo *Backoffer, k kv.Key) ([]byte, error) {
 		Client:            s.store.client,
 		resolveLite:       true,
 	}
-	if s.stats != nil {
+	if s.mu.stats != nil {
 		cli.stats = make(map[tikvrpc.CmdType]*RegionRequestRuntimeStats)
 		defer func() {
 			s.mergeRegionRequestStats(cli.stats)
@@ -448,7 +448,9 @@ func (s *tikvSnapshot) SetOption(opt kv.Option, val interface{}) {
 	case kv.TaskID:
 		s.taskID = val.(uint64)
 	case kv.CollectRuntimeStats:
-		s.stats = val.(*SnapshotRuntimeStats)
+		s.mu.Lock()
+		s.mu.stats = val.(*SnapshotRuntimeStats)
+		s.mu.Unlock()
 	}
 }
 
@@ -458,7 +460,9 @@ func (s *tikvSnapshot) DelOption(opt kv.Option) {
 	case kv.ReplicaRead:
 		s.replicaRead = kv.ReplicaReadLeader
 	case kv.CollectRuntimeStats:
-		s.stats = nil
+		s.mu.Lock()
+		s.mu.stats = nil
+		s.mu.Unlock()
 	}
 }
 
@@ -566,35 +570,41 @@ func prettyWriteKey(buf *bytes.Buffer, key []byte) {
 }
 
 func (s *tikvSnapshot) recordBackoffInfo(bo *Backoffer) {
-	if s.stats == nil || bo.totalSleep == 0 {
+	if s.mu.stats == nil || bo.totalSleep == 0 {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stats.backoffSleepMS == nil {
-		s.stats.backoffSleepMS = bo.backoffSleepMS
-		s.stats.backoffTimes = bo.backoffTimes
+	if s.mu.stats == nil {
+		return
+	}
+	if s.mu.stats.backoffSleepMS == nil {
+		s.mu.stats.backoffSleepMS = bo.backoffSleepMS
+		s.mu.stats.backoffTimes = bo.backoffTimes
 		return
 	}
 	for k, v := range bo.backoffSleepMS {
-		s.stats.backoffSleepMS[k] += v
+		s.mu.stats.backoffSleepMS[k] += v
 	}
 	for k, v := range bo.backoffTimes {
-		s.stats.backoffTimes[k] += v
+		s.mu.stats.backoffTimes[k] += v
 	}
 }
 
 func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RegionRequestRuntimeStats) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.stats.rpcStats == nil {
-		s.stats.rpcStats = stats
+	if s.mu.stats == nil {
+		return
+	}
+	if s.mu.stats.rpcStats == nil {
+		s.mu.stats.rpcStats = stats
 		return
 	}
 	for k, v := range stats {
-		stat, ok := s.stats.rpcStats[k]
+		stat, ok := s.mu.stats.rpcStats[k]
 		if !ok {
-			s.stats.rpcStats[k] = v
+			s.mu.stats.rpcStats[k] = v
 			continue
 		}
 		stat.count += v.count
