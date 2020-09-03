@@ -91,6 +91,51 @@ func (s *testIntegrationSuiteBase) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
+func (s *testIntegrationSuite) Test19654(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+
+	// enum vs enum
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b enum('a', 'b'));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b enum('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+
+	// set vs set
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b set('a', 'b'));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b set('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+
+	// enum vs set
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b enum('a', 'b'));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b set('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+
+	// char vs enum
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b char(10));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b enum('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+
+	// char vs set
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b char(10));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b set('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+}
+
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
