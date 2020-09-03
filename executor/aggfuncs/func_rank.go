@@ -14,9 +14,16 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+)
+
+const (
+	DefPartialResult4RankSize = int64(unsafe.Sizeof(partialResult4Rank{}))
+	DefRowSize = int64(unsafe.Sizeof(chunk.Row{}))
 )
 
 type rank struct {
@@ -32,7 +39,7 @@ type partialResult4Rank struct {
 }
 
 func (r *rank) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(&partialResult4Rank{}), 0
+	return PartialResult(&partialResult4Rank{}), DefPartialResult4RankSize
 }
 
 func (r *rank) ResetPartialResult(pr PartialResult) {
@@ -45,7 +52,8 @@ func (r *rank) ResetPartialResult(pr PartialResult) {
 func (r *rank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Rank)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
-	return 0, nil
+	memDelta += int64(len(rowsInGroup)) * DefRowSize
+	return memDelta, nil
 }
 
 func (r *rank) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
