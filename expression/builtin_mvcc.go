@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/server/client"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -167,8 +168,8 @@ func (b *builtinMVCCGetInfoSig) getByIndex(row chunk.Row) (string, bool, error) 
 }
 
 func (b *builtinMVCCGetInfoSig) fetch(uri string) (string, bool, error) {
-	client := newTiDBServerClient()
-	resp, err := client.fetchStatus(uri)
+	svrClient := client.NewFromGlobalConfig()
+	resp, err := svrClient.Get(uri)
 	if err != nil {
 		return "", true, err
 	}
