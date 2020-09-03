@@ -56,7 +56,7 @@ func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 	for _, row := range rowsInGroup {
 		_, isNull, err := e.args[0].EvalInt(sctx, row)
 		if err != nil {
-			return DefPartialResult4CountSize, err
+			return 0, err
 		}
 		if isNull {
 			continue
@@ -65,7 +65,7 @@ func (e *countOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInG
 		*p++
 	}
 
-	return DefPartialResult4CountSize, nil
+	return 0, nil
 }
 
 func (e *countOriginal4Int) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
