@@ -270,6 +270,7 @@ type LockCtx struct {
 	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
+	Stats                 *execdetails.LockKeysDetails
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
@@ -380,8 +381,6 @@ type ResultSubset interface {
 	GetData() []byte
 	// GetStartKey gets the start key.
 	GetStartKey() Key
-	// GetExecDetails gets the detail information.
-	GetExecDetails() *execdetails.ExecDetails
 	// MemSize returns how many bytes of memory this result use for tracing memory usage.
 	MemSize() int64
 	// RespTime returns the response time for the request.

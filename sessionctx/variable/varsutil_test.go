@@ -98,6 +98,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.FoundInPlanCache, Equals, DefTiDBFoundInPlanCache)
 	c.Assert(vars.AllowAutoRandExplicitInsert, Equals, DefTiDBAllowAutoRandExplicitInsert)
 	c.Assert(vars.ShardAllocateStep, Equals, int64(DefTiDBShardAllocateStep))
+	c.Assert(vars.EnableChangeColumnType, Equals, DefTiDBChangeColumnType)
 
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.MemQuota))
 	assertFieldsGreaterThanZero(c, reflect.ValueOf(vars.BatchSize))
@@ -458,6 +459,13 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "0")
 	c.Assert(v.systems[TiDBFoundInPlanCache], Equals, "1")
+
+	err = SetSessionSystemVar(v, TiDBEnableChangeColumnType, types.NewStringDatum("on"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBEnableChangeColumnType)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "1")
+	c.Assert(v.systems[TiDBEnableChangeColumnType], Equals, "1")
 }
 
 func (s *testVarsutilSuite) TestSetOverflowBehave(c *C) {
@@ -557,6 +565,9 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBShardAllocateStep, "ad", true},
 		{TiDBShardAllocateStep, "-123", false},
 		{TiDBShardAllocateStep, "128", false},
+		{TiDBEnableAmendPessimisticTxn, "0", false},
+		{TiDBEnableAmendPessimisticTxn, "1", false},
+		{TiDBEnableAmendPessimisticTxn, "256", true},
 	}
 
 	for _, t := range tests {

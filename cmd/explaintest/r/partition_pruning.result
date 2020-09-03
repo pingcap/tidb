@@ -1677,22 +1677,22 @@ partition p1 values less than (20)
 insert into t3 values (5),(15);
 explain select * from t3 where a=11;
 id	estRows	task	access object	operator info
-TableReader_7	10.00	root	partition:all	data:Selection_6
+TableReader_7	10.00	root	partition:p1	data:Selection_6
 └─Selection_6	10.00	cop[tikv]		eq(test.t3.a, 11)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain select * from t3 where a=10;
 id	estRows	task	access object	operator info
-TableReader_7	10.00	root	partition:all	data:Selection_6
+TableReader_7	10.00	root	partition:p1	data:Selection_6
 └─Selection_6	10.00	cop[tikv]		eq(test.t3.a, 10)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain select * from t3 where a=20;
 id	estRows	task	access object	operator info
-TableReader_7	10.00	root	partition:all	data:Selection_6
+TableReader_7	10.00	root	partition:dual	data:Selection_6
 └─Selection_6	10.00	cop[tikv]		eq(test.t3.a, 20)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain select * from t3 where a=30;
 id	estRows	task	access object	operator info
-TableReader_7	10.00	root	partition:all	data:Selection_6
+TableReader_7	10.00	root	partition:dual	data:Selection_6
 └─Selection_6	10.00	cop[tikv]		eq(test.t3.a, 30)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 create table t7 (a int not null) partition by RANGE(a) (
@@ -2256,7 +2256,7 @@ TableReader_7	10.00	root	partition:p0	data:Selection_6
   └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select * from t2 where a=0;
 id	estRows	task	access object	operator info
-TableReader_7	10.00	root	partition:all	data:Selection_6
+TableReader_7	10.00	root	partition:p0	data:Selection_6
 └─Selection_6	10.00	cop[tikv]		eq(test.t2.a, 0)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select * from t1 where a=0xFE;
@@ -2266,7 +2266,7 @@ TableReader_7	10.00	root	partition:p2	data:Selection_6
   └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select * from t2 where a=0xFE;
 id	estRows	task	access object	operator info
-TableReader_7	10.00	root	partition:all	data:Selection_6
+TableReader_7	10.00	root	partition:p2	data:Selection_6
 └─Selection_6	10.00	cop[tikv]		eq(test.t2.a, 254)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select * from t1 where a > 0xFE AND a <= 0xFF;
@@ -2456,8 +2456,8 @@ PARTITION p2 VALUES LESS THAN (100)
 );
 desc select * from t where a = 11 and b = 1 or a = 12 and b = 1;
 id	estRows	task	access object	operator info
-TableReader_7	8000.00	root	partition:p2	data:Selection_6
-└─Selection_6	8000.00	cop[tikv]		or(and(eq(test.t.a, 11), eq(test.t.b, 1)), and(eq(test.t.a, 12), eq(test.t.b, 1)))
+TableReader_7	0.02	root	partition:p2	data:Selection_6
+└─Selection_6	0.02	cop[tikv]		or(and(eq(test.t.a, 11), eq(test.t.b, 1)), and(eq(test.t.a, 12), eq(test.t.b, 1)))
   └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t (ts timestamp(3) not null default current_timestamp(3))
