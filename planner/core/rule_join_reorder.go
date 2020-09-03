@@ -126,6 +126,17 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		if err != nil {
 			return nil, err
 		}
+		for _, tab := range leftJoinTabs {
+			_, err := tab.p.recursiveDeriveStats(nil)
+			if err != nil {
+				return nil, err
+			}
+		}
+		// Sort the left join tabs by the following rule:
+		//   1. If there're join keys on the j-th one and the key can be found in i-th, means that the j-th should be executed after the i-th
+		//      e.g. select * from t1 left join t2 on t1.a=t2.a left join t3 on t2.b=t3.b; In this case, t3 should be joined after t2.
+		//   2. If j-th one has no join key and the i-th one has, the i-th one should be joined before the j-th one.
+		//   3. Otherwise we compare the size of two tab, the smaller one first.
 		sort.Slice(leftJoinTabs, func(i, j int) bool {
 			if len(leftJoinTabs[j].eqCond) > 0 && leftJoinTabs[i].p.Schema().ColumnIndex(leftJoinTabs[j].eqCond[0].GetArgs()[0].(*expression.Column)) >= 0 {
 				return true
@@ -133,7 +144,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			if len(leftJoinTabs[i].eqCond) > 0 && len(leftJoinTabs[j].eqCond) == 0 {
 				return true
 			}
-			return false
+			return leftJoinTabs[i].p.statsInfo().RowCount < leftJoinTabs[j].p.statsInfo().RowCount
 		})
 		for _, joinTab := range leftJoinTabs {
 			p = s.newLeftJoin(ctx, p, joinTab.p, joinTab.eqCond, joinTab.leftCond, joinTab.otherCond)

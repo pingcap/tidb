@@ -45,12 +45,12 @@
       {
         "SQL": "explain select * from t1 left join t2 on t1.id = 1 and t2.a = 2 where t2.id = 7",
         "Result": [
-          "HashJoin_7 1.00 root  CARTESIAN inner join",
-          "├─IndexLookUp_13(Build) 1.00 root partition:p9 ",
-          "│ ├─IndexRangeScan_11(Build) 1.00 cop[tikv] table:t2, index:PRIMARY(id, a) range:[7 2,7 2], keep order:false, stats:pseudo",
-          "│ └─TableRowIDScan_12(Probe) 1.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader_10(Probe) 1.00 root partition:p1 data:TableRangeScan_9",
-          "  └─TableRangeScan_9 1.00 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo"
+          "HashJoin_8 1.00 root  CARTESIAN inner join",
+          "├─IndexLookUp_14(Build) 1.00 root partition:p9 ",
+          "│ ├─IndexRangeScan_12(Build) 1.00 cop[tikv] table:t2, index:PRIMARY(id, a) range:[7 2,7 2], keep order:false, stats:pseudo",
+          "│ └─TableRowIDScan_13(Probe) 1.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader_11(Probe) 1.00 root partition:p1 data:TableRangeScan_10",
+          "  └─TableRangeScan_10 1.00 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo"
         ]
       },
       {
