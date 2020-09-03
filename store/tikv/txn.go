@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"runtime/trace"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -232,6 +233,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	defer trace.StartRegion(ctx, "CommitTxn").End()
 
 	if !txn.valid {
 		return kv.ErrInvalidTxn
