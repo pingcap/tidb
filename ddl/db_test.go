@@ -1283,7 +1283,8 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 		partition p1 values less than (20)
 	);`)
 	defer s.mustExec(tk, c, "drop table t_part;")
-	for i := 0; i < 10; i++ {
+	base := 10
+	for i := 0; i < base; i++ {
 		s.mustExec(tk, c, "insert into t_part values (?)", i)
 	}
 
@@ -1297,8 +1298,6 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 		{model.ActionDropTablePartition, model.JobStateNone, model.StateNone, true},
 		// Add table partition now can be cancelled in ReplicaOnly state.
 		{model.ActionAddTablePartition, model.JobStateRunning, model.StateReplicaOnly, true},
-		{model.ActionAddTablePartition, model.JobStateRunning, model.StatePublic, false},
-		{model.ActionDropTablePartition, model.JobStateRunning, model.StatePublic, false},
 	}
 	var checkErr error
 	hook := &ddl.TestDDLCallback{}
@@ -1331,33 +1330,43 @@ func (s *testDBSuite1) TestCancelAddTableAndDropTablePartition(c *C) {
 			}
 			checkErr = txn.Commit(context.Background())
 		}
-		var err error
-		sql := ""
-		for i := range testCases {
-			testCase = &testCases[i]
-			if testCase.action == model.ActionAddTablePartition {
-				sql = `alter table t_part add partition (
-				partition p2 values less than (30)
-				);`
-			} else if testCase.action == model.ActionDropTablePartition {
-				sql = "alter table t_part drop partition p1;"
-			}
-			_, err = tk.Exec(sql)
-			if testCase.cancelSucc {
-				c.Assert(checkErr, IsNil)
-				c.Assert(err, NotNil)
-				c.Assert(err.Error(), Equals, "[ddl:12]cancelled DDL job")
-				s.mustExec(tk, c, "insert into t_part values (?)", i)
-			} else {
-				c.Assert(err, IsNil)
-				c.Assert(checkErr, NotNil)
-				c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
-				_, err = tk.Exec("insert into t_part values (?)", i)
-				c.Assert(err, NotNil)
-			}
-		}
 	}
 	originalHook := s.dom.DDL().GetHook()
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+
+	var err error
+	sql := ""
+	for i := range testCases {
+		testCase = &testCases[i]
+		if testCase.action == model.ActionAddTablePartition {
+			sql = `alter table t_part add partition (
+				partition p2 values less than (30)
+				);`
+		} else if testCase.action == model.ActionDropTablePartition {
+			sql = "alter table t_part drop partition p1;"
+		}
+		_, err = tk.Exec(sql)
+		if testCase.cancelSucc {
+			c.Assert(checkErr, IsNil)
+			c.Assert(err, NotNil)
+			c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+			s.mustExec(tk, c, "insert into t_part values (?)", i+base)
+
+			ctx := s.s.(sessionctx.Context)
+			is := domain.GetDomain(ctx).InfoSchema()
+			tbl, err := is.TableByName(model.NewCIStr("test_partition_table"), model.NewCIStr("t_part"))
+			c.Assert(err, IsNil)
+			partitionInfo := tbl.Meta().GetPartitionInfo()
+			c.Assert(partitionInfo, NotNil)
+			c.Assert(len(partitionInfo.AddingDefinitions), Equals, 0)
+		} else {
+			c.Assert(err, IsNil, Commentf("err:%v", err))
+			c.Assert(checkErr, NotNil)
+			c.Assert(checkErr.Error(), Equals, admin.ErrCannotCancelDDLJob.GenWithStackByArgs(jobID).Error())
+			_, err = tk.Exec("insert into t_part values (?)", i)
+			c.Assert(err, NotNil)
+		}
+	}
 	s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
 }
 
