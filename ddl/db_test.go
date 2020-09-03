@@ -2574,7 +2574,7 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustExec("drop table y;")
 }
 
-func (s *testDBSuite5) TestRepairTable(c *C) {
+func (s *testSerialDBSuite) TestRepairTable(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"), IsNil)
@@ -2726,7 +2726,7 @@ func turnRepairModeAndInit(on bool) {
 	domainutil.RepairInfo.SetRepairTableList(list)
 }
 
-func (s *testDBSuite5) TestRepairTableWithPartition(c *C) {
+func (s *testSerialDBSuite) TestRepairTableWithPartition(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"), IsNil)

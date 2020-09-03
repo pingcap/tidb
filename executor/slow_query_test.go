@@ -53,7 +53,7 @@ func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datu
 	return rows, err
 }
 
-func (s *testExecSuite) TestParseSlowLogPanic(c *C) {
+func (s *testExecSerialSuite) TestParseSlowLogPanic(c *C) {
 	slowLogStr :=
 		`# Time: 2019-04-28T15:24:04.309074+08:00
 # Txn_start_ts: 405888132465033227

@@ -119,8 +119,8 @@ var _ = Suite(&testBypassSuite{})
 var _ = Suite(&testUpdateSuite{})
 var _ = Suite(&testPointGetSuite{})
 var _ = Suite(&testBatchPointGetSuite{})
-var _ = Suite(&testRecoverTable{})
-var _ = Suite(&testMemTableReaderSuite{&testClusterTableBase{}})
+var _ = SerialSuites(&testRecoverTable{})
+var _ = SerialSuites(&testMemTableReaderSuite{&testClusterTableBase{}})
 var _ = SerialSuites(&testFlushSuite{})
 var _ = SerialSuites(&testAutoRandomSuite{&baseTestSuite{}})
 var _ = SerialSuites(&testClusterTableSuite{})
@@ -2340,7 +2340,7 @@ func (s *testSuiteP2) TestBatchPointGetRepeatableRead(c *C) {
 	c.Assert(failpoint.Disable(step2), IsNil)
 }
 
-func (s *testSuite7) TestSplitRegionTimeout(c *C) {
+func (s *testSerialSuite1) TestSplitRegionTimeout(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout", `return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
