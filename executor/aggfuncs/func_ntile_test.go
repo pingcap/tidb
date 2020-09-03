@@ -22,8 +22,8 @@ import (
 
 func (s *testSuite) TestMemNtile(c *C) {
 	tests := []aggMemTest{
-		buildAggMemTester(ast.WindowFuncNtile, mysql.TypeBit, 5,
-			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens, true),
+		buildAggMemTester(ast.WindowFuncNtile, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {
 		s.testAggMemFunc(c, test)
