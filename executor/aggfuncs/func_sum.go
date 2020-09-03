@@ -339,9 +339,7 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		}
 		p.valSet.Insert(decStr)
 		memDelta += int64(len(decStr))
-		if p.isNull {
-			p.isNull = false
-		}
+		p.isNull = false
 		newSum := new(types.MyDecimal)
 		if err = types.DecimalAdd(&p.val, input, newSum); err != nil {
 			return memDelta, err
