@@ -20,7 +20,7 @@ import (
 
 	us "github.com/ngaut/unistore/tikv"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	pd "github.com/pingcap/pd/v4/client"
+	pd "github.com/tikv/pd/client"
 	"golang.org/x/net/context"
 )
 
@@ -56,10 +56,6 @@ func (m *mockTSFuture) Wait() (int64, int64, error) {
 	}
 	m.used = true
 	return m.pdc.GetTS(m.ctx)
-}
-
-func (c *pdClient) ConfigClient() pd.ConfigClient {
-	return nil
 }
 
 func (c *pdClient) GetLeaderAddr() string { return "mockpd" }

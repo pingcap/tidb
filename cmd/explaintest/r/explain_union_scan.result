@@ -16,16 +16,16 @@ Limit_21	10.00	root		offset:0, count:10
 └─HashJoin_23	10.00	root		left outer join, equal:[eq(test.city.province_id, test.city.province_id)]
   ├─Limit_26(Build)	10.00	root		offset:0, count:10
   │ └─IndexJoin_39	10.00	root		inner join, inner:UnionScan_38, outer key:test.city.id, inner key:test.city.id
-  │   ├─UnionScan_48(Build)	10.33	root		
-  │   │ └─TableReader_50	10.33	root		data:TableFullScan_49
-  │   │   └─TableFullScan_49	10.33	cop[tikv]	table:t2	keep order:false
-  │   └─UnionScan_38(Probe)	0.97	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100)
-  │     └─IndexLookUp_37	0.97	root		
+  │   ├─UnionScan_48(Build)	10.00	root		
+  │   │ └─TableReader_50	10.00	root		data:TableFullScan_49
+  │   │   └─TableFullScan_49	10.00	cop[tikv]	table:t2	keep order:false
+  │   └─UnionScan_38(Probe)	1.00	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100)
+  │     └─IndexLookUp_37	1.00	root		
   │       ├─IndexRangeScan_34(Build)	1.00	cop[tikv]	table:t1, index:PRIMARY(id)	range: decided by [eq(test.city.id, test.city.id)], keep order:false
-  │       └─Selection_36(Probe)	0.97	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100)
+  │       └─Selection_36(Probe)	1.00	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100)
   │         └─TableRowIDScan_35	1.00	cop[tikv]	table:t1	keep order:false
-  └─UnionScan_58(Probe)	519304.44	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
-    └─TableReader_61	519304.44	root		data:Selection_60
-      └─Selection_60	519304.44	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
+  └─UnionScan_58(Probe)	536284.00	root		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
+    └─TableReader_61	536284.00	root		data:Selection_60
+      └─Selection_60	536284.00	cop[tikv]		gt(test.city.province_id, 1), lt(test.city.province_id, 100), not(isnull(test.city.province_id))
         └─TableFullScan_59	536284.00	cop[tikv]	table:t3	keep order:false
 commit;

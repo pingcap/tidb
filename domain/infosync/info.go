@@ -14,9 +14,12 @@
 package infosync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"path"
@@ -30,6 +33,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
@@ -41,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
-	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
 	"go.uber.org/zap"
@@ -95,13 +99,14 @@ type InfoSyncer struct {
 // It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
 type ServerInfo struct {
 	ServerVersionInfo
-	ID             string `json:"ddl_id"`
-	IP             string `json:"ip"`
-	Port           uint   `json:"listening_port"`
-	StatusPort     uint   `json:"status_port"`
-	Lease          string `json:"lease"`
-	BinlogStatus   string `json:"binlog_status"`
-	StartTimestamp int64  `json:"start_timestamp"`
+	ID             string            `json:"ddl_id"`
+	IP             string            `json:"ip"`
+	Port           uint              `json:"listening_port"`
+	StatusPort     uint              `json:"status_port"`
+	Lease          string            `json:"lease"`
+	BinlogStatus   string            `json:"binlog_status"`
+	StartTimestamp int64             `json:"start_timestamp"`
+	Labels         map[string]string `json:"labels"`
 }
 
 // ServerVersionInfo is the server version and git_hash.
@@ -264,6 +269,76 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 	return progressMap, nil
 }
 
+func doRequest(ctx context.Context, addrs []string, route, method string, body io.Reader) error {
+	var err error
+	var req *http.Request
+	for _, addr := range addrs {
+		var url string
+		if strings.HasPrefix(addr, "http://") {
+			url = fmt.Sprintf("%s%s", addr, route)
+		} else {
+			url = fmt.Sprintf("http://%s%s", addr, route)
+		}
+
+		if ctx != nil {
+			req, err = http.NewRequestWithContext(ctx, method, url, body)
+		} else {
+			req, err = http.NewRequest(method, url, body)
+		}
+		if err != nil {
+			return err
+		}
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		res, err := http.DefaultClient.Do(req)
+		if err == nil {
+			defer terror.Call(res.Body.Close)
+			if res.StatusCode != http.StatusOK {
+				bodyBytes, err := ioutil.ReadAll(res.Body)
+				return errors.Wrapf(err, "%s", bodyBytes)
+			}
+			return nil
+		}
+	}
+	return err
+}
+
+// UpdatePlacementRules is used to notify PD changes of placement rules.
+func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error {
+	if len(rules) == 0 {
+		return nil
+	}
+
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+
+	if is.etcdCli == nil {
+		return nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return errors.Errorf("pd unavailable")
+	}
+
+	b, err := json.Marshal(rules)
+	if err != nil {
+		return err
+	}
+
+	err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
@@ -304,9 +379,10 @@ func (is *InfoSyncer) RemoveServerInfo() {
 
 type topologyInfo struct {
 	ServerVersionInfo
-	StatusPort     uint   `json:"status_port"`
-	DeployPath     string `json:"deploy_path"`
-	StartTimestamp int64  `json:"start_timestamp"`
+	StatusPort     uint              `json:"status_port"`
+	DeployPath     string            `json:"deploy_path"`
+	StartTimestamp int64             `json:"start_timestamp"`
+	Labels         map[string]string `json:"labels"`
 }
 
 func (is *InfoSyncer) getTopologyInfo() topologyInfo {
@@ -323,6 +399,7 @@ func (is *InfoSyncer) getTopologyInfo() topologyInfo {
 		StatusPort:     is.info.StatusPort,
 		DeployPath:     dir,
 		StartTimestamp: is.info.StartTimestamp,
+		Labels:         is.info.Labels,
 	}
 }
 
@@ -611,13 +688,17 @@ func getServerInfo(id string) *ServerInfo {
 		Lease:          cfg.Lease,
 		BinlogStatus:   binloginfo.GetStatus().String(),
 		StartTimestamp: time.Now().Unix(),
+		Labels:         cfg.Labels,
 	}
 	info.Version = mysql.ServerVersion
-	info.GitHash = printer.TiDBGitHash
+	info.GitHash = versioninfo.TiDBGitHash
 
 	failpoint.Inject("mockServerInfo", func(val failpoint.Value) {
 		if val.(bool) {
 			info.StartTimestamp = 1282967700000
+			info.Labels = map[string]string{
+				"foo": "bar",
+			}
 		}
 	})
 

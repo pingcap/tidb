@@ -24,10 +24,10 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockoracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	pd "github.com/tikv/pd/client"
 )
 
 var errStopped = errors.New("stopped")
@@ -105,10 +105,6 @@ type mockPDClient struct {
 	stop   bool
 }
 
-func (c *mockPDClient) ConfigClient() pd.ConfigClient {
-	return nil
-}
-
 func (c *mockPDClient) enable() {
 	c.Lock()
 	defer c.Unlock()
@@ -169,12 +165,12 @@ func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64) (*pd.
 	return c.client.GetRegionByID(ctx, regionID)
 }
 
-func (c *mockPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+func (c *mockPDClient) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*pd.Region, error) {
 	c.RLock()
 	defer c.RUnlock()
 
 	if c.stop {
-		return nil, nil, errors.Trace(errStopped)
+		return nil, errors.Trace(errStopped)
 	}
 	return c.client.ScanRegions(ctx, startKey, endKey, limit)
 }

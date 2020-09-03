@@ -95,7 +95,7 @@ var MetricTableMap = map[string]MetricTableDef{
 	"go_gc_duration": {
 		PromQL:  "rate(go_gc_duration_seconds_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])",
 		Labels:  []string{"instance", "job"},
-		Comment: "Go garbage collection time cost(second)",
+		Comment: "Go garbage collection STW pause duration(second)",
 	},
 	"go_threads": {
 		PromQL:  "go_threads{$LABEL_CONDITIONS}",

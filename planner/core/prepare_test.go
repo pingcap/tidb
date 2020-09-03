@@ -96,7 +96,7 @@ func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 	tk.MustExec(`insert into tp values(1, 1), (2, 2), (3, 3)`)
 
 	tk.MustExec(`create user 'u_tp'@'localhost'`)
-	tk.MustExec(`grant select on test.tp to u_tp@'localhost';flush privileges;`)
+	tk.MustExec(`grant select on test.tp to u_tp@'localhost';`)
 
 	// user u_tp
 	userSess := newSession(c, store, "test")
@@ -110,7 +110,7 @@ func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 
 	// root revoke
 	tk.Se = rootSe
-	tk.MustExec(`revoke all on test.tp from 'u_tp'@'localhost';flush privileges;`)
+	tk.MustExec(`revoke all on test.tp from 'u_tp'@'localhost';`)
 
 	// user u_tp
 	tk.Se = userSess
@@ -119,7 +119,7 @@ func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 
 	// grant again
 	tk.Se = rootSe
-	tk.MustExec(`grant select on test.tp to u_tp@'localhost';flush privileges;`)
+	tk.MustExec(`grant select on test.tp to u_tp@'localhost';`)
 
 	// user u_tp
 	tk.Se = userSess
@@ -242,7 +242,7 @@ func (s *testPrepareSerialSuite) TestPrepareCacheNow(c *C) {
 	c.Assert(rs[0][3].(string), Equals, rs[0][8].(string))
 }
 
-func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
+func (s *testPrepareSerialSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)

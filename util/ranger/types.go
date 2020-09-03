@@ -77,6 +77,34 @@ func (ran *Range) IsPoint(sc *stmtctx.StatementContext) bool {
 	return !ran.LowExclude && !ran.HighExclude
 }
 
+// IsPointNullable returns if the range is a point.
+func (ran *Range) IsPointNullable(sc *stmtctx.StatementContext) bool {
+	if len(ran.LowVal) != len(ran.HighVal) {
+		return false
+	}
+	for i := range ran.LowVal {
+		a := ran.LowVal[i]
+		b := ran.HighVal[i]
+		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
+			return false
+		}
+		cmp, err := a.CompareDatum(sc, &b)
+		if err != nil {
+			return false
+		}
+		if cmp != 0 {
+			return false
+		}
+
+		if a.IsNull() {
+			if !b.IsNull() {
+				return false
+			}
+		}
+	}
+	return !ran.LowExclude && !ran.HighExclude
+}
+
 //IsFullRange check if the range is full scan range
 func (ran *Range) IsFullRange() bool {
 	if len(ran.LowVal) != len(ran.HighVal) {
@@ -86,7 +114,8 @@ func (ran *Range) IsFullRange() bool {
 		lowValRawString := formatDatum(ran.LowVal[i], true)
 		highValRawString := formatDatum(ran.HighVal[i], false)
 		if ("-inf" != lowValRawString && "NULL" != lowValRawString) ||
-			("+inf" != highValRawString && "NULL" != highValRawString) {
+			("+inf" != highValRawString && "NULL" != highValRawString) ||
+			("NULL" == lowValRawString && "NULL" == highValRawString) {
 			return false
 		}
 	}

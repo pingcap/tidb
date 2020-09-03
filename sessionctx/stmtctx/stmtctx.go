@@ -146,10 +146,10 @@ type StatementContext struct {
 	planNormalized        string
 	planDigest            string
 	Tables                []TableEntry
-	PointExec             bool       // for point update cached execution, Constant expression need to set "paramMarker"
-	lockWaitStartTime     *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
+	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
+	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
 	PessimisticLockWaited int32
-	LockKeysDuration      time.Duration
+	LockKeysDuration      int64
 	LockKeysCount         int32
 	TblInfo2UnionScan     map[*model.TableInfo]bool
 	TaskID                uint64 // unique ID for an execution of a statement
@@ -505,12 +505,23 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 	sc.mu.Unlock()
 }
 
+// MergeLockKeysExecDetails merges lock keys execution details into self.
+func (sc *StatementContext) MergeLockKeysExecDetails(lockKeys *execdetails.LockKeysDetails) {
+	sc.mu.Lock()
+	if sc.mu.execDetails.LockKeysDetail == nil {
+		sc.mu.execDetails.LockKeysDetail = lockKeys
+	} else {
+		sc.mu.execDetails.LockKeysDetail.Merge(lockKeys)
+	}
+	sc.mu.Unlock()
+}
+
 // GetExecDetails gets the execution details for the statement.
 func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	var details execdetails.ExecDetails
 	sc.mu.Lock()
 	details = sc.mu.execDetails
-	details.LockKeysDuration = sc.LockKeysDuration
+	details.LockKeysDuration = time.Duration(atomic.LoadInt64(&sc.LockKeysDuration))
 	sc.mu.Unlock()
 	return details
 }
@@ -651,11 +662,12 @@ func (sc *StatementContext) SetFlagsFromPBFlag(flags uint64) {
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time
 func (sc *StatementContext) GetLockWaitStartTime() time.Time {
-	if sc.lockWaitStartTime == nil {
-		curTime := time.Now()
-		sc.lockWaitStartTime = &curTime
+	startTime := atomic.LoadInt64(&sc.lockWaitStartTime)
+	if startTime == 0 {
+		startTime = time.Now().UnixNano()
+		atomic.StoreInt64(&sc.lockWaitStartTime, startTime)
 	}
-	return *sc.lockWaitStartTime
+	return time.Unix(0, startTime)
 }
 
 //CopTasksDetails collects some useful information of cop-tasks during execution.
