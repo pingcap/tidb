@@ -4107,10 +4107,10 @@ func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testSerialDBSuite, c
 }
 func (s *testSerialDBSuite) TestAddIndexForGeneratedColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = false
 	})
-	defer config.RestoreFunc()()
 
 	testAddIndexForGeneratedColumn(tk, s, c)
 	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
