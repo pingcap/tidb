@@ -28,19 +28,13 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-type keyValue struct {
-	key   kv.Key
-	value []byte
-}
-
 type keyValueWithDupInfo struct {
-	newKV  keyValue
+	newKey kv.Key
 	dupErr error
 }
 
 type toBeCheckedRow struct {
 	row        []types.Datum
-	rowValue   []byte
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
 	// t is the table or partition this row belongs to.
@@ -108,18 +102,11 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 
 	var handleKey *keyValueWithDupInfo
 	uniqueKeys := make([]*keyValueWithDupInfo, 0, nUnique)
-	newRowValue, err := encodeNewRow(ctx, t, row)
-	if err != nil {
-		return nil, err
-	}
 	// Append record keys and errors.
 	if handleCol != nil {
 		handle := row[handleCol.Offset].GetInt64()
 		handleKey = &keyValueWithDupInfo{
-			newKV: keyValue{
-				key:   t.RecordKey(handle),
-				value: newRowValue,
-			},
+			newKey: t.RecordKey(handle),
 			dupErr: kv.ErrKeyExists.FastGenByArgs(strconv.FormatInt(handle, 10), "PRIMARY"),
 		}
 	}
@@ -149,15 +136,12 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			return nil, err1
 		}
 		uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
-			newKV: keyValue{
-				key: key,
-			},
+			newKey: key,
 			dupErr: kv.ErrKeyExists.FastGenByArgs(colValStr, v.Meta().Name),
 		})
 	}
 	result = append(result, toBeCheckedRow{
 		row:        row,
-		rowValue:   newRowValue,
 		handleKey:  handleKey,
 		uniqueKeys: uniqueKeys,
 		t:          t,
