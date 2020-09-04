@@ -963,6 +963,8 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 	ver int64, err error) {
 	failpoint.Inject("mockUpdateVersionAndTableInfoErr", func(val failpoint.Value) {
 		if val.(bool) {
+			// We change it cancelled directly here, because we want to get the original error with the job id appended.
+			// The job id will be used to get the job from history queue and we will assert it's args.
 			job.State = model.JobStateCancelled
 			failpoint.Return(ver, errors.New("mock update version and tableInfo error,jobID="+strconv.Itoa(int(job.ID))))
 		}
