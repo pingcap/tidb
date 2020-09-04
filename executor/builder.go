@@ -3102,7 +3102,11 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		return handles[i].Compare(handles[j]) < 0
 	})
 	var b distsql.RequestBuilder
-	b.SetTableHandles(getPhysicalTableID(e.table), handles)
+	if _, ok := handles[0].(*kv.PartitionHandle); ok {
+		b.SetPartitionsAndHandles(handles)
+	} else {
+		b.SetTableHandles(getPhysicalTableID(e.table), handles)
+	}
 	return builder.buildTableReaderBase(ctx, e, b)
 }
 

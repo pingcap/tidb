@@ -705,11 +705,15 @@ func (w *indexWorker) fetchHandles(ctx context.Context, result distsql.SelectRes
 func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, count uint64) (
 	handles []kv.Handle, retChk *chunk.Chunk, scannedKeys uint64, err error) {
 	var handleOffset []int
+	numColsWithoutPid := chk.NumCols()
+	if w.idxLookup.index.Global {
+		numColsWithoutPid = numColsWithoutPid - 1
+	}
 	for i := range w.idxLookup.handleCols {
-		handleOffset = append(handleOffset, chk.NumCols()-len(w.idxLookup.handleCols)+i)
+		handleOffset = append(handleOffset, numColsWithoutPid-len(w.idxLookup.handleCols)+i)
 	}
 	if len(handleOffset) == 0 {
-		handleOffset = []int{chk.NumCols() - 1}
+		handleOffset = []int{numColsWithoutPid - 1}
 	}
 	handles = make([]kv.Handle, 0, w.batchSize)
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
@@ -868,6 +872,11 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int, isCommon
 		} else {
 			handle = kv.IntHandle(row.GetInt64(handleIdx[0]))
 		}
+	}
+	if e.index.Global {
+		pidOffset := row.Len() - 1
+		pid := row.GetInt64(pidOffset)
+		handle = kv.NewPartitionHandle(pid, handle)
 	}
 	return
 }

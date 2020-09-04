@@ -429,3 +429,41 @@ func BuildHandleFromDatumRow(sctx *stmtctx.StatementContext, row []types.Datum, 
 	}
 	return handle, nil
 }
+
+// PartitionHandle combines a handle and a PartitionID, used to location a row in partioned table.
+// Now only used in global index.
+// TODO: support PartitionHandle in HandleMap.
+type PartitionHandle struct {
+	Handle
+	PartitionID int64
+}
+
+// NewPartitionHandle creates a PartitionHandle from a normal handle and a pid.
+func NewPartitionHandle(pid int64, h Handle) *PartitionHandle {
+	return &PartitionHandle{
+		Handle: h,
+		PartitionID: pid,
+	}
+}
+
+// Equal implements the Handle interface.
+func (ph PartitionHandle) Equal(h Handle) bool {
+	if ph2, ok := h.(PartitionHandle); ok {
+		return ph.PartitionID == ph2.PartitionID && ph.Handle.Equal(ph2.Handle)
+	}
+	return false
+}
+
+// Compare implements the Handle interface.
+func (ph PartitionHandle) Compare(h Handle) int {
+	if ph2, ok := h.(PartitionHandle); ok {
+		if ph.PartitionID < ph2.PartitionID {
+			return -1
+		}
+		if ph.PartitionID > ph2.PartitionID {
+			return 1
+		}
+		return ph.Handle.Compare(ph2.Handle)
+	}
+	panic("PartitonHandle compares to non-parition Handle")
+}
