@@ -534,8 +534,6 @@ const (
 	ErrSizeOverflow                                                 = 1532
 	ErrAlterFilegroupFailed                                         = 1533
 	ErrBinlogRowLoggingFailed                                       = 1534
-	ErrBinlogRowWrongTableDef                                       = 1535
-	ErrBinlogRowRbrToSbr                                            = 1536
 	ErrEventAlreadyExists                                           = 1537
 	ErrEventStoreFailed                                             = 1538
 	ErrEventDoesNotExist                                            = 1539
@@ -601,7 +599,6 @@ const (
 	ErrEventInvalidCreationCtx                                      = 1605
 	ErrTrgCantOpenTable                                             = 1606
 	ErrCantCreateSroutine                                           = 1607
-	ErrNeverUsed                                                    = 1608
 	ErrNoFormatDescriptionEventBeforeBinlogStatement                = 1609
 	ErrLoadDataInvalidColumn                                        = 1611
 	ErrLogPurgeNoFile                                               = 1612
@@ -658,11 +655,7 @@ const (
 	ErrBinlogMultipleEnginesAndSelfLoggingEngine                    = 1667
 	ErrBinlogUnsafeLimit                                            = 1668
 	ErrBinlogUnsafeInsertDelayed                                    = 1669
-	ErrBinlogUnsafeSystemTable                                      = 1670
 	ErrBinlogUnsafeAutoincColumns                                   = 1671
-	ErrBinlogUnsafeUdf                                              = 1672
-	ErrBinlogUnsafeSystemVariable                                   = 1673
-	ErrBinlogUnsafeSystemFunction                                   = 1674
 	ErrBinlogUnsafeNontransAfterTrans                               = 1675
 	ErrMessageAndStatement                                          = 1676
 	ErrInsideTransactionPreventsSwitchBinlogFormat                  = 1679
@@ -698,16 +691,8 @@ const (
 	ErrErrorInUnknownTriggerBody                                    = 1711
 	ErrIndexCorrupt                                                 = 1712
 	ErrUndoRecordTooBig                                             = 1713
-	ErrBinlogUnsafeInsertIgnoreSelect                               = 1714
-	ErrBinlogUnsafeInsertSelectUpdate                               = 1715
-	ErrBinlogUnsafeReplaceSelect                                    = 1716
-	ErrBinlogUnsafeCreateIgnoreSelect                               = 1717
-	ErrBinlogUnsafeCreateReplaceSelect                              = 1718
-	ErrBinlogUnsafeUpdateIgnore                                     = 1719
 	ErrPluginNoUninstall                                            = 1720
 	ErrPluginNoInstall                                              = 1721
-	ErrBinlogUnsafeWriteAutoincSelect                               = 1722
-	ErrBinlogUnsafeCreateSelectAutoinc                              = 1723
 	ErrBinlogUnsafeInsertTwoKeys                                    = 1724
 	ErrTableInFkCheck                                               = 1725
 	ErrUnsupportedEngine                                            = 1726
@@ -736,7 +721,6 @@ const (
 	ErrChangeRplInfoRepositoryFailure                               = 1750
 	ErrWarningNotCompleteRollbackWithCreatedTempTable               = 1751
 	ErrWarningNotCompleteRollbackWithDroppedTempTable               = 1752
-	ErrMtsFeatureIsNotSupported                                     = 1753
 	ErrMtsUpdatedDBsGreaterMax                                      = 1754
 	ErrMtsCantParallel                                              = 1755
 	ErrMtsInconsistentData                                          = 1756
@@ -757,10 +741,8 @@ const (
 	ErrMalformedGtidSetEncoding                                     = 1773
 	ErrMalformedGtidSpecification                                   = 1774
 	ErrGnoExhausted                                                 = 1775
-	ErrAutoPositionRequiresGtidModeOn                               = 1777
 	ErrCantDoImplicitCommitInTrxWhenGtidNextIsSet                   = 1778
 	ErrGtidMode2Or3RequiresEnforceGtidConsistencyOn                 = 1779
-	ErrGtidModeRequiresBinlog                                       = 1780
 	ErrCantSetGtidNextToGtidWhenGtidModeIsOff                       = 1781
 	ErrCantSetGtidNextToAnonymousWhenGtidModeIsOn                   = 1782
 	ErrCantSetGtidNextListToNonNullWhenGtidModeIsOff                = 1783
@@ -780,7 +762,6 @@ const (
 	ErrInnodbOnlineLogTooBig                                        = 1799
 	ErrUnknownAlterAlgorithm                                        = 1800
 	ErrUnknownAlterLock                                             = 1801
-	ErrMtsRecoveryFailure                                           = 1803
 	ErrMtsResetWorkers                                              = 1804
 	ErrColCountDoesntMatchCorruptedV2                               = 1805
 	ErrDiscardFkChecksRunning                                       = 1807
@@ -813,7 +794,6 @@ const (
 	ErrFkCannotDeleteParent                                         = 1834
 	ErrMalformedPacket                                              = 1835
 	ErrReadOnlyMode                                                 = 1836
-	ErrGtidNextTypeUndefinedGroup                                   = 1837
 	ErrVariableNotSettableInSp                                      = 1838
 	ErrCantSetGtidPurgedWhenGtidModeIsOff                           = 1839
 	ErrCantSetGtidPurgedWhenGtidExecutedIsNotEmpty                  = 1840
