@@ -52,15 +52,7 @@ func (r *FailpointChecker) pos(pos token.Pos) string {
 	return fmt.Sprintf("%s:%d", p.Filename, p.Line)
 }
 
-// Check does the rewrite action for specified path. It contains the main steps:
-//
-// 1. Filter out failpoint binding files and files that have no suffix `.go`
-// 2. Filter out files which have not imported failpoint package (implying no failpoints)
-// 3. Parse file to `ast.File` and rewrite the AST
-// 4. Create failpoint binding file (which contains `_curpkg_` function) if it does not exist
-// 5. Rename original file to `original-file-name + __failpoint_stash__`
-// 6. Replace original file content base on the new AST
-func (r *FailpointChecker) Check() error {
+func (r *FailpointChecker) check(isTest bool) error {
 	var files []string
 	err := filepath.Walk(r.dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -70,6 +62,9 @@ func (r *FailpointChecker) Check() error {
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		if !isTest && strings.Contains(path, "checkserialtest/testdata") {
 			return nil
 		}
 		// Will rewrite a file only if the file has imported "github.com/pingcap/failpoint"

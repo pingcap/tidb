@@ -6,12 +6,6 @@ import (
 	"path/filepath"
 )
 
-
-func usage() {
-	fmt.Println("failpoint-ctl enable/disable /target/path [/target/path2 /target/path3 ...]")
-	os.Exit(1)
-}
-
 func main() {
 	path, err := os.Getwd()
 	if err != nil {
@@ -35,12 +29,12 @@ func Check(path string, test bool) *FailpointChecker {
 	}
 
 	checker := NewChecker(realPath, CollateTestSuiteInfo)
-	if err := checker.Check(); err != nil {
+	if err := checker.check(test); err != nil {
 		fmt.Println("Check error " + err.Error())
 		os.Exit(1)
 	}
 	checker.Mode = CheckFailPoint
-	if err := checker.Check(); err != nil {
+	if err := checker.check(test); err != nil {
 		fmt.Println("Check error " + err.Error())
 		os.Exit(1)
 	}
