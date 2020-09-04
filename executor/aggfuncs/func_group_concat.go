@@ -154,8 +154,8 @@ type partialResult4GroupConcatDistinct struct {
 	basePartialResult4GroupConcat
 	valSet            set.StringSet
 	encodeBytesBuffer []byte
-	valList           []string
-	joinedValList     []string
+	needSync          bool
+	syncSet           set.SyncSet
 }
 
 type groupConcatDistinct struct {
@@ -166,14 +166,18 @@ func (e *groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta i
 	p := new(partialResult4GroupConcatDistinct)
 	p.valsBuf = &bytes.Buffer{}
 	p.valSet = set.NewStringSet()
-	p.valList, p.joinedValList = []string{}, []string{}
 	return PartialResult(p), 0
 }
 
 func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	p.buffer, p.valSet = nil, set.NewStringSet()
-	p.valList, p.joinedValList = p.valList[:0], p.joinedValList[:0]
+}
+
+func (e *groupConcatDistinct) SetSyncSet(s set.SyncSet, pr PartialResult) {
+	p := (*partialResult4GroupConcatDistinct)(pr)
+	p.needSync = true
+	p.syncSet = s
 }
 
 func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -197,12 +201,17 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 		joinedVal := string(p.encodeBytesBuffer)
-		if p.valSet.Exist(joinedVal) {
-			continue
+		if p.needSync {
+			if p.syncSet.Exist(joinedVal) {
+				continue
+			}
+			p.syncSet.Insert(joinedVal)
+		} else {
+			if p.valSet.Exist(joinedVal) {
+				continue
+			}
+			p.valSet.Insert(joinedVal)
 		}
-		p.valSet.Insert(joinedVal)
-		p.valList = append(p.valList, p.valsBuf.String())
-		p.joinedValList = append(p.joinedValList, joinedVal)
 		// write separator
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
@@ -220,26 +229,16 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 
 func (e *groupConcatDistinct) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4GroupConcatDistinct)(src), (*partialResult4GroupConcatDistinct)(dst)
-	for i := range p1.valList {
-		if p2.valSet.Exist(p1.joinedValList[i]) {
-			continue
-		}
-		p2.valSet.Insert(p1.joinedValList[i])
-		p2.valList = append(p2.valList, p1.valList[i])
-		p2.joinedValList = append(p2.joinedValList, p1.joinedValList[i])
-		// write separator
-		if p2.buffer == nil {
-			p2.buffer = &bytes.Buffer{}
-		} else {
-			p2.buffer.WriteString(e.sep)
-		}
-		// write values
-		p2.buffer.WriteString(p1.valList[i])
+	if p1.buffer == nil {
+		return 0, nil
 	}
-	if p2.buffer != nil {
-		return 0, e.truncatePartialResultIfNeed(sctx, p2.buffer)
+	if p2.buffer == nil {
+		p2.buffer = p1.buffer
+		return 0, nil
 	}
-	return 0, nil
+	p2.buffer.WriteString(e.sep)
+	p2.buffer.WriteString(p1.buffer.String())
+	return 0, e.truncatePartialResultIfNeed(sctx, p2.buffer)
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.

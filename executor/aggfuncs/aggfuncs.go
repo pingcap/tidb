@@ -16,6 +16,8 @@ package aggfuncs
 import (
 	"unsafe"
 
+	"github.com/pingcap/tidb/util/set"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -133,6 +135,8 @@ type AggFunc interface {
 	// every field to the proper original state.
 	ResetPartialResult(pr PartialResult)
 
+	SetSyncSet(s set.SyncSet, pr PartialResult)
+
 	// UpdatePartialResult updates the specific partial result for an aggregate
 	// function using the input rows which all belonging to the same data group.
 	// It converts the PartialResult to the specific data structure which stores
@@ -165,6 +169,9 @@ type baseAggFunc struct {
 	// ordinal stores the ordinal of the columns in the output chunk, which is
 	// used to append the final result of this function.
 	ordinal int
+}
+
+func (*baseAggFunc) SetSyncSet(s set.SyncSet, pr PartialResult) {
 }
 
 func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {

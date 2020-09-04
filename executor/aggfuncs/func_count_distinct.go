@@ -50,7 +50,10 @@ const (
 )
 
 type partialResult4CountDistinctInt struct {
-	valSet set.Int64Set
+	count    int64
+	valSet   set.Int64Set
+	needSync bool
+	syncSet  set.SyncSet
 }
 
 type countOriginalWithDistinct4Int struct {
@@ -65,12 +68,19 @@ func (e *countOriginalWithDistinct4Int) AllocPartialResult() (pr PartialResult, 
 
 func (e *countOriginalWithDistinct4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctInt)(pr)
+	p.count = 0
 	p.valSet = set.NewInt64Set()
+}
+
+func (e *countOriginalWithDistinct4Int) SetSyncSet(s set.SyncSet, pr PartialResult) {
+	p := (*partialResult4CountDistinctInt)(pr)
+	p.needSync = true
+	p.syncSet = set.NewSyncSet()
 }
 
 func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctInt)(pr)
-	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
+	chk.AppendInt64(e.ordinal, p.count)
 	return nil
 }
 
@@ -85,10 +95,18 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 		if isNull {
 			continue
 		}
-		if p.valSet.Exist(input) {
-			continue
+		if p.needSync {
+			if p.syncSet.Exist(input) {
+				continue
+			}
+			p.syncSet.Insert(input)
+		} else {
+			if p.valSet.Exist(input) {
+				continue
+			}
+			p.valSet.Insert(input)
 		}
-		p.valSet.Insert(input)
+		p.count++
 		memDelta += DefInt64Size
 	}
 
@@ -96,7 +114,10 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 }
 
 type partialResult4CountDistinctReal struct {
-	valSet set.Float64Set
+	count    int64
+	valSet   set.Float64Set
+	needSync bool
+	syncSet  set.SyncSet
 }
 
 type countOriginalWithDistinct4Real struct {
@@ -111,12 +132,19 @@ func (e *countOriginalWithDistinct4Real) AllocPartialResult() (pr PartialResult,
 
 func (e *countOriginalWithDistinct4Real) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctReal)(pr)
+	p.count = 0
 	p.valSet = set.NewFloat64Set()
+}
+
+func (e *countOriginalWithDistinct4Real) SetSyncSet(s set.SyncSet, pr PartialResult) {
+	p := (*partialResult4CountDistinctReal)(pr)
+	p.needSync = true
+	p.syncSet = set.NewSyncSet()
 }
 
 func (e *countOriginalWithDistinct4Real) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctReal)(pr)
-	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
+	chk.AppendInt64(e.ordinal, p.count)
 	return nil
 }
 
@@ -131,10 +159,18 @@ func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Con
 		if isNull {
 			continue
 		}
-		if p.valSet.Exist(input) {
-			continue
+		if p.needSync {
+			if p.syncSet.Exist(input) {
+				continue
+			}
+			p.syncSet.Insert(input)
+		} else {
+			if p.valSet.Exist(input) {
+				continue
+			}
+			p.valSet.Insert(input)
 		}
-		p.valSet.Insert(input)
+		p.count++
 		memDelta += DefFloat64Size
 	}
 
@@ -142,7 +178,10 @@ func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Con
 }
 
 type partialResult4CountDistinctDecimal struct {
-	valSet set.StringSet
+	count    int64
+	valSet   set.StringSet
+	needSync bool
+	syncSet  set.SyncSet
 }
 
 type countOriginalWithDistinct4Decimal struct {
@@ -157,12 +196,19 @@ func (e *countOriginalWithDistinct4Decimal) AllocPartialResult() (pr PartialResu
 
 func (e *countOriginalWithDistinct4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctDecimal)(pr)
+	p.count = 0
 	p.valSet = set.NewStringSet()
+}
+
+func (e *countOriginalWithDistinct4Decimal) SetSyncSet(s set.SyncSet, pr PartialResult) {
+	p := (*partialResult4CountDistinctDecimal)(pr)
+	p.needSync = true
+	p.syncSet = set.NewSyncSet()
 }
 
 func (e *countOriginalWithDistinct4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctDecimal)(pr)
-	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
+	chk.AppendInt64(e.ordinal, p.count)
 	return nil
 }
 
@@ -182,10 +228,18 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 			return memDelta, err
 		}
 		decStr := string(hack.String(hash))
-		if p.valSet.Exist(decStr) {
-			continue
+		if p.needSync {
+			if p.syncSet.Exist(decStr) {
+				continue
+			}
+			p.syncSet.Insert(decStr)
+		} else {
+			if p.valSet.Exist(decStr) {
+				continue
+			}
+			p.valSet.Insert(decStr)
 		}
-		p.valSet.Insert(decStr)
+		p.count++
 		memDelta += int64(len(decStr))
 	}
 
@@ -193,7 +247,10 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 }
 
 type partialResult4CountDistinctDuration struct {
-	valSet set.Int64Set
+	count    int64
+	valSet   set.Int64Set
+	needSync bool
+	syncSet  set.SyncSet
 }
 
 type countOriginalWithDistinct4Duration struct {
@@ -208,12 +265,19 @@ func (e *countOriginalWithDistinct4Duration) AllocPartialResult() (pr PartialRes
 
 func (e *countOriginalWithDistinct4Duration) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctDuration)(pr)
+	p.count = 0
 	p.valSet = set.NewInt64Set()
+}
+
+func (e *countOriginalWithDistinct4Duration) SetSyncSet(s set.SyncSet, pr PartialResult) {
+	p := (*partialResult4CountDistinctDuration)(pr)
+	p.needSync = true
+	p.syncSet = set.NewSyncSet()
 }
 
 func (e *countOriginalWithDistinct4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctDuration)(pr)
-	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
+	chk.AppendInt64(e.ordinal, p.count)
 	return nil
 }
 
@@ -229,10 +293,18 @@ func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx
 			continue
 		}
 
-		if p.valSet.Exist(int64(input.Duration)) {
-			continue
+		if p.needSync {
+			if p.syncSet.Exist(int64(input.Duration)) {
+				continue
+			}
+			p.syncSet.Insert(int64(input.Duration))
+		} else {
+			if p.valSet.Exist(int64(input.Duration)) {
+				continue
+			}
+			p.valSet.Insert(int64(input.Duration))
 		}
-		p.valSet.Insert(int64(input.Duration))
+		p.count++
 		memDelta += DefInt64Size
 	}
 
@@ -240,7 +312,10 @@ func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx
 }
 
 type partialResult4CountDistinctString struct {
-	valSet set.StringSet
+	count    int64
+	valSet   set.StringSet
+	needSync bool
+	syncSet  set.SyncSet
 }
 
 type countOriginalWithDistinct4String struct {
@@ -255,12 +330,19 @@ func (e *countOriginalWithDistinct4String) AllocPartialResult() (pr PartialResul
 
 func (e *countOriginalWithDistinct4String) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountDistinctString)(pr)
+	p.count = 0
 	p.valSet = set.NewStringSet()
+}
+
+func (e *countOriginalWithDistinct4String) SetSyncSet(s set.SyncSet, pr PartialResult) {
+	p := (*partialResult4CountDistinctString)(pr)
+	p.needSync = true
+	p.syncSet = set.NewSyncSet()
 }
 
 func (e *countOriginalWithDistinct4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountDistinctString)(pr)
-	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
+	chk.AppendInt64(e.ordinal, p.count)
 	return nil
 }
 
@@ -277,12 +359,20 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 			continue
 		}
 		input = string(collator.Key(input))
-
-		if p.valSet.Exist(input) {
-			continue
-		}
 		input = stringutil.Copy(input)
-		p.valSet.Insert(input)
+
+		if p.needSync {
+			if p.syncSet.Exist(input) {
+				continue
+			}
+			p.syncSet.Insert(input)
+		} else {
+			if p.valSet.Exist(input) {
+				continue
+			}
+			p.valSet.Insert(input)
+		}
+		p.count++
 		memDelta += int64(len(input))
 	}
 
@@ -294,7 +384,10 @@ type countOriginalWithDistinct struct {
 }
 
 type partialResult4CountWithDistinct struct {
-	valSet set.StringSet
+	count    int64
+	valSet   set.StringSet
+	needSync bool
+	syncSet  set.SyncSet
 }
 
 func (e *countOriginalWithDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -305,12 +398,19 @@ func (e *countOriginalWithDistinct) AllocPartialResult() (pr PartialResult, memD
 
 func (e *countOriginalWithDistinct) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4CountWithDistinct)(pr)
+	p.count = 0
 	p.valSet = set.NewStringSet()
+}
+
+func (e *countOriginalWithDistinct) SetSyncSet(s set.SyncSet, pr PartialResult) {
+	p := (*partialResult4CountWithDistinct)(pr)
+	p.needSync = true
+	p.syncSet = set.NewSyncSet()
 }
 
 func (e *countOriginalWithDistinct) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CountWithDistinct)(pr)
-	chk.AppendInt64(e.ordinal, int64(p.valSet.Count()))
+	chk.AppendInt64(e.ordinal, p.count)
 	return nil
 }
 
@@ -337,97 +437,50 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 			}
 		}
 		encodedString := string(encodedBytes)
-		if hasNull || p.valSet.Exist(encodedString) {
+		if hasNull {
 			continue
 		}
-		p.valSet.Insert(encodedString)
+		if p.needSync {
+			if p.syncSet.Exist(encodedString) {
+				continue
+			}
+			p.syncSet.Insert(encodedString)
+		} else {
+			if p.valSet.Exist(encodedString) {
+				continue
+			}
+			p.valSet.Insert(encodedString)
+		}
+		p.count++
 		memDelta += int64(len(encodedString))
 	}
 
 	return memDelta, nil
 }
 
-type countPartialWithDistinct4Int struct {
-	countOriginalWithDistinct4Int
-}
-
-func (e *countPartialWithDistinct4Int) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
-	p1, p2 := (*partialResult4CountDistinctInt)(src), (*partialResult4CountDistinctInt)(dst)
-	for k := range p1.valSet {
-		if !p2.valSet.Exist(k) {
-			p2.valSet.Insert(k)
-		}
-	}
-	return 0, nil
-}
-
-type countPartialWithDistinct4Real struct {
-	countOriginalWithDistinct4Real
-}
-
-func (e *countPartialWithDistinct4Real) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
-	p1, p2 := (*partialResult4CountDistinctReal)(src), (*partialResult4CountDistinctReal)(dst)
-	for k := range p1.valSet {
-		if !p2.valSet.Exist(k) {
-			p2.valSet.Insert(k)
-		}
-	}
-	return 0, nil
-}
-
-type countPartialWithDistinct4Decimal struct {
-	countOriginalWithDistinct4Decimal
-}
-
-func (e *countPartialWithDistinct4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
-	p1, p2 := (*partialResult4CountDistinctDecimal)(src), (*partialResult4CountDistinctDecimal)(dst)
-	for k := range p1.valSet {
-		if !p2.valSet.Exist(k) {
-			p2.valSet.Insert(k)
-		}
-	}
-	return 0, nil
-}
-
-type countPartialWithDistinct4Duration struct {
-	countOriginalWithDistinct4Duration
-}
-
-func (e *countPartialWithDistinct4Duration) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
-	p1, p2 := (*partialResult4CountDistinctDuration)(src), (*partialResult4CountDistinctDuration)(dst)
-	for k := range p1.valSet {
-		if !p2.valSet.Exist(k) {
-			p2.valSet.Insert(k)
-		}
-	}
-	return 0, nil
-}
-
-type countPartialWithDistinct4String struct {
-	countOriginalWithDistinct4String
-}
-
-func (e *countPartialWithDistinct4String) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
-	p1, p2 := (*partialResult4CountDistinctString)(src), (*partialResult4CountDistinctString)(dst)
-	for k := range p1.valSet {
-		if !p2.valSet.Exist(k) {
-			p2.valSet.Insert(k)
-		}
-	}
-	return 0, nil
-}
-
 type countPartialWithDistinct struct {
 	countOriginalWithDistinct
 }
 
+func (e *countPartialWithDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4CountWithDistinct)(pr)
+	for _, row := range rowsInGroup {
+		input, isNull, err := e.args[0].EvalInt(sctx, row)
+		if err != nil {
+			return 0, err
+		}
+		if isNull {
+			continue
+		}
+
+		p.count += input
+	}
+	return 0, nil
+}
+
 func (e *countPartialWithDistinct) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4CountWithDistinct)(src), (*partialResult4CountWithDistinct)(dst)
-	for k := range p1.valSet {
-		if !p2.valSet.Exist(k) {
-			p2.valSet.Insert(k)
-		}
-	}
+	p2.count += p1.count
 	return 0, nil
 }
 

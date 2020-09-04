@@ -118,6 +118,8 @@ type partialResult4VarPopDistinctFloat64 struct {
 	sum      float64
 	variance float64
 	valSet   set.Float64Set
+	needSync bool
+	syncSet  set.SyncSet
 }
 
 func (e *varPop4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
@@ -135,6 +137,12 @@ func (e *varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.sum = 0
 	p.variance = 0
 	p.valSet = set.NewFloat64Set()
+}
+
+func (e *varPop4DistinctFloat64) SetSyncSet(s set.SyncSet, pr PartialResult) {
+	p := (*partialResult4VarPopDistinctFloat64)(pr)
+	p.needSync = true
+	p.syncSet = s
 }
 
 func (e *varPop4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -155,10 +163,20 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		if isNull || p.valSet.Exist(input) {
+		if isNull {
 			continue
 		}
-		p.valSet.Insert(input)
+		if p.needSync {
+			if p.syncSet.Exist(input) {
+				continue
+			}
+			p.syncSet.Insert(input)
+		} else {
+			if p.valSet.Exist(input) {
+				continue
+			}
+			p.valSet.Insert(input)
+		}
 		p.count++
 		p.sum += input
 		if p.count > 1 {
@@ -170,16 +188,19 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 
 func (e *varPop4DistinctFloat64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4VarPopDistinctFloat64)(src), (*partialResult4VarPopDistinctFloat64)(dst)
-	for f := range p1.valSet {
-		if p2.valSet.Exist(f) {
-			continue
-		}
-		p2.valSet.Insert(f)
-		p2.count++
-		p2.sum += f
-		if p2.count > 1 {
-			p2.variance = calculateIntermediate(p2.count, p2.sum, f, p2.variance)
-		}
+	if p1.count == 0 {
+		return 0, nil
+	}
+	if p2.count == 0 {
+		p2.count = p1.count
+		p2.sum = p1.sum
+		p2.variance = p1.variance
+		return 0, nil
+	}
+	if p2.count != 0 && p1.count != 0 {
+		p2.variance = calculateMerge(p1.count, p2.count, p1.sum, p2.sum, p1.variance, p2.variance)
+		p2.count += p1.count
+		p2.sum += p1.sum
 	}
 	return 0, nil
 }

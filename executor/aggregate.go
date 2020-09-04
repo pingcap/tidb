@@ -46,6 +46,7 @@ type baseHashAggWorker struct {
 	ctx          sessionctx.Context
 	finishCh     <-chan struct{}
 	aggFuncs     []aggfuncs.AggFunc
+	syncSetMap   *sync.Map
 	maxChunkSize int
 }
 
@@ -54,6 +55,16 @@ func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggF
 		ctx:          ctx,
 		finishCh:     finishCh,
 		aggFuncs:     aggFuncs,
+		maxChunkSize: maxChunkSize,
+	}
+}
+
+func newBaseHashAggWorkerSync(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, syncSetMap *sync.Map, maxChunkSize int) baseHashAggWorker {
+	return baseHashAggWorker{
+		ctx:          ctx,
+		finishCh:     finishCh,
+		aggFuncs:     aggFuncs,
+		syncSetMap:   syncSetMap,
 		maxChunkSize: maxChunkSize,
 	}
 }
@@ -146,6 +157,7 @@ type HashAggExec struct {
 	PartialAggFuncs  []aggfuncs.AggFunc
 	FinalAggFuncs    []aggfuncs.AggFunc
 	partialResultMap aggPartialResultMapper
+	syncSetMap       *sync.Map
 	groupSet         set.StringSet
 	groupKeys        []string
 	cursor4GroupKey  int
@@ -299,11 +311,12 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 
 	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
 	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
+	e.syncSetMap = new(sync.Map)
 
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
 		w := HashAggPartialWorker{
-			baseHashAggWorker: newBaseHashAggWorker(e.ctx, e.finishCh, e.PartialAggFuncs, e.maxChunkSize),
+			baseHashAggWorker: newBaseHashAggWorkerSync(e.ctx, e.finishCh, e.PartialAggFuncs, e.syncSetMap, e.maxChunkSize),
 			inputCh:           e.partialInputChs[i],
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
@@ -476,15 +489,34 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 	n := len(groupKey)
 	partialResults := make([][]aggfuncs.PartialResult, n)
 	for i := 0; i < n; i++ {
+		groupKeyStr := string(groupKey[i])
 		var ok bool
-		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
+		if partialResults[i], ok = mapper[groupKeyStr]; ok {
 			continue
 		}
 		for _, af := range w.aggFuncs {
 			partialResult, _ := af.AllocPartialResult()
 			partialResults[i] = append(partialResults[i], partialResult)
 		}
-		mapper[string(groupKey[i])] = partialResults[i]
+		mapper[groupKeyStr] = partialResults[i]
+
+		if w.syncSetMap == nil {
+			continue
+		}
+		var syncSets []set.SyncSet
+		sets, ok := w.syncSetMap.Load(groupKeyStr)
+		if !ok {
+			syncSets = make([]set.SyncSet, len(w.aggFuncs))
+			for j := range syncSets {
+				syncSets[j] = set.NewSyncSet()
+			}
+			w.syncSetMap.Store(groupKeyStr, syncSets)
+		} else {
+			syncSets = sets.([]set.SyncSet)
+		}
+		for j, af := range w.aggFuncs {
+			af.SetSyncSet(syncSets[j], partialResults[i][j])
+		}
 	}
 	return partialResults
 }

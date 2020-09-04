@@ -45,15 +45,19 @@ type partialResult4SumDecimal struct {
 }
 
 type partialResult4SumDistinctFloat64 struct {
-	val    float64
-	isNull bool
-	valSet set.Float64Set
+	val      float64
+	isNull   bool
+	valSet   set.Float64Set
+	needSync bool
+	syncSet  set.SyncSet
 }
 
 type partialResult4SumDistinctDecimal struct {
-	val    types.MyDecimal
-	isNull bool
-	valSet set.StringSet
+	val      types.MyDecimal
+	isNull   bool
+	valSet   set.StringSet
+	needSync bool
+	syncSet  set.SyncSet
 }
 
 type baseSumAggFunc struct {
@@ -271,6 +275,12 @@ func (e *sum4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.valSet = set.NewFloat64Set()
 }
 
+func (e *sum4DistinctFloat64) SetSyncSet(s set.SyncSet, pr PartialResult) {
+	p := (*partialResult4SumDistinctFloat64)(pr)
+	p.needSync = true
+	p.syncSet = s
+}
+
 func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4SumDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {
@@ -278,10 +288,20 @@ func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if err != nil {
 			return memDelta, err
 		}
-		if isNull || p.valSet.Exist(input) {
+		if isNull {
 			continue
 		}
-		p.valSet.Insert(input)
+		if p.needSync {
+			if p.syncSet.Exist(input) {
+				continue
+			}
+			p.syncSet.Insert(input)
+		} else {
+			if p.valSet.Exist(input) {
+				continue
+			}
+			p.valSet.Insert(input)
+		}
 		memDelta += DefFloat64Size
 		if p.isNull {
 			p.val = input
@@ -330,6 +350,12 @@ func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p.valSet = set.NewStringSet()
 }
 
+func (e *sum4DistinctDecimal) SetSyncSet(s set.SyncSet, pr PartialResult) {
+	p := (*partialResult4SumDistinctDecimal)(pr)
+	p.needSync = true
+	p.syncSet = s
+}
+
 func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	for _, row := range rowsInGroup {
@@ -345,10 +371,17 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			return memDelta, err
 		}
 		decStr := string(hack.String(hash))
-		if p.valSet.Exist(decStr) {
-			continue
+		if p.needSync {
+			if p.syncSet.Exist(decStr) {
+				continue
+			}
+			p.syncSet.Insert(decStr)
+		} else {
+			if p.valSet.Exist(decStr) {
+				continue
+			}
+			p.valSet.Insert(decStr)
 		}
-		p.valSet.Insert(decStr)
 		memDelta += int64(len(decStr))
 		if p.isNull {
 			p.val = *input
@@ -380,8 +413,8 @@ func (e *sum4DistinctDecimal) MergePartialResult(sctx sessionctx.Context, src, d
 		return 0, nil
 	}
 	p2.isNull = false
-	var newSum types.MyDecimal
-	err = types.DecimalAdd(&p1.val, &p2.val, &newSum)
-	p2.val = newSum
+	newSum := new(types.MyDecimal)
+	err = types.DecimalAdd(&p1.val, &p2.val, newSum)
+	p2.val = *newSum
 	return 0, nil
 }

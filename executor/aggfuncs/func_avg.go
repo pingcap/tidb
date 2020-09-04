@@ -203,9 +203,9 @@ func (e *avgPartial4Decimal) MergePartialResult(sctx sessionctx.Context, src, ds
 
 type partialResult4AvgDistinctDecimal struct {
 	partialResult4AvgDecimal
-	valSet  set.StringSet
-	valList []*types.MyDecimal
-	strList []string
+	valSet   set.StringSet
+	needSync bool
+	syncSet  set.SyncSet
 }
 
 type avgOriginal4DistinctDecimal struct {
@@ -224,7 +224,12 @@ func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p.sum = *types.NewDecFromInt(0)
 	p.count = int64(0)
 	p.valSet = set.NewStringSet()
-	p.valList, p.strList = p.valList[:0], p.strList[:0]
+}
+
+func (e *avgOriginal4DistinctDecimal) SetSyncSet(s set.SyncSet, pr PartialResult) {
+	p := (*partialResult4AvgDistinctDecimal)(pr)
+	p.needSync = true
+	p.syncSet = s
 }
 
 func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -242,10 +247,17 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 			return memDelta, err
 		}
 		decStr := string(hack.String(hash))
-		if p.valSet.Exist(decStr) {
-			continue
+		if p.needSync {
+			if p.syncSet.Exist(decStr) {
+				continue
+			}
+			p.syncSet.Insert(decStr)
+		} else {
+			if p.valSet.Exist(decStr) {
+				continue
+			}
+			p.valSet.Insert(decStr)
 		}
-		p.valSet.Insert(decStr)
 		memDelta += int64(len(decStr))
 		newSum := new(types.MyDecimal)
 		err = types.DecimalAdd(&p.sum, input, newSum)
@@ -272,6 +284,9 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	}
 	// Make the decimal be the result of type inferring.
 	frac := e.args[0].GetType().Decimal
+	if len(e.args) == 2 {
+		frac = e.args[1].GetType().Decimal
+	}
 	if frac == -1 {
 		frac = mysql.MaxDecimalScale
 	}
@@ -287,26 +302,48 @@ type avgPartial4DistinctDecimal struct {
 	avgOriginal4DistinctDecimal
 }
 
+func (e *avgPartial4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4AvgDistinctDecimal)(pr)
+	for _, row := range rowsInGroup {
+		inputSum, isNull, err := e.args[1].EvalDecimal(sctx, row)
+		if err != nil {
+			return 0, err
+		}
+		if isNull {
+			continue
+		}
+
+		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
+		if err != nil {
+			return 0, err
+		}
+		if isNull {
+			continue
+		}
+
+		newSum := new(types.MyDecimal)
+		err = types.DecimalAdd(&p.sum, inputSum, newSum)
+		if err != nil {
+			return 0, err
+		}
+		p.sum = *newSum
+		p.count += inputCount
+	}
+	return 0, nil
+}
+
 func (e *avgPartial4DistinctDecimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4AvgDistinctDecimal)(src), (*partialResult4AvgDistinctDecimal)(dst)
 	if p1.count == 0 {
 		return 0, nil
 	}
-	for i := range p1.valList {
-		if p2.valSet.Exist(p1.strList[i]) {
-			continue
-		}
-		p2.valSet.Insert(p1.strList[i])
-		p2.valList = append(p2.valList, p1.valList[i])
-		p2.strList = append(p2.strList, p1.strList[i])
-		newSum := new(types.MyDecimal)
-		err = types.DecimalAdd(&p2.sum, p1.valList[i], newSum)
-		if err != nil {
-			return 0, err
-		}
-		p2.sum = *newSum
-		p2.count++
+	newSum := new(types.MyDecimal)
+	err = types.DecimalAdd(&p1.sum, &p2.sum, newSum)
+	if err != nil {
+		return 0, err
 	}
+	p2.sum = *newSum
+	p2.count += p1.count
 	return 0, nil
 }
 
@@ -434,7 +471,9 @@ func (e *avgPartial4Float64) MergePartialResult(sctx sessionctx.Context, src, ds
 
 type partialResult4AvgDistinctFloat64 struct {
 	partialResult4AvgFloat64
-	valSet set.Float64Set
+	valSet   set.Float64Set
+	needSync bool
+	syncSet  set.SyncSet
 }
 
 type avgOriginal4DistinctFloat64 struct {
@@ -455,6 +494,12 @@ func (e *avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.valSet = set.NewFloat64Set()
 }
 
+func (e *avgOriginal4DistinctFloat64) SetSyncSet(s set.SyncSet, pr PartialResult) {
+	p := (*partialResult4AvgDistinctFloat64)(pr)
+	p.needSync = true
+	p.syncSet = s
+}
+
 func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {
@@ -462,13 +507,22 @@ func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Contex
 		if err != nil {
 			return memDelta, err
 		}
-		if isNull || p.valSet.Exist(input) {
+		if isNull {
 			continue
 		}
-
+		if p.needSync {
+			if p.syncSet.Exist(input) {
+				continue
+			}
+			p.syncSet.Insert(input)
+		} else {
+			if p.valSet.Exist(input) {
+				continue
+			}
+			p.valSet.Insert(input)
+		}
 		p.sum += input
 		p.count++
-		p.valSet.Insert(input)
 		memDelta += DefFloat64Size
 	}
 	return memDelta, nil
@@ -488,18 +542,33 @@ type avgPartial4DistinctFloat64 struct {
 	avgOriginal4DistinctFloat64
 }
 
-func (e *avgPartial4DistinctFloat64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
-	p1, p2 := (*partialResult4AvgDistinctFloat64)(src), (*partialResult4AvgDistinctFloat64)(dst)
-	if p1.count == 0 {
-		return 0, nil
-	}
-	for f := range p1.valSet {
-		if p2.valSet.Exist(f) {
+func (e *avgPartial4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4AvgDistinctFloat64)(pr)
+	for _, row := range rowsInGroup {
+		inputSum, isNull, err := e.args[1].EvalReal(sctx, row)
+		if err != nil {
+			return 0, err
+		}
+		if isNull {
 			continue
 		}
-		p2.valSet.Insert(f)
-		p2.sum += f
-		p2.count++
+
+		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
+		if err != nil {
+			return 0, err
+		}
+		if isNull {
+			continue
+		}
+		p.sum += inputSum
+		p.count += inputCount
 	}
+	return 0, nil
+}
+
+func (e *avgPartial4DistinctFloat64) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4AvgDistinctFloat64)(src), (*partialResult4AvgDistinctFloat64)(dst)
+	p2.sum += p1.sum
+	p2.count += p1.count
 	return 0, nil
 }

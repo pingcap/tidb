@@ -163,28 +163,9 @@ func buildCount(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			}
 			return &countOriginalWithDistinct{baseCount{base}}
 		case aggregation.Partial2Mode, aggregation.FinalMode:
-			if len(base.args) == 1 {
-				// optimize with single column
-				// TODO: because Time and JSON does not have `hashcode()` or similar method
-				// so they're in exception for now.
-				// TODO: add hashCode method for all evaluate types (Time, JSON).
-				// https://github.com/pingcap/tidb/issues/15857
-				switch aggFuncDesc.Args[0].GetType().EvalType() {
-				case types.ETInt:
-					return &countPartialWithDistinct4Int{countOriginalWithDistinct4Int{baseCount{base}}}
-				case types.ETReal:
-					return &countPartialWithDistinct4Real{countOriginalWithDistinct4Real{baseCount{base}}}
-				case types.ETDecimal:
-					return &countPartialWithDistinct4Decimal{countOriginalWithDistinct4Decimal{baseCount{base}}}
-				case types.ETDuration:
-					return &countPartialWithDistinct4Duration{countOriginalWithDistinct4Duration{baseCount{base}}}
-				case types.ETString:
-					return &countPartialWithDistinct4String{countOriginalWithDistinct4String{baseCount{base}}}
-				}
-			}
 			return &countPartialWithDistinct{countOriginalWithDistinct{baseCount{base}}}
 		}
-		return &countOriginalWithDistinct{baseCount{base}}
+		return nil
 	}
 
 	switch aggFuncDesc.Mode {
@@ -485,14 +466,10 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildStdDevPop builds the AggFunc implementation for function "STD()/STDDEV()/STDDEV_POP()"
 func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	base := baseStdDevPopAggFunc{
-		varPop4Float64{
-			baseVarPopAggFunc{
-				baseAggFunc{
-					args:    aggFuncDesc.Args,
-					ordinal: ordinal,
-				},
-			},
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
 		},
 	}
 	switch aggFuncDesc.Mode {
@@ -500,9 +477,9 @@ func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		return nil
 	default:
 		if aggFuncDesc.HasDistinct {
-			return &stdDevPop4DistinctFloat64{base}
+			return &stdDevPop4DistinctFloat64{varPop4DistinctFloat64{base}}
 		}
-		return &stdDevPop4Float64{base}
+		return &stdDevPop4Float64{baseStdDevPopAggFunc{varPop4Float64{base}}}
 	}
 }
 
