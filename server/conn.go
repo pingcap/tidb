@@ -954,12 +954,15 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	case mysql.ComStmtPrepare:
 		return cc.handleStmtPrepare(ctx, dataStr)
 	case mysql.ComStmtExecute:
+		// TODO: handle detaching stmt memory/disk tracker from global tracker
 		return cc.handleStmtExecute(ctx, data)
 	case mysql.ComStmtSendLongData:
 		return cc.handleStmtSendLongData(data)
 	case mysql.ComStmtClose:
+		// TODO: handle detaching stmt memory/disk tracker from global tracker
 		return cc.handleStmtClose(data)
 	case mysql.ComStmtReset:
+		// TODO: handle detaching stmt memory/disk tracker from global tracker
 		return cc.handleStmtReset(ctx, data)
 	case mysql.ComSetOption:
 		return cc.handleSetOption(ctx, data)
@@ -1456,6 +1459,9 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
+	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
+	// If the stmt have no rs like `insert`, The detachment work will be directly
+	// done in the `defer` function.
 	if rs != nil {
 		defer terror.Call(rs.Close)
 	} else {
