@@ -974,10 +974,6 @@ func TableLockEnabled() bool {
 	return GetGlobalConfig().EnableTableLock
 }
 
-func DesensitizeEnabled() bool {
-	return GetGlobalConfig().EnableTableLock
-}
-
 // TableLockDelayClean uses to get the time of delay clean table lock.
 var TableLockDelayClean = func() uint64 {
 	return GetGlobalConfig().DelayCleanTableLock
