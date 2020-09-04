@@ -923,7 +923,7 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if isNull {
 			continue
@@ -934,15 +934,17 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			// We have to deep copy that string to avoid some potential risks
 			// when the content of that underlying buffer changed.
 			p.val = stringutil.Copy(input)
+			memDelta += int64(len(input))
 			p.isNull = false
 			continue
 		}
 		cmp := types.CompareString(input, p.val, tp.Collate)
 		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
 			p.val = stringutil.Copy(input)
+			memDelta += int64(len(input))
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *maxMin4String) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
@@ -1308,22 +1310,24 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalJSON(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if isNull {
 			continue
 		}
 		if p.isNull {
 			p.val = input.Copy()
+			memDelta += int64(len(input.Value))
 			p.isNull = false
 			continue
 		}
 		cmp := json.CompareBinary(input, p.val)
 		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 			p.val = input.Copy()
+			memDelta += int64(len(input.Value))
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *maxMin4JSON) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
