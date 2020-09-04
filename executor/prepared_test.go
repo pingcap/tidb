@@ -158,7 +158,8 @@ func (s *testSuite9) TestPlanCacheOnPointGet(c *C) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
 	// NOTE: the following test case causes data race in release-4.0, in order to surpass the CI check for later PRs
-	//       it is temporarily skipped when race detection is enabled, we will add it back once the race condition is resolved
+	//       it is temporarily skipped when race detection is enabled, we will add it back once the race condition is resolved。
+	//       see the coresponding issue here: https://github.com/pingcap/tidb/issues/19700
 	if israce.RaceEnabled {
 		c.Skip("skip race test")
 	}
