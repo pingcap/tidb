@@ -1392,6 +1392,7 @@ type UnionExec struct {
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
 
+	concurrency     int
 	childrenResults []*chunk.Chunk
 	wg              sync.WaitGroup
 	initialized     bool
@@ -1429,21 +1430,22 @@ func (e *UnionExec) Open(ctx context.Context) error {
 func (e *UnionExec) initialize(ctx context.Context) {
 	e.resultPool = make(chan *unionWorkerResult, len(e.children))
 	e.resourcePools = make([]chan *chunk.Chunk, len(e.children))
-	for i := range e.children {
+	childChan := make(chan int, len(e.children))
+	for i := 0; i < len(e.children); i++ {
 		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
 		e.resourcePools[i] <- e.childrenResults[i]
-		e.wg.Add(1)
-		go e.resultPuller(ctx, i)
+		childChan <- i
 	}
+	for i := 0; i < e.concurrency; i++ {
+		e.wg.Add(1)
+		go e.resultPuller(ctx, i, childChan)
+	}
+	close(childChan)
 	go e.waitAllFinished()
 }
 
-func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
-	result := &unionWorkerResult{
-		err: nil,
-		chk: nil,
-		src: e.resourcePools[childID],
-	}
+func (e *UnionExec) resultPuller(ctx context.Context, workerId int, childIDChan <-chan int) {
+	result := &unionWorkerResult{}
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -1456,23 +1458,30 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 		}
 		e.wg.Done()
 	}()
-	for {
-		if e.stopFetchData.Load().(bool) {
-			return
+	for childID := range childIDChan {
+		result = &unionWorkerResult{
+			err: nil,
+			chk: nil,
+			src: e.resourcePools[childID],
 		}
-		select {
-		case <-e.finished:
-			return
-		case result.chk = <-e.resourcePools[childID]:
-		}
-		result.err = Next(ctx, e.children[childID], result.chk)
-		if result.err == nil && result.chk.NumRows() == 0 {
-			return
-		}
-		e.resultPool <- result
-		if result.err != nil {
-			e.stopFetchData.Store(true)
-			return
+		for {
+			if e.stopFetchData.Load().(bool) {
+				return
+			}
+			select {
+			case <-e.finished:
+				return
+			case result.chk = <-e.resourcePools[childID]:
+			}
+			result.err = Next(ctx, e.children[childID], result.chk)
+			if result.err == nil && result.chk.NumRows() == 0 {
+				break
+			}
+			e.resultPool <- result
+			if result.err != nil {
+				e.stopFetchData.Store(true)
+				return
+			}
 		}
 	}
 }
