@@ -213,12 +213,6 @@ func (s *testEvaluatorSuite) TestGetVar(c *C) {
 }
 
 func (s *testEvaluatorSuite) TestValues(c *C) {
-	origin := s.ctx.GetSessionVars().StmtCtx.InInsertStmt
-	s.ctx.GetSessionVars().StmtCtx.InInsertStmt = false
-	defer func() {
-		s.ctx.GetSessionVars().StmtCtx.InInsertStmt = origin
-	}()
-
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, 1, types.NewFieldType(mysql.TypeVarchar)}
 	_, err := fc.getFunction(s.ctx, s.datumsToConstants(types.MakeDatums("")))
 	c.Assert(err, ErrorMatches, "*Incorrect parameter count in the call to native function 'values'")
@@ -232,11 +226,10 @@ func (s *testEvaluatorSuite) TestValues(c *C) {
 
 	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow()
 	ret, err = evalBuiltinFunc(sig, chunk.Row{})
-	c.Assert(err, IsNil)
-	c.Assert(ret.IsNull(), IsTrue)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Session current insert values len.*")
 
 	currInsertValues := types.MakeDatums("1", "2")
-	s.ctx.GetSessionVars().StmtCtx.InInsertStmt = true
 	s.ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()
 	ret, err = evalBuiltinFunc(sig, chunk.Row{})
 	c.Assert(err, IsNil)
