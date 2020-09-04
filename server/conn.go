@@ -1458,6 +1458,19 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	reg.End()
 	if rs != nil {
 		defer terror.Call(rs.Close)
+	} else {
+		sc := cc.ctx.GetSessionVars().StmtCtx
+		
+		defer func() {
+			if sc != nil {
+				if sc.MemTracker != nil {
+					sc.MemTracker.DetachFromGlobalTracker()
+				}
+				if sc.DiskTracker != nil {
+					sc.DiskTracker.DetachFromGlobalTracker()
+				}
+			}
+		}()
 	}
 	if err != nil {
 		return err

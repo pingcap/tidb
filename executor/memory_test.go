@@ -20,9 +20,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
 var _ = SerialSuites(&testMemoryLeak{})
@@ -113,4 +115,42 @@ func (s *testMemoryLeak) memDiff(m1, m2 uint64) uint64 {
 		return m1 - m2
 	}
 	return m2 - m1
+}
+
+func (s *testMemoryLeak) TestGlobalMemoryTrackerOnCleanUp(c *C) {
+	originMaxConsumed := executor.GlobalMemoryUsageTracker.MaxConsumed()
+	defer executor.GlobalMemoryUsageTracker.SetMaxConsumed(originMaxConsumed)
+	executor.GlobalMemoryUsageTracker.SetMaxConsumed(0)
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+
+	originConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
+	// assert insert
+	tk.MustExec("select * from t")
+	afterConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
+	c.Assert(originConsume, Equals, afterConsume)
+	tk.MustExec("insert t (id) values (2)")
+	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
+	c.Assert(originConsume, Equals, afterConsume)
+	tk.MustExec("insert t (id) values (3)")
+	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
+	c.Assert(originConsume, Equals, afterConsume)
+
+	// assert update
+	tk.MustExec("update t set id = 4 where id = 1")
+	tk.MustExec("update t set id = 5 where id = 2")
+	tk.MustExec("update t set id = 6 where id = 3")
+	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
+	c.Assert(originConsume, Equals, afterConsume)
+
+	// assert select
+	tk.MustExec("select * from t")
+	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
+	c.Assert(originConsume, Equals, afterConsume)
+
+	// assert consume happened
+	afterMaxConsumed := executor.GlobalMemoryUsageTracker.MaxConsumed()
+	c.Assert(afterMaxConsumed, Greater, int64(0))
 }
