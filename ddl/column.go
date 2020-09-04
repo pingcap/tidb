@@ -794,8 +794,8 @@ func (w *worker) doModifyColumnTypeWithData(
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// Make sure job args change behind the `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
-		// be updated in `updateDDLJob` even if it meet a error in `updateVersionAndTableInfoWithCheck`.
+		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
+		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
 		job.Args = append(job.Args, changingCol, changingIdxs)
 	case model.StateDeleteOnly:
