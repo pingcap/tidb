@@ -1460,22 +1460,8 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
 	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
-	// If the stmt have no rs like `insert`, The detachment work will be directly
-	// done in the `defer` function.
 	if rs != nil {
 		defer terror.Call(rs.Close)
-	} else {
-		sc := cc.ctx.GetSessionVars().StmtCtx
-		defer func() {
-			if sc != nil {
-				if sc.MemTracker != nil {
-					sc.MemTracker.DetachFromGlobalTracker()
-				}
-				if sc.DiskTracker != nil {
-					sc.DiskTracker.DetachFromGlobalTracker()
-				}
-			}
-		}()
 	}
 	if err != nil {
 		return err
