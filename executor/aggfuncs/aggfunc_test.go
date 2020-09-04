@@ -234,6 +234,21 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 	return memDeltas, nil
 }
 
+func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, 0, 0)
+	fmt.Printf("num rows %d\n", srcChk.NumRows())
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		memDelta := int64(unsafe.Sizeof(chunk.Row{}))
+		memDeltas = append(memDeltas, memDelta)
+	}
+	return memDeltas, nil
+}
+
 type aggMemTest struct {
 	aggTest            aggTest
 	allocMemDelta      int64

@@ -53,8 +53,12 @@ func (r *rank) ResetPartialResult(pr PartialResult) {
 
 func (r *rank) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4Rank)(pr)
-	p.rows = append(p.rows, rowsInGroup...)
-	memDelta += int64(len(rowsInGroup)) * DefRowSize
+	for _, row := range rowsInGroup {
+		p.rows = append(p.rows, row)
+		if !row.IsNull(0) {
+			memDelta += DefRowSize
+		}
+	}
 	return memDelta, nil
 }
 
