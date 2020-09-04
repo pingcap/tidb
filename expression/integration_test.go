@@ -91,6 +91,51 @@ func (s *testIntegrationSuiteBase) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
+func (s *testIntegrationSuite) Test19654(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+
+	// enum vs enum
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b enum('a', 'b'));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b enum('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+
+	// set vs set
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b set('a', 'b'));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b set('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+
+	// enum vs set
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b enum('a', 'b'));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b set('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+
+	// char vs enum
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b char(10));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b enum('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+
+	// char vs set
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b char(10));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b set('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+}
+
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
@@ -6774,9 +6819,9 @@ func (s *testIntegrationSerialSuite) TestIssue17176(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8 collate utf8_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
+	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8 collate utf8_bin;", "[types:1291]Column 'a' has duplicated value 'a' in ENUM")
 	tk.MustGetErrMsg("create table t(a enum('a', 'Á')) charset utf8 collate utf8_general_ci;", "[types:1291]Column 'a' has duplicated value 'Á' in ENUM")
-	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8mb4 collate utf8mb4_bin;", "[types:1291]Column 'a' has duplicated value 'a ' in ENUM")
+	tk.MustGetErrMsg("create table t(a enum('a', 'a ')) charset utf8mb4 collate utf8mb4_bin;", "[types:1291]Column 'a' has duplicated value 'a' in ENUM")
 	tk.MustExec("create table t(a enum('a', 'A')) charset utf8 collate utf8_bin;")
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t3(a enum('a', 'A')) charset utf8mb4 collate utf8mb4_bin;")
@@ -7190,4 +7235,19 @@ func (s *testIntegrationSuite) TestIssue19504(c *C) {
 	tk.MustExec("insert into t2 values (1);")
 	tk.MustQuery("select (select count(c_int) from t2 where c_int = t1.c_int) c1, (select count(1) from t2 where c_int = t1.c_int) c2 from t1;").
 		Check(testkit.Rows("1 1", "0 0", "0 0"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue18949(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a enum('a ', 'b\t', ' c '), b set('a ', 'b\t', ' c '));`)
+	result := tk.MustQuery("show create table t").Rows()[0][1]
+	c.Assert(result, Matches, `(?s).*enum\('a','b	',' c'\).*set\('a','b	',' c'\).*`)
+	tk.MustExec(`alter table t change a aa enum('a   ', 'b\t', ' c ');`)
+	result = tk.MustQuery("show create table t").Rows()[0][1]
+	c.Assert(result, Matches, `(?s).*enum\('a','b	',' c'\).*set\('a','b	',' c'\).*`)
 }
