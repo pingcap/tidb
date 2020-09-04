@@ -32,9 +32,8 @@ type FailpointChecker struct {
 	currTestName        string
 	rewritten           bool
 	Mode                checkMode
-
-	testSuiteMap map[string]map[string]bool
-	errList      []error
+	testSuiteMap        map[string]map[string]bool
+	errList             []error
 }
 
 // NewRewriter returns a non-nil rewriter which is used to rewrite the specified path
@@ -76,24 +75,6 @@ func (r *FailpointChecker) check(isTest bool) error {
 		if len(file.Imports) < 1 {
 			return nil
 		}
-		//for _, imp := range file.Imports {
-		//	// import path maybe in the form of:
-		//	//
-		//	// 1. normal import
-		//	//    - "github.com/pingcap/failpoint"
-		//	//    - `github.com/pingcap/failpoint`
-		//	// 2. ignore import
-		//	//    - _ "github.com/pingcap/failpoint"
-		//	//    - _ `github.com/pingcap/failpoint`
-		//	// 3. alias import
-		//	//    - alias "github.com/pingcap/failpoint"
-		//	//    - alias `github.com/pingcap/failpoint`
-		//	// we should trim '"' or '`' before compare it.
-		//	if strings.Trim(imp.Path.Value, "`\"") == packagePath {
-		//		files = append(files, path)
-		//		break
-		//	}
-		//}
 		files = append(files, path)
 		return nil
 	})
@@ -716,4 +697,3 @@ func (r *FailpointChecker) checkSelector(v ast.SelectorExpr) error {
 		return r.checkExpr(v.X)
 	}
 }
-
