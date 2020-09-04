@@ -215,7 +215,7 @@ func (s *largeNullSorter) Swap(i, j int) {
 const (
 	// Length of rowkey.
 	rowKeyLen = 19
-	// Index of record flag 'r' in rowkey used by master tidb-server.
+	// Index of record flag 'r' in rowkey used by tidb-server.
 	// The rowkey format is t{8 bytes id}_r{8 bytes handle}
 	recordPrefixIdx = 10
 )
