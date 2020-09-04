@@ -1151,98 +1151,158 @@ func FindColumnInfoByID(colInfos []*model.ColumnInfo, id int64) *model.ColumnInf
 }
 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReader(ctx context.Context, dbName model.CIStr, tbl table.Table, idx *model.IndexInfo) (Plan, error) {
-	var extraColHandle *expression.Column
-	var commonHandleCols []*expression.Column
-	var pkOffsets []int
 	tblInfo := tbl.Meta()
-	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
-	idxReaderCols := make([]*model.ColumnInfo, 0, len(idx.Columns))
-	tblReaderCols := make([]*model.ColumnInfo, 0, len(tbl.Cols()))
+	physicalID, isPartition := getPhysicalID(tbl)
 	fullExprCols, _, err := expression.TableInfo2SchemaAndNames(b.ctx, dbName, tblInfo)
 	if err != nil {
 		return nil, err
 	}
-	for _, idxCol := range idx.Columns {
-		for i, col := range tblInfo.Columns {
-			if idxCol.Name.L == col.Name.L {
-				idxReaderCols = append(idxReaderCols, col)
-				tblReaderCols = append(tblReaderCols, col)
-				schema.Append(fullExprCols.Columns[i])
-			}
-		}
-	}
-	idxCols, idxColLens := expression.IndexInfo2PrefixCols(tblReaderCols, schema.Columns, idx)
-	fullIdxCols, _ := expression.IndexInfo2Cols(tblReaderCols, schema.Columns, idx)
+	extraInfo, extraCol, hasExtraCol := tryGetPkExtraColumn(b.ctx.GetSessionVars(), tblInfo)
+	pkHandleInfo, pkHandleCol, hasPkIsHandle := tryGetPkHandleCol(tblInfo, fullExprCols)
+	commonInfos, commonCols, hasCommonCols := tryGetCommonHandleCols(tbl, fullExprCols)
+	idxColInfos := getIndexColumnInfos(tblInfo, idx)
+	idxColSchema := getIndexColsSchema(tblInfo, idx, fullExprCols)
+	idxCols, idxColLens := expression.IndexInfo2PrefixCols(idxColInfos, idxColSchema.Columns, idx)
 
 	is := PhysicalIndexScan{
 		Table:            tblInfo,
 		TableAsName:      &tblInfo.Name,
 		DBName:           dbName,
-		Columns:          idxReaderCols,
+		Columns:          idxColInfos,
 		Index:            idx,
 		IdxCols:          idxCols,
 		IdxColLens:       idxColLens,
-		dataSourceSchema: schema,
+		dataSourceSchema: idxColSchema.Clone(),
 		Ranges:           ranger.FullRange(),
+		physicalTableID:  physicalID,
+		isPartition:      isPartition,
 	}.Init(b.ctx, b.getSelectOffset())
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
 	is.stats = &property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl}
-	// It's double read case.
-	ts := PhysicalTableScan{Columns: tblReaderCols, Table: is.Table, TableAsName: &tblInfo.Name}.Init(b.ctx, b.getSelectOffset())
-	ts.SetSchema(schema.Clone())
-	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
-	if tblInfo.IsCommonHandle {
-		pkOffsets = pkOffsets[:0]
-		pk := tables.FindPrimaryIndex(tblInfo)
-		commonHandleCols, _ = expression.IndexInfo2Cols(tblInfo.Columns, fullExprCols.Columns, pk)
-		for _, c := range commonHandleCols {
-			ts.schema.Append(c)
-		}
-		for _, c := range tables.TryGetCommonPkColumns(tbl) {
-			ts.Columns = append(ts.Columns, c.ColumnInfo)
+	if hasCommonCols {
+		for _, c := range commonInfos {
 			is.Columns = append(is.Columns, c.ColumnInfo)
-			pkOffsets = append(pkOffsets, len(ts.Columns)-1)
 		}
-	} else {
-		pkOffsets = pkOffsets[:0]
-		for offset, col := range ts.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) {
-				pkOffsets = append(pkOffsets, offset)
+	}
+	is.initSchema(append(is.IdxCols, commonCols...), true)
+
+	// It's double read case.
+	ts := PhysicalTableScan{
+		Columns:         idxColInfos,
+		Table:           tblInfo,
+		TableAsName:     &tblInfo.Name,
+		physicalTableID: physicalID,
+		isPartition:     isPartition,
+	}.Init(b.ctx, b.getSelectOffset())
+	ts.SetSchema(idxColSchema)
+	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
+	switch {
+	case hasExtraCol:
+		ts.Columns = append(ts.Columns, extraInfo)
+		ts.schema.Append(extraCol)
+		ts.HandleIdx = []int{len(ts.Columns) - 1}
+	case hasPkIsHandle:
+		ts.Columns = append(ts.Columns, pkHandleInfo)
+		ts.schema.Append(pkHandleCol)
+		ts.HandleIdx = []int{len(ts.Columns) - 1}
+	case hasCommonCols:
+		ts.HandleIdx = make([]int, 0, len(commonCols))
+		for pkOffset, cInfo := range commonInfos {
+			found := false
+			for i, c := range ts.Columns {
+				if c.ID == cInfo.ID {
+					found = true
+					ts.HandleIdx = append(ts.HandleIdx, i)
+					break
+				}
 			}
-		}
-		if !tblInfo.PKIsHandle || len(pkOffsets) == 0 {
-			ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
-			extraColHandle = &expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
-				ID:       model.ExtraHandleID,
+			if !found {
+				ts.Columns = append(ts.Columns, cInfo.ColumnInfo)
+				ts.schema.Append(commonCols[pkOffset])
+				ts.HandleIdx = append(ts.HandleIdx, len(ts.Columns)-1)
 			}
-			ts.schema.Append(extraColHandle)
-			pkOffsets = []int{len(ts.Columns) - 1}
+
 		}
 	}
 
-	if tbl.Meta().GetPartitionInfo() != nil {
-		pid := tbl.(table.PhysicalTable).GetPhysicalID()
-		is.physicalTableID = pid
-		is.isPartition = true
-		ts.physicalTableID = pid
-		ts.isPartition = true
-	}
 	cop := &copTask{
 		indexPlan:        is,
 		tablePlan:        ts,
 		tblColHists:      is.stats.HistColl,
-		extraHandleCol:   extraColHandle,
-		commonHandleCols: commonHandleCols,
+		extraHandleCol:   extraCol,
+		commonHandleCols: commonCols,
 	}
-	ts.HandleIdx = pkOffsets
-	is.initSchema(append(fullIdxCols, commonHandleCols...), true)
 	rootT := finishCopTask(b.ctx, cop).(*rootTask)
 	if err := rootT.p.ResolveIndices(); err != nil {
 		return nil, err
 	}
 	return rootT.p, nil
+}
+
+func getIndexColumnInfos(tblInfo *model.TableInfo, idx *model.IndexInfo) []*model.ColumnInfo {
+	ret := make([]*model.ColumnInfo, len(idx.Columns))
+	for i, idxCol := range idx.Columns {
+		ret[i] = tblInfo.Columns[idxCol.Offset]
+	}
+	return ret
+}
+
+func getIndexColsSchema(tblInfo *model.TableInfo, idx *model.IndexInfo, allColSchema *expression.Schema) *expression.Schema {
+	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
+	for _, idxCol := range idx.Columns {
+		for i, colInfo := range tblInfo.Columns {
+			if colInfo.Name.L == idxCol.Name.L {
+				schema.Append(allColSchema.Columns[i])
+				break
+			}
+		}
+	}
+	return schema
+}
+
+func getPhysicalID(t table.Table) (physicalID int64, isPartition bool) {
+	tblInfo := t.Meta()
+	if tblInfo.GetPartitionInfo() != nil {
+		pid := t.(table.PhysicalTable).GetPhysicalID()
+		return pid, true
+	}
+	return tblInfo.ID, false
+}
+
+func tryGetPkExtraColumn(sv *variable.SessionVars, tblInfo *model.TableInfo) (*model.ColumnInfo, *expression.Column, bool) {
+	if tblInfo.IsCommonHandle || tblInfo.PKIsHandle {
+		return nil, nil, false
+	}
+	info := model.NewExtraHandleColInfo()
+	expCol := &expression.Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		UniqueID: sv.AllocPlanColumnID(),
+		ID:       model.ExtraHandleID,
+	}
+	return info, expCol, true
+}
+
+func tryGetCommonHandleCols(t table.Table, allColSchema *expression.Schema) ([]*table.Column, []*expression.Column, bool) {
+	tblInfo := t.Meta()
+	if !tblInfo.IsCommonHandle {
+		return nil, nil, false
+	}
+	pk := tables.FindPrimaryIndex(tblInfo)
+	commonHandleCols, _ := expression.IndexInfo2Cols(tblInfo.Columns, allColSchema.Columns, pk)
+	commonHandelColInfos := tables.TryGetCommonPkColumns(t)
+	return commonHandelColInfos, commonHandleCols, true
+}
+
+func tryGetPkHandleCol(tblInfo *model.TableInfo, allColSchema *expression.Schema) (*model.ColumnInfo, *expression.Column, bool) {
+	if !tblInfo.PKIsHandle {
+		return nil, nil, false
+	}
+	for i, c := range tblInfo.Columns {
+		if mysql.HasPriKeyFlag(c.Flag) {
+			return c, allColSchema.Columns[i], true
+		}
+	}
+	return nil, nil, false
 }
 
 func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbName model.CIStr, tbl table.Table, indices []table.Index) ([]Plan, []*model.IndexInfo, error) {
@@ -1328,32 +1388,6 @@ func (b *PlanBuilder) buildAdminCheckTable(ctx context.Context, as *ast.AdminStm
 	p.IndexInfos = indexInfos
 	p.IndexLookUpReaders = readers
 	return p, nil
-}
-
-func (b *PlanBuilder) buildCheckIndex(ctx context.Context, dbName model.CIStr, as *ast.AdminStmt) (Plan, error) {
-	tblName := as.Tables[0]
-	tbl, err := b.is.TableByName(dbName, tblName.Name)
-	if err != nil {
-		return nil, err
-	}
-	tblInfo := tbl.Meta()
-
-	// get index information
-	var idx *model.IndexInfo
-	for _, index := range tblInfo.Indices {
-		if index.Name.L == strings.ToLower(as.Index) {
-			idx = index
-			break
-		}
-	}
-	if idx == nil {
-		return nil, errors.Errorf("index %s do not exist", as.Index)
-	}
-	if idx.State != model.StatePublic {
-		return nil, errors.Errorf("index %s state %s isn't public", as.Index, idx.State)
-	}
-
-	return b.buildPhysicalIndexLookUpReader(ctx, dbName, tbl, idx)
 }
 
 func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string) (*expression.Schema, types.NameSlice, error) {
@@ -1533,13 +1567,15 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		return nil, err
 	}
 	for _, idxName := range as.IndexNames {
-		handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
-		if handleCols != nil {
-			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
-				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+		if isPrimaryIndex(idxName) {
+			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
+			if handleCols != nil {
+				for i, id := range physicalIDs {
+					info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], PhysicalTableID: id, Incremental: as.Incremental}
+					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+				}
+				continue
 			}
-			continue
 		}
 		idx := tblInfo.FindIndexByName(idxName.L)
 		if idx == nil || idx.State != model.StatePublic {
@@ -1887,6 +1923,13 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		p.setSchemaAndNames(buildShowNextRowID())
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, show.Table.Schema.L, show.Table.Name.L, "", ErrPrivilegeCheckFail)
 		return p, nil
+	case ast.ShowStatsBuckets, ast.ShowStatsHistograms, ast.ShowStatsMeta, ast.ShowStatsHealthy:
+		user := b.ctx.GetSessionVars().User
+		var err error
+		if user != nil {
+			err = ErrDBaccessDenied.GenWithStackByArgs(user.AuthUsername, user.AuthHostname, mysql.SystemDB)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, mysql.SystemDB, "", "", err)
 	}
 	schema, names := buildShowSchema(show, isView, isSequence)
 	p.SetSchema(schema)
@@ -3142,6 +3185,7 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 	if err != nil {
 		return nil, err
 	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	return &SelectInto{
 		TargetPlan: targetPlan,
 		IntoOpt:    selectIntoInfo,

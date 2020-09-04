@@ -115,7 +115,7 @@ var (
 	configStrict = flagBoolean(nmConfigStrict, false, "enforce config file validity")
 
 	// Base
-	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
+	store            = flag.String(nmStore, "unistore", "registered store name, [tikv, mocktikv, unistore]")
 	storePath        = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
 	host             = flag.String(nmHost, "0.0.0.0", "tidb server host")
 	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
@@ -418,6 +418,9 @@ func overrideConfig(cfg *config.Config) {
 	}
 	if actualFlags[nmAdvertiseAddress] {
 		cfg.AdvertiseAddress = *advertiseAddress
+	}
+	if len(cfg.AdvertiseAddress) == 0 {
+		cfg.AdvertiseAddress = util.GetLocalIP()
 	}
 	if len(cfg.AdvertiseAddress) == 0 {
 		cfg.AdvertiseAddress = cfg.Host
