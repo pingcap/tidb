@@ -1300,14 +1300,7 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 				return nil, err
 			}
 			if !dec.IsZero() && frac > decimal && dec.Compare(&old) != 0 {
-				if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
-					// fix https://github.com/pingcap/tidb/issues/3895
-					// fix https://github.com/pingcap/tidb/issues/5532
-					sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", &old))
-					err = nil
-				} else {
-					err = sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", &old))
-				}
+				sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", &old))
 			}
 		}
 	}
