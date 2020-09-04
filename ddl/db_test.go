@@ -2583,7 +2583,7 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustExec("drop table y;")
 }
 
-func (s *testDBSuite5) TestRepairTable(c *C) {
+func (s *testSerialDBSuite) TestRepairTable(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"), IsNil)
@@ -2735,7 +2735,7 @@ func turnRepairModeAndInit(on bool) {
 	domainutil.RepairInfo.SetRepairTableList(list)
 }
 
-func (s *testDBSuite5) TestRepairTableWithPartition(c *C) {
+func (s *testSerialDBSuite) TestRepairTableWithPartition(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"), IsNil)
@@ -4116,10 +4116,10 @@ func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testSerialDBSuite, c
 }
 func (s *testSerialDBSuite) TestAddIndexForGeneratedColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = false
 	})
-	defer config.RestoreFunc()()
 
 	testAddIndexForGeneratedColumn(tk, s, c)
 	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
