@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,7 +58,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -92,7 +92,7 @@ var (
 
 type baseExecutor struct {
 	ctx           sessionctx.Context
-	id            fmt.Stringer
+	id            int
 	schema        *expression.Schema // output schema
 	initCap       int
 	maxChunkSize  int
@@ -125,7 +125,7 @@ const (
 )
 
 func init() {
-	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(stringutil.StringerStr("GlobalStorageLabel"), -1)
+	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
 	action := &globalPanicOnExceed{}
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 }
@@ -188,7 +188,7 @@ func (e *baseExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.Stringer, children ...Executor) baseExecutor {
+func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, children ...Executor) baseExecutor {
 	e := baseExecutor{
 		children:     children,
 		ctx:          ctx,
@@ -198,9 +198,9 @@ func newBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id fmt.S
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
-		if e.id != nil {
+		if e.id > 0 {
 			e.runtimeStats = &execdetails.BasicRuntimeStats{}
-			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id.String(), e.runtimeStats)
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(id, e.runtimeStats)
 		}
 	}
 	if schema != nil {
@@ -246,6 +246,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	if trace.IsEnabled() {
+		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
 	}
 	err := e.Next(ctx, req)
 
@@ -1059,6 +1062,12 @@ func init() {
 	// but the plan package cannot import the executor package because of the dependency cycle.
 	// So we assign a function implemented in the executor package to the plan package to avoid the dependency cycle.
 	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) ([]types.Datum, error) {
+		defer func(begin time.Time) {
+			s := sctx.GetSessionVars()
+			s.RewritePhaseInfo.PreprocessSubQueries++
+			s.RewritePhaseInfo.DurationPreprocessSubQuery += time.Since(begin)
+		}(time.Now())
+
 		if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 			span1 := span.Tracer().StartSpan("executor.EvalSubQuery", opentracing.ChildOf(span.Context()))
 			defer span1.Finish()
@@ -1532,8 +1541,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
-		MemTracker:  memory.NewTracker(stringutil.MemoizeStr(s.Text), vars.MemQuotaQuery),
-		DiskTracker: disk.NewTracker(stringutil.MemoizeStr(s.Text), -1),
+		MemTracker:  memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
+		DiskTracker: disk.NewTracker(memory.LabelForSQLText, -1),
 		TaskID:      stmtctx.AllocateTaskID(),
 	}
 	globalConfig := config.GetGlobalConfig()

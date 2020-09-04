@@ -14,7 +14,9 @@
 package tikv
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -61,14 +63,54 @@ type RegionRequestSender struct {
 	storeAddr    string
 	rpcError     error
 	failStoreIDs map[uint64]struct{}
-	stats        map[tikvrpc.CmdType]*RegionRequestRuntimeStats
+	RegionRequestRuntimeStats
 }
 
 // RegionRequestRuntimeStats records the runtime stats of send region requests.
 type RegionRequestRuntimeStats struct {
-	count int64
+	Stats map[tikvrpc.CmdType]*RPCRuntimeStats
+}
+
+// NewRegionRequestRuntimeStats returns a new RegionRequestRuntimeStats.
+func NewRegionRequestRuntimeStats() RegionRequestRuntimeStats {
+	return RegionRequestRuntimeStats{
+		Stats: make(map[tikvrpc.CmdType]*RPCRuntimeStats),
+	}
+}
+
+// RPCRuntimeStats indicates the RPC request count and consume time.
+type RPCRuntimeStats struct {
+	Count int64
 	// Send region request consume time.
-	consume int64
+	Consume int64
+}
+
+// String implements fmt.Stringer interface.
+func (r *RegionRequestRuntimeStats) String() string {
+	var buf bytes.Buffer
+	for k, v := range r.Stats {
+		if buf.Len() > 0 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(fmt.Sprintf("%s:{num_rpc:%d, total_time:%s}", k.String(), v.Count, time.Duration(v.Consume)))
+	}
+	return buf.String()
+}
+
+// Merge merges other RegionRequestRuntimeStats.
+func (r *RegionRequestRuntimeStats) Merge(rs RegionRequestRuntimeStats) {
+	for cmd, v := range rs.Stats {
+		stat, ok := r.Stats[cmd]
+		if !ok {
+			r.Stats[cmd] = &RPCRuntimeStats{
+				Count:   v.Count,
+				Consume: v.Consume,
+			}
+			continue
+		}
+		stat.Count += v.Count
+		stat.Consume += v.Consume
+	}
 }
 
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
@@ -92,9 +134,9 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
 	}
-	if ss.stats != nil {
+	if ss.Stats != nil {
 		defer func(start time.Time) {
-			recordRegionRequestRuntimeStats(ss.stats, req.Type, time.Since(start))
+			recordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
 		}(time.Now())
 	}
 	resp, err = ss.client.SendRequest(ctx, rpcCtx.Addr, req, timout)
@@ -111,17 +153,17 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	return
 }
 
-func recordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*RegionRequestRuntimeStats, cmd tikvrpc.CmdType, d time.Duration) {
+func recordRegionRequestRuntimeStats(stats map[tikvrpc.CmdType]*RPCRuntimeStats, cmd tikvrpc.CmdType, d time.Duration) {
 	stat, ok := stats[cmd]
 	if !ok {
-		stats[cmd] = &RegionRequestRuntimeStats{
-			count:   1,
-			consume: int64(d),
+		stats[cmd] = &RPCRuntimeStats{
+			Count:   1,
+			Consume: int64(d),
 		}
 		return
 	}
-	stat.count++
-	stat.consume += int64(d)
+	stat.Count++
+	stat.Consume += int64(d)
 }
 
 func (ss *RegionBatchRequestSender) onSendFail(bo *Backoffer, ctxs []copTaskAndRPCContext, err error) error {
@@ -344,9 +386,10 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		}
 		defer s.releaseStoreToken(rpcCtx.Store)
 	}
-	if s.stats != nil {
+
+	if s.Stats != nil {
 		defer func(start time.Time) {
-			recordRegionRequestRuntimeStats(s.stats, req.Type, time.Since(start))
+			recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
 		}(time.Now())
 	}
 	ctx := bo.ctx
@@ -461,6 +504,11 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, seed
 			zap.String("ctx", ctx.String()))
 
 		if notLeader.GetLeader() == nil {
+			// The peer doesn't know who is the current leader. Generally it's because
+			// the Raft group is in an election, but it's possible that the peer is
+			// isolated and removed from the Raft group. So it's necessary to reload
+			// the region from PD.
+			s.regionCache.InvalidateCachedRegion(ctx.Region)
 			if err = bo.Backoff(BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
 				return false, errors.Trace(err)
 			}

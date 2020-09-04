@@ -301,9 +301,18 @@ func (s *testTableSuite) TestInfoschemaFieldValue(c *C) {
 			"  `COMMAND` varchar(16) NOT NULL DEFAULT '',\n" +
 			"  `TIME` int(7) NOT NULL DEFAULT 0,\n" +
 			"  `STATE` varchar(7) DEFAULT NULL,\n" +
-			"  `INFO` binary(512) DEFAULT NULL,\n" +
+			"  `INFO` longtext DEFAULT NULL,\n" +
 			"  `MEM` bigint(21) unsigned DEFAULT NULL,\n" +
 			"  `TxnStart` varchar(64) NOT NULL DEFAULT ''\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("show create table information_schema.cluster_log").Check(
+		testkit.Rows("" +
+			"CLUSTER_LOG CREATE TABLE `CLUSTER_LOG` (\n" +
+			"  `TIME` varchar(32) DEFAULT NULL,\n" +
+			"  `TYPE` varchar(64) DEFAULT NULL,\n" +
+			"  `INSTANCE` varchar(64) DEFAULT NULL,\n" +
+			"  `LEVEL` varchar(8) DEFAULT NULL,\n" +
+			"  `MESSAGE` longtext DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
@@ -531,11 +540,12 @@ func prepareSlowLogfile(c *C, slowLogFileName string) {
 	c.Assert(err, IsNil)
 	_, err = f.Write([]byte(`# Time: 2019-02-12T19:33:56.571953+08:00
 # Txn_start_ts: 406315658548871171
-# User: root@127.0.0.1
+# User@Host: root[root] @ localhost [127.0.0.1]
 # Conn_ID: 6
 # Query_time: 4.895492
 # Parse_time: 0.4
 # Compile_time: 0.2
+# Rewrite_time: 0.000000003 Preproc_subqueries: 2 Preproc_subqueries_time: 0.000000002
 # LockKeys_time: 1.71 Request_count: 1 Prewrite_time: 0.19 Wait_prewrite_binlog_time: 0.21 Commit_time: 0.01 Commit_backoff_time: 0.18 Backoff_types: [txnLock] Resolve_lock_time: 0.03 Write_keys: 15 Write_size: 480 Prewrite_region: 1 Txn_retry: 8
 # Cop_time: 0.3824278 Process_time: 0.161 Request_count: 1 Total_keys: 100001 Process_keys: 100000
 # Wait_time: 0.101
@@ -620,10 +630,10 @@ func (s *testTableSuite) TestSlowQuery(c *C) {
 	tk.MustExec("set time_zone = '+08:00';")
 	re := tk.MustQuery("select * from information_schema.slow_query")
 	re.Check(testutil.RowsWithSep("|",
-		"2019-02-12 19:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|1|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
+		"2019-02-12 19:33:56.571953|406315658548871171|root|localhost|6|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|1|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
 	tk.MustExec("set time_zone = '+00:00';")
 	re = tk.MustQuery("select * from information_schema.slow_query")
-	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|127.0.0.1|6|4.895492|0.4|0.2|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|1|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
+	re.Check(testutil.RowsWithSep("|", "2019-02-12 11:33:56.571953|406315658548871171|root|localhost|6|4.895492|0.4|0.2|0.000000003|2|0.000000002|0.19|0.21|0.01|0|0.18|[txnLock]|0.03|0|15|480|1|8|0.3824278|0.161|0.101|0.092|1.71|1|100001|100000|test||0|42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772|t1:1,t2:2|0.1|0.2|0.03|127.0.0.1:20160|0.05|0.6|0.8|0.0.0.0:20160|70724|65536|1|1|abcd|60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4|update t set i = 2;|select * from t_slim;"))
 
 	// Test for long query.
 	f, err := os.OpenFile(slowLogFileName, os.O_CREATE|os.O_WRONLY, 0644)
@@ -811,13 +821,13 @@ func (s *testClusterTableSuite) TestSelectClusterTablePrivelege(c *C) {
 	c.Assert(err, IsNil)
 	_, err = f.Write([]byte(
 		`# Time: 2019-02-12T19:33:57.571953+08:00
-# User: user2@127.0.0.1
+# User@Host: user2 [user2] @ 127.0.0.1 [127.0.0.1]
 select * from t2;
 # Time: 2019-02-12T19:33:56.571953+08:00
-# User: user1@127.0.0.1
+# User@Host: user1 [user1] @ 127.0.0.1 [127.0.0.1]
 select * from t1;
 # Time: 2019-02-12T19:33:58.571953+08:00
-# User: user2@127.0.0.1
+# User@Host: user2 [user2] @ 127.0.0.1 [127.0.0.1]
 select * from t3;
 # Time: 2019-02-12T19:33:59.571953+08:00
 select * from t3;
@@ -911,10 +921,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("/**/insert into t values(4, 'd')")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		max_prewrite_regions, avg_affected_rows, query_sample_text
 		from information_schema.statements_summary
 		where digest_text like 'insert into t%'`,
-	).Check(testkit.Rows("Insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
+	).Check(testkit.Rows("Insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a')"))
 
 	// Test point get.
 	tk.MustExec("drop table if exists p")
@@ -953,18 +963,18 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t100    \t\n" +
-		"\t├─IndexScan_8 \tcop \t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop \t100    \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t100    \t\n" +
+		"\t├─IndexScan_8 \tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// select ... order by
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		max_prewrite_regions, avg_affected_rows, query_sample_text
 		from information_schema.statements_summary
 		order by exec_count desc limit 1`,
-	).Check(testkit.Rows("Insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a') "))
+	).Check(testkit.Rows("Insert test test.t <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into t values(1, 'a')"))
 
 	// Test different plans with same digest.
 	c.Assert(failpoint.Enable(failpointName, "return(1000)"), IsNil)
@@ -974,10 +984,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t100    \t\n" +
-		"\t├─IndexScan_8 \tcop \t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop \t100    \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t100    \t\n" +
+		"\t├─IndexScan_8 \tcop[tikv]\t100    \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop[tikv]\t100    \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it again.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -1007,16 +1017,16 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 	tk.MustExec("commit")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text, plan
+		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text
 		from information_schema.statements_summary
 		where digest_text like 'insert into t%'`,
-	).Check(testkit.Rows("Insert test test.t <nil> 1 0 0 0 0 0 0 0 0 0 1 insert into t values(1, 'a')  "))
+	).Check(testkit.Rows("Insert test test.t <nil> 1 0 0 0 0 0 0 0 0 0 1 insert into t values(1, 'a') "))
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text, plan
+		max_prewrite_regions, avg_affected_rows, query_sample_text, prev_sample_text
 		from information_schema.statements_summary
 		where digest_text='commit'`,
-	).Check(testkit.Rows("Commit test <nil> <nil> 1 0 0 0 0 0 2 2 1 1 0 commit insert into t values(1, 'a') "))
+	).Check(testkit.Rows("Commit test <nil> <nil> 1 0 0 0 0 0 2 2 1 1 0 commit insert into t values(1, 'a')"))
 
 	tk.MustQuery("select * from t where a=2")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
@@ -1024,10 +1034,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t1000   \t\n" +
-		"\t├─IndexScan_8 \tcop \t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop \t1000   \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 1 2 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t1000   \t\n" +
+		"\t├─IndexScan_8 \tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Disable it in global scope.
 	tk.MustExec("set global tidb_enable_stmt_summary = false")
@@ -1043,10 +1053,10 @@ func (s *testTableSuite) TestStmtSummaryTable(c *C) {
 		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
 		from information_schema.statements_summary
 		where digest_text like 'select * from t%'`,
-	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask\testRows\toperator info\n" +
-		"\tIndexLookUp_10\troot\t1000   \t\n" +
-		"\t├─IndexScan_8 \tcop \t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
-		"\t└─TableScan_9 \tcop \t1000   \ttable:t, keep order:false, stats:pseudo"))
+	).Check(testkit.Rows("Select test test.t t:k 2 4 0 0 0 0 0 0 0 0 0 select * from t where a=2 \tid            \ttask     \testRows\toperator info\n" +
+		"\tIndexLookUp_10\troot     \t1000   \t\n" +
+		"\t├─IndexScan_8 \tcop[tikv]\t1000   \ttable:t, index:k(a), range:[2,2], keep order:false, stats:pseudo\n" +
+		"\t└─TableScan_9 \tcop[tikv]\t1000   \ttable:t, keep order:false, stats:pseudo"))
 
 	// Unset session variable.
 	tk.MustExec("set session tidb_enable_stmt_summary = ''")
@@ -1161,10 +1171,10 @@ func (s *testTableSuite) TestStmtSummaryHistoryTable(c *C) {
 	tk.MustExec("/**/insert into test_summary values(4, 'd')")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
 		max_total_keys, avg_processed_keys, max_processed_keys, avg_write_keys, max_write_keys, avg_prewrite_regions,
-		max_prewrite_regions, avg_affected_rows, query_sample_text, plan
+		max_prewrite_regions, avg_affected_rows, query_sample_text
 		from information_schema.statements_summary_history
 		where digest_text like 'insert into test_summary%'`,
-	).Check(testkit.Rows("Insert test test.test_summary <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into test_summary values(1, 'a') "))
+	).Check(testkit.Rows("Insert test test.test_summary <nil> 4 0 0 0 0 0 2 2 1 1 1 insert into test_summary values(1, 'a')"))
 
 	tk.MustExec("set global tidb_stmt_summary_history_size = 0")
 	tk.MustQuery(`select stmt_type, schema_name, table_names, index_names, exec_count, sum_cop_task_num, avg_total_keys,
