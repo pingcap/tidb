@@ -729,7 +729,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBAllowAutoRandExplicitInsert, boolToOnOff(DefTiDBAllowAutoRandExplicitInsert)},
 	{ScopeGlobal | ScopeSession, TiDBEnableClusteredIndex, BoolToIntStr(DefTiDBEnableClusteredIndex)},
 	{ScopeGlobal, TiDBSlowLogMasking, BoolToIntStr(DefTiDBSlowLogMasking)},
-	{ScopeGlobal, TiDBLogDesensitization, BoolToIntStr(config.DefTiDBLogDesensitization)},
+	{ScopeGlobal, TiDBRedactLog, BoolToIntStr(config.DefTiDBRedactLog)},
 	{ScopeGlobal | ScopeSession, TiDBShardAllocateStep, strconv.Itoa(DefTiDBShardAllocateStep)},
 	{ScopeGlobal, TiDBEnableTelemetry, BoolToIntStr(DefTiDBEnableTelemetry)},
 	{ScopeGlobal | ScopeSession, TiDBEnableAmendPessimisticTxn, boolToOnOff(DefTiDBEnableAmendPessimisticTxn)},

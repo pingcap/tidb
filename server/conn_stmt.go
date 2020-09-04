@@ -638,7 +638,7 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	if sv == nil {
 		return ""
 	}
-	if config.GetGlobalConfig().EnableLogDesensitization {
+	if config.GetGlobalConfig().EnableRedactLog {
 		return cc.preparedStmt2StringNoArgs(stmtID)
 	}
 	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PreparedParams.String()

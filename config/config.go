@@ -61,8 +61,8 @@ const (
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
-	// DefTiDBLogDesensitization is the default value for log desensitization.
-	DefTiDBLogDesensitization = false
+	// DefTiDBRedactLog is the default value for redact log.
+	DefTiDBRedactLog = false
 )
 
 // Valid config maps
@@ -160,8 +160,8 @@ type Config struct {
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
-	// EnableLogDesensitization indicates that whether desensitization when log query.
-	EnableLogDesensitization bool `toml:"enable-log-desensitization" json:"enable-log-desensitization"`
+	// EnableRedactLog indicates that whether redact log.
+	EnableRedactLog bool `toml:"enable-redact-log" json:"enable-redact-log"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -736,7 +736,7 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
 	DeprecateIntegerDisplayWidth: false,
-	EnableLogDesensitization:     DefTiDBLogDesensitization,
+	EnableRedactLog:              DefTiDBRedactLog,
 }
 
 var (

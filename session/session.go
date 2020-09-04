@@ -659,7 +659,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
 				sql := sqlForLog(st.GetTextToLog())
-				if !config.GetGlobalConfig().EnableLogDesensitization {
+				if !config.GetGlobalConfig().EnableRedactLog {
 					sql += sessVars.PreparedParams.String()
 				}
 				logutil.Logger(ctx).Warn("retrying",
@@ -2096,7 +2096,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBAllowAutoRandExplicitInsert,
 	variable.TiDBEnableClusteredIndex,
 	variable.TiDBSlowLogMasking,
-	variable.TiDBLogDesensitization,
+	variable.TiDBRedactLog,
 	variable.TiDBEnableTelemetry,
 	variable.TiDBShardAllocateStep,
 	variable.TiDBEnableAmendPessimisticTxn,
@@ -2278,7 +2278,7 @@ func logStmt(execStmt *executor.ExecStmt, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		if !config.GetGlobalConfig().EnableLogDesensitization {
+		if !config.GetGlobalConfig().EnableRedactLog {
 			query = query + vars.PreparedParams.String()
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",

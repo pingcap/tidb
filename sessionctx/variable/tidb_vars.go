@@ -425,11 +425,11 @@ const (
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
 
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
-	// Deprecated: use TiDBLogDesensitization instead.
+	// Deprecated: use TiDBRedactLog instead.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
 
-	// TiDBLogDesensitization indicates that whether desensitization when log query.
-	TiDBLogDesensitization = "tidb_log_desensitization"
+	// TiDBRedactLog indicates that whether redact log.
+	TiDBRedactLog = "tidb_redact_log"
 
 	// TiDBShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	TiDBShardAllocateStep = "tidb_shard_allocate_step"

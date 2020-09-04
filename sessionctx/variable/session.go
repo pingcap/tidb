@@ -1418,8 +1418,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableClusteredIndex = TiDBOptOn(val)
 	case TiDBEnableParallelApply:
 		s.EnableParallelApply = TiDBOptOn(val)
-	case TiDBSlowLogMasking, TiDBLogDesensitization:
-		config.GetGlobalConfig().EnableLogDesensitization = TiDBOptOn(val)
+	case TiDBSlowLogMasking, TiDBRedactLog:
+		config.GetGlobalConfig().EnableRedactLog = TiDBOptOn(val)
 	case TiDBShardAllocateStep:
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	case TiDBEnableAmendPessimisticTxn:
