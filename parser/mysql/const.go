@@ -599,8 +599,8 @@ func (m SQLMode) HasAllowInvalidDatesMode() bool {
 }
 
 // consts for sql modes.
+// see https://dev.mysql.com/doc/internals/en/query-event.html#q-sql-mode-code
 const (
-	ModeNone        SQLMode = 0
 	ModeRealAsFloat SQLMode = 1 << iota
 	ModePipesAsConcat
 	ModeANSIQuotes
@@ -634,6 +634,7 @@ const (
 	ModeNoEngineSubstitution
 	ModePadCharToFullLength
 	ModeAllowInvalidDates
+	ModeNone = 0
 )
 
 // FormatSQLModeStr re-format 'SQL_MODE' variable.
