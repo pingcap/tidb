@@ -166,6 +166,45 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 
 	case tipb.ScalarFuncSig_GTReal:
 		f = &builtinGTRealSig{base}
+<<<<<<< HEAD
+=======
+	case tipb.ScalarFuncSig_GTDecimal:
+		f = &builtinGTDecimalSig{base}
+	case tipb.ScalarFuncSig_GTString:
+		f = &builtinGTStringSig{base}
+	case tipb.ScalarFuncSig_GTTime:
+		f = &builtinGTTimeSig{base}
+	case tipb.ScalarFuncSig_GTDuration:
+		f = &builtinGTDurationSig{base}
+	case tipb.ScalarFuncSig_GTJson:
+		f = &builtinGTJSONSig{base}
+	case tipb.ScalarFuncSig_GreatestInt:
+		f = &builtinGreatestIntSig{base}
+	case tipb.ScalarFuncSig_GreatestReal:
+		f = &builtinGreatestRealSig{base}
+	case tipb.ScalarFuncSig_GreatestDecimal:
+		f = &builtinGreatestDecimalSig{base}
+	case tipb.ScalarFuncSig_GreatestString:
+		f = &builtinGreatestStringSig{base}
+	case tipb.ScalarFuncSig_GreatestTime:
+		f = &builtinGreatestTimeSig{base}
+	case tipb.ScalarFuncSig_LeastInt:
+		f = &builtinLeastIntSig{base}
+	case tipb.ScalarFuncSig_LeastReal:
+		f = &builtinLeastRealSig{base}
+	case tipb.ScalarFuncSig_LeastDecimal:
+		f = &builtinLeastDecimalSig{base}
+	case tipb.ScalarFuncSig_LeastString:
+		f = &builtinLeastStringSig{base}
+	case tipb.ScalarFuncSig_LeastTime:
+		f = &builtinLeastTimeSig{base}
+	case tipb.ScalarFuncSig_IntervalInt:
+		f = &builtinIntervalIntSig{base, false} // Since interval function won't be pushed down to TiKV, therefore it doesn't matter what value we give to hasNullable
+	case tipb.ScalarFuncSig_IntervalReal:
+		f = &builtinIntervalRealSig{base, false}
+	case tipb.ScalarFuncSig_GEInt:
+		f = &builtinGEIntSig{base}
+>>>>>>> 5b26588... expression: add linear search for the interval function (#19543)
 	case tipb.ScalarFuncSig_GEReal:
 		f = &builtinGERealSig{base}
 	case tipb.ScalarFuncSig_LTReal:
