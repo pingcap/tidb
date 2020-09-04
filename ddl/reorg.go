@@ -544,7 +544,7 @@ func runAndWaitReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tblI
 			// if timeout, we should return, check for the owner and re-wait job done.
 			return ver, false, err
 		}
-		if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeIndex.Equal(err) {
+		if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) {
 			logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 			ver, err = convertDropColumnWithCompositeIdxJob2RollbackJob(t, job, tblInfo, nil, indexInfos, err)
 		}
