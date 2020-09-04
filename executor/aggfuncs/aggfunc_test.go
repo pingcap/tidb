@@ -235,7 +235,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 }
 
 func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
-	memDeltas = make([]int64, 0, 0)
+	memDeltas = make([]int64, 0)
 	fmt.Printf("num rows %d\n", srcChk.NumRows())
 	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
