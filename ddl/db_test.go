@@ -2115,6 +2115,12 @@ LOOP:
 	hasNotNull = mysql.HasNotNullFlag(colC.Flag)
 	c.Assert(hasNotNull, IsFalse)
 
+	// add datetime type column
+	s.mustExec(tk, c, "create table test_on_update_e (c1 int);")
+	s.mustExec(tk, c, "insert into test_on_update_e (c1) values (0);")
+	s.mustExec(tk, c, "alter table test_on_update_e add column c2 year not null;")
+	tk.MustQuery("select c2 from test_on_update_e").Check(testkit.Rows("0"))
+
 	// test add unsupported constraint
 	s.mustExec(tk, c, "create table t_add_unsupported_constraint (a int);")
 	_, err = tk.Exec("ALTER TABLE t_add_unsupported_constraint ADD id int AUTO_INCREMENT;")
