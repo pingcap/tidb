@@ -65,6 +65,7 @@ func (s *testVarsutilSuite) TestNewSessionVars(c *C) {
 	c.Assert(vars.IndexLookupJoinConcurrency, Equals, DefIndexLookupJoinConcurrency)
 	c.Assert(vars.HashJoinConcurrency, Equals, DefTiDBHashJoinConcurrency)
 	c.Assert(vars.AllowBatchCop, Equals, DefTiDBAllowBatchCop)
+	c.Assert(vars.AllowBCJ, Equals, DefOptBCJ)
 	c.Assert(vars.ProjectionConcurrency, Equals, int64(DefTiDBProjectionConcurrency))
 	c.Assert(vars.HashAggPartialConcurrency, Equals, DefTiDBHashAggPartialConcurrency)
 	c.Assert(vars.HashAggFinalConcurrency, Equals, DefTiDBHashAggFinalConcurrency)
@@ -194,6 +195,17 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 		c.Assert(v.SQLMode, Equals, mode)
 	}
 
+	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", types.NewStringDatum("1"))
+	c.Assert(err, IsNil)
+	err = SetSessionSystemVar(v, "tidb_allow_batch_cop", types.NewStringDatum("0"))
+	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
+	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	err = SetSessionSystemVar(v, "tidb_allow_batch_cop", types.NewStringDatum("0"))
+	c.Assert(err, IsNil)
+	err = SetSessionSystemVar(v, "tidb_opt_broadcast_join", types.NewStringDatum("1"))
+	c.Assert(terror.ErrorEqual(err, ErrWrongValueForVar), IsTrue)
+
 	// Combined sql_mode
 	SetSessionSystemVar(v, "sql_mode", types.NewStringDatum("REAL_AS_FLOAT,ANSI_QUOTES"))
 	c.Assert(v.SQLMode, Equals, mysql.ModeRealAsFloat|mysql.ModeANSIQuotes)
@@ -312,6 +324,14 @@ func (s *testVarsutilSuite) TestVarsutil(c *C) {
 	err = SetSessionSystemVar(v, TiDBOptCopCPUFactor, types.NewStringDatum("5.0"))
 	c.Assert(err, IsNil)
 	val, err = GetSessionSystemVar(v, TiDBOptCopCPUFactor)
+	c.Assert(err, IsNil)
+	c.Assert(val, Equals, "5.0")
+	c.Assert(v.CopCPUFactor, Equals, 5.0)
+
+	c.Assert(v.CopTiFlashConcurrencyFactor, Equals, 24.0)
+	err = SetSessionSystemVar(v, TiDBOptTiFlashConcurrencyFactor, types.NewStringDatum("5.0"))
+	c.Assert(err, IsNil)
+	val, err = GetSessionSystemVar(v, TiDBOptTiFlashConcurrencyFactor)
 	c.Assert(err, IsNil)
 	c.Assert(val, Equals, "5.0")
 	c.Assert(v.CopCPUFactor, Equals, 5.0)
@@ -491,6 +511,7 @@ func (s *testVarsutilSuite) TestValidate(c *C) {
 		{TiDBOptCorrelationThreshold, "-2", true},
 		{TiDBOptCPUFactor, "a", true},
 		{TiDBOptCPUFactor, "-2", true},
+		{TiDBOptTiFlashConcurrencyFactor, "-2", true},
 		{TiDBOptCopCPUFactor, "a", true},
 		{TiDBOptCopCPUFactor, "-2", true},
 		{TiDBOptNetworkFactor, "a", true},

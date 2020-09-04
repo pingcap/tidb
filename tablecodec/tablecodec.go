@@ -18,8 +18,11 @@ import (
 	"encoding/binary"
 	"math"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
@@ -28,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/structure"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -717,10 +721,22 @@ func DecodeIndexHandle(key, value []byte, colsLen int, pkTp *types.FieldType) (i
 		return d.GetInt64(), nil
 
 	} else if len(value) >= 8 {
-		return DecodeIndexValueAsHandle(value)
+		return decodeHandleInIndexValue(value)
 	}
 	// Should never execute to here.
 	return 0, errors.Errorf("no handle in index key: %v, value: %v", key, value)
+}
+
+func decodeHandleInIndexValue(value []byte) (int64, error) {
+	if len(value) > MaxOldEncodeValueLen {
+		tailLen := value[0]
+		if tailLen >= 8 {
+			return DecodeIndexValueAsHandle(value[len(value)-int(tailLen):])
+		}
+		// Should never executed to here, since the handle is encoded in IndexKey.
+		return 0, errors.Errorf("no handle in index value: %v", value)
+	}
+	return DecodeIndexValueAsHandle(value)
 }
 
 // DecodeIndexValueAsHandle uses to decode index value as handle id.
@@ -839,4 +855,151 @@ func GetTableIndexKeyRange(tableID, indexID int64) (startKey, endKey []byte) {
 	startKey = EncodeIndexSeekKey(tableID, indexID, nil)
 	endKey = EncodeIndexSeekKey(tableID, indexID, []byte{255})
 	return
+}
+
+// GetIndexKeyBuf reuse or allocate buffer.
+func GetIndexKeyBuf(buf []byte, defaultCap int) []byte {
+	if buf != nil {
+		return buf[:0]
+	}
+
+	return make([]byte, 0, defaultCap)
+}
+
+// GenIndexKey generates index key using input physical table id.
+func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+	phyTblID int64, indexedValues []types.Datum, h int64, buf []byte) (key []byte, distinct bool, err error) {
+	if idxInfo.Unique {
+		// See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
+		// A UNIQUE index creates a constraint such that all values in the index must be distinct.
+		// An error occurs if you try to add a new row with a key value that matches an existing row.
+		// For all engines, a UNIQUE index permits multiple NULL values for columns that can contain NULL.
+		distinct = true
+		for _, cv := range indexedValues {
+			if cv.IsNull() {
+				distinct = false
+				break
+			}
+		}
+	}
+
+	// For string columns, indexes can be created using only the leading part of column values,
+	// using col_name(length) syntax to specify an index prefix length.
+	indexedValues = TruncateIndexValuesIfNeeded(tblInfo, idxInfo, indexedValues)
+	key = GetIndexKeyBuf(buf, RecordRowKeyLen+len(indexedValues)*9+9)
+	key = appendTableIndexPrefix(key, phyTblID)
+	key = codec.EncodeInt(key, idxInfo.ID)
+	key, err = codec.EncodeKey(sc, key, indexedValues...)
+	if err != nil {
+		return nil, false, err
+	}
+	if !distinct {
+		key, err = codec.EncodeKey(sc, key, types.NewDatum(h))
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	return
+}
+
+// GenIndexValue creates encoded index value and returns the result.
+func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+	containNonBinaryString bool, distinct bool, untouched bool, indexedValues []types.Datum, h int64) ([]byte, error) {
+	var idxVal []byte
+	if collate.NewCollationEnabled() && containNonBinaryString {
+		colIds := make([]int64, len(idxInfo.Columns))
+		for i, col := range idxInfo.Columns {
+			colIds[i] = tblInfo.Columns[col.Offset].ID
+		}
+		rd := rowcodec.Encoder{Enable: true}
+		rowRestoredValue, err := rd.Encode(sc, colIds, indexedValues, nil)
+		if err != nil {
+			return nil, err
+		}
+		idxVal = make([]byte, 1+len(rowRestoredValue))
+		copy(idxVal[1:], rowRestoredValue)
+		tailLen := 0
+		if distinct {
+			// The len of the idxVal is always >= 10 since len (restoredValue) > 0.
+			tailLen += 8
+			idxVal = append(idxVal, EncodeHandle(h)...)
+		} else if len(idxVal) < 10 {
+			// Padding the len to 10
+			paddingLen := 10 - len(idxVal)
+			tailLen += paddingLen
+			idxVal = append(idxVal, bytes.Repeat([]byte{0x0}, paddingLen)...)
+		}
+		if untouched {
+			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
+			// then should also write the untouched index key/value to mem-buffer to make sure the data
+			// is consistent with the index in txn mem-buffer.
+			tailLen += 1
+			idxVal = append(idxVal, kv.UnCommitIndexKVFlag)
+		}
+		idxVal[0] = byte(tailLen)
+	} else {
+		idxVal = make([]byte, 0)
+		if distinct {
+			idxVal = EncodeHandle(h)
+		}
+		if untouched {
+			// If index is untouched and fetch here means the key is exists in TiKV, but not in txn mem-buffer,
+			// then should also write the untouched index key/value to mem-buffer to make sure the data
+			// is consistent with the index in txn mem-buffer.
+			idxVal = append(idxVal, kv.UnCommitIndexKVFlag)
+		}
+		if len(idxVal) == 0 {
+			idxVal = []byte{'0'}
+		}
+	}
+	return idxVal, nil
+}
+
+// TruncateIndexValuesIfNeeded truncates the index values created using only the leading part of column values.
+func TruncateIndexValuesIfNeeded(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) []types.Datum {
+	for i := 0; i < len(indexedValues); i++ {
+		v := &indexedValues[i]
+		if v.Kind() == types.KindString || v.Kind() == types.KindBytes {
+			ic := idxInfo.Columns[i]
+			colCharset := tblInfo.Columns[ic.Offset].Charset
+			colValue := v.GetBytes()
+			isUTF8Charset := colCharset == charset.CharsetUTF8 || colCharset == charset.CharsetUTF8MB4
+			origKind := v.Kind()
+			if isUTF8Charset {
+				if ic.Length != types.UnspecifiedLength && utf8.RuneCount(colValue) > ic.Length {
+					rs := bytes.Runes(colValue)
+					truncateStr := string(rs[:ic.Length])
+					// truncate value and limit its length
+					v.SetString(truncateStr, tblInfo.Columns[ic.Offset].Collate)
+					if origKind == types.KindBytes {
+						v.SetBytes(v.GetBytes())
+					}
+				}
+			} else if ic.Length != types.UnspecifiedLength && len(colValue) > ic.Length {
+				// truncate value and limit its length
+				v.SetBytes(colValue[:ic.Length])
+				if origKind == types.KindString {
+					v.SetString(v.GetString(), tblInfo.Columns[ic.Offset].Collate)
+				}
+			}
+		}
+	}
+
+	return indexedValues
+}
+
+// EncodeHandle encodes handle in data.
+func EncodeHandle(h int64) []byte {
+	var data [8]byte
+	binary.BigEndian.PutUint64(data[:], uint64(h))
+	return data[:]
+}
+
+// DecodeHandle decodes handle in data.
+func DecodeHandle(data []byte) (int64, error) {
+	dLen := len(data)
+	if dLen <= MaxOldEncodeValueLen {
+		return int64(binary.BigEndian.Uint64(data)), nil
+	}
+	return int64(binary.BigEndian.Uint64(data[dLen-int(data[0]):])), nil
 }

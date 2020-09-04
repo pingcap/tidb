@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
@@ -512,6 +511,16 @@ func (s *testPointGetSuite) TestSelectCheckVisibility(c *C) {
 	checkSelectResultError("select * from t", tikv.ErrGCTooEarly)
 }
 
+func (s *testPointGetSuite) TestNullValues(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t ( id bigint(10) primary key, f varchar(191) default null, unique key `idx_f` (`f`))")
+	tk.MustExec(`insert into t values (1, "")`)
+	rs := tk.MustQuery(`select * from t where f in (null)`).Rows()
+	c.Assert(len(rs), Equals, 0)
+}
+
 func (s *testPointGetSuite) TestReturnValues(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -527,7 +536,7 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	txnCtx := tk.Se.GetSessionVars().TxnCtx
 	val, ok := txnCtx.GetKeyInPessimisticLockCache(pk)
 	c.Assert(ok, IsTrue)
-	handle, err := tables.DecodeHandle(val)
+	handle, err := tablecodec.DecodeHandle(val)
 	c.Assert(err, IsNil)
 	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, handle)
 	_, ok = txnCtx.GetKeyInPessimisticLockCache(rowKey)

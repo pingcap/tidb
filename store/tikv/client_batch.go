@@ -17,6 +17,7 @@ package tikv
 import (
 	"context"
 	"math"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -217,6 +218,9 @@ func (c *batchCommandsClient) isStopped() bool {
 func (c *batchCommandsClient) send(request *tikvpb.BatchCommandsRequest, entries []*batchCommandsEntry) {
 	for i, requestID := range request.RequestIds {
 		c.batched.Store(requestID, entries[i])
+		if trace.IsEnabled() {
+			trace.Log(entries[i].ctx, "rpc", "send")
+		}
 	}
 
 	if err := c.initBatchClient(); err != nil {
@@ -356,6 +360,9 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 				continue
 			}
 			entry := value.(*batchCommandsEntry)
+			if trace.IsEnabled() {
+				trace.Log(entry.ctx, "rpc", "received")
+			}
 			logutil.Eventf(entry.ctx, "receive %T response with other %d batched requests from %s", responses[i].GetCmd(), len(responses), c.target)
 			if atomic.LoadInt32(&entry.canceled) == 0 {
 				// Put the response only if the request is not canceled.
@@ -455,6 +462,13 @@ func (a *batchConn) batchSendLoop(cfg config.TiKVClient) {
 
 		a.pendingRequests.Set(float64(len(a.batchCommandsCh)))
 		a.fetchAllPendingRequests(int(cfg.MaxBatchSize), &entries, &requests)
+
+		// curl -XPUT -d 'return(true)' http://0.0.0.0:10080/fail/github.com/pingcap/tidb/store/tikv/mockBlockOnBatchClient
+		failpoint.Inject("mockBlockOnBatchClient", func(val failpoint.Value) {
+			if val.(bool) {
+				time.Sleep(1 * time.Hour)
+			}
+		})
 
 		if len(entries) < int(cfg.MaxBatchSize) && cfg.MaxBatchWaitTime > 0 {
 			// If the target TiKV is overload, wait a while to collect more requests.

@@ -129,6 +129,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	c.Assert(seVar, NotNil)
 
 	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "192.168.0.1"}
+	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "192.168.0.1"}
 	seVar.ConnectionID = 1
 	seVar.CurrentDB = "test"
 	seVar.InRestrictedSQL = true
@@ -174,17 +175,18 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 
 	var memMax int64 = 2333
 	var diskMax int64 = 6666
-	resultString := `# Txn_start_ts: 406649736972468225
-# User: root@192.168.0.1
+	resultFields := `# Txn_start_ts: 406649736972468225
+# User@Host: root[root] @ 192.168.0.1 [192.168.0.1]
 # Conn_ID: 1
 # Query_time: 1
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
+# Rewrite_time: 0.000000003 Preproc_subqueries: 2 Preproc_subqueries_time: 0.000000002
 # Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
 # DB: test
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
-# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Digest: f94c76d7fa8f60e438118752bfbfb71fe9e1934888ac415ddd8625b121af124c
 # Stats: t1:pseudo
 # Num_cop_tasks: 10
 # Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3 Cop_proc_addr: 10.6.131.78
@@ -197,37 +199,54 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # Prepared: true
 # Plan_from_cache: true
 # Has_more_results: true
-# Succ: true
-select * from t;`
-	sql := "select * from t"
+# KV_total: 10
+# PD_total: 11
+# Backoff_total: 12
+# Write_sql_response_total: 1
+# Succ: true`
+	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
-	logString := seVar.SlowLogFormat(&variable.SlowQueryLogItems{
-		TxnTS:          txnTS,
-		SQL:            sql,
-		Digest:         digest,
-		TimeTotal:      costTime,
-		TimeParse:      time.Duration(10),
-		TimeCompile:    time.Duration(10),
-		IndexNames:     "[t1:a,t2:b]",
-		StatsInfos:     statsInfos,
-		CopTasks:       copTasks,
-		ExecDetail:     execDetail,
-		MemMax:         memMax,
-		DiskMax:        diskMax,
-		Prepared:       true,
-		PlanFromCache:  true,
-		HasMoreResults: true,
-		Succ:           true,
-	})
-	c.Assert(logString, Equals, resultString)
+	logItems := &variable.SlowQueryLogItems{
+		TxnTS:             txnTS,
+		SQL:               sql,
+		Digest:            digest,
+		TimeTotal:         costTime,
+		TimeParse:         time.Duration(10),
+		TimeCompile:       time.Duration(10),
+		IndexNames:        "[t1:a,t2:b]",
+		StatsInfos:        statsInfos,
+		CopTasks:          copTasks,
+		ExecDetail:        execDetail,
+		MemMax:            memMax,
+		DiskMax:           diskMax,
+		Prepared:          true,
+		PlanFromCache:     true,
+		HasMoreResults:    true,
+		KVTotal:           10 * time.Second,
+		PDTotal:           11 * time.Second,
+		BackoffTotal:      12 * time.Second,
+		WriteSQLRespTotal: 1 * time.Second,
+		Succ:              true,
+		RewriteInfo: variable.RewritePhaseInfo{
+			DurationRewrite:            3,
+			DurationPreprocessSubQuery: 2,
+			PreprocessSubQueries:       2,
+		},
+	}
+	logString := seVar.SlowLogFormat(logItems)
+	c.Assert(logString, Equals, resultFields+"\n"+sql)
+
+	seVar.CurrentDBChanged = true
+	logString = seVar.SlowLogFormat(logItems)
+	c.Assert(logString, Equals, resultFields+"\n"+"use test;\n"+sql)
+	c.Assert(seVar.CurrentDBChanged, IsFalse)
 }
 
 func (*testSessionSuite) TestIsolationRead(c *C) {
-	originIsolationEngines := config.GetGlobalConfig().IsolationRead.Engines
-	defer func() {
-		config.GetGlobalConfig().IsolationRead.Engines = originIsolationEngines
-	}()
-	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash", "tidb"}
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.IsolationRead.Engines = []string{"tiflash", "tidb"}
+	})
 	sessVars := variable.NewSessionVars()
 	_, ok := sessVars.IsolationReadEngines[kv.TiDB]
 	c.Assert(ok, Equals, true)

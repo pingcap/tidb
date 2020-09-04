@@ -1378,10 +1378,13 @@ func buildTableInfoWithCheck(ctx sessionctx.Context, s *ast.CreateTableStmt, dbC
 	if err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(tbInfo); err != nil {
+	// Fix issue 17952 which will cause partition range expr can't be parsed as Int.
+	// checkTableInfoValidWithStmt will do the constant fold the partition expression first,
+	// then checkTableInfoValidExtra will pass the tableInfo check successfully.
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+	if err = checkTableInfoValidExtra(tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil
@@ -1616,7 +1619,7 @@ func (d *ddl) preSplitAndScatter(ctx sessionctx.Context, tbInfo *model.TableInfo
 		scatterRegion = variable.TiDBOptOn(val)
 	}
 	if pi != nil {
-		preSplit = func() { splitPartitionTableRegion(ctx, sp, pi, scatterRegion) }
+		preSplit = func() { splitPartitionTableRegion(ctx, sp, tbInfo, pi, scatterRegion) }
 	} else {
 		preSplit = func() { splitTableRegion(ctx, sp, tbInfo, scatterRegion) }
 	}
@@ -2050,11 +2053,11 @@ func resolveAlterTableSpec(ctx sessionctx.Context, specs []*ast.AlterTableSpec) 
 	for _, spec := range validSpecs {
 		resolvedAlgorithm, err := ResolveAlterAlgorithm(spec, algorithm)
 		if err != nil {
-			if algorithm != ast.AlgorithmTypeCopy {
+			// If TiDB failed to choose a better algorithm, report the error
+			if resolvedAlgorithm == ast.AlgorithmTypeDefault {
 				return nil, errors.Trace(err)
 			}
-			// For the compatibility, we return warning instead of error when the algorithm is COPY,
-			// because the COPY ALGORITHM is not supported in TiDB.
+			// For the compatibility, we return warning instead of error when a better algorithm is chosed by TiDB
 			ctx.GetSessionVars().StmtCtx.AppendError(err)
 		}
 
@@ -2561,6 +2564,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	if err != nil {
 		return errors.Trace(err)
 	}
+	pids := []int64{pid}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -2568,7 +2572,7 @@ func (d *ddl) TruncateTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		SchemaName: schema.Name.L,
 		Type:       model.ActionTruncateTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{pid},
+		Args:       []interface{}{pids},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -2600,7 +2604,8 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 
 	partName := spec.PartitionNames[0].L
-	err = checkDropTablePartition(meta, partName)
+	partNames := []string{partName}
+	err = checkDropTablePartition(meta, partNames)
 	if err != nil {
 		if ErrDropPartitionNonExistent.Equal(err) && spec.IfExists {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -2615,7 +2620,7 @@ func (d *ddl) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, spec *
 		SchemaName: schema.Name.L,
 		Type:       model.ActionDropTablePartition,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{partName},
+		Args:       []interface{}{partNames},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -2745,6 +2750,9 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 			}
 		}
 	case mysql.TypeNewDecimal:
+		if origin.Tp != to.Tp {
+			return errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
 		// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
 		if to.Flen != origin.Flen || to.Decimal != origin.Decimal {
 			return errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")
@@ -3082,7 +3090,10 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 
 func checkAutoRandom(tableInfo *model.TableInfo, originCol *table.Column, specNewColumn *ast.ColumnDef) (uint64, error) {
 	// Disallow add/drop actions on auto_random.
-	oldRandBits := tableInfo.AutoRandomBits
+	var oldRandBits uint64
+	if tableInfo.PKIsHandle && (tableInfo.GetPkName().L == originCol.Name.L) {
+		oldRandBits = tableInfo.AutoRandomBits
+	}
 	newRandBits, err := extractAutoRandomBitsFromColDef(specNewColumn)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -3415,6 +3426,11 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 		}
 	}
 
+	err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    tb.Meta().ID,
@@ -3426,6 +3442,18 @@ func (d *ddl) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast.Iden
 	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
+}
+
+func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error {
+	// Check the tiflash replica count should be less than the total tiflash stores.
+	tiflashStoreCnt, err := infoschema.GetTiFlashStoreCount(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if replicaCount > tiflashStoreCnt {
+		return errors.Errorf("the tiflash replica count: %d should be less than the total tiflash server count: %d", replicaCount, tiflashStoreCnt)
+	}
+	return nil
 }
 
 // UpdateTableReplicaInfo updates the table flash replica infos.

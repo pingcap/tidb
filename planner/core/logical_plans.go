@@ -106,6 +106,7 @@ const (
 	preferRightAsINLMJInner
 	preferHashJoin
 	preferMergeJoin
+	preferBCJoin
 	preferHashAgg
 	preferStreamAgg
 )
@@ -731,8 +732,17 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
 		handleCol := ds.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
-			path.IdxCols = append(path.IdxCols, handleCol)
-			path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+			alreadyHandle := false
+			for _, col := range path.IdxCols {
+				if col.ID == model.ExtraHandleID || col.Equal(nil, handleCol) {
+					alreadyHandle = true
+				}
+			}
+			// Don't add one column twice to the index. May cause unexpected errors.
+			if !alreadyHandle {
+				path.IdxCols = append(path.IdxCols, handleCol)
+				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+			}
 		}
 	}
 	if len(path.IdxCols) != 0 {
@@ -782,7 +792,9 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, conds []expres
 			}
 		}
 	}
-	path.IndexFilters, path.TableFilters = splitIndexFilterConditions(path.TableFilters, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+	var indexFilters []expression.Expression
+	indexFilters, path.TableFilters = splitIndexFilterConditions(path.TableFilters, path.FullIdxCols, path.FullIdxColLens, ds.tableInfo)
+	path.IndexFilters = append(path.IndexFilters, indexFilters...)
 	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
 	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
 	if path.CountAfterAccess < ds.stats.RowCount && !isIm {

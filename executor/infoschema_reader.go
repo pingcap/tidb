@@ -265,7 +265,7 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
-	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	is := infoschema.GetInfoSchema(ctx)
 	tbl, err := is.TableByName(schema.Name, tblInfo.Name)
 	if err != nil {
 		return 0, err
@@ -535,12 +535,12 @@ func (e *hugeMemTableRetriever) setDataForColumns(ctx sessionctx.Context) error 
 		schema := e.dbs[e.dbsIdx]
 		for e.tblIdx < len(schema.Tables) {
 			table := schema.Tables[e.tblIdx]
+			e.tblIdx++
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
 			e.dataForColumnsInTable(schema, table)
-			e.tblIdx++
 			if len(e.rows) >= batch {
 				return nil
 			}
@@ -1581,8 +1581,16 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 					if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
 						continue
 					}
-					// TODO: Support https in tiflash
-					url := fmt.Sprintf("http://%s", ev.Value)
+					url := fmt.Sprintf("%s://%s", util.InternalHTTPSchema(), ev.Value)
+					req, err := http.NewRequest(http.MethodGet, url, nil)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					_, err = util.InternalHTTPClient().Do(req)
+					if err != nil {
+						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						continue
+					}
 					e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
 						id:  id,
 						url: url,
@@ -1622,7 +1630,6 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	}
 	sql = fmt.Sprintf("%s LIMIT %d, %d", sql, e.rowIdx, maxCount)
 	notNumber := "nan"
-	httpClient := http.DefaultClient
 	instanceInfo := e.instanceInfos[e.instanceIdx]
 	url := instanceInfo.url
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -1632,7 +1639,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	q := req.URL.Query()
 	q.Add("query", sql)
 	req.URL.RawQuery = q.Encode()
-	resp, err := httpClient.Do(req)
+	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

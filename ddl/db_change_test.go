@@ -92,7 +92,9 @@ func (s *testStateChangeSuiteBase) TearDownSuite(c *C) {
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
 func (s *serialTestStateChangeSuite) TestShowCreateTable(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int)")
@@ -513,8 +515,7 @@ func (s *testStateChangeSuite) TestWriteOnlyWriteNULL(c *C) {
 	sqls[0] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 8 on duplicate key update c1 = values(c1)", nil}
 	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
 	expectQuery := &expectQuery{"select c4, c5 from t", []string{"8 1"}}
-	// TODO: This case should always fail in write-only state, but it doesn't. We use write-reorganization state here to keep it running stable. It need a double check.
-	s.runTestInSchemaState(c, model.StateWriteReorganization, true, addColumnSQL, sqls, expectQuery)
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
 }
 
 func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdate(c *C) {
@@ -524,8 +525,7 @@ func (s *testStateChangeSuite) TestWriteOnlyOnDupUpdate(c *C) {
 	sqls[2] = sqlWithErr{"insert t set c1 = 'c1_new', c3 = '2019-02-12', c4 = 2 on duplicate key update c1 = values(c1)", nil}
 	addColumnSQL := "alter table t add column c5 int not null default 1 after c4"
 	expectQuery := &expectQuery{"select c4, c5 from t", []string{"2 1"}}
-	// TODO: This case should always fail in write-only state, but it doesn't. We use write-reorganization state here to keep it running stable. It need a double check.
-	s.runTestInSchemaState(c, model.StateWriteReorganization, true, addColumnSQL, sqls, expectQuery)
+	s.runTestInSchemaState(c, model.StateWriteOnly, true, addColumnSQL, sqls, expectQuery)
 }
 
 // TestWriteOnly tests whether the correct columns is used in PhysicalIndexScan's ToPB function.
@@ -807,7 +807,9 @@ func (s *testStateChangeSuite) TestParallelAlterAddIndex(c *C) {
 }
 
 func (s *serialTestStateChangeSuite) TestParallelAlterAddExpressionIndex(c *C) {
-	config.GetGlobalConfig().Experimental.AllowsExpressionIndex = true
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = true
+	})
 	sql1 := "ALTER TABLE t add index expr_index_b((b+1));"
 	sql2 := "CREATE INDEX expr_index_b ON t ((c+1));"
 	f := func(c *C, err1, err2 error) {
@@ -831,11 +833,14 @@ func (s *testStateChangeSuite) TestParallelAlterAddPartition(c *C) {
 	sql1 := `alter table t_part add partition (
     partition p2 values less than (30)
    );`
+	sql2 := `alter table t_part add partition (
+    partition p3 values less than (30)
+   );`
 	f := func(c *C, err1, err2 error) {
 		c.Assert(err1, IsNil)
 		c.Assert(err2.Error(), Equals, "[ddl:1493]VALUES LESS THAN value must be strictly increasing for each partition")
 	}
-	s.testControlParallelExecSQL(c, sql1, sql1, f)
+	s.testControlParallelExecSQL(c, sql1, sql2, f)
 }
 
 func (s *testStateChangeSuite) TestParallelDropColumn(c *C) {
@@ -997,7 +1002,10 @@ func (s *testStateChangeSuiteBase) testControlParallelExecSQL(c *C, sql1, sql2 s
 	f(c, err1, err2)
 }
 
-func (s *testStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
+func (s *serialTestStateChangeSuite) TestParallelUpdateTableReplica(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
+
 	ctx := context.Background()
 	_, err := s.se.Execute(context.Background(), "use test_db_state")
 	c.Assert(err, IsNil)

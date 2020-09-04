@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -230,7 +231,7 @@ type columnInfo struct {
 func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
-	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
+	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
 	}
@@ -689,7 +690,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "COMMAND", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "TIME", tp: mysql.TypeLong, size: 7, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 7},
-	{name: "INFO", tp: mysql.TypeString, size: 512},
+	{name: "INFO", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 }
@@ -716,6 +717,9 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogQueryTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogParseTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogCompileTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogRewriteTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogPreprocSubQueriesStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: variable.SlowLogPreProcSubQueryTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.PreWriteTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.WaitPrewriteBinlogTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.CommitTimeStr, tp: mysql.TypeDouble, size: 22},
@@ -857,7 +861,7 @@ var tableClusterLogCols = []columnInfo{
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
 	{name: "LEVEL", tp: mysql.TypeVarchar, size: 8},
-	{name: "MESSAGE", tp: mysql.TypeVarString, size: 1024},
+	{name: "MESSAGE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 
 var tableClusterLoadCols = []columnInfo{
@@ -1376,19 +1380,46 @@ func GetTiDBServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	var servers []ServerInfo
+	var isDefaultVersion bool
+	if len(config.GetGlobalConfig().ServerVersion) == 0 {
+		isDefaultVersion = true
+	}
 	for _, node := range tidbNodes {
 		servers = append(servers, ServerInfo{
 			ServerType:     "tidb",
 			Address:        fmt.Sprintf("%s:%d", node.IP, node.Port),
 			StatusAddr:     fmt.Sprintf("%s:%d", node.IP, node.StatusPort),
-			Version:        node.Version,
+			Version:        FormatVersion(node.Version, isDefaultVersion),
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
 		})
 	}
 	return servers, nil
+}
+
+// FormatVersion make TiDBVersion consistent to TiKV and PD.
+// The default TiDBVersion is 5.7.25-TiDB-${TiDBReleaseVersion}.
+func FormatVersion(TiDBVersion string, isDefaultVersion bool) string {
+	var version, nodeVersion string
+
+	// The user hasn't set the config 'ServerVersion'.
+	if isDefaultVersion {
+		nodeVersion = TiDBVersion[strings.LastIndex(TiDBVersion, "TiDB-")+len("TiDB-"):]
+		if nodeVersion[0] == 'v' {
+			nodeVersion = nodeVersion[1:]
+		}
+		nodeVersions := strings.Split(nodeVersion, "-")
+		if len(nodeVersions) == 1 {
+			version = nodeVersions[0]
+		} else if len(nodeVersions) >= 2 {
+			version = fmt.Sprintf("%s-%s", nodeVersions[0], nodeVersions[1])
+		}
+	} else { // The user has already set the config 'ServerVersion',it would be a complex scene, so just use the 'ServerVersion' as version.
+		version = TiDBVersion
+	}
+
+	return version
 }
 
 // GetPDServerInfo returns all PD nodes information of cluster
@@ -1454,12 +1485,14 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	return servers, nil
 }
 
+const tiflashLabel = "tiflash"
+
 // GetStoreServerInfo returns all store nodes(TiKV or TiFlash) cluster information
 func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	isTiFlashStore := func(store *metapb.Store) bool {
 		isTiFlash := false
 		for _, label := range store.Labels {
-			if label.GetKey() == "engine" && label.GetValue() == "tiflash" {
+			if label.GetKey() == "engine" && label.GetValue() == tiflashLabel {
 				isTiFlash = true
 			}
 		}
@@ -1493,7 +1526,7 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		}
 		var tp string
 		if isTiFlashStore(store) {
-			tp = "tiflash"
+			tp = tiflashLabel
 		} else {
 			tp = tikv.GetStoreTypeByMeta(store).Name()
 		}
@@ -1507,6 +1540,26 @@ func GetStoreServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		})
 	}
 	return servers, nil
+}
+
+// GetTiFlashStoreCount returns the count of tiflash server.
+func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
+	failpoint.Inject("mockTiFlashStoreCount", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(uint64(10), nil)
+		}
+	})
+
+	stores, err := GetStoreServerInfo(ctx)
+	if err != nil {
+		return cnt, err
+	}
+	for _, store := range stores {
+		if store.ServerType == tiflashLabel {
+			cnt++
+		}
+	}
+	return cnt, nil
 }
 
 var tableNameToColumns = map[string][]columnInfo{
@@ -1749,7 +1802,7 @@ func (it *infoschemaTable) RemoveRecord(ctx sessionctx.Context, h int64, r []typ
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (it *infoschemaTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+func (it *infoschemaTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
@@ -1876,7 +1929,7 @@ func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h int64, r []types.
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (vt *VirtualTable) UpdateRecord(ctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
+func (vt *VirtualTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 

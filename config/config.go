@@ -71,7 +71,7 @@ var (
 	// checkBeforeDropLDFlag is a go build flag.
 	checkBeforeDropLDFlag = "None"
 	// tempStorageDirName is the default temporary storage dir name by base64 encoding a string `port/statusPort`
-	tempStorageDirName = encodeDefTempStorageDir(DefHost, DefStatusHost, DefPort, DefStatusPort)
+	tempStorageDirName = encodeDefTempStorageDir(os.TempDir(), DefHost, DefStatusHost, DefPort, DefStatusPort)
 )
 
 // Config contains configuration options.
@@ -149,11 +149,13 @@ type Config struct {
 // and the `tmp-storage-path` was not specified in the conf.toml or was specified the same as the default value.
 func (c *Config) UpdateTempStoragePath() {
 	if c.TempStoragePath == tempStorageDirName {
-		c.TempStoragePath = encodeDefTempStorageDir(c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
+		c.TempStoragePath = encodeDefTempStorageDir(os.TempDir(), c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
+	} else {
+		c.TempStoragePath = encodeDefTempStorageDir(c.TempStoragePath, c.Host, c.Status.StatusHost, c.Port, c.Status.StatusPort)
 	}
 }
 
-func encodeDefTempStorageDir(host, statusHost string, port, statusPort uint) string {
+func encodeDefTempStorageDir(tempDir string, host, statusHost string, port, statusPort uint) string {
 	dirName := base64.URLEncoding.EncodeToString([]byte(fmt.Sprintf("%v:%v/%v:%v", host, port, statusHost, statusPort)))
 	var osUID string
 	currentUser, err := user.Current()
@@ -162,7 +164,7 @@ func encodeDefTempStorageDir(host, statusHost string, port, statusPort uint) str
 	} else {
 		osUID = currentUser.Uid
 	}
-	return filepath.Join(os.TempDir(), osUID+"_tidb", dirName, "tmp-storage")
+	return filepath.Join(tempDir, osUID+"_tidb", dirName, "tmp-storage")
 }
 
 // nullableBool defaults unset bool options to unset instead of false, which enables us to know if the user has set 2
@@ -559,7 +561,7 @@ var defaultConf = Config{
 	OOMUseTmpStorage:             true,
 	TempStorageQuota:             -1,
 	TempStoragePath:              tempStorageDirName,
-	OOMAction:                    OOMActionCancel,
+	OOMAction:                    OOMActionLog,
 	MemQuotaQuery:                1 << 30,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
@@ -609,7 +611,7 @@ var defaultConf = Config{
 		RunAutoAnalyze:       true,
 		StmtCountLimit:       5000,
 		FeedbackProbability:  0.05,
-		QueryFeedbackLimit:   1024,
+		QueryFeedbackLimit:   512,
 		PseudoEstimateRatio:  0.8,
 		ForcePriority:        "NO_PRIORITY",
 		BindInfoLease:        "3s",
@@ -883,6 +885,22 @@ func (c *Config) Valid() error {
 	// test log level
 	l := zap.NewAtomicLevel()
 	return l.UnmarshalText([]byte(c.Log.Level))
+}
+
+// UpdateGlobal updates the global config, and provide a restore function that can be used to restore to the original.
+func UpdateGlobal(f func(conf *Config)) {
+	g := GetGlobalConfig()
+	newConf := *g
+	f(&newConf)
+	StoreGlobalConfig(&newConf)
+}
+
+// RestoreFunc gets a function that restore the config to the current value.
+func RestoreFunc() (restore func()) {
+	g := GetGlobalConfig()
+	return func() {
+		StoreGlobalConfig(g)
+	}
 }
 
 func hasRootPrivilege() bool {

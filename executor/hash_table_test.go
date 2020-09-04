@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 )
 
@@ -152,7 +153,7 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	}
 	rowContainer := newHashRowContainer(sctx, 0, hCtx)
 	tracker := rowContainer.GetMemTracker()
-	tracker.SetLabel(buildSideResultLabel)
+	tracker.SetLabel(memory.LabelForBuildSideResult)
 	if spill {
 		tracker.SetBytesLimit(1)
 		rowContainer.rowContainer.ActionSpillForTest().Action(tracker)
@@ -162,10 +163,10 @@ func (s *pkgTestSerialSuite) testHashRowContainer(c *C, hashFunc func() hash.Has
 	err = rowContainer.PutChunk(chk1)
 	c.Assert(err, IsNil)
 	rowContainer.ActionSpill().(*chunk.SpillDiskAction).WaitForTest()
-	c.Assert(rowContainer.alreadySpilledSafe(), Equals, spill)
+	c.Assert(rowContainer.alreadySpilledSafeForTest(), Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() == 0, Equals, spill)
 	c.Assert(rowContainer.GetMemTracker().BytesConsumed() > 0, Equals, !spill)
-	if rowContainer.alreadySpilledSafe() {
+	if rowContainer.alreadySpilledSafeForTest() {
 		c.Assert(rowContainer.GetDiskTracker(), NotNil)
 		c.Assert(rowContainer.GetDiskTracker().BytesConsumed() > 0, Equals, true)
 	}
