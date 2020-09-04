@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/types"
 )
 
-func (s *pkgTestSuite) TestJoinExec(c *C) {
+func (s *pkgTestSerialSuite) TestJoinExec(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"), IsNil)
 	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"), IsNil) }()
 	colTypes := []*types.FieldType{

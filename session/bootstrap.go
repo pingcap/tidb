@@ -1260,6 +1260,9 @@ func doDMLWorks(s Session) {
 			if v.Name == variable.TiDBRowFormatVersion {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
 			}
+			if v.Name == variable.TiDBEnableClusteredIndex {
+				vVal = "1"
+			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
 		}

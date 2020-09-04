@@ -113,6 +113,7 @@ func (s *testSerialSuite) TestChangeMaxIndexLength(c *C) {
 func (s *testSerialSuite) TestPrimaryKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_clustered_index = 0")
 
 	tk.MustExec("create table primary_key_test (a int, b varchar(10))")
 	tk.MustExec("create table primary_key_test_1 (a int, b varchar(10), primary key(a))")
