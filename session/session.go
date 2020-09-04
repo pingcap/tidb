@@ -362,6 +362,19 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	is := infoschema.GetInfoSchema(s)
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
+	pm := privilege.GetPrivilegeManager(s)
+	if pm != nil && s.sessionVars.User != nil {
+		if !pm.RequestVerification(s.sessionVars.ActiveRoles, dbName.O, tName.O, "", mysql.AllPrivMask) {
+			user := s.sessionVars.User
+			u := user.Username
+			h := user.Hostname
+			if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+				u = user.AuthUsername
+				h = user.AuthHostname
+			}
+			return nil, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
+		}
+	}
 	table, err := is.TableByName(dbName, tName)
 	if err != nil {
 		return nil, err

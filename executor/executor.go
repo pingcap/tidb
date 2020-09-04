@@ -971,7 +971,13 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx,
 	if err != nil {
 		return err
 	}
-	return txn.LockKeys(sessionctx.SetCommitCtx(ctx, se), lockCtx, keys...)
+	var lockKeyStats *execdetails.LockKeysDetails
+	ctx = context.WithValue(ctx, execdetails.LockKeysDetailCtxKey, &lockKeyStats)
+	err = txn.LockKeys(sessionctx.SetCommitCtx(ctx, se), lockCtx, keys...)
+	if lockKeyStats != nil {
+		sctx.MergeLockKeysExecDetails(lockKeyStats)
+	}
+	return err
 }
 
 // LimitExec represents limit executor

@@ -1013,6 +1013,15 @@ func (s *testPrivilegeSuite) TestLoadDataPrivilege(c *C) {
 	c.Assert(err, IsNil)
 }
 
+func (s *testPrivilegeSuite) TestSelectIntoNoPremissions(c *C) {
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'nofile'@'localhost';`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "nofile", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.Execute(context.Background(), `select 1 into outfile '/tmp/doesntmatter-no-permissions'`)
+	message := "Access denied; you need (at least one of) the FILE privilege(s) for this operation"
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
+}
+
 func (s *testPrivilegeSuite) TestGetEncodedPassword(c *C) {
 	se := newSession(c, s.store, s.dbName)
 	mustExec(c, se, `CREATE USER 'test_encode_u'@'localhost' identified by 'root';`)
@@ -1084,6 +1093,16 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 	}
 	buf.WriteString(" from mysql.user where user = 'superadmin'")
 	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
+}
+
+func (s *testPrivilegeSuite) TestFieldList(c *C) { // Issue #14237 List fields RPC
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'tableaccess'@'localhost'`)
+	mustExec(c, se, `CREATE TABLE fieldlistt1 (a int)`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tableaccess", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.FieldList("fieldlistt1")
+	message := "SELECT command denied to user 'tableaccess'@'localhost' for table 'fieldlistt1'"
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
 }
 
 func mustExec(c *C, se session.Session, sql string) {
