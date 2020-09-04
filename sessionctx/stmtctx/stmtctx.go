@@ -505,6 +505,17 @@ func (sc *StatementContext) MergeExecDetails(details *execdetails.ExecDetails, c
 	sc.mu.Unlock()
 }
 
+// MergeLockKeysExecDetails merges lock keys execution details into self.
+func (sc *StatementContext) MergeLockKeysExecDetails(lockKeys *execdetails.LockKeysDetails) {
+	sc.mu.Lock()
+	if sc.mu.execDetails.LockKeysDetail == nil {
+		sc.mu.execDetails.LockKeysDetail = lockKeys
+	} else {
+		sc.mu.execDetails.LockKeysDetail.Merge(lockKeys)
+	}
+	sc.mu.Unlock()
+}
+
 // GetExecDetails gets the execution details for the statement.
 func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	var details execdetails.ExecDetails
@@ -521,7 +532,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 func (sc *StatementContext) ShouldClipToZero() bool {
 	// TODO: Currently altering column of integer to unsigned integer is not supported.
 	// If it is supported one day, that case should be added here.
-	return sc.InInsertStmt || sc.InLoadDataStmt
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
