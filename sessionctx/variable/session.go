@@ -373,6 +373,10 @@ type SessionVars struct {
 	// CurrentDB is the default database of this session.
 	CurrentDB string
 
+	// CurrentDBChanged indicates if the CurrentDB has been updated, and if it is we should print it into
+	// the slow log to make it be compatible with MySQL, https://github.com/pingcap/tidb/issues/17846.
+	CurrentDBChanged bool
+
 	// StrictSQLMode indicates if the session is in strict mode.
 	StrictSQLMode bool
 
@@ -1784,6 +1788,11 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
+	}
+
+	if s.CurrentDBChanged {
+		buf.WriteString(fmt.Sprintf("use %s;\n", s.CurrentDB))
+		s.CurrentDBChanged = false
 	}
 
 	buf.WriteString(logItems.SQL)
