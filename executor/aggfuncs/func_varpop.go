@@ -162,7 +162,7 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return memDelta, errors.Trace(err)
 		}
 		if isNull || p.valSet.Exist(input) {
 			continue
