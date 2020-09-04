@@ -57,8 +57,8 @@ require (
 	go.uber.org/atomic v1.6.0
 	go.uber.org/automaxprocs v1.2.0
 	go.uber.org/zap v1.16.0
-	golang.org/x/net v0.0.0-20200520182314-0ba52f642ac2
-	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
+	golang.org/x/net v0.0.0-20200625001655-4c5254603344
+	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
 	golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd
 	golang.org/x/text v0.3.3
 	golang.org/x/tools v0.0.0-20200827010519-17fd2f27a9e3
