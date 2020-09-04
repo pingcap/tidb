@@ -1014,8 +1014,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 func (a *ExecStmt) GetTextToLog() string {
 	var sql string
 	if config.GetGlobalConfig().EnableLogDesensitization {
-		sessVars := a.Ctx.GetSessionVars()
-		sql, _ = sessVars.StmtCtx.SQLDigest()
+		sql, _ = a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {

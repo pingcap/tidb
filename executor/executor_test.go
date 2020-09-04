@@ -6174,9 +6174,7 @@ func (s *testSuite) TestPrevStmtDesensitization(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
 	oriCfg := config.GetGlobalConfig()
-	defer func() {
-		config.StoreGlobalConfig(oriCfg)
-	}()
+	defer config.StoreGlobalConfig(oriCfg)
 	newCfg := *oriCfg
 	newCfg.EnableLogDesensitization = true
 	config.StoreGlobalConfig(&newCfg)

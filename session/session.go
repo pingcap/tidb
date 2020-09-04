@@ -1219,7 +1219,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			}
 		}
 	}
-
 	if rs != nil {
 		return &execStmtResult{
 			RecordSet: rs,
