@@ -24,6 +24,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -375,7 +376,7 @@ func (s *session) HasDirtyContent(tid int64) bool {
 	}
 	seekKey := tablecodec.EncodeTablePrefix(tid)
 	it, err := s.txn.GetMemBuffer().Iter(seekKey, nil)
-	_ = err
+	terror.Log(err)
 	return it.Valid() && bytes.HasPrefix(it.Key(), seekKey)
 }
 
