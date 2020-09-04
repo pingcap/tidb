@@ -237,7 +237,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
-		memDelta := int64(unsafe.Sizeof(chunk.Row{}))
+		memDelta := aggfuncs.DefRowSize
 		memDeltas = append(memDeltas, memDelta)
 	}
 	return memDeltas, nil
