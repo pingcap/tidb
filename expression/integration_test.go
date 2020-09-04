@@ -7268,3 +7268,21 @@ func (s *testIntegrationSerialSuite) TestIssue18949(c *C) {
 	result = tk.MustQuery("show create table t").Rows()[0][1]
 	c.Assert(result, Matches, `(?s).*enum\('a','b	',' c'\).*set\('a','b	',' c'\).*`)
 }
+
+func (s *testIntegrationSerialSuite) TestIssue19804(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
+	tk.MustGetErrMsg("alter table t change a a set('a', 'b', 'c', 'c');", "[types:1291]Column 'a' has duplicated value 'c' in SET")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a enum('a', 'b', 'c'));`)
+	tk.MustGetErrMsg("alter table t change a a enum('a', 'b', 'c', 'c');", "[types:1291]Column 'a' has duplicated value 'c' in ENUM")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
+	tk.MustExec(`alter table t change a a set('a', 'b', 'c', 'd');`)
+	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[ddl:8200]Unsupported modify column: cannot modify SET column value d to e")
+}
