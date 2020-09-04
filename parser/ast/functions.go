@@ -710,6 +710,8 @@ const (
 	AggFuncJsonObjectAgg = "json_objectagg"
 	// AggFuncApproxCountDistinct is the name of approx_count_distinct function.
 	AggFuncApproxCountDistinct = "approx_count_distinct"
+	// AggFuncApproxPercentile is the name of approx_percentile function.
+	AggFuncApproxPercentile = "approx_percentile"
 )
 
 // AggregateFuncExpr represents aggregate function expression.
