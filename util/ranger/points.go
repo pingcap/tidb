@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Error instances.
@@ -650,12 +649,4 @@ func (r *builder) merge(a, b []point, union bool) []point {
 		}
 	}
 	return mergedPoints[:curTail]
-}
-
-func (r *builder) isTrueKeepNull(expr *expression.ScalarFunction) bool {
-	switch expr.Function.PbCode() {
-	case tipb.ScalarFuncSig_DecimalIsTrueWithNull, tipb.ScalarFuncSig_RealIsTrueWithNull, tipb.ScalarFuncSig_IntIsTrueWithNull:
-		return true
-	}
-	return false
 }
