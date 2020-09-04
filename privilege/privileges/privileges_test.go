@@ -950,6 +950,9 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.Execute(context.Background(), "delete from performance_schema.events_statements_summary_by_digest")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	_, err = se.Execute(context.Background(), "create table performance_schema.t(a int)")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
 
 	// Test metric_schema.
 	mustExec(c, se, `select * from metrics_schema.tidb_query_duration`)
@@ -959,6 +962,9 @@ func (s *testPrivilegeSuite) TestSystemSchema(c *C) {
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
 	_, err = se.Execute(context.Background(), "delete from metrics_schema.tidb_query_duration")
 	c.Assert(strings.Contains(err.Error(), "privilege check fail"), IsTrue)
+	_, err = se.Execute(context.Background(), "create table metric_schema.t(a int)")
+	c.Assert(err, NotNil)
+	c.Assert(strings.Contains(err.Error(), "CREATE command denied"), IsTrue, Commentf(err.Error()))
 }
 
 func (s *testPrivilegeSuite) TestAdminCommand(c *C) {
@@ -1087,6 +1093,16 @@ func (s *testPrivilegeSuite) TestUserTableConsistency(c *C) {
 	}
 	buf.WriteString(" from mysql.user where user = 'superadmin'")
 	tk.MustQuery(buf.String()).Check(testkit.Rows(res.String()))
+}
+
+func (s *testPrivilegeSuite) TestFieldList(c *C) { // Issue #14237 List fields RPC
+	se := newSession(c, s.store, s.dbName)
+	mustExec(c, se, `CREATE USER 'tableaccess'@'localhost'`)
+	mustExec(c, se, `CREATE TABLE fieldlistt1 (a int)`)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "tableaccess", Hostname: "localhost"}, nil, nil), IsTrue)
+	_, err := se.FieldList("fieldlistt1")
+	message := "SELECT command denied to user 'tableaccess'@'localhost' for table 'fieldlistt1'"
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
 }
 
 func mustExec(c *C, se session.Session, sql string) {
