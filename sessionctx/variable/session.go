@@ -134,7 +134,6 @@ type stmtFuture struct {
 type TransactionContext struct {
 	forUpdateTS   uint64
 	stmtFuture    oracle.Future
-	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
 	History       interface{}
@@ -254,7 +253,6 @@ func (tc *TransactionContext) SetPessimisticLockCache(key kv.Key, val []byte) {
 // Cleanup clears up transaction info that no longer use.
 func (tc *TransactionContext) Cleanup() {
 	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
-	tc.DirtyDB = nil
 	tc.Binlog = nil
 	tc.History = nil
 	tc.TableDeltaMap = nil
@@ -548,6 +546,9 @@ type SessionVars struct {
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
+	// EnableChangeColumnType is used to control whether to enable the change column type.
+	EnableChangeColumnType bool
+
 	// WaitSplitRegionFinish defines the split region behaviour is sync or async.
 	WaitSplitRegionFinish bool
 
@@ -706,6 +707,9 @@ type SessionVars struct {
 
 	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
 	ShardAllocateStep int64
+
+	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
+	EnableAmendPessimisticTxn bool
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -801,6 +805,8 @@ func NewSessionVars() *SessionVars {
 		EnableParallelApply:         DefTiDBEnableParallelApply,
 		EnableLogDesensitization:    DefTiDBLogDesensitization,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
+		EnableChangeColumnType:      DefTiDBChangeColumnType,
+		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1324,7 +1330,9 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.TxnMode = strings.ToUpper(val)
 	case TiDBRowFormatVersion:
 		formatVersion := int(tidbOptInt64(val, DefTiDBRowFormatV1))
-		if formatVersion == DefTiDBRowFormatV2 {
+		if formatVersion == DefTiDBRowFormatV1 {
+			s.RowEncoder.Enable = false
+		} else if formatVersion == DefTiDBRowFormatV2 {
 			s.RowEncoder.Enable = true
 		}
 	case TiDBLowResolutionTSO:
@@ -1420,6 +1428,10 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableLogDesensitization = TiDBOptOn(val)
 	case TiDBShardAllocateStep:
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
+	case TiDBEnableChangeColumnType:
+		s.EnableChangeColumnType = TiDBOptOn(val)
+	case TiDBEnableAmendPessimisticTxn:
+		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil
@@ -1813,6 +1825,10 @@ const (
 	SlowLogBackoffTotal = "Backoff_total"
 	// SlowLogWriteSQLRespTotal is the total time used to write response to client.
 	SlowLogWriteSQLRespTotal = "Write_sql_response_total"
+	// SlowLogExecRetryCount is the execution retry count.
+	SlowLogExecRetryCount = "Exec_retry_count"
+	// SlowLogExecRetryTime is the execution retry time.
+	SlowLogExecRetryTime = "Exec_retry_time"
 )
 
 // SlowQueryLogItems is a collection of items that should be included in the
@@ -1844,6 +1860,8 @@ type SlowQueryLogItems struct {
 	PDTotal           time.Duration
 	BackoffTotal      time.Duration
 	WriteSQLRespTotal time.Duration
+	ExecRetryCount    uint
+	ExecRetryTime     time.Duration
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -1880,6 +1898,17 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if s.ConnectionID != 0 {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
+	}
+	if logItems.ExecRetryCount > 0 {
+		buf.WriteString(SlowLogRowPrefixStr)
+		buf.WriteString(SlowLogExecRetryTime)
+		buf.WriteString(SlowLogSpaceMarkStr)
+		buf.WriteString(strconv.FormatFloat(logItems.ExecRetryTime.Seconds(), 'f', -1, 64))
+		buf.WriteString(" ")
+		buf.WriteString(SlowLogExecRetryCount)
+		buf.WriteString(SlowLogSpaceMarkStr)
+		buf.WriteString(strconv.Itoa(int(logItems.ExecRetryCount)))
+		buf.WriteString("\n")
 	}
 	writeSlowLogItem(&buf, SlowLogQueryTimeStr, strconv.FormatFloat(logItems.TimeTotal.Seconds(), 'f', -1, 64))
 	writeSlowLogItem(&buf, SlowLogParseTimeStr, strconv.FormatFloat(logItems.TimeParse.Seconds(), 'f', -1, 64))

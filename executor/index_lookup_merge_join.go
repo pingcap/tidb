@@ -17,12 +17,14 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"runtime/trace"
 	"sort"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -33,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -299,6 +300,7 @@ func (e *IndexLookUpMergeJoin) getFinishedTask(ctx context.Context) {
 }
 
 func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
+	defer trace.StartRegion(ctx, "IndexLookupMergeJoinOuterWorker").End()
 	defer func() {
 		if r := recover(); r != nil {
 			task := &lookUpMergeJoinTask{
@@ -352,7 +354,7 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 		results:     make(chan *indexMergeJoinResult, numResChkHold),
 		outerResult: chunk.NewList(omw.rowTypes, omw.executor.base().initCap, omw.executor.base().maxChunkSize),
 	}
-	task.memTracker = memory.NewTracker(stringutil.MemoizeStr(func() string { return fmt.Sprintf("lookup join task %p", task) }), -1)
+	task.memTracker = memory.NewTracker(memory.LabelForSimpleTask, -1)
 	task.memTracker.AttachTo(omw.parentMemTracker)
 
 	omw.increaseBatchSize()
@@ -395,6 +397,7 @@ func (omw *outerMergeWorker) increaseBatchSize() {
 }
 
 func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancelFunc context.CancelFunc) {
+	defer trace.StartRegion(ctx, "IndexLookupMergeJoinInnerWorker").End()
 	var task *lookUpMergeJoinTask
 	defer func() {
 		wg.Done()
@@ -670,6 +673,9 @@ func (imw *innerMergeWorker) constructDatumLookupKey(task *lookUpMergeJoinTask, 
 			if terror.ErrorEqual(err, types.ErrOverflow) {
 				return nil, nil
 			}
+			if terror.ErrorEqual(err, types.ErrTruncated) && (innerColType.Tp == mysql.TypeSet || innerColType.Tp == mysql.TypeEnum) {
+				return nil, nil
+			}
 			return nil, err
 		}
 		cmp, err := outerValue.CompareDatum(sc, &innerValue)
@@ -730,7 +736,7 @@ func (e *IndexLookUpMergeJoin) Close() error {
 		concurrency := cap(e.resultCh)
 		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	return e.baseExecutor.Close()
 }

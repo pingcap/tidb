@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -96,7 +96,7 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 
 	e.outerList = chunk.NewList(retTypes(e.outerExec), e.initCap, e.maxChunkSize)
-	e.outerList.GetMemTracker().SetLabel(stringutil.StringerStr("outerList"))
+	e.outerList.GetMemTracker().SetLabel(memory.LabelForOuterList)
 	e.outerList.GetMemTracker().AttachTo(e.memTracker)
 
 	e.innerList = make([]*chunk.List, e.concurrency)
@@ -109,7 +109,7 @@ func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
 	for i := 0; i < e.concurrency; i++ {
 		e.innerChunk[i] = newFirstChunk(e.innerExecs[i])
 		e.innerList[i] = chunk.NewList(retTypes(e.innerExecs[i]), e.initCap, e.maxChunkSize)
-		e.innerList[i].GetMemTracker().SetLabel(innerListLabel)
+		e.innerList[i].GetMemTracker().SetLabel(memory.LabelForInnerList)
 		e.innerList[i].GetMemTracker().AttachTo(e.memTracker)
 	}
 
@@ -168,7 +168,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 
 	if e.runtimeStats != nil {
 		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
-		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id.String(), runtimeStats)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.useCache {
 			var hitRatio float64
 			if e.cacheAccessCounter > 0 {
@@ -192,6 +192,7 @@ func (e *ParallelNestedLoopApplyExec) notifyWorker(ctx context.Context) {
 }
 
 func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
+	defer trace.StartRegion(ctx, "ParallelApplyOuterWorker").End()
 	defer e.handleWorkerPanic(ctx, &e.workerWg)
 	var selected []bool
 	var err error
@@ -224,6 +225,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 }
 
 func (e *ParallelNestedLoopApplyExec) innerWorker(ctx context.Context, id int) {
+	defer trace.StartRegion(ctx, "ParallelApplyInnerWorker").End()
 	defer e.handleWorkerPanic(ctx, &e.workerWg)
 	for {
 		var chk *chunk.Chunk
