@@ -3226,9 +3226,9 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	case mysql.TypeEnum, mysql.TypeSet:
 		var typeVar string
 		if origin.Tp == mysql.TypeEnum {
-			typeVar = "ENUM"
+			typeVar = "enum"
 		} else {
-			typeVar = "SET"
+			typeVar = "set"
 		}
 		if origin.Tp != to.Tp {
 			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())

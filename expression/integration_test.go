@@ -7284,5 +7284,5 @@ func (s *testIntegrationSerialSuite) TestIssue19804(c *C) {
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
 	tk.MustExec(`alter table t change a a set('a', 'b', 'c', 'd');`)
-	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[ddl:8200]Unsupported modify column: cannot modify SET column value d to e")
+	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[ddl:8200]Unsupported modify column: cannot modify set column value d to e")
 }
