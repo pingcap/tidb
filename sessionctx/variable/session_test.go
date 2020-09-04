@@ -175,7 +175,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 
 	var memMax int64 = 2333
 	var diskMax int64 = 6666
-	resultString := `# Txn_start_ts: 406649736972468225
+	resultFields := `# Txn_start_ts: 406649736972468225
 # User@Host: root[root] @ 192.168.0.1 [192.168.0.1]
 # Conn_ID: 1
 # Query_time: 1
@@ -186,7 +186,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # DB: test
 # Index_names: [t1:a,t2:b]
 # Is_internal: true
-# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Digest: f94c76d7fa8f60e438118752bfbfb71fe9e1934888ac415ddd8625b121af124c
 # Stats: t1:pseudo
 # Num_cop_tasks: 10
 # Cop_proc_avg: 1 Cop_proc_p90: 2 Cop_proc_max: 3 Cop_proc_addr: 10.6.131.78
@@ -203,11 +203,10 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 # PD_total: 11
 # Backoff_total: 12
 # Write_sql_response_total: 1
-# Succ: true
-select * from t;`
-	sql := "select * from t"
+# Succ: true`
+	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
-	logString := seVar.SlowLogFormat(&variable.SlowQueryLogItems{
+	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		SQL:               sql,
 		Digest:            digest,
@@ -233,8 +232,14 @@ select * from t;`
 			DurationPreprocessSubQuery: 2,
 			PreprocessSubQueries:       2,
 		},
-	})
-	c.Assert(logString, Equals, resultString)
+	}
+	logString := seVar.SlowLogFormat(logItems)
+	c.Assert(logString, Equals, resultFields+"\n"+sql)
+
+	seVar.CurrentDBChanged = true
+	logString = seVar.SlowLogFormat(logItems)
+	c.Assert(logString, Equals, resultFields+"\n"+"use test;\n"+sql)
+	c.Assert(seVar.CurrentDBChanged, IsFalse)
 }
 
 func (*testSessionSuite) TestIsolationRead(c *C) {
