@@ -523,6 +523,7 @@ func (e *SimpleExec) executeUse(s *ast.UseStmt) error {
 	if !exists {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbname)
 	}
+	e.ctx.GetSessionVars().CurrentDBChanged = dbname.O != e.ctx.GetSessionVars().CurrentDB
 	e.ctx.GetSessionVars().CurrentDB = dbname.O
 	// character_set_database is the character set used by the default database.
 	// The server sets this variable whenever the default database changes.

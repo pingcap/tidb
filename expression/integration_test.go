@@ -91,6 +91,51 @@ func (s *testIntegrationSuiteBase) TearDownSuite(c *C) {
 	s.store.Close()
 }
 
+func (s *testIntegrationSuite) Test19654(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("USE test;")
+
+	// enum vs enum
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b enum('a', 'b'));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b enum('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+
+	// set vs set
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b set('a', 'b'));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b set('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+
+	// enum vs set
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b enum('a', 'b'));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b set('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+
+	// char vs enum
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b char(10));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b enum('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+
+	// char vs set
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (b char(10));")
+	tk.MustExec("insert into t1 values ('a');")
+	tk.MustExec("create table t2 (b set('b','a') not null, unique(b));")
+	tk.MustExec("insert into t2 values ('a');")
+	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
+}
+
 func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer s.cleanEnv(c)
@@ -2755,6 +2800,13 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil> 4"))
 	result = tk.MustQuery("select * from t where b = case when a is null then 4 when  a = 'str5' then 7 else 9 end")
 	result.Check(testkit.Rows("<nil> 4"))
+	// test warnings
+	tk.MustQuery("select case when b=0 then 1 else 1/b end from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select if(b=0, 1, 1/b) from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select ifnull(b, b/0) from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("select case 2.0 when 2.0 then 3.0 when 3.0 then 2.0 end").Check(testkit.Rows("3.0"))
 	tk.MustQuery("select case 2.0 when 3.0 then 2.0 when 4.0 then 3.0 else 5.0 end").Check(testkit.Rows("5.0"))
@@ -6787,6 +6839,19 @@ func (s *testIntegrationSerialSuite) TestIssue19045(c *C) {
 	tk.MustQuery(`select  ( SELECT t1.a FROM  t1,  t2 WHERE t1.b = t2.a AND  t2.b = '03' AND t1.c = a.a) invode from t a ;`).Check(testkit.Rows("a011", "a011"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue19315(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE `t` (`a` bit(10) DEFAULT NULL,`b` int(11) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("INSERT INTO `t` VALUES (_binary '\\0',1),(_binary '\\0',2),(_binary '\\0',5),(_binary '\\0',4),(_binary '\\0',2),(_binary '\\0	',4)")
+	tk.MustExec("CREATE TABLE `t1` (`a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("INSERT INTO `t1` VALUES (1,1),(1,5),(2,3),(2,4),(3,3)")
+	err := tk.QueryToErr("select * from t where t.b > (select min(t1.b) from t1 where t1.a > t.a)")
+	c.Assert(err, IsNil)
+}
+
 func (s *testIntegrationSerialSuite) TestIssue18674(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery("select -1.0 % -1.0").Check(testkit.Rows("0.0"))
@@ -6824,4 +6889,85 @@ func (s *testIntegrationSerialSuite) TestIssue17891(c *C) {
 	tk.MustExec("create table t(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_bin default 'a,b ');")
 	tk.MustExec("drop table t")
 	tk.MustExec("create table test(id int, value set ('a','b','c') charset utf8mb4 collate utf8mb4_general_ci default 'a,B ,C');")
+}
+
+func (s *testIntegrationSerialSuite) TestIssue17233(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists table_int")
+	tk.MustExec(`CREATE TABLE table_int (
+	  id_0 int(16) NOT NULL AUTO_INCREMENT,
+	  col_int_0 int(16) DEFAULT NULL,
+	  PRIMARY KEY (id_0),
+	  KEY fvclc (id_0,col_int_0));`)
+	tk.MustExec("INSERT INTO table_int VALUES (1,NULL),(2,NULL),(3,65535),(4,1),(5,0),(6,NULL),(7,-1),(8,65535),(9,NULL),(10,65535),(11,-1),(12,0),(13,-1),(14,1),(15,65535),(16,0),(17,1),(18,0),(19,0)")
+
+	tk.MustExec("drop table if exists table_varchar")
+	tk.MustExec(`CREATE TABLE table_varchar (
+	  id_2 int(16) NOT NULL AUTO_INCREMENT,
+	  col_varchar_2 varchar(511) DEFAULT NULL,
+	  PRIMARY KEY (id_2));`)
+	tk.MustExec(`INSERT INTO table_varchar VALUES (1,''),(2,''),(3,''),(4,''),(5,''),(6,''),(7,''),(8,''),(9,''),(10,''),(11,''),(12,'');`)
+
+	tk.MustExec("drop table if exists table_float_varchar")
+	tk.MustExec(`CREATE TABLE table_int_float_varchar (
+	  id_6 int(16) NOT NULL AUTO_INCREMENT,
+	  col_int_6 int(16) NOT NULL,
+	  col_float_6 float DEFAULT NULL,
+	  col_varchar_6 varchar(511) DEFAULT NULL,
+	  PRIMARY KEY (id_6,col_int_6)
+	)
+	PARTITION BY RANGE ( col_int_6 ) (
+	  PARTITION p0 VALUES LESS THAN (1),
+	  PARTITION p2 VALUES LESS THAN (1000),
+	  PARTITION p3 VALUES LESS THAN (10000),
+	  PARTITION p5 VALUES LESS THAN (1000000),
+	  PARTITION p7 VALUES LESS THAN (100000000),
+	  PARTITION p9 VALUES LESS THAN (10000000000),
+	  PARTITION p10 VALUES LESS THAN (100000000000),
+	  PARTITION pn VALUES LESS THAN (MAXVALUE));`)
+	tk.MustExec(`INSERT INTO table_int_float_varchar VALUES (1,-1,0.1,'0000-00-00 00:00:00'),(2,0,0,NULL),(3,-1,1,NULL),(4,0,NULL,NULL),(7,0,0.5,NULL),(8,0,0,NULL),(10,-1,0,'-1'),(5,1,-0.1,NULL),(6,1,0.1,NULL),(9,65535,0,'1');`)
+
+	tk.MustExec("drop table if exists table_float")
+	tk.MustExec(`CREATE TABLE table_float (
+	  id_1 int(16) NOT NULL AUTO_INCREMENT,
+	  col_float_1 float DEFAULT NULL,
+	  PRIMARY KEY (id_1),
+	  KEY zbjus (id_1,col_float_1));`)
+	tk.MustExec(`INSERT INTO table_float VALUES (1,NULL),(2,-0.1),(3,-1),(4,NULL),(5,-0.1),(6,0),(7,0),(8,-1),(9,NULL),(10,NULL),(11,0.1),(12,-1);`)
+
+	tk.MustExec("drop view if exists view_4")
+	tk.MustExec(`CREATE DEFINER='root'@'127.0.0.1' VIEW view_4 (col_1, col_2, col_3, col_4, col_5, col_6, col_7, col_8, col_9, col_10) AS
+    SELECT /*+ USE_INDEX(table_int fvclc, fvclc)*/
+        tmp1.id_6 AS col_1,
+        tmp1.col_int_6 AS col_2,
+        tmp1.col_float_6 AS col_3,
+        tmp1.col_varchar_6 AS col_4,
+        tmp2.id_2 AS col_5,
+        tmp2.col_varchar_2 AS col_6,
+        tmp3.id_0 AS col_7,
+        tmp3.col_int_0 AS col_8,
+        tmp4.id_1 AS col_9,
+        tmp4.col_float_1 AS col_10
+    FROM ((
+            test.table_int_float_varchar AS tmp1 LEFT JOIN
+            test.table_varchar AS tmp2 ON ((NULL<=tmp2.col_varchar_2)) IS NULL
+        ) JOIN
+        test.table_int AS tmp3 ON (1.117853833115198e-03!=tmp1.col_int_6))
+    JOIN
+        test.table_float AS tmp4 ON !((1900370398268920328=0e+00)) WHERE ((''<='{Gm~PcZNb') OR (tmp2.id_2 OR tmp3.col_int_0)) ORDER BY col_1,col_2,col_3,col_4,col_5,col_6,col_7,col_8,col_9,col_10 LIMIT 20580,5;`)
+
+	tk.MustExec("drop view if exists view_10")
+	tk.MustExec(`CREATE DEFINER='root'@'127.0.0.1' VIEW view_10 (col_1, col_2) AS
+    SELECT  table_int.id_0 AS col_1,
+            table_int.col_int_0 AS col_2
+    FROM test.table_int
+    WHERE
+        ((-1e+00=1) OR (0e+00>=table_int.col_int_0))
+    ORDER BY col_1,col_2
+    LIMIT 5,9;`)
+
+	tk.MustQuery("SELECT col_1 FROM test.view_10").Sort().Check(testkit.Rows("16", "18", "19"))
+	tk.MustQuery("SELECT col_1 FROM test.view_4").Sort().Check(testkit.Rows("8", "8", "8", "8", "8"))
+	tk.MustQuery("SELECT view_10.col_1 FROM view_4 JOIN view_10").Check(testkit.Rows("16", "16", "16", "16", "16", "18", "18", "18", "18", "18", "19", "19", "19", "19", "19"))
 }
