@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/rowcodec"
 )
 
@@ -140,7 +139,6 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
-			BasicRuntimeStats:    e.runtimeStats,
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
@@ -466,23 +464,12 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 }
 
 type runtimeStatsWithSnapshot struct {
-	*execdetails.BasicRuntimeStats
 	*tikv.SnapshotRuntimeStats
 }
 
 func (e *runtimeStatsWithSnapshot) String() string {
-	var basic, rpcStatsStr string
-	if e.BasicRuntimeStats != nil {
-		basic = e.BasicRuntimeStats.String()
-	}
 	if e.SnapshotRuntimeStats != nil {
-		rpcStatsStr = e.SnapshotRuntimeStats.String()
+		return e.SnapshotRuntimeStats.String()
 	}
-	if rpcStatsStr == "" {
-		return basic
-	}
-	if basic == "" {
-		return rpcStatsStr
-	}
-	return basic + ", " + rpcStatsStr
+	return ""
 }

@@ -162,7 +162,6 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 	basic := &execdetails.BasicRuntimeStats{}
 	basic.Record(time.Second, 20)
 	s1 := &selectResultRuntimeStats{
-		RuntimeStats:     basic,
 		copRespTime:      []time.Duration{time.Second, time.Millisecond},
 		procKeys:         []int64{100, 200},
 		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
@@ -171,11 +170,12 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 		rpcStat:          tikv.RegionRequestRuntimeStats{},
 	}
 	s2 := *s1
-	s2.RuntimeStats = s1
-	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s}, backoff{RegionMiss: 2ms}"
-	c.Assert(s2.String(), Equals, expect)
-	// Test for idempotence.
-	c.Assert(s2.String(), Equals, expect)
+	stmtStats := execdetails.NewRuntimeStatsColl()
+	stmtStats.RegisterStats(1, s1)
+	stmtStats.RegisterStats(1, &s2)
+	stats := stmtStats.GetRootStats(1)
+	expect := "cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s}, backoff{RegionMiss: 2ms}"
+	c.Assert(stats.String(), Equals, expect)
 }
 
 func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {

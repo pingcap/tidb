@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/execdetails"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -655,6 +656,40 @@ type SnapshotRuntimeStats struct {
 	rpcStats       RegionRequestRuntimeStats
 	backoffSleepMS map[backoffType]int
 	backoffTimes   map[backoffType]int
+}
+
+func (rs *SnapshotRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := SnapshotRuntimeStats{}
+	newRs.Merge(rs)
+	return &newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (rs *SnapshotRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*SnapshotRuntimeStats)
+	if !ok {
+		return
+	}
+	if tmp.rpcStats.Stats != nil {
+		if rs.rpcStats.Stats == nil {
+			rs.rpcStats.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
+		}
+		rs.rpcStats.Merge(tmp.rpcStats)
+	}
+	if len(tmp.backoffSleepMS) > 0 {
+		if rs.backoffSleepMS == nil {
+			rs.backoffSleepMS = make(map[backoffType]int)
+		}
+		if rs.backoffTimes == nil {
+			rs.backoffTimes = make(map[backoffType]int)
+		}
+		for k, v := range tmp.backoffSleepMS {
+			rs.backoffSleepMS[k] += v
+		}
+		for k, v := range tmp.backoffTimes {
+			rs.backoffTimes[k] += v
+		}
+	}
 }
 
 // String implements fmt.Stringer interface.

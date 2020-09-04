@@ -142,7 +142,7 @@ func (e *HashJoinExec) Close() error {
 
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
-		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
+		runtimeStats := newJoinRuntimeStats()
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
 		if e.rowContainer != nil {
@@ -780,7 +780,7 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.innerRows = nil
 	e.memTracker = nil
 	if e.runtimeStats != nil {
-		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
+		runtimeStats := newJoinRuntimeStats()
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.canUseCache {
 			var hitRatio float64
@@ -971,11 +971,9 @@ type joinRuntimeStats struct {
 	hashStat    hashStatistic
 }
 
-func newJoinRuntimeStats(basic *execdetails.BasicRuntimeStats) *joinRuntimeStats {
+func newJoinRuntimeStats() *joinRuntimeStats {
 	stats := &joinRuntimeStats{
-		RuntimeStatsWithConcurrencyInfo: &execdetails.RuntimeStatsWithConcurrencyInfo{
-			BasicRuntimeStats: basic,
-		},
+		RuntimeStatsWithConcurrencyInfo: &execdetails.RuntimeStatsWithConcurrencyInfo{},
 	}
 	return stats
 }

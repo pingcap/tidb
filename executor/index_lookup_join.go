@@ -687,7 +687,7 @@ func (e *IndexLookUpJoin) Close() error {
 	e.task = nil
 	if e.runtimeStats != nil {
 		concurrency := cap(e.resultCh)
-		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}

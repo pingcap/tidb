@@ -259,11 +259,8 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 		return
 	}
 	if r.stats == nil {
-		stmtCtx := r.ctx.GetSessionVars().StmtCtx
 		id := r.rootPlanID
-		originRuntimeStats := stmtCtx.RuntimeStatsColl.GetRootStats(id)
 		r.stats = &selectResultRuntimeStats{
-			RuntimeStats: originRuntimeStats,
 			backoffSleep: make(map[string]time.Duration),
 			rpcStat:      tikv.NewRegionRequestRuntimeStats(),
 		}
@@ -323,7 +320,6 @@ type CopRuntimeStats interface {
 }
 
 type selectResultRuntimeStats struct {
-	execdetails.RuntimeStats
 	copRespTime      []time.Duration
 	procKeys         []int64
 	backoffSleep     map[string]time.Duration
@@ -344,7 +340,22 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntim
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
 }
 
-func (s *selectResultRuntimeStats) merge(other *selectResultRuntimeStats) {
+func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := selectResultRuntimeStats{
+		copRespTime:  make([]time.Duration, 0, len(s.copRespTime)),
+		procKeys:     make([]int64, 0, len(s.procKeys)),
+		backoffSleep: make(map[string]time.Duration, len(s.backoffSleep)),
+		rpcStat:      tikv.NewRegionRequestRuntimeStats(),
+	}
+	newRs.Merge(s)
+	return &newRs
+}
+
+func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
+	other, ok := rs.(*selectResultRuntimeStats)
+	if !ok {
+		return
+	}
 	s.copRespTime = append(s.copRespTime, other.copRespTime...)
 	s.procKeys = append(s.procKeys, other.procKeys...)
 
@@ -358,24 +369,8 @@ func (s *selectResultRuntimeStats) merge(other *selectResultRuntimeStats) {
 
 func (s *selectResultRuntimeStats) String() string {
 	buf := bytes.NewBuffer(nil)
-	if s.RuntimeStats != nil {
-		stats, ok := s.RuntimeStats.(*selectResultRuntimeStats)
-		if ok {
-			stats.merge(s)
-			// Clean for idempotence.
-			s.copRespTime = nil
-			s.procKeys = nil
-			s.backoffSleep = nil
-			s.totalWaitTime = 0
-			s.totalProcessTime = 0
-			s.rpcStat = tikv.RegionRequestRuntimeStats{}
-			return stats.String()
-		}
-		buf.WriteString(s.RuntimeStats.String())
-	}
 	if len(s.copRespTime) > 0 {
 		size := len(s.copRespTime)
-		buf.WriteString(", ")
 		if size == 1 {
 			buf.WriteString(fmt.Sprintf("cop_task: {num: 1, max:%v, proc_keys: %v", s.copRespTime[0], s.procKeys[0]))
 		} else {
@@ -411,16 +406,16 @@ func (s *selectResultRuntimeStats) String() string {
 				}
 			}
 		}
+		copRPC := s.rpcStat.Stats[tikvrpc.CmdCop]
+		if copRPC != nil && copRPC.Count > 0 {
+			delete(s.rpcStat.Stats, tikvrpc.CmdCop)
+			buf.WriteString(", rpc_num: ")
+			buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
+			buf.WriteString(", rpc_time: ")
+			buf.WriteString(time.Duration(copRPC.Consume).String())
+		}
+		buf.WriteString("}")
 	}
-	copRPC := s.rpcStat.Stats[tikvrpc.CmdCop]
-	if copRPC != nil && copRPC.Count > 0 {
-		delete(s.rpcStat.Stats, tikvrpc.CmdCop)
-		buf.WriteString(", rpc_num: ")
-		buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
-		buf.WriteString(", rpc_time: ")
-		buf.WriteString(time.Duration(copRPC.Consume).String())
-	}
-	buf.WriteString("}")
 
 	rpcStatsStr := s.rpcStat.String()
 	if len(rpcStatsStr) > 0 {

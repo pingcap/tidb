@@ -299,7 +299,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	}
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joinChkResourceCh)
-		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", concurrency))
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
