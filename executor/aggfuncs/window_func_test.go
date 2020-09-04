@@ -88,6 +88,7 @@ func (s *testSuite) testWindowAggMemFunc(c *C, p windowMemTest) {
 	c.Assert(err, IsNil)
 	finalFunc := aggfuncs.BuildWindowFunctions(s.ctx, desc, 0, p.windowTest.orderByCols)
 	finalPr, memDelta := finalFunc.AllocPartialResult()
+	c.Assert(memDelta, Equals, p.allocMemDelta)
 
 	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.windowTest.dataType)
 	c.Assert(err, IsNil)
