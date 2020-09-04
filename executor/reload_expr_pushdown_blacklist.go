@@ -42,7 +42,7 @@ func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	newBlacklist := make(map[string]uint32, len(rows))
+	newBlocklist := make(map[string]uint32, len(rows))
 	for _, row := range rows {
 		name := strings.ToLower(row.GetString(0))
 		storeTypeString := strings.ToLower(row.GetString(1))
@@ -50,7 +50,7 @@ func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
 			name = alias
 		}
 		var value uint32 = 0
-		if val, ok := newBlacklist[name]; ok {
+		if val, ok := newBlocklist[name]; ok {
 			value = val
 		}
 		storeTypes := strings.Split(storeTypeString, ",")
@@ -63,9 +63,9 @@ func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
 				value |= 1 << kv.TiKV
 			}
 		}
-		newBlacklist[name] = value
+		newBlocklist[name] = value
 	}
-	expression.DefaultExprPushDownBlacklist.Store(newBlacklist)
+	expression.DefaultExprPushDownBlacklist.Store(newBlocklist)
 	return nil
 }
 
