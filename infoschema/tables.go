@@ -231,7 +231,7 @@ type columnInfo struct {
 func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
-	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob {
+	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
 	}
@@ -690,7 +690,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "COMMAND", tp: mysql.TypeVarchar, size: 16, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "TIME", tp: mysql.TypeLong, size: 7, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "STATE", tp: mysql.TypeVarchar, size: 7},
-	{name: "INFO", tp: mysql.TypeString, size: 512},
+	{name: "INFO", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: "MEM", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 }
@@ -717,6 +717,9 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogQueryTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogParseTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogCompileTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogRewriteTimeStr, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogPreprocSubQueriesStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.UnsignedFlag},
+	{name: variable.SlowLogPreProcSubQueryTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.PreWriteTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.WaitPrewriteBinlogTimeStr, tp: mysql.TypeDouble, size: 22},
 	{name: execdetails.CommitTimeStr, tp: mysql.TypeDouble, size: 22},
@@ -858,7 +861,7 @@ var tableClusterLogCols = []columnInfo{
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
 	{name: "LEVEL", tp: mysql.TypeVarchar, size: 8},
-	{name: "MESSAGE", tp: mysql.TypeVarString, size: 1024},
+	{name: "MESSAGE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 
 var tableClusterLoadCols = []columnInfo{

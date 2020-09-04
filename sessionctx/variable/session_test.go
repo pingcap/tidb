@@ -129,6 +129,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	c.Assert(seVar, NotNil)
 
 	seVar.User = &auth.UserIdentity{Username: "root", Hostname: "192.168.0.1"}
+	seVar.ConnectionInfo = &variable.ConnectionInfo{ClientIP: "192.168.0.1"}
 	seVar.ConnectionID = 1
 	seVar.CurrentDB = "test"
 	seVar.InRestrictedSQL = true
@@ -175,10 +176,12 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	var memMax int64 = 2333
 	var diskMax int64 = 6666
 	resultFields := `# Txn_start_ts: 406649736972468225
-# User: root@192.168.0.1# Conn_ID: 1
+# User@Host: root[root] @ 192.168.0.1 [192.168.0.1]
+# Conn_ID: 1
 # Query_time: 1
 # Parse_time: 0.00000001
 # Compile_time: 0.00000001
+# Rewrite_time: 0.000000003 Preproc_subqueries: 2 Preproc_subqueries_time: 0.000000002
 # Process_time: 2 Wait_time: 60 Backoff_time: 0.001 Request_count: 2 Total_keys: 10000 Process_keys: 20001
 # DB: test
 # Index_names: [t1:a,t2:b]
@@ -210,8 +213,6 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		TimeTotal:         costTime,
 		TimeParse:         time.Duration(10),
 		TimeCompile:       time.Duration(10),
-		TimeOptimize:      time.Duration(10),
-		TimeWaitTS:        time.Duration(3),
 		IndexNames:        "[t1:a,t2:b]",
 		StatsInfos:        statsInfos,
 		CopTasks:          copTasks,
@@ -226,6 +227,11 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 		BackoffTotal:      12 * time.Second,
 		WriteSQLRespTotal: 1 * time.Second,
 		Succ:              true,
+		RewriteInfo: variable.RewritePhaseInfo{
+			DurationRewrite:            3,
+			DurationPreprocessSubQuery: 2,
+			PreprocessSubQueries:       2,
+		},
 	}
 	logString := seVar.SlowLogFormat(logItems)
 	c.Assert(logString, Equals, resultFields+"\n"+sql)
