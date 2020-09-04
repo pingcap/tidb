@@ -11,15 +11,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package desensitize
+package redact
 
 import (
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 )
 
 // Error is used to desensitize error message.
-func Error(err error, desensitize bool) error {
-	if !desensitize {
+func Error(err error) error {
+	if err == nil {
+		return nil
+	}
+	if !config.GetGlobalConfig().EnableLogDesensitization {
 		return err
 	}
 	if kv.ErrKeyExists.Equal(err) {

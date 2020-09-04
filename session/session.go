@@ -64,10 +64,10 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/desensitize"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/redact"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-binlog"
@@ -472,7 +472,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 			maxRetryCount := commitRetryLimit - int64(float64(commitRetryLimit-1)*txnSizeRate)
 			err = s.retry(ctx, uint(maxRetryCount))
 		} else {
-			err = desensitize.Error(err, s.sessionVars.EnableLogDesensitization)
+			err = redact.Error(err)
 			logutil.Logger(ctx).Warn("can not retry txn",
 				zap.String("label", s.getSQLLabel()),
 				zap.Error(err),
@@ -488,7 +488,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 	s.recordOnTransactionExecution(err, counter, duration)
 
 	if err != nil {
-		err = desensitize.Error(err, s.sessionVars.EnableLogDesensitization)
+		err = redact.Error(err)
 		logutil.Logger(ctx).Warn("commit failed",
 			zap.String("finished txn", s.txn.GoString()),
 			zap.Error(err))
@@ -659,7 +659,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
 				sql := sqlForLog(st.GetTextToLog())
-				if !sessVars.EnableLogDesensitization {
+				if !config.GetGlobalConfig().EnableLogDesensitization {
 					sql += sessVars.PreparedParams.String()
 				}
 				logutil.Logger(ctx).Warn("retrying",
@@ -1220,16 +1220,12 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		}
 	}
 
-	if err != nil {
-		err = desensitize.Error(err, sessVars.EnableLogDesensitization)
-	}
-
 	if rs != nil {
 		return &execStmtResult{
 			RecordSet: rs,
 			sql:       s,
 			se:        se,
-		}, err
+		}, redact.Error(err)
 	}
 
 	err = finishStmt(ctx, se, err, s)
@@ -1237,7 +1233,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	// If it is not a select statement, we record its slow log here,
 	// then it could include the transaction commit time.
 	s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err == nil, false)
-	return nil, err
+	return nil, redact.Error(err)
 }
 
 // execStmtResult is the return value of ExecuteStmt and it implements the sqlexec.RecordSet interface.
@@ -2283,7 +2279,7 @@ func logStmt(execStmt *executor.ExecStmt, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		if !vars.EnableLogDesensitization {
+		if !config.GetGlobalConfig().EnableLogDesensitization {
 			query = query + vars.PreparedParams.String()
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",

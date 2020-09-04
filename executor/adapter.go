@@ -776,7 +776,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	a.SummaryStmt(succ)
 	sessVars := a.Ctx.GetSessionVars()
 	prevStmt := a.GetTextToLog()
-	if sessVars.EnableLogDesensitization {
+	if config.GetGlobalConfig().EnableLogDesensitization {
 		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
 	} else {
 		pps := types.CloneRow(sessVars.PreparedParams)
@@ -820,7 +820,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 	var sql stringutil.StringerFunc
 	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
-	if sessVars.EnableLogDesensitization {
+	if config.GetGlobalConfig().EnableLogDesensitization {
 		sql = FormatSQL(normalizedSQL, nil)
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
@@ -1013,8 +1013,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 // GetTextToLog return the query text to log.
 func (a *ExecStmt) GetTextToLog() string {
 	var sql string
-	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.EnableLogDesensitization {
+	if config.GetGlobalConfig().EnableLogDesensitization {
+		sessVars := a.Ctx.GetSessionVars()
 		sql, _ = sessVars.StmtCtx.SQLDigest()
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()

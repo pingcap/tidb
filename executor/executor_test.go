@@ -6173,7 +6173,13 @@ func (s *testSuite) TestKillTableReader(c *C) {
 func (s *testSuite) TestPrevStmtDesensitization(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.Se.GetSessionVars().EnableLogDesensitization = true
+	oriCfg := config.GetGlobalConfig()
+	defer func() {
+		config.StoreGlobalConfig(oriCfg)
+	}()
+	newCfg := *oriCfg
+	newCfg.EnableLogDesensitization = true
+	config.StoreGlobalConfig(&newCfg)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("begin")

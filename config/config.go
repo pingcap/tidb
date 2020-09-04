@@ -61,6 +61,8 @@ const (
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
+	// DefTiDBLogDesensitization is the default value for log desensitization.
+	DefTiDBLogDesensitization = false
 )
 
 // Valid config maps
@@ -158,6 +160,8 @@ type Config struct {
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
+	// EnableLogDesensitization indicates that whether desensitization when log query.
+	EnableLogDesensitization bool `toml:"enable-log-desensitization" json:"enable-log-desensitization"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -732,6 +736,7 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
 	DeprecateIntegerDisplayWidth: false,
+	EnableLogDesensitization:     DefTiDBLogDesensitization,
 }
 
 var (
@@ -966,6 +971,10 @@ func hasRootPrivilege() bool {
 
 // TableLockEnabled uses to check whether enabled the table lock feature.
 func TableLockEnabled() bool {
+	return GetGlobalConfig().EnableTableLock
+}
+
+func DesensitizeEnabled() bool {
 	return GetGlobalConfig().EnableTableLock
 }
 
