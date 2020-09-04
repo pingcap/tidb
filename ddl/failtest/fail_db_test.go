@@ -51,7 +51,7 @@ func TestT(t *testing.T) {
 	testleak.AfterTestT(t)()
 }
 
-var _ = Suite(&testFailDBSuite{})
+var _ = SerialSuites(&testFailDBSuite{})
 
 type testFailDBSuite struct {
 	cluster cluster.Cluster
