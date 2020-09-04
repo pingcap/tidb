@@ -846,17 +846,9 @@ func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argTps...)
 	var sig builtinFunc
 	if allInt {
-<<<<<<< HEAD
-		sig = &builtinIntervalIntSig{bf}
-	} else {
-		sig = &builtinIntervalRealSig{bf}
-=======
 		sig = &builtinIntervalIntSig{bf, hasNullable}
-		sig.setPbCode(tipb.ScalarFuncSig_IntervalInt)
 	} else {
 		sig = &builtinIntervalRealSig{bf, hasNullable}
-		sig.setPbCode(tipb.ScalarFuncSig_IntervalReal)
->>>>>>> 5b26588... expression: add linear search for the interval function (#19543)
 	}
 	return sig, nil
 }
