@@ -20,6 +20,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/testkit"
@@ -96,6 +97,7 @@ func (s *testSuite) TestMaxMin(c *C) {
 	}
 }
 
+<<<<<<< HEAD
 type maxSlidingWindowTestCase struct {
 	rowType       string
 	insertValue   string
@@ -192,5 +194,57 @@ func (s *testSuite) TestMaxSlidingWindow(c *C) {
 				testMaxSlidingWindow(tk, tc)
 			}
 		}
+=======
+func (s *testSuite) TestMemMaxMin(c *C) {
+	tests := []aggMemTest{
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4MaxMinIntSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4MaxMinUintSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeNewDecimal, 5,
+			aggfuncs.DefPartialResult4MaxMinDecimalSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeFloat, 5,
+			aggfuncs.DefPartialResult4MaxMinFloat32Size, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeDouble, 5,
+			aggfuncs.DefPartialResult4MaxMinFloat64Size, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeDate, 5,
+			aggfuncs.DefPartialResult4TimeSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeDuration, 5,
+			aggfuncs.DefPartialResult4MaxMinDurationSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeString, 5,
+			aggfuncs.DefPartialResult4MaxMinStringSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeJSON, 5,
+			aggfuncs.DefPartialResult4MaxMinJSONSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeEnum, 5,
+			aggfuncs.DefPartialResult4MaxMinEnumSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeSet, 5,
+			aggfuncs.DefPartialResult4MaxMinSetSize, defaultUpdateMemDeltaGens, false),
+
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4MaxMinIntSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4MaxMinUintSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeNewDecimal, 5,
+			aggfuncs.DefPartialResult4MaxMinDecimalSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeFloat, 5,
+			aggfuncs.DefPartialResult4MaxMinFloat32Size, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeDouble, 5,
+			aggfuncs.DefPartialResult4MaxMinFloat64Size, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeDate, 5,
+			aggfuncs.DefPartialResult4TimeSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeDuration, 5,
+			aggfuncs.DefPartialResult4MaxMinDurationSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeString, 5,
+			aggfuncs.DefPartialResult4MaxMinStringSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeJSON, 5,
+			aggfuncs.DefPartialResult4MaxMinJSONSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeEnum, 5,
+			aggfuncs.DefPartialResult4MaxMinEnumSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeSet, 5,
+			aggfuncs.DefPartialResult4MaxMinSetSize, defaultUpdateMemDeltaGens, false),
+	}
+	for _, test := range tests {
+		s.testAggMemFunc(c, test)
+>>>>>>> e3888f4e9... Implement memDelta for max min functions to track memUsage
 	}
 }
