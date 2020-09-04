@@ -25,7 +25,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
-	github.com/ngaut/unistore v0.0.0-20200826054345-a70ab8a1f698
+	github.com/ngaut/unistore v0.0.0-20200828072424-1c0ede06a3fc
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.1.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
@@ -36,9 +36,9 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20200702092429-9f69995143ce
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
-	github.com/pingcap/kvproto v0.0.0-20200826081920-597e3bf93df7
-	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
-	github.com/pingcap/parser v0.0.0-20200821073936-cf85e80665c4
+	github.com/pingcap/kvproto v0.0.0-20200828054126-d677e6fd224a
+	github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463
+	github.com/pingcap/parser v0.0.0-20200902143951-126c14c456eb
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
 	github.com/pingcap/tidb-tools v4.0.5-0.20200820082341-afeaaaaaa153+incompatible
 	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
@@ -56,10 +56,10 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
 	go.uber.org/atomic v1.6.0
 	go.uber.org/automaxprocs v1.2.0
-	go.uber.org/zap v1.15.0
-	golang.org/x/net v0.0.0-20200822124328-c89045814202
-	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
-	golang.org/x/sys v0.0.0-20200826173525-f9321e4c35a6
+	go.uber.org/zap v1.16.0
+	golang.org/x/net v0.0.0-20200520182314-0ba52f642ac2
+	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
+	golang.org/x/sys v0.0.0-20200323222414-85ca7c5b95cd
 	golang.org/x/text v0.3.3
 	golang.org/x/tools v0.0.0-20200827010519-17fd2f27a9e3
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
