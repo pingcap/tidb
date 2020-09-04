@@ -1394,13 +1394,10 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 	switch d.k {
 	case KindString, KindBytes:
 		e, err = ParseEnumName(target.Elems, d.GetString(), target.Collate)
-<<<<<<< HEAD
-=======
 	case KindMysqlEnum:
 		e, err = ParseEnumName(target.Elems, d.GetMysqlEnum().Name, target.Collate)
 	case KindMysqlSet:
 		e, err = ParseEnumName(target.Elems, d.GetMysqlSet().Name, target.Collate)
->>>>>>> 9c344ce... types: fix bug of converting enum and set (#19699)
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
