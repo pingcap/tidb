@@ -274,7 +274,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *tikv
 	for i, detail := range r.selectResp.GetExecutionSummaries() {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
-			// Fixme: Use detail.GetExecutorId() if exist.
 			planID := r.copPlanIDs[i]
 			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
 				RecordOneCopTask(planID, callee, detail)
