@@ -39,6 +39,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"runtime/trace"
 	"strconv"
 	"time"
 
@@ -51,7 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-func (cc *clientConn) handleStmtPrepare(sql string) error {
+func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
 	if err != nil {
 		return err
@@ -105,10 +106,11 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 		}
 
 	}
-	return cc.flush()
+	return cc.flush(ctx)
 }
 
 func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
+	defer trace.StartRegion(ctx, "HandleStmtExecute").End()
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}
@@ -188,7 +190,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
 	if rs == nil {
-		return cc.writeOK()
+		return cc.writeOK(ctx)
 	}
 
 	// if the client wants to use cursor
@@ -204,7 +206,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			cl.OnFetchReturned()
 		}
 		// explicitly flush columnInfo to client.
-		return cc.flush()
+		return cc.flush(ctx)
 	}
 	err = cc.writeResultset(ctx, rs, true, 0, 0)
 	if err != nil {
@@ -591,7 +593,7 @@ func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 	return stmt.AppendParam(paramID, data[6:])
 }
 
-func (cc *clientConn) handleStmtReset(data []byte) (err error) {
+func (cc *clientConn) handleStmtReset(ctx context.Context, data []byte) (err error) {
 	if len(data) < 4 {
 		return mysql.ErrMalformPacket
 	}
@@ -604,11 +606,11 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 	}
 	stmt.Reset()
 	stmt.StoreResultSet(nil)
-	return cc.writeOK()
+	return cc.writeOK(ctx)
 }
 
 // handleSetOption refer to https://dev.mysql.com/doc/internals/en/com-set-option.html
-func (cc *clientConn) handleSetOption(data []byte) (err error) {
+func (cc *clientConn) handleSetOption(ctx context.Context, data []byte) (err error) {
 	if len(data) < 2 {
 		return mysql.ErrMalformPacket
 	}
@@ -627,7 +629,7 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 		return err
 	}
 
-	return cc.flush()
+	return cc.flush(ctx)
 }
 
 func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
