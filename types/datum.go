@@ -31,8 +31,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // Kind constants.
@@ -1396,6 +1394,10 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 	switch d.k {
 	case KindString, KindBytes:
 		e, err = ParseEnumName(target.Elems, d.GetString(), target.Collate)
+	case KindMysqlEnum:
+		e, err = ParseEnumName(target.Elems, d.GetMysqlEnum().Name, target.Collate)
+	case KindMysqlSet:
+		e, err = ParseEnumName(target.Elems, d.GetMysqlSet().Name, target.Collate)
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
@@ -1405,8 +1407,7 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
-		logutil.BgLogger().Error("convert to MySQL enum failed", zap.Error(err))
-		err = errors.Trace(ErrTruncated)
+		err = errors.Wrap(ErrTruncated, "convert to MySQL enum failed: "+err.Error())
 	}
 	ret.SetMysqlEnum(e, target.Collate)
 	return ret, err
@@ -1421,6 +1422,10 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 	switch d.k {
 	case KindString, KindBytes:
 		s, err = ParseSetName(target.Elems, d.GetString(), target.Collate)
+	case KindMysqlEnum:
+		s, err = ParseSetName(target.Elems, d.GetMysqlEnum().Name, target.Collate)
+	case KindMysqlSet:
+		s, err = ParseSetName(target.Elems, d.GetMysqlSet().Name, target.Collate)
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
@@ -1431,10 +1436,10 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 	}
 
 	if err != nil {
-		return invalidConv(d, target.Tp)
+		err = errors.Wrap(ErrTruncated, "convert to MySQL set failed: "+err.Error())
 	}
 	ret.SetMysqlSet(s, target.Collate)
-	return ret, nil
+	return ret, err
 }
 
 func (d *Datum) convertToMysqlJSON(sc *stmtctx.StatementContext, target *FieldType) (ret Datum, err error) {

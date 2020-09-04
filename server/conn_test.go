@@ -40,7 +40,7 @@ type ConnTestSuite struct {
 	store kv.Storage
 }
 
-var _ = Suite(&ConnTestSuite{})
+var _ = SerialSuites(&ConnTestSuite{})
 
 func (ts *ConnTestSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
@@ -173,7 +173,7 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 			bufWriter: bufio.NewWriter(&outBuffer),
 		},
 	}
-	err := cc.writeInitialHandshake()
+	err := cc.writeInitialHandshake(context.TODO())
 	c.Assert(err, IsNil)
 
 	expected := new(bytes.Buffer)
@@ -463,9 +463,10 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(ts.store)
 	cfg := newTestConfig()
-	cfg.Port, cfg.Status.StatusPort = genPorts()
+	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
+
 	c.Assert(err, IsNil)
 	defer server.Close()
 
@@ -487,11 +488,11 @@ func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability u
 		err := cc.dispatch(context.Background(), inBytes)
 		c.Assert(err, Equals, cs.err)
 		if err == nil {
-			err = cc.flush()
+			err = cc.flush(context.TODO())
 			c.Assert(err, IsNil)
 			c.Assert(outBuffer.Bytes(), DeepEquals, cs.out)
 		} else {
-			_ = cc.flush()
+			_ = cc.flush(context.TODO())
 		}
 		outBuffer.Reset()
 	}
@@ -648,6 +649,7 @@ func (ts *ConnTestSuite) TestPrefetchPointKeys(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	cc.ctx = &TiDBContext{Session: tk.Se}
 	ctx := context.Background()
+	tk.MustExec("set @@tidb_enable_clustered_index=0")
 	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk.MustExec("begin optimistic")

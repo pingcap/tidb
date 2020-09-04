@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 
@@ -137,6 +138,7 @@ func (e *HashJoinExec) Close() error {
 		e.joinChkResourceCh = nil
 		terror.Call(e.rowContainer.Close)
 	}
+	e.outerMatchedStatus = e.outerMatchedStatus[:0]
 
 	if e.runtimeStats != nil {
 		concurrency := cap(e.joiners)
@@ -312,7 +314,10 @@ func (e *HashJoinExec) initializeForProbe() {
 func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
 	e.joinWorkerWaitGroup.Add(1)
-	go util.WithRecovery(func() { e.fetchProbeSideChunks(ctx) }, e.handleProbeSideFetcherPanic)
+	go util.WithRecovery(func() {
+		defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
+		e.fetchProbeSideChunks(ctx)
+	}, e.handleProbeSideFetcherPanic)
 
 	probeKeyColIdx := make([]int, len(e.probeKeys))
 	for i := range e.probeKeys {
@@ -324,7 +329,10 @@ func (e *HashJoinExec) fetchAndProbeHashTable(ctx context.Context) {
 	for i := uint(0); i < e.concurrency; i++ {
 		e.joinWorkerWaitGroup.Add(1)
 		workID := i
-		go util.WithRecovery(func() { e.runJoinWorker(workID, probeKeyColIdx) }, e.handleJoinWorkerPanic)
+		go util.WithRecovery(func() {
+			defer trace.StartRegion(ctx, "HashJoinWorker").End()
+			e.runJoinWorker(workID, probeKeyColIdx)
+		}, e.handleJoinWorkerPanic)
 	}
 	go util.WithRecovery(e.waitJoinWorkersAndCloseResultChan, nil)
 }
@@ -607,7 +615,10 @@ func (e *HashJoinExec) join2ChunkForOuterHashJoin(workerID uint, probeSideChk *c
 func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if !e.prepared {
 		e.buildFinished = make(chan error, 1)
-		go util.WithRecovery(func() { e.fetchAndBuildHashTable(ctx) }, e.handleFetchAndBuildHashTablePanic)
+		go util.WithRecovery(func() {
+			defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
+			e.fetchAndBuildHashTable(ctx)
+		}, e.handleFetchAndBuildHashTablePanic)
 		e.fetchAndProbeHashTable(ctx)
 		e.prepared = true
 	}
@@ -642,7 +653,10 @@ func (e *HashJoinExec) fetchAndBuildHashTable(ctx context.Context) {
 	doneCh := make(chan struct{})
 	fetchBuildSideRowsOk := make(chan error, 1)
 	go util.WithRecovery(
-		func() { e.fetchBuildSideRows(ctx, buildSideResultCh, doneCh) },
+		func() {
+			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
+			e.fetchBuildSideRows(ctx, buildSideResultCh, doneCh)
+		},
 		func(r interface{}) {
 			if r != nil {
 				fetchBuildSideRowsOk <- errors.Errorf("%v", r)
