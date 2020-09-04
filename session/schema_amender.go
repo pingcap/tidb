@@ -41,8 +41,8 @@ import (
 )
 
 const amendableType = nonMemAmendType | memBufAmendType
-const nonMemAmendType = (1 << model.ActionAddColumn) | (1 << model.ActionDropColumn) | (1 << model.ActionDropIndex)
-const memBufAmendType = uint64(1<<model.ActionAddIndex) | (1 << model.ActionModifyColumn)
+const nonMemAmendType = (1 << model.ActionAddColumn) | (1 << model.ActionDropIndex)
+const memBufAmendType = uint64(1<<model.ActionAddIndex) | (1 << model.ActionModifyColumn) | (1 << model.ActionDropColumn)
 
 // Amend operation types.
 const (
@@ -136,7 +136,7 @@ func needCollectIndexOps(actionType uint64) bool {
 }
 
 func needCollectModifyColOps(actionType uint64) bool {
-	return actionType&(1<<model.ActionModifyColumn) != 0
+	return actionType&((1<<model.ActionModifyColumn)|(1<<model.ActionDropColumn)) != 0
 }
 
 func fieldTypeDeepEquals(ft1 *types.FieldType, ft2 *types.FieldType) bool {
