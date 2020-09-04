@@ -1609,7 +1609,7 @@ func (s *serialTestStateChangeSuite) TestParallelFlashbackTable(c *C) {
 
 // TestModifyColumnTypeArgs test job raw args won't be updated when error occurs in `updateVersionAndTableInfo`.
 func (s *serialTestStateChangeSuite) TestModifyColumnTypeArgs(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr", `return(2)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateVersionAndTableInfoErr"), IsNil)
 	}()
