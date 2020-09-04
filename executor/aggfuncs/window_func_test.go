@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
-	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
@@ -35,6 +34,12 @@ type windowTest struct {
 	args        []expression.Expression
 	orderByCols []*expression.Column
 	results     []types.Datum
+}
+
+type windowMemTest struct {
+	windowTest         windowTest
+	allocMemDelta      int64
+	updateMemDeltaGens updateMemDeltaGens
 }
 
 func (s *testSuite) testWindowFunc(c *C, p windowTest) {
@@ -153,41 +158,51 @@ func (s *testSuite) TestWindowFunctions(c *C) {
 	}
 }
 
+func buildWindowMemTester(funcName string, tp byte, constantArg uint64, numRows int, orderByCols int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens) windowMemTest {
+	windowTest := buildWindowTester(funcName, tp, constantArg, orderByCols, numRows, nil)
+	pt := windowMemTest{
+		windowTest:         windowTest,
+		allocMemDelta:      allocMemDelta,
+		updateMemDeltaGens: updateMemDeltaGens,
+	}
+	return pt
+}
+
 func (s *testSuite) TestMemNtile(c *C) {
-	tests := []aggMemTest{
-		buildAggMemTester(ast.WindowFuncNtile, mysql.TypeLonglong, 5,
-			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens, false),
+	tests := []windowMemTest{
+		buildWindowMemTester(ast.WindowFuncNtile, mysql.TypeLonglong, 1, 1, 1,
+			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens),
+		buildWindowMemTester(ast.WindowFuncNtile, mysql.TypeLonglong, 1, 3, 0,
+			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens),
+		buildWindowMemTester(ast.WindowFuncNtile, mysql.TypeLonglong, 1, 4, 1,
+			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens),
 	}
 	for _, test := range tests {
 		s.testWindowAggMemFunc(c, test)
 	}
 }
 
-func (s *testSuite) testWindowAggMemFunc(c *C, p aggMemTest) {
-	srcChk := p.aggTest.genSrcChk()
+func (s *testSuite) testWindowAggMemFunc(c *C, p windowMemTest) {
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.windowTest.dataType}, p.windowTest.numRows)
+	dataGen := getDataGenFunc(p.windowTest.dataType)
+	for i := 0; i < p.windowTest.numRows; i++ {
+		dt := dataGen(i)
+		srcChk.AppendDatum(0, &dt)
+	}
 
-	args := []expression.Expression{&expression.Column{RetType: p.aggTest.dataType, Index: 0}}
-	if p.aggTest.funcName == ast.AggFuncGroupConcat {
-		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
-	}
-	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.aggTest.funcName, args, p.isDistinct)
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.windowTest.funcName, p.windowTest.args, false)
 	c.Assert(err, IsNil)
-	if p.aggTest.orderBy {
-		desc.OrderByItems = []*util.ByItems{
-			{Expr: args[0], Desc: true},
-		}
-	}
-	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
+	finalFunc := aggfuncs.BuildWindowFunctions(s.ctx, desc, 0, p.windowTest.orderByCols)
 	finalPr, memDelta := finalFunc.AllocPartialResult()
 	c.Assert(memDelta, Equals, p.allocMemDelta)
 
-	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.aggTest.dataType)
+	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.windowTest.dataType)
 	c.Assert(err, IsNil)
-	iter := chunk.NewIterator4Chunk(srcChk)
 	i := 0
+	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		memDelta, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 		c.Assert(memDelta, Equals, updateMemDeltas[i])
-		i++
+		c.Assert(err, IsNil)
 	}
 }
