@@ -423,6 +423,10 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if _, ok := expression.TryFoldFunctions["case"]; ok {
 			er.tryFoldCounter++
 		}
+	case *ast.BinaryOperationExpr:
+		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
+			er.tryFoldCounter++
+		}
 	case *ast.SetCollationExpr:
 		// Do nothing
 	default:
@@ -990,6 +994,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.UnaryOperationExpr:
 		er.unaryOpToExpression(v)
 	case *ast.BinaryOperationExpr:
+		if v.Op == opcode.LogicAnd || v.Op == opcode.LogicOr {
+			er.tryFoldCounter--
+		}
 		er.binaryOpToExpression(v)
 	case *ast.BetweenExpr:
 		er.betweenToExpression(v)
