@@ -1460,7 +1460,6 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 		defer terror.Call(rs.Close)
 	} else {
 		sc := cc.ctx.GetSessionVars().StmtCtx
-		
 		defer func() {
 			if sc != nil {
 				if sc.MemTracker != nil {
