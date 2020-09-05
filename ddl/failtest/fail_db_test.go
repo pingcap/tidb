@@ -538,9 +538,9 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 
 func (s *testFailDBSuite) TestIssuePanicHand(c *C) {
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkPartitionByRangeErr"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr"), IsNil)
 	}()
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkPartitionByRangeErr", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr", `return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
