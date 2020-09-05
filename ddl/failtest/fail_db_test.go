@@ -436,6 +436,7 @@ func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {
 func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
 
 	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
@@ -544,7 +545,6 @@ func (s *testFailDBSuite) TestIssuePanicHand(c *C) {
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkPartitionByRangeErr"), IsNil)
 	}()
-	_, err := tk.Exec(`alter table t add partition (partition p1 values less than (20));`)
+	_, err := tk.Exec(`alter table t add partition (partition p1 values less than (a));`)
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
 }
