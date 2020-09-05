@@ -318,7 +318,6 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
 	d.ctx, d.cancel = context.WithCancel(d.ctx)
 
-	d.wg.Add(1)
 	go d.limitDDLJobs()
 
 	// If RunWorker is true, we need campaign owner and do DDL job.
@@ -461,28 +460,15 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 
 // doDDLJob will return
 // - nil: found in history DDL job and no job error
-// - context.Cancel: not sure job has been sent to worker or added to history DDL job
+// - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
-	// protect accessing changed d.ctx and d.cancel by restartWorkers. note that must call d.cancel before d.wg.Wait()
-	d.wg.Add(1)
-	defer d.wg.Done()
-
-	if isChanClosed(d.ctx.Done()) {
-		return d.ctx.Err()
-	}
-	var err error
-
 	// Get a global job ID and put the DDL job in the queue.
 	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	task := &limitJobTask{job, make(chan error)}
 	d.limitJobCh <- task
-	// in case worker exit before handle task
-	select {
-	case <-d.ctx.Done():
-		return d.ctx.Err()
-	case err = <-task.err:
-	}
+	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
+	err := <-task.err
 
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 

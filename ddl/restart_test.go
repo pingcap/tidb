@@ -34,7 +34,6 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 	d.wg.Wait()
 	d.ctx, d.cancel = context.WithCancel(ctx)
 
-	d.wg.Add(1)
 	go d.limitDDLJobs()
 	if !RunWorker {
 		return
@@ -63,15 +62,18 @@ func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan error) {
 
 	err = d.doDDLJob(ctx, job)
 	if errors.Is(err, context.Canceled) {
-		// if error is context.Canceled, we check if job has been finished. report error if found finished,
-		// otherwise just let it pass
-		time.Sleep(10 * testLease)
-		history, _ = d.getHistoryDDLJob(job.ID)
-		// imitate doDDLJob's logic
-		if history != nil {
-			err = history.Error
-		} else {
-			err = nil
+		endlessLoopTime := time.Now().Add(time.Minute)
+		for history == nil {
+			// imitate doDDLJob's logic, quit only find history
+			history, _ = d.getHistoryDDLJob(job.ID)
+			if history != nil {
+				err = history.Error
+			}
+			time.Sleep(10 * testLease)
+			if time.Now().After(endlessLoopTime) {
+				err = errors.New("runInterruptedJob may enter endless loop")
+				break
+			}
 		}
 	}
 
