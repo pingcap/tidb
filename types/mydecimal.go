@@ -182,7 +182,7 @@ func fixWordCntError(wordsInt, wordsFrac int) (newWordsInt int, newWordsFrac int
 		if wordsInt > wordBufLen {
 			return wordBufLen, 0, ErrOverflow
 		}
-		return wordsInt, wordBufLen - wordsInt, ErrTruncatedWrongVal
+		return wordsInt, wordBufLen - wordsInt, ErrTruncated
 	}
 	return wordsInt, wordsFrac, nil
 }
@@ -482,7 +482,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 		exponent, err1 := strToInt(string(str[endIdx+1:]))
 		if err1 != nil {
 			err = errors.Cause(err1)
-			if err != ErrTruncatedWrongVal {
+			if err != ErrTruncated {
 				*d = zeroMyDecimal
 			}
 		}
@@ -494,7 +494,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 		}
 		if exponent < math.MinInt32/2 && err != ErrOverflow {
 			*d = zeroMyDecimal
-			err = ErrTruncatedWrongVal
+			err = ErrTruncated
 		}
 		if err != ErrOverflow {
 			shiftErr := d.Shift(int(exponent))
@@ -571,7 +571,7 @@ func (d *MyDecimal) Shift(shift int) error {
 			return ErrOverflow
 		}
 		/* cut off fraction part to allow new number to fit in our buffer */
-		err = ErrTruncatedWrongVal
+		err = ErrTruncated
 		wordsFrac -= lack
 		diff := digitsFrac - wordsFrac*digitsPerWord
 		err1 := d.Round(d, digitEnd-point-diff, ModeHalfEven)
@@ -586,7 +586,7 @@ func (d *MyDecimal) Shift(shift int) error {
 			   just return 0.
 			*/
 			*d = zeroMyDecimal
-			return ErrTruncatedWrongVal
+			return ErrTruncated
 		}
 	}
 
@@ -814,7 +814,7 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 	if wordsInt+wordsFracTo > wordBufLen {
 		wordsFracTo = wordBufLen - wordsInt
 		frac = wordsFracTo * digitsPerWord
-		err = ErrTruncatedWrongVal
+		err = ErrTruncated
 	}
 	if int(d.digitsInt)+frac < 0 {
 		*to = zeroMyDecimal
@@ -922,7 +922,7 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 			if wordsInt+wordsFracTo >= wordBufLen {
 				wordsFracTo--
 				frac = wordsFracTo * digitsPerWord
-				err = ErrTruncatedWrongVal
+				err = ErrTruncated
 			}
 			for toIdx = wordsInt + myMax(wordsFracTo, 0); toIdx > 0; toIdx-- {
 				if toIdx < wordBufLen {
@@ -1039,7 +1039,7 @@ func (d *MyDecimal) ToInt() (int64, error) {
 	}
 	for i := d.digitsFrac; i > 0; i -= digitsPerWord {
 		if d.wordBuf[wordIdx] != 0 {
-			return x, ErrTruncatedWrongVal
+			return x, ErrTruncated
 		}
 		wordIdx++
 	}
@@ -1063,7 +1063,7 @@ func (d *MyDecimal) ToUint() (uint64, error) {
 	}
 	for i := d.digitsFrac; i > 0; i -= digitsPerWord {
 		if d.wordBuf[wordIdx] != 0 {
-			return x, ErrTruncatedWrongVal
+			return x, ErrTruncated
 		}
 		wordIdx++
 	}
@@ -1230,7 +1230,7 @@ func (d *MyDecimal) WriteBin(precision, frac int, buf []byte) ([]byte, error) {
 	if fracSize < fracSizeFrom ||
 		(fracSize == fracSizeFrom && (trailingDigits <= trailingDigitsFrom || wordsFrac <= wordsFracFrom)) {
 		if fracSize < fracSizeFrom || (fracSize == fracSizeFrom && trailingDigits < trailingDigitsFrom) || (fracSize == fracSizeFrom && wordsFrac < wordsFracFrom) {
-			err = ErrTruncatedWrongVal
+			err = ErrTruncated
 		}
 		wordsFracFrom = wordsFrac
 		trailingDigitsFrom = trailingDigits
@@ -1297,11 +1297,11 @@ func (d *MyDecimal) ToHashKey() ([]byte, error) {
 		prec = 1
 	}
 	buf, err := d.ToBin(prec, digitsFrac)
-	if err == ErrTruncatedWrongVal {
+	if err == ErrTruncated {
 		// This err is caused by shorter digitsFrac;
 		// After removing the trailing zeros from a Decimal,
 		// so digitsFrac may be less than the real digitsFrac of the Decimal,
-		// thus ErrTruncatedWrongVal may be raised, we can ignore it here.
+		// thus ErrTruncated may be raised, we can ignore it here.
 		err = nil
 	}
 	buf = append(buf, byte(digitsFrac))
@@ -2245,7 +2245,7 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 		if wordsIntTo <= 0 {
 			if -wordsIntTo >= wordBufLen {
 				*to = zeroMyDecimal
-				return ErrTruncatedWrongVal
+				return ErrTruncated
 			}
 			stop1 = start1 + wordsIntTo + wordsFracTo
 			wordsFracTo += wordsIntTo
@@ -2268,7 +2268,7 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 			stop1 -= wordsIntTo + wordsFracTo - wordBufLen
 			wordsFracTo = wordBufLen - wordsIntTo
 			to.digitsFrac = int8(wordsFracTo * digitsPerWord)
-			err = ErrTruncatedWrongVal
+			err = ErrTruncated
 		}
 		for start1 < stop1 {
 			to.wordBuf[idxTo] = tmp1[start1]

@@ -806,7 +806,7 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyD
 		if types.ErrOverflow.Equal(err) {
 			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
 			err = b.ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
-		} else if types.ErrTruncatedWrongVal.Equal(err) {
+		} else if types.ErrTruncated.Equal(err) {
 			// This behavior is consistent with MySQL.
 			err = nil
 		}

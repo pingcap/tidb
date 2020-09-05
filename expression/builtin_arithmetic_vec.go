@@ -91,7 +91,7 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(input *chunk.Chunk, r
 			}
 			result.SetNull(i, true)
 			continue
-		} else if err == types.ErrTruncatedWrongVal {
+		} else if err == types.ErrTruncated {
 			if err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", to)); err != nil {
 				return err
 			}
@@ -640,7 +640,7 @@ func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(input *chunk.Chunk,
 			continue
 		}
 		err = types.DecimalMul(&x[i], &y[i], &to)
-		if err != nil && !terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+		if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
 			return err
 		}
 		x[i] = to
@@ -693,7 +693,7 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 			result.SetNull(i, true)
 			continue
 		}
-		if err == types.ErrTruncatedWrongVal {
+		if err == types.ErrTruncated {
 			err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
 		} else if err == types.ErrOverflow {
 			newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c)
@@ -709,7 +709,7 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(input *chunk.Chunk, re
 			if err == types.ErrOverflow {
 				v, err := c.ToInt()
 				// when the final result is at (-1, 0], it should be return 0 instead of the error
-				if v == 0 && err == types.ErrTruncatedWrongVal {
+				if v == 0 && err == types.ErrTruncated {
 					i64s[i] = int64(0)
 					continue
 				}

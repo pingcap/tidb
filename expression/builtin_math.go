@@ -583,7 +583,7 @@ func (b *builtinCeilDecToIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	// err here will only be ErrOverFlow(will never happen) or ErrTruncate(can be ignored).
 	res, err := val.ToInt()
-	if err == types.ErrTruncatedWrongVal {
+	if err == types.ErrTruncated {
 		err = nil
 		if !val.IsNegative() {
 			res = res + 1
@@ -771,7 +771,7 @@ func (b *builtinFloorDecToIntSig) evalInt(row chunk.Row) (int64, bool, error) {
 	}
 	// err here will only be ErrOverFlow(will never happen) or ErrTruncate(can be ignored).
 	res, err := val.ToInt()
-	if err == types.ErrTruncatedWrongVal {
+	if err == types.ErrTruncated {
 		err = nil
 		if val.IsNegative() {
 			res--

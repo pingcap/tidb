@@ -563,7 +563,7 @@ func (s *builtinArithmeticMultiplyDecimalSig) evalDecimal(row chunk.Row) (*types
 	}
 	c := &types.MyDecimal{}
 	err = types.DecimalMul(a, b, c)
-	if err != nil && !terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
+	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
 		return nil, true, err
 	}
 	return c, false, nil
@@ -683,7 +683,7 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(row chunk.Row) (*types.M
 	err = types.DecimalDiv(a, b, c, types.DivFracIncr)
 	if err == types.ErrDivByZero {
 		return c, true, handleDivisionByZeroError(s.ctx)
-	} else if err == types.ErrTruncatedWrongVal {
+	} else if err == types.ErrTruncated {
 		sc := s.ctx.GetSessionVars().StmtCtx
 		err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
 	} else if err == nil {
@@ -803,7 +803,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (ret int64
 	if err == types.ErrDivByZero {
 		return 0, true, handleDivisionByZeroError(s.ctx)
 	}
-	if err == types.ErrTruncatedWrongVal {
+	if err == types.ErrTruncated {
 		err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
 	}
 	if err == types.ErrOverflow {
@@ -823,7 +823,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(row chunk.Row) (ret int64
 		if err == types.ErrOverflow {
 			v, err := c.ToInt()
 			// when the final result is at (-1, 0], it should be return 0 instead of the error
-			if v == 0 && err == types.ErrTruncatedWrongVal {
+			if v == 0 && err == types.ErrTruncated {
 				ret = int64(0)
 				return ret, false, nil
 			}
