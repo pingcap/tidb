@@ -1919,9 +1919,8 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 				return nil
 			}
 			return errors.Errorf("Etcd client not found")
-		} else {
-			return errors.Errorf("Etcd addrs not found")
 		}
+		return errors.Errorf("Etcd addrs not found")
 	}
 	return errors.Errorf("%T not an etcd backend", store)
 }
