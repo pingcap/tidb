@@ -255,6 +255,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
@@ -262,6 +263,9 @@ func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas 
 		memDeltas = append(memDeltas, memDelta)
 =======
 func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+=======
+func noZeroUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+>>>>>>> 730d9e2a3... modify UpdatePartialResult functions
 	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
 		if i > 0 {

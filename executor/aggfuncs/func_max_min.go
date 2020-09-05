@@ -941,11 +941,9 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		cmp := types.CompareString(input, p.val, tp.Collate)
 		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
 			p.val = stringutil.Copy(input)
-			if cmp == 1 {
-				oldMem := len(p.val)
-				newMem := len(input)
-				memDelta += int64(newMem - oldMem)
-			}
+			oldMem := len(p.val)
+			newMem := len(input)
+			memDelta += int64(newMem - oldMem)
 		}
 	}
 	return memDelta, nil
@@ -1328,11 +1326,9 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		cmp := json.CompareBinary(input, p.val)
 		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 			p.val = input.Copy()
-			if cmp > 0 {
-				oldMem := len(p.val.Value)
-				newMem := len(input.Value)
-				memDelta += int64(newMem - oldMem)
-			}
+			oldMem := len(p.val.Value)
+			newMem := len(input.Value)
+			memDelta += int64(newMem - oldMem)
 		}
 	}
 	return memDelta, nil
@@ -1399,11 +1395,9 @@ func (e *maxMin4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		en := d.GetMysqlEnum()
 		if e.isMax && en.Value > p.val.Value || !e.isMax && en.Value < p.val.Value {
 			p.val = en.Copy()
-			if en.Value > p.val.Value {
-				oldMem := len(p.val.Name)
-				newMem := len(en.Name)
-				memDelta += int64(newMem - oldMem)
-			}
+			oldMem := len(p.val.Name)
+			newMem := len(en.Name)
+			memDelta += int64(newMem - oldMem)
 		}
 	}
 	return memDelta, nil
@@ -1468,11 +1462,9 @@ func (e *maxMin4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 		s := d.GetMysqlSet()
 		if e.isMax && s.Value > p.val.Value || !e.isMax && s.Value < p.val.Value {
 			p.val = s.Copy()
-			if s.Value > p.val.Value {
-				oldMem := len(p.val.Name)
-				newMem := len(s.Name)
-				memDelta += int64(newMem - oldMem)
-			}
+			oldMem := len(p.val.Name)
+			newMem := len(s.Name)
+			memDelta += int64(newMem - oldMem)
 		}
 	}
 	return memDelta, nil
