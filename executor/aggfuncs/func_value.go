@@ -54,7 +54,7 @@ const (
 // `lead` and `lag`.
 type valueEvaluator interface {
 	// evaluateRow evaluates the expression using row and stores the result inside.
-	evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error
+	evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error)
 	// appendResult appends the result to chunk.
 	appendResult(chk *chunk.Chunk, colIdx int)
 }
@@ -64,10 +64,9 @@ type value4Int struct {
 	isNull bool
 }
 
-func (v *value4Int) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4Int) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalInt(ctx, row)
-	return err
+	return 0, err
 }
 
 func (v *value4Int) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -83,12 +82,11 @@ type value4Float32 struct {
 	isNull bool
 }
 
-func (v *value4Float32) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4Float32) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	var val float64
 	val, v.isNull, err = expr.EvalReal(ctx, row)
 	v.val = float32(val)
-	return err
+	return 0, err
 }
 
 func (v *value4Float32) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -104,10 +102,9 @@ type value4Decimal struct {
 	isNull bool
 }
 
-func (v *value4Decimal) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4Decimal) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalDecimal(ctx, row)
-	return err
+	return 0, err
 }
 
 func (v *value4Decimal) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -123,10 +120,9 @@ type value4Float64 struct {
 	isNull bool
 }
 
-func (v *value4Float64) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4Float64) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalReal(ctx, row)
-	return err
+	return 0, err
 }
 
 func (v *value4Float64) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -142,10 +138,9 @@ type value4String struct {
 	isNull bool
 }
 
-func (v *value4String) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4String) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalString(ctx, row)
-	return err
+	return int64(unsafe.Sizeof(v.val)), err
 }
 
 func (v *value4String) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -161,10 +156,9 @@ type value4Time struct {
 	isNull bool
 }
 
-func (v *value4Time) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4Time) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalTime(ctx, row)
-	return err
+	return 0, err
 }
 
 func (v *value4Time) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -180,10 +174,9 @@ type value4Duration struct {
 	isNull bool
 }
 
-func (v *value4Duration) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4Duration) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalDuration(ctx, row)
-	return err
+	return 0, err
 }
 
 func (v *value4Duration) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -199,11 +192,10 @@ type value4JSON struct {
 	isNull bool
 }
 
-func (v *value4JSON) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) error {
-	var err error
+func (v *value4JSON) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalJSON(ctx, row)
 	v.val = v.val.Copy() // deep copy to avoid content change.
-	return err
+	return int64(unsafe.Sizeof(v.val)), err
 }
 
 func (v *value4JSON) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -272,12 +264,12 @@ func (v *firstValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 	}
 	if len(rowsInGroup) > 0 {
 		p.gotFirstValue = true
-		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[0])
+		memDelta, err = p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[0])
 		if err != nil {
 			return 0, err
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (v *firstValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -316,12 +308,12 @@ func (v *lastValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []c
 	p := (*partialResult4LastValue)(pr)
 	if len(rowsInGroup) > 0 {
 		p.gotLastValue = true
-		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[len(rowsInGroup)-1])
+		memDelta, err = p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[len(rowsInGroup)-1])
 		if err != nil {
 			return 0, err
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (v *lastValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -364,13 +356,13 @@ func (v *nthValue) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []ch
 	p := (*partialResult4NthValue)(pr)
 	numRows := uint64(len(rowsInGroup))
 	if v.nth > p.seenRows && v.nth-p.seenRows <= numRows {
-		err := p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[v.nth-p.seenRows-1])
+		memDelta, err = p.evaluator.evaluateRow(sctx, v.args[0], rowsInGroup[v.nth-p.seenRows-1])
 		if err != nil {
 			return 0, err
 		}
 	}
 	p.seenRows += numRows
-	return 0, nil
+	return memDelta, nil
 }
 
 func (v *nthValue) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
