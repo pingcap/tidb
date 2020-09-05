@@ -941,7 +941,11 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		cmp := types.CompareString(input, p.val, tp.Collate)
 		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
 			p.val = stringutil.Copy(input)
-			memDelta += int64(len(input))
+			if cmp == 1 {
+				oldMem := len(p.val)
+				newMem := len(input)
+				memDelta += int64(newMem - oldMem)
+			}
 		}
 	}
 	return memDelta, nil
@@ -1324,7 +1328,11 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		cmp := json.CompareBinary(input, p.val)
 		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 			p.val = input.Copy()
-			memDelta += int64(len(input.Value))
+			if cmp > 0 {
+				oldMem := len(p.val.Value)
+				newMem := len(input.Value)
+				memDelta += int64(newMem - oldMem)
+			}
 		}
 	}
 	return memDelta, nil
@@ -1377,22 +1385,28 @@ func (e *maxMin4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		d, err := e.args[0].Eval(row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if d.IsNull() {
 			continue
 		}
 		if p.isNull {
 			p.val = d.GetMysqlEnum().Copy()
+			memDelta += int64(len(d.GetMysqlEnum().Name))
 			p.isNull = false
 			continue
 		}
 		en := d.GetMysqlEnum()
 		if e.isMax && en.Value > p.val.Value || !e.isMax && en.Value < p.val.Value {
 			p.val = en.Copy()
+			if en.Value > p.val.Value {
+				oldMem := len(p.val.Name)
+				newMem := len(en.Name)
+				memDelta += int64(newMem - oldMem)
+			}
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *maxMin4Enum) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
@@ -1440,22 +1454,28 @@ func (e *maxMin4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 	for _, row := range rowsInGroup {
 		d, err := e.args[0].Eval(row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if d.IsNull() {
 			continue
 		}
 		if p.isNull {
 			p.val = d.GetMysqlSet().Copy()
+			memDelta += int64(len(d.GetMysqlSet().Name))
 			p.isNull = false
 			continue
 		}
 		s := d.GetMysqlSet()
 		if e.isMax && s.Value > p.val.Value || !e.isMax && s.Value < p.val.Value {
 			p.val = s.Copy()
+			if s.Value > p.val.Value {
+				oldMem := len(p.val.Name)
+				newMem := len(s.Name)
+				memDelta += int64(newMem - oldMem)
+			}
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *maxMin4Set) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {

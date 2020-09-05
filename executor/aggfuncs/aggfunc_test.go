@@ -254,11 +254,37 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 	return memDeltas, nil
 }
 
+<<<<<<< HEAD
 func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		memDelta := aggfuncs.DefRowSize
 		memDeltas = append(memDeltas, memDelta)
+=======
+func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if i > 0 {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		switch dataType.Tp {
+		case mysql.TypeString:
+			val := row.GetString(0)
+			memDeltas = append(memDeltas, int64(len(val)))
+		case mysql.TypeJSON:
+			json := row.GetJSON(0)
+			bytes := make([]byte, 0)
+			bytes = append(bytes, json.Value...)
+			memDeltas = append(memDeltas, int64(len(string(bytes))))
+		case mysql.TypeEnum:
+			enum := row.GetEnum(0)
+			memDeltas = append(memDeltas, int64(len(enum.Name)))
+		case mysql.TypeSet:
+			typeSet := row.GetSet(0)
+			memDeltas = append(memDeltas, int64(len(typeSet.Name)))
+		}
+>>>>>>> a1270a633... modify maxMin4Enum.UpdatePartialResult and maxMin4Set.UpdatePartialResult function to calculate memory change
 	}
 	return memDeltas, nil
 }

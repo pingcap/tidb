@@ -212,11 +212,13 @@ func (s *testSuite) TestMemMaxMin(c *C) {
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeDuration, 5,
 			aggfuncs.DefPartialResult4MaxMinDurationSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeString, 5,
-			aggfuncs.DefPartialResult4MaxMinStringSize, distinctUpdateMemDeltaGens, false),
+			aggfuncs.DefPartialResult4MaxMinStringSize, maxMinUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeJSON, 5,
+			aggfuncs.DefPartialResult4MaxMinJSONSize, maxMinUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeEnum, 5,
-			aggfuncs.DefPartialResult4MaxMinEnumSize, defaultUpdateMemDeltaGens, false),
+			aggfuncs.DefPartialResult4MaxMinEnumSize, maxMinUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeSet, 5,
-			aggfuncs.DefPartialResult4MaxMinSetSize, defaultUpdateMemDeltaGens, false),
+			aggfuncs.DefPartialResult4MaxMinSetSize, maxMinUpdateMemDeltaGens, false),
 
 		buildAggMemTester(ast.AggFuncMin, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4MaxMinIntSize, defaultUpdateMemDeltaGens, false),
@@ -232,10 +234,14 @@ func (s *testSuite) TestMemMaxMin(c *C) {
 			aggfuncs.DefPartialResult4TimeSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncMin, mysql.TypeDuration, 5,
 			aggfuncs.DefPartialResult4MaxMinDurationSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeString, 5,
+			aggfuncs.DefPartialResult4MaxMinStringSize, maxMinUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeJSON, 5,
+			aggfuncs.DefPartialResult4MaxMinJSONSize, maxMinUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncMin, mysql.TypeEnum, 5,
-			aggfuncs.DefPartialResult4MaxMinEnumSize, defaultUpdateMemDeltaGens, false),
+			aggfuncs.DefPartialResult4MaxMinEnumSize, maxMinUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncMin, mysql.TypeSet, 5,
-			aggfuncs.DefPartialResult4MaxMinSetSize, defaultUpdateMemDeltaGens, false),
+			aggfuncs.DefPartialResult4MaxMinSetSize, maxMinUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {
 		s.testAggMemFunc(c, test)
