@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -51,7 +52,7 @@ func (d *ddl) restartWorkers(ctx context.Context) {
 }
 
 // runInterruptedJob should be called concurrently with restartWorkers
-func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan struct{}) {
+func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan error) {
 	ctx := mock.NewContext()
 	ctx.Store = d.store
 
@@ -60,19 +61,25 @@ func runInterruptedJob(c *C, d *ddl, job *model.Job, doneCh chan struct{}) {
 		err     error
 	)
 
-	_ = d.doDDLJob(ctx, job)
-
-	for history == nil {
-		history, err = d.getHistoryDDLJob(job.ID)
-		c.Assert(err, IsNil)
+	err = d.doDDLJob(ctx, job)
+	if errors.Is(err, context.Canceled) {
+		// if error is context.Canceled, we check if job has been finished. report error if found finished,
+		// otherwise just let it pass
 		time.Sleep(10 * testLease)
+		history, _ = d.getHistoryDDLJob(job.ID)
+		// imitate doDDLJob's logic
+		if history != nil {
+			err = history.Error
+		} else {
+			err = nil
+		}
 	}
-	c.Assert(history.Error, IsNil)
-	doneCh <- struct{}{}
+
+	doneCh <- err
 }
 
 func testRunInterruptedJob(c *C, d *ddl, job *model.Job) {
-	done := make(chan struct{}, 1)
+	done := make(chan error, 1)
 	go runInterruptedJob(c, d, job, done)
 
 	ticker := time.NewTicker(d.lease * 1)
@@ -84,7 +91,8 @@ LOOP:
 			d.Stop()
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
-		case <-done:
+		case err := <-done:
+			c.Assert(err, IsNil)
 			break LOOP
 		}
 	}
@@ -150,7 +158,7 @@ func (s *testStatSuite) TestStat(c *C) {
 		Args:       []interface{}{dbInfo.Name},
 	}
 
-	done := make(chan struct{}, 1)
+	done := make(chan error, 1)
 	go runInterruptedJob(c, d, job, done)
 
 	ticker := time.NewTicker(d.lease * 1)
@@ -164,10 +172,10 @@ LOOP:
 			c.Assert(s.getDDLSchemaVer(c, d), GreaterEqual, ver)
 			d.restartWorkers(context.Background())
 			time.Sleep(time.Millisecond * 20)
-		case <-done:
+		case err := <-done:
 			// TODO: Get this information from etcd.
 			// m, err := d.Stats(nil)
-			// c.Assert(err, IsNil)
+			c.Assert(err, IsNil)
 			break LOOP
 		}
 	}
