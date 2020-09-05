@@ -96,8 +96,8 @@ func (s *testSuite) testWindowAggMemFunc(c *C, p windowMemTest) {
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		memDelta, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
-		c.Assert(memDelta, Equals, updateMemDeltas[i])
 		c.Assert(err, IsNil)
+		c.Assert(memDelta, Equals, updateMemDeltas[i])
 	}
 }
 
