@@ -572,7 +572,8 @@ func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
-	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: buildValueEvaluator(aggFuncDesc.RetTp)}
+	ve, _ := buildValueEvaluator(aggFuncDesc.RetTp)
+	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: ve}
 }
 
 func buildLead(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
