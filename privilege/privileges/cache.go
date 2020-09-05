@@ -1023,7 +1023,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	}
 	var g string
 	for _, record := range p.User {
-		if user == record.User && host == record.Host {
+		if record.fullyMatch(user, host) {
 			hasGlobalGrant = true
 			if (record.Privileges & mysql.GrantPriv) > 0 {
 				hasGrantOptionPriv = true
