@@ -14,13 +14,14 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"unsafe"
 )
 
 const (
