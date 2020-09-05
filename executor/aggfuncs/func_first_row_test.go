@@ -60,17 +60,17 @@ func (s *testSuite) TestMemFirstRow(c *C) {
 		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4FirstRowDecimalSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeString, 5,
-			aggfuncs.DefPartialResult4FirstRowStringSize, FirstRowUpdateMemDeltaGens, false),
+			aggfuncs.DefPartialResult4FirstRowStringSize, firstRowUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeDate, 5,
 			aggfuncs.DefPartialResult4FirstRowTimeSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeDuration, 5,
 			aggfuncs.DefPartialResult4FirstRowDurationSize, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeJSON, 5,
-			aggfuncs.DefPartialResult4FirstRowJSONSize, FirstRowUpdateMemDeltaGens, false),
+			aggfuncs.DefPartialResult4FirstRowJSONSize, firstRowUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeEnum, 5,
-			aggfuncs.DefPartialResult4FirstRowEnumSize, defaultUpdateMemDeltaGens, false),
+			aggfuncs.DefPartialResult4FirstRowEnumSize, firstRowUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncFirstRow, mysql.TypeSet, 5,
-			aggfuncs.DefPartialResult4FirstRowSetSize, defaultUpdateMemDeltaGens, false),
+			aggfuncs.DefPartialResult4FirstRowSetSize, firstRowUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {
 		s.testAggMemFunc(c, test)

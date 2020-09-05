@@ -143,7 +143,7 @@ func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (
 	return memDeltas, nil
 }
 
-func FirstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+func firstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
 		if i > 0 {
@@ -152,12 +152,19 @@ func FirstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 		}
 		switch dataType.Tp {
 		case mysql.TypeString:
-			memDeltas = append(memDeltas, aggfuncs.DefStringSize)
+			val := row.GetString(0)
+			memDeltas = append(memDeltas, int64(len(val)))
 		case mysql.TypeJSON:
 			json := row.GetJSON(0)
 			bytes := make([]byte, 0)
 			bytes = append(bytes, json.Value...)
 			memDeltas = append(memDeltas, int64(len(string(bytes))))
+		case mysql.TypeEnum:
+			enum := row.GetEnum(0)
+			memDeltas = append(memDeltas, int64(len(enum.Name)))
+		case mysql.TypeSet:
+			typeSet := row.GetSet(0)
+			memDeltas = append(memDeltas, int64(len(typeSet.Name)))
 		}
 	}
 	return memDeltas, nil
