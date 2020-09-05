@@ -545,6 +545,5 @@ func (s *testFailDBSuite) TestIssuePanicHand(c *C) {
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a int) partition by range(a) (partition p0 values less than (10));`)
-	_, err := tk.Exec(`alter table t add partition (partition p1 values less than (a));`)
-	c.Assert(err, NotNil)
+	c.Assert(func() { _, _ = tk.Exec(`alter table t add partition (partition p1 values less than (a));`) }, PanicMatches, ".*")
 }
