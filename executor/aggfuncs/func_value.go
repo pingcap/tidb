@@ -25,17 +25,28 @@ import (
 )
 
 const (
+	// DefPartialResult4FirstValueSize is the size of partialResult4FirstValue
 	DefPartialResult4FirstValueSize = int64(unsafe.Sizeof(partialResult4FirstValue{}))
+	// DefPartialResult4LastValueSize is the size of partialResult4LastValue
 	DefPartialResult4LastValueSize  = int64(unsafe.Sizeof(partialResult4LastValue{}))
+	// DefPartialResult4NthValueSize is the size of partialResult4NthValue
 	DefPartialResult4NthValueSize   = int64(unsafe.Sizeof(partialResult4NthValue{}))
 
+	// DefValue4IntSize is the size of value4Int
 	DefValue4IntSize      = int64(unsafe.Sizeof(value4Int{}))
+	// DefValue4Float32Size is the size of value4Float32
 	DefValue4Float32Size  = int64(unsafe.Sizeof(value4Float32{}))
+	// DefValue4Float64Size is the size of value4Float64
 	DefValue4Float64Size  = int64(unsafe.Sizeof(value4Float64{}))
+	// DefValue4DecimalSize is the size of value4Decimal
 	DefValue4DecimalSize  = int64(unsafe.Sizeof(value4Decimal{}))
+	// DefValue4TimeSize is the size of value4Time
 	DefValue4TimeSize     = int64(unsafe.Sizeof(value4Time{}))
+	// DefValue4DurationSize is the size of value4Duration
 	DefValue4DurationSize = int64(unsafe.Sizeof(value4Duration{}))
+	// DefValue4StringSize is the size of value4String
 	DefValue4StringSize   = int64(unsafe.Sizeof(value4String{}))
+	// DefValue4JSONSize is the size of value4JSON
 	DefValue4JSONSize     = int64(unsafe.Sizeof(value4JSON{}))
 )
 
