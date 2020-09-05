@@ -202,10 +202,9 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		}
 		joinedVal := string(p.encodeBytesBuffer)
 		if p.needSync {
-			if p.syncSet.Exist(joinedVal) {
+			if p.syncSet.InsertIfNotExist(joinedVal) {
 				continue
 			}
-			p.syncSet.Insert(joinedVal)
 		} else {
 			if p.valSet.Exist(joinedVal) {
 				continue

@@ -167,10 +167,9 @@ func (e *varPop4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, ro
 			continue
 		}
 		if p.needSync {
-			if p.syncSet.Exist(input) {
+			if p.syncSet.InsertIfNotExist(input) {
 				continue
 			}
-			p.syncSet.Insert(input)
 		} else {
 			if p.valSet.Exist(input) {
 				continue

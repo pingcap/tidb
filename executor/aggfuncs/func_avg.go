@@ -248,10 +248,9 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		}
 		decStr := string(hack.String(hash))
 		if p.needSync {
-			if p.syncSet.Exist(decStr) {
+			if p.syncSet.InsertIfNotExist(decStr) {
 				continue
 			}
-			p.syncSet.Insert(decStr)
 		} else {
 			if p.valSet.Exist(decStr) {
 				continue
@@ -511,10 +510,9 @@ func (e *avgOriginal4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Contex
 			continue
 		}
 		if p.needSync {
-			if p.syncSet.Exist(input) {
+			if p.syncSet.InsertIfNotExist(input) {
 				continue
 			}
-			p.syncSet.Insert(input)
 		} else {
 			if p.valSet.Exist(input) {
 				continue

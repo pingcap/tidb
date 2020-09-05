@@ -292,10 +292,9 @@ func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 		if p.needSync {
-			if p.syncSet.Exist(input) {
+			if p.syncSet.InsertIfNotExist(input) {
 				continue
 			}
-			p.syncSet.Insert(input)
 		} else {
 			if p.valSet.Exist(input) {
 				continue
@@ -372,10 +371,9 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		}
 		decStr := string(hack.String(hash))
 		if p.needSync {
-			if p.syncSet.Exist(decStr) {
+			if p.syncSet.InsertIfNotExist(decStr) {
 				continue
 			}
-			p.syncSet.Insert(decStr)
 		} else {
 			if p.valSet.Exist(decStr) {
 				continue

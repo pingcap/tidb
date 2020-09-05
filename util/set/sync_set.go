@@ -16,7 +16,7 @@ package set
 import (
 	"sync"
 
-	"github.com/uber-go/atomic"
+	"go.uber.org/atomic"
 )
 
 // SyncSet is a synchronized set
@@ -44,10 +44,14 @@ func (s SyncSet) Exist(val interface{}) bool {
 	return ok
 }
 
-// Insert inserts `val` into `s`.
-func (s SyncSet) Insert(val interface{}) {
-	s.Store(val, struct{}{})
-	s.count.Inc()
+// InsertIfNotExist inserts `val` into `s` if `val` does not exists in `s`.
+// It returns true if `val` already exists.
+func (s SyncSet) InsertIfNotExist(val interface{}) bool {
+	_, ok := s.Map.LoadOrStore(val, struct{}{})
+	if ok {
+		s.count.Inc()
+	}
+	return ok
 }
 
 // Count returns the number in Set s.

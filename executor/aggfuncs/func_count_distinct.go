@@ -96,10 +96,9 @@ func (e *countOriginalWithDistinct4Int) UpdatePartialResult(sctx sessionctx.Cont
 			continue
 		}
 		if p.needSync {
-			if p.syncSet.Exist(input) {
+			if p.syncSet.InsertIfNotExist(input) {
 				continue
 			}
-			p.syncSet.Insert(input)
 		} else {
 			if p.valSet.Exist(input) {
 				continue
@@ -160,10 +159,9 @@ func (e *countOriginalWithDistinct4Real) UpdatePartialResult(sctx sessionctx.Con
 			continue
 		}
 		if p.needSync {
-			if p.syncSet.Exist(input) {
+			if p.syncSet.InsertIfNotExist(input) {
 				continue
 			}
-			p.syncSet.Insert(input)
 		} else {
 			if p.valSet.Exist(input) {
 				continue
@@ -229,10 +227,9 @@ func (e *countOriginalWithDistinct4Decimal) UpdatePartialResult(sctx sessionctx.
 		}
 		decStr := string(hack.String(hash))
 		if p.needSync {
-			if p.syncSet.Exist(decStr) {
+			if p.syncSet.InsertIfNotExist(decStr) {
 				continue
 			}
-			p.syncSet.Insert(decStr)
 		} else {
 			if p.valSet.Exist(decStr) {
 				continue
@@ -294,10 +291,9 @@ func (e *countOriginalWithDistinct4Duration) UpdatePartialResult(sctx sessionctx
 		}
 
 		if p.needSync {
-			if p.syncSet.Exist(int64(input.Duration)) {
+			if p.syncSet.InsertIfNotExist(int64(input.Duration)) {
 				continue
 			}
-			p.syncSet.Insert(int64(input.Duration))
 		} else {
 			if p.valSet.Exist(int64(input.Duration)) {
 				continue
@@ -362,10 +358,9 @@ func (e *countOriginalWithDistinct4String) UpdatePartialResult(sctx sessionctx.C
 		input = stringutil.Copy(input)
 
 		if p.needSync {
-			if p.syncSet.Exist(input) {
+			if p.syncSet.InsertIfNotExist(input) {
 				continue
 			}
-			p.syncSet.Insert(input)
 		} else {
 			if p.valSet.Exist(input) {
 				continue
@@ -441,10 +436,9 @@ func (e *countOriginalWithDistinct) UpdatePartialResult(sctx sessionctx.Context,
 			continue
 		}
 		if p.needSync {
-			if p.syncSet.Exist(encodedString) {
+			if p.syncSet.InsertIfNotExist(encodedString) {
 				continue
 			}
-			p.syncSet.Insert(encodedString)
 		} else {
 			if p.valSet.Exist(encodedString) {
 				continue
