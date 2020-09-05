@@ -1899,8 +1899,16 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 					if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
 						continue
 					}
-					// TODO: Support https in tiflash
-					url := fmt.Sprintf("http://%s", ev.Value)
+					url := fmt.Sprintf("%s://%s", util.InternalHTTPSchema(), ev.Value)
+					req, err := http.NewRequest(http.MethodGet, url, nil)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					_, err = util.InternalHTTPClient().Do(req)
+					if err != nil {
+						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						continue
+					}
 					e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
 						id:  id,
 						url: url,
@@ -1910,6 +1918,8 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 				e.initialized = true
 				return nil
 			}
+			return errors.Errorf("Etcd client not found")
+		} else {
 			return errors.Errorf("Etcd addrs not found")
 		}
 	}
