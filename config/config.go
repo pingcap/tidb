@@ -491,7 +491,8 @@ type TiKVClient struct {
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
 	// EnableAsyncCommit enables async commit for all transactions.
-	EnableAsyncCommit bool `toml:"enable-async-commit" json:"enable-async-commit"`
+	EnableAsyncCommit       bool `toml:"enable-async-commit" json:"enable-async-commit"`
+	AsyncCommitTxnSizeLimit uint `toml:"async-commit-txn-size-limit" json:"async-commit-txn-size-limit"`
 
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
@@ -680,11 +681,12 @@ var defaultConf = Config{
 		Reporter: OpenTracingReporter{},
 	},
 	TiKVClient: TiKVClient{
-		GrpcConnectionCount:  4,
-		GrpcKeepAliveTime:    10,
-		GrpcKeepAliveTimeout: 3,
-		CommitTimeout:        "41s",
-		EnableAsyncCommit:    false,
+		GrpcConnectionCount:     4,
+		GrpcKeepAliveTime:       10,
+		GrpcKeepAliveTimeout:    3,
+		CommitTimeout:           "41s",
+		EnableAsyncCommit:       false,
+		AsyncCommitTxnSizeLimit: 256,
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,

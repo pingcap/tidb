@@ -692,10 +692,10 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 // checkAsyncCommit checks if async commit protocol is available for current transaction commit, true is returned if possible.
 func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 	// TODO the keys limit need more tests, this value makes the unit test pass by now.
-	const asyncCommitKeysLimit = 256
+	// const asyncCommitKeysLimit = 256
 	// Async commit is not compatible with Binlog because of the non unique timestamp issue.
 	if c.connID > 0 && config.GetGlobalConfig().TiKVClient.EnableAsyncCommit &&
-		len(c.mutations.keys) <= asyncCommitKeysLimit && !c.shouldWriteBinlog() {
+		uint(len(c.mutations.keys)) <= config.GetGlobalConfig().TiKVClient.AsyncCommitTxnSizeLimit && !c.shouldWriteBinlog() {
 		return true
 	}
 	return false
