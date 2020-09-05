@@ -81,7 +81,7 @@ func (s *testSuite) testWindowFunc(c *C, p windowTest) {
 	finalFunc.ResetPartialResult(finalPr)
 }
 
-func buildWindowMemTester(funcName string, tp byte,  constantArg uint64, orderByCols int, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens, isDistinct bool) windowMemTest {
+func buildWindowMemTester(funcName string, tp byte, constantArg uint64, orderByCols int, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens, isDistinct bool) windowMemTest {
 	windowTest := buildWindowTester(funcName, tp, constantArg, orderByCols, numRows)
 	pt := windowMemTest{
 		windowTest:         windowTest,
