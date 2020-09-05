@@ -20,6 +20,22 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
+	"unsafe"
+)
+
+const (
+	DefPartialResult4FirstValueSize = int64(unsafe.Sizeof(partialResult4FirstValue{}))
+	DefPartialResult4LastValueSize  = int64(unsafe.Sizeof(partialResult4LastValue{}))
+	DefPartialResult4NthValueSize   = int64(unsafe.Sizeof(partialResult4NthValue{}))
+
+	DefValue4IntSize      = int64(unsafe.Sizeof(value4Int{}))
+	DefValue4Float32Size  = int64(unsafe.Sizeof(value4Float32{}))
+	DefValue4Float64Size  = int64(unsafe.Sizeof(value4Float64{}))
+	DefValue4DecimalSize  = int64(unsafe.Sizeof(value4Decimal{}))
+	DefValue4TimeSize     = int64(unsafe.Sizeof(value4Time{}))
+	DefValue4DurationSize = int64(unsafe.Sizeof(value4Duration{}))
+	DefValue4StringSize   = int64(unsafe.Sizeof(value4String{}))
+	DefValue4JSONSize     = int64(unsafe.Sizeof(value4JSON{}))
 )
 
 // valueEvaluator is used to evaluate values for `first_value`, `last_value`, `nth_value`,
@@ -186,33 +202,33 @@ func (v *value4JSON) appendResult(chk *chunk.Chunk, colIdx int) {
 	}
 }
 
-func buildValueEvaluator(tp *types.FieldType) valueEvaluator {
+func buildValueEvaluator(tp *types.FieldType) (ve valueEvaluator, memDelta int64) {
 	evalType := tp.EvalType()
 	if tp.Tp == mysql.TypeBit {
 		evalType = types.ETString
 	}
 	switch evalType {
 	case types.ETInt:
-		return &value4Int{}
+		return &value4Int{}, DefValue4IntSize
 	case types.ETReal:
 		switch tp.Tp {
 		case mysql.TypeFloat:
-			return &value4Float32{}
+			return &value4Float32{}, DefValue4Float32Size
 		case mysql.TypeDouble:
-			return &value4Float64{}
+			return &value4Float64{}, DefValue4Float64Size
 		}
 	case types.ETDecimal:
-		return &value4Decimal{}
+		return &value4Decimal{}, DefValue4DecimalSize
 	case types.ETDatetime, types.ETTimestamp:
-		return &value4Time{}
+		return &value4Time{}, DefValue4TimeSize
 	case types.ETDuration:
-		return &value4Duration{}
+		return &value4Duration{}, DefValue4DurationSize
 	case types.ETString:
-		return &value4String{}
+		return &value4String{}, DefValue4StringSize
 	case types.ETJson:
-		return &value4JSON{}
+		return &value4JSON{}, DefValue4JSONSize
 	}
-	return nil
+	return nil, 0
 }
 
 type firstValue struct {
@@ -227,7 +243,9 @@ type partialResult4FirstValue struct {
 }
 
 func (v *firstValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(&partialResult4FirstValue{evaluator: buildValueEvaluator(v.tp)}), 0
+	ve, veMemDelta := buildValueEvaluator(v.tp)
+	p := &partialResult4FirstValue{evaluator: ve}
+	return PartialResult(p), DefPartialResult4FirstValueSize + veMemDelta
 }
 
 func (v *firstValue) ResetPartialResult(pr PartialResult) {
@@ -272,7 +290,9 @@ type partialResult4LastValue struct {
 }
 
 func (v *lastValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(&partialResult4LastValue{evaluator: buildValueEvaluator(v.tp)}), 0
+	ve, veMemDelta := buildValueEvaluator(v.tp)
+	p := &partialResult4FirstValue{evaluator: ve}
+	return PartialResult(p), DefPartialResult4LastValueSize + veMemDelta
 }
 
 func (v *lastValue) ResetPartialResult(pr PartialResult) {
@@ -315,7 +335,9 @@ type partialResult4NthValue struct {
 }
 
 func (v *nthValue) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(&partialResult4NthValue{evaluator: buildValueEvaluator(v.tp)}), 0
+	ve, veMemDelta := buildValueEvaluator(v.tp)
+	p := &partialResult4FirstValue{evaluator: ve}
+	return PartialResult(p), DefPartialResult4NthValueSize + veMemDelta
 }
 
 func (v *nthValue) ResetPartialResult(pr PartialResult) {
