@@ -535,7 +535,6 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 	tk.MustExec("drop table t, t1, t2, t3, t4, t5")
 }
 
-
 func (s *testFailDBSuite) TestIssuePanicHand(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
