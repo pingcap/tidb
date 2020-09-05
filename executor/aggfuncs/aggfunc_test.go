@@ -143,6 +143,26 @@ func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (
 	return memDeltas, nil
 }
 
+func FirstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if i > 0 {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		switch dataType.Tp {
+		case mysql.TypeString:
+			memDeltas = append(memDeltas, aggfuncs.DefStringSize)
+		case mysql.TypeJSON:
+			json := row.GetJSON(0)
+			bytes := make([]byte, 0)
+			bytes = append(bytes, json.Value...)
+			memDeltas = append(memDeltas, int64(len(string(bytes))))
+		}
+	}
+	return memDeltas, nil
+}
+
 func approxCountDistinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 

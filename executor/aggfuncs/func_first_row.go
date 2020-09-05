@@ -276,6 +276,7 @@ func (e *firstRow4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGro
 			return memDelta, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, stringutil.Copy(input)
+		memDelta += DefStringSize
 	}
 	return memDelta, nil
 }
@@ -414,6 +415,7 @@ func (e *firstRow4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			return memDelta, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, isNull, input.Copy()
+		memDelta += int64(len(input.Value))
 	}
 	return memDelta, nil
 }
@@ -508,6 +510,7 @@ func (e *firstRow4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			return memDelta, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlEnum().Copy()
+		memDelta += int64(d.Length())
 		break
 	}
 	return memDelta, nil
@@ -555,6 +558,7 @@ func (e *firstRow4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup 
 			return memDelta, err
 		}
 		p.gotFirstRow, p.isNull, p.val = true, d.IsNull(), d.GetMysqlSet().Copy()
+		memDelta += int64(d.Length())
 		break
 	}
 	return memDelta, nil
