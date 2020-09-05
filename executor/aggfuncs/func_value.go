@@ -140,7 +140,7 @@ type value4String struct {
 
 func (v *value4String) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalString(ctx, row)
-	return int64(unsafe.Sizeof(v.val)), err
+	return int64(len(v.val)), err
 }
 
 func (v *value4String) appendResult(chk *chunk.Chunk, colIdx int) {
