@@ -1910,8 +1910,6 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 				e.initialized = true
 				return nil
 			}
-			return errors.Errorf("Etcd client not found")
-
 			return errors.Errorf("Etcd addrs not found")
 		}
 	}
