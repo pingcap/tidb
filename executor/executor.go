@@ -1392,10 +1392,10 @@ type UnionExec struct {
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
 
-	concurrency     int
-	childrenResults []*chunk.Chunk
-	wg              sync.WaitGroup
-	initialized     bool
+	concurrency   int
+	workerResults []*chunk.Chunk
+	wg            sync.WaitGroup
+	initialized   bool
 }
 
 // unionWorkerResult stores the result for a union worker.
@@ -1418,9 +1418,6 @@ func (e *UnionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	for _, child := range e.children {
-		e.childrenResults = append(e.childrenResults, newFirstChunk(child))
-	}
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
@@ -1428,17 +1425,23 @@ func (e *UnionExec) Open(ctx context.Context) error {
 }
 
 func (e *UnionExec) initialize(ctx context.Context) {
+	if e.concurrency > len(e.children) {
+		e.concurrency = len(e.children)
+	}
+	for i := 0; i < e.concurrency; i++ {
+		e.workerResults = append(e.workerResults, newFirstChunk(e.children[0]))
+	}
 	e.resultPool = make(chan *unionWorkerResult, len(e.children))
 	e.resourcePools = make([]chan *chunk.Chunk, len(e.children))
 	childChan := make(chan int, len(e.children))
-	for i := 0; i < len(e.children); i++ {
-		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
-		e.resourcePools[i] <- e.childrenResults[i]
-		childChan <- i
-	}
 	for i := 0; i < e.concurrency; i++ {
+		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
+		e.resourcePools[i] <- e.workerResults[i]
 		e.wg.Add(1)
 		go e.resultPuller(ctx, i, childChan)
+	}
+	for i := 0; i < len(e.children); i++ {
+		childChan <- i
 	}
 	close(childChan)
 	go e.waitAllFinished()
@@ -1462,7 +1465,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerId int, childIDChan 
 		result = &unionWorkerResult{
 			err: nil,
 			chk: nil,
-			src: e.resourcePools[childID],
+			src: e.resourcePools[workerId],
 		}
 		for {
 			if e.stopFetchData.Load().(bool) {
@@ -1471,7 +1474,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerId int, childIDChan 
 			select {
 			case <-e.finished:
 				return
-			case result.chk = <-e.resourcePools[childID]:
+			case result.chk = <-e.resourcePools[workerId]:
 			}
 			result.err = Next(ctx, e.children[childID], result.chk)
 			if result.err == nil && result.chk.NumRows() == 0 {
@@ -1511,7 +1514,7 @@ func (e *UnionExec) Close() error {
 	if e.finished != nil {
 		close(e.finished)
 	}
-	e.childrenResults = nil
+	e.workerResults = nil
 	if e.resultPool != nil {
 		for range e.resultPool {
 		}
