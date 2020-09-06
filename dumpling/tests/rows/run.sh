@@ -16,10 +16,10 @@ run_sql "drop database if exists \`$DB_NAME\`;"
 
 # build data on mysql
 run_sql "create database $DB_NAME;"
-run_sql "create table $DB_NAME.$TABLE_NAME (id int not null auto_increment primary key, a varchar(8));"
+run_sql "create table $DB_NAME.$TABLE_NAME (id int not null auto_increment primary key, a varchar(24));"
 
 # insert 100 records
-run_sql "insert into $DB_NAME.$TABLE_NAME (a) values $(seq -s, 100 | sed 's/,*$//g' | sed "s/[0-9]*/('1111_')/g");"
+run_sql_file "$cur/data/rows.t.0.sql"
 
 # dumping
 export DUMPLING_TEST_DATABASE=$DB_NAME
