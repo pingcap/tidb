@@ -83,7 +83,7 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle) *
 }
 
 // SetPartitionsAndHandles sets "KeyRanges" for "kv.Request" by converting ParitionHandles to KeyRanges.
-// handles in slice must be *kv.PartitionHandle.
+// handles in slice must be kv.PartitionHandle.
 func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle) *RequestBuilder {
 	builder.Request.KeyRanges = PartitionHandlesToKVRanges(handles)
 	return builder
@@ -307,12 +307,12 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) []kv.KeyRange {
 }
 
 // PartitionHandlesToKVRanges convert ParitionHandles to kv ranges.
-// Handle in slices must be *kv.PartitionHandle
+// Handle in slices must be kv.PartitionHandle
 func PartitionHandlesToKVRanges(handles []kv.Handle) []kv.KeyRange {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	i := 0
 	for i < len(handles) {
-		ph := handles[i].(*kv.PartitionHandle)
+		ph := handles[i].(kv.PartitionHandle)
 		h := ph.Handle
 		pid := ph.PartitionID
 		if commonHandle, ok := h.(*kv.CommonHandle); ok {
@@ -329,7 +329,7 @@ func PartitionHandlesToKVRanges(handles []kv.Handle) []kv.KeyRange {
 			if handles[j].IntValue() != handles[j-1].IntValue()+1 {
 				break
 			}
-			if handles[j].(*kv.PartitionHandle).PartitionID != pid {
+			if handles[j].(kv.PartitionHandle).PartitionID != pid {
 				break
 			}
 		}

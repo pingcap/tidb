@@ -450,6 +450,9 @@ func (e *IndexLookUpExecutor) getRetTpsByHandle() []*types.FieldType {
 	} else {
 		tps = []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	}
+	if e.index.Global {
+		tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+	}
 	if e.checkIndexValue != nil {
 		tps = e.idxColTps
 	}

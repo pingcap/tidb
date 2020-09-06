@@ -439,9 +439,9 @@ type PartitionHandle struct {
 }
 
 // NewPartitionHandle creates a PartitionHandle from a normal handle and a pid.
-func NewPartitionHandle(pid int64, h Handle) *PartitionHandle {
-	return &PartitionHandle{
-		Handle: h,
+func NewPartitionHandle(pid int64, h Handle) PartitionHandle {
+	return PartitionHandle{
+		Handle:      h,
 		PartitionID: pid,
 	}
 }
