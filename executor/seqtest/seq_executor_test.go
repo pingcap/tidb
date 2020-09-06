@@ -1422,6 +1422,53 @@ func (s *seqTestSuite) TestOOMPanicInHashJoinWhenFetchBuildRows(c *C) {
 	c.Assert(err.Error(), Equals, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn_id=1]")
 }
 
+func (s *seqTestSuite) TestIssue18744(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t, t1;`)
+	tk.MustExec(`CREATE TABLE t (
+  id int(11) NOT NULL,
+  a bigint(20) DEFAULT NULL,
+  b char(20) DEFAULT NULL,
+  c datetime DEFAULT NULL,
+  d double DEFAULT NULL,
+  e json DEFAULT NULL,
+  f decimal(40,6) DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY a (a),
+  KEY b (b),
+  KEY c (c),
+  KEY d (d),
+  KEY f (f)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`CREATE TABLE t1 (
+  id int(11) NOT NULL,
+  a bigint(20) DEFAULT NULL,
+  b char(20) DEFAULT NULL,
+  c datetime DEFAULT NULL,
+  d double DEFAULT NULL,
+  e json DEFAULT NULL,
+  f decimal(40,6) DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY a (a),
+  KEY b (b),
+  KEY c (c),
+  KEY d (d),
+  KEY f (f)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`insert into t1(id) values(0),(1),(2);`)
+	tk.MustExec(`insert into t values(0, 2010,  "2010-01-01 01:01:00" , "2010-01-01 01:01:00" , 2010 , 2010 , 2010.000000);`)
+	tk.MustExec(`insert into t values(1 , NULL , NULL                , NULL                , NULL , NULL ,        NULL);`)
+	tk.MustExec(`insert into t values(2 , 2012 , "2012-01-01 01:01:00" , "2012-01-01 01:01:00" , 2012 , 2012 , 2012.000000);`)
+	tk.MustExec(`set tidb_index_lookup_join_concurrency=1`)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr"), IsNil)
+	}()
+	err := tk.QueryToErr(`select /*+ inl_hash_join(t2) */ t1.id, t2.id from t1 join t t2 on t1.a = t2.a order by t1.a ASC limit 1;`)
+	c.Assert(err.Error(), Equals, "mockIndexHashJoinOuterWorkerErr")
+}
+
 func (s *seqTestSuite) TestIssue19410(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
