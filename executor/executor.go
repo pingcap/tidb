@@ -1415,9 +1415,7 @@ func (e *UnionExec) waitAllFinished() {
 
 // Open implements the Executor Open interface.
 func (e *UnionExec) Open(ctx context.Context) error {
-	if err := e.baseExecutor.Open(ctx); err != nil {
-		return err
-	}
+	// Open children executor when starting pulling result.
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
@@ -1466,6 +1464,12 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerId int, childIDChan 
 			err: nil,
 			chk: nil,
 			src: e.resourcePools[workerId],
+		}
+		result.err = e.children[childID].Open(ctx)
+		if result.err != nil {
+			e.resultPool <- result
+			e.stopFetchData.Store(true)
+			return
 		}
 		for {
 			if e.stopFetchData.Load().(bool) {
