@@ -344,12 +344,13 @@ LOOP:
 		}
 
 		td := &tableData{
-			database:      dbName,
-			table:         tableName,
-			query:         query,
-			chunkIndex:    chunkIndex,
-			colTypes:      colTypes,
-			selectedField: selectedField,
+			database:        dbName,
+			table:           tableName,
+			query:           query,
+			chunkIndex:      chunkIndex,
+			colTypes:        colTypes,
+			selectedField:   selectedField,
+			escapeBackslash: conf.EscapeBackslash,
 			specCmts: []string{
 				"/*!40101 SET NAMES binary*/;",
 			},
