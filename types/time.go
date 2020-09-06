@@ -131,8 +131,8 @@ var (
 )
 
 var (
-	// MinDatetime is the minimum for mysql datetime type.
-	MinDatetime = FromDate(1000, 1, 1, 0, 0, 0, 0)
+	// MinDatetime is the minimum for Golang Time type.
+	MinDatetime = FromDate(1, 1, 1, 0, 0, 0, 0)
 	// MaxDatetime is the maximum for mysql datetime type.
 	MaxDatetime = FromDate(9999, 12, 31, 23, 59, 59, 999999)
 

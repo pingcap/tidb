@@ -1686,6 +1686,9 @@ func (s *testTimeSuite) TestTimeOverflow(c *C) {
 		{"2018.01.01", false},
 		{"2018.01.01 00:00:00", false},
 		{"2018/01/01-00:00:00", false},
+		{"0999-12-31 22:00:00", false},
+		{"0001-01-01 00:00:00", false},
+		{"0001-01-01 23:59:59", false},
 	}
 
 	for _, test := range table {
