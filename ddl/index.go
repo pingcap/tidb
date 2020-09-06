@@ -1742,7 +1742,6 @@ type dropIndexWorker struct {
 }
 
 func newDropIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column) (*dropIndexWorker, error) {
-	//index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, decodeColMap)
 	for _, index := range t.Indices() {
@@ -1791,6 +1790,9 @@ func (w *dropIndexWorker) cleanupIndexInTxn(handleRange reorgIndexTask) (taskCtx
 		n := len(w.indexes)
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++
+			// we fetch records row by row, so records will belong to
+			// index[0], index[1] ... index[n-1], index[0], index[1] ...
+			// respectively. So indexes[i%n] is the index of idxRecords[i].
 			err := w.indexes[i%n].Delete(w.sessCtx.GetSessionVars().StmtCtx, txn, idxRecord.vals, idxRecord.handle)
 			if err != nil {
 				return errors.Trace(err)
@@ -1962,7 +1964,7 @@ func (w *worker) cleanupGlobalIndexes(tbl table.PartitionedTable, partitionIDs [
 		if err != nil {
 			break
 		}
-		finish, err = w.updateReorgInfofromPartitions(tbl, reorgInfo, partitionIDs)
+		finish, err = w.updateReorgInfoForPartitions(tbl, reorgInfo, partitionIDs)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1971,10 +1973,10 @@ func (w *worker) cleanupGlobalIndexes(tbl table.PartitionedTable, partitionIDs [
 	return errors.Trace(err)
 }
 
-// updateReorgInfoFromPartitions will find the next partition in partitionIDs according to current reorgInfo.
+// updateReorgInfoForPartitions will find the next partition in partitionIDs according to current reorgInfo.
 // If no more partitions, or table t is not a partitioned table, returns true to
 // indicate that the reorganize work is finished.
-func (w *worker) updateReorgInfofromPartitions(t table.PartitionedTable, reorg *reorgInfo, partitionIDs []int64) (bool, error) {
+func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *reorgInfo, partitionIDs []int64) (bool, error) {
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
 		return true, nil
