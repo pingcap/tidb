@@ -252,6 +252,22 @@ func buildAggMemTester(funcName string, tp byte, numRows int, allocMemDelta int6
 	return pt
 }
 
+type multiArgsAggMemTest struct {
+	multiArgsAggTest   multiArgsAggTest
+	allocMemDelta      int64
+	updateMemDeltaGens updateMemDeltaGens
+}
+
+func buildMultiArgsAggMemTester(funcName string, tps []byte, rt byte, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens, results ...interface{}) multiArgsAggMemTest {
+	multiArgsAggTest := buildMultiArgsAggTester(funcName, tps, rt, numRows, results...)
+	pt := multiArgsAggMemTest{
+		multiArgsAggTest:   multiArgsAggTest,
+		allocMemDelta:      allocMemDelta,
+		updateMemDeltaGens: updateMemDeltaGens,
+	}
+	return pt
+}
+
 func (s *testSuite) testMergePartialResult(c *C, p aggTest) {
 	srcChk := p.genSrcChk()
 	iter := chunk.NewIterator4Chunk(srcChk)
@@ -669,6 +685,64 @@ func (s *testSuite) testMultiArgsAggFunc(c *C, p multiArgsAggTest) {
 	result, err = dt.CompareDatum(s.ctx.GetSessionVars().StmtCtx, &p.results[0])
 	c.Assert(err, IsNil)
 	c.Assert(result, Equals, 0)
+}
+
+func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
+	srcChk := p.multiArgsAggTest.genSrcChk()
+
+	args := make([]expression.Expression, len(p.multiArgsAggTest.dataTypes))
+	for k := 0; k < len(p.multiArgsAggTest.dataTypes); k++ {
+		args[k] = &expression.Column{RetType: p.multiArgsAggTest.dataTypes[k], Index: k}
+	}
+	if p.multiArgsAggTest.funcName == ast.AggFuncGroupConcat {
+		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
+	}
+
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.multiArgsAggTest.funcName, args, false)
+	c.Assert(err, IsNil)
+	if p.multiArgsAggTest.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc := aggfuncs.Build(s.ctx, desc, 0)
+	finalPr, memDelta := finalFunc.AllocPartialResult()
+	c.Assert(memDelta, Equals, p.allocMemDelta)
+
+	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
+	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.multiArgsAggTest.retType)
+	c.Assert(err, IsNil)
+	iter := chunk.NewIterator4Chunk(srcChk)
+	i := 0
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		memDelta,_ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(memDelta, Equals, updateMemDeltas[i])
+		i++
+	}
+
+	// test the agg func with distinct
+	desc, err = aggregation.NewAggFuncDesc(s.ctx, p.multiArgsAggTest.funcName, args, true)
+	c.Assert(err, IsNil)
+	if p.multiArgsAggTest.orderBy {
+		desc.OrderByItems = []*util.ByItems{
+			{Expr: args[0], Desc: true},
+		}
+	}
+	finalFunc = aggfuncs.Build(s.ctx, desc, 0)
+	finalPr, memDelta = finalFunc.AllocPartialResult()
+	c.Assert(memDelta, Equals, p.allocMemDelta)
+
+	resultChk.Reset()
+	srcChk = p.multiArgsAggTest.genSrcChk()
+	updateMemDeltas, err = p.updateMemDeltaGens(srcChk, p.multiArgsAggTest.retType)
+	c.Assert(err, IsNil)
+	iter = chunk.NewIterator4Chunk(srcChk)
+	i = 0
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(memDelta, Equals, updateMemDeltas[i])
+		i++
+	}
 }
 
 func (s *testSuite) benchmarkAggFunc(b *testing.B, p aggTest) {

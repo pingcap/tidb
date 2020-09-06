@@ -17,6 +17,8 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -100,5 +102,42 @@ func (s *testSuite) TestJsonObjectagg(c *C) {
 
 	for _, test := range tests {
 		s.testMultiArgsAggFunc(c, test)
+	}
+}
+
+func (s *testSuite) TestMemJsonObjectagg(c *C) {
+	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
+	var argCombines [][]byte
+	for i := 0; i < len(typeList); i++ {
+		for j := 0; j < len(typeList); j++ {
+			argTypes := []byte{typeList[i], typeList[j]}
+			argCombines = append(argCombines, argTypes)
+		}
+	}
+
+	var tests []multiArgsAggMemTest
+	numRows := 5
+
+	for k := 0; k < len(argCombines); k++ {
+		entries := make(map[string]interface{})
+
+		argTypes := argCombines[k]
+		fGenFunc := getDataGenFunc(types.NewFieldType(argTypes[0]))
+		sGenFunc := getDataGenFunc(types.NewFieldType(argTypes[1]))
+
+		for m := 0; m < numRows; m++ {
+			firstArg := fGenFunc(m)
+			secondArg := sGenFunc(m)
+			keyString, _ := firstArg.ToString()
+			entries[keyString] = secondArg.GetValue()
+		}
+
+		aggTest := buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg, defaultUpdateMemDeltaGens, nil, json.CreateBinary(entries))
+
+		tests = append(tests, aggTest)
+	}
+
+	for _, test := range tests {
+		s.testMultiArgsAggMemFunc(c, test)
 	}
 }

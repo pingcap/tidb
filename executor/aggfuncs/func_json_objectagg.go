@@ -14,12 +14,18 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/stringutil"
+)
+
+const (
+	DefPartialResult4JsonObjectAgg = int64(unsafe.Sizeof(partialResult4JsonObjectAgg{}))
 )
 
 type jsonObjectAgg struct {
@@ -33,7 +39,7 @@ type partialResult4JsonObjectAgg struct {
 func (e *jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonObjectAgg{}
 	p.entries = make(map[string]interface{})
-	return PartialResult(&p), 0
+	return PartialResult(&p), DefPartialResult4JsonObjectAgg
 }
 
 func (e *jsonObjectAgg) ResetPartialResult(pr PartialResult) {
@@ -110,7 +116,12 @@ func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src, dst Par
 	// When the result of this function is normalized, values having duplicate keys are discarded,
 	// and only the last value encountered is used with that key in the returned object
 	for k, v := range p1.entries {
+		if _, ok := p2.entries[k]; !ok {
+			memDelta += int64(unsafe.Sizeof(k))
+			memDelta += int64(unsafe.Sizeof(v))
+		}
+
 		p2.entries[k] = v
 	}
-	return 0, nil
+	return memDelta, nil
 }
