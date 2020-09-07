@@ -66,14 +66,16 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 
 	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
 	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
+	idxUsageSyncLease := time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
 			zap.Stringer("ddl lease", ddlLease),
-			zap.Stringer("stats lease", statisticLease))
+			zap.Stringer("stats lease", statisticLease),
+			zap.Stringer("index usage sync lease", idxUsageSyncLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomain(store, ddlLease, statisticLease, factory)
+		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, factory)
 		err1 = d.Init(ddlLease, sysFactory)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
@@ -115,6 +117,9 @@ var (
 
 	// statsLease is the time for reload stats table.
 	statsLease = int64(3 * time.Second)
+
+	// indexUsageSyncLease is the time for index usage synchronization.
+	indexUsageSyncLease = int64(60 * time.Second)
 )
 
 // ResetStoreForWithTiKVTest is only used in the test code.
@@ -148,6 +153,11 @@ func SetSchemaLease(lease time.Duration) {
 // SetStatsLease changes the default stats lease time for loading stats info.
 func SetStatsLease(lease time.Duration) {
 	atomic.StoreInt64(&statsLease, int64(lease))
+}
+
+// SetISetIndexUsageSyncLease changes the default index usage sync lease time for loading info.
+func SetIndexUsageSyncLease(lease time.Duration) {
+	atomic.StoreInt64(&indexUsageSyncLease, int64(lease))
 }
 
 // DisableStats4Test disables the stats for tests.
