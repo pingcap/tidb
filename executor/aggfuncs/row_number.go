@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	// DefPartialResult4RowNumberSize is the size of partialResult4AvgDecimal
+	// DefPartialResult4RowNumberSize is the size of partialResult4RowNumberSize
 	DefPartialResult4RowNumberSize = int64(unsafe.Sizeof(partialResult4RowNumber{}))
 )
 
