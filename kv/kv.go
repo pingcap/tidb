@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -202,6 +201,8 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
+	// GetMemBufferSnapshot is used to return a snapshot of MemBuffer without any statement modify.
+	GetMemBufferSnapshot() MemBuffer
 	// GetSnapshot returns the Snapshot binding to this transaction.
 	GetSnapshot() Snapshot
 	// SetVars sets variables to the transaction.
@@ -339,8 +340,6 @@ type ResultSubset interface {
 	GetData() []byte
 	// GetStartKey gets the start key.
 	GetStartKey() Key
-	// GetExecDetails gets the detail information.
-	GetExecDetails() *execdetails.ExecDetails
 	// MemSize returns how many bytes of memory this result use for tracing memory usage.
 	MemSize() int64
 	// RespTime returns the response time for the request.
