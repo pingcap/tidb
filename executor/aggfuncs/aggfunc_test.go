@@ -274,19 +274,17 @@ func noZeroUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 		}
 		switch dataType.Tp {
 		case mysql.TypeString:
-			val := row.GetString(0)
-			memDeltas = append(memDeltas, int64(len(val)))
+			stringT := row.GetString(0)
+			memDeltas = append(memDeltas, int64(len(stringT)))
 		case mysql.TypeJSON:
-			json := row.GetJSON(0)
-			bytes := make([]byte, 0)
-			bytes = append(bytes, json.Value...)
-			memDeltas = append(memDeltas, int64(len(string(bytes))))
+			jsonT := row.GetJSON(0)
+			memDeltas = append(memDeltas, int64(len(jsonT.Value)))
 		case mysql.TypeEnum:
-			enum := row.GetEnum(0)
-			memDeltas = append(memDeltas, int64(len(enum.Name)))
+			enumT := row.GetEnum(0)
+			memDeltas = append(memDeltas, int64(len(enumT.Name)))
 		case mysql.TypeSet:
-			typeSet := row.GetSet(0)
-			memDeltas = append(memDeltas, int64(len(typeSet.Name)))
+			setT := row.GetSet(0)
+			memDeltas = append(memDeltas, int64(len(setT.Name)))
 		}
 >>>>>>> a1270a633... modify maxMin4Enum.UpdatePartialResult and maxMin4Set.UpdatePartialResult function to calculate memory change
 	}
