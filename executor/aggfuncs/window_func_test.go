@@ -81,7 +81,6 @@ func (s *testSuite) testWindowFunc(c *C, p windowTest) {
 	finalFunc.ResetPartialResult(finalPr)
 }
 
-
 func (s *testSuite) testWindowAggMemFunc(c *C, p windowMemTest) {
 	srcChk := p.windowTest.genSrcChk()
 
