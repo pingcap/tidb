@@ -560,7 +560,9 @@ func (c *CMSketch) GetWidthAndDepth() (int32, int32) {
 // CalcDefaultValForAnalyze calculate the default value for Analyze.
 // The value of it is count / NDV in CMSketch. This means count and NDV are not include topN.
 func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
-	if NDV < uint64(len(c.topN)) {
+	// If NDV <= TopN, all values should be in TopN.
+	// So we set c.defaultValue to 0 and return immediately.
+	if NDV <= uint64(len(c.topN)) {
 		c.defaultValue = 0
 		return
 	}
