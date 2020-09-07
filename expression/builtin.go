@@ -86,11 +86,11 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
-func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression) (baseBuiltinFunc, error) {
+func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
-	if err := checkIllegalMixCollation(funcName, args); err != nil {
+	if err := checkIllegalMixCollation(funcName, args, retType); err != nil {
 		return baseBuiltinFunc{}, err
 	}
 	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
@@ -109,18 +109,10 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 }
 
 var (
-	// allowDeriveNoneFunction stores functions which allow two incompatible collations which have the same charset derive to CoercibilityNone
-	allowDeriveNoneFunction = map[string]struct{}{
-		ast.Concat: {}, ast.ConcatWS: {}, ast.Reverse: {}, ast.Replace: {}, ast.InsertFunc: {}, ast.Lower: {},
-		ast.Upper: {}, ast.Left: {}, ast.Right: {}, ast.Substr: {}, ast.SubstringIndex: {}, ast.Trim: {},
-		ast.CurrentUser: {}, ast.Elt: {}, ast.MakeSet: {}, ast.Repeat: {}, ast.Rpad: {}, ast.Lpad: {},
-		ast.ExportSet: {},
-	}
-
 	coerString = []string{"EXPLICIT", "NONE", "IMPLICIT", "SYSCONST", "COERCIBLE", "NUMERIC", "IGNORABLE"}
 )
 
-func checkIllegalMixCollation(funcName string, args []Expression) error {
+func checkIllegalMixCollation(funcName string, args []Expression, evalType types.EvalType) error {
 	if len(args) < 2 {
 		return nil
 	}
@@ -128,10 +120,8 @@ func checkIllegalMixCollation(funcName string, args []Expression) error {
 	if !legal {
 		return illegalMixCollationErr(funcName, args)
 	}
-	if coercibility == CoercibilityNone {
-		if _, ok := allowDeriveNoneFunction[funcName]; !ok {
-			return illegalMixCollationErr(funcName, args)
-		}
+	if coercibility == CoercibilityNone && evalType != types.ETString {
+		return illegalMixCollationErr(funcName, args)
 	}
 	return nil
 }
@@ -179,7 +169,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		}
 	}
 
-	if err = checkIllegalMixCollation(funcName, args); err != nil {
+	if err = checkIllegalMixCollation(funcName, args, retType); err != nil {
 		return
 	}
 
