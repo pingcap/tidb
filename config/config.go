@@ -160,7 +160,7 @@ type Config struct {
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
-	// EnableRedactLog indicates that whether redact log.
+	// EnableRedactLog indicates that whether redact log, 0 is disable. 1 is enable.
 	EnableRedactLog int32 `toml:"enable-redact-log" json:"enable-redact-log"`
 }
 
@@ -983,10 +983,12 @@ var TableLockDelayClean = func() uint64 {
 	return GetGlobalConfig().DelayCleanTableLock
 }
 
+// RedactLogEnabled uses to check whether enabled the log redact.
 func RedactLogEnabled() bool {
 	return atomic.LoadInt32(&GetGlobalConfig().EnableRedactLog) == 1
 }
 
+// SetRedactLog uses to set log redact status.
 func SetRedactLog(enable bool) {
 	value := int32(0)
 	if enable {
