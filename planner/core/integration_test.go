@@ -1551,3 +1551,16 @@ func (s *testIntegrationSuite) TestIssue19926(c *C) {
 	tk.MustExec("create definer='root'@'localhost' view v as\nselect \nconcat(`ta`.`status`,`tb`.`status`) AS `status`, \n`ta`.`id` AS `id`  from (`ta` join `tb`) \nwhere (`ta`.`id` = `tb`.`id`);")
 	tk.MustQuery("SELECT tc.status,v.id FROM tc, v WHERE tc.id = v.id AND v.status = '11';").Check(testkit.Rows("1 1"))
 }
+
+func (s *testIntegrationSuite) TestDeleteUsingJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int primary key, b int)")
+	tk.MustExec("create table t2(a int primary key, b int)")
+	tk.MustExec("insert into t1 values(1,1),(2,2)")
+	tk.MustExec("insert into t2 values(2,2)")
+	tk.MustExec("delete t1.* from t1 join t2 using (a)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("2 2"))
+}

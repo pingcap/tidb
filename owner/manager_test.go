@@ -41,9 +41,9 @@ func TestT(t *testing.T) {
 
 func checkOwner(d DDL, fbVal bool) (isOwner bool) {
 	manager := d.OwnerManager()
-	// The longest to wait for 3 seconds to
+	// The longest to wait for 30 seconds to
 	// make sure that campaigning owners is completed.
-	for i := 0; i < 600; i++ {
+	for i := 0; i < 6000; i++ {
 		time.Sleep(5 * time.Millisecond)
 		isOwner = manager.IsOwner()
 		if isOwner == fbVal {
