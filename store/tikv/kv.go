@@ -259,6 +259,9 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 		}
 		s.etcdAddrs = append(s.etcdAddrs, u.Host)
 	}
+	if len(s.etcdAddrs) == 0 {
+		return nil, errors.New("pd unavailable")
+	}
 	return s.etcdAddrs, nil
 }
 
