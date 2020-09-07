@@ -329,9 +329,9 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 	default:
 		switch fieldType.Tp {
 		case mysql.TypeEnum:
-			aggFunc = &maxMin4Enum{base}
+			return &maxMin4Enum{base}
 		case mysql.TypeSet:
-			aggFunc = &maxMin4Set{base}
+			return &maxMin4Set{base}
 		}
 
 		switch evalType {
@@ -356,7 +356,7 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 		case types.ETDuration:
 			aggFunc = &maxMin4Duration{base}
 		case types.ETJson:
-			aggFunc = &maxMin4JSON{base}
+			return &maxMin4JSON{base}
 		}
 	}
 
