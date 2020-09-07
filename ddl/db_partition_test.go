@@ -1984,17 +1984,20 @@ func backgroundExecOnJobUpdatedExported(c *C, store kv.Storage, ctx sessionctx.C
 	return hook.OnJobUpdatedExported, c3IdxInfo, checkErr
 }
 
+// func (s *testIntegrationSuite5) TestPartitionAddPrimaryKey(c *C) {
+// 	tk := testkit.NewTestKit(c, s.store)
+// 	testPartitionAddIndexOrPK(c, tk, "primary key")
+// }
+//
+// func (s *testIntegrationSuite1) TestPartitionAddIndex(c *C) {
+// 	tk := testkit.NewTestKit(c, s.store)
+// 	testPartitionAddIndexOrPK(c, tk, "index")
+// }
+//
+// func testPartitionAddIndexOrPK(c *C, tk *testkit.TestKit, key string) {
 func (s *testIntegrationSuite5) TestPartitionAddPrimaryKey(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	testPartitionAddIndexOrPK(c, tk, "primary key")
-}
-
-func (s *testIntegrationSuite1) TestPartitionAddIndex(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	testPartitionAddIndexOrPK(c, tk, "index")
-}
-
-func testPartitionAddIndexOrPK(c *C, tk *testkit.TestKit, key string) {
+	key := "primary key"
 	tk.MustExec("use test")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,

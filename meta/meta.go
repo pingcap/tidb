@@ -14,7 +14,6 @@
 package meta
 
 import (
-	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -708,50 +707,41 @@ func (m *Meta) jobIDKey(id int64) []byte {
 	return b
 }
 
-func (m *Meta) reorgJobStartHandle(id int64, element *Element) []byte {
-	// There is no element to make it compatible with the old TiDB versions which doesn't support change column type.
-	if bytes.Equal(m.jobListKey, AddIndexJobListKey) {
-		// There is no "_start" to make it compatible with the older TiDB versions.
-		return m.jobIDKey(id)
-	}
+func (m *Meta) reorgJobCurrentElement(id int64) []byte {
+	b := make([]byte, 0, 12)
+	b = m.jobIDKey(id)
+	b = append(b, "_ele"...)
+	return b
+}
 
+func (m *Meta) reorgJobStartHandle(id int64, element *Element) []byte {
 	b := make([]byte, 0, 16+len(element.TypeKey))
 	b = m.jobIDKey(id)
 	b = append(b, element.TypeKey...)
-	binary.BigEndian.PutUint64(b, uint64(element.ID))
+	eID := make([]byte, 8)
+	binary.BigEndian.PutUint64(eID, uint64(element.ID))
+	b = append(b, eID...)
 	return b
 }
 
 func (m *Meta) reorgJobEndHandle(id int64, element *Element) []byte {
-	// There is no element to make it compatible with the old TiDB versions which doesn't support change column type.
-	if bytes.Equal(m.jobListKey, AddIndexJobListKey) {
-		b := make([]byte, 8, 12)
-		binary.BigEndian.PutUint64(b, uint64(id))
-		b = append(b, "_end"...)
-		return b
-	}
-
 	b := make([]byte, 8, 25)
 	binary.BigEndian.PutUint64(b, uint64(id))
 	b = append(b, element.TypeKey...)
-	binary.BigEndian.PutUint64(b, uint64(element.ID))
+	eID := make([]byte, 8)
+	binary.BigEndian.PutUint64(eID, uint64(element.ID))
+	b = append(b, eID...)
 	b = append(b, "_end"...)
 	return b
 }
 
 func (m *Meta) reorgJobPhysicalTableID(id int64, element *Element) []byte {
-	// There is no element to make it compatible with the old TiDB versions which doesn't support change column type.
-	if bytes.Equal(m.jobListKey, AddIndexJobListKey) {
-		b := make([]byte, 8, 12)
-		binary.BigEndian.PutUint64(b, uint64(id))
-		b = append(b, "_pid"...)
-		return b
-	}
-
 	b := make([]byte, 8, 25)
 	binary.BigEndian.PutUint64(b, uint64(id))
 	b = append(b, element.TypeKey...)
-	binary.BigEndian.PutUint64(b, uint64(element.ID))
+	eID := make([]byte, 8)
+	binary.BigEndian.PutUint64(eID, uint64(element.ID))
+	b = append(b, eID...)
 	b = append(b, "_pid"...)
 	return b
 }
@@ -894,27 +884,77 @@ func (m *Meta) FinishBootstrap(version int64) error {
 	return errors.Trace(err)
 }
 
+// ElementKeyType is a key type of the element.
 type ElementKeyType []byte
 
 var (
 	// ColumnElementKey is the key for column element.
 	ColumnElementKey ElementKeyType = []byte("_col_")
-	// ColumnElementKey is the key for index element.
+	// IndexElementKey is the key for index element.
 	IndexElementKey ElementKeyType = []byte("_idx_")
 )
 
+// Element has the information of the backfill job's type and ID.
 type Element struct {
 	ID      int64
 	TypeKey []byte
 }
 
+// String defines a Stringer function for debugging and pretty printing.
+func (e *Element) String() string {
+	return "ID:" + strconv.FormatInt(e.ID, 10) + "," +
+		"TypeKey:" + string(e.TypeKey)
+}
+
+// EncodeElement encodes an Element into a byte slice.
+// It's exported for testing.
+func (e *Element) EncodeElement() []byte {
+	b := make([]byte, 0, 12)
+	b = append(b, e.TypeKey...)
+	id := make([]byte, 8)
+	binary.BigEndian.PutUint64(id, uint64(e.ID))
+	b = append(b, id...)
+	return b
+}
+
+// DecodeElement decodes values from a byte slice generated with an element.
+// It's exported for testing.
+func DecodeElement(b []byte) (*Element, error) {
+	logutil.BgLogger().Warn(fmt.Sprintf("decode -------------------- %s", b))
+	var tp []byte
+	prefix := b[:5]
+	b = b[5:]
+	switch string(prefix) {
+	case string(IndexElementKey):
+		tp = IndexElementKey
+	case string(ColumnElementKey):
+		tp = ColumnElementKey
+	default:
+		return nil, errors.Errorf("invalid encoded key prefix %s", prefix)
+	}
+
+	id := binary.BigEndian.Uint64(b)
+	return &Element{ID: int64(id), TypeKey: tp}, nil
+}
+
+// UpdateDDLReorgStartHandle saves the job reorganization latest processed element and start handle for later resuming.
 func (m *Meta) UpdateDDLReorgStartHandle(job *model.Job, element *Element, startHandle kv.Handle) error {
+	logutil.BgLogger().Warn(fmt.Sprintf("start reorg ================================================= e:%v, key:%s, [%v:]", element, m.jobListKey, startHandle))
+	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID), element.EncodeElement())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	return setReorgJobFieldHandle(m.txn, m.reorgJobStartHandle(job.ID, element), startHandle)
 }
 
 // UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
 func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startHandle, endHandle kv.Handle, physicalTableID int64, element *Element) error {
-	err := setReorgJobFieldHandle(m.txn, m.reorgJobStartHandle(job.ID, element), startHandle)
+	logutil.BgLogger().Warn(fmt.Sprintf("update reorg ================================================= e:%v, key:%s, [%v:%v], id:%v", element, m.jobListKey, startHandle, endHandle, physicalTableID))
+	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID), element.EncodeElement())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = setReorgJobFieldHandle(m.txn, m.reorgJobStartHandle(job.ID, element), startHandle)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -942,7 +982,12 @@ func setReorgJobFieldHandle(t *structure.TxStructure, reorgJobField []byte, hand
 // RemoveDDLReorgHandle removes the job reorganization related handles.
 func (m *Meta) RemoveDDLReorgHandle(job *model.Job, elements []*Element) error {
 	for _, element := range elements {
-		err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID, element))
+		logutil.BgLogger().Warn(fmt.Sprintf("remove reorg ================================================= e:%v, key:%s", element, m.jobListKey))
+		err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID, element))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -957,14 +1002,26 @@ func (m *Meta) RemoveDDLReorgHandle(job *model.Job, elements []*Element) error {
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
-func (m *Meta) GetDDLReorgHandle(job *model.Job, element *Element, isCommonHandle bool) (startHandle, endHandle kv.Handle, physicalTableID int64, err error) {
+func (m *Meta) GetDDLReorgHandle(job *model.Job, isCommonHandle bool) (element *Element, startHandle, endHandle kv.Handle, physicalTableID int64, err error) {
+	elementBytes, err := m.txn.HGet(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))
+	if err != nil {
+		return nil, nil, nil, 0, errors.Trace(err)
+	}
+	if elementBytes == nil {
+		return nil, nil, nil, 0, errors.New("element doesn't exist")
+	}
+	element, err = DecodeElement(elementBytes)
+	if err != nil {
+		return nil, nil, nil, 0, errors.Trace(err)
+	}
+
 	startHandle, err = getReorgJobFieldHandle(m.txn, m.reorgJobStartHandle(job.ID, element), isCommonHandle)
 	if err != nil {
-		return nil, nil, 0, errors.Trace(err)
+		return nil, nil, nil, 0, errors.Trace(err)
 	}
 	endHandle, err = getReorgJobFieldHandle(m.txn, m.reorgJobEndHandle(job.ID, element), isCommonHandle)
 	if err != nil {
-		return nil, nil, 0, errors.Trace(err)
+		return nil, nil, nil, 0, errors.Trace(err)
 	}
 
 	physicalTableID, err = m.txn.HGetInt64(mDDLJobReorgKey, m.reorgJobPhysicalTableID(job.ID, element))
@@ -972,6 +1029,8 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job, element *Element, isCommonHandl
 		err = errors.Trace(err)
 		return
 	}
+	logutil.BgLogger().Warn(fmt.Sprintf("get reorg ================================================= e:%v, key:%s, [%v:%v], id:%v", element, m.jobListKey, startHandle, endHandle, physicalTableID))
+
 	// physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
 	// update them to table's in this case.
 	if physicalTableID == 0 {

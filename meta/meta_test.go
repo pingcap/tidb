@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -303,6 +304,24 @@ func (s *testSuite) TestSnapshot(c *C) {
 	c.Assert(err.Error(), Equals, "[structure:8220]write on snapshot")
 }
 
+func (s *testSuite) TestElement(c *C) {
+	checkElement := func(key []byte, resErr error) {
+		e := &meta.Element{ID: 123, TypeKey: key}
+		eBytes := e.EncodeElement()
+		resE, err := meta.DecodeElement(eBytes)
+		if resErr == nil {
+			c.Assert(err, Equals, resErr)
+			c.Assert(e, DeepEquals, resE)
+		} else {
+			c.Assert(err.Error(), Equals, resErr.Error())
+		}
+	}
+	checkElement(meta.IndexElementKey, nil)
+	checkElement(meta.ColumnElementKey, nil)
+	key := []byte("inexistent")
+	checkElement(key, errors.Errorf("invalid encoded key prefix %s", key[:5]))
+}
+
 func (s *testSuite) TestDDL(c *C) {
 	defer testleak.AfterTest(c)()
 	store, err := mockstore.NewMockStore()
@@ -342,42 +361,46 @@ func (s *testSuite) TestDDL(c *C) {
 
 	// Since physical_table_id is uninitialized, we simulate older TiDB version that doesn't store them.
 	// In this case GetDDLReorgHandle always return maxInt64 as end_handle.
-	i, j, k, err := t.GetDDLReorgHandle(job, element, false)
+	e, i, j, k, err := t.GetDDLReorgHandle(job, false)
 	c.Assert(err, IsNil)
+	c.Assert(e, DeepEquals, element)
 	c.Assert(i, HandleEquals, kv.IntHandle(1))
 	c.Assert(j, HandleEquals, kv.IntHandle(math.MaxInt64))
 	c.Assert(k, Equals, int64(0))
 
 	startHandle := s.NewHandle().Int(1).Common("abc", 1222, "string")
 	endHandle := s.NewHandle().Int(2).Common("dddd", 1222, "string")
+	element = &meta.Element{ID: 222, TypeKey: meta.ColumnElementKey}
 	err = t.UpdateDDLReorgHandle(job, startHandle, endHandle, 3, element)
 	c.Assert(err, IsNil)
 
-	i, j, k, err = t.GetDDLReorgHandle(job, element, s.IsCommonHandle)
+	e, i, j, k, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
 	c.Assert(err, IsNil)
+	c.Assert(e, DeepEquals, element)
 	c.Assert(i, HandleEquals, startHandle)
 	c.Assert(j, HandleEquals, endHandle)
 	c.Assert(k, Equals, int64(3))
 
 	err = t.RemoveDDLReorgHandle(job, []*meta.Element{element})
 	c.Assert(err, IsNil)
-	i, j, k, err = t.GetDDLReorgHandle(job, element, false)
-	c.Assert(err, IsNil)
+	e, i, j, k, err = t.GetDDLReorgHandle(job, false)
+	c.Assert(err.Error(), Equals, "element doesn't exist")
+	c.Assert(e, IsNil)
 	c.Assert(i, IsNil)
-	c.Assert(j, HandleEquals, kv.IntHandle(math.MaxInt64))
+	c.Assert(j, IsNil)
 	c.Assert(k, Equals, int64(0))
 
 	// new TiDB binary running on old TiDB DDL reorg data.
-	i, j, k, err = t.GetDDLReorgHandle(job, element, s.IsCommonHandle)
-	c.Assert(err, IsNil)
+	e, i, j, k, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
+	c.Assert(err.Error(), Equals, "element doesn't exist")
+	c.Assert(e, IsNil)
 	c.Assert(i, IsNil)
-	// The default value for endHandle is MaxInt64, not 0.
-	c.Assert(j, HandleEquals, kv.IntHandle(math.MaxInt64))
+	c.Assert(j, IsNil)
 	c.Assert(k, Equals, int64(0))
 
 	// Test GetDDLReorgHandle failed.
-	_, _, _, err = t.GetDDLReorgHandle(job, element, s.IsCommonHandle)
-	c.Assert(err, IsNil)
+	_, _, _, _, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
+	c.Assert(err.Error(), Equals, "element doesn't exist")
 
 	v, err = t.DeQueueDDLJob()
 	c.Assert(err, IsNil)

@@ -89,8 +89,10 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	txn, err = ctx.Txn(true)
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(txn)
+	e := &meta.Element{ID: 333, TypeKey: meta.IndexElementKey}
 	rInfo := &reorgInfo{
-		Job: job,
+		Job:         job,
+		currElement: e,
 	}
 	mockTbl := tables.MockTableFromMeta(&model.TableInfo{IsCommonHandle: s.IsCommonHandle})
 	err = d.generalWorker().runReorgJob(m, rInfo, mockTbl.Meta(), d.lease, f)
@@ -111,9 +113,10 @@ func (s *testDDLSuite) TestReorg(c *C) {
 			c.Assert(err, IsNil)
 
 			m = meta.NewMeta(txn)
-			info, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl)
+			info, err1 := getReorgInfo(d.ddlCtx, m, job, mockTbl, nil)
 			c.Assert(err1, IsNil)
 			c.Assert(info.StartHandle, HandleEquals, handle)
+			c.Assert(info.currElement, DeepEquals, e)
 			_, doneHandle := d.generalWorker().reorgCtx.getRowCountAndHandle()
 			c.Assert(doneHandle, IsNil)
 			break
@@ -129,15 +132,21 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		SnapshotVer: 1, // Make sure it is not zero. So the reorgInfo's first is false.
 	}
 
-	var info *reorgInfo
+	element := &meta.Element{ID: 123, TypeKey: meta.ColumnElementKey}
+	info := &reorgInfo{
+		Job:         job,
+		currElement: element,
+	}
 	startHandle := s.NewHandle().Int(1).Common(100, "string")
 	endHandle := s.NewHandle().Int(0).Common(101, "string")
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
-		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl)
+		_, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
+		c.Assert(err1, NotNil)
+		err1 = info.UpdateReorgMeta(txn, startHandle, endHandle, 1, element)
 		c.Assert(err1, IsNil)
-		err1 = info.UpdateReorgMeta(txn, startHandle, endHandle, 1)
+		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
 		c.Assert(err1, IsNil)
 		return nil
 	})
@@ -146,7 +155,7 @@ func (s *testDDLSuite) TestReorg(c *C) {
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
-		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl)
+		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
 		c.Assert(err1, IsNil)
 		c.Assert(info.StartHandle, HandleEquals, startHandle)
 		c.Assert(info.EndHandle, HandleEquals, endHandle)

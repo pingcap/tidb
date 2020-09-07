@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -83,27 +82,7 @@ func GetDDLInfo(txn kv.Transaction) (*DDLInfo, error) {
 		return info, nil
 	}
 
-	var (
-		unique                  bool
-		global                  bool
-		indexName               model.CIStr
-		indexPartSpecifications []*ast.IndexPartSpecification
-		indexOption             *ast.IndexOption
-		sqlMode                 mysql.SQLMode
-		warnings                []string
-		hiddenCols              []*model.ColumnInfo
-	)
-	if addIdxJob.Type == model.ActionAddPrimaryKey {
-		// Notice: sqlMode and warnings is used to support non-strict mode.
-		err = job.DecodeArgs(&unique, &indexName, &indexPartSpecifications, &indexOption, &sqlMode, &warnings, &global)
-	} else {
-		err = job.DecodeArgs(&unique, &indexName, &indexPartSpecifications, &indexOption, &hiddenCols, &global)
-	}
-	indexInfo := tbl.FindIndexByName(indexName.L)
-	if indexInfo == nil {
-		return info, nil
-	}
-	info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob, &meta.Element{indexInfo.ID, meta.IndexElementKey}, tbl.IsCommonHandle)
+	_, info.ReorgHandle, _, _, err = t.GetDDLReorgHandle(addIdxJob, tbl.IsCommonHandle)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

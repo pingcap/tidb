@@ -14,6 +14,7 @@
 package ddl
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"math/bits"
@@ -822,7 +823,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return ver, errors.Trace(err)
 		}
 
-		reorgInfo, err := getReorgInfo(d, t, job, tbl, buildElements(changingCol, changingIdxs))
+		reorgInfo, err := getReorgInfo(d, t, job, tbl, BuildElements(changingCol, changingIdxs))
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
@@ -841,15 +842,17 @@ func (w *worker) doModifyColumnTypeWithData(
 				// If timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
 			}
-			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) {
+			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) || types.ErrOverflow.Equal(err) {
+				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+					logutil.BgLogger().Warn("[ddl] run modify column job failed, RemoveDDLReorgHandle failed, can't convert job to rollback",
+						zap.String("job", job.String()), zap.Error(err1))
+					return ver, errors.Trace(err)
+				}
 				logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
-				// TODO: Do rollback.
+				// TODO: Do rollback. Remove the following line when the rollback is done.
+				job.State = model.JobStateRollbackDone
 			}
-			if types.ErrOverflow.Equal(err) {
-				// TODO: Do rollback.
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
-			}
+			logutil.BgLogger().Warn("[ddl] xxx run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 			w.reorgCtx.cleanNotifyReorgCancel()
 			return ver, errors.Trace(err)
@@ -892,7 +895,8 @@ func (w *worker) doModifyColumnTypeWithData(
 	return ver, errors.Trace(err)
 }
 
-func buildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
+// BuildElements is exported for testing.
+func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
 	elements := make([]*meta.Element, 0, len(changingIdxs)+1)
 	elements = append(elements, &meta.Element{changingCol.ID, meta.ColumnElementKey})
 	for _, idx := range changingIdxs {
@@ -909,15 +913,32 @@ func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colIn
 // updateColumnAndIndexes handles the modify column reorganization state for a table.
 func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.ColumnInfo, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
 	// TODO: Support partition tables.
-	reorgInfo.currentEle = reorgInfo.elements[0]
-	err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
-	if err != nil {
-		return errors.Trace(err)
+	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
+		logutil.BgLogger().Warn(fmt.Sprintf("************************************************* e:%v, initail s:%v", reorgInfo.currElement, reorgInfo.StartHandle))
+		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
-	for i, idx := range idxes {
-		reorgInfo.currentEle = reorgInfo.elements[i+1]
-		err = w.addTableIndex(t, idx, reorgInfo)
+	startElementOffset := 0
+	// This backfill job starts with backfilling index data, whose index ID is currElement.ID.
+	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
+		for i, idx := range idxes {
+			if reorgInfo.currElement.ID == idx.ID {
+				logutil.BgLogger().Warn(fmt.Sprintf("continue ************************************************ e:%v, initail s:%v", reorgInfo.currElement, reorgInfo.StartHandle))
+				startElementOffset = i
+			}
+		}
+	}
+	for i := startElementOffset; i < len(idxes); i++ {
+		reorgInfo.currElement = reorgInfo.elements[i+1]
+		logutil.BgLogger().Warn(fmt.Sprintf("************************************************ e:%v, initail s:%v", reorgInfo.currElement, reorgInfo.StartHandle))
+		// Write the reorg info to store so the whole reorganize process can recover from panic.
+		err := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
+			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, reorgInfo.StartHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID, reorgInfo.currElement))
+		})
+		err = w.addTableIndex(t, idxes[i], reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}

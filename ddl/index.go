@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -417,6 +418,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	}
 
 	indexInfo := tblInfo.FindIndexByName(indexName.L)
+	logutil.BgLogger().Warn(fmt.Sprintf("xxx ============================== tbl:%v, name:%v, idx:%v", tblInfo, indexName, indexInfo))
 	if indexInfo != nil && indexInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
 		err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
@@ -531,7 +533,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, errors.Trace(err)
 		}
 
-		elements := []*meta.Element{&meta.Element{indexInfo.ID, meta.IndexElementKey}}
+		elements := []*meta.Element{{indexInfo.ID, meta.IndexElementKey}}
 		reorgInfo, err := getReorgInfo(d, t, job, tbl, elements)
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
@@ -544,6 +546,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				func() {
 					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
 				}, false)
+			reorgInfo.currElement = reorgInfo.elements[0]
 			return w.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
 		if err != nil {
@@ -554,6 +557,10 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) {
 				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				ver, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
+				logutil.BgLogger().Warn(fmt.Sprintf("yyy ============================== name:%v, idx:%v", indexName, indexInfo))
+				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+					logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
+				}
 			}
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 			w.reorgCtx.cleanNotifyReorgCancel()
@@ -832,6 +839,11 @@ func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawR
 	if err != nil {
 		return nil, errors.Trace(errCantDecodeRecord.GenWithStackByArgs("index", err))
 	}
+	failpoint.Inject("MockCantDecodeRecordErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(nil, errors.Trace(errCantDecodeRecord.GenWithStackByArgs("index", errors.New("mock can't decode record error"))))
+		}
+	})
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	for j, v := range idxInfo.Columns {
 		col := cols[v.Offset]
@@ -936,7 +948,8 @@ func (w *addIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBack
 		taskDone = true
 	}
 
-	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()), zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
+	logutil.BgLogger().Debug("[ddl] txn fetches handle info", zap.Uint64("txnStartTS", txn.StartTS()),
+		zap.String("taskRange", taskRange.String()), zap.Duration("takeTime", time.Since(startTime)))
 	return w.idxRecords, w.getNextHandle(taskRange, taskDone), taskDone, errors.Trace(err)
 }
 
@@ -1077,7 +1090,6 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 // addTableIndex handles the add index reorganization state for a table.
 func (w *worker) addTableIndex(t table.Table, idx *model.IndexInfo, reorgInfo *reorgInfo) error {
 	var err error
-	reorgInfo.currElement = reorgInfo.elements[0]
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		var finish bool
 		for !finish {

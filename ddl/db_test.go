@@ -28,6 +28,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
@@ -325,6 +327,10 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 
 	d := s.dom.DDL()
 	hook := &ddl.TestDDLCallback{}
+	var currJob *model.Job
+	ctx := mock.NewContext()
+	ctx.Store = s.store
+	times := 0
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly {
 			if checkErr != nil {
@@ -332,12 +338,29 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 			}
 			_, checkErr = tk1.Exec("delete from t1 where c1 = 40;")
 		}
+		if checkErr == nil && job.SchemaState == model.StateWriteReorganization && times == 0 {
+			currJob = job
+			times++
+		}
 	}
 	d.(ddl.DDLForTest).SetHook(hook)
 
 	tk.MustGetErrMsg("alter table t1 add index expr_idx ((pow(c1, c2)));", "[ddl:8202]Cannot decode index value, because [types:1690]DOUBLE value is out of range in 'pow(160, 160)'")
 	c.Assert(checkErr, IsNil)
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("20 20 20", "80 80 80", "160 160 160"))
+
+	// Check whether the reorge information is cleaned up.
+	err := ctx.NewTxn(context.Background())
+	c.Assert(err, IsNil)
+	txn, err := ctx.Txn(true)
+	c.Assert(err, IsNil)
+	m := meta.NewMeta(txn)
+	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob, false)
+	c.Assert(err.Error(), Equals, "element doesn't exist")
+	c.Assert(element, IsNil)
+	c.Assert(start, IsNil)
+	c.Assert(end, IsNil)
+	c.Assert(physicalID, Equals, int64(0))
 }
 
 func batchInsert(tk *testkit.TestKit, tbl string, start, end int) {
@@ -3683,6 +3706,95 @@ func (s *testDBSuite5) TestModifyColumnRollBack(c *C) {
 	s.mustExec(tk, c, "drop table t1")
 }
 
+func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, index idx(c2));")
+
+	sql := "alter table t1 change c2 c2 mediumint;"
+	// defaultBatchSize is equal to ddl.defaultBatchSize
+	base := defaultBatchSize * 8
+	// add some rows
+	batchInsert(tk, "t1", 0, base)
+	// Make sure the count of regions more than backfill workers.
+	tk.MustQuery("split table t1 between (0) and (8192) regions 8;").Check(testkit.Rows("8 1"))
+
+	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+	}()
+
+	tbl := s.testGetTable(c, "t1")
+	originalHook := s.dom.DDL().GetHook()
+	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
+
+	// Check insert null before job first update.
+	hook := &ddl.TestDDLCallback{}
+	var checkErr error
+	var currJob *model.Job
+	var elements []*meta.Element
+	ctx := mock.NewContext()
+	ctx.Store = s.store
+	times := 0
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if tbl.Meta().ID != job.TableID {
+			return
+		}
+		if checkErr == nil && job.SchemaState == model.StateWriteReorganization {
+			if times%2 == 1 {
+				times++
+				return
+			}
+			currJob = job
+			var (
+				newCol                *model.ColumnInfo
+				oldColName            *model.CIStr
+				modifyColumnTp        byte
+				updatedAutoRandomBits uint64
+				changingCol           *model.ColumnInfo
+				changingIdxs          []*model.IndexInfo
+			)
+			pos := &ast.ColumnPosition{}
+			checkErr = job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+			elements = ddl.BuildElements(changingCol, changingIdxs)
+		}
+	}
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockCantDecodeRecordErr", `return(true)`), IsNil)
+	save := variable.GetDDLErrorCountLimit()
+	variable.SetDDLErrorCountLimit(1)
+	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
+	_, err := tk.Exec(sql)
+	c.Assert(err.Error(), Equals, "[ddl:8202]Cannot decode index value, because mock can't decode record error")
+	c.Assert(checkErr, IsNil)
+	// Check whether the reorge information is cleaned up when executing "modify column" failed.
+	checkReorgHandle := func(element *meta.Element) {
+		err := ctx.NewTxn(context.Background())
+		c.Assert(err, IsNil)
+		txn, err := ctx.Txn(true)
+		c.Assert(err, IsNil)
+		m := meta.NewMeta(txn)
+		e, start, end, physicalID, err := m.GetDDLReorgHandle(currJob, false)
+		c.Assert(err.Error(), Equals, "element doesn't exist")
+		c.Assert(e, IsNil)
+		c.Assert(start, IsNil)
+		c.Assert(end, IsNil)
+		c.Assert(physicalID, Equals, int64(0))
+	}
+	checkReorgHandle(elements[0])
+	checkReorgHandle(elements[1])
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockCantDecodeRecordErr"), IsNil)
+	variable.SetDDLErrorCountLimit(save)
+	tk.MustExec("admin check table t1")
+
+	// Check whether the reorge information is cleaned up when executing "modify column" successful.
+	tk.MustExec(sql)
+	checkReorgHandle(elements[0])
+	checkReorgHandle(elements[1])
+	tk.MustExec("admin check table t1")
+}
+
 func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
@@ -3707,7 +3819,7 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	testModifyColumnNullToNotNull(c, s.testDBSuite, false, sql1, sql2)
 }
 
-func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal(c *C) {
+func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal1(c *C) {
 	sql1 := "alter table t1 change c2 c2 tinyint not null;"
 	sql2 := "alter table t1 change c2 c2 tinyint not null;"
 	testModifyColumnNullToNotNull(c, s.testDBSuite, true, sql1, sql2)
@@ -3767,6 +3879,7 @@ func testModifyColumnNullToNotNull(c *C, s *testDBSuite, enableChangeColumnType 
 	c.Assert(err, NotNil)
 	if enableChangeColumnType {
 		c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'c2' at row 1")
+		// Check whether the reorge information is cleaned up.
 	} else {
 		c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
 	}

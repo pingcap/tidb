@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"strconv"
 	"sync/atomic"
@@ -171,6 +172,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 
 		taskCtx, err := bf.BackfillDataInTxn(handleRange)
 		if err != nil {
+			logutil.BgLogger().Warn("++++++++++++++++++++++++++++++++++++++++++++++ failed")
 			result.err = err
 			return result
 		}
@@ -304,10 +306,11 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	if err != nil {
 		// Update the reorg handle that has been processed.
 		err1 := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
-			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, nextHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID))
+			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, nextHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID, reorgInfo.currElement))
 		})
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
 		logutil.BgLogger().Warn("[ddl] backfill worker handle batch tasks failed",
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
 			zap.Int64("totalAddedCount", *totalAddedCount), zap.String("startHandle", toString(startHandle)),
 			zap.String("nextHandle", toString(nextHandle)), zap.Int64("batchAddedCount", taskAddedCount),
 			zap.String("taskFailedError", err.Error()), zap.String("takeTime", elapsedTime.String()),
@@ -318,7 +321,9 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	w.reorgCtx.setNextHandle(nextHandle)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
-	logutil.BgLogger().Info("[ddl] backfill worker handle batch tasks successful", zap.Int64("totalAddedCount", *totalAddedCount), zap.String("startHandle", toString(startHandle)),
+	logutil.BgLogger().Info("[ddl] backfill worker handle batch tasks successful",
+		zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
+		zap.Int64("totalAddedCount", *totalAddedCount), zap.String("startHandle", toString(startHandle)),
 		zap.String("nextHandle", toString(nextHandle)), zap.Int64("batchAddedCount", taskAddedCount), zap.String("takeTime", elapsedTime.String()))
 	return nil
 }
@@ -475,6 +480,8 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		if len(kvRanges) < int(workerCnt) {
 			workerCnt = int32(len(kvRanges))
 		}
+		logutil.BgLogger().Warn(fmt.Sprintf("++++++++++++++++++++++++++++++++++++++++++++++, write record, start:%v, end:%v, backfill cnt:%v, worker cnt:%v",
+			startHandle, endHandle, len(backfillWorkers), workerCnt))
 		// Enlarge the worker size.
 		for i := len(backfillWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)
