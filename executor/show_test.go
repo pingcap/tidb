@@ -1008,7 +1008,7 @@ func (s *testSuite5) TestShowVar(c *C) {
 	var showSQL string
 	for _, v := range variable.SysVars {
 		// When ScopeSession only. `show global variables` must return empty.
-		if v.Scope != variable.ScopeNone && v.Scope != variable.ScopeGlobal|variable.ScopeSession && v.Scope == variable.ScopeSession {
+		if v.Scope == variable.ScopeSession {
 			showSQL = "show variables like '" + v.Name + "'"
 			res := tk.MustQuery(showSQL)
 			c.Check(res.Rows(), HasLen, 1)
