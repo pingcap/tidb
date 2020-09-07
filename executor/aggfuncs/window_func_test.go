@@ -144,7 +144,7 @@ func buildWindowTester(funcName string, tp byte, constantArg uint64, orderByCols
 }
 
 func buildWindowMemTester(funcName string, tp byte, constantArg uint64, numRows int, orderByCols int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens) windowMemTest {
-	windowTest := buildWindowTester(funcName, tp, constantArg, orderByCols, numRows, nil)
+	windowTest := buildWindowTester(funcName, tp, constantArg, orderByCols, numRows)
 	pt := windowMemTest{
 		windowTest:         windowTest,
 		allocMemDelta:      allocMemDelta,
