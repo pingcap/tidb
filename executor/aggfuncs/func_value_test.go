@@ -14,8 +14,6 @@
 package aggfuncs_test
 
 import (
-	"unsafe"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -30,7 +28,7 @@ func getEvaluatedMemDelta(row *chunk.Row, dataType *types.FieldType) (memDelta i
 	case mysql.TypeString:
 		memDelta = int64(len(row.GetString(0)))
 	case mysql.TypeJSON:
-		memDelta = int64(unsafe.Sizeof(row.GetJSON(0)))
+		memDelta = int64(len(row.GetJSON(0).Value))
 	}
 	return
 }

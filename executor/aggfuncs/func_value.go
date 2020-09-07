@@ -195,7 +195,7 @@ type value4JSON struct {
 func (v *value4JSON) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
 	v.val, v.isNull, err = expr.EvalJSON(ctx, row)
 	v.val = v.val.Copy() // deep copy to avoid content change.
-	return int64(unsafe.Sizeof(v.val)), err
+	return int64(len(v.val.Value)), err
 }
 
 func (v *value4JSON) appendResult(chk *chunk.Chunk, colIdx int) {
