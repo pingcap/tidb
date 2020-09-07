@@ -81,10 +81,10 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 func (s *testCacheableSuite) TestUnionReadOnly(c *C) {
 	selectReadOnly := &SelectStmt{}
 	selectForUpdate := &SelectStmt{
-		LockTp: SelectLockForUpdate,
+		LockInfo: &SelectLockInfo{LockType: SelectLockForUpdate},
 	}
 	selectForUpdateNoWait := &SelectStmt{
-		LockTp: SelectLockForUpdateNoWait,
+		LockInfo: &SelectLockInfo{LockType: SelectLockForUpdateNoWait},
 	}
 
 	setOprStmt := &SetOprStmt{
