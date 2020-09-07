@@ -15,6 +15,7 @@ package aggfuncs
 
 import (
 	"container/heap"
+
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
