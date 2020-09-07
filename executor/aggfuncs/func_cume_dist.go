@@ -14,9 +14,10 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"unsafe"
 )
 
 const (
