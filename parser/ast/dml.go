@@ -456,11 +456,17 @@ const (
 	SelectLockForUpdate
 	SelectLockInShareMode
 	SelectLockForUpdateNoWait
+	SelectLockForUpdateWaitN
 )
 
+type SelectLockInfo struct {
+	LockType SelectLockType
+	WaitSec  uint64
+}
+
 // String implements fmt.Stringer.
-func (slt SelectLockType) String() string {
-	switch slt {
+func (n SelectLockType) String() string {
+	switch n {
 	case SelectLockNone:
 		return "none"
 	case SelectLockForUpdate:
@@ -469,6 +475,8 @@ func (slt SelectLockType) String() string {
 		return "in share mode"
 	case SelectLockForUpdateNoWait:
 		return "for update nowait"
+	case SelectLockForUpdateWaitN:
+		return "for update wait seconds"
 	}
 	return "unsupported select lock type"
 }
@@ -793,8 +801,8 @@ type SelectStmt struct {
 	OrderBy *OrderByClause
 	// Limit is the limit clause.
 	Limit *Limit
-	// LockTp is the lock type
-	LockTp SelectLockType
+	// LockInfo is the lock type
+	LockInfo *SelectLockInfo
 	// TableHints represents the table level Optimizer Hint for join type
 	TableHints []*TableOptimizerHint
 	// AfterSetOperator indicates the SelectStmt after which type of set operator
@@ -916,13 +924,18 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	switch n.LockTp {
-	case SelectLockInShareMode:
-		ctx.WriteKeyWord(" LOCK ")
-		ctx.WriteKeyWord(n.LockTp.String())
-	case SelectLockForUpdate, SelectLockForUpdateNoWait:
-		ctx.WritePlain(" ")
-		ctx.WriteKeyWord(n.LockTp.String())
+	if n.LockInfo != nil {
+		switch n.LockInfo.LockType {
+		case SelectLockInShareMode:
+			ctx.WriteKeyWord(" LOCK ")
+			ctx.WriteKeyWord(n.LockInfo.LockType.String())
+		case SelectLockForUpdate, SelectLockForUpdateNoWait:
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord(n.LockInfo.LockType.String())
+		case SelectLockForUpdateWaitN:
+			ctx.WriteKeyWord(" FOR UPDATE WAIT ")
+			ctx.WritePlainf("%d", n.LockInfo.WaitSec)
+		}
 	}
 
 	if n.SelectIntoOpt != nil {
