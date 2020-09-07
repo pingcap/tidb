@@ -1882,7 +1882,7 @@ type tiflashInstanceInfo struct {
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
 	store := sctx.GetStore()
 	if etcd, ok := store.(tikv.EtcdBackend); ok {
-		if _, err := etcd.EtcdAddrs(); err == nil {
+		if addrs, _ := etcd.EtcdAddrs(); addrs != nil {
 			domainFromCtx := domain.GetDomain(sctx)
 			if domainFromCtx != nil {
 				cli := domainFromCtx.GetEtcdClient()
