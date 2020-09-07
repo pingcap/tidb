@@ -37,6 +37,8 @@ type AggFuncDesc struct {
 	HasDistinct bool
 	// OrderByItems represents the order by clause used in GROUP_CONCAT
 	OrderByItems []*util.ByItems
+	// IsWindowAggFunc represents the aggregation function is used to window function.
+	IsWindowAggFunc bool
 }
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
@@ -46,6 +48,15 @@ func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expre
 		return nil, err
 	}
 	return &AggFuncDesc{baseFuncDesc: b, HasDistinct: hasDistinct}, nil
+}
+
+// NewWindowAggFuncDesc creates an aggregation function signature descriptor of the window function.
+func NewWindowAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, hasDistinct bool) (*AggFuncDesc, error) {
+	b, err := newBaseFuncDesc(ctx, name, args)
+	if err != nil {
+		return nil, err
+	}
+	return &AggFuncDesc{baseFuncDesc: b, HasDistinct: hasDistinct, IsWindowAggFunc: true}, nil
 }
 
 // String implements the fmt.Stringer interface.

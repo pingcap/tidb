@@ -323,42 +323,71 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 	if fieldType.Tp == mysql.TypeBit {
 		evalType = types.ETString
 	}
+	var aggFunc AggFunc
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
 		switch fieldType.Tp {
 		case mysql.TypeEnum:
-			return &maxMin4Enum{base}
+			aggFunc = &maxMin4Enum{base}
 		case mysql.TypeSet:
-			return &maxMin4Set{base}
+			aggFunc = &maxMin4Set{base}
 		}
 
 		switch evalType {
 		case types.ETInt:
 			if mysql.HasUnsignedFlag(fieldType.Flag) {
-				return &maxMin4Uint{base}
+				aggFunc = &maxMin4Uint{base}
 			}
-			return &maxMin4Int{base}
+			aggFunc = &maxMin4Int{base}
 		case types.ETReal:
 			switch fieldType.Tp {
 			case mysql.TypeFloat:
-				return &maxMin4Float32{base}
+				aggFunc = &maxMin4Float32{base}
 			case mysql.TypeDouble:
-				return &maxMin4Float64{base}
+				aggFunc = &maxMin4Float64{base}
 			}
 		case types.ETDecimal:
-			return &maxMin4Decimal{base}
+			aggFunc = &maxMin4Decimal{base}
 		case types.ETString:
-			return &maxMin4String{baseMaxMinAggFunc: base, retTp: aggFuncDesc.RetTp}
+			aggFunc = &maxMin4String{baseMaxMinAggFunc: base, retTp: aggFuncDesc.RetTp}
 		case types.ETDatetime, types.ETTimestamp:
-			return &maxMin4Time{base}
+			aggFunc = &maxMin4Time{base}
 		case types.ETDuration:
-			return &maxMin4Duration{base}
+			aggFunc = &maxMin4Duration{base}
 		case types.ETJson:
-			return &maxMin4JSON{base}
+			aggFunc = &maxMin4JSON{base}
 		}
 	}
-	return nil
+
+	// build max/min aggFunc for window function using sliding window
+	if aggFuncDesc.IsWindowAggFunc {
+		switch baseAggFunc := aggFunc.(type) {
+		case *maxMin4Int:
+			aggFunc = &maxMin4IntSliding{*baseAggFunc}
+		case *maxMin4Uint:
+			aggFunc = &maxMin4UintSliding{*baseAggFunc}
+		case *maxMin4Float32:
+			aggFunc = &maxMin4Float32Sliding{*baseAggFunc}
+		case *maxMin4Float64:
+			aggFunc = &maxMin4Float64Sliding{*baseAggFunc}
+		case *maxMin4Decimal:
+			aggFunc = &maxMin4DecimalSliding{*baseAggFunc}
+		case *maxMin4String:
+			aggFunc = &maxMin4StringSliding{*baseAggFunc}
+		case *maxMin4Time:
+			aggFunc = &maxMin4TimeSliding{*baseAggFunc}
+		case *maxMin4Duration:
+			aggFunc = &maxMin4DurationSliding{*baseAggFunc}
+		case *maxMin4JSON:
+			aggFunc = &maxMin4JSONSliding{*baseAggFunc}
+		case *maxMin4Enum:
+			aggFunc = &maxMin4EnumSliding{*baseAggFunc}
+		case *maxMin4Set:
+			aggFunc = &maxMin4SetSliding{*baseAggFunc}
+		}
+	}
+	return aggFunc
 }
 
 // buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".
