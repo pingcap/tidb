@@ -762,7 +762,7 @@ func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
 	wg.Wait()
 	c.Assert(done, IsTrue)
 	c.Assert(checkErr, NotNil)
-	// There are two possible assert result is because that:
+	// There are two possible assert result because:
 	// 1: If drop-database is finished before drop-table being put into the ddl job queue, it will return unknown table error directly in previous check .
 	// 2: If drop-table has passed the previous check and been put into the ddl job queue, then drop-database finished, it will return schema change error.
 	assertRes := checkErr.Error() == "[domain:8028]Information schema is changed during the execution of the"+
