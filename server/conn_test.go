@@ -176,7 +176,7 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 			bufWriter: bufio.NewWriter(&outBuffer),
 		},
 	}
-	err := cc.writeInitialHandshake()
+	err := cc.writeInitialHandshake(context.TODO())
 	c.Assert(err, IsNil)
 
 	expected := new(bytes.Buffer)
@@ -197,17 +197,19 @@ func (ts *ConnTestSuite) TestInitialHandshake(c *C) {
 	c.Assert(outBuffer.Bytes()[4:], DeepEquals, expected.Bytes())
 }
 
+type dispatchInput struct {
+	com byte
+	in  []byte
+	err error
+	out []byte
+}
+
 func (ts *ConnTestSuite) TestDispatch(c *C) {
 	userData := append([]byte("root"), 0x0, 0x0)
 	userData = append(userData, []byte("test")...)
 	userData = append(userData, 0x0)
 
-	inputs := []struct {
-		com byte
-		in  []byte
-		err error
-		out []byte
-	}{
+	inputs := []dispatchInput{
 		{
 			com: mysql.ComSleep,
 			in:  nil,
@@ -300,7 +302,121 @@ func (ts *ConnTestSuite) TestDispatch(c *C) {
 		},
 	}
 
-	se, err := session.CreateSession4Test(ts.store)
+	ts.testDispatch(c, inputs, 0)
+}
+
+func (ts *ConnTestSuite) TestDispatchClientProtocol41(c *C) {
+	userData := append([]byte("root"), 0x0, 0x0)
+	userData = append(userData, []byte("test")...)
+	userData = append(userData, 0x0)
+
+	inputs := []dispatchInput{
+		{
+			com: mysql.ComSleep,
+			in:  nil,
+			err: nil,
+			out: nil,
+		},
+		{
+			com: mysql.ComQuit,
+			in:  nil,
+			err: io.EOF,
+			out: nil,
+		},
+		{
+			com: mysql.ComQuery,
+			in:  []byte("do 1"),
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComInitDB,
+			in:  []byte("test"),
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComPing,
+			in:  nil,
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComStmtPrepare,
+			in:  []byte("select 1"),
+			err: nil,
+			out: []byte{
+				0xc, 0x0, 0x0, 0x3, 0x0, 0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x18,
+				0x0, 0x0, 0x4, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0, 0x1, 0x31, 0x1, 0x31, 0xc, 0x3f,
+				0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0, 0x0, 0x5, 0x0, 0x0, 0x5, 0xfe,
+				0x0, 0x0, 0x2, 0x0,
+			},
+		},
+		{
+			com: mysql.ComStmtExecute,
+			in:  []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x1, 0x0},
+			err: nil,
+			out: []byte{
+				0x1, 0x0, 0x0, 0x6, 0x1, 0x18, 0x0, 0x0, 0x7, 0x3, 0x64, 0x65, 0x66, 0x0, 0x0, 0x0,
+				0x1, 0x31, 0x1, 0x31, 0xc, 0x3f, 0x0, 0x1, 0x0, 0x0, 0x0, 0x8, 0x81, 0x0, 0x0, 0x0,
+				0x0, 0x5, 0x0, 0x0, 0x8, 0xfe, 0x0, 0x0, 0x42, 0x0,
+			},
+		},
+		{
+			com: mysql.ComStmtFetch,
+			in:  []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{0x5, 0x0, 0x0, 0x9, 0xfe, 0x0, 0x0, 0x82, 0x0},
+		},
+		{
+			com: mysql.ComStmtReset,
+			in:  []byte{0x1, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0xa, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+		{
+			com: mysql.ComSetOption,
+			in:  []byte{0x1, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{0x5, 0x0, 0x0, 0xb, 0xfe, 0x0, 0x0, 0x2, 0x0},
+		},
+		{
+			com: mysql.ComStmtClose,
+			in:  []byte{0x1, 0x0, 0x0, 0x0},
+			err: nil,
+			out: []byte{},
+		},
+		{
+			com: mysql.ComFieldList,
+			in:  []byte("t"),
+			err: nil,
+			out: []byte{
+				0x26, 0x0, 0x0, 0xc, 0x3, 0x64, 0x65, 0x66, 0x4, 0x74, 0x65, 0x73, 0x74, 0x1, 0x74,
+				0x1, 0x74, 0x1, 0x61, 0x1, 0x61, 0xc, 0x3f, 0x0, 0xb, 0x0, 0x0, 0x0, 0x3, 0x0, 0x0,
+				0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5, 0x0, 0x0, 0xd, 0xfe,
+				0x0, 0x0, 0x2, 0x0,
+			},
+		},
+		{
+			com: mysql.ComChangeUser,
+			in:  userData,
+			err: nil,
+			out: []byte{0x7, 0x0, 0x0, 0xe, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0},
+		},
+	}
+
+	ts.testDispatch(c, inputs, mysql.ClientProtocol41)
+}
+
+func (ts *ConnTestSuite) testDispatch(c *C, inputs []dispatchInput, capability uint32) {
+	store, err := mockstore.NewMockTikvStore()
+	c.Assert(err, IsNil)
+	defer store.Close()
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+
+	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
 	tc := &TiDBContext{
 		session: se,
@@ -314,10 +430,12 @@ func (ts *ConnTestSuite) TestDispatch(c *C) {
 	var outBuffer bytes.Buffer
 	tidbdrv := NewTiDBDriver(ts.store)
 	cfg := config.NewConfig()
-	cfg.Port = 4005
+	cfg.Port = 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
+
 	c.Assert(err, IsNil)
+	defer server.Close()
 
 	cc := &clientConn{
 		connectionID: 1,
@@ -326,21 +444,22 @@ func (ts *ConnTestSuite) TestDispatch(c *C) {
 		pkt: &packetIO{
 			bufWriter: bufio.NewWriter(&outBuffer),
 		},
-		collation: mysql.DefaultCollationID,
-		peerHost:  "localhost",
-		alloc:     arena.NewAllocator(512),
-		ctx:       tc,
+		collation:  mysql.DefaultCollationID,
+		peerHost:   "localhost",
+		alloc:      arena.NewAllocator(512),
+		ctx:        tc,
+		capability: capability,
 	}
 	for _, cs := range inputs {
 		inBytes := append([]byte{cs.com}, cs.in...)
 		err := cc.dispatch(context.Background(), inBytes)
 		c.Assert(err, Equals, cs.err)
 		if err == nil {
-			err = cc.flush()
+			err = cc.flush(context.TODO())
 			c.Assert(err, IsNil)
 			c.Assert(outBuffer.Bytes(), DeepEquals, cs.out)
 		} else {
-			_ = cc.flush()
+			_ = cc.flush(context.TODO())
 		}
 		outBuffer.Reset()
 	}

@@ -1216,10 +1216,13 @@ func (d *MyDecimal) ToBin(precision, frac int) ([]byte, error) {
 		}
 	}
 
-	if fracSize < fracSizeFrom {
+	if fracSize < fracSizeFrom ||
+		(fracSize == fracSizeFrom && (trailingDigits <= trailingDigitsFrom || wordsFrac <= wordsFracFrom)) {
+		if fracSize < fracSizeFrom || (fracSize == fracSizeFrom && trailingDigits < trailingDigitsFrom) || (fracSize == fracSizeFrom && wordsFrac < wordsFracFrom) {
+			err = ErrTruncated
+		}
 		wordsFracFrom = wordsFrac
 		trailingDigitsFrom = trailingDigits
-		err = ErrTruncated
 	} else if fracSize > fracSizeFrom && trailingDigitsFrom > 0 {
 		if wordsFrac == wordsFracFrom {
 			trailingDigitsFrom = trailingDigits
@@ -1290,6 +1293,7 @@ func (d *MyDecimal) ToHashKey() ([]byte, error) {
 		// thus ErrTruncated may be raised, we can ignore it here.
 		err = nil
 	}
+	buf = append(buf, byte(digitsFrac))
 	return buf, err
 }
 
@@ -2265,6 +2269,10 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	to.digitsInt = int8(digitsIntTo)
 	if idxTo != 0 {
 		copy(to.wordBuf[:], to.wordBuf[idxTo:])
+	}
+
+	if to.IsZero() {
+		to.negative = false
 	}
 	return err
 }

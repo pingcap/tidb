@@ -673,6 +673,7 @@ func (c *collationFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err != nil {
 		return nil, err
 	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	sig := &builtinCollationSig{bf}
 	return sig, nil
 }

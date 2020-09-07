@@ -764,7 +764,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		return 0.0, nil
 	}
 	if c.NDV > 0 && c.outOfRange(val) {
-		return float64(modifyCount) / float64(c.NDV), nil
+		return outOfRangeEQSelectivity(c.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
@@ -829,7 +829,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		// The interval case.
 		cnt := c.BetweenRowCount(lowVal, highVal)
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			cnt += float64(modifyCount) / outOfRangeBetweenRate
+			cnt += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount()
 		}
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boudaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
@@ -891,7 +891,7 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCo
 	}
 	val := types.NewBytesDatum(b)
 	if idx.NDV > 0 && idx.outOfRange(val) {
-		return float64(modifyCount) / (float64(idx.NDV)), nil
+		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount(), nil
 	}
 	if idx.CMSketch != nil {
 		return float64(idx.CMSketch.QueryBytes(b)), nil
@@ -943,7 +943,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		totalCount += idx.BetweenRowCount(l, r)
 		lowIsNull := bytes.Equal(lb, nullKeyBytes)
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			totalCount += float64(modifyCount) / outOfRangeBetweenRate
+			totalCount += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 		}
 		if isSingleCol && lowIsNull {
 			totalCount += float64(idx.NullCount)

@@ -406,12 +406,6 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	result = tk.MustQuery("select a, variance(b) over w from t window w as (partition by a)").Sort()
 	result.Check(testkit.Rows("1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "1 2364075.6875", "2 0"))
 
-	_, err = tk.Exec("select std(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: std")
-	_, err = tk.Exec("select stddev(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev")
-	_, err = tk.Exec("select stddev_pop(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: stddev_pop")
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
 	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
@@ -428,6 +422,48 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustQuery("select sum(b) from t1 group by c order by c;").Check(testkit.Rows("<nil>", "-3", "-2", "-2"))
 	tk.MustQuery("select sum(c) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "-2", "-2", "-3"))
 	tk.MustQuery("select sum(c) from t1 group by b order by b;").Check(testkit.Rows("<nil>", "-3", "-2", "-2"))
+
+	// For stddev_pop()/std()/stddev() function
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`create table t1 (grp int, a bigint unsigned, c char(10) not null);`)
+	tk.MustExec(`insert into t1 values (1,1,"a");`)
+	tk.MustExec(`insert into t1 values (2,2,"b");`)
+	tk.MustExec(`insert into t1 values (2,3,"c");`)
+	tk.MustExec(`insert into t1 values (3,4,"E");`)
+	tk.MustExec(`insert into t1 values (3,5,"C");`)
+	tk.MustExec(`insert into t1 values (3,6,"D");`)
+	tk.MustQuery(`select stddev_pop(all a) from t1;`).Check(testkit.Rows("1.707825127659933"))
+	tk.MustQuery(`select stddev_pop(a) from t1 group by grp order by grp;`).Check(testkit.Rows("0", "0.5", "0.816496580927726"))
+	tk.MustQuery(`select sum(a)+count(a)+avg(a)+stddev_pop(a) as sum from t1 group by grp order by grp;`).Check(testkit.Rows("3", "10", "23.816496580927726"))
+	tk.MustQuery(`select std(all a) from t1;`).Check(testkit.Rows("1.707825127659933"))
+	tk.MustQuery(`select std(a) from t1 group by grp order by grp;`).Check(testkit.Rows("0", "0.5", "0.816496580927726"))
+	tk.MustQuery(`select sum(a)+count(a)+avg(a)+std(a) as sum from t1 group by grp order by grp;`).Check(testkit.Rows("3", "10", "23.816496580927726"))
+	tk.MustQuery(`select stddev(all a) from t1;`).Check(testkit.Rows("1.707825127659933"))
+	tk.MustQuery(`select stddev(a) from t1 group by grp order by grp;`).Check(testkit.Rows("0", "0.5", "0.816496580927726"))
+	tk.MustQuery(`select sum(a)+count(a)+avg(a)+stddev(a) as sum from t1 group by grp order by grp;`).Check(testkit.Rows("3", "10", "23.816496580927726"))
+	// test null
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (a int, b int);")
+	tk.MustQuery("select  stddev_pop(b) from t1;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select  std(b) from t1;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select  stddev(b) from t1;").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into t1 values (1,null);")
+	tk.MustQuery("select stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>"))
+	tk.MustExec("insert into t1 values (1,null);")
+	tk.MustExec("insert into t1 values (2,null);")
+	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "<nil>"))
+	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "<nil>"))
+	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "<nil>"))
+	tk.MustExec("insert into t1 values (2,1);")
+	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0"))
+	tk.MustExec("insert into t1 values (3,1);")
+	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
+	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
+	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 }
 
 func (s *testSuiteAgg) TestAggPrune(c *C) {
@@ -1057,4 +1093,14 @@ func (s *testSuiteAgg) TestIssue15690(c *C) {
 	tk.MustExec(`insert into t values('a'),('b');`)
 	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "a", "b"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(0))
+}
+
+func (s *testSuiteAgg) TestIssue15958(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().MaxChunkSize = 2
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(y year);`)
+	tk.MustExec(`insert into t values (2020), (2000), (2050);`)
+	tk.MustQuery(`select sum(y) from t`).Check(testkit.Rows("6070"))
+	tk.MustQuery(`select avg(y) from t`).Check(testkit.Rows("2023.3333"))
 }

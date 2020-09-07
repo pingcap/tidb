@@ -20,13 +20,13 @@ import (
 	"io"
 	"io/ioutil"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,23 +39,13 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/printer"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"go.uber.org/zap"
 )
 
 var (
-	portGenerator       uint32 = 4001
-	statusPortGenerator uint32 = 7090
-	regression                 = true
+	regression = true
 )
-
-func genPort() uint {
-	return uint(atomic.AddUint32(&portGenerator, 1))
-}
-
-func genStatusPort() uint {
-	return uint(atomic.AddUint32(&statusPortGenerator, 1))
-}
 
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
@@ -77,10 +67,14 @@ type testServerClient struct {
 // newTestServerClient return a testServerClient with unique address
 func newTestServerClient() *testServerClient {
 	return &testServerClient{
-		port:         genPort(),
-		statusPort:   genStatusPort(),
+		port:         0,
+		statusPort:   0,
 		statusScheme: "http",
 	}
+}
+
+func getPortFromTCPAddr(addr net.Addr) uint {
+	return uint(addr.(*net.TCPAddr).Port)
 }
 
 // statusURL return the full URL of a status path
@@ -1085,7 +1079,7 @@ func (cli *testServerClient) runTestStatusAPI(c *C) {
 	err = decoder.Decode(&data)
 	c.Assert(err, IsNil)
 	c.Assert(data.Version, Equals, tmysql.ServerVersion)
-	c.Assert(data.GitHash, Equals, printer.TiDBGitHash)
+	c.Assert(data.GitHash, Equals, versioninfo.TiDBGitHash)
 }
 
 func (cli *testServerClient) runTestMultiStatements(c *C) {

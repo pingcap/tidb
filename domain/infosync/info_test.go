@@ -86,7 +86,7 @@ func TestTopology(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockServerInfo", "return(true)")
 	defer failpoint.Disable("github.com/pingcap/tidb/domain/infosync/mockServerInfo")
 
-	info, err := GlobalInfoSyncerInit(ctx, currentID, cli)
+	info, err := GlobalInfoSyncerInit(ctx, currentID, cli, false)
 	if err != nil {
 		t.Fatal(err)
 	}

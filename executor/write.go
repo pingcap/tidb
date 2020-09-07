@@ -193,7 +193,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h int64, oldData
 		}
 	} else {
 		// Update record to new value and update index.
-		if err = t.UpdateRecord(sctx, h, oldData, newData, modified); err != nil {
+		if err = t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
 			return false, false, 0, err
 		}
 		if onDup {
@@ -217,8 +217,12 @@ func rebaseAutoRandomValue(sctx sessionctx.Context, t table.Table, newData *type
 	if err != nil {
 		return err
 	}
-	shardBits := tableInfo.AutoRandomBits + 1 // sign bit is reserved.
-	recordID = recordID << shardBits >> shardBits
+	if recordID < 0 {
+		return nil
+	}
+	layout := autoid.NewAutoRandomIDLayout(&col.FieldType, tableInfo.AutoRandomBits)
+	// Set bits except incremental_bits to zero.
+	recordID = recordID & (1<<layout.IncrementalBits - 1)
 	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(tableInfo.ID, recordID, true)
 }
 

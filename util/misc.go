@@ -14,6 +14,7 @@
 package util
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -141,6 +142,16 @@ func CompatibleParseGCTime(value string) (time.Time, error) {
 		err = errors.Errorf("string \"%v\" doesn't has a prefix that matches format \"%v\"", value, GCTimeFormat)
 	}
 	return t, err
+}
+
+// HasCancelled checks whether context has be cancelled.
+func HasCancelled(ctx context.Context) (cancel bool) {
+	select {
+	case <-ctx.Done():
+		cancel = true
+	default:
+	}
+	return
 }
 
 const (

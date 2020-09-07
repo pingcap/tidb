@@ -62,7 +62,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		return c.sendBatch(ctx, req, vars)
 	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
-	bo := NewBackoffer(ctx, copBuildTaskMaxBackoff).WithVars(vars)
+	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
 	if err != nil {
 		return copErrorResponse{err}
@@ -75,6 +75,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		vars:            vars,
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
+		rpcCancel:       NewRPCanceller(),
 	}
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
@@ -89,6 +90,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
+	}
+	if !it.req.Streaming {
+		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	}
 	it.open(ctx)
 	return it
@@ -390,6 +394,8 @@ type copIterator struct {
 
 	replicaReadSeed uint32
 
+	rpcCancel *RPCCanceller
+
 	wg sync.WaitGroup
 	// closed represents when the Close is called.
 	// There are two cases we need to close the `finishCh` channel, one is when context is done, the other one is
@@ -427,7 +433,7 @@ type copIteratorTaskSender struct {
 
 type copResponse struct {
 	pbResp   *coprocessor.Response
-	detail   *execdetails.ExecDetails
+	detail   *CopRuntimeStats
 	startKey kv.Key
 	err      error
 	respSize int64
@@ -449,7 +455,7 @@ func (rs *copResponse) GetStartKey() kv.Key {
 	return rs.startKey
 }
 
-func (rs *copResponse) GetExecDetails() *execdetails.ExecDetails {
+func (rs *copResponse) GetCopRuntimeStats() *CopRuntimeStats {
 	return rs.detail
 }
 
@@ -463,9 +469,6 @@ func (rs *copResponse) MemSize() int64 {
 	rs.respSize += int64(cap(rs.startKey))
 	if rs.detail != nil {
 		rs.respSize += int64(sizeofExecDetails)
-		if rs.detail.CommitDetail != nil {
-			rs.respSize += int64(sizeofCommitDetails)
-		}
 	}
 	if rs.pbResp != nil {
 		// Using a approximate size since it's hard to get a accurate value.
@@ -492,6 +495,9 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
+		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
+			return
+		}
 		select {
 		case <-worker.finishCh:
 			return
@@ -566,21 +572,34 @@ func (sender *copIteratorTaskSender) run() {
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
-	select {
-	case resp, ok = <-respCh:
-		if it.memTracker != nil && resp != nil {
-			it.memTracker.Consume(-int64(resp.MemSize()))
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case resp, ok = <-respCh:
+			if it.memTracker != nil && resp != nil {
+				it.memTracker.Consume(-int64(resp.MemSize()))
+			}
+			return
+		case <-it.finishCh:
+			exit = true
+			return
+		case <-ticker.C:
+			if atomic.LoadUint32(it.vars.Killed) == 1 {
+				resp = &copResponse{err: ErrQueryInterrupted}
+				ok = true
+				return
+			}
+		case <-ctx.Done():
+			// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
+			if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
+				close(it.finishCh)
+			}
+			exit = true
+			return
 		}
-	case <-it.finishCh:
-		exit = true
-	case <-ctx.Done():
-		// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
-		if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
-			close(it.finishCh)
-		}
-		exit = true
 	}
-	return
+
 }
 
 func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
@@ -660,7 +679,7 @@ func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, ta
 	if ok {
 		return bo
 	}
-	newbo := NewBackoffer(ctx, copNextMaxBackoff).WithVars(worker.vars)
+	newbo := NewBackofferWithVars(ctx, copNextMaxBackoff, worker.vars)
 	backoffermap[task.region.id] = newbo
 	return newbo
 }
@@ -689,6 +708,11 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			worker.sendToRespCh(resp, respCh, true)
 			return
 		}
+		// test whether the ctx is cancelled
+		if bo.vars != nil && bo.vars.Killed != nil && atomic.LoadUint32(bo.vars.Killed) == 1 {
+			return
+		}
+
 		if len(tasks) > 0 {
 			remainTasks = append(tasks, remainTasks[1:]...)
 		} else {
@@ -748,6 +772,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 	req.StoreTp = task.storeType
 	startTime := time.Now()
+	worker.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
 	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {
 		if task.storeType == kv.TiDB {
@@ -756,6 +781,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		}
 		return nil, errors.Trace(err)
 	}
+
 	// Set task.storeAddr field so its task.String() method have the store address information.
 	task.storeAddr = storeAddr
 	costTime := time.Since(startTime)
@@ -812,6 +838,7 @@ type clientHelper struct {
 	*minCommitTSPushed
 	Client
 	resolveLite bool
+	RegionRequestRuntimeStats
 }
 
 // ResolveLocks wraps the ResolveLocks function and store the resolved result.
@@ -819,6 +846,11 @@ func (ch *clientHelper) ResolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 	var err error
 	var resolvedLocks []uint64
 	var msBeforeTxnExpired int64
+	if ch.Stats != nil {
+		defer func(start time.Time) {
+			recordRegionRequestRuntimeStats(ch.Stats, tikvrpc.CmdResolveLock, time.Since(start))
+		}(time.Now())
+	}
 	if ch.resolveLite {
 		msBeforeTxnExpired, resolvedLocks, err = ch.LockResolver.resolveLocksLite(bo, callerStartTS, locks)
 	} else {
@@ -840,6 +872,7 @@ func (ch *clientHelper) SendReqCtx(bo *Backoffer, req *tikvrpc.Request, regionID
 	if len(directStoreAddr) > 0 {
 		sender.storeAddr = directStoreAddr
 	}
+	sender.Stats = ch.Stats
 	req.Context.ResolvedLocks = ch.minCommitTSPushed.Get()
 	resp, ctx, err := sender.SendReqCtx(bo, req, regionID, timeout, sType)
 	return resp, ctx, sender.storeAddr, err
@@ -988,8 +1021,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.startKey = task.ranges.at(0).StartKey
 	}
 	if resp.detail == nil {
-		resp.detail = new(execdetails.ExecDetails)
+		resp.detail = new(CopRuntimeStats)
 	}
+	resp.detail.Stats = worker.Stats
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
 	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
 	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))
@@ -1043,6 +1077,12 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 	return nil, nil
 }
 
+// CopRuntimeStats contains execution detail information.
+type CopRuntimeStats struct {
+	execdetails.ExecDetails
+	RegionRequestRuntimeStats
+}
+
 func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, ch chan<- *copResponse) error {
 	errCode := errno.ErrUnknown
 	errMsg := err.Error()
@@ -1066,7 +1106,7 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask, 
 		pbResp: &coprocessor.Response{
 			Data: data,
 		},
-		detail: &execdetails.ExecDetails{},
+		detail: &CopRuntimeStats{},
 	}
 	worker.sendToRespCh(resp, ch, true)
 	return nil
@@ -1100,6 +1140,7 @@ func (it *copIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 		close(it.finishCh)
 	}
+	it.rpcCancel.CancelAll()
 	it.wg.Wait()
 	return nil
 }

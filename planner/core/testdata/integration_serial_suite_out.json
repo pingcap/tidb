@@ -17,6 +17,120 @@
           "└─TableReader_6 10000.00 root  data:TableFullScan_5",
           "  └─TableFullScan_5 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain select * from t where b > 'a' order by convert(b, unsigned) limit 2",
+        "Result": [
+          "Projection_17 2.00 root  test.t.a, test.t.b",
+          "└─TopN_8 2.00 root  Column#3:asc, offset:0, count:2",
+          "  └─Projection_18 3333.33 root  test.t.a, test.t.b, cast(test.t.b, bigint(22) UNSIGNED BINARY)->Column#3",
+          "    └─TableReader_13 3333.33 root  data:Selection_12",
+          "      └─Selection_12 3333.33 cop[tiflash]  gt(test.t.b, \"a\")",
+          "        └─TableFullScan_11 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain select * from t where b > 'a' order by b limit 2",
+        "Result": [
+          "TopN_8 2.00 root  test.t.b:asc, offset:0, count:2",
+          "└─TableReader_17 2.00 root  data:TopN_16",
+          "  └─TopN_16 2.00 cop[tiflash]  test.t.b:asc, offset:0, count:2",
+          "    └─Selection_15 3333.33 cop[tiflash]  gt(test.t.b, \"a\")",
+          "      └─TableFullScan_14 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestBroadcastJoin",
+    "Cases": [
+      {
+        "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
+        "Plan": [
+          "StreamAgg_32 1.00 root  funcs:count(Column#14)->Column#11",
+          "└─TableReader_33 1.00 root  data:StreamAgg_13",
+          "  └─StreamAgg_13 1.00 cop[tiflash]  funcs:count(1)->Column#14",
+	  "    └─BroadcastJoin_31 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─Selection_23(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │ └─TableFullScan_22 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─Selection_21(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_20 8.00 cop[tiflash] table:fact_t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ broadcast_join(fact_t,d1_t,d2_t,d3_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
+        "Plan": [
+          "StreamAgg_52 1.00 root  funcs:count(Column#20)->Column#17",
+          "└─TableReader_53 1.00 root  data:StreamAgg_17",
+          "  └─StreamAgg_17 1.00 cop[tiflash]  funcs:count(1)->Column#20",
+          "    └─BroadcastJoin_51 8.00 cop[tiflash]  inner join, left key:test.fact_t.d3_k, right key:test.d3_t.d3_k",
+          "      ├─Selection_43(Build) 2.00 cop[tiflash]  not(isnull(test.d3_t.d3_k))",
+          "      │ └─TableFullScan_42 2.00 cop[tiflash] table:d3_t keep order:false, global read",
+          "      └─BroadcastJoin_33(Probe) 8.00 cop[tiflash]  inner join, left key:test.fact_t.d2_k, right key:test.d2_t.d2_k",
+          "        ├─Selection_29(Build) 2.00 cop[tiflash]  not(isnull(test.d2_t.d2_k))",
+          "        │ └─TableFullScan_28 2.00 cop[tiflash] table:d2_t keep order:false, global read",
+          "        └─BroadcastJoin_37(Probe) 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "          ├─Selection_27(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "          │ └─TableFullScan_26 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "          └─Selection_41(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
+          "            └─TableFullScan_40 8.00 cop[tiflash] table:fact_t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ broadcast_join(fact_t,d1_t), broadcast_join_local(d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
+        "Plan": [
+          "StreamAgg_25 1.00 root  funcs:count(Column#14)->Column#11",
+          "└─TableReader_26 1.00 root  data:StreamAgg_13",
+          "  └─StreamAgg_13 1.00 cop[tiflash]  funcs:count(1)->Column#14",
+          "    └─BroadcastJoin_24 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─Selection_18(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │ └─TableFullScan_17 2.00 cop[tiflash] table:d1_t keep order:false",
+          "      └─Selection_16(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_15 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ broadcast_join(fact_t,d1_t,d2_t,d3_t), broadcast_join_local(d2_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
+        "Plan": [
+          "StreamAgg_36 1.00 root  funcs:count(Column#20)->Column#17",
+          "└─TableReader_37 1.00 root  data:StreamAgg_17",
+          "  └─StreamAgg_17 1.00 cop[tiflash]  funcs:count(1)->Column#20",
+          "    └─BroadcastJoin_35 8.00 cop[tiflash]  inner join, left key:test.fact_t.d3_k, right key:test.d3_t.d3_k",
+          "      ├─Selection_29(Build) 2.00 cop[tiflash]  not(isnull(test.d3_t.d3_k))",
+          "      │ └─TableFullScan_28 2.00 cop[tiflash] table:d3_t keep order:false, global read",
+          "      └─BroadcastJoin_19(Probe) 8.00 cop[tiflash]  inner join, left key:test.fact_t.d2_k, right key:test.d2_t.d2_k",
+          "        ├─Selection_27(Build) 2.00 cop[tiflash]  not(isnull(test.d2_t.d2_k))",
+          "        │ └─TableFullScan_26 2.00 cop[tiflash] table:d2_t keep order:false",
+          "        └─BroadcastJoin_20(Probe) 8.00 cop[tiflash]  inner join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "          ├─Selection_25(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "          │ └─TableFullScan_24 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "          └─Selection_23(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k)), not(isnull(test.fact_t.d2_k)), not(isnull(test.fact_t.d3_k))",
+          "            └─TableFullScan_22 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k",
+        "Plan": [
+          "StreamAgg_23 1.00 root  funcs:count(Column#14)->Column#11",
+          "└─TableReader_24 1.00 root  data:StreamAgg_12",
+          "  └─StreamAgg_12 1.00 cop[tiflash]  funcs:count(1)->Column#14",
+          "    └─BroadcastJoin_22 8.00 cop[tiflash]  left outer join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─Selection_16(Build) 2.00 cop[tiflash]  not(isnull(test.d1_t.d1_k))",
+          "      │ └─TableFullScan_15 2.00 cop[tiflash] table:d1_t keep order:false, global read",
+          "      └─TableFullScan_14(Probe) 8.00 cop[tiflash] table:fact_t keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k",
+        "Plan": [
+          "StreamAgg_23 1.00 root  funcs:count(Column#14)->Column#11",
+          "└─TableReader_24 1.00 root  data:StreamAgg_12",
+          "  └─StreamAgg_12 1.00 cop[tiflash]  funcs:count(1)->Column#14",
+          "    └─BroadcastJoin_22 8.00 cop[tiflash]  right outer join, left key:test.fact_t.d1_k, right key:test.d1_t.d1_k",
+          "      ├─TableFullScan_16(Build) 2.00 cop[tiflash] table:d1_t keep order:false",
+          "      └─Selection_15(Probe) 8.00 cop[tiflash]  not(isnull(test.fact_t.d1_k))",
+          "        └─TableFullScan_14 8.00 cop[tiflash] table:fact_t keep order:false, global read"
+        ]
       }
     ]
   },
