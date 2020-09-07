@@ -521,8 +521,8 @@ func (p *preprocessor) checkCreateViewWithSelect(stmt *ast.SelectStmt) {
 		p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
 		return
 	}
-	if stmt.LockTp != ast.SelectLockNone {
-		stmt.LockTp = ast.SelectLockNone
+	if stmt.LockInfo != nil && stmt.LockInfo.LockType != ast.SelectLockNone {
+		stmt.LockInfo.LockType = ast.SelectLockNone
 		return
 	}
 }
@@ -1000,6 +1000,12 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 		if spec.Tp == ast.AlterTableRenameTable {
 			p.flag |= inCreateOrDropTable
 			break
+		}
+		if spec.Tp == ast.AlterTableAddConstraint && spec.Constraint.Refer != nil {
+			table := spec.Constraint.Refer.Table
+			if table.Schema.L == "" && node.Table.Schema.L != "" {
+				table.Schema = model.NewCIStr(node.Table.Schema.L)
+			}
 		}
 	}
 }
