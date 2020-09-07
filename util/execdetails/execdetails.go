@@ -89,6 +89,7 @@ type CommitDetails struct {
 	TxnRetry          int
 }
 
+// Merge merges commit details into self.
 func (cd *CommitDetails) Merge(other *CommitDetails) {
 	cd.GetCommitTsTime += other.GetCommitTsTime
 	cd.PrewriteTime += other.PrewriteTime
@@ -393,11 +394,12 @@ type BasicRuntimeStats struct {
 	rows int64
 }
 
-// GetActRows implements the RuntimeStats interface.
+// GetActRows return total rows of BasicRuntimeStats.
 func (e *BasicRuntimeStats) GetActRows() int64 {
 	return e.rows
 }
 
+// Clone implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) Clone() RuntimeStats {
 	return &BasicRuntimeStats{
 		loop:    e.loop,
@@ -406,7 +408,7 @@ func (e *BasicRuntimeStats) Clone() RuntimeStats {
 	}
 }
 
-// Combine implements the RuntimeStats interface.
+// Merge implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 	tmp, ok := rs.(*BasicRuntimeStats)
 	if !ok {
@@ -417,12 +419,13 @@ func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 	e.rows += tmp.rows
 }
 
+// RootRuntimeStats is the executor runtime stats that combine with multiple runtime stats.
 type RootRuntimeStats struct {
 	basics   []*BasicRuntimeStats
 	groupRss [][]RuntimeStats
 }
 
-// GetActRows implements the RuntimeStats interface.
+// GetActRows return total rows of RootRuntimeStats.
 func (e *RootRuntimeStats) GetActRows() int64 {
 	num := int64(0)
 	for _, basic := range e.basics {
@@ -431,6 +434,7 @@ func (e *RootRuntimeStats) GetActRows() int64 {
 	return num
 }
 
+// String implements the RuntimeStats interface.
 func (e *RootRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
 	if len(e.basics) > 0 {
@@ -618,6 +622,7 @@ func (e *RuntimeStatsWithConcurrencyInfo) SetConcurrencyInfo(infos ...*Concurren
 	}
 }
 
+// Clone implements the RuntimeStats interface.
 func (e *RuntimeStatsWithConcurrencyInfo) Clone() RuntimeStats {
 	newRs := &RuntimeStatsWithConcurrencyInfo{
 		concurrency: make([]*ConcurrencyInfo, 0, len(e.concurrency)),
@@ -626,6 +631,7 @@ func (e *RuntimeStatsWithConcurrencyInfo) Clone() RuntimeStats {
 	return newRs
 }
 
+// String implements the RuntimeStats interface.
 func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 	var result string
 	if len(e.concurrency) > 0 {
@@ -655,6 +661,7 @@ type RuntimeStatsWithCommit struct {
 	LockKeys *LockKeysDetails
 }
 
+// Merge implements the RuntimeStats interface.
 func (e *RuntimeStatsWithCommit) Merge(rs RuntimeStats) {
 	tmp, ok := rs.(*RuntimeStatsWithCommit)
 	if !ok {
@@ -675,12 +682,14 @@ func (e *RuntimeStatsWithCommit) Merge(rs RuntimeStats) {
 	}
 }
 
+// Clone implements the RuntimeStats interface.
 func (e *RuntimeStatsWithCommit) Clone() RuntimeStats {
 	newRs := RuntimeStatsWithCommit{}
 	newRs.Merge(e)
 	return &newRs
 }
 
+// String implements the RuntimeStats interface.
 func (e *RuntimeStatsWithCommit) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 32))
 	if e.Commit != nil {

@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/util/execdetails"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -658,6 +658,7 @@ type SnapshotRuntimeStats struct {
 	backoffTimes   map[backoffType]int
 }
 
+// Clone implements the RuntimeStats interface.
 func (rs *SnapshotRuntimeStats) Clone() execdetails.RuntimeStats {
 	newRs := SnapshotRuntimeStats{}
 	newRs.Merge(rs)
