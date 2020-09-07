@@ -182,7 +182,29 @@ func (s *testSuite2) TestIssue18878(c *C) {
 	tk.MustQuery("show grants for `show_grants`@`127.0.%`")
 }
 
+<<<<<<< HEAD
 func (s *testSuite2) TestIssue3641(c *C) {
+=======
+func (s *testSuite5) TestIssue17794(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("CREATE USER 'root'@'8.8.%'")
+	se, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se.Auth(&auth.UserIdentity{Username: "root", Hostname: "9.9.9.9", AuthHostname: "%"}, nil, nil), IsTrue)
+	tk.Se = se
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	se1, err := session.CreateSession4Test(s.store)
+	c.Assert(err, IsNil)
+	c.Assert(se1.Auth(&auth.UserIdentity{Username: "root", Hostname: "8.8.8.8", AuthHostname: "8.8.%"}, nil, nil), IsTrue)
+	tk1.Se = se1
+
+	tk.MustQuery("show grants").Check(testkit.Rows("GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION"))
+	tk1.MustQuery("show grants").Check(testkit.Rows("GRANT USAGE ON *.* TO 'root'@'8.8.%'"))
+}
+
+func (s *testSuite5) TestIssue3641(c *C) {
+>>>>>>> 3d33bdf... privilege: fix wrong result of `SHOW GRANTS` (#19704)
 	tk := testkit.NewTestKit(c, s.store)
 	_, err := tk.Exec("show tables;")
 	c.Assert(err.Error(), Equals, plannercore.ErrNoDB.Error())
