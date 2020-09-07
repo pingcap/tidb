@@ -25,17 +25,18 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/tikv"
-	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 type testPointGetSuite struct {
-	store kv.Storage
-	dom   *domain.Domain
-	cli   *checkRequestClient
+	store    kv.Storage
+	dom      *domain.Domain
+	cli      *checkRequestClient
+	testData testutil.TestData
 }
 
 func (s *testPointGetSuite) SetUpSuite(c *C) {
@@ -54,11 +55,14 @@ func (s *testPointGetSuite) SetUpSuite(c *C) {
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
 	s.dom.SetStatsUpdating(true)
+	s.testData, err = testutil.LoadTestSuiteData("testdata", "point_get_suite")
+	c.Assert(err, IsNil)
 }
 
 func (s *testPointGetSuite) TearDownSuite(c *C) {
 	s.dom.Close()
 	s.store.Close()
+	c.Assert(s.testData.GenerateOutputIfNeeded(), IsNil)
 }
 
 func (s *testPointGetSuite) TearDownTest(c *C) {
@@ -516,6 +520,7 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_enable_clustered_index=0;")
 	tk.MustExec("create table t (a varchar(64) primary key, b int)")
 	tk.MustExec("insert t values ('a', 1), ('b', 2), ('c', 3)")
 	tk.MustExec("begin pessimistic")
@@ -527,7 +532,7 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	txnCtx := tk.Se.GetSessionVars().TxnCtx
 	val, ok := txnCtx.GetKeyInPessimisticLockCache(pk)
 	c.Assert(ok, IsTrue)
-	handle, err := tables.DecodeHandleInUniqueIndexValue(val, false)
+	handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, false)
 	c.Assert(err, IsNil)
 	rowKey := tablecodec.EncodeRowKeyWithHandle(tid, handle)
 	_, ok = txnCtx.GetKeyInPessimisticLockCache(rowKey)
@@ -556,4 +561,35 @@ func (s *testPointGetSuite) TestClusterIndexPointGet(c *C) {
 	tk.MustQuery(`explain select * from snp where id1 in (1, 100)`).Check(testkit.Rows("TableReader_6 20.00 root  data:TableRangeScan_5",
 		"└─TableRangeScan_5 20.00 cop[tikv] table:snp range:[1,1], [100,100], keep order:false, stats:pseudo"))
 	tk.MustQuery("select * from snp where id1 = 2").Check(testkit.Rows("2 2 2", "2 3 3"))
+}
+
+func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`set @@tidb_enable_clustered_index=true`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec(`create table t1 (a int, b decimal(10,0), c int, primary key(a,b))`)
+	tk.MustExec(`create table t2 (a varchar(20), b int, primary key(a), unique key(b))`)
+	tk.MustExec(`insert into t1 values(1,1,1),(2,2,2),(3,3,3)`)
+	tk.MustExec(`insert into t2 values('111',1),('222',2),('333',3)`)
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		plan := tk.MustQuery("explain " + tt)
+		res := tk.MustQuery(tt).Sort()
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(plan.Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(res.Rows())
+		})
+		plan.Check(testkit.Rows(output[i].Plan...))
+		res.Check(testkit.Rows(output[i].Res...))
+	}
 }

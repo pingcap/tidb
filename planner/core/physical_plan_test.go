@@ -120,6 +120,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
+	ctx := se.(sessionctx.Context)
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.ExecutorConcurrency = 4
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.SetHashJoinConcurrency(5)
 
 	var input []string
 	var output []struct {
@@ -157,8 +162,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
+	sessionVars.SetHashJoinConcurrency(5)
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.ExecutorConcurrency = 4
 	var input []string
 	var output []struct {
 		SQL  string
@@ -316,7 +324,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		txn, err := se.Txn(true)
 		c.Assert(err, IsNil)
 		txn.Set(kv.Key("AAA"), []byte("BBB"))
-		c.Assert(se.StmtCommit(nil), IsNil)
+		se.StmtCommit()
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
@@ -341,8 +349,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.ExecutorConcurrency = 4
 
 	var input []string
 	var output []struct {
@@ -489,6 +499,9 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 	}
 	tk.MustExec("create table t (a int primary key, b int, index idx(a))")
 	tk.MustExec("create table tt (a int primary key) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
+
+	tk.MustExec("set @try_old_partition_implementation = 1")
+
 	s.testData.GetTestCases(c, &input, &output)
 	for i, ts := range input {
 		tk.MustExec("begin")
@@ -740,8 +753,8 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	c.Assert(err, IsNil)
 
 	sessionVars := se.(sessionctx.Context).GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
 
 	var input []struct {
 		SQL         string
@@ -873,6 +886,7 @@ func (s *testPlanSuite) TestPushdownDistinctDisable(c *C) {
 			Result []string
 		}
 	)
+
 	s.testData.GetTestCases(c, &input, &output)
 	vars := []string{
 		fmt.Sprintf("set @@session.%s = 0", variable.TiDBOptDistinctAggPushDown),
@@ -932,6 +946,8 @@ func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, outpu
 	tk.MustExec("set session sql_mode=''")
 	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggPartialConcurrency))
 	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggFinalConcurrency))
+
+	tk.MustExec("set @try_old_partition_implementation = 1")
 
 	for _, v := range vars {
 		tk.MustExec(v)
@@ -1477,4 +1493,49 @@ func (s *testPlanSuite) TestHintFromDiffDatabase(c *C) {
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
 	}
+}
+
+func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `drop table if exists test.tt`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `create table test.tt (a int,b int, index(a), index(b));`)
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(ctx, "insert into tt values (1, 1), (2, 2), (3, 4)")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set @try_old_partition_implementation = 1")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+
+	// This assert makes sure a query with or without nth_plan() hint output exactly the same plan(including plan ID).
+	// The query below is the same as queries in the testdata except for nth_plan() hint.
+	// Currently its output is the same as the second test case in the testdata, which is `output[1]`. If this doesn't
+	// hold in the future, you may need to modify this.
+	tk.MustQuery("explain select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
 }

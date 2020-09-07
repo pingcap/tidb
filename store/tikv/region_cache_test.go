@@ -54,7 +54,7 @@ func (s *testRegionCacheSuite) SetUpTest(c *C) {
 	s.peer2 = peerIDs[1]
 	pdCli := &codecPDClient{mocktikv.NewPDClient(s.cluster)}
 	s.cache = NewRegionCache(pdCli)
-	s.bo = NewBackoffer(context.Background(), 5000)
+	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
 func (s *testRegionCacheSuite) TearDownTest(c *C) {
@@ -136,7 +136,7 @@ func (s *testRegionCacheSuite) TestSimple(c *C) {
 }
 
 func (s *testRegionCacheSuite) TestDropStore(c *C) {
-	bo := NewBackoffer(context.Background(), 100)
+	bo := NewBackofferWithVars(context.Background(), 100, nil)
 	s.cluster.RemoveStore(s.store1)
 	loc, err := s.cache.LocateKey(bo, []byte("a"))
 	c.Assert(err, IsNil)
@@ -277,8 +277,6 @@ func (s *testRegionCacheSuite) TestUpdateLeader3(c *C) {
 	addr2 := s.getAddr(c, []byte("a"), kv.ReplicaReadFollower, seed+1)
 	c.Assert(addr, Not(Equals), s.storeAddr(store3))
 	c.Assert(addr2, Not(Equals), s.storeAddr(store3))
-	c.Assert(addr, Not(Equals), "")
-	c.Assert(addr2, Not(Equals), "")
 }
 
 func (s *testRegionCacheSuite) TestSendFailedButLeaderNotChange(c *C) {
@@ -676,7 +674,7 @@ func (s *testRegionCacheSuite) TestRegionEpochAheadOfTiKV(c *C) {
 	r1 := metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 9, ConfVer: 10}}
 	r2 := metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 10, ConfVer: 9}}
 
-	bo := NewBackoffer(context.Background(), 2000000)
+	bo := NewBackofferWithVars(context.Background(), 2000000, nil)
 
 	err := cache.OnRegionEpochNotMatch(bo, &RPCContext{Region: region.VerID()}, []*metapb.Region{&r1})
 	c.Assert(err, IsNil)
@@ -706,7 +704,7 @@ func (s *testRegionCacheSuite) TestRegionEpochOnTiFlash(c *C) {
 	ctxTiFlash, err := s.cache.GetTiFlashRPCContext(s.bo, loc1.Region)
 	c.Assert(err, IsNil)
 	c.Assert(ctxTiFlash.Peer.Id, Equals, s.peer1)
-	ctxTiFlash.Peer.IsLearner = true
+	ctxTiFlash.Peer.Role = metapb.PeerRole_Learner
 	r := ctxTiFlash.Meta
 	reqSend := NewRegionRequestSender(s.cache, nil)
 	regionErr := &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{CurrentRegions: []*metapb.Region{r}}}
@@ -739,7 +737,7 @@ func createClusterWithStoresAndRegions(regionCnt, storeCount int) *mocktikv.Clus
 func loadRegionsToCache(cache *RegionCache, regionCnt int) {
 	for i := 0; i < regionCnt; i++ {
 		rawKey := []byte(fmt.Sprintf(regionSplitKeyFormat, i))
-		cache.LocateKey(NewBackoffer(context.Background(), 1), rawKey)
+		cache.LocateKey(NewBackofferWithVars(context.Background(), 1, nil), rawKey)
 	}
 }
 
@@ -1167,7 +1165,7 @@ func BenchmarkOnRequestFail(b *testing.B) {
 	cache := NewRegionCache(mocktikv.NewPDClient(cluster))
 	defer cache.Close()
 	loadRegionsToCache(cache, regionCnt)
-	bo := NewBackoffer(context.Background(), 1)
+	bo := NewBackofferWithVars(context.Background(), 1, nil)
 	loc, err := cache.LocateKey(bo, []byte{})
 	if err != nil {
 		b.Fatal(err)

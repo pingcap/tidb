@@ -86,11 +86,11 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
-func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression) (baseBuiltinFunc, error) {
+func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType) (baseBuiltinFunc, error) {
 	if ctx == nil {
-		panic("ctx should not be nil")
+		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
-	if err := checkIllegalMixCollation(funcName, args); err != nil {
+	if err := checkIllegalMixCollation(funcName, args, retType); err != nil {
 		return baseBuiltinFunc{}, err
 	}
 	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
@@ -108,21 +108,33 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	return bf, nil
 }
 
-func checkIllegalMixCollation(funcName string, args []Expression) error {
-	firstExplicitCollation := ""
-	for _, arg := range args {
-		if arg.GetType().EvalType() != types.ETString {
-			continue
-		}
-		if arg.Coercibility() == CoercibilityExplicit {
-			if firstExplicitCollation == "" {
-				firstExplicitCollation = arg.GetType().Collate
-			} else if firstExplicitCollation != arg.GetType().Collate {
-				return collate.ErrIllegalMixCollation.GenWithStackByArgs(firstExplicitCollation, "EXPLICIT", arg.GetType().Collate, "EXPLICIT", funcName)
-			}
-		}
+var (
+	coerString = []string{"EXPLICIT", "NONE", "IMPLICIT", "SYSCONST", "COERCIBLE", "NUMERIC", "IGNORABLE"}
+)
+
+func checkIllegalMixCollation(funcName string, args []Expression, evalType types.EvalType) error {
+	if len(args) < 2 {
+		return nil
+	}
+	_, _, coercibility, legal := inferCollation(args...)
+	if !legal {
+		return illegalMixCollationErr(funcName, args)
+	}
+	if coercibility == CoercibilityNone && evalType != types.ETString {
+		return illegalMixCollationErr(funcName, args)
 	}
 	return nil
+}
+
+func illegalMixCollationErr(funcName string, args []Expression) error {
+	switch len(args) {
+	case 2:
+		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], funcName)
+	case 3:
+		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType().Collate, coerString[args[0].Coercibility()], args[1].GetType().Collate, coerString[args[1].Coercibility()], args[0].GetType().Collate, coerString[args[2].Coercibility()], funcName)
+	default:
+		return collate.ErrIllegalMixCollation.GenWithStackByArgs(funcName)
+	}
 }
 
 // newBaseBuiltinFuncWithTp creates a built-in function signature with specified types of arguments and the return type of the function.
@@ -133,7 +145,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		panic("unexpected length of args and argTps")
 	}
 	if ctx == nil {
-		panic("ctx should not be nil")
+		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
 
 	for i := range args {
@@ -157,7 +169,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		}
 	}
 
-	if err = checkIllegalMixCollation(funcName, args); err != nil {
+	if err = checkIllegalMixCollation(funcName, args, retType); err != nil {
 		return
 	}
 
@@ -240,6 +252,26 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	}
 	bf.SetCharsetAndCollation(derivedCharset, derivedCollate)
 	bf.setCollator(collate.GetCollator(derivedCollate))
+	return bf, nil
+}
+
+// newBaseBuiltinFuncWithFieldType create BaseBuiltinFunc with FieldType charset and collation.
+// do not check and compute collation.
+func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
+	if ctx == nil {
+		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
+	}
+	bf := baseBuiltinFunc{
+		bufAllocator:           newLocalSliceBuffer(len(args)),
+		childrenVectorizedOnce: new(sync.Once),
+		childrenReversedOnce:   new(sync.Once),
+
+		args: args,
+		ctx:  ctx,
+		tp:   types.NewFieldType(mysql.TypeUnspecified),
+	}
+	bf.SetCharsetAndCollation(tp.Charset, tp.Collate)
+	bf.setCollator(collate.GetCollator(tp.Collate))
 	return bf, nil
 }
 

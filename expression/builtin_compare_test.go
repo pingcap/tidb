@@ -66,11 +66,10 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"-123456789123456789123456789.12345 > a", "0"},
 		{"123456789123456789123456789.12345 < a", "0"},
 		{"-123456789123456789123456789.12345 < a", "1"},
-		// This cast can not be eliminated,
-		// since converting "aaaa" to an int will cause DataTruncate error.
-		{"'aaaa'=a", "eq(cast(aaaa, double BINARY), cast(a, double BINARY))"},
+		{"'aaaa'=a", "eq(0, a)"},
 	}
-	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns)
+	cols, names, err := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
+	c.Assert(err, IsNil)
 	schema := NewSchema(cols...)
 	for _, t := range tests {
 		f, err := ParseSimpleExprsWithNames(s.ctx, t.exprStr, schema, names)

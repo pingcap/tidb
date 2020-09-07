@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	. "github.com/pingcap/tidb/util/testutil"
 )
 
 func TestT(t *testing.T) {
@@ -59,6 +60,8 @@ type testFailDBSuite struct {
 	dom     *domain.Domain
 	se      session.Session
 	p       *parser.Parser
+
+	CommonHandleSuite
 }
 
 func (s *testFailDBSuite) SetUpSuite(c *C) {
@@ -193,9 +196,9 @@ func (s *testFailDBSuite) TestUpdateHandleFailed(c *C) {
 }
 
 func (s *testFailDBSuite) TestAddIndexFailed(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockAddIndexErr", `1*return`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/mockBackfillRunErr", `1*return`), IsNil)
 	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockAddIndexErr"), IsNil)
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockBackfillRunErr"), IsNil)
 	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test_add_index_failed")
@@ -331,7 +334,12 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	tk.MustExec("create database if not exists test_db")
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists test_add_index")
-	tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+	if s.IsCommonHandle {
+		tk.MustExec("set @@tidb_enable_clustered_index = 1")
+		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1, c3))")
+	} else {
+		tk.MustExec("create table test_add_index (c1 bigint, c2 bigint, c3 bigint, primary key(c1))")
+	}
 
 	done := make(chan error, 1)
 	start := -10
@@ -358,10 +366,12 @@ func (s *testFailDBSuite) TestAddIndexWorkerNum(c *C) {
 	ddl.TestCheckWorkerNumber = lastSetWorkerCnt
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_worker_cnt=%d", originDDLAddIndexWorkerCnt))
 
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum", `return(true)`), IsNil)
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkIndexWorkerNum"), IsNil)
-	}()
+	if !s.IsCommonHandle { // only enable failpoint once
+		c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`), IsNil)
+		defer func() {
+			c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"), IsNil)
+		}()
+	}
 
 	testutil.SessionExecInGoroutine(c, s.store, "create index c3_index on test_add_index (c3)", done)
 	checkNum := 0
@@ -384,6 +394,8 @@ LOOP:
 	c.Assert(checkNum, Greater, 5)
 	tk.MustExec("admin check table test_add_index")
 	tk.MustExec("drop table test_add_index")
+
+	s.RerunWithCommonHandleEnabled(c, s.TestAddIndexWorkerNum)
 }
 
 // TestRunDDLJobPanic tests recover panic when run ddl job panic.
@@ -419,4 +431,106 @@ func (s *testFailDBSuite) TestPartitionAddIndexGC(c *C) {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/mockUpdateCachedSafePoint"), IsNil)
 	}()
 	tk.MustExec("alter table partition_add_idx add index idx (id, hired)")
+}
+
+func (s *testFailDBSuite) TestModifyColumn(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+	}()
+
+	tk.MustExec("create table t (a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")
+	tk.MustExec("insert into t values(1, 2, 3), (11, 22, 33)")
+	_, err := tk.Exec("alter table t change column c cc mediumint")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true and this column has primary key flag")
+	tk.MustExec("alter table t change column b bb mediumint first")
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	c.Assert(err, IsNil)
+	cols := tbl.Meta().Columns
+	colsStr := ""
+	idxsStr := ""
+	for _, col := range cols {
+		colsStr += col.Name.L + " "
+	}
+	for _, idx := range tbl.Meta().Indices {
+		idxsStr += idx.Name.L + " "
+	}
+	c.Assert(len(cols), Equals, 3)
+	c.Assert(len(tbl.Meta().Indices), Equals, 3)
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 1 3", "22 11 33"))
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `bb` mediumint(9) DEFAULT NULL,\n" +
+		"  `a` int(11) NOT NULL DEFAULT 1,\n" +
+		"  `c` int(11) NOT NULL DEFAULT 0,\n" +
+		"  PRIMARY KEY (`c`),\n" +
+		"  KEY `idx` (`bb`),\n" +
+		"  KEY `idx1` (`a`),\n" +
+		"  KEY `idx2` (`bb`,`c`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("admin check table t")
+	tk.MustExec("insert into t values(111, 222, 333)")
+	_, err = tk.Exec("alter table t change column a aa tinyint after c")
+	c.Assert(err.Error(), Equals, "[types:1690]constant 222 overflows tinyint")
+	tk.MustExec("alter table t change column a aa mediumint after c")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `bb` mediumint(9) DEFAULT NULL,\n" +
+		"  `c` int(11) NOT NULL DEFAULT 0,\n" +
+		"  `aa` mediumint(9) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`c`),\n" +
+		"  KEY `idx` (`bb`),\n" +
+		"  KEY `idx1` (`aa`),\n" +
+		"  KEY `idx2` (`bb`,`c`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("2 3 1", "22 33 11", "111 333 222"))
+	tk.MustExec("admin check table t")
+
+	// Test unsupport statements.
+	tk.MustExec("create table t1(a int) partition by hash (a) partitions 2")
+	_, err = tk.Exec("alter table t1 modify column a mediumint")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, table is partition table")
+	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual, c int generated always as (a+1) stored)")
+	_, err = tk.Exec("alter table t2 modify column b mediumint")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, newCol IsGenerated false, oldCol IsGenerated true")
+	_, err = tk.Exec("alter table t2 modify column c mediumint")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, newCol IsGenerated false, oldCol IsGenerated true")
+	_, err = tk.Exec("alter table t2 modify column a mediumint generated always as(id+1) stored")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: tidb_enable_change_column_type is true, newCol IsGenerated true, oldCol IsGenerated false")
+
+	// Test multiple rows of data.
+	tk.MustExec("create table t3(a int not null default 1, b int default 2, c int not null default 0, primary key(c), index idx(b), index idx1(a), index idx2(b, c))")
+	// Add some discrete rows.
+	maxBatch := 20
+	batchCnt := 100
+	// Make sure there are no duplicate keys.
+	defaultBatchSize := variable.DefTiDBDDLReorgBatchSize * variable.DefTiDBDDLReorgWorkerCount
+	base := defaultBatchSize * 20
+	for i := 1; i < batchCnt; i++ {
+		n := base + i*defaultBatchSize + i
+		for j := 0; j < rand.Intn(maxBatch); j++ {
+			n += j
+			sql := fmt.Sprintf("insert into t3 values (%d, %d, %d)", n, n, n)
+			tk.MustExec(sql)
+		}
+	}
+	tk.MustExec("alter table t3 modify column a mediumint")
+	tk.MustExec("admin check table t")
+
+	// Test PointGet.
+	tk.MustExec("create table t4(a bigint, b int, unique index idx(a));")
+	tk.MustExec("insert into t4 values (1,1),(2,2),(3,3),(4,4),(5,5);")
+	tk.MustExec("alter table t4 modify a bigint unsigned;")
+	tk.MustQuery("select * from t4 where a=1;").Check(testkit.Rows("1 1"))
+
+	// Test changing null to not null.
+	tk.MustExec("create table t5(a bigint, b int, unique index idx(a));")
+	tk.MustExec("insert into t5 values (1,1),(2,2),(3,3),(4,4),(5,5);")
+	tk.MustExec("alter table t5 modify a int not null;")
+
+	tk.MustExec("drop table t, t1, t2, t3, t4, t5")
 }

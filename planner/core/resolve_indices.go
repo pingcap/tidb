@@ -114,6 +114,49 @@ func (p *PhysicalHashJoin) ResolveIndices() (err error) {
 }
 
 // ResolveIndices implements Plan interface.
+func (p *PhysicalBroadCastJoin) ResolveIndices() (err error) {
+	err = p.physicalSchemaProducer.ResolveIndices()
+	if err != nil {
+		return err
+	}
+	lSchema := p.children[0].Schema()
+	rSchema := p.children[1].Schema()
+	for i, col := range p.LeftJoinKeys {
+		newKey, err := col.ResolveIndices(lSchema)
+		if err != nil {
+			return err
+		}
+		p.LeftJoinKeys[i] = newKey.(*expression.Column)
+	}
+	for i, col := range p.RightJoinKeys {
+		newKey, err := col.ResolveIndices(rSchema)
+		if err != nil {
+			return err
+		}
+		p.RightJoinKeys[i] = newKey.(*expression.Column)
+	}
+	for i, expr := range p.LeftConditions {
+		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
+		if err != nil {
+			return err
+		}
+	}
+	for i, expr := range p.RightConditions {
+		p.RightConditions[i], err = expr.ResolveIndices(rSchema)
+		if err != nil {
+			return err
+		}
+	}
+	for i, expr := range p.OtherConditions {
+		p.OtherConditions[i], err = expr.ResolveIndices(expression.MergeSchema(lSchema, rSchema))
+		if err != nil {
+			return err
+		}
+	}
+	return
+}
+
+// ResolveIndices implements Plan interface.
 func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 	err = p.physicalSchemaProducer.ResolveIndices()
 	if err != nil {
@@ -223,11 +266,11 @@ func (p *PhysicalUnionScan) ResolveIndices() (err error) {
 			return err
 		}
 	}
-	resolvedHandleCol, err := p.HandleCol.ResolveIndices(p.children[0].Schema())
+	resolvedHandleCol, err := p.HandleCols.ResolveIndices(p.children[0].Schema())
 	if err != nil {
 		return err
 	}
-	p.HandleCol = resolvedHandleCol.(*expression.Column)
+	p.HandleCols = resolvedHandleCol
 	return
 }
 
@@ -294,6 +337,13 @@ func (p *PhysicalIndexLookUpReader) ResolveIndices() (err error) {
 			return err
 		}
 		p.ExtraHandleCol = newCol.(*expression.Column)
+	}
+	for i, commonHandleCol := range p.CommonHandleCols {
+		newCol, err := commonHandleCol.ResolveIndices(p.TablePlans[0].Schema())
+		if err != nil {
+			return err
+		}
+		p.CommonHandleCols[i] = newCol.(*expression.Column)
 	}
 	return
 }
@@ -531,7 +581,7 @@ func (p *PhysicalLock) ResolveIndices() (err error) {
 			if err != nil {
 				return err
 			}
-			p.TblID2Handle[i][j] = resolvedCol.(*expression.Column)
+			p.TblID2Handle[i][j] = resolvedCol
 		}
 	}
 	return nil

@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
@@ -135,6 +136,7 @@ const (
 	boServerBusy
 	boTxnNotFound
 	boStaleCmd
+	boMaxTsNotSynced
 )
 
 func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
@@ -159,6 +161,8 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		return NewBackoffFn(2000, 10000, EqualJitter)
 	case boStaleCmd:
 		return NewBackoffFn(2, 1000, NoJitter)
+	case boMaxTsNotSynced:
+		return NewBackoffFn(2, 500, NoJitter)
 	}
 	return nil
 }
@@ -181,6 +185,8 @@ func (t backoffType) String() string {
 		return "staleCommand"
 	case boTxnNotFound:
 		return "txnNotFound"
+	case boMaxTsNotSynced:
+		return "maxTsNotSynced"
 	}
 	return ""
 }
@@ -199,6 +205,8 @@ func (t backoffType) TError() error {
 		return ErrTiKVServerBusy
 	case boStaleCmd:
 		return ErrTiKVStaleCommand
+	case boMaxTsNotSynced:
+		return ErrTiKVMaxTimestampNotSynced
 	}
 	return ErrUnknown
 }
@@ -254,7 +262,7 @@ type txnStartCtxKeyType struct{}
 // txnStartKey is a key for transaction start_ts info in context.Context.
 var txnStartKey = txnStartCtxKeyType{}
 
-// NewBackoffer creates a Backoffer with maximum sleep time(in ms).
+// NewBackoffer (Deprecated) creates a Backoffer with maximum sleep time(in ms).
 func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	return &Backoffer{
 		ctx:      ctx,
@@ -263,13 +271,18 @@ func NewBackoffer(ctx context.Context, maxSleep int) *Backoffer {
 	}
 }
 
+// NewBackofferWithVars creates a Backoffer with maximum sleep time(in ms) and kv.Variables.
+func NewBackofferWithVars(ctx context.Context, maxSleep int, vars *kv.Variables) *Backoffer {
+	return NewBackoffer(ctx, maxSleep).withVars(vars)
+}
+
 // NewNoopBackoff create a Backoffer do nothing just return error directly
 func NewNoopBackoff(ctx context.Context) *Backoffer {
 	return &Backoffer{ctx: ctx, noop: true}
 }
 
-// WithVars sets the kv.Variables to the Backoffer and return it.
-func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
+// withVars sets the kv.Variables to the Backoffer and return it.
+func (b *Backoffer) withVars(vars *kv.Variables) *Backoffer {
 	if vars != nil {
 		b.vars = vars
 	}
@@ -284,6 +297,11 @@ func (b *Backoffer) WithVars(vars *kv.Variables) *Backoffer {
 // Backoff sleeps a while base on the backoffType and records the error message.
 // It returns a retryable error if total sleep time exceeds maxSleep.
 func (b *Backoffer) Backoff(typ backoffType, err error) error {
+	if span := opentracing.SpanFromContext(b.ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan(fmt.Sprintf("tikv.backoff.%s", typ), opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(b.ctx, span1)
+	}
 	return b.BackoffWithMaxSleep(typ, -1, err)
 }
 
@@ -344,7 +362,7 @@ func (b *Backoffer) BackoffWithMaxSleep(typ backoffType, maxSleepMs int, err err
 	}
 
 	if b.vars != nil && b.vars.Killed != nil {
-		if atomic.CompareAndSwapUint32(b.vars.Killed, 1, 0) {
+		if atomic.LoadUint32(b.vars.Killed) == 1 {
 			return ErrQueryInterrupted
 		}
 	}

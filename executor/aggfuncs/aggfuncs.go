@@ -66,6 +66,8 @@ var (
 	_ AggFunc = (*maxMin4String)(nil)
 	_ AggFunc = (*maxMin4Duration)(nil)
 	_ AggFunc = (*maxMin4JSON)(nil)
+	_ AggFunc = (*maxMin4Enum)(nil)
+	_ AggFunc = (*maxMin4Set)(nil)
 
 	// All the AggFunc implementations for "AVG" are listed here.
 	_ AggFunc = (*avgOriginal4Decimal)(nil)
@@ -99,6 +101,17 @@ var (
 	_ AggFunc = (*jsonObjectAgg)(nil)
 )
 
+const (
+	// DefUint32Size is the size of uint32
+	DefUint32Size = int64(unsafe.Sizeof(uint32(0)))
+	// DefInt64Size is the size of int64
+	DefInt64Size = int64(unsafe.Sizeof(int64(0)))
+	// DefFloat64Size is the size of float64
+	DefFloat64Size = int64(unsafe.Sizeof(float64(0)))
+	// DefTimeSize is the size of time
+	DefTimeSize = int64(16)
+)
+
 // PartialResult represents data structure to store the partial result for the
 // aggregate functions. Here we use unsafe.Pointer to allow the partial result
 // to be any type.
@@ -108,10 +121,11 @@ type PartialResult unsafe.Pointer
 type AggFunc interface {
 	// AllocPartialResult allocates a specific data structure to store the
 	// partial result, initializes it, and converts it to PartialResult to
-	// return back. Aggregate operator implementation, no matter it's a hash
+	// return back. The second returned value is the memDelta used to trace
+	// memory usage. Aggregate operator implementation, no matter it's a hash
 	// or stream, should hold this allocated PartialResult for the further
 	// operations like: "ResetPartialResult", "UpdatePartialResult".
-	AllocPartialResult() PartialResult
+	AllocPartialResult() (pr PartialResult, memDelta int64)
 
 	// ResetPartialResult resets the partial result to the original state for a
 	// specific aggregate function. It converts the input PartialResult to the
@@ -124,14 +138,16 @@ type AggFunc interface {
 	// It converts the PartialResult to the specific data structure which stores
 	// the partial result and then iterates on the input rows and update that
 	// partial result according to the functionality and the state of the
-	// aggregate function.
-	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) error
+	// aggregate function. The returned value is the memDelta used to trace memory
+	// usage.
+	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
 
 	// MergePartialResult will be called in the final phase when parallelly
 	// executing. It converts the PartialResult `src`, `dst` to the same specific
 	// data structure which stores the partial results, and then evaluate the
-	// final result using the partial results as input values.
-	MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error
+	// final result using the partial results as input values. The returned value
+	// is the memDelta used to trace memory usage.
+	MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error)
 
 	// AppendFinalResult2Chunk finalizes the partial result and append the
 	// final result to the input chunk. Like other operations, it converts the
@@ -151,8 +167,8 @@ type baseAggFunc struct {
 	ordinal int
 }
 
-func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) error {
-	return nil
+func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+	return 0, nil
 }
 
 // SlidingWindowAggFunc is the interface to evaluate the aggregate functions using sliding window.

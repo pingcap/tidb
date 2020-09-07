@@ -34,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
+	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/logutil"
@@ -164,7 +164,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		}
 		w.reorgCtx.clean()
 		return errors.Trace(err)
-	case <-w.quitCh:
+	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
 		w.reorgCtx.setNextHandle(nil)
 		w.reorgCtx.setRowCount(0)
@@ -226,7 +226,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 }
 
 func (w *worker) isReorgRunnable(d *ddlCtx) error {
-	if isChanClosed(w.quitCh) {
+	if isChanClosed(w.ctx.Done()) {
 		// Worker is closed. So it can't do the reorganizational job.
 		return errInvalidWorker.GenWithStack("worker is closed")
 	}
@@ -268,17 +268,9 @@ func (r *reorgInfo) String() string {
 }
 
 func constructDescTableScanPB(physicalTableID int64, tblInfo *model.TableInfo, handleCols []*model.ColumnInfo) *tipb.Executor {
-	handleColPBs := util.ColumnsToProto(handleCols, tblInfo.PKIsHandle)
-	pkColIDs := make([]int64, 0, len(handleCols))
-	for _, c := range handleCols {
-		pkColIDs = append(pkColIDs, c.ID)
-	}
-	tblScan := &tipb.TableScan{
-		TableId:          physicalTableID,
-		Columns:          handleColPBs,
-		Desc:             true,
-		PrimaryColumnIds: pkColIDs,
-	}
+	tblScan := tables.BuildTableScanFromInfos(tblInfo, handleCols)
+	tblScan.TableId = physicalTableID
+	tblScan.Desc = true
 	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}
 }
 
@@ -314,17 +306,23 @@ func getColumnsTypes(columns []*model.ColumnInfo) []*types.FieldType {
 }
 
 // buildDescTableScan builds a desc table scan upon tblInfo.
-func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable,
+func (dc *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl table.PhysicalTable,
 	handleCols []*model.ColumnInfo, limit uint64) (distsql.SelectResult, error) {
-	sctx := newContext(d.store)
+	sctx := newContext(dc.store)
 	dagPB, err := buildDescTableScanDAG(sctx, tbl, handleCols, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ranges := ranger.FullIntRange(false)
-	var builder distsql.RequestBuilder
-	builder.SetTableRanges(tbl.GetPhysicalID(), ranges, nil).
-		SetDAGRequest(dagPB).
+	var b distsql.RequestBuilder
+	var builder *distsql.RequestBuilder
+	if !tbl.Meta().IsCommonHandle {
+		ranges := ranger.FullIntRange(false)
+		builder = b.SetTableRanges(tbl.GetPhysicalID(), ranges, nil)
+	} else {
+		ranges := ranger.FullNotNullRange()
+		builder = b.SetCommonHandleRanges(sctx.GetSessionVars().StmtCtx, tbl.GetPhysicalID(), ranges)
+	}
+	builder.SetDAGRequest(dagPB).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(1).SetDesc(true)
@@ -346,8 +344,9 @@ func (d *ddlCtx) buildDescTableScan(ctx context.Context, startTS uint64, tbl tab
 }
 
 // GetTableMaxHandle gets the max handle of a PhysicalTable.
-func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
+func (dc *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (maxHandle kv.Handle, emptyTable bool, err error) {
 	var handleCols []*model.ColumnInfo
+	var pkIdx *model.IndexInfo
 	tblInfo := tbl.Meta()
 	switch {
 	case tblInfo.PKIsHandle:
@@ -358,7 +357,7 @@ func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (max
 			}
 		}
 	case tblInfo.IsCommonHandle:
-		pkIdx := tables.FindPrimaryIndex(tblInfo)
+		pkIdx = tables.FindPrimaryIndex(tblInfo)
 		cols := tblInfo.Cols()
 		for _, idxCol := range pkIdx.Columns {
 			handleCols = append(handleCols, cols[idxCol.Offset])
@@ -369,7 +368,7 @@ func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (max
 
 	ctx := context.Background()
 	// build a desc scan of tblInfo, which limit is 1, we can use it to retrieve the last handle of the table.
-	result, err := d.buildDescTableScan(ctx, startTS, tbl, handleCols, 1)
+	result, err := dc.buildDescTableScan(ctx, startTS, tbl, handleCols, 1)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -385,21 +384,23 @@ func (d *ddlCtx) GetTableMaxHandle(startTS uint64, tbl table.PhysicalTable) (max
 		// empty table
 		return nil, true, nil
 	}
-	sessCtx := newContext(d.store)
+	sessCtx := newContext(dc.store)
 	row := chk.GetRow(0)
 	if tblInfo.IsCommonHandle {
-		maxHandle, err = buildHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, row, handleCols)
+		maxHandle, err = buildCommonHandleFromChunkRow(sessCtx.GetSessionVars().StmtCtx, tblInfo, pkIdx, handleCols, row)
 		return maxHandle, false, err
 	}
 	return kv.IntHandle(row.GetInt64(0)), false, nil
 }
 
-func buildHandleFromChunkRow(sctx *stmtctx.StatementContext, row chunk.Row, cols []*model.ColumnInfo) (kv.Handle, error) {
+func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo,
+	cols []*model.ColumnInfo, row chunk.Row) (kv.Handle, error) {
 	fieldTypes := make([]*types.FieldType, 0, len(cols))
 	for _, col := range cols {
 		fieldTypes = append(fieldTypes, &col.FieldType)
 	}
 	datumRow := row.GetDatumRow(fieldTypes)
+	tablecodec.TruncateIndexValues(tblInfo, idxInfo, datumRow)
 
 	var handleBytes []byte
 	handleBytes, err := codec.EncodeKey(sctx, nil, datumRow...)

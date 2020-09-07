@@ -106,6 +106,7 @@ const (
 	preferRightAsINLMJInner
 	preferHashJoin
 	preferMergeJoin
+	preferBCJoin
 	preferHashAgg
 	preferStreamAgg
 )
@@ -157,11 +158,15 @@ func (p *LogicalJoin) Shallow() *LogicalJoin {
 	return join.Init(p.ctx, p.blockOffset)
 }
 
-// GetJoinKeys extracts join keys(columns) from EqualConditions.
-func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column) {
+// GetJoinKeys extracts join keys(columns) from EqualConditions. It returns left join keys, right
+// join keys and an `isNullEQ` array which means the `joinKey[i]` is a `NullEQ` function. The `hasNullEQ`
+// means whether there is a `NullEQ` of a join key.
+func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, isNullEQ []bool, hasNullEQ bool) {
 	for _, expr := range p.EqualConditions {
 		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
 		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
+		isNullEQ = append(isNullEQ, expr.FuncName.L == ast.NullEQ)
+		hasNullEQ = hasNullEQ || expr.FuncName.L == ast.NullEQ
 	}
 	return
 }
@@ -459,22 +464,23 @@ type LogicalUnionScan struct {
 
 	conditions []expression.Expression
 
-	handleCol *expression.Column
+	handleCols HandleCols
 }
 
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
 	logicalSchemaProducer
 
-	indexHints []*ast.IndexHint
-	table      table.Table
-	tableInfo  *model.TableInfo
-	Columns    []*model.ColumnInfo
-	DBName     model.CIStr
+	astIndexHints []*ast.IndexHint
+	IndexHints    []indexHintInfo
+	table         table.Table
+	tableInfo     *model.TableInfo
+	Columns       []*model.ColumnInfo
+	DBName        model.CIStr
 
 	TableAsName *model.CIStr
 	// indexMergeHints are the hint for indexmerge.
-	indexMergeHints []*ast.IndexHint
+	indexMergeHints []indexHintInfo
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
@@ -494,7 +500,8 @@ type DataSource struct {
 
 	// handleCol represents the handle column for the datasource, either the
 	// int primary key column or extra handle column.
-	handleCol *expression.Column
+	//handleCol *expression.Column
+	handleCols HandleCols
 	// TblCols contains the original columns of table before being pruned, and it
 	// is used for estimating table scan cost.
 	TblCols []*expression.Column
@@ -504,8 +511,10 @@ type DataSource struct {
 	// TblColHists contains the Histogram of all original table columns,
 	// it is converted from statisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
-	//preferStoreType means the DataSource is enforced to which storage.
+	// preferStoreType means the DataSource is enforced to which storage.
 	preferStoreType int
+	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
+	preferPartitions map[int][]model.CIStr
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -533,7 +542,7 @@ type TiKVSingleGather struct {
 type LogicalTableScan struct {
 	logicalSchemaProducer
 	Source      *DataSource
-	Handle      *expression.Column
+	HandleCols  HandleCols
 	AccessConds expression.CNFExprs
 	Ranges      []*ranger.Range
 }
@@ -586,7 +595,7 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 }
 
 func (ds *DataSource) buildTableGather() LogicalPlan {
-	ts := LogicalTableScan{Source: ds, Handle: ds.getHandleCol()}.Init(ds.ctx, ds.blockOffset)
+	ts := LogicalTableScan{Source: ds, HandleCols: ds.handleCols}.Init(ds.ctx, ds.blockOffset)
 	ts.SetSchema(ds.Schema())
 	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.ctx, ds.blockOffset)
 	sg.SetSchema(ds.Schema())
@@ -625,7 +634,7 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	tg := ds.buildTableGather()
 	gathers = append(gathers, tg)
 	for _, path := range ds.possibleAccessPaths {
-		if !path.IsTablePath() {
+		if !path.IsIntHandlePath {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 			// If index columns can cover all of the needed columns, we can use a IndexGather + IndexScan.
@@ -641,12 +650,12 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, conds []expression.Expression, isIm bool) (bool, error) {
 	path.CountAfterAccess = float64(ds.statisticTable.Count)
 	path.Ranges = ranger.FullNotNullRange()
+	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
+	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 	if len(conds) == 0 {
 		return false, nil
 	}
 	sc := ds.ctx.GetSessionVars().StmtCtx
-	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
-	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
 	if len(path.IdxCols) != 0 {
 		res, err := ranger.DetachCondAndBuildRangeForIndex(ds.ctx, conds, path.IdxCols, path.IdxColLens)
 		if err != nil {
@@ -809,8 +818,17 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
 		handleCol := ds.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.Flag) {
-			path.IdxCols = append(path.IdxCols, handleCol)
-			path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+			alreadyHandle := false
+			for _, col := range path.IdxCols {
+				if col.ID == model.ExtraHandleID || col.Equal(nil, handleCol) {
+					alreadyHandle = true
+				}
+			}
+			// Don't add one column twice to the index. May cause unexpected errors.
+			if !alreadyHandle {
+				path.IdxCols = append(path.IdxCols, handleCol)
+				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+			}
 		}
 	}
 	if len(path.IdxCols) != 0 {
@@ -932,26 +950,6 @@ func (p *LogicalIndexScan) getPKIsHandleCol(schema *expression.Schema) *expressi
 	return getPKIsHandleColFromSchema(p.Columns, schema, p.Source.tableInfo.PKIsHandle)
 }
 
-func (ds *DataSource) getHandleCol() *expression.Column {
-	if ds.handleCol != nil {
-		return ds.handleCol
-	}
-
-	if !ds.tableInfo.PKIsHandle {
-		ds.handleCol = ds.newExtraHandleSchemaCol()
-		return ds.handleCol
-	}
-
-	for i, col := range ds.Columns {
-		if mysql.HasPriKeyFlag(col.Flag) {
-			ds.handleCol = ds.schema.Columns[i]
-			break
-		}
-	}
-
-	return ds.handleCol
-}
-
 // TableInfo returns the *TableInfo of data source.
 func (ds *DataSource) TableInfo() *model.TableInfo {
 	return ds.tableInfo
@@ -1019,7 +1017,7 @@ type LogicalLock struct {
 	baseLogicalPlan
 
 	Lock             ast.SelectLockType
-	tblID2Handle     map[int64][]*expression.Column
+	tblID2Handle     map[int64][]HandleCols
 	partitionedTable []table.PartitionedTable
 }
 

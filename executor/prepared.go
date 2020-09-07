@@ -29,14 +29,12 @@ import (
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -90,11 +88,9 @@ type PrepareExec struct {
 	Fields     []*ast.ResultField
 }
 
-var prepareStmtLabel = stringutil.StringerStr("PrepareStmt")
-
 // NewPrepareExec creates a new PrepareExec.
 func NewPrepareExec(ctx sessionctx.Context, is infoschema.InfoSchema, sqlTxt string) *PrepareExec {
-	base := newBaseExecutor(ctx, nil, prepareStmtLabel)
+	base := newBaseExecutor(ctx, nil, 0)
 	base.initCap = chunk.ZeroCapacity
 	return &PrepareExec{
 		baseExecutor: base,
@@ -328,22 +324,4 @@ func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context,
 		stmtCtx.InitSQLDigest(preparedObj.NormalizedSQL, preparedObj.SQLDigest)
 	}
 	return stmt, nil
-}
-
-func getPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (ast.StmtNode, error) {
-	var ok bool
-	execID := stmt.ExecID
-	if stmt.Name != "" {
-		if execID, ok = vars.PreparedStmtNameToID[stmt.Name]; !ok {
-			return nil, plannercore.ErrStmtNotFound
-		}
-	}
-	if preparedPointer, ok := vars.PreparedStmts[execID]; ok {
-		preparedObj, ok := preparedPointer.(*plannercore.CachedPrepareStmt)
-		if !ok {
-			return nil, errors.Errorf("invalid CachedPrepareStmt type")
-		}
-		return preparedObj.PreparedAst.Stmt, nil
-	}
-	return nil, plannercore.ErrStmtNotFound
 }

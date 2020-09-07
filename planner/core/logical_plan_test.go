@@ -466,7 +466,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		stmt, err := s.ParseOneStmt(ca, "", "")
 		c.Assert(err, IsNil, comment)
 
-		s.ctx.GetSessionVars().HashJoinConcurrency = 1
+		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		Preprocess(s.ctx, stmt, s.is)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -770,6 +770,22 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "select concat(c_str, d_str) from t group by `concat(c_str,d_str)`",
 			err: ErrUnknownColumn,
 		},
+		{
+			sql: "select a from t b having b.a",
+			err: nil,
+		},
+		{
+			sql: "select b.a from t b having b.a",
+			err: nil,
+		},
+		{
+			sql: "select b.a from t b having a",
+			err: nil,
+		},
+		{
+			sql: "select a+1 from t having t.a",
+			err: ErrUnknownColumn,
+		},
 	}
 
 	ctx := context.Background()
@@ -1070,7 +1086,7 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
 		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
-		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
+		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
 		c.Assert(err, IsNil, comment)
 
@@ -1231,7 +1247,7 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		comment := Commentf("for %s", t.sql)
 		stmt, err := s.ParseOneStmt(t.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		s.ctx.GetSessionVars().HashJoinConcurrency = 1
+		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 
 		_, _, err = BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		if t.err == "" {
@@ -1379,7 +1395,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	if err != nil {
 		return nil, nil, err
 	}
-	p, _, err = physicalOptimize(p.(LogicalPlan))
+	p, _, err = physicalOptimize(p.(LogicalPlan), &PlanCounterDisabled)
 	return p.(PhysicalPlan), stmt, err
 }
 
@@ -1462,7 +1478,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		lp := p.(LogicalPlan)
-		_, err = lp.recursiveDeriveStats()
+		_, err = lp.recursiveDeriveStats(nil)
 		c.Assert(err, IsNil, comment)
 		var ds *DataSource
 		var byItems []*util.ByItems

@@ -241,6 +241,10 @@ func (s *testAnalyzeSuite) TestIndexRead(c *C) {
 		dom.Close()
 		store.Close()
 	}()
+	testKit.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	testKit.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	testKit.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
+
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
 	testKit.MustExec("create table t (a int primary key, b int, c varchar(200), d datetime DEFAULT CURRENT_TIMESTAMP, e int, ts timestamp DEFAULT CURRENT_TIMESTAMP)")
@@ -410,8 +414,8 @@ func (s *testAnalyzeSuite) TestOutdatedAnalyze(c *C) {
 	c.Assert(h.Update(dom.InfoSchema()), IsNil)
 	statistics.RatioOfPseudoEstimate.Store(10.0)
 	testKit.MustQuery("explain select * from t where a <= 5 and b <= 5").Check(testkit.Rows(
-		"TableReader_7 35.91 root  data:Selection_6",
-		"└─Selection_6 35.91 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
+		"TableReader_7 29.77 root  data:Selection_6",
+		"└─Selection_6 29.77 cop[tikv]  le(test.t.a, 5), le(test.t.b, 5)",
 		"  └─TableFullScan_5 80.00 cop[tikv] table:t keep order:false",
 	))
 	statistics.RatioOfPseudoEstimate.Store(0.7)
@@ -775,6 +779,9 @@ func (s *testAnalyzeSuite) TestLimitCrossEstimation(c *C) {
 		store.Close()
 	}()
 
+	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
+	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
+	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int primary key, b int not null, c int not null default 0, index idx_bc(b, c))")
@@ -865,6 +872,7 @@ func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
 	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
+	testKit.MustExec("set @@tidb_enable_clustered_index=0")
 	testKit.MustExec("CREATE TABLE t(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c bigint(20) NOT NULL, PRIMARY KEY (a,c,b), KEY (b))")
 	err = s.loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom)
 	c.Assert(err, IsNil)

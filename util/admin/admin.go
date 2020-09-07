@@ -109,8 +109,10 @@ func IsJobRollbackable(job *model.Job) bool {
 			job.SchemaState == model.StateDeleteOnly {
 			return false
 		}
+	case model.ActionAddTablePartition:
+		return job.SchemaState == model.StateNone || job.SchemaState == model.StateReplicaOnly
 	case model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn,
-		model.ActionDropTablePartition, model.ActionAddTablePartition,
+		model.ActionDropTablePartition,
 		model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
@@ -286,7 +288,7 @@ func IterAllDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error
 
 // RecordData is the record data composed of a handle and values.
 type RecordData struct {
-	Handle int64
+	Handle kv.Handle
 	Values []types.Datum
 }
 
@@ -340,13 +342,13 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		} else if idxCnt > tblCnt {
 			ret = IdxCntGreater
 		}
-		return ret, i, errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
+		return ret, i, ErrAdminCheckTable.GenWithStack("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
 	}
 	return 0, 0, nil
 }
 
 // CheckRecordAndIndex is exported for testing.
-func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index, genExprs map[model.TableColumnID]expression.Expression) error {
+func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table.Table, idx table.Index) error {
 	sc := sessCtx.GetSessionVars().StmtCtx
 	cols := make([]*table.Column, len(idx.Meta().Columns))
 	for i, col := range idx.Meta().Columns {
@@ -354,7 +356,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	}
 
 	startKey := t.RecordKey(kv.IntHandle(math.MinInt64))
-	filterFunc := func(h1 int64, vals1 []types.Datum, cols []*table.Column) (bool, error) {
+	filterFunc := func(h1 kv.Handle, vals1 []types.Datum, cols []*table.Column) (bool, error) {
 		for i, val := range vals1 {
 			col := cols[i]
 			if val.IsNull() {
@@ -369,10 +371,10 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 				vals1[i] = colDefVal
 			}
 		}
-		isExist, h2, err := idx.Exist(sc, txn, vals1, kv.IntHandle(h1))
+		isExist, h2, err := idx.Exist(sc, txn.GetUnionStore(), vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &RecordData{Handle: h1, Values: vals1}
-			record2 := &RecordData{Handle: h2.IntValue(), Values: vals1}
+			record2 := &RecordData{Handle: h2, Values: vals1}
 			return false, ErrDataInConsistent.GenWithStack("index:%#v != record:%#v", record2, record1)
 		}
 		if err != nil {
@@ -385,7 +387,7 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 
 		return true, nil
 	}
-	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc, genExprs)
+	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -393,24 +395,19 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 	return nil
 }
 
-func makeRowDecoder(t table.Table, decodeCol []*table.Column, genExpr map[model.TableColumnID]expression.Expression) *decoder.RowDecoder {
-	var containsVirtualCol bool
-	decodeColsMap, ignored := decoder.BuildFullDecodeColMap(decodeCol, t, func(genCol *table.Column) (expression.Expression, error) {
-		containsVirtualCol = true
-		return genExpr[model.TableColumnID{TableID: t.Meta().ID, ColumnID: genCol.ID}], nil
-	})
-	_ = ignored
-
-	if containsVirtualCol {
-		decoder.SubstituteGenColsInDecodeColMap(decodeColsMap)
-		decoder.RemoveUnusedVirtualCols(decodeColsMap, decodeCol)
+func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder, error) {
+	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
+	if err != nil {
+		return nil, err
 	}
-	return decoder.NewRowDecoder(t, decodeColsMap)
+	mockSchema := expression.NewSchema(exprCols...)
+	decodeColsMap := decoder.BuildFullDecodeColMap(t.Cols(), mockSchema)
+
+	return decoder.NewRowDecoder(t, t.Cols(), decodeColsMap), nil
 }
 
-// genExprs use to calculate generated column value.
-func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column,
-	fn table.RecordIterFunc, genExprs map[model.TableColumnID]expression.Expression) error {
+func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {
 	prefix := t.RecordPrefix()
 	keyUpperBound := prefix.PrefixNext()
 
@@ -428,7 +425,10 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		zap.Stringer("startKey", startKey),
 		zap.Stringer("key", it.Key()),
 		zap.Binary("value", it.Value()))
-	rowDecoder := makeRowDecoder(t, cols, genExprs)
+	rowDecoder, err := makeRowDecoder(t, sessCtx)
+	if err != nil {
+		return err
+	}
 	for it.Valid() && it.Key().HasPrefix(prefix) {
 		// first kv pair is row lock information.
 		// TODO: check valid lock
@@ -446,7 +446,7 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		for _, col := range cols {
 			data = append(data, rowMap[col.ID])
 		}
-		more, err := fn(handle.IntValue(), data, cols)
+		more, err := fn(handle, data, cols)
 		if !more || err != nil {
 			return errors.Trace(err)
 		}
@@ -470,4 +470,6 @@ var (
 	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(errno.ErrCancelFinishedDDLJob, errno.MySQLErrName[errno.ErrCancelFinishedDDLJob])
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
 	ErrCannotCancelDDLJob = terror.ClassAdmin.New(errno.ErrCannotCancelDDLJob, errno.MySQLErrName[errno.ErrCannotCancelDDLJob])
+	// ErrAdminCheckTable returns when the table records is inconsistent with the index values.
+	ErrAdminCheckTable = terror.ClassAdmin.New(errno.ErrAdminCheckTable, errno.MySQLErrName[errno.ErrAdminCheckTable])
 )

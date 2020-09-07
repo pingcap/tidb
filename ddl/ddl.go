@@ -174,8 +174,9 @@ type limitJobTask struct {
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
 	m          sync.RWMutex
-	quitCh     chan struct{}
-	wg         sync.WaitGroup // It's only used to deal with data race in state_test and schema_test.
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup // It's only used to deal with data race in restart_test.
 	limitJobCh chan *limitJobTask
 
 	*ddlCtx
@@ -265,7 +266,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		syncer = NewMockSchemaSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
-		syncer = util.NewSchemaSyncer(etcdCli, id, manager)
+		syncer = util.NewSchemaSyncer(ctx, etcdCli, id, manager)
 	}
 
 	ddlCtx := &ddlCtx{
@@ -281,6 +282,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	d := &ddl{
+		ctx:        ctx,
 		ddlCtx:     ddlCtx,
 		limitJobCh: make(chan *limitJobTask, batchAddingJobs),
 	}
@@ -314,7 +316,7 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 // Start implements DDL.Start interface.
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("[ddl] start DDL", zap.String("ID", d.uuid), zap.Bool("runWorker", RunWorker))
-	d.quitCh = make(chan struct{})
+	d.ctx, d.cancel = context.WithCancel(d.ctx)
 
 	d.wg.Add(1)
 	go d.limitDDLJobs()
@@ -330,8 +332,8 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		d.workers = make(map[workerType]*worker, 2)
 		d.sessPool = newSessionPool(ctxPool)
 		d.delRangeMgr = d.newDeleteRangeManager(ctxPool == nil)
-		d.workers[generalWorker] = newWorker(generalWorker, d.store, d.sessPool, d.delRangeMgr)
-		d.workers[addIdxWorker] = newWorker(addIdxWorker, d.store, d.sessPool, d.delRangeMgr)
+		d.workers[generalWorker] = newWorker(d.ctx, generalWorker, d.sessPool, d.delRangeMgr)
+		d.workers[addIdxWorker] = newWorker(d.ctx, addIdxWorker, d.sessPool, d.delRangeMgr)
 		for _, worker := range d.workers {
 			worker.wg.Add(1)
 			w := worker
@@ -355,19 +357,15 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 }
 
 func (d *ddl) close() {
-	if isChanClosed(d.quitCh) {
+	if isChanClosed(d.ctx.Done()) {
 		return
 	}
 
 	startTime := time.Now()
-	close(d.quitCh)
+	d.cancel()
 	d.wg.Wait()
 	d.ownerManager.Cancel()
-	d.schemaSyncer.CloseCleanWork()
-	err := d.schemaSyncer.RemoveSelfVersionPath()
-	if err != nil {
-		logutil.BgLogger().Error("[ddl] remove self version path failed", zap.Error(err))
-	}
+	d.schemaSyncer.Close()
 
 	for _, worker := range d.workers {
 		worker.close()
@@ -462,14 +460,16 @@ func (d *ddl) asyncNotifyWorker(jobTp model.ActionType) {
 }
 
 func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	if isChanClosed(d.ctx.Done()) {
+		return d.ctx.Err()
+	}
+
 	// Get a global job ID and put the DDL job in the queue.
 	job.Query, _ = ctx.Value(sessionctx.QueryString).(string)
 	task := &limitJobTask{job, make(chan error)}
 	d.limitJobCh <- task
 	err := <-task.err
-	if err != nil {
-		return errors.Trace(err)
-	}
+
 	ctx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 
 	// Notice worker that we push a new job and wait the job done.
@@ -490,9 +490,17 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		metrics.HandleJobHistogram.WithLabelValues(job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	}()
 	for {
+		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
+			d.cancel()
+		})
+
 		select {
 		case <-d.ddlJobDoneCh:
 		case <-ticker.C:
+		case <-d.ctx.Done():
+			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done", zap.Error(d.ctx.Err()))
+			err := d.ctx.Err()
+			return err
 		}
 
 		historyJob, err = d.getHistoryDDLJob(jobID)
