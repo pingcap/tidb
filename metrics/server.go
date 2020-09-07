@@ -155,6 +155,14 @@ var (
 			Help:      "Bucketed histogram of all cop waiting time (s) of of slow queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		})
+
+	MaxProcs = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "server",
+			Name:      "maxprocs",
+			Help:      "The value of GOMAXPROCS.",
+		})
 )
 
 // ExecuteErrorToLabel converts an execute error to label.
