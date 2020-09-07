@@ -106,7 +106,7 @@ func TestInfo(t *testing.T) {
 	mockStore := &mockEtcdBackend{
 		Storage: s,
 		pdAddrs: []string{clus.Members[0].GRPCAddr()}}
-	dom := NewDomain(mockStore, ddlLease, 0, mockFactory)
+	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory)
 	defer func() {
 		dom.Close()
 		s.Close()
@@ -245,7 +245,7 @@ func (*testSuite) TestT(c *C) {
 	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 	err = dom.Init(ddlLease, sysMockFactory)
 	c.Assert(err, IsNil)
 	ctx := mock.NewContext()

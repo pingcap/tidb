@@ -155,7 +155,7 @@ func SetStatsLease(lease time.Duration) {
 	atomic.StoreInt64(&statsLease, int64(lease))
 }
 
-// SetISetIndexUsageSyncLease changes the default index usage sync lease time for loading info.
+// SetIndexUsageSyncLease changes the default index usage sync lease time for loading info.
 func SetIndexUsageSyncLease(lease time.Duration) {
 	atomic.StoreInt64(&indexUsageSyncLease, int64(lease))
 }
