@@ -907,8 +907,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	// If there's no handle or it's not a `SELECT FOR UPDATE` statement.
-	if len(e.tblID2Handle) == 0 || (e.Lock.LockType != ast.SelectLockForUpdate &&
-		e.Lock.LockType != ast.SelectLockForUpdateNoWait && e.Lock.LockType != ast.SelectLockForUpdateWaitN) {
+	if len(e.tblID2Handle) == 0 || (!plannercore.IsSelectForUpdateLockType(e.Lock.LockType)) {
 		return nil
 	}
 
