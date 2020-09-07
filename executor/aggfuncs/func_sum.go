@@ -152,11 +152,13 @@ type sum4Decimal struct {
 
 func (e *sum4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDecimal)
+	p.val = *types.NewZeroDec(e.args[0].GetType().Flen, e.args[0].GetType().Decimal)
 	return PartialResult(p), DefPartialResult4SumDecimalSize
 }
 
 func (e *sum4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDecimal)(pr)
+	p.val = *types.NewZeroDec(e.args[0].GetType().Flen, e.args[0].GetType().Decimal)
 	p.notNullRowCount = 0
 }
 
@@ -178,11 +180,6 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			return 0, err
 		}
 		if isNull {
-			continue
-		}
-		if p.notNullRowCount == 0 {
-			p.val = *input
-			p.notNullRowCount = 1
 			continue
 		}
 
@@ -309,6 +306,7 @@ type sum4DistinctDecimal struct {
 
 func (e *sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctDecimal)
+	p.val = *types.NewZeroDec(e.args[0].GetType().Flen, e.args[0].GetType().Decimal)
 	p.isNull = true
 	p.valSet = set.NewStringSet()
 	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize
@@ -316,6 +314,7 @@ func (e *sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta i
 
 func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
+	p.val = *types.NewZeroDec(e.args[0].GetType().Flen, e.args[0].GetType().Decimal)
 	p.isNull = true
 	p.valSet = set.NewStringSet()
 }
@@ -340,11 +339,7 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		}
 		p.valSet.Insert(decStr)
 		memDelta += int64(len(decStr))
-		if p.isNull {
-			p.val = *input
-			p.isNull = false
-			continue
-		}
+		p.isNull = false
 		newSum := new(types.MyDecimal)
 		if err = types.DecimalAdd(&p.val, input, newSum); err != nil {
 			return memDelta, err
