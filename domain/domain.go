@@ -660,13 +660,13 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, factory pools.Factory) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
-		store:          store,
-		exit:           make(chan struct{}),
-		sysSessionPool: newSessionPool(capacity, factory),
-		statsLease:     statsLease,
-		infoHandle:     infoschema.NewHandle(store),
-		slowQuery:      newTopNSlowQueries(30, time.Hour*24*7, 500),
-		indexUsageSyncLease:	idxUsageSyncLease,
+		store:               store,
+		exit:                make(chan struct{}),
+		sysSessionPool:      newSessionPool(capacity, factory),
+		statsLease:          statsLease,
+		infoHandle:          infoschema.NewHandle(store),
+		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
+		indexUsageSyncLease: idxUsageSyncLease,
 	}
 
 	do.SchemaValidator = NewSchemaValidator(ddlLease, do)
