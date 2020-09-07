@@ -267,7 +267,7 @@ networks = ""
 header-timeout = 5
 
 [prepared-plan-cache]
-enabled = true
+enabled = false
 capacity = 100
 memory-guard-ratio = 0.1
 
