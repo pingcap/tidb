@@ -635,11 +635,14 @@ func (e *RuntimeStatsWithConcurrencyInfo) Clone() RuntimeStats {
 func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 	var result string
 	if len(e.concurrency) > 0 {
-		for _, concurrency := range e.concurrency {
+		for i, concurrency := range e.concurrency {
+			if i > 0 {
+				result += ", "
+			}
 			if concurrency.concurrencyNum > 0 {
-				result += fmt.Sprintf(", %s:%d", concurrency.concurrencyName, concurrency.concurrencyNum)
+				result += fmt.Sprintf("%s:%d", concurrency.concurrencyName, concurrency.concurrencyNum)
 			} else {
-				result += fmt.Sprintf(", %s:OFF", concurrency.concurrencyName)
+				result += fmt.Sprintf("%s:OFF", concurrency.concurrencyName)
 			}
 		}
 	}

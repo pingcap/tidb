@@ -223,3 +223,37 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		t.Fatalf("%v != %v", stats.String(), expect)
 	}
 }
+
+func TestRootRuntimeStats(t *testing.T) {
+	basic1 := &BasicRuntimeStats{}
+	basic2 := &BasicRuntimeStats{}
+	basic1.Record(time.Second, 20)
+	basic2.Record(time.Second*2, 30)
+	pid := 1
+	stmtStats := NewRuntimeStatsColl()
+	stmtStats.RegisterStats(pid, basic1)
+	stmtStats.RegisterStats(pid, basic2)
+	concurrency := &RuntimeStatsWithConcurrencyInfo{}
+	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("worker", 15))
+	stmtStats.RegisterStats(pid, concurrency)
+	commitDetail := &CommitDetails{
+		GetCommitTsTime:   time.Second,
+		PrewriteTime:      time.Second,
+		CommitTime:        time.Second,
+		WriteKeys:         3,
+		WriteSize:         66,
+		PrewriteRegionNum: 5,
+		TxnRetry:          2,
+	}
+	stmtStats.RegisterStats(pid, &RuntimeStatsWithCommit{
+		Commit: commitDetail,
+	})
+	concurrency = &RuntimeStatsWithConcurrencyInfo{}
+	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("concurrent", 0))
+	stmtStats.RegisterStats(pid, concurrency)
+	stats := stmtStats.GetRootStats(1)
+	expect := "time:3s, loops:2, worker:15, concurrent:OFF, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
+	if stats.String() != expect {
+		t.Fatalf("%v != %v", stats.String(), expect)
+	}
+}
