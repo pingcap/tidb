@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"hash"
 	"hash/fnv"
+	"runtime/trace"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -310,6 +311,7 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 }
 
 func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
+	defer trace.StartRegion(ctx, "IndexHashJoinOuterWorker").End()
 	defer close(ow.innerCh)
 	for {
 		task, err := ow.buildTask(ctx)
@@ -434,6 +436,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 }
 
 func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.CancelFunc) {
+	defer trace.StartRegion(ctx, "IndexHashJoinInnerWorker").End()
 	var task *indexHashJoinTask
 	joinResult, ok := iw.getNewJoinResult(ctx)
 	if !ok {
