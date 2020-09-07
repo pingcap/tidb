@@ -1418,7 +1418,9 @@ func (e *UnionExec) waitAllFinished() {
 
 // Open implements the Executor Open interface.
 func (e *UnionExec) Open(ctx context.Context) error {
-	// Open children executor when starting pulling result.
+	if err := e.baseExecutor.Open(ctx); err != nil {
+		return err
+	}
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
@@ -1467,12 +1469,6 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 		e.wg.Done()
 	}()
 	for childID := range e.childIDChan {
-		result.err = e.children[childID].Open(ctx)
-		if result.err != nil {
-			e.resultPool <- result
-			e.stopFetchData.Store(true)
-			return
-		}
 		for {
 			if e.stopFetchData.Load().(bool) {
 				return
@@ -1528,24 +1524,10 @@ func (e *UnionExec) Close() error {
 	}
 	e.resourcePools = nil
 	if e.childIDChan != nil {
-		// Close children manually.
-		openChildNum, ok := <-e.childIDChan
-		if !ok {
-			// All children has been opened.
-			return e.baseExecutor.Close()
-		}
 		for range e.childIDChan {
-
 		}
-		var firstErr error
-		for i := 0; i < openChildNum; i++ {
-			if err := e.children[i].Close(); err != nil && firstErr == nil {
-				firstErr = err
-			}
-		}
-		return firstErr
 	}
-	return nil
+	return e.baseExecutor.Close()
 }
 
 // ResetContextOfStmt resets the StmtContext and session variables.
