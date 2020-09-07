@@ -700,9 +700,9 @@ type mockStore struct {
 	host string
 }
 
-func (s *mockStore) EtcdAddrs() []string    { return []string{s.host} }
-func (s *mockStore) TLSConfig() *tls.Config { panic("not implemented") }
-func (s *mockStore) StartGCWorker() error   { panic("not implemented") }
+func (s *mockStore) EtcdAddrs() ([]string, error) { return []string{s.host}, nil }
+func (s *mockStore) TLSConfig() *tls.Config       { panic("not implemented") }
+func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
 
 func (s *testInfoschemaClusterTableSuite) TestTiDBClusterInfo(c *C) {
 	mockAddr := s.mockAddr

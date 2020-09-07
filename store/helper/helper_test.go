@@ -48,8 +48,8 @@ type mockStore struct {
 	pdAddrs []string
 }
 
-func (s *mockStore) EtcdAddrs() []string {
-	return s.pdAddrs
+func (s *mockStore) EtcdAddrs() ([]string, error) {
+	return s.pdAddrs, nil
 }
 
 func (s *mockStore) StartGCWorker() error {
