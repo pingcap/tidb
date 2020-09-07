@@ -139,11 +139,17 @@ type sum4Decimal struct {
 
 func (e *sum4Decimal) AllocPartialResult() PartialResult {
 	p := new(partialResult4SumDecimal)
+<<<<<<< HEAD
 	return PartialResult(p)
+=======
+	p.val = *types.NewZeroDec(e.args[0].GetType().Flen, e.args[0].GetType().Decimal)
+	return PartialResult(p), DefPartialResult4SumDecimalSize
+>>>>>>> 7263411... expression, types: fix decimal precision for SUM function (#19592)
 }
 
 func (e *sum4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDecimal)(pr)
+	p.val = *types.NewZeroDec(e.args[0].GetType().Flen, e.args[0].GetType().Decimal)
 	p.notNullRowCount = 0
 }
 
@@ -165,11 +171,6 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 			return err
 		}
 		if isNull {
-			continue
-		}
-		if p.notNullRowCount == 0 {
-			p.val = *input
-			p.notNullRowCount = 1
 			continue
 		}
 
@@ -295,6 +296,7 @@ type sum4DistinctDecimal struct {
 
 func (e *sum4DistinctDecimal) AllocPartialResult() PartialResult {
 	p := new(partialResult4SumDistinctDecimal)
+	p.val = *types.NewZeroDec(e.args[0].GetType().Flen, e.args[0].GetType().Decimal)
 	p.isNull = true
 	p.valSet = set.NewStringSet()
 	return PartialResult(p)
@@ -302,6 +304,7 @@ func (e *sum4DistinctDecimal) AllocPartialResult() PartialResult {
 
 func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
+	p.val = *types.NewZeroDec(e.args[0].GetType().Flen, e.args[0].GetType().Decimal)
 	p.isNull = true
 	p.valSet = set.NewStringSet()
 }
@@ -325,11 +328,16 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 			continue
 		}
 		p.valSet.Insert(decStr)
+<<<<<<< HEAD
 		if p.isNull {
 			p.val = *input
 			p.isNull = false
 			continue
 		}
+=======
+		memDelta += int64(len(decStr))
+		p.isNull = false
+>>>>>>> 7263411... expression, types: fix decimal precision for SUM function (#19592)
 		newSum := new(types.MyDecimal)
 		if err = types.DecimalAdd(&p.val, input, newSum); err != nil {
 			return err
