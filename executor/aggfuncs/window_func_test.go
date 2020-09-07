@@ -137,6 +137,24 @@ func buildWindowTester(funcName string, tp byte, constantArg uint64, orderByCols
 	return pt
 }
 
+type windowMemTest struct {
+	windowTest         windowTest
+	allocMemDelta      int64
+	updateMemDeltaGens updateMemDeltaGens
+	isDistinct         bool
+}
+
+func buildWindowMemTester(funcName string, tp byte, constantArg uint64, orderByCols int, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens, isDistinct bool) windowMemTest {
+	windowTest := buildWindowTester(funcName, tp, constantArg, orderByCols, numRows)
+	pt := windowMemTest{
+		windowTest:         windowTest,
+		allocMemDelta:      allocMemDelta,
+		updateMemDeltaGens: updateMemDeltaGens,
+		isDistinct:         isDistinct,
+	}
+	return pt
+}
+
 func (s *testSuite) TestWindowFunctions(c *C) {
 	tests := []windowTest{
 		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 1, 1, 1),
@@ -175,33 +193,5 @@ func (s *testSuite) TestWindowFunctions(c *C) {
 	}
 	for _, test := range tests {
 		s.testWindowFunc(c, test)
-	}
-}
-
-type windowMemTest struct {
-	windowTest         windowTest
-	allocMemDelta      int64
-	updateMemDeltaGens updateMemDeltaGens
-	isDistinct         bool
-}
-
-func buildWindowMemTester(funcName string, tp byte, constantArg uint64, orderByCols int, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens, isDistinct bool) windowMemTest {
-	windowTest := buildWindowTester(funcName, tp, constantArg, orderByCols, numRows)
-	pt := windowMemTest{
-		windowTest:         windowTest,
-		allocMemDelta:      allocMemDelta,
-		updateMemDeltaGens: updateMemDeltaGens,
-		isDistinct:         isDistinct,
-	}
-	return pt
-}
-
-func (s *testSuite) TestMemRowNumber(c *C) {
-	tests := []windowMemTest{
-		buildWindowMemTester(ast.WindowFuncRowNumber, mysql.TypeLonglong, 0, 0, 4,
-			aggfuncs.DefPartialResult4RowNumberSize, defaultUpdateMemDeltaGens, false),
-	}
-	for _, test := range tests {
-		s.testWindowMemFunc(c, test)
 	}
 }
