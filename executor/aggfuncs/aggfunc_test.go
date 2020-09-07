@@ -256,6 +256,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
@@ -266,25 +267,65 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 =======
 func noZeroUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 >>>>>>> 730d9e2a3... modify UpdatePartialResult functions
+=======
+func maxUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, srcChk.NumRows())
+	var memDelta int64
+>>>>>>> a8bdbf02f... add maxUpdateMemDeltaGens and minUpdateMemDeltaGens functions
 	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
-		if i > 0 {
-			memDeltas = append(memDeltas, int64(0))
+		if row.IsNull(0) {
 			continue
 		}
 		switch dataType.Tp {
 		case mysql.TypeString:
 			stringT := row.GetString(0)
-			memDeltas = append(memDeltas, int64(len(stringT)))
+			memDelta = int64(len(stringT))
 		case mysql.TypeJSON:
 			jsonT := row.GetJSON(0)
-			memDeltas = append(memDeltas, int64(len(jsonT.Value)))
+			memDelta = int64(len(jsonT.Value))
 		case mysql.TypeEnum:
 			enumT := row.GetEnum(0)
-			memDeltas = append(memDeltas, int64(len(enumT.Name)))
+			memDelta = int64(len(enumT.Name))
 		case mysql.TypeSet:
 			setT := row.GetSet(0)
-			memDeltas = append(memDeltas, int64(len(setT.Name)))
+			memDelta = int64(len(setT.Name))
+		}
+
+		if memDeltas[0] < memDelta {
+			memDeltas[0] = memDelta
+		}
+	}
+	return memDeltas, nil
+}
+
+func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, srcChk.NumRows())
+	var memDelta int64
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			continue
+		}
+		switch dataType.Tp {
+		case mysql.TypeString:
+			stringT := row.GetString(0)
+			memDelta = int64(len(stringT))
+		case mysql.TypeJSON:
+			jsonT := row.GetJSON(0)
+			memDelta = int64(len(jsonT.Value))
+		case mysql.TypeEnum:
+			enumT := row.GetEnum(0)
+			memDelta = int64(len(enumT.Name))
+		case mysql.TypeSet:
+			setT := row.GetSet(0)
+			memDelta = int64(len(setT.Name))
+		}
+
+		if memDeltas[0] > memDelta {
+			memDeltas[0] = memDelta
+		} else if memDeltas[0] == 0 {
+			memDeltas[0] = memDelta
 		}
 >>>>>>> a1270a633... modify maxMin4Enum.UpdatePartialResult and maxMin4Set.UpdatePartialResult function to calculate memory change
 	}
