@@ -463,7 +463,7 @@ type PhysicalBroadCastJoin struct {
 type PhysicalLock struct {
 	basePhysicalPlan
 
-	Lock ast.SelectLockType
+	Lock *ast.SelectLockInfo
 
 	TblID2Handle     map[int64][]*expression.Column
 	PartitionedTable []table.PartitionedTable

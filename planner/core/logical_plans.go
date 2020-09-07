@@ -950,8 +950,13 @@ type LogicalLimit struct {
 type LogicalLock struct {
 	baseLogicalPlan
 
+<<<<<<< HEAD
 	Lock             ast.SelectLockType
 	tblID2Handle     map[int64][]*expression.Column
+=======
+	Lock             *ast.SelectLockInfo
+	tblID2Handle     map[int64][]HandleCols
+>>>>>>> c283bc6... txn:support wait second grammar for "select for update" (#19630)
 	partitionedTable []table.PartitionedTable
 }
 
