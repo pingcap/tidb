@@ -1648,6 +1648,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if globalConfig.EnableCollectExecutionInfo {
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl()
 	}
+	sc.CanRuntimePrune = true
 
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
