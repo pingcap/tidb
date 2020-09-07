@@ -418,7 +418,7 @@ func (e *HashJoinExec) runJoinWorker(workerID uint, probeKeyColIdx []int) {
 			t := time.Since(start)
 			atomic.AddInt64(&e.stats.probe, probeTime)
 			atomic.AddInt64(&e.stats.fetchAndProbe, int64(t))
-			e.stats.setMaxFetchAndProbeTime(t)
+			e.stats.setMaxFetchAndProbeTime(int64(t))
 		}()
 	}
 
@@ -1045,19 +1045,18 @@ type hashJoinRuntimeStats struct {
 	fetchAndProbe          int64
 	probe                  int64
 	concurrent             int
-	mu                     struct {
-		sync.Mutex
-		maxFetchAndProbe time.Duration
-	}
+	maxFetchAndProbe       int64
 }
 
-func (e *hashJoinRuntimeStats) setMaxFetchAndProbeTime(t time.Duration) {
-	if t > e.mu.maxFetchAndProbe {
-		e.mu.Lock()
-		if t > e.mu.maxFetchAndProbe {
-			e.mu.maxFetchAndProbe = t
+func (e *hashJoinRuntimeStats) setMaxFetchAndProbeTime(t int64) {
+	for {
+		value := atomic.LoadInt64(&e.maxFetchAndProbe)
+		if t <= value {
+			return
 		}
-		e.mu.Unlock()
+		if atomic.CompareAndSwapInt64(&e.maxFetchAndProbe, value, t) {
+			return
+		}
 	}
 }
 
@@ -1079,7 +1078,7 @@ func (e *hashJoinRuntimeStats) String() string {
 		buf.WriteString(", total:")
 		buf.WriteString(time.Duration(e.fetchAndProbe).String())
 		buf.WriteString(", max:")
-		buf.WriteString(e.mu.maxFetchAndProbe.String())
+		buf.WriteString(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe)).String())
 		buf.WriteString(", probe:")
 		buf.WriteString(time.Duration(e.probe).String())
 		buf.WriteString(", fetch:")
