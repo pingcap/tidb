@@ -3368,8 +3368,13 @@ func (b *builtinFormatWithLocaleSig) evalString(row chunk.Row) (string, bool, er
 	if err != nil {
 		return "", false, err
 	}
+	isSurportLocale := locale == "en_US" || locale == "zh_CN"
 	if isNull {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
+		locale = "en_US"
+	}
+	if !isSurportLocale {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(locale))
 		locale = "en_US"
 	}
 	formatString, err := mysql.GetLocaleFormatFunction(locale)(x, d)
