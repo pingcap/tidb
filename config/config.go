@@ -899,7 +899,7 @@ func (c *Config) Valid() error {
 		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
 	}
 	if c.MemQuotaStatistic < DefMinQuotaStatistic {
-		return fmt.Errorf("memory-quota-statistic in must be less than %dB", DefMinQuotaStatistic)
+		return fmt.Errorf("memory-quota-statistic in must be greater than %dB", DefMinQuotaStatistic)
 	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
