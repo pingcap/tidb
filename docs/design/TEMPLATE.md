@@ -53,6 +53,13 @@ A discussion of alternate approaches and the trade-offs, advantages, and disadva
 <!--
 A discussion of the change with regard to the compatibility issues:
 - Does this proposal make TiDB not compatible with the old versions?
+- Does this proposal make TiDB not compatible with TiDB tools?
+    + [BR](https://github.com/pingcap/br)
+    + [DM](https://github.com/pingcap/dm)
+    + [Dumpling](https://github.com/pingcap/dumpling)
+    + [TiCDC](https://github.com/pingcap/ticdc)
+    + [TiDB Binlog](https://github.com/pingcap/tidb-binlog)
+    + [TiDB Lightning](https://github.com/pingcap/tidb-lightning)
 - If the existing behavior will be changed, how will we phase out the older behavior?
 - Does this proposal make TiDB more compatible with MySQL?
 - What is the impact(if any) on the data migration:

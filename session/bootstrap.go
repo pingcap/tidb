@@ -77,6 +77,7 @@ const (
 		Shutdown_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE if not exists mysql.global_priv (" +
@@ -239,6 +240,7 @@ const (
 		update_time timestamp(3) NOT NULL,
 		charset text NOT NULL,
 		collation text NOT NULL,
+		source varchar(10) NOT NULL default 'unknown',
 		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -274,12 +276,42 @@ const (
 
 	// CreateExprPushdownBlacklist stores the expressions which are not allowed to be pushed down.
 	CreateExprPushdownBlacklist = `CREATE TABLE IF NOT EXISTS mysql.expr_pushdown_blacklist (
-		name char(100) NOT NULL
+		name char(100) NOT NULL,
+		store_type char(100) NOT NULL DEFAULT 'tikv,tiflash,tidb',
+		reason varchar(200)
 	);`
 
 	// CreateOptRuleBlacklist stores the list of disabled optimizing operations.
 	CreateOptRuleBlacklist = `CREATE TABLE IF NOT EXISTS mysql.opt_rule_blacklist (
 		name char(100) NOT NULL
+	);`
+
+	// CreateStatsExtended stores the registered extended statistics.
+	CreateStatsExtended = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
+		stats_name varchar(32) NOT NULL,
+		db varchar(32) NOT NULL,
+		type tinyint(4) NOT NULL,
+		table_id bigint(64) NOT NULL,
+		column_ids varchar(32) NOT NULL,
+		scalar_stats double DEFAULT NULL,
+		blob_stats blob DEFAULT NULL,
+		version bigint(64) unsigned NOT NULL,
+		status tinyint(4) NOT NULL,
+		PRIMARY KEY(stats_name, db),
+		KEY idx_1 (table_id, status, version),
+		KEY idx_2 (status, version)
+	);`
+
+	// CreateSchemaIndexUsageTable stores the index usage information.
+	CreateSchemaIndexUsageTable = `CREATE TABLE IF NOT EXISTS mysql.schema_index_usage (
+		TABLE_SCHEMA varchar(64),
+		TABLE_NAME varchar(64),
+		INDEX_NAME varchar(64),
+		QUERY_COUNT bigint(64),
+		ROWS_SELECTED bigint(64),
+		LAST_USED_AT timestamp,
+		LAST_UPDATED_AT timestamp,
+		PRIMARY KEY(TABLE_SCHEMA, TABLE_NAME, INDEX_NAME)
 	);`
 )
 
@@ -373,6 +405,78 @@ const (
 	// see https://github.com/pingcap/tidb/pull/14574 for more details.
 	version40 = 40
 	version41 = 41
+	// version42 add storeType and reason column in expr_pushdown_blacklist
+	version42 = 42
+	// version43 updates global variables related to statement summary.
+	version43 = 43
+	// version44 delete tidb_isolation_read_engines from mysql.global_variables to avoid unexpected behavior after upgrade.
+	version44 = 44
+	// version45 introduces CONFIG_PRIV for SET CONFIG statements.
+	version45 = 45
+	// version46 fix a bug in v3.1.1.
+	version46 = 46
+	// version47 add Source to bindings to indicate the way binding created.
+	version47 = 47
+	// version48 reset all deprecated concurrency related system-variables if they were all default value.
+	version48 = 48
+	// version49 introduces mysql.stats_extended table.
+	version49 = 49
+	// version50 add mysql.schema_index_usage table.
+	version50 = 50
+)
+
+var (
+	bootstrapVersion = []func(Session, int64){
+		upgradeToVer2,
+		upgradeToVer3,
+		upgradeToVer4,
+		upgradeToVer5,
+		upgradeToVer6,
+		upgradeToVer7,
+		upgradeToVer8,
+		upgradeToVer9,
+		upgradeToVer10,
+		upgradeToVer11,
+		upgradeToVer12,
+		upgradeToVer13,
+		upgradeToVer14,
+		upgradeToVer15,
+		upgradeToVer16,
+		upgradeToVer17,
+		upgradeToVer18,
+		upgradeToVer19,
+		upgradeToVer20,
+		upgradeToVer21,
+		upgradeToVer22,
+		upgradeToVer23,
+		upgradeToVer24,
+		upgradeToVer25,
+		upgradeToVer26,
+		upgradeToVer27,
+		upgradeToVer28,
+		upgradeToVer29,
+		upgradeToVer30,
+		upgradeToVer31,
+		upgradeToVer32,
+		upgradeToVer33,
+		upgradeToVer34,
+		upgradeToVer35,
+		upgradeToVer36,
+		upgradeToVer37,
+		upgradeToVer38,
+		upgradeToVer39,
+		upgradeToVer40,
+		upgradeToVer41,
+		upgradeToVer42,
+		upgradeToVer43,
+		upgradeToVer44,
+		upgradeToVer45,
+		upgradeToVer46,
+		upgradeToVer47,
+		upgradeToVer48,
+		upgradeToVer49,
+		upgradeToVer50,
+	}
 )
 
 func checkBootstrapped(s Session) (bool, error) {
@@ -437,164 +541,8 @@ func upgrade(s Session) {
 		return
 	}
 	// Do upgrade works then update bootstrap version.
-	if ver < version2 {
-		upgradeToVer2(s)
-		ver = version2
-	}
-	if ver < version3 {
-		upgradeToVer3(s)
-	}
-	if ver < version4 {
-		upgradeToVer4(s)
-	}
-
-	if ver < version5 {
-		upgradeToVer5(s)
-	}
-
-	if ver < version6 {
-		upgradeToVer6(s)
-	}
-
-	if ver < version7 {
-		upgradeToVer7(s)
-	}
-
-	if ver < version8 {
-		upgradeToVer8(s)
-	}
-
-	if ver < version9 {
-		upgradeToVer9(s)
-	}
-
-	if ver < version10 {
-		upgradeToVer10(s)
-	}
-
-	if ver < version11 {
-		upgradeToVer11(s)
-	}
-
-	if ver < version12 {
-		upgradeToVer12(s)
-	}
-
-	if ver < version13 {
-		upgradeToVer13(s)
-	}
-
-	if ver < version14 {
-		upgradeToVer14(s)
-	}
-
-	if ver < version15 {
-		upgradeToVer15(s)
-	}
-
-	if ver < version16 {
-		upgradeToVer16(s)
-	}
-
-	if ver < version17 {
-		upgradeToVer17(s)
-	}
-
-	if ver < version18 {
-		upgradeToVer18(s)
-	}
-
-	if ver < version19 {
-		upgradeToVer19(s)
-	}
-
-	if ver < version20 {
-		upgradeToVer20(s)
-	}
-
-	if ver < version21 {
-		upgradeToVer21(s)
-	}
-
-	if ver < version22 {
-		upgradeToVer22(s)
-	}
-
-	if ver < version23 {
-		upgradeToVer23(s)
-	}
-
-	if ver < version24 {
-		upgradeToVer24(s)
-	}
-
-	if ver < version25 {
-		upgradeToVer25(s)
-	}
-
-	if ver < version26 {
-		upgradeToVer26(s)
-	}
-
-	if ver < version27 {
-		upgradeToVer27(s)
-	}
-
-	if ver < version28 {
-		upgradeToVer28(s)
-	}
-
-	// upgradeToVer29 only need to be run when the current version is 28.
-	if ver == version28 {
-		upgradeToVer29(s)
-	}
-
-	if ver < version30 {
-		upgradeToVer30(s)
-	}
-
-	if ver < version31 {
-		upgradeToVer31(s)
-	}
-
-	if ver < version32 {
-		upgradeToVer32(s)
-	}
-
-	if ver < version33 {
-		upgradeToVer33(s)
-	}
-
-	if ver < version34 {
-		upgradeToVer34(s)
-	}
-
-	if ver < version35 {
-		upgradeToVer35(s)
-	}
-
-	if ver < version36 {
-		upgradeToVer36(s)
-	}
-
-	if ver < version37 {
-		upgradeToVer37(s)
-	}
-
-	if ver < version38 {
-		upgradeToVer38(s)
-	}
-
-	if ver < version39 {
-		upgradeToVer39(s)
-	}
-
-	if ver < version40 {
-		upgradeToVer40(s)
-	}
-
-	if ver < version41 {
-		upgradeToVer41(s)
+	for _, upgrade := range bootstrapVersion {
+		upgrade(s, ver)
 	}
 
 	updateBootstrapVer(s)
@@ -622,7 +570,10 @@ func upgrade(s Session) {
 }
 
 // upgradeToVer2 updates to version 2.
-func upgradeToVer2(s Session) {
+func upgradeToVer2(s Session, ver int64) {
+	if ver >= version2 {
+		return
+	}
 	// Version 2 add two system variable for DistSQL concurrency controlling.
 	// Insert distsql related system variable.
 	distSQLVars := []string{variable.TiDBDistSQLScanConcurrency}
@@ -637,7 +588,10 @@ func upgradeToVer2(s Session) {
 }
 
 // upgradeToVer3 updates to version 3.
-func upgradeToVer3(s Session) {
+func upgradeToVer3(s Session, ver int64) {
+	if ver >= version3 {
+		return
+	}
 	// Version 3 fix tx_read_only variable value.
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s set variable_value = '0' where variable_name = 'tx_read_only';",
 		mysql.SystemDB, mysql.GlobalVariablesTable)
@@ -645,37 +599,55 @@ func upgradeToVer3(s Session) {
 }
 
 // upgradeToVer4 updates to version 4.
-func upgradeToVer4(s Session) {
+func upgradeToVer4(s Session, ver int64) {
+	if ver >= version4 {
+		return
+	}
 	sql := CreateStatsMetaTable
 	mustExecute(s, sql)
 }
 
-func upgradeToVer5(s Session) {
+func upgradeToVer5(s Session, ver int64) {
+	if ver >= version5 {
+		return
+	}
 	mustExecute(s, CreateStatsColsTable)
 	mustExecute(s, CreateStatsBucketsTable)
 }
 
-func upgradeToVer6(s Session) {
+func upgradeToVer6(s Session, ver int64) {
+	if ver >= version6 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Super_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Show_db_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Super_priv='Y'")
 }
 
-func upgradeToVer7(s Session) {
+func upgradeToVer7(s Session, ver int64) {
+	if ver >= version7 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Process_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Drop_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Process_priv='Y'")
 }
 
-func upgradeToVer8(s Session) {
+func upgradeToVer8(s Session, ver int64) {
+	if ver >= version8 {
+		return
+	}
 	// This is a dummy upgrade, it checks whether upgradeToVer7 success, if not, do it again.
 	if _, err := s.Execute(context.Background(), "SELECT HIGH_PRIORITY `Process_priv` from mysql.user limit 0"); err == nil {
 		return
 	}
-	upgradeToVer7(s)
+	upgradeToVer7(s, ver)
 }
 
-func upgradeToVer9(s Session) {
+func upgradeToVer9(s Session, ver int64) {
+	if ver >= version9 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Trigger_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Trigger_priv='Y'")
@@ -693,7 +665,10 @@ func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
 	}
 }
 
-func upgradeToVer10(s Session) {
+func upgradeToVer10(s Session, ver int64) {
+	if ver >= version10 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets CHANGE COLUMN `value` `upper_bound` BLOB NOT NULL", infoschema.ErrColumnNotExists, infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_buckets ADD COLUMN `lower_bound` BLOB", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `null_count` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
@@ -701,7 +676,10 @@ func upgradeToVer10(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms DROP COLUMN use_count_to_estimate", ddl.ErrCantDropFieldOrKey)
 }
 
-func upgradeToVer11(s Session) {
+func upgradeToVer11(s Session, ver int64) {
+	if ver >= version11 {
+		return
+	}
 	_, err := s.Execute(context.Background(), "ALTER TABLE mysql.user ADD COLUMN `References_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`")
 	if err != nil {
 		if terror.ErrorEqual(err, infoschema.ErrColumnExists) {
@@ -712,7 +690,10 @@ func upgradeToVer11(s Session) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET References_priv='Y'")
 }
 
-func upgradeToVer12(s Session) {
+func upgradeToVer12(s Session, ver int64) {
+	if ver >= version12 {
+		return
+	}
 	ctx := context.Background()
 	_, err := s.Execute(ctx, "BEGIN")
 	terror.MustNil(err)
@@ -755,7 +736,10 @@ func upgradeToVer12(s Session) {
 	mustExecute(s, "COMMIT")
 }
 
-func upgradeToVer13(s Session) {
+func upgradeToVer13(s Session, ver int64) {
+	if ver >= version13 {
+		return
+	}
 	sqls := []string{
 		"ALTER TABLE mysql.user ADD COLUMN `Create_tmp_table_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Super_priv`",
 		"ALTER TABLE mysql.user ADD COLUMN `Lock_tables_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_tmp_table_priv`",
@@ -779,7 +763,10 @@ func upgradeToVer13(s Session) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_view_priv='Y',Show_view_priv='Y' WHERE Create_priv='Y'")
 }
 
-func upgradeToVer14(s Session) {
+func upgradeToVer14(s Session, ver int64) {
+	if ver >= version14 {
+		return
+	}
 	sqls := []string{
 		"ALTER TABLE mysql.db ADD COLUMN `References_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Grant_priv`",
 		"ALTER TABLE mysql.db ADD COLUMN `Create_tmp_table_priv` enum('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Alter_priv`",
@@ -803,7 +790,10 @@ func upgradeToVer14(s Session) {
 	}
 }
 
-func upgradeToVer15(s Session) {
+func upgradeToVer15(s Session, ver int64) {
+	if ver >= version15 {
+		return
+	}
 	var err error
 	_, err = s.Execute(context.Background(), CreateGCDeleteRangeTable)
 	if err != nil {
@@ -811,29 +801,47 @@ func upgradeToVer15(s Session) {
 	}
 }
 
-func upgradeToVer16(s Session) {
+func upgradeToVer16(s Session, ver int64) {
+	if ver >= version16 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `cm_sketch` blob", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer17(s Session) {
+func upgradeToVer17(s Session, ver int64) {
+	if ver >= version17 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY User CHAR(32)")
 }
 
-func upgradeToVer18(s Session) {
+func upgradeToVer18(s Session, ver int64) {
+	if ver >= version18 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `tot_col_size` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer19(s Session) {
+func upgradeToVer19(s Session, ver int64) {
+	if ver >= version19 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.db MODIFY User CHAR(32)")
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY User CHAR(32)")
 	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv MODIFY User CHAR(32)")
 }
 
-func upgradeToVer20(s Session) {
+func upgradeToVer20(s Session, ver int64) {
+	if ver >= version20 {
+		return
+	}
 	doReentrantDDL(s, CreateStatsFeedbackTable)
 }
 
-func upgradeToVer21(s Session) {
+func upgradeToVer21(s Session, ver int64) {
+	if ver >= version21 {
+		return
+	}
 	mustExecute(s, CreateGCDeleteRangeDoneTable)
 
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX job_id", ddl.ErrCantDropFieldOrKey)
@@ -841,11 +849,17 @@ func upgradeToVer21(s Session) {
 	doReentrantDDL(s, "ALTER TABLE mysql.gc_delete_range DROP INDEX element_id", ddl.ErrCantDropFieldOrKey)
 }
 
-func upgradeToVer22(s Session) {
+func upgradeToVer22(s Session, ver int64) {
+	if ver >= version22 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `stats_ver` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer23(s Session) {
+func upgradeToVer23(s Session, ver int64) {
+	if ver >= version23 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `flag` bigint(64) NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
@@ -857,18 +871,27 @@ func writeSystemTZ(s Session) {
 }
 
 // upgradeToVer24 initializes `System` timezone according to docs/design/2018-09-10-adding-tz-env.md
-func upgradeToVer24(s Session) {
+func upgradeToVer24(s Session, ver int64) {
+	if ver >= version24 {
+		return
+	}
 	writeSystemTZ(s)
 }
 
 // upgradeToVer25 updates tidb_max_chunk_size to new low bound value 32 if previous value is small than 32.
-func upgradeToVer25(s Session) {
+func upgradeToVer25(s Session, ver int64) {
+	if ver >= version25 {
+		return
+	}
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = '%[4]d' WHERE VARIABLE_NAME = '%[3]s' AND VARIABLE_VALUE < %[4]d",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBMaxChunkSize, variable.DefInitChunkSize)
 	mustExecute(s, sql)
 }
 
-func upgradeToVer26(s Session) {
+func upgradeToVer26(s Session, ver int64) {
+	if ver >= version26 {
+		return
+	}
 	mustExecute(s, CreateRoleEdgesTable)
 	mustExecute(s, CreateDefaultRolesTable)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_role_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
@@ -880,61 +903,98 @@ func upgradeToVer26(s Session) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_view_priv='Y',Show_view_priv='Y' WHERE Create_priv='Y'")
 }
 
-func upgradeToVer27(s Session) {
+func upgradeToVer27(s Session, ver int64) {
+	if ver >= version27 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `correlation` double NOT NULL DEFAULT 0", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer28(s Session) {
+func upgradeToVer28(s Session, ver int64) {
+	if ver >= version28 {
+		return
+	}
 	doReentrantDDL(s, CreateBindInfoTable)
 }
 
-func upgradeToVer29(s Session) {
+func upgradeToVer29(s Session, ver int64) {
+	// upgradeToVer29 only need to be run when the current version is 28.
+	if ver != version28 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info change create_time create_time timestamp(3)")
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info change update_time update_time timestamp(3)")
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info add index sql_index (original_sql(1024),default_db(1024))", ddl.ErrDupKeyName)
 }
 
-func upgradeToVer30(s Session) {
+func upgradeToVer30(s Session, ver int64) {
+	if ver >= version30 {
+		return
+	}
 	mustExecute(s, CreateStatsTopNTable)
 }
 
-func upgradeToVer31(s Session) {
+func upgradeToVer31(s Session, ver int64) {
+	if ver >= version31 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms ADD COLUMN `last_analyze_pos` blob default null", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer32(s Session) {
+func upgradeToVer32(s Session, ver int64) {
+	if ver >= version32 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv MODIFY table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant', 'Index', 'Alter', 'Create View', 'Show View', 'Trigger', 'References')")
 }
 
-func upgradeToVer33(s Session) {
+func upgradeToVer33(s Session, ver int64) {
+	if ver >= version33 {
+		return
+	}
 	doReentrantDDL(s, CreateExprPushdownBlacklist)
 }
 
-func upgradeToVer34(s Session) {
+func upgradeToVer34(s Session, ver int64) {
+	if ver >= version34 {
+		return
+	}
 	doReentrantDDL(s, CreateOptRuleBlacklist)
 }
 
-func upgradeToVer35(s Session) {
+func upgradeToVer35(s Session, ver int64) {
+	if ver >= version35 {
+		return
+	}
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %s.%s SET VARIABLE_NAME = '%s' WHERE VARIABLE_NAME = 'tidb_back_off_weight'",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBBackOffWeight)
 	mustExecute(s, sql)
 }
 
-func upgradeToVer36(s Session) {
+func upgradeToVer36(s Session, ver int64) {
+	if ver >= version36 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Shutdown_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	// A root user will have those privileges after upgrading.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Shutdown_priv='Y' where Super_priv='Y'")
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tmp_table_priv='Y',Lock_tables_priv='Y',Create_routine_priv='Y',Alter_routine_priv='Y',Event_priv='Y' WHERE Super_priv='Y'")
 }
 
-func upgradeToVer37(s Session) {
+func upgradeToVer37(s Session, ver int64) {
+	if ver >= version37 {
+		return
+	}
 	// when upgrade from old tidb and no 'tidb_enable_window_function' in GLOBAL_VARIABLES, init it with 0.
 	sql := fmt.Sprintf("INSERT IGNORE INTO  %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%d')",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableWindowFunction, 0)
 	mustExecute(s, sql)
 }
 
-func upgradeToVer38(s Session) {
+func upgradeToVer38(s Session, ver int64) {
+	if ver >= version38 {
+		return
+	}
 	var err error
 	_, err = s.Execute(context.Background(), CreateGlobalPrivTable)
 	if err != nil {
@@ -942,7 +1002,10 @@ func upgradeToVer38(s Session) {
 	}
 }
 
-func upgradeToVer39(s Session) {
+func upgradeToVer39(s Session, ver int64) {
+	if ver >= version39 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Reload_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' where Super_priv='Y'")
@@ -960,14 +1023,151 @@ func writeNewCollationParameter(s Session, flag bool) {
 	mustExecute(s, sql)
 }
 
-func upgradeToVer40(s Session) {
+func upgradeToVer40(s Session, ver int64) {
+	if ver >= version40 {
+		return
+	}
 	// There is no way to enable new collation for an existing TiDB cluster.
 	writeNewCollationParameter(s, false)
 }
 
-func upgradeToVer41(s Session) {
+func upgradeToVer41(s Session, ver int64) {
+	if ver >= version41 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user CHANGE `password` `authentication_string` TEXT", infoschema.ErrColumnExists, infoschema.ErrColumnNotExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `password` TEXT as (`authentication_string`)", infoschema.ErrColumnExists)
+}
+
+// writeDefaultExprPushDownBlacklist writes default expr pushdown blacklist into mysql.expr_pushdown_blacklist
+func writeDefaultExprPushDownBlacklist(s Session) {
+	mustExecute(s, "INSERT HIGH_PRIORITY INTO mysql.expr_pushdown_blacklist VALUES"+
+		"('date_add','tiflash', 'DST(daylight saving time) does not take effect in TiFlash date_add'),"+
+		"('cast','tiflash', 'Behavior of some corner cases(overflow, truncate etc) is different in TiFlash and TiDB')")
+}
+
+func upgradeToVer42(s Session, ver int64) {
+	if ver >= version42 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `store_type` char(100) NOT NULL DEFAULT 'tikv,tiflash,tidb'", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.expr_pushdown_blacklist ADD COLUMN `reason` varchar(200)", infoschema.ErrColumnExists)
+	writeDefaultExprPushDownBlacklist(s)
+}
+
+// Convert statement summary global variables to non-empty values.
+func writeStmtSummaryVars(s Session) {
+	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s' AND variable_value=''", mysql.SystemDB, mysql.GlobalVariablesTable)
+	stmtSummaryConfig := config.GetGlobalConfig().StmtSummary
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.Enable), variable.TiDBEnableStmtSummary))
+	mustExecute(s, fmt.Sprintf(sql, variable.BoolToIntStr(stmtSummaryConfig.EnableInternalQuery), variable.TiDBStmtSummaryInternalQuery))
+	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.RefreshInterval), variable.TiDBStmtSummaryRefreshInterval))
+	mustExecute(s, fmt.Sprintf(sql, strconv.Itoa(stmtSummaryConfig.HistorySize), variable.TiDBStmtSummaryHistorySize))
+	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxStmtCount), 10), variable.TiDBStmtSummaryMaxStmtCount))
+	mustExecute(s, fmt.Sprintf(sql, strconv.FormatUint(uint64(stmtSummaryConfig.MaxSQLLength), 10), variable.TiDBStmtSummaryMaxSQLLength))
+}
+
+func upgradeToVer43(s Session, ver int64) {
+	if ver >= version43 {
+		return
+	}
+	writeStmtSummaryVars(s)
+}
+
+func upgradeToVer44(s Session, ver int64) {
+	if ver >= version44 {
+		return
+	}
+	mustExecute(s, "DELETE FROM mysql.global_variables where variable_name = \"tidb_isolation_read_engines\"")
+}
+
+func upgradeToVer45(s Session, ver int64) {
+	if ver >= version45 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Config_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Config_priv='Y' where Super_priv='Y'")
+}
+
+// In v3.1.1, we wrongly replace the context of upgradeToVer39 with upgradeToVer44. If we upgrade from v3.1.1 to a newer version,
+// upgradeToVer39 will be missed. So we redo upgradeToVer39 here to make sure the upgrading from v3.1.1 succeed.
+func upgradeToVer46(s Session, ver int64) {
+	if ver >= version46 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Reload_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' where Super_priv='Y'")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer47(s Session, ver int64) {
+	if ver >= version47 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `source` varchar(10) NOT NULL default 'unknown'", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer48(s Session, ver int64) {
+	if ver >= version48 {
+		return
+	}
+	defValues := map[string]string{
+		variable.TiDBIndexLookupConcurrency:     "4",
+		variable.TiDBIndexLookupJoinConcurrency: "4",
+		variable.TiDBHashAggFinalConcurrency:    "4",
+		variable.TiDBHashAggPartialConcurrency:  "4",
+		variable.TiDBWindowConcurrency:          "4",
+		variable.TiDBProjectionConcurrency:      "4",
+		variable.TiDBHashJoinConcurrency:        "5",
+	}
+	names := make([]string, 0, len(defValues))
+	for n := range defValues {
+		names = append(names, n)
+	}
+
+	selectSQL := "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(names, quoteCommaQuote) + "')"
+	ctx := context.Background()
+	rs, err := s.Execute(ctx, selectSQL)
+	terror.MustNil(err)
+	r := rs[0]
+	defer terror.Call(r.Close)
+	req := r.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
+	err = r.Next(ctx, req)
+	for err == nil && req.NumRows() != 0 {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			n := strings.ToLower(row.GetString(0))
+			v := row.GetString(1)
+			if defValue, ok := defValues[n]; !ok || defValue != v {
+				return
+			}
+		}
+		err = r.Next(ctx, req)
+	}
+	terror.MustNil(err)
+
+	mustExecute(s, "BEGIN")
+	v := strconv.Itoa(variable.ConcurrencyUnset)
+	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s'", mysql.SystemDB, mysql.GlobalVariablesTable)
+	for _, name := range names {
+		mustExecute(s, fmt.Sprintf(sql, v, name))
+	}
+	mustExecute(s, "COMMIT")
+}
+
+func upgradeToVer49(s Session, ver int64) {
+	if ver >= version49 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
+func upgradeToVer50(s Session, ver int64) {
+	if ver >= version50 {
+		return
+	}
+	doReentrantDDL(s, CreateSchemaIndexUsageTable)
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
@@ -1033,6 +1233,10 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateExprPushdownBlacklist)
 	// Create opt_rule_blacklist table.
 	mustExecute(s, CreateOptRuleBlacklist)
+	// Create stats_extended table.
+	mustExecute(s, CreateStatsExtended)
+	// Create schema_index_usage.
+	mustExecute(s, CreateSchemaIndexUsageTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -1042,7 +1246,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))
@@ -1055,6 +1259,9 @@ func doDMLWorks(s Session) {
 			}
 			if v.Name == variable.TiDBRowFormatVersion {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
+			}
+			if v.Name == variable.TiDBEnableClusteredIndex {
+				vVal = "1"
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
@@ -1076,6 +1283,10 @@ func doDMLWorks(s Session) {
 	writeSystemTZ(s)
 
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
+
+	writeDefaultExprPushDownBlacklist(s)
+
+	writeStmtSummaryVars(s)
 
 	_, err := s.Execute(context.Background(), "COMMIT")
 	if err != nil {

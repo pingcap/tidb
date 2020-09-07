@@ -16,14 +16,14 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/trace"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -38,7 +38,7 @@ type UpdateExec struct {
 
 	// updatedRowKeys is a map for unique (Table, handle) pair.
 	// The value is true if the row is changed, or false otherwise
-	updatedRowKeys map[int64]map[int64]bool
+	updatedRowKeys map[int64]*kv.HandleMap
 	tblID2table    map[int64]table.Table
 
 	matched uint64 // a counter of matched rows during update
@@ -49,26 +49,30 @@ type UpdateExec struct {
 	allAssignmentsAreConstant bool
 	drained                   bool
 	memTracker                *memory.Tracker
+
+	stats *runtimeStatsWithSnapshot
 }
 
 func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, newData []types.Datum) error {
-	assignFlag, err := e.getUpdateColumns(e.ctx, schema.Len())
+	defer trace.StartRegion(ctx, "UpdateExec").End()
+	assignFlag, err := plannercore.GetUpdateColumns(e.ctx, e.OrderedList, schema.Len())
 	if err != nil {
 		return err
 	}
 	if e.updatedRowKeys == nil {
-		e.updatedRowKeys = make(map[int64]map[int64]bool)
+		e.updatedRowKeys = make(map[int64]*kv.HandleMap)
 	}
 	for _, content := range e.tblColPosInfos {
 		tbl := e.tblID2table[content.TblID]
 		if e.updatedRowKeys[content.TblID] == nil {
-			e.updatedRowKeys[content.TblID] = make(map[int64]bool)
+			e.updatedRowKeys[content.TblID] = kv.NewHandleMap()
 		}
-		handleDatum := row[content.HandleOrdinal]
-		if e.canNotUpdate(handleDatum) {
-			continue
+		var handle kv.Handle
+		handle, err = content.HandleCols.BuildHandleByDatums(row)
+		if err != nil {
+			return err
 		}
-		handle := row[content.HandleOrdinal].GetInt64()
+
 		oldData := row[content.Start:content.End]
 		newTableData := newData[content.Start:content.End]
 		updatable := false
@@ -83,10 +87,13 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 			// If there's nothing to update, we can just skip current row
 			continue
 		}
-		changed, ok := e.updatedRowKeys[content.TblID][handle]
+		var changed bool
+		v, ok := e.updatedRowKeys[content.TblID].Get(handle)
 		if !ok {
 			// Row is matched for the first time, increment `matched` counter
 			e.matched++
+		} else {
+			changed = v.(bool)
 		}
 		if changed {
 			// Each matched row is updated once, even if it matches the conditions multiple times.
@@ -94,9 +101,9 @@ func (e *UpdateExec) exec(ctx context.Context, schema *expression.Schema, row, n
 		}
 
 		// Update row
-		changed, _, _, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
+		changed, err1 := updateRecord(ctx, e.ctx, handle, oldData, newTableData, flags, tbl, false, e.memTracker)
 		if err1 == nil {
-			e.updatedRowKeys[content.TblID][handle] = changed
+			e.updatedRowKeys[content.TblID].Set(handle, changed)
 			continue
 		}
 
@@ -166,6 +173,12 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		}
 		memUsageOfChk = chk.MemoryUsage()
 		e.memTracker.Consume(memUsageOfChk)
+		if e.collectRuntimeStatsEnabled() {
+			txn, err := e.ctx.Txn(false)
+			if err == nil && txn.GetSnapshot() != nil {
+				txn.GetSnapshot().SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			}
+		}
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
@@ -216,7 +229,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo)
+			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false, false)
 			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
@@ -243,7 +256,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo)
+			val, err = table.CastValue(e.ctx, val, cols[assign.Col.Index].ColumnInfo, false, false)
 			if err = e.handleErr(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
@@ -258,6 +271,12 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 // Close implements the Executor Close interface.
 func (e *UpdateExec) Close() error {
 	e.setMessage()
+	if e.runtimeStats != nil && e.stats != nil {
+		txn, err := e.ctx.Txn(false)
+		if err == nil && txn.GetSnapshot() != nil {
+			txn.GetSnapshot().DelOption(kv.CollectRuntimeStats)
+		}
+	}
 	return e.children[0].Close()
 }
 
@@ -269,18 +288,6 @@ func (e *UpdateExec) Open(ctx context.Context) error {
 	return e.children[0].Open(ctx)
 }
 
-func (e *UpdateExec) getUpdateColumns(ctx sessionctx.Context, schemaLen int) ([]bool, error) {
-	assignFlag := make([]bool, schemaLen)
-	for _, v := range e.OrderedList {
-		if !ctx.GetSessionVars().AllowWriteRowID && v.Col.ID == model.ExtraHandleID {
-			return nil, errors.Errorf("insert, update and replace statements for _tidb_rowid are not supported.")
-		}
-		idx := v.Col.Index
-		assignFlag[idx] = true
-	}
-	return assignFlag, nil
-}
-
 // setMessage sets info message(ERR_UPDATE_INFO) generated by UPDATE statement
 func (e *UpdateExec) setMessage() {
 	stmtCtx := e.ctx.GetSessionVars().StmtCtx
@@ -289,4 +296,19 @@ func (e *UpdateExec) setMessage() {
 	numWarnings := stmtCtx.WarningCount()
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUpdateInfo], numMatched, numChanged, numWarnings)
 	stmtCtx.SetMessage(msg)
+}
+
+func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
+	if e.runtimeStats != nil {
+		if e.stats == nil {
+			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			e.stats = &runtimeStatsWithSnapshot{
+				BasicRuntimeStats:    e.runtimeStats,
+				SnapshotRuntimeStats: snapshotStats,
+			}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		}
+		return true
+	}
+	return false
 }

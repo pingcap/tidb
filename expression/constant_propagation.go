@@ -119,7 +119,7 @@ func validEqualCond(ctx sessionctx.Context, cond Expression) (*Column, *Constant
 //  for 'a, b, a < 3', it returns 'true, false, b < 3'
 //  for 'a, b, sin(a) + cos(a) = 5', it returns 'true, false, returns sin(b) + cos(b) = 5'
 //  for 'a, b, cast(a) < rand()', it returns 'false, true, cast(a) < rand()'
-func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Expression) (bool, bool, Expression) {
+func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Expression, rejectControl bool) (bool, bool, Expression) {
 	sf, ok := cond.(*ScalarFunction)
 	if !ok {
 		return false, false, cond
@@ -132,10 +132,17 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 	if _, ok := inequalFunctions[sf.FuncName.L]; ok {
 		return false, true, cond
 	}
+	// See https://github.com/pingcap/tidb/issues/15782. The control function's result may rely on the original nullable
+	// information of the outer side column. Its args cannot be replaced easily.
+	// A more strict check is that after we replace the arg. We check the nullability of the new expression.
+	// But we haven't maintained it yet, so don't replace the arg of the control function currently.
+	if rejectControl && (sf.FuncName.L == ast.Ifnull || sf.FuncName.L == ast.If || sf.FuncName.L == ast.Case) {
+		return false, false, cond
+	}
 	for idx, expr := range sf.GetArgs() {
 		if src.Equal(nil, expr) {
-			_, coll, _ := cond.CharsetAndCollation(ctx)
-			if !collate.CompatibleCollate(tgt.GetType().Collate, coll) {
+			_, coll := cond.CharsetAndCollation(ctx)
+			if tgt.GetType().Collate != coll {
 				continue
 			}
 			replaced = true
@@ -145,7 +152,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 			}
 			args[idx] = tgt
 		} else {
-			subReplaced, isNonDeterministic, subExpr := tryToReplaceCond(ctx, src, tgt, expr)
+			subReplaced, isNonDeterministic, subExpr := tryToReplaceCond(ctx, src, tgt, expr, rejectControl)
 			if isNonDeterministic {
 				return false, true, cond
 			} else if subReplaced {
@@ -190,20 +197,6 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				// Make sure the collations of the argument are equal.
-				if sf, ok := cond.(*ScalarFunction); ok && len(sf.GetArgs()) > 1 {
-					baseCollation := sf.GetArgs()[0].GetType().Collate
-					skip := false
-					for _, arg := range sf.GetArgs() {
-						if !collate.CompatibleCollate(arg.GetType().Collate, baseCollation) {
-							skip = true
-							break
-						}
-					}
-					if skip {
-						continue
-					}
-				}
 				s.conditions[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
 			}
 		}
@@ -235,7 +228,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 		if fun, ok := s.conditions[i].(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 			lCol, lOk := fun.GetArgs()[0].(*Column)
 			rCol, rOk := fun.GetArgs()[1].(*Column)
-			if lOk && rOk && collate.CompatibleCollate(lCol.GetType().Collate, rCol.GetType().Collate) {
+			if lOk && rOk && lCol.GetType().Collate == rCol.GetType().Collate {
 				lID := s.getColID(lCol)
 				rID := s.getColID(rCol)
 				s.unionSet.Union(lID, rID)
@@ -258,11 +251,11 @@ func (s *propConstSolver) propagateColumnEQ() {
 					continue
 				}
 				cond := s.conditions[k]
-				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond)
+				replaced, _, newExpr := tryToReplaceCond(s.ctx, coli, colj, cond, false)
 				if replaced {
 					s.conditions = append(s.conditions, newExpr)
 				}
-				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond)
+				replaced, _, newExpr = tryToReplaceCond(s.ctx, colj, coli, cond, false)
 				if replaced {
 					s.conditions = append(s.conditions, newExpr)
 				}
@@ -482,7 +475,7 @@ func (s *propOuterJoinConstSolver) validColEqualCond(cond Expression) (*Column, 
 	if fun, ok := cond.(*ScalarFunction); ok && fun.FuncName.L == ast.EQ {
 		lCol, lOk := fun.GetArgs()[0].(*Column)
 		rCol, rOk := fun.GetArgs()[1].(*Column)
-		if lOk && rOk && collate.CompatibleCollate(lCol.GetType().Collate, rCol.GetType().Collate) {
+		if lOk && rOk && lCol.GetType().Collate == rCol.GetType().Collate {
 			return s.colsFromOuterAndInner(lCol, rCol)
 		}
 	}
@@ -512,7 +505,7 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 			visited[k+offset] = true
 			continue
 		}
-		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond)
+		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond, true)
 		if replaced {
 			s.joinConds = append(s.joinConds, newExpr)
 		}

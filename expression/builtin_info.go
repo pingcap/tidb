@@ -19,7 +19,6 @@ package expression
 
 import (
 	"encoding/hex"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -90,7 +90,10 @@ func (c *databaseFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinDatabaseSig{bf}
@@ -122,7 +125,10 @@ func (c *foundRowsFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinFoundRowsSig{bf}
 	return sig, nil
@@ -157,7 +163,10 @@ func (c *currentUserFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinCurrentUserSig{bf}
@@ -192,7 +201,11 @@ func (c *currentRoleFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinCurrentRoleSig{bf}
 	return sig, nil
@@ -241,7 +254,10 @@ func (c *userFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinUserSig{bf}
@@ -277,7 +293,10 @@ func (c *connectionIDFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinConnectionIDSig{bf}
 	return sig, nil
@@ -314,7 +333,10 @@ func (c *lastInsertIDFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if len(args) == 1 {
 		argsTp = append(argsTp, types.ETInt)
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, argsTp...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argsTp...)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flag |= mysql.UnsignedFlag
 
 	if len(args) == 1 {
@@ -374,7 +396,10 @@ func (c *versionFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = 64
 	sig := &builtinVersionSig{bf}
@@ -405,7 +430,10 @@ func (c *tidbVersionFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	bf.tp.Flen = len(printer.GetTiDBInfo())
 	sig := &builtinTiDBVersionSig{bf}
@@ -436,7 +464,10 @@ func (c *tidbIsDDLOwnerFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinTiDBIsDDLOwnerSig{bf}
 	return sig, nil
 }
@@ -482,7 +513,10 @@ func (c *benchmarkFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 			constLoopCount = lc
 		}
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETInt, sameEvalType)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETInt, sameEvalType)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinBenchmarkSig{bf, constLoopCount}
 	return sig, nil
 }
@@ -599,7 +633,10 @@ func (c *coercibilityFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, args[0].GetType().EvalType())
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, args[0].GetType().EvalType())
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinCoercibilitySig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_Unspecified)
 	return sig, nil
@@ -631,7 +668,11 @@ func (c *collationFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	for _, arg := range args {
 		argsTps = append(argsTps, arg.GetType().EvalType())
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, argsTps...)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argsTps...)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
 	sig := &builtinCollationSig{bf}
 	return sig, nil
 }
@@ -658,7 +699,10 @@ func (c *rowCountFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
 	sig = &builtinRowCountSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_RowCount)
 	return sig, nil
@@ -677,7 +721,7 @@ func (b *builtinRowCountSig) Clone() builtinFunc {
 // evalInt evals ROW_COUNT().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count.
 func (b *builtinRowCountSig) evalInt(_ chunk.Row) (res int64, isNull bool, err error) {
-	res = int64(b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows)
+	res = b.ctx.GetSessionVars().StmtCtx.PrevAffectedRows
 	return res, false, nil
 }
 
@@ -689,7 +733,10 @@ func (c *tidbDecodeKeyFunctionClass) getFunction(ctx sessionctx.Context, args []
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinTiDBDecodeKeySig{bf}
 	return sig, nil
 }
@@ -720,22 +767,23 @@ func decodeKey(ctx sessionctx.Context, s string) string {
 		return s
 	}
 	// Auto decode byte if needed.
-	_, bs, err := codec.DecodeBytes([]byte(key), nil)
+	_, bs, err := codec.DecodeBytes(key, nil)
 	if err == nil {
 		key = bs
 	}
 	// Try to decode it as a record key.
 	tableID, handle, err := tablecodec.DecodeRecordKey(key)
 	if err == nil {
-		return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle, 10)
+		if handle.IsInt() {
+			return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle.IntValue(), 10)
+		}
+		return "tableID=" + strconv.FormatInt(tableID, 10) + ", clusterHandle=" + handle.String()
 	}
 	// Try decode as table index key.
-	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKeyPrefix(key)
+	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
 	if err == nil {
-		idxValueStr := fmt.Sprintf("%X", indexValues)
-		return "tableID=" + strconv.FormatInt(tableID, 10) + ", indexID=" + strconv.FormatInt(indexID, 10) + ", indexValues=" + idxValueStr
+		return "tableID=" + strconv.FormatInt(tableID, 10) + ", indexID=" + strconv.FormatInt(indexID, 10) + ", indexValues=" + strings.Join(indexValues, ",")
 	}
-
 	// TODO: try to decode other type key.
 	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
 	return s
@@ -749,7 +797,10 @@ func (c *tidbDecodePlanFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinTiDBDecodePlanSig{bf}
 	return sig, nil
 }
@@ -781,7 +832,10 @@ func (c *nextValFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinNextValSig{bf}
 	bf.tp.Flen = 10
 	return sig, nil
@@ -811,6 +865,12 @@ func (b *builtinNextValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
+	// Do the privilege check.
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	user := b.ctx.GetSessionVars().User
+	if checker != nil && !checker.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.InsertPriv) {
+		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, seq)
+	}
 	nextVal, err := sequence.GetSequenceNextVal(b.ctx, db, seq)
 	if err != nil {
 		return 0, false, err
@@ -828,7 +888,10 @@ func (c *lastValFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinLastValSig{bf}
 	bf.tp.Flen = 10
 	return sig, nil
@@ -858,6 +921,12 @@ func (b *builtinLastValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
+	// Do the privilege check.
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	user := b.ctx.GetSessionVars().User
+	if checker != nil && !checker.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.SelectPriv) {
+		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, seq)
+	}
 	return b.ctx.GetSessionVars().SequenceState.GetLastValue(sequence.GetSequenceID())
 }
 
@@ -869,7 +938,10 @@ func (c *setValFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETInt, types.ETString, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
 	sig := &builtinSetValSig{bf}
 	bf.tp.Flen = args[1].GetType().Flen
 	return sig, nil
@@ -899,6 +971,12 @@ func (b *builtinSetValSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if err != nil {
 		return 0, false, err
 	}
+	// Do the privilege check.
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	user := b.ctx.GetSessionVars().User
+	if checker != nil && !checker.RequestVerification(b.ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.InsertPriv) {
+		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, seq)
+	}
 	setValue, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -922,7 +1000,10 @@ func (c *formatBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinFormatBytesSig{bf}
 	return sig, nil
@@ -956,7 +1037,10 @@ func (c *formatNanoTimeFunctionClass) getFunction(ctx sessionctx.Context, args [
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf := newBaseBuiltinFuncWithTp(ctx, args, types.ETString, types.ETReal)
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETReal)
+	if err != nil {
+		return nil, err
+	}
 	bf.tp.Flag |= mysql.UnsignedFlag
 	sig := &builtinFormatNanoTimeSig{bf}
 	return sig, nil

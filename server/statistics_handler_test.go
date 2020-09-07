@@ -23,13 +23,11 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
 type testDumpStatsSuite struct {
@@ -45,9 +43,8 @@ var _ = Suite(&testDumpStatsSuite{
 })
 
 func (ds *testDumpStatsSuite) startServer(c *C) {
-	mvccStore := mocktikv.MustNewMVCCStore()
 	var err error
-	ds.store, err = mockstore.NewMockTikvStore(mockstore.WithMVCCStore(mvccStore))
+	ds.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	session.DisableStats4Test()
 	ds.domain, err = session.BootstrapSession(ds.store)
@@ -55,13 +52,15 @@ func (ds *testDumpStatsSuite) startServer(c *C) {
 	ds.domain.SetStatsUpdating(true)
 	tidbdrv := NewTiDBDriver(ds.store)
 
-	cfg := config.NewConfig()
+	cfg := newTestConfig()
 	cfg.Port = ds.port
 	cfg.Status.StatusPort = ds.statusPort
 	cfg.Status.ReportStatus = true
 
 	server, err := NewServer(cfg, tidbdrv)
 	c.Assert(err, IsNil)
+	ds.port = getPortFromTCPAddr(server.listener.Addr())
+	ds.statusPort = getPortFromTCPAddr(server.statusListener.Addr())
 	ds.server = server
 	go server.Run()
 	ds.waitUntilServerOnline()
@@ -85,8 +84,8 @@ func (ds *testDumpStatsSuite) stopServer(c *C) {
 
 func (ds *testDumpStatsSuite) TestDumpStatsAPI(c *C) {
 	ds.startServer(c)
+	defer ds.stopServer(c)
 	ds.prepareData(c)
-	defer ds.server.Close()
 
 	router := mux.NewRouter()
 	router.Handle("/stats/dump/{db}/{table}", ds.sh)

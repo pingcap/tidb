@@ -84,7 +84,10 @@ func genMockVecPlusIntBuiltinFunc() (*mockVecPlusIntBuiltinFunc, *chunk.Chunk, *
 	col1.Index, col1.RetType = 0, tp
 	col2 := newColumn(1)
 	col2.Index, col2.RetType = 1, tp
-	bf := newBaseBuiltinFuncWithTp(mock.NewContext(), []Expression{col1, col2}, types.ETInt, types.ETInt, types.ETInt)
+	bf, err := newBaseBuiltinFuncWithTp(mock.NewContext(), "", []Expression{col1, col2}, types.ETInt, types.ETInt, types.ETInt)
+	if err != nil {
+		panic(err)
+	}
 	plus := &mockVecPlusIntBuiltinFunc{bf, nil, false}
 	input := chunk.New([]*types.FieldType{tp, tp}, 1024, 1024)
 	buf := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
@@ -399,7 +402,10 @@ func genMockRowDouble(eType types.EvalType, enableVec bool) (builtinFunc, *chunk
 	col1 := newColumn(1)
 	col1.Index = 0
 	col1.RetType = tp
-	bf := newBaseBuiltinFuncWithTp(mock.NewContext(), []Expression{col1}, eType, eType)
+	bf, err := newBaseBuiltinFuncWithTp(mock.NewContext(), "", []Expression{col1}, eType, eType)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	rowDouble := &mockBuiltinDouble{bf, eType, enableVec}
 	input := chunk.New([]*types.FieldType{tp}, 1024, 1024)
 	buf := chunk.NewColumn(types.NewFieldType(convertETType(eType)), 1024)
@@ -778,8 +784,6 @@ func (s *testEvaluatorSuite) TestFloat32ColVec(c *C) {
 		i++
 	}
 
-	// set an empty Sel
-	sel = sel[:0]
 	c.Assert(col.VecEvalReal(ctx, chk, result), IsNil)
 }
 

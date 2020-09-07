@@ -300,20 +300,29 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 	}
 	switch tp.Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
-		flag = varintFlag
-		if mysql.HasUnsignedFlag(tp.Flag) {
-			if integer := row.GetInt64(idx); integer < 0 {
-				flag = uvarintFlag
-			}
+		flag = uvarintFlag
+		if !mysql.HasUnsignedFlag(tp.Flag) && row.GetInt64(idx) < 0 {
+			flag = varintFlag
 		}
 		b = row.GetRaw(idx)
 	case mysql.TypeFloat:
 		flag = floatFlag
 		f := float64(row.GetFloat32(idx))
+		// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+		// It makes -0's hash val different from 0's.
+		if f == 0 {
+			f = 0
+		}
 		b = (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
 	case mysql.TypeDouble:
 		flag = floatFlag
-		b = row.GetRaw(idx)
+		f := row.GetFloat64(idx)
+		// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+		// It makes -0's hash val different from 0's.
+		if f == 0 {
+			f = 0
+		}
+		b = (*[unsafe.Sizeof(f)]byte)(unsafe.Pointer(&f))[:]
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 		flag = compactBytesFlag
 		b = row.GetBytes(idx)
@@ -348,13 +357,15 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 			return
 		}
 	case mysql.TypeEnum:
-		flag = uvarintFlag
+		flag = compactBytesFlag
 		v := uint64(row.GetEnum(idx).ToNumber())
-		b = (*[8]byte)(unsafe.Pointer(&v))[:]
+		str := tp.Elems[v-1]
+		b = ConvertByCollation(hack.Slice(str), tp)
 	case mysql.TypeSet:
-		flag = uvarintFlag
+		flag = compactBytesFlag
 		v := uint64(row.GetSet(idx).ToNumber())
-		b = (*[unsafe.Sizeof(v)]byte)(unsafe.Pointer(&v))[:]
+		str := tp.Elems[v-1]
+		b = ConvertByCollation(hack.Slice(str), tp)
 	case mysql.TypeBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 		flag = uvarintFlag
@@ -372,13 +383,13 @@ func encodeHashChunkRowIdx(sc *stmtctx.StatementContext, row chunk.Row, tp *type
 
 // HashChunkColumns writes the encoded value of each row's column, which of index `colIdx`, to h.
 func HashChunkColumns(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte, isNull []bool) (err error) {
-	return HashChunkSelected(sc, h, chk, tp, colIdx, buf, isNull, nil)
+	return HashChunkSelected(sc, h, chk, tp, colIdx, buf, isNull, nil, false)
 }
 
 // HashChunkSelected writes the encoded value of selected row's column, which of index `colIdx`, to h.
 // sel indicates which rows are selected. If it is nil, all rows are selected.
 func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk.Chunk, tp *types.FieldType, colIdx int, buf []byte,
-	isNull, sel []bool) (err error) {
+	isNull, sel []bool, ignoreNull bool) (err error) {
 	var b []byte
 	column := chk.Column(colIdx)
 	rows := chk.NumRows()
@@ -391,11 +402,11 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
-				isNull[i] = true
+				isNull[i] = !ignoreNull
 			} else {
-				buf[0] = varintFlag
-				if mysql.HasUnsignedFlag(tp.Flag) && v < 0 {
-					buf[0] = uvarintFlag
+				buf[0] = uvarintFlag
+				if !mysql.HasUnsignedFlag(tp.Flag) && v < 0 {
+					buf[0] = varintFlag
 				}
 				b = column.GetRaw(i)
 			}
@@ -413,10 +424,15 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
-				isNull[i] = true
+				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = floatFlag
 				d := float64(f)
+				// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+				// It makes -0's hash val different from 0's.
+				if d == 0 {
+					d = 0
+				}
 				b = (*[sizeFloat64]byte)(unsafe.Pointer(&d))[:]
 			}
 
@@ -433,9 +449,14 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
-				isNull[i] = true
+				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = floatFlag
+				// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+				// It makes -0's hash val different from 0's.
+				if f == 0 {
+					f = 0
+				}
 				b = (*[sizeFloat64]byte)(unsafe.Pointer(&f))[:]
 			}
 
@@ -451,7 +472,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
-				isNull[i] = true
+				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = compactBytesFlag
 				b = column.GetBytes(i)
@@ -471,7 +492,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
-				isNull[i] = true
+				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = uintFlag
 				// Encoding timestamp need to consider timezone.
@@ -502,7 +523,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
-				isNull[i] = true
+				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = durationFlag
 				// duration may have negative value, so we cannot use String to encode directly.
@@ -522,7 +543,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
-				isNull[i] = true
+				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = decimalFlag
 				// If hash is true, we only consider the original value of this decimal and ignore it's precision.
@@ -544,11 +565,12 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
-				isNull[i] = true
+				isNull[i] = !ignoreNull
 			} else {
-				buf[0] = uvarintFlag
+				buf[0] = compactBytesFlag
 				v := uint64(column.GetEnum(i).ToNumber())
-				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+				str := tp.Elems[v-1]
+				b = ConvertByCollation(hack.Slice(str), tp)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -563,11 +585,12 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
-				isNull[i] = true
+				isNull[i] = !ignoreNull
 			} else {
-				buf[0] = uvarintFlag
+				buf[0] = compactBytesFlag
 				v := uint64(column.GetSet(i).ToNumber())
-				b = (*[sizeUint64]byte)(unsafe.Pointer(&v))[:]
+				str := tp.Elems[v-1]
+				b = ConvertByCollation(hack.Slice(str), tp)
 			}
 
 			// As the golang doc described, `Hash.Write` never returns an error.
@@ -582,7 +605,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
-				isNull[i] = true
+				isNull[i] = !ignoreNull
 			} else {
 				// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 				buf[0] = uvarintFlag
@@ -603,7 +626,7 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			}
 			if column.IsNull(i) {
 				buf[0], b = NilFlag, nil
-				isNull[i] = true
+				isNull[i] = !ignoreNull
 			} else {
 				buf[0] = jsonFlag
 				b = column.GetBytes(i)
@@ -613,6 +636,15 @@ func HashChunkSelected(sc *stmtctx.StatementContext, h []hash.Hash64, chk *chunk
 			// See https://golang.org/pkg/hash/#Hash
 			_, _ = h[i].Write(buf)
 			_, _ = h[i].Write(b)
+		}
+	case mysql.TypeNull:
+		for i := 0; i < rows; i++ {
+			if sel != nil && !sel[i] {
+				continue
+			}
+			isNull[i] = !ignoreNull
+			buf[0] = NilFlag
+			_, _ = h[i].Write(buf)
 		}
 	default:
 		return errors.Errorf("unsupport column type for encode %d", tp.Tp)

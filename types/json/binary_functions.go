@@ -20,10 +20,10 @@ import (
 	"fmt"
 	"sort"
 	"unicode/utf8"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // Type returns type of BinaryJSON as string.
@@ -637,6 +637,41 @@ func compareFloat64PrecisionLoss(x, y float64) int {
 	return 1
 }
 
+func compareInt64(x int64, y int64) int {
+	if x < y {
+		return -1
+	} else if x == y {
+		return 0
+	}
+
+	return 1
+}
+
+func compareUint64(x uint64, y uint64) int {
+	if x < y {
+		return -1
+	} else if x == y {
+		return 0
+	}
+
+	return 1
+}
+
+func compareInt64Uint64(x int64, y uint64) int {
+	if x < 0 {
+		return -1
+	}
+	return compareUint64(uint64(x), y)
+}
+
+func compareFloat64Int64(x float64, y int64) int {
+	return compareFloat64PrecisionLoss(x, float64(y))
+}
+
+func compareFloat64Uint64(x float64, y uint64) int {
+	return compareFloat64PrecisionLoss(x, float64(y))
+}
+
 // CompareBinary compares two binary json objects. Returns -1 if left < right,
 // 0 if left == right, else returns 1.
 func CompareBinary(left, right BinaryJSON) int {
@@ -652,10 +687,33 @@ func CompareBinary(left, right BinaryJSON) int {
 		case TypeCodeLiteral:
 			// false is less than true.
 			cmp = int(right.Value[0]) - int(left.Value[0])
-		case TypeCodeInt64, TypeCodeUint64, TypeCodeFloat64:
-			leftFloat := i64AsFloat64(left.GetInt64(), left.TypeCode)
-			rightFloat := i64AsFloat64(right.GetInt64(), right.TypeCode)
-			cmp = compareFloat64PrecisionLoss(leftFloat, rightFloat)
+		case TypeCodeInt64:
+			switch right.TypeCode {
+			case TypeCodeInt64:
+				cmp = compareInt64(left.GetInt64(), right.GetInt64())
+			case TypeCodeUint64:
+				cmp = compareInt64Uint64(left.GetInt64(), right.GetUint64())
+			case TypeCodeFloat64:
+				cmp = -compareFloat64Int64(right.GetFloat64(), left.GetInt64())
+			}
+		case TypeCodeUint64:
+			switch right.TypeCode {
+			case TypeCodeInt64:
+				cmp = -compareInt64Uint64(right.GetInt64(), left.GetUint64())
+			case TypeCodeUint64:
+				cmp = compareUint64(left.GetUint64(), right.GetUint64())
+			case TypeCodeFloat64:
+				cmp = -compareFloat64Uint64(right.GetFloat64(), left.GetUint64())
+			}
+		case TypeCodeFloat64:
+			switch right.TypeCode {
+			case TypeCodeInt64:
+				cmp = compareFloat64Int64(left.GetFloat64(), right.GetInt64())
+			case TypeCodeUint64:
+				cmp = compareFloat64Uint64(left.GetFloat64(), right.GetUint64())
+			case TypeCodeFloat64:
+				cmp = compareFloat64PrecisionLoss(left.GetFloat64(), right.GetFloat64())
+			}
 		case TypeCodeString:
 			cmp = bytes.Compare(left.GetString(), right.GetString())
 		case TypeCodeArray:
@@ -679,21 +737,6 @@ func CompareBinary(left, right BinaryJSON) int {
 		cmp = precedence1 - precedence2
 	}
 	return cmp
-}
-
-func i64AsFloat64(i64 int64, typeCode TypeCode) float64 {
-	switch typeCode {
-	case TypeCodeLiteral, TypeCodeInt64:
-		return float64(i64)
-	case TypeCodeUint64:
-		u64 := *(*uint64)(unsafe.Pointer(&i64))
-		return float64(u64)
-	case TypeCodeFloat64:
-		return *(*float64)(unsafe.Pointer(&i64))
-	default:
-		msg := fmt.Sprintf(unknownTypeCodeErrorMsg, typeCode)
-		panic(msg)
-	}
 }
 
 // MergeBinary merges multiple BinaryJSON into one according the following rules:
@@ -778,7 +821,7 @@ func PeekBytesAsJSON(b []byte) (n int, err error) {
 		err = errors.New("Cant peek from empty bytes")
 		return
 	}
-	switch c := TypeCode(b[0]); c {
+	switch c := b[0]; c {
 	case TypeCodeObject, TypeCodeArray:
 		if len(b) >= valTypeSize+headerSize {
 			size := endian.Uint32(b[valTypeSize+dataSizeOff:])
@@ -878,6 +921,47 @@ func (bj BinaryJSON) GetElemDepth() int {
 	default:
 		return 1
 	}
+}
+
+// Search for JSON_Search
+// rules referenced by MySQL JSON_SEARCH function
+// [https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html#function_json-search]
+func (bj BinaryJSON) Search(containType string, search string, escape byte, pathExpres []PathExpression) (res BinaryJSON, isNull bool, err error) {
+	if containType != ContainsPathOne && containType != ContainsPathAll {
+		return res, true, ErrInvalidJSONPath
+	}
+	patChars, patTypes := stringutil.CompilePattern(search, escape)
+
+	result := make([]interface{}, 0)
+	walkFn := func(fullpath PathExpression, bj BinaryJSON) (stop bool, err error) {
+		if bj.TypeCode == TypeCodeString && stringutil.DoMatch(string(bj.GetString()), patChars, patTypes) {
+			result = append(result, fullpath.String())
+			if containType == ContainsPathOne {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	if len(pathExpres) != 0 {
+		err := bj.Walk(walkFn, pathExpres...)
+		if err != nil {
+			return res, true, err
+		}
+	} else {
+		err := bj.Walk(walkFn)
+		if err != nil {
+			return res, true, err
+		}
+	}
+	switch len(result) {
+	case 0:
+		return res, true, nil
+	case 1:
+		return CreateBinary(result[0]), false, nil
+	default:
+		return CreateBinary(result), false, nil
+	}
+
 }
 
 // extractCallbackFn: the type of CALLBACK function for extractToCallback

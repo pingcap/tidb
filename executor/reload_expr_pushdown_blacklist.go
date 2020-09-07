@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -36,20 +37,35 @@ func (e *ReloadExprPushdownBlacklistExec) Next(ctx context.Context, _ *chunk.Chu
 
 // LoadExprPushdownBlacklist loads the latest data from table mysql.expr_pushdown_blacklist.
 func LoadExprPushdownBlacklist(ctx sessionctx.Context) (err error) {
-	sql := "select HIGH_PRIORITY name from mysql.expr_pushdown_blacklist"
+	sql := "select HIGH_PRIORITY name, store_type from mysql.expr_pushdown_blacklist"
 	rows, _, err := ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
 		return err
 	}
-	newBlacklist := make(map[string]struct{}, len(rows))
+	newBlocklist := make(map[string]uint32, len(rows))
 	for _, row := range rows {
 		name := strings.ToLower(row.GetString(0))
+		storeTypeString := strings.ToLower(row.GetString(1))
 		if alias, ok := funcName2Alias[name]; ok {
 			name = alias
 		}
-		newBlacklist[name] = struct{}{}
+		var value uint32 = 0
+		if val, ok := newBlocklist[name]; ok {
+			value = val
+		}
+		storeTypes := strings.Split(storeTypeString, ",")
+		for _, typeString := range storeTypes {
+			if typeString == kv.TiDB.Name() {
+				value |= 1 << kv.TiDB
+			} else if typeString == kv.TiFlash.Name() {
+				value |= 1 << kv.TiFlash
+			} else if typeString == kv.TiKV.Name() {
+				value |= 1 << kv.TiKV
+			}
+		}
+		newBlocklist[name] = value
 	}
-	expression.DefaultExprPushDownBlacklist.Store(newBlacklist)
+	expression.DefaultExprPushDownBlacklist.Store(newBlocklist)
 	return nil
 }
 

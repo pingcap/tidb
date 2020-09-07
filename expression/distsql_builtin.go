@@ -15,6 +15,7 @@ package expression
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -43,7 +43,10 @@ func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 
 func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
 	fieldTp := PbTypeToFieldType(tp)
-	base := newBaseBuiltinFunc(ctx, args)
+	base, err := newBaseBuiltinFuncWithFieldType(ctx, fieldTp, args)
+	if err != nil {
+		return nil, err
+	}
 	base.tp = fieldTp
 	switch sigCode {
 	case tipb.ScalarFuncSig_CastIntAsInt:
@@ -221,9 +224,9 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_LeastTime:
 		f = &builtinLeastTimeSig{base}
 	case tipb.ScalarFuncSig_IntervalInt:
-		f = &builtinIntervalIntSig{base}
+		f = &builtinIntervalIntSig{base, false} // Since interval function won't be pushed down to TiKV, therefore it doesn't matter what value we give to hasNullable
 	case tipb.ScalarFuncSig_IntervalReal:
-		f = &builtinIntervalRealSig{base}
+		f = &builtinIntervalRealSig{base, false}
 	case tipb.ScalarFuncSig_GEInt:
 		f = &builtinGEIntSig{base}
 	case tipb.ScalarFuncSig_GEReal:
@@ -456,6 +459,18 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinRealIsFalseSig{base, false}
 	case tipb.ScalarFuncSig_DecimalIsFalse:
 		f = &builtinDecimalIsFalseSig{base, false}
+	case tipb.ScalarFuncSig_IntIsTrueWithNull:
+		f = &builtinIntIsTrueSig{base, true}
+	case tipb.ScalarFuncSig_RealIsTrueWithNull:
+		f = &builtinRealIsTrueSig{base, true}
+	case tipb.ScalarFuncSig_DecimalIsTrueWithNull:
+		f = &builtinDecimalIsTrueSig{base, true}
+	case tipb.ScalarFuncSig_IntIsFalseWithNull:
+		f = &builtinIntIsFalseSig{base, true}
+	case tipb.ScalarFuncSig_RealIsFalseWithNull:
+		f = &builtinRealIsFalseSig{base, true}
+	case tipb.ScalarFuncSig_DecimalIsFalseWithNull:
+		f = &builtinDecimalIsFalseSig{base, true}
 	case tipb.ScalarFuncSig_LeftShift:
 		f = &builtinLeftShiftSig{base}
 	case tipb.ScalarFuncSig_RightShift:
@@ -618,7 +633,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_UUID:
 		f = &builtinUUIDSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
-		f = &builtinLikeSig{base, nil, false}
+		f = &builtinLikeSig{base, nil, false, sync.Once{}}
 	//case tipb.ScalarFuncSig_RegexpSig:
 	//	f = &builtinRegexpSig{base}
 	//case tipb.ScalarFuncSig_RegexpUTF8Sig:
@@ -1116,11 +1131,6 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		return nil, err
 	}
 
-	// recover collation information
-	if collate.NewCollationEnabled() {
-		tp := sf.GetType()
-		sf.SetCharsetAndCollation(tp.Charset, tp.Collate, types.UnspecifiedLength)
-	}
 	return sf, nil
 }
 

@@ -33,8 +33,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // CompareUnorderedStringSlice compare two string slices.
@@ -91,6 +95,9 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 		if v := recover(); v != nil {
 			result = false
 			error = fmt.Sprint(v)
+			logutil.BgLogger().Error("panic in datumEqualsChecker.Check",
+				zap.Reflect("r", v),
+				zap.Stack("stack trace"))
 		}
 	}()
 	paramFirst, ok := params[0].(types.Datum)
@@ -107,6 +114,101 @@ func (checker *datumEqualsChecker) Check(params []interface{}, names []string) (
 		panic(err)
 	}
 	return res == 0, ""
+}
+
+// MustNewCommonHandle create a common handle with given values.
+func MustNewCommonHandle(c *check.C, values ...interface{}) kv.Handle {
+	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(values...)...)
+	c.Assert(err, check.IsNil)
+	ch, err := kv.NewCommonHandle(encoded)
+	c.Assert(err, check.IsNil)
+	return ch
+}
+
+// CommonHandleSuite is used to adapt kv.CommonHandle to existing kv.IntHandle tests.
+//  Usage:
+//   type MyTestSuite struct {
+//       CommonHandleSuite
+//   }
+//   func (s *MyTestSuite) TestSomething(c *C) {
+//       // ...
+//       s.RerunWithCommonHandleEnabled(c, s.TestSomething)
+//   }
+type CommonHandleSuite struct {
+	IsCommonHandle bool
+}
+
+// RerunWithCommonHandleEnabled runs a test function with IsCommonHandle enabled.
+func (chs *CommonHandleSuite) RerunWithCommonHandleEnabled(c *check.C, f func(*check.C)) {
+	if !chs.IsCommonHandle {
+		chs.IsCommonHandle = true
+		f(c)
+		chs.IsCommonHandle = false
+	}
+}
+
+// NewHandle create a handle according to CommonHandleSuite.IsCommonHandle.
+func (chs *CommonHandleSuite) NewHandle() *commonHandleSuiteNewHandleBuilder {
+	return &commonHandleSuiteNewHandleBuilder{isCommon: chs.IsCommonHandle}
+}
+
+type commonHandleSuiteNewHandleBuilder struct {
+	isCommon   bool
+	intVal     int64
+	commonVals []interface{}
+}
+
+func (c *commonHandleSuiteNewHandleBuilder) Int(v int64) *commonHandleSuiteNewHandleBuilder {
+	c.intVal = v
+	return c
+}
+
+func (c *commonHandleSuiteNewHandleBuilder) Common(vs ...interface{}) kv.Handle {
+	c.commonVals = vs
+	return c.Build()
+}
+
+func (c *commonHandleSuiteNewHandleBuilder) Build() kv.Handle {
+	if c.isCommon {
+		encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.MakeDatums(c.commonVals...)...)
+		if err != nil {
+			panic(err)
+		}
+		ch, err := kv.NewCommonHandle(encoded)
+		if err != nil {
+			panic(err)
+		}
+		return ch
+	}
+	return kv.IntHandle(c.intVal)
+}
+
+type handleEqualsChecker struct {
+	*check.CheckerInfo
+}
+
+// HandleEquals checker verifies that the obtained handle is equal to
+// the expected handle.
+// For example:
+//     c.Assert(value, HandleEquals, kv.IntHandle(42))
+var HandleEquals = &handleEqualsChecker{
+	&check.CheckerInfo{Name: "HandleEquals", Params: []string{"obtained", "expected"}},
+}
+
+func (checker *handleEqualsChecker) Check(params []interface{}, names []string) (result bool, error string) {
+	if params[0] == nil && params[1] == nil {
+		return true, ""
+	}
+	param1, ok1 := params[0].(kv.Handle)
+	param2, ok2 := params[1].(kv.Handle)
+	if !ok1 || !ok2 {
+		return false, "Argument to " + checker.Name + " must be kv.Handle"
+	}
+	if param1.IsInt() != param2.IsInt() {
+		return false, "Two handle types arguments to" + checker.Name + " must be same"
+	}
+
+	return param1.String() == param2.String(), ""
 }
 
 // RowsWithSep is a convenient function to wrap args to a slice of []interface.
@@ -264,7 +366,7 @@ func (t *TestData) ConvertRowsToStrings(rows [][]interface{}) (rs []string) {
 // ConvertSQLWarnToStrings converts []SQLWarn to []string.
 func (t *TestData) ConvertSQLWarnToStrings(warns []stmtctx.SQLWarn) (rs []string) {
 	for _, warn := range warns {
-		rs = append(rs, fmt.Sprintf(warn.Err.Error()))
+		rs = append(rs, fmt.Sprint(warn.Err.Error()))
 	}
 	return rs
 }
@@ -319,25 +421,22 @@ type autoRandom struct {
 	originAlterPrimaryKey bool
 }
 
-// SetupAutoRandomTestConfig set alter-primary-key to false, and set allow-auto-random to true and save their origin values.
+// SetupAutoRandomTestConfig set alter-primary-key to false and save its origin values.
 // This method should only be used for the tests in SerialSuite.
 func (a *autoRandom) SetupAutoRandomTestConfig() {
 	globalCfg := config.GetGlobalConfig()
-	a.originAllowAutoRandom = globalCfg.Experimental.AllowAutoRandom
 	a.originAlterPrimaryKey = globalCfg.AlterPrimaryKey
 	globalCfg.AlterPrimaryKey = false
-	globalCfg.Experimental.AllowAutoRandom = true
 }
 
 // RestoreAutoRandomTestConfig restore the values had been saved in SetupTestConfig.
 // This method should only be used for the tests in SerialSuite.
 func (a *autoRandom) RestoreAutoRandomTestConfig() {
 	globalCfg := config.GetGlobalConfig()
-	globalCfg.Experimental.AllowAutoRandom = a.originAllowAutoRandom
 	globalCfg.AlterPrimaryKey = a.originAlterPrimaryKey
 }
 
-// MaskSortHandles masks highest shard_bits numbers of table handles and sort it.
+// MaskSortHandles sorts the handles by lowest (fieldTypeBits - 1 - shardBitsCount) bits.
 func (a *autoRandom) MaskSortHandles(handles []int64, shardBitsCount int, fieldType byte) []int64 {
 	typeBitsLength := mysql.DefaultLengthOfMysqlTypes[fieldType] * 8
 	const signBitCount = 1

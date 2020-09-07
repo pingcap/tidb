@@ -15,9 +15,8 @@ package ddl
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -35,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/gcutil"
 )
+
+const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
 
 func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
@@ -74,6 +75,13 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+
+		failpoint.Inject("checkOwnerCheckAllVersionsWaitTime", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(ver, errors.New("mock create table error"))
+			}
+		})
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
@@ -224,6 +232,14 @@ func (w *worker) onRecoverTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	}
 
 	err = checkTableNotExists(d, t, schemaID, tblInfo.Name.L)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+
+	err = checkTableIDNotExists(t, schemaID, tblInfo.ID)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -430,6 +446,10 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	if tblInfo.IsView() || tblInfo.IsSequence() {
+		job.State = model.JobStateCancelled
+		return ver, infoschema.ErrTableNotExists.GenWithStackByArgs(job.SchemaName, tblInfo.Name.O)
+	}
 
 	err = t.DropTableOrView(schemaID, tblInfo.ID, true)
 	if err != nil {
@@ -466,6 +486,12 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 		return ver, errors.Trace(err)
 	}
 
+	failpoint.Inject("mockTruncateTableUpdateVersionError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("mock update version error"))
+		}
+	})
+
 	ver, err = updateSchemaVersion(t, job)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -477,7 +503,15 @@ func onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ erro
 	return ver, nil
 }
 
-func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func onRebaseRowIDType(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	return onRebaseAutoID(store, t, job, autoid.RowIDAllocType)
+}
+
+func onRebaseAutoRandomType(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	return onRebaseAutoID(store, t, job, autoid.AutoRandomType)
+}
+
+func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job, tp autoid.AllocatorType) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	var newBase int64
 	err := job.DecodeArgs(&newBase)
@@ -491,20 +525,47 @@ func onRebaseAutoID(store kv.Storage, t *meta.Meta, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 	// No need to check `newBase` again, because `RebaseAutoID` will do this check.
-	tblInfo.AutoIncID = newBase
+	if tp == autoid.RowIDAllocType {
+		tblInfo.AutoIncID = newBase
+	} else {
+		tblInfo.AutoRandID = newBase
+	}
+
 	tbl, err := getTable(store, schemaID, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	// The operation of the minus 1 to make sure that the current value doesn't be used,
-	// the next Alloc operation will get this value.
-	// Its behavior is consistent with MySQL.
-	err = tbl.RebaseAutoID(nil, tblInfo.AutoIncID-1, false)
+	if alloc := tbl.Allocators(nil).Get(tp); alloc != nil {
+		// The next value to allocate is `newBase`.
+		newEnd := newBase - 1
+		err = alloc.Rebase(tblInfo.ID, newEnd, false)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
+func onModifyTableAutoIDCache(t *meta.Meta, job *model.Job) (int64, error) {
+	var cache int64
+	if err := job.DecodeArgs(&cache); err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	tblInfo.AutoIdCache = cache
+	ver, err := updateVersionAndTableInfo(t, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -561,7 +622,7 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if tables.OverflowShardBits(autoIncID, shardRowIDBits, autoid.RowIDBitLength) {
+	if tables.OverflowShardBits(autoIncID, shardRowIDBits, autoid.RowIDBitLength, true) {
 		return autoid.ErrAutoincReadFailed.GenWithStack("shard_row_id_bits %d will cause next global auto ID %v overflow", shardRowIDBits, autoIncID)
 	}
 	return nil
@@ -589,11 +650,17 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	var baseID int64
+	var autoTableID int64
+	var autoRandID int64
 	shouldDelAutoID := false
 	if newSchemaID != oldSchemaID {
 		shouldDelAutoID = true
-		baseID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
+		autoTableID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		autoRandID, err = t.GetAutoRandomID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -624,7 +691,12 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	}
 	// Update the table's auto-increment ID.
 	if newSchemaID != oldSchemaID {
-		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, baseID)
+		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, autoTableID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		_, err = t.GenAutoRandomID(newSchemaID, tblInfo.ID, autoRandID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -679,7 +751,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	}
 
 	// double check.
-	_, err = checkAlterTableCharset(tblInfo, dbInfo, toCharset, toCollate)
+	_, err = checkAlterTableCharset(tblInfo, dbInfo, toCharset, toCollate, needsOverwriteCols)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -709,7 +781,7 @@ func onModifyTableCharsetAndCollate(t *meta.Meta, job *model.Job) (ver int64, _ 
 	return ver, nil
 }
 
-func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
+func (w *worker) onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var replicaInfo ast.TiFlashReplicaSpec
 	if err := job.DecodeArgs(&replicaInfo); err != nil {
 		job.State = model.JobStateCancelled
@@ -718,6 +790,12 @@ func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
 	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	err = w.checkTiFlashReplicaCount(replicaInfo.Count)
+	if err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -736,6 +814,16 @@ func onSetTableFlashReplica(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
+}
+
+func (w *worker) checkTiFlashReplicaCount(replicaCount uint64) error {
+	ctx, err := w.sessPool.get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.put(ctx)
+
+	return checkTiFlashReplicaCount(ctx, replicaCount)
 }
 
 func onUpdateFlashReplicaStatus(t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -812,6 +900,20 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 	return checkTableNotExistsFromStore(t, schemaID, tableName)
 }
 
+func checkTableIDNotExists(t *meta.Meta, schemaID, tableID int64) error {
+	tbl, err := t.GetTable(schemaID, tableID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			return infoschema.ErrDatabaseNotExists.GenWithStackByArgs("")
+		}
+		return errors.Trace(err)
+	}
+	if tbl != nil {
+		return infoschema.ErrTableExists.GenWithStackByArgs(tbl.Name)
+	}
+	return nil
+}
+
 func checkTableNotExistsFromInfoSchema(is infoschema.InfoSchema, schemaID int64, tableName string) error {
 	// Check this table's database.
 	schema, ok := is.SchemaByID(schemaID)
@@ -853,7 +955,6 @@ func updateVersionAndTableInfoWithCheck(t *meta.Meta, job *model.Job, tblInfo *m
 		return ver, errors.Trace(err)
 	}
 	return updateVersionAndTableInfo(t, job, tblInfo, shouldUpdateVer)
-
 }
 
 // updateVersionAndTableInfo updates the schema version and the table information.
@@ -870,93 +971,6 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 		tblInfo.UpdateTS = t.StartTS
 	}
 	return ver, t.UpdateTable(job.SchemaID, tblInfo)
-}
-
-// TODO: It may have the issue when two clients concurrently add partitions to a table.
-func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	partInfo := &model.PartitionInfo{}
-	err := job.DecodeArgs(&partInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, job.SchemaID)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-	err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions)))
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	err = checkAddPartitionValue(tblInfo, partInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	err = checkAddPartitionNameUnique(tblInfo, partInfo)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	updatePartitionInfo(partInfo, tblInfo)
-	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-	// Finish this job.
-	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-	asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddTablePartition, TableInfo: tblInfo, PartInfo: partInfo})
-	return ver, errors.Trace(err)
-}
-
-func updatePartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *model.TableInfo) {
-	parInfo := &model.PartitionInfo{}
-	oldDefs, newDefs := tblInfo.Partition.Definitions, partitionInfo.Definitions
-	parInfo.Definitions = make([]model.PartitionDefinition, 0, len(newDefs)+len(oldDefs))
-	parInfo.Definitions = append(parInfo.Definitions, oldDefs...)
-	parInfo.Definitions = append(parInfo.Definitions, newDefs...)
-	tblInfo.Partition.Definitions = parInfo.Definitions
-}
-
-// checkAddPartitionValue values less than value must be strictly increasing for each partition.
-func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) error {
-	if meta.Partition.Type == model.PartitionTypeRange && len(meta.Partition.Columns) == 0 {
-		newDefs, oldDefs := part.Definitions, meta.Partition.Definitions
-		rangeValue := oldDefs[len(oldDefs)-1].LessThan[0]
-		if strings.EqualFold(rangeValue, "MAXVALUE") {
-			return errors.Trace(ErrPartitionMaxvalue)
-		}
-
-		currentRangeValue, err := strconv.Atoi(rangeValue)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		for i := 0; i < len(newDefs); i++ {
-			ifMaxvalue := strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE")
-			if ifMaxvalue && i == len(newDefs)-1 {
-				return nil
-			} else if ifMaxvalue && i != len(newDefs)-1 {
-				return errors.Trace(ErrPartitionMaxvalue)
-			}
-
-			nextRangeValue, err := strconv.Atoi(newDefs[i].LessThan[0])
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if nextRangeValue <= currentRangeValue {
-				return errors.Trace(ErrRangeNotIncreasing)
-			}
-			currentRangeValue = nextRangeValue
-		}
-	}
-	return nil
 }
 
 func onRepairTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {

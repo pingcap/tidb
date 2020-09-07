@@ -32,6 +32,9 @@ func (c *conditionChecker) check(condition expression.Expression) bool {
 	case *expression.ScalarFunction:
 		return c.checkScalarFunction(x)
 	case *expression.Column:
+		if x.RetType.EvalType() == types.ETString {
+			return false
+		}
 		return c.checkColumn(x)
 	case *expression.Constant:
 		return true
@@ -40,11 +43,11 @@ func (c *conditionChecker) check(condition expression.Expression) bool {
 }
 
 func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction) bool {
-	_, collation, _ := scalar.CharsetAndCollation(scalar.GetCtx())
+	_, collation := scalar.CharsetAndCollation(scalar.GetCtx())
 	switch scalar.FuncName.L {
 	case ast.LogicOr, ast.LogicAnd:
 		return c.check(scalar.GetArgs()[0]) && c.check(scalar.GetArgs()[1])
-	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT:
+	case ast.EQ, ast.NE, ast.GE, ast.GT, ast.LE, ast.LT, ast.NullEQ:
 		if _, ok := scalar.GetArgs()[0].(*expression.Constant); ok {
 			if c.checkColumn(scalar.GetArgs()[1]) {
 				// Checks whether the scalar function is calculated use the collation compatible with the column.
@@ -63,7 +66,14 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 				return scalar.FuncName.L != ast.NE || c.length == types.UnspecifiedLength
 			}
 		}
-	case ast.IsNull, ast.IsTruth, ast.IsFalsity:
+	case ast.IsNull:
+		return c.checkColumn(scalar.GetArgs()[0])
+	case ast.IsTruth, ast.IsFalsity:
+		if s, ok := scalar.GetArgs()[0].(*expression.Column); ok {
+			if s.RetType.EvalType() == types.ETString {
+				return false
+			}
+		}
 		return c.checkColumn(scalar.GetArgs()[0])
 	case ast.UnaryNot:
 		// TODO: support "not like" convert to access conditions.
@@ -98,6 +108,10 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 }
 
 func (c *conditionChecker) checkLikeFunc(scalar *expression.ScalarFunction) bool {
+	_, collation := scalar.CharsetAndCollation(scalar.GetCtx())
+	if !collate.CompatibleCollate(scalar.GetArgs()[0].GetType().Collate, collation) {
+		return false
+	}
 	if !c.checkColumn(scalar.GetArgs()[0]) {
 		return false
 	}

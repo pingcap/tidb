@@ -19,14 +19,11 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -87,10 +84,10 @@ PARTITION BY RANGE ( id ) (
 	// Check that add record writes to the partition, rather than the table.
 	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
-	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid))
+	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid.IntValue()))
 	c.Assert(err, IsNil)
 	c.Assert(len(val), Greater, 0)
-	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid))
+	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
 	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 
 	// Cover more code.
@@ -178,10 +175,10 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 	// Check that add record writes to the partition, rather than the table.
 	txn, err := ts.se.Txn(true)
 	c.Assert(err, IsNil)
-	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid))
+	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid.IntValue()))
 	c.Assert(err, IsNil)
 	c.Assert(len(val), Greater, 0)
-	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid))
+	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
 	c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 
 	// Cover more code.
@@ -214,10 +211,10 @@ func (ts *testSuite) TestHashPartitionAddRecord(c *C) {
 		c.Assert(err, IsNil)
 		txn, err = ts.se.Txn(true)
 		c.Assert(err, IsNil)
-		val, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid))
+		val, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid.IntValue()))
 		c.Assert(err, IsNil)
 		c.Assert(len(val), Greater, 0)
-		_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid))
+		_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
 		c.Assert(kv.ErrNotExist.Equal(err), IsTrue)
 	}
 	_, err = ts.se.Execute(context.Background(), "drop table if exists t1, t2;")
@@ -266,16 +263,14 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	tbl, err := ts.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	type partitionExpr interface {
-		PartitionExpr(ctx sessionctx.Context, columns []*expression.Column, names types.NameSlice) (*tables.PartitionExpr, error)
+		PartitionExpr() (*tables.PartitionExpr, error)
 	}
-	ctx := mock.NewContext()
-	columns, names := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr("test"), tbl.Meta().Name, tbl.Meta().Columns)
-	pe, err := tbl.(partitionExpr).PartitionExpr(ctx, columns, names)
+	pe, err := tbl.(partitionExpr).PartitionExpr()
 	c.Assert(err, IsNil)
 
 	upperBounds := []string{
-		"lt(test.t1.id, 4)",
-		"lt(test.t1.id, 7)",
+		"lt(t1.id, 4)",
+		"lt(t1.id, 7)",
 		"1",
 	}
 	for i, expr := range pe.UpperBounds {
@@ -283,7 +278,7 @@ func (ts *testSuite) TestGeneratePartitionExpr(c *C) {
 	}
 }
 
-func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
+func (ts *testSuite) TestLocateRangeColumnPartitionErr(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t_month_data_monitor (
@@ -299,12 +294,94 @@ func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
 	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
 }
 
+func (ts *testSuite) TestLocateRangePartitionErr(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_range_locate (
+		id int(20) NOT NULL AUTO_INCREMENT,
+		data_date date NOT NULL,
+		PRIMARY KEY (id, data_date)
+	) PARTITION BY RANGE(id) (
+		PARTITION p0 VALUES LESS THAN (1024),
+		PARTITION p1 VALUES LESS THAN (4096)
+	)`)
+
+	_, err := tk.Exec("INSERT INTO t_range_locate VALUES (5000, '2019-04-04')")
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+}
+
+func (ts *testSuite) TestLocatePartitionWithExtraHandle(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_extra (
+		id int(20) NOT NULL AUTO_INCREMENT,
+		x int(10) not null,
+		PRIMARY KEY (id, x)
+	) PARTITION BY RANGE(id) (
+		PARTITION p0 VALUES LESS THAN (1024),
+		PARTITION p1 VALUES LESS THAN (4096)
+	)`)
+	tk.MustExec("INSERT INTO t_extra VALUES (1000, 1000), (2000, 2000)")
+	tk.MustExec("set autocommit=0;")
+	tk.MustQuery("select * from t_extra where id = 1000 for update").Check(testkit.Rows("1000 1000"))
+	tk.MustExec("commit")
+}
+
+func (ts *testSuite) TestMultiTableUpdate(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_a (
+		id int(20),
+		data_date date
+	) partition by hash(id) partitions 10`)
+	tk.MustExec(`CREATE TABLE t_b (
+		id int(20),
+		data_date date
+	) PARTITION BY RANGE(id) (
+		PARTITION p0 VALUES LESS THAN (2),
+		PARTITION p1 VALUES LESS THAN (4),
+		PARTITION p2 VALUES LESS THAN (6)
+	)`)
+	tk.MustExec("INSERT INTO t_a VALUES (1, '2020-08-25'), (2, '2020-08-25'), (3, '2020-08-25'), (4, '2020-08-25'), (5, '2020-08-25')")
+	tk.MustExec("INSERT INTO t_b VALUES (1, '2020-08-25'), (2, '2020-08-25'), (3, '2020-08-25'), (4, '2020-08-25'), (5, '2020-08-25')")
+	tk.MustExec("update t_a, t_b set t_a.data_date = '2020-08-24',  t_a.data_date = '2020-08-23', t_a.id = t_a.id + t_b.id where t_a.id = t_b.id")
+	tk.MustQuery("select id from t_a order by id").Check(testkit.Rows("2", "4", "6", "8", "10"))
+}
+
+func (ts *testSuite) TestLocatePartitionSingleColumn(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t_hash_locate (
+		id int(20),
+		data_date date
+	) partition by hash(id) partitions 10`)
+
+	tk.MustExec(`CREATE TABLE t_range (
+		id int(10) NOT NULL,
+		data_date date,
+		PRIMARY KEY (id)
+	) PARTITION BY RANGE(id) (
+		PARTITION p0 VALUES LESS THAN (1),
+		PARTITION p1 VALUES LESS THAN (2),
+		PARTITION p2 VALUES LESS THAN (4)
+	)`)
+
+	tk.MustExec("INSERT INTO t_hash_locate VALUES (), (), (), ()")
+	tk.MustQuery("SELECT count(*) FROM t_hash_locate PARTITION (p0)").Check(testkit.Rows("4"))
+	tk.MustExec("INSERT INTO t_range VALUES (-1, NULL), (1, NULL), (2, NULL), (3, NULL)")
+	tk.MustQuery("SELECT count(*) FROM t_range PARTITION (p0)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT count(*) FROM t_range PARTITION (p1)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT count(*) FROM t_range PARTITION (p2)").Check(testkit.Rows("2"))
+	_, err := tk.Exec("INSERT INTO t_range VALUES (4, NULL)")
+	c.Assert(table.ErrNoPartitionForGivenValue.Equal(err), IsTrue)
+}
+
 func (ts *testSuite) TestTimeZoneChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, ts.store)
 	tk.MustExec("use test")
 	createTable := `CREATE TABLE timezone_test (
 	id int(11) NOT NULL,
-	creation_dt timestamp DEFAULT CURRENT_TIMESTAMP ) PARTITION BY RANGE ( unix_timestamp(creation_dt) )
+	creation_dt timestamp DEFAULT CURRENT_TIMESTAMP ) PARTITION BY RANGE ( ` + "UNIX_TIMESTAMP(`creation_dt`)" + ` )
 ( PARTITION p5 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:10:00') ),
 	PARTITION p6 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:15:00') ),
 	PARTITION p7 VALUES LESS THAN ( UNIX_TIMESTAMP('2020-01-03 15:20:00') ),
@@ -316,7 +393,7 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( unix_timestamp(`creation_dt`) ) (\n" +
+		"PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) ) (\n" +
 		"  PARTITION `p5` VALUES LESS THAN (1578035400),\n" +
 		"  PARTITION `p6` VALUES LESS THAN (1578035700),\n" +
 		"  PARTITION `p7` VALUES LESS THAN (1578036000),\n" +
@@ -331,7 +408,7 @@ func (ts *testSuite) TestTimeZoneChange(c *C) {
 		"  `id` int(11) NOT NULL,\n" +
 		"  `creation_dt` timestamp DEFAULT CURRENT_TIMESTAMP\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
-		"PARTITION BY RANGE ( unix_timestamp(`creation_dt`) ) (\n" +
+		"PARTITION BY RANGE ( UNIX_TIMESTAMP(`creation_dt`) ) (\n" +
 		"  PARTITION `p5` VALUES LESS THAN (1578064200),\n" +
 		"  PARTITION `p6` VALUES LESS THAN (1578064500),\n" +
 		"  PARTITION `p7` VALUES LESS THAN (1578064800),\n" +
@@ -367,4 +444,61 @@ func (ts *testSuite) TestCreatePartitionTableNotSupport(c *C) {
 	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
 	_, err = tk.Exec(`create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));`)
 	c.Assert(ddl.ErrPartitionFunctionIsNotAllowed.Equal(err), IsTrue)
+}
+
+func (ts *testSuite) TestIntUint(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_uint (id bigint unsigned) partition by range (id) (
+partition p0 values less than (4294967293),
+partition p1 values less than (4294967296),
+partition p2 values less than (484467440737095),
+partition p3 values less than (18446744073709551614))`)
+	tk.MustExec("insert into t_uint values (1)")
+	tk.MustExec("insert into t_uint values (4294967294)")
+	tk.MustExec("insert into t_uint values (4294967295)")
+	tk.MustExec("insert into t_uint values (18446744073709551613)")
+	tk.MustQuery("select * from t_uint where id > 484467440737095").Check(testkit.Rows("18446744073709551613"))
+	tk.MustQuery("select * from t_uint where id = 4294967295").Check(testkit.Rows("4294967295"))
+	tk.MustQuery("select * from t_uint where id < 4294967294").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t_uint where id >= 4294967293 order by id").Check(testkit.Rows("4294967294", "4294967295", "18446744073709551613"))
+
+	tk.MustExec(`create table t_int (id bigint signed) partition by range (id) (
+partition p0 values less than (-4294967293),
+partition p1 values less than (-12345),
+partition p2 values less than (0),
+partition p3 values less than (484467440737095),
+partition p4 values less than (9223372036854775806))`)
+	tk.MustExec("insert into t_int values (-9223372036854775803)")
+	tk.MustExec("insert into t_int values (-429496729312)")
+	tk.MustExec("insert into t_int values (-1)")
+	tk.MustExec("insert into t_int values (4294967295)")
+	tk.MustExec("insert into t_int values (9223372036854775805)")
+	tk.MustQuery("select * from t_int where id > 484467440737095").Check(testkit.Rows("9223372036854775805"))
+	tk.MustQuery("select * from t_int where id = 4294967295").Check(testkit.Rows("4294967295"))
+	tk.MustQuery("select * from t_int where id = -4294967294").Check(testkit.Rows())
+	tk.MustQuery("select * from t_int where id < -12345 order by id desc").Check(testkit.Rows("-429496729312", "-9223372036854775803"))
+}
+
+func (ts *testSuite) TestHashPartitionAndConditionConflict(c *C) {
+	tk := testkit.NewTestKitWithInit(c, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3;")
+	tk.MustExec("create table t1 (a int, b tinyint)  partition by range (a) (" +
+		"    partition p0 values less than (10)," +
+		"    partition p1 values less than (20)," +
+		"    partition p2 values less than (30)," +
+		"    partition p3 values less than (40)," +
+		"    partition p4 values less than MAXVALUE" +
+		");")
+
+	tk.MustExec("insert into t1 values(NULL, NULL), (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (10, 10), (11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (20, 20), (21, 21), (22, 22), (23, 23), (24, 24), (25, 25), (30, 30), (31, 31), (32, 32), (33, 33), (34, 34), (35, 35), (36, 36), (40, 40), (50, 50), (80, 80), (90, 90), (100, 100);")
+	tk.MustExec("create table t2 (a int, b bigint) partition by hash(a) partitions 10;")
+	tk.MustExec("insert into t2 values (NULL, NULL), (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (17, 17), (18, 18), (19, 19), (20, 20), (21, 21), (22, 22), (23, 23);")
+	tk.MustQuery("select /*+ HASH_JOIN(t1, t2) */ * from t1 partition (p0) left join t2 partition (p1) on t1.a = t2.a where t1.a = 6 order by t1.a, t1.b, t2.a, t2.b;").
+		Check(testkit.Rows("6 6 <nil> <nil>"))
+	tk.MustQuery("select /*+ HASH_JOIN(t1, t2) */ * from t2 partition (p1) left join t1 partition (p0) on t2.a = t1.a where t2.a = 6 order by t1.a, t1.b, t2.a, t2.b;").
+		Check(testkit.Rows())
+
+	tk.MustQuery("select * from t2 partition (p1) where t2.a = 6;").Check(testkit.Rows())
 }

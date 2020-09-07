@@ -15,7 +15,6 @@ package distsql
 
 import (
 	"context"
-	"fmt"
 	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
@@ -92,7 +91,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 // The difference from Select is that SelectWithRuntimeStats will set copPlanIDs into selectResult,
 // which can help selectResult to collect runtime stats.
 func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer, rootPlanID fmt.Stringer) (SelectResult, error) {
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int, rootPlanID int) (SelectResult, error) {
 	sr, err := Select(ctx, sctx, kvReq, fieldTypes, fb)
 	if err == nil {
 		if selectResult, ok := sr.(*selectResult); ok {
@@ -188,7 +187,7 @@ func GetSystemEndian() tipb.Endian {
 }
 
 func init() {
-	var i int = 0x0100
+	i := 0x0100
 	ptr := unsafe.Pointer(&i)
 	if 0x01 == *(*byte)(ptr) {
 		systemEndian = tipb.Endian_BigEndian

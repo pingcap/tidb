@@ -22,8 +22,9 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 )
 
@@ -144,7 +145,9 @@ func (e *ShuffleExec) Close() error {
 	e.executed = false
 
 	if e.runtimeStats != nil {
-		e.runtimeStats.SetConcurrencyInfo("ShuffleConcurrency", e.concurrency)
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
+		runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("ShuffleConcurrency", e.concurrency))
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 
 	err := e.dataSource.Close()
@@ -207,7 +210,7 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func recoveryShuffleExec(output chan *shuffleOutput, r interface{}) {
 	err := errors.Errorf("%v", r)
 	output <- &shuffleOutput{err: errors.Errorf("%v", r)}
-	logutil.BgLogger().Error("shuffle panicked", zap.Error(err))
+	logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
 }
 
 func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context) {

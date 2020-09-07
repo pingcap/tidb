@@ -20,30 +20,26 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/log"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testleak"
-	"go.uber.org/zap"
 )
 
 type DDLForTest interface {
 	// SetHook sets the hook.
 	SetHook(h Callback)
-	// SetInterceptoror sets the interceptor.
-	SetInterceptoror(h Interceptor)
+	// SetInterceptor sets the interceptor.
+	SetInterceptor(h Interceptor)
 }
 
 // SetHook implements DDL.SetHook interface.
@@ -54,8 +50,8 @@ func (d *ddl) SetHook(h Callback) {
 	d.mu.hook = h
 }
 
-// SetInterceptoror implements DDL.SetInterceptoror interface.
-func (d *ddl) SetInterceptoror(i Interceptor) {
+// SetInterceptor implements DDL.SetInterceptor interface.
+func (d *ddl) SetInterceptor(i Interceptor) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
@@ -67,42 +63,6 @@ func (d *ddl) generalWorker() *worker {
 	return d.workers[generalWorker]
 }
 
-// restartWorkers is like the function of d.start. But it won't initialize the "workers" and create a new worker.
-// It only starts the original workers.
-func (d *ddl) restartWorkers(ctx context.Context) {
-	d.quitCh = make(chan struct{})
-
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
-		util.WithRecovery(
-			func() { d.limitDDLJobs() },
-			func(r interface{}) {
-				logutil.BgLogger().Error("[ddl] DDL add batch DDL jobs meet panic",
-					zap.String("ID", d.uuid), zap.Reflect("r", r), zap.Stack("stack trace"))
-				metrics.PanicCounter.WithLabelValues(metrics.LabelDDL).Inc()
-			})
-	}()
-	if !RunWorker {
-		return
-	}
-
-	err := d.ownerManager.CampaignOwner(ctx)
-	terror.Log(err)
-	for _, worker := range d.workers {
-		worker.wg.Add(1)
-		worker.quitCh = make(chan struct{})
-		w := worker
-		go util.WithRecovery(func() { w.start(d.ddlCtx) },
-			func(r interface{}) {
-				if r != nil {
-					log.Error("[ddl] restart DDL worker meet panic", zap.String("worker", w.String()), zap.String("ID", d.uuid))
-				}
-			})
-		asyncNotify(worker.ddlJobCh)
-	}
-}
-
 func TestT(t *testing.T) {
 	CustomVerboseFlag = true
 	*CustomParallelSuiteFlag = true
@@ -110,23 +70,36 @@ func TestT(t *testing.T) {
 	logutil.InitLogger(logutil.NewLogConfig(logLevel, "", "", logutil.EmptyFileLogConfig, false))
 	autoid.SetStep(5000)
 	ReorgWaitTimeout = 30 * time.Millisecond
+	batchInsertDeleteRangeSize = 2
 
-	cfg := config.GetGlobalConfig()
-	newCfg := *cfg
-	// Test for table lock.
-	newCfg.EnableTableLock = true
-	newCfg.Log.SlowThreshold = 10000
-	// Test for add/drop primary key.
-	newCfg.AlterPrimaryKey = true
-	config.StoreGlobalConfig(&newCfg)
+	config.UpdateGlobal(func(conf *config.Config) {
+		// Test for table lock.
+		conf.EnableTableLock = true
+		conf.Log.SlowThreshold = 10000
+		// Test for add/drop primary key.
+		conf.AlterPrimaryKey = true
+	})
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	testleak.BeforeTest()
 	TestingT(t)
 	testleak.AfterTestT(t)()
 }
 
+func testNewDDLAndStart(ctx context.Context, c *C, options ...Option) *ddl {
+	d := newDDL(ctx, options...)
+	err := d.Start(nil)
+	c.Assert(err, IsNil)
+
+	return d
+}
+
 func testCreateStore(c *C, name string) kv.Storage {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	return store
 }
@@ -229,6 +202,21 @@ func testAddColumn(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, t
 		SchemaID:   dbInfo.ID,
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAddColumn,
+		Args:       args,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	err := d.doDDLJob(ctx, job)
+	c.Assert(err, IsNil)
+	v := getSchemaVer(c, ctx)
+	checkHistoryJobArgs(c, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
+	return job
+}
+
+func testAddColumns(c *C, ctx sessionctx.Context, d *ddl, dbInfo *model.DBInfo, tblInfo *model.TableInfo, args []interface{}) *model.Job {
+	job := &model.Job{
+		SchemaID:   dbInfo.ID,
+		TableID:    tblInfo.ID,
+		Type:       model.ActionAddColumns,
 		Args:       args,
 		BinlogInfo: &model.HistoryInfo{},
 	}

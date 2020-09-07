@@ -34,6 +34,8 @@ const (
 	TypeJoin = "Join"
 	// TypeUnion is the type of Union.
 	TypeUnion = "Union"
+	// TypePartitionUnion is the type of PartitionUnion
+	TypePartitionUnion = "PartitionUnion"
 	// TypeTableScan is the type of TableScan.
 	TypeTableScan = "TableScan"
 	// TypeMemTableScan is the type of TableScan.
@@ -48,10 +50,10 @@ const (
 	TypeTopN = "TopN"
 	// TypeLimit is the type of Limit.
 	TypeLimit = "Limit"
-	// TypeHashLeftJoin is the type of left hash join.
-	TypeHashLeftJoin = "HashLeftJoin"
-	// TypeHashRightJoin is the type of right hash join.
-	TypeHashRightJoin = "HashRightJoin"
+	// TypeHashJoin is the type of hash join.
+	TypeHashJoin = "HashJoin"
+	// TypeBroadcastJoin is the type of broad cast join.
+	TypeBroadcastJoin = "BroadcastJoin"
 	// TypeMergeJoin is the type of merge join.
 	TypeMergeJoin = "MergeJoin"
 	// TypeIndexJoin is the type of index look up join.
@@ -105,48 +107,48 @@ const (
 )
 
 // plan id.
+// Attention: for compatibility of encode/decode plan, The plan id shouldn't be changed.
 const (
-	typeSelID int = iota + 1
-	typeSetID
-	typeProjID
-	typeAggID
-	typeStreamAggID
-	typeHashAggID
-	typeShowID
-	typeJoinID
-	typeUnionID
-	typeTableScanID
-	typeMemTableScanID
-	typeUnionScanID
-	typeIdxScanID
-	typeSortID
-	typeTopNID
-	typeLimitID
-	typeHashLeftJoinID
-	typeHashRightJoinID
-	typeMergeJoinID
-	typeIndexJoinID
-	typeIndexMergeJoinID
-	typeIndexHashJoinID
-	typeApplyID
-	typeMaxOneRowID
-	typeExistsID
-	typeDualID
-	typeLockID
-	typeInsertID
-	typeUpdateID
-	typeDeleteID
-	typeIndexLookUpID
-	typeTableReaderID
-	typeIndexReaderID
-	typeWindowID
-	typeTiKVSingleGatherID
-	typeIndexMergeID
-	typePointGet
-	typeShowDDLJobs
-	typeBatchPointGet
-	typeClusterMemTableReader
-	typeDataSourceID
+	typeSelID                 int = 1
+	typeSetID                 int = 2
+	typeProjID                int = 3
+	typeAggID                 int = 4
+	typeStreamAggID           int = 5
+	typeHashAggID             int = 6
+	typeShowID                int = 7
+	typeJoinID                int = 8
+	typeUnionID               int = 9
+	typeTableScanID           int = 10
+	typeMemTableScanID        int = 11
+	typeUnionScanID           int = 12
+	typeIdxScanID             int = 13
+	typeSortID                int = 14
+	typeTopNID                int = 15
+	typeLimitID               int = 16
+	typeHashJoinID            int = 17
+	typeMergeJoinID           int = 18
+	typeIndexJoinID           int = 19
+	typeIndexMergeJoinID      int = 20
+	typeIndexHashJoinID       int = 21
+	typeApplyID               int = 22
+	typeMaxOneRowID           int = 23
+	typeExistsID              int = 24
+	typeDualID                int = 25
+	typeLockID                int = 26
+	typeInsertID              int = 27
+	typeUpdateID              int = 28
+	typeDeleteID              int = 29
+	typeIndexLookUpID         int = 30
+	typeTableReaderID         int = 31
+	typeIndexReaderID         int = 32
+	typeWindowID              int = 33
+	typeTiKVSingleGatherID    int = 34
+	typeIndexMergeID          int = 35
+	typePointGet              int = 36
+	typeShowDDLJobs           int = 37
+	typeBatchPointGet         int = 38
+	typeClusterMemTableReader int = 39
+	typeDataSourceID          int = 40
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -184,10 +186,8 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeTopNID
 	case TypeLimit:
 		return typeLimitID
-	case TypeHashLeftJoin:
-		return typeHashLeftJoinID
-	case TypeHashRightJoin:
-		return typeHashRightJoinID
+	case TypeHashJoin:
+		return typeHashJoinID
 	case TypeMergeJoin:
 		return typeMergeJoinID
 	case TypeIndexJoin:
@@ -274,10 +274,8 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeTopN
 	case typeLimitID:
 		return TypeLimit
-	case typeHashLeftJoinID:
-		return TypeHashLeftJoin
-	case typeHashRightJoinID:
-		return TypeHashRightJoin
+	case typeHashJoinID:
+		return TypeHashJoin
 	case typeMergeJoinID:
 		return TypeMergeJoin
 	case typeIndexJoinID:

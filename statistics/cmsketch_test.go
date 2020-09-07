@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {
@@ -100,7 +100,7 @@ func averageAbsoluteError(cms *CMSketch, mp map[int64]uint32) (uint64, error) {
 		} else {
 			diff = estimate - uint64(count)
 		}
-		total += uint64(diff)
+		total += diff
 	}
 	return total / uint64(len(mp)), nil
 }

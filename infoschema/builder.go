@@ -56,11 +56,11 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	var oldTableID, newTableID int64
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable, model.ActionRepairTable:
+	case model.ActionCreateTable, model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
-	case model.ActionTruncateTable, model.ActionCreateView:
+	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:
@@ -74,8 +74,15 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	// We try to reuse the old allocator, so the cached auto ID can be reused.
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
-		if oldTableID == newTableID && diff.Type != model.ActionRenameTable && diff.Type != model.ActionRebaseAutoID {
-			allocs, _ = b.is.AllocByID(oldTableID)
+		if oldTableID == newTableID && diff.Type != model.ActionRenameTable &&
+			diff.Type != model.ActionExchangeTablePartition &&
+			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
+			// For normal node's information schema, repaired table is existed.
+			// For repair node's information schema, repaired table is filtered (couldn't find it in `is`).
+			// So here skip to reserve the allocators when repairing table.
+			diff.Type != model.ActionRepairTable {
+			oldAllocs, _ := b.is.AllocByID(oldTableID)
+			allocs = filterAllocators(diff, oldAllocs)
 		}
 
 		tmpIDs := tblIDs
@@ -105,7 +112,51 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 			return nil, errors.Trace(err)
 		}
 	}
+	if diff.AffectedOpts != nil {
+		for _, opt := range diff.AffectedOpts {
+			var err error
+			affectedDiff := &model.SchemaDiff{
+				Version:     diff.Version,
+				Type:        diff.Type,
+				SchemaID:    opt.SchemaID,
+				TableID:     opt.TableID,
+				OldSchemaID: opt.OldSchemaID,
+				OldTableID:  opt.OldTableID,
+			}
+			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			tblIDs = append(tblIDs, affectedIDs...)
+		}
+	}
 	return tblIDs, nil
+}
+
+func filterAllocators(diff *model.SchemaDiff, oldAllocs autoid.Allocators) autoid.Allocators {
+	var newAllocs autoid.Allocators
+	switch diff.Type {
+	case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+		// Only drop auto-increment allocator.
+		for _, alloc := range oldAllocs {
+			if alloc.GetType() == autoid.RowIDAllocType || alloc.GetType() == autoid.AutoIncrementType {
+				continue
+			}
+			newAllocs = append(newAllocs, alloc)
+		}
+	case model.ActionRebaseAutoRandomBase:
+		// Only drop auto-random allocator.
+		for _, alloc := range oldAllocs {
+			if alloc.GetType() == autoid.AutoRandomType {
+				continue
+			}
+			newAllocs = append(newAllocs, alloc)
+		}
+	default:
+		// Keep all allocators.
+		newAllocs = oldAllocs
+	}
+	return newAllocs
 }
 
 func appendAffectedIDs(affected []int64, tblInfo *model.TableInfo) []int64 {
@@ -155,7 +206,7 @@ func (b *Builder) applyModifySchemaCharsetAndCollate(m *meta.Meta, diff *model.S
 			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
 		)
 	}
-	newDbInfo := b.copySchemaTables(di.Name.O)
+	newDbInfo := b.copySchemaTables(di.Name.L)
 	newDbInfo.Charset = di.Charset
 	newDbInfo.Collate = di.Collate
 	return nil
@@ -224,6 +275,15 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 
 	if len(allocs) == 0 {
 		allocs = autoid.NewAllocatorsFromTblInfo(b.handle.store, dbInfo.ID, tblInfo)
+	} else {
+		switch tp {
+		case model.ActionRebaseAutoID, model.ActionModifyTableAutoIdCache:
+			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoIncColUnsigned(), autoid.RowIDAllocType)
+			allocs = append(allocs, newAlloc)
+		case model.ActionRebaseAutoRandomBase:
+			newAlloc := autoid.NewAllocator(b.handle.store, dbInfo.ID, tblInfo.IsAutoRandomBitColUnsigned(), autoid.AutoRandomType)
+			allocs = append(allocs, newAlloc)
+		}
 	}
 	tbl, err := tables.TableFromMeta(allocs, tblInfo)
 	if err != nil {
@@ -321,6 +381,7 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 
 // copySchemaTables creates a new schemaTables instance when a table in the database has changed.
 // It also does modifications on the new one because old schemaTables must be read-only.
+// Note: please make sure the dbName is in lowercase.
 func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 	oldSchemaTables := b.is.schemaMap[dbName]
 	newSchemaTables := &schemaTables{
@@ -373,7 +434,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		var tbl table.Table
 		tbl, err := tableFromMeta(allocs, t)
 		if err != nil {
-			return errors.Trace(err)
+			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
 		schTbls.tables[t.Name.L] = tbl
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]

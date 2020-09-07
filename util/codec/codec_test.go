@@ -100,6 +100,10 @@ func (s *testCodecSuite) TestCodecKey(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(args, DeepEquals, t.Expect)
 	}
+	var raw types.Datum
+	raw.SetRaw([]byte("raw"))
+	_, err := EncodeKey(sc, nil, raw)
+	c.Assert(err, NotNil)
 }
 
 func estimateValuesSize(sc *stmtctx.StatementContext, vals []types.Datum) (int, error) {
@@ -245,6 +249,8 @@ func (s *testCodecSuite) TestNumberCodec(c *C) {
 		-1 << 47,
 		1<<23 - 1,
 		-1 << 23,
+		1<<33 - 1,
+		-1 << 33,
 		1<<55 - 1,
 		-1 << 55,
 		1,
@@ -876,6 +882,10 @@ func (s *testCodecSuite) TestCut(c *C) {
 			types.MakeDatums(types.NewDecFromInt(0), types.NewDecFromFloatForTest(-1.3)),
 			types.MakeDatums(types.NewDecFromInt(0), types.NewDecFromFloatForTest(-1.3)),
 		},
+		{
+			types.MakeDatums(json.CreateBinary("abc")),
+			types.MakeDatums(json.CreateBinary("abc")),
+		},
 	}
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	for i, t := range table {
@@ -946,20 +956,60 @@ func (s *testCodecSuite) TestDecodeOneToChunk(c *C) {
 			if got.IsNull() {
 				c.Assert(expect.IsNull(), IsTrue)
 			} else {
-				cmp, err := got.CompareDatum(sc, &expect)
-				c.Assert(err, IsNil)
-				c.Assert(cmp, Equals, 0)
+				if got.Kind() != types.KindMysqlDecimal {
+					cmp, err := got.CompareDatum(sc, &expect)
+					c.Assert(err, IsNil)
+					c.Assert(cmp, Equals, 0, Commentf("expect: %v, got %v", expect, got))
+				} else {
+					c.Assert(got.GetString(), Equals, expect.GetString(), Commentf("expect: %v, got %v", expect, got))
+				}
 			}
 		}
 	}
 }
 
+func (s *testCodecSuite) TestHashGroup(c *C) {
+	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	tp := types.NewFieldType(mysql.TypeNewDecimal)
+	tps := []*types.FieldType{tp}
+	chk1 := chunk.New(tps, 3, 3)
+	chk1.Reset()
+	chk1.Column(0).AppendMyDecimal(types.NewDecFromStringForTest("-123.123456789"))
+	chk1.Column(0).AppendMyDecimal(types.NewDecFromStringForTest("-123.123456789"))
+	chk1.Column(0).AppendMyDecimal(types.NewDecFromStringForTest("-123.123456789"))
+
+	buf1 := make([][]byte, 3)
+	tp1 := tp
+	tp1.Flen = 20
+	tp1.Decimal = 5
+	_, err := HashGroupKey(sc, 3, chk1.Column(0), buf1, tp1)
+	c.Assert(err, NotNil)
+	tp2 := tp
+	tp2.Flen = 12
+	tp2.Decimal = 10
+	_, err = HashGroupKey(sc, 3, chk1.Column(0), buf1, tp2)
+	c.Assert(err, NotNil)
+}
+
 func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldType) {
+	decType := types.NewFieldType(mysql.TypeNewDecimal)
+	decType.Decimal = 2
 	table := []struct {
 		value interface{}
 		tp    *types.FieldType
 	}{
+		{nil, types.NewFieldType(mysql.TypeNull)},
 		{nil, types.NewFieldType(mysql.TypeLonglong)},
+		{nil, types.NewFieldType(mysql.TypeFloat)},
+		{nil, types.NewFieldType(mysql.TypeDate)},
+		{nil, types.NewFieldType(mysql.TypeDuration)},
+		{nil, types.NewFieldType(mysql.TypeNewDecimal)},
+		{nil, types.NewFieldType(mysql.TypeEnum)},
+		{nil, types.NewFieldType(mysql.TypeSet)},
+		{nil, types.NewFieldType(mysql.TypeBit)},
+		{nil, types.NewFieldType(mysql.TypeJSON)},
+		{nil, types.NewFieldType(mysql.TypeVarchar)},
+		{nil, types.NewFieldType(mysql.TypeDouble)},
 		{int64(1), types.NewFieldType(mysql.TypeTiny)},
 		{int64(1), types.NewFieldType(mysql.TypeShort)},
 		{int64(1), types.NewFieldType(mysql.TypeInt24)},
@@ -970,6 +1020,7 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 		{float32(1), types.NewFieldType(mysql.TypeFloat)},
 		{float64(1), types.NewFieldType(mysql.TypeDouble)},
 		{types.NewDecFromInt(1), types.NewFieldType(mysql.TypeNewDecimal)},
+		{types.NewDecFromStringForTest("1.123"), decType},
 		{"abc", types.NewFieldType(mysql.TypeString)},
 		{"def", types.NewFieldType(mysql.TypeVarchar)},
 		{"ghi", types.NewFieldType(mysql.TypeVarString)},
@@ -981,8 +1032,8 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 		{types.CurrentTime(mysql.TypeDate), types.NewFieldType(mysql.TypeDate)},
 		{types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp), types.NewFieldType(mysql.TypeTimestamp)},
 		{types.Duration{Duration: time.Second, Fsp: 1}, types.NewFieldType(mysql.TypeDuration)},
-		{types.Enum{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
-		{types.Set{Name: "a", Value: 0}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
+		{types.Enum{Name: "a", Value: 1}, &types.FieldType{Tp: mysql.TypeEnum, Elems: []string{"a"}}},
+		{types.Set{Name: "a", Value: 1}, &types.FieldType{Tp: mysql.TypeSet, Elems: []string{"a"}}},
 		{types.BinaryLiteral{100}, &types.FieldType{Tp: mysql.TypeBit, Flen: 8}},
 		{json.CreateBinary("abc"), types.NewFieldType(mysql.TypeJSON)},
 		{int64(1), types.NewFieldType(mysql.TypeYear)},
@@ -992,7 +1043,8 @@ func datumsForTest(sc *stmtctx.StatementContext) ([]types.Datum, []*types.FieldT
 	tps := make([]*types.FieldType, 0, len(table)+2)
 	for _, t := range table {
 		tps = append(tps, t.tp)
-		datums = append(datums, types.NewDatum(t.value))
+		d := types.NewDatum(t.value)
+		datums = append(datums, d)
 	}
 	return datums, tps
 }
@@ -1103,6 +1155,7 @@ func (s *testCodecSuite) TestHashChunkRow(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(e, IsTrue)
 
+	testHashChunkRowEqual(c, nil, nil, true)
 	testHashChunkRowEqual(c, uint64(1), int64(1), true)
 	testHashChunkRowEqual(c, uint64(18446744073709551615), int64(-1), false)
 
@@ -1164,7 +1217,7 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 	sc := &stmtctx.StatementContext{TimeZone: time.Local}
 	buf := make([]byte, 1)
 	datums, tps := datumsForTest(sc)
-	chk := chunkForTest(c, sc, datums, tps, 3)
+	chk := chunkForTest(c, sc, datums, tps, 4)
 
 	colIdx := make([]int, len(tps))
 	for i := 0; i < len(tps); i++ {
@@ -1174,35 +1227,43 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 	vecHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 	rowHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
-	// Test hash value of the first `Null` column
-	c.Assert(chk.GetRow(0).IsNull(0), Equals, true)
-	err1 := HashChunkColumns(sc, vecHash, chk, tps[0], 0, buf, hasNull)
-	err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[0:1], buf)
-	err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[0:1], buf)
-	err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[0:1], buf)
-	c.Assert(err1, IsNil)
-	c.Assert(err2, IsNil)
-	c.Assert(err3, IsNil)
-	c.Assert(err4, IsNil)
+	sel := make([]bool, len(datums))
+	for i := 0; i < 3; i++ {
+		sel[i] = true
+	}
 
-	c.Assert(hasNull[0], Equals, true)
-	c.Assert(hasNull[1], Equals, true)
-	c.Assert(hasNull[2], Equals, true)
-	c.Assert(vecHash[0].Sum64(), Equals, rowHash[0].Sum64())
-	c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
-	c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
+	// Test hash value of the first 12 `Null` columns
+	for i := 0; i < 12; i++ {
+		c.Assert(chk.GetRow(0).IsNull(i), Equals, true)
+		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
+		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
+		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
+		c.Assert(err1, IsNil)
+		c.Assert(err2, IsNil)
+		c.Assert(err3, IsNil)
+		c.Assert(err4, IsNil)
+
+		c.Assert(hasNull[0], Equals, true)
+		c.Assert(hasNull[1], Equals, true)
+		c.Assert(hasNull[2], Equals, true)
+		c.Assert(vecHash[0].Sum64(), Equals, rowHash[0].Sum64())
+		c.Assert(vecHash[1].Sum64(), Equals, rowHash[1].Sum64())
+		c.Assert(vecHash[2].Sum64(), Equals, rowHash[2].Sum64())
+
+	}
 
 	// Test hash value of every single column that is not `Null`
-	for i := 1; i < len(tps); i++ {
+	for i := 12; i < len(tps); i++ {
 		hasNull = []bool{false, false, false}
 		vecHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 		rowHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
 		c.Assert(chk.GetRow(0).IsNull(i), Equals, false)
-		err1 = HashChunkColumns(sc, vecHash, chk, tps[i], i, buf, hasNull)
-		err2 = HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
-		err3 = HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
-		err4 = HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
+		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
+		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
+		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
+		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
 		c.Assert(err1, IsNil)
 		c.Assert(err2, IsNil)
 		c.Assert(err3, IsNil)

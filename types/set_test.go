@@ -15,16 +15,20 @@ package types
 
 import (
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testleak"
 )
 
-var _ = Suite(&testSetSuite{})
+var _ = SerialSuites(&testSetSuite{})
 
 type testSetSuite struct {
 }
 
 func (s *testSetSuite) TestSet(c *C) {
 	defer testleak.AfterTest(c)()
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
 	elems := []string{"a", "b", "c", "d"}
 	tbl := []struct {
 		Name          string
@@ -39,9 +43,31 @@ func (s *testSetSuite) TestSet(c *C) {
 		{"", 0, ""},
 		{"0", 0, ""},
 	}
+	citbl := []struct {
+		Name          string
+		ExpectedValue uint64
+		ExpectedName  string
+	}{
+		{"A ", 1, "a"},
+		{"a,B,a", 3, "a,b"},
+	}
 
 	for _, t := range tbl {
-		e, err := ParseSetName(elems, t.Name)
+		e, err := ParseSetName(elems, t.Name, mysql.DefaultCollationName)
+		c.Assert(err, IsNil)
+		c.Assert(e.ToNumber(), Equals, float64(t.ExpectedValue))
+		c.Assert(e.String(), Equals, t.ExpectedName)
+	}
+
+	for _, t := range tbl {
+		e, err := ParseSetName(elems, t.Name, "utf8_unicode_ci")
+		c.Assert(err, IsNil)
+		c.Assert(e.ToNumber(), Equals, float64(t.ExpectedValue))
+		c.Assert(e.String(), Equals, t.ExpectedName)
+	}
+
+	for _, t := range citbl {
+		e, err := ParseSetName(elems, t.Name, "utf8_general_ci")
 		c.Assert(err, IsNil)
 		c.Assert(e.ToNumber(), Equals, float64(t.ExpectedValue))
 		c.Assert(e.String(), Equals, t.ExpectedName)
@@ -69,7 +95,7 @@ func (s *testSetSuite) TestSet(c *C) {
 		"e.f",
 	}
 	for _, t := range tblErr {
-		_, err := ParseSetName(elems, t)
+		_, err := ParseSetName(elems, t, mysql.DefaultCollationName)
 		c.Assert(err, NotNil)
 	}
 

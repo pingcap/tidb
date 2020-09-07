@@ -194,7 +194,7 @@ type ImplTableScan struct {
 // Match implements ImplementationRule Match interface.
 func (r *ImplTableScan) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	ts := expr.ExprNode.(*plannercore.LogicalTableScan)
-	return prop.IsEmpty() || (len(prop.Items) == 1 && ts.Handle != nil && prop.Items[0].Col.Equal(nil, ts.Handle))
+	return prop.IsEmpty() || (len(prop.Items) == 1 && ts.HandleCols != nil && prop.Items[0].Col.Equal(nil, ts.HandleCols.GetCol(0)))
 }
 
 // OnImplement implements ImplementationRule OnImplement interface.
@@ -301,7 +301,8 @@ func (r *ImplSort) OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalP
 	ls := expr.ExprNode.(*plannercore.LogicalSort)
 	if newProp, canUseNominal := plannercore.GetPropByOrderByItems(ls.ByItems); canUseNominal {
 		newProp.ExpectedCnt = reqProp.ExpectedCnt
-		ns := plannercore.NominalSort{}.Init(ls.SCtx(), ls.SelectBlockOffset(), newProp)
+		ns := plannercore.NominalSort{}.Init(
+			ls.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), ls.SelectBlockOffset(), newProp)
 		return []memo.Implementation{impl.NewNominalSortImpl(ns)}, nil
 	}
 	ps := plannercore.PhysicalSort{ByItems: ls.ByItems}.Init(

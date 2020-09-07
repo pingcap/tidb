@@ -193,7 +193,7 @@ func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	row, err := getRowData(e.Columns, e.colIDs, handle, val, e.rd)
+	row, err := getRowData(e.Columns, e.colIDs, handle.IntValue(), val, e.rd)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -241,7 +241,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	row, err := getRowData(e.Columns, e.colIDs, handle, pair.Value, e.rd)
+	row, err := getRowData(e.Columns, e.colIDs, handle.IntValue(), pair.Value, e.rd)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -408,7 +408,7 @@ func (e *indexScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 		if bytes.Compare(pair.Key, ran.EndKey) >= 0 {
 			return nil, nil
 		}
-		e.seekKey = []byte(kv.Key(pair.Key).PrefixNext())
+		e.seekKey = kv.Key(pair.Key).PrefixNext()
 	}
 	return tablecodec.DecodeIndexKV(pair.Key, pair.Value, e.colsLen, e.hdStatus, e.colInfos)
 }
@@ -567,6 +567,7 @@ func (e *topNExec) Next(ctx context.Context) (value [][]byte, err error) {
 				return nil, errors.Trace(err)
 			}
 			if !hasMore {
+				sort.Sort(&e.heap.topNSorter)
 				break
 			}
 		}
@@ -575,7 +576,6 @@ func (e *topNExec) Next(ctx context.Context) (value [][]byte, err error) {
 	if e.cursor >= len(e.heap.rows) {
 		return nil, nil
 	}
-	sort.Sort(&e.heap.topNSorter)
 	row := e.heap.rows[e.cursor]
 	e.cursor++
 
@@ -586,7 +586,7 @@ func (e *topNExec) Next(ctx context.Context) (value [][]byte, err error) {
 // And this function will check if this record can replace one of the old records.
 func (e *topNExec) evalTopN(value [][]byte) error {
 	newRow := &sortRow{
-		key: make([]types.Datum, len(value)),
+		key: make([]types.Datum, len(e.orderByExprs)),
 	}
 	err := e.evalCtx.decodeRelatedColumnVals(e.relatedColOffsets, value, e.row)
 	if err != nil {
@@ -672,7 +672,7 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 // getRowData decodes raw byte slice to row data.
 func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, value []byte, rd *rowcodec.BytesDecoder) ([][]byte, error) {
 	if rowcodec.IsNewFormat(value) {
-		return rd.DecodeToBytes(colIDs, handle, value, nil)
+		return rd.DecodeToBytes(colIDs, kv.IntHandle(handle), value, nil)
 	}
 	values, err := tablecodec.CutRowNew(value, colIDs)
 	if err != nil {

@@ -52,6 +52,8 @@ func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.captureBindings()
 	case plannercore.OpEvolveBindings:
 		return e.evolveBindings()
+	case plannercore.OpReloadBindings:
+		return e.reloadBindings()
 	default:
 		return errors.Errorf("unsupported SQL bind operation: %v", e.sqlBindOp)
 	}
@@ -80,6 +82,7 @@ func (e *SQLBindExec) createSQLBind() error {
 		Charset:   e.charset,
 		Collation: e.collation,
 		Status:    bindinfo.Using,
+		Source:    bindinfo.Manual,
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
@@ -88,16 +91,13 @@ func (e *SQLBindExec) createSQLBind() error {
 	}
 	if !e.isGlobal {
 		handle := e.ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		return handle.AddBindRecord(e.ctx, record)
+		return handle.CreateBindRecord(e.ctx, record)
 	}
-	return domain.GetDomain(e.ctx).BindHandle().AddBindRecord(e.ctx, record)
+	return domain.GetDomain(e.ctx).BindHandle().CreateBindRecord(e.ctx, record)
 }
 
 func (e *SQLBindExec) flushBindings() error {
-	handle := domain.GetDomain(e.ctx).BindHandle()
-	handle.DropInvalidBindRecord()
-	handle.SaveEvolveTasksToStore()
-	return handle.Update(false)
+	return domain.GetDomain(e.ctx).BindHandle().FlushBindings()
 }
 
 func (e *SQLBindExec) captureBindings() {
@@ -105,5 +105,9 @@ func (e *SQLBindExec) captureBindings() {
 }
 
 func (e *SQLBindExec) evolveBindings() error {
-	return domain.GetDomain(e.ctx).BindHandle().HandleEvolvePlanTask(e.ctx)
+	return domain.GetDomain(e.ctx).BindHandle().HandleEvolvePlanTask(e.ctx, true)
+}
+
+func (e *SQLBindExec) reloadBindings() error {
+	return domain.GetDomain(e.ctx).BindHandle().ReloadBindings()
 }

@@ -1,0 +1,73 @@
+[
+  {
+    "name": "TestSelPushDownTiFlash",
+    "cases": [
+      "explain select * from t where t.a > 1 and t.b = \"flash\" or t.a + 3 * t.a = 5",
+      "explain select * from t where cast(t.a as float) + 3 = 5.1",
+      "explain select * from t where b > 'a' order by convert(b, unsigned) limit 2",
+      "explain select * from t where b > 'a' order by b limit 2"
+    ]
+  },
+  {
+    "name": "TestBroadcastJoin",
+    "cases": [
+      "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
+      "explain select /*+ broadcast_join(fact_t,d1_t,d2_t,d3_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
+      "explain select /*+ broadcast_join(fact_t,d1_t), broadcast_join_local(d1_t) */ count(*) from fact_t, d1_t where fact_t.d1_k = d1_t.d1_k",
+      "explain select /*+ broadcast_join(fact_t,d1_t,d2_t,d3_t), broadcast_join_local(d2_t) */ count(*) from fact_t, d1_t, d2_t, d3_t where fact_t.d1_k = d1_t.d1_k and fact_t.d2_k = d2_t.d2_k and fact_t.d3_k = d3_t.d3_k",
+      "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k",
+      "explain select /*+ broadcast_join(fact_t,d1_t) */ count(*) from fact_t right join d1_t on fact_t.d1_k = d1_t.d1_k"
+    ]
+  },
+  {
+    "name": "TestReadFromStorageHint",
+    "cases": [
+      "desc select avg(a) from t",
+      "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
+      "desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
+      "desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
+      "desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
+      "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIKV[t2]) */ * from t t1, t t2 where t1.a = t2.a",
+      "desc select /*+ READ_FROM_STORAGE(TIKV[t1], TIFLASH[t2]) */ * from t t1, t t2 where t1.a = t2.a",
+      "desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
+      "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
+      "desc select * from ttt order by ttt.a desc",
+      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
+      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a",
+      "desc select /*+ read_from_storage(tikv[t, ttt]) */ * from ttt",
+      "desc select /*+ read_from_storage(tiflash[t, ttt], tikv[tt]) */ * from ttt"
+    ]
+  },
+  {
+    "name": "TestReadFromStorageHintAndIsolationRead",
+    "cases": [
+      "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
+      "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
+      "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
+    ]
+  },
+  {
+    "name": "TestIsolationReadDoNotFilterSystemDB",
+    "cases": [
+      "desc select * from metrics_schema.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'",
+      "desc select * from information_schema.tables",
+      "desc select * from mysql.stats_meta"
+    ]
+  },
+  {
+    "name": "TestIsolationReadTiFlashNotChoosePointGet",
+    "cases": [
+      "explain select * from t where t.a = 1",
+      "explain select * from t where t.a in (1, 2)"
+    ]
+  },
+  {
+    "name": "TestIsolationReadTiFlashUseIndexHint",
+    "cases": [
+      "explain select * from t",
+      "explain select * from t use index();",
+      "explain select /*+ use_index(t, idx)*/ * from t",
+      "explain select /*+ use_index(t)*/ * from t"
+    ]
+  }
+]

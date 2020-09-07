@@ -22,15 +22,13 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/collate"
 	"golang.org/x/text/transform"
 )
 
@@ -366,7 +364,7 @@ func (b *builtinLocate3ArgsUTF8Sig) vectorized() bool {
 	return true
 }
 
-// vecEvalInt evals LOCATE(substr,str,pos), non case-sensitive.
+// vecEvalInt evals LOCATE(substr,str,pos).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -393,6 +391,7 @@ func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 
 	result.MergeNulls(buf, buf1)
 	i64s := result.Int64s()
+	ci := collate.IsCICollation(b.collation)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -413,8 +412,10 @@ func (b *builtinLocate3ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 			continue
 		}
 		slice := string([]rune(str)[pos:])
-		subStr = strings.ToLower(subStr)
-		slice = strings.ToLower(slice)
+		if ci {
+			subStr = strings.ToLower(subStr)
+			slice = strings.ToLower(slice)
+		}
 		idx := strings.Index(slice, subStr)
 		if idx != -1 {
 			i64s[i] = pos + int64(utf8.RuneCountInString(slice[:idx])) + 1
@@ -1631,12 +1632,20 @@ func (b *builtinInstrUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Colum
 	result.ResizeInt64(n, false)
 	result.MergeNulls(str, substr)
 	res := result.Int64s()
+	ci := collate.IsCICollation(b.collation)
+	var strI string
+	var substrI string
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		strI := strings.ToLower(str.GetString(i))
-		substrI := strings.ToLower(substr.GetString(i))
+		if ci {
+			strI = strings.ToLower(str.GetString(i))
+			substrI = strings.ToLower(substr.GetString(i))
+		} else {
+			strI = str.GetString(i)
+			substrI = substr.GetString(i)
+		}
 		idx := strings.Index(strI, substrI)
 		if idx == -1 {
 			res[i] = 0
@@ -2126,7 +2135,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vectorized() bool {
 	return true
 }
 
-// vecEvalInt evals LOCATE(substr,str), non case-sensitive.
+// vecEvalInt evals LOCATE(substr,str).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
@@ -2150,6 +2159,7 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf, buf1)
 	i64s := result.Int64s()
+	ci := collate.IsCICollation(b.collation)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -2161,9 +2171,11 @@ func (b *builtinLocate2ArgsUTF8Sig) vecEvalInt(input *chunk.Chunk, result *chunk
 			i64s[i] = 1
 			continue
 		}
-		slice := string([]rune(str))
-		slice = strings.ToLower(slice)
-		subStr = strings.ToLower(subStr)
+		slice := str
+		if ci {
+			slice = strings.ToLower(slice)
+			subStr = strings.ToLower(subStr)
+		}
 		idx := strings.Index(slice, subStr)
 		if idx != -1 {
 			i64s[i] = int64(utf8.RuneCountInString(slice[:idx])) + 1
@@ -2226,9 +2238,6 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 		return err
 	}
 	defer b.bufAllocator.put(bufstr)
-	if err := b.args[l-1].VecEvalString(b.ctx, input, bufstr); err != nil {
-		return err
-	}
 	bigints := make([]int64, 0, l-1)
 	result.ReserveString(n)
 	bufint := make([]([]int64), l-1)
@@ -2244,25 +2253,7 @@ func (b *builtinCharSig) vecEvalString(input *chunk.Chunk, result *chunk.Column)
 			bigints = append(bigints, bufint[j][i])
 		}
 		tempString := string(b.convertToBytes(bigints))
-		charsetLable := strings.ToLower(bufstr.GetString(i))
-		if bufstr.IsNull(i) || charsetLable == "ascii" || strings.HasPrefix(charsetLable, "utf8") {
-			result.AppendString(tempString)
-		} else {
-			encoding, charsetName := charset.Lookup(charsetLable)
-			if encoding == nil {
-				return errors.Errorf("unknown encoding: %s", bufstr.GetString(i))
-			}
-			oldStr := tempString
-			tempString, _, err := transform.String(encoding.NewDecoder(), tempString)
-			if err != nil {
-				logutil.BgLogger().Warn("change charset of string",
-					zap.String("string", oldStr),
-					zap.String("charset", charsetName),
-					zap.Error(err))
-				return err
-			}
-			result.AppendString(tempString)
-		}
+		result.AppendString(tempString)
 	}
 	return nil
 }

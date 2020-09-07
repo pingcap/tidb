@@ -14,15 +14,25 @@
 package executor_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
+	"io/ioutil"
+	"net/http"
 	"strconv"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -136,6 +146,15 @@ func (s *testSuite5) TestSetVar(c *C) {
 	charset, collation = vars.GetCharsetInfo()
 	c.Assert(charset, Equals, "utf8")
 	c.Assert(collation, Equals, "utf8_bin")
+
+	expectErrMsg := "[ddl:1273]Unknown collation: 'non_exist_collation'"
+	tk.MustGetErrMsg("set names utf8 collate non_exist_collation", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_server='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_database='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@session.collation_connection='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_server='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_database='non_exist_collation'", expectErrMsg)
+	tk.MustGetErrMsg("set @@global.collation_connection='non_exist_collation'", expectErrMsg)
 
 	tk.MustExec("set character_set_results = NULL")
 	tk.MustQuery("select @@character_set_results").Check(testkit.Rows(""))
@@ -385,6 +404,12 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustQuery("select @@session.tidb_store_limit;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.tidb_store_limit;").Check(testkit.Rows("100"))
 
+	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_enable_change_column_type = 1")
+	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_enable_change_column_type = off")
+	tk.MustQuery("select @@tidb_enable_change_column_type;").Check(testkit.Rows("0"))
+
 	tk.MustQuery("select @@session.tidb_metric_query_step;").Check(testkit.Rows("60"))
 	tk.MustExec("set @@session.tidb_metric_query_step = 120")
 	_, err = tk.Exec("set @@session.tidb_metric_query_step = 9")
@@ -398,6 +423,58 @@ func (s *testSuite5) TestSetVar(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "tidb_metric_query_range_duration(9) cannot be smaller than 10 or larger than 216000")
 	tk.MustQuery("select @@session.tidb_metric_query_range_duration;").Check(testkit.Rows("120"))
+
+	// test for tidb_slow_log_masking
+	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
+	tk.MustExec("set global tidb_slow_log_masking = 1")
+	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("1"))
+	tk.MustExec("set global tidb_slow_log_masking = 0")
+	tk.MustQuery(`select @@global.tidb_slow_log_masking;`).Check(testkit.Rows("0"))
+	_, err = tk.Exec("set session tidb_slow_log_masking = 0")
+	c.Assert(err, NotNil)
+	_, err = tk.Exec(`select @@session.tidb_slow_log_masking;`)
+	c.Assert(err, NotNil)
+
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
+	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
+	c.Assert(tk.ExecToErr("set @@session.tidb_dml_batch_size = -120"), NotNil)
+	c.Assert(tk.ExecToErr("set @@global.tidb_dml_batch_size = 120"), NotNil)
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
+
+	_, err = tk.Exec("set tidb_enable_parallel_apply=-1")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
+}
+
+func (s *testSuite5) TestTruncateIncorrectIntSessionVar(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	testCases := []struct {
+		sessionVarName string
+		minValue       int
+		maxValue       int
+	}{
+		{"auto_increment_increment", 1, 65535},
+		{"auto_increment_offset", 1, 65535},
+	}
+
+	for _, tc := range testCases {
+		name := tc.sessionVarName
+		selectSQL := fmt.Sprintf("select @@%s;", name)
+		validValue := tc.minValue + (tc.maxValue-tc.minValue)/2
+		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, validValue))
+		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", validValue)))
+
+		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, tc.minValue-1))
+		warnMsg := fmt.Sprintf("Warning 1292 Truncated incorrect %s value: '%d'", name, tc.minValue-1)
+		tk.MustQuery("show warnings").Check(testkit.Rows(warnMsg))
+		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", tc.minValue)))
+
+		tk.MustExec(fmt.Sprintf("set @@%s = %d", name, tc.maxValue+1))
+		warnMsg = fmt.Sprintf("Warning 1292 Truncated incorrect %s value: '%d'", name, tc.maxValue+1)
+		tk.MustQuery("show warnings").Check(testkit.Rows(warnMsg))
+		tk.MustQuery(selectSQL).Check(testkit.Rows(fmt.Sprintf("%d", tc.maxValue)))
+	}
 }
 
 func (s *testSuite5) TestSetCharset(c *C) {
@@ -481,7 +558,7 @@ func (s *testSuite5) TestSetCharset(c *C) {
 	tk.MustExec(`SET CHARACTER SET latin1`)
 	check(
 		"latin1",
-		"latin1",
+		"utf8mb4",
 		"latin1",
 		"utf8mb4",
 		"utf8mb4",
@@ -507,13 +584,13 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	_, err := tk.Exec("set global tidb_distsql_scan_concurrency='fff';")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 
-	_, err = tk.Exec("set global tidb_distsql_scan_concurrency=-1;")
+	_, err = tk.Exec("set global tidb_distsql_scan_concurrency=-2;")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency='fff';")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongTypeForVar), IsTrue, Commentf("err %v", err))
 
-	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency=-1;")
+	_, err = tk.Exec("set @@tidb_distsql_scan_concurrency=-2;")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 
 	_, err = tk.Exec("set @@tidb_batch_delete='ok';")
@@ -854,6 +931,9 @@ func (s *testSuite5) TestValidateSetVar(c *C) {
 	tk.MustExec("SET SESSION tidb_skip_isolation_level_check = 0")
 	_, err = tk.Exec("set @@tx_isolation='SERIALIZABLE'")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnsupportedIsolationLevel), IsTrue, Commentf("err %v", err))
+
+	tk.MustExec("set global allow_auto_random_explicit_insert=on;")
+	tk.MustQuery("select @@global.allow_auto_random_explicit_insert;").Check(testkit.Rows("1"))
 }
 
 func (s *testSuite5) TestSelectGlobalVar(c *C) {
@@ -874,6 +954,96 @@ func (s *testSuite5) TestSelectGlobalVar(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownSystemVar), IsTrue, Commentf("err %v", err))
 	err = tk.ExecToErr("select @@global.invalid")
 	c.Assert(terror.ErrorEqual(err, variable.ErrUnknownSystemVar), IsTrue, Commentf("err %v", err))
+}
+
+func (s *testSuite5) TestSetConcurrency(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	// test default value
+	tk.MustQuery("select @@tidb_executor_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.DefExecutorConcurrency)))
+
+	tk.MustQuery("select @@tidb_index_lookup_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_index_lookup_join_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_hash_join_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_hashagg_partial_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_hashagg_final_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_window_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_projection_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.ConcurrencyUnset)))
+	tk.MustQuery("select @@tidb_distsql_scan_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.DefDistSQLScanConcurrency)))
+
+	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows(strconv.Itoa(variable.DefIndexSerialScanConcurrency)))
+
+	vars := tk.Se.(sessionctx.Context).GetSessionVars()
+	c.Assert(vars.ExecutorConcurrency, Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.IndexLookupConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.IndexLookupJoinConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.HashJoinConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.HashAggPartialConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.HashAggFinalConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.WindowConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.DistSQLScanConcurrency(), Equals, variable.DefDistSQLScanConcurrency)
+
+	c.Assert(vars.IndexSerialScanConcurrency(), Equals, variable.DefIndexSerialScanConcurrency)
+
+	// test setting deprecated variables
+	warnTpl := "Warning 1287 '%s' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead"
+
+	checkSet := func(v string) {
+		tk.MustExec(fmt.Sprintf("set @@%s=1;", v))
+		tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", fmt.Sprintf(warnTpl, v)))
+		tk.MustQuery(fmt.Sprintf("select @@%s;", v)).Check(testkit.Rows("1"))
+	}
+
+	checkSet(variable.TiDBIndexLookupConcurrency)
+	c.Assert(vars.IndexLookupConcurrency(), Equals, 1)
+
+	checkSet(variable.TiDBIndexLookupJoinConcurrency)
+	c.Assert(vars.IndexLookupJoinConcurrency(), Equals, 1)
+
+	checkSet(variable.TiDBHashJoinConcurrency)
+	c.Assert(vars.HashJoinConcurrency(), Equals, 1)
+
+	checkSet(variable.TiDBHashAggPartialConcurrency)
+	c.Assert(vars.HashAggPartialConcurrency(), Equals, 1)
+
+	checkSet(variable.TiDBHashAggFinalConcurrency)
+	c.Assert(vars.HashAggFinalConcurrency(), Equals, 1)
+
+	checkSet(variable.TiDBProjectionConcurrency)
+	c.Assert(vars.ProjectionConcurrency(), Equals, 1)
+
+	checkSet(variable.TiDBWindowConcurrency)
+	c.Assert(vars.WindowConcurrency(), Equals, 1)
+
+	tk.MustExec(fmt.Sprintf("set @@%s=1;", variable.TiDBDistSQLScanConcurrency))
+	tk.MustQuery(fmt.Sprintf("select @@%s;", variable.TiDBDistSQLScanConcurrency)).Check(testkit.Rows("1"))
+	c.Assert(vars.DistSQLScanConcurrency(), Equals, 1)
+
+	tk.MustExec("set @@tidb_index_serial_scan_concurrency=4")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows("4"))
+	c.Assert(vars.IndexSerialScanConcurrency(), Equals, 4)
+
+	// test setting deprecated value unset
+	tk.MustExec("set @@tidb_index_lookup_concurrency=-1;")
+	tk.MustExec("set @@tidb_index_lookup_join_concurrency=-1;")
+	tk.MustExec("set @@tidb_hash_join_concurrency=-1;")
+	tk.MustExec("set @@tidb_hashagg_partial_concurrency=-1;")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency=-1;")
+	tk.MustExec("set @@tidb_window_concurrency=-1;")
+	tk.MustExec("set @@tidb_projection_concurrency=-1;")
+
+	c.Assert(vars.IndexLookupConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.IndexLookupJoinConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.HashJoinConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.HashAggPartialConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.HashAggFinalConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.WindowConcurrency(), Equals, variable.DefExecutorConcurrency)
+	c.Assert(vars.ProjectionConcurrency(), Equals, variable.DefExecutorConcurrency)
+
+	_, err := tk.Exec("set @@tidb_executor_concurrency=-1;")
+	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue, Commentf("err %v", err))
 }
 
 func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
@@ -916,4 +1086,89 @@ func (s *testSuite5) TestEnableNoopFunctionsVar(c *C) {
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("1"))
 	tk.MustExec(`set tidb_enable_noop_functions=0;`)
 	tk.MustQuery(`select @@tidb_enable_noop_functions;`).Check(testkit.Rows("0"))
+}
+
+func (s *testSuite5) TestSetClusterConfig(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	serversInfo := []infoschema.ServerInfo{
+		{ServerType: "tidb", Address: "127.0.0.1:1111", StatusAddr: "127.0.0.1:1111"},
+		{ServerType: "tidb", Address: "127.0.0.1:2222", StatusAddr: "127.0.0.1:2222"},
+		{ServerType: "pd", Address: "127.0.0.1:3333", StatusAddr: "127.0.0.1:3333"},
+		{ServerType: "pd", Address: "127.0.0.1:4444", StatusAddr: "127.0.0.1:4444"},
+		{ServerType: "tikv", Address: "127.0.0.1:5555", StatusAddr: "127.0.0.1:5555"},
+		{ServerType: "tikv", Address: "127.0.0.1:6666", StatusAddr: "127.0.0.1:6666"},
+	}
+	var serverInfoErr error
+	serverInfoFunc := func(sessionctx.Context) ([]infoschema.ServerInfo, error) {
+		return serversInfo, serverInfoErr
+	}
+	tk.Se.SetValue(executor.TestSetConfigServerInfoKey, serverInfoFunc)
+
+	c.Assert(tk.ExecToErr("set config xxx log.level='info'"), ErrorMatches, "unknown type xxx")
+	c.Assert(tk.ExecToErr("set config tidb log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
+	c.Assert(tk.ExecToErr("set config '127.0.0.1:1111' log.level='info'"), ErrorMatches, "TiDB doesn't support to change configs online, please use SQL variables")
+	c.Assert(tk.ExecToErr("set config '127.a.b.c:1234' log.level='info'"), ErrorMatches, "invalid instance 127.a.b.c:1234")
+	c.Assert(tk.ExecToErr("set config tikv log.level=null"), ErrorMatches, "can't set config to null")
+	c.Assert(tk.ExecToErr("set config '1.1.1.1:1111' log.level='info'"), ErrorMatches, "instance 1.1.1.1:1111 is not found in this cluster")
+
+	httpCnt := 0
+	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+		httpCnt++
+		return &http.Response{StatusCode: http.StatusOK, Body: ioutil.NopCloser(nil)}, nil
+	})
+	tk.MustExec("set config tikv log.level='info'")
+	c.Assert(httpCnt, Equals, 2)
+
+	httpCnt = 0
+	tk.MustExec("set config '127.0.0.1:5555' log.level='info'")
+	c.Assert(httpCnt, Equals, 1)
+
+	httpCnt = 0
+	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("something wrong")
+	})
+	tk.MustExec("set config tikv log.level='info'")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 something wrong", "Warning 1105 something wrong"))
+
+	tk.Se.SetValue(executor.TestSetConfigHTTPHandlerKey, func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusBadRequest, Body: ioutil.NopCloser(bytes.NewBufferString("WRONG"))}, nil
+	})
+	tk.MustExec("set config tikv log.level='info'")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 bad request to http://127.0.0.1:5555/config: WRONG", "Warning 1105 bad request to http://127.0.0.1:6666/config: WRONG"))
+}
+
+func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
+	var d types.MyDecimal
+	c.Assert(d.FromFloat64(123.456), IsNil)
+	tyBool := types.NewFieldType(mysql.TypeTiny)
+	tyBool.Flag |= mysql.IsBooleanFlag
+	cases := []struct {
+		val    expression.Expression
+		result string
+		succ   bool
+	}{
+		{&expression.Constant{Value: types.NewIntDatum(1), RetType: tyBool}, `{"k":true}`, true},
+		{&expression.Constant{Value: types.NewIntDatum(0), RetType: tyBool}, `{"k":false}`, true},
+		{&expression.Constant{Value: types.NewIntDatum(2333), RetType: types.NewFieldType(mysql.TypeLong)}, `{"k":2333}`, true},
+		{&expression.Constant{Value: types.NewFloat64Datum(23.33), RetType: types.NewFieldType(mysql.TypeDouble)}, `{"k":23.33}`, true},
+		{&expression.Constant{Value: types.NewStringDatum("abcd"), RetType: types.NewFieldType(mysql.TypeString)}, `{"k":"abcd"}`, true},
+		{&expression.Constant{Value: types.NewDecimalDatum(&d), RetType: types.NewFieldType(mysql.TypeNewDecimal)}, `{"k":123.456}`, true},
+		{&expression.Constant{Value: types.NewDatum(nil), RetType: types.NewFieldType(mysql.TypeLonglong)}, "", false},
+		{&expression.Constant{RetType: types.NewFieldType(mysql.TypeJSON)}, "", false}, // unsupported type
+		{nil, "", false},
+	}
+
+	ctx := mock.NewContext()
+	for _, t := range cases {
+		result, err := executor.ConvertConfigItem2JSON(ctx, "k", t.val)
+		if t.succ {
+			c.Assert(t.result, Equals, result)
+		} else {
+			c.Assert(err, NotNil)
+		}
+	}
 }

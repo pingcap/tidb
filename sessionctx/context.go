@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-binlog"
 )
 
@@ -78,13 +77,11 @@ type Context interface {
 	HasDirtyContent(tid int64) bool
 
 	// StmtCommit flush all changes by the statement to the underlying transaction.
-	StmtCommit(tracker *memory.Tracker) error
+	StmtCommit()
 	// StmtRollback provides statement level rollback.
 	StmtRollback()
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
-	// StmtAddDirtyTableOP adds the dirty table operation for current statement.
-	StmtAddDirtyTableOP(op int, physicalID int64, handle int64)
 	// DDLOwnerChecker returns owner.DDLOwnerChecker.
 	DDLOwnerChecker() owner.DDLOwnerChecker
 	// AddTableLock adds table lock to the session lock map.
@@ -134,7 +131,7 @@ type connIDCtxKeyType struct{}
 // ConnID is the key in context.
 var ConnID = connIDCtxKeyType{}
 
-// SetCommitCtx sets the variables for context before commit a transaction.
+// SetCommitCtx sets connection id into context
 func SetCommitCtx(ctx context.Context, sessCtx Context) context.Context {
 	return context.WithValue(ctx, ConnID, sessCtx.GetSessionVars().ConnectionID)
 }

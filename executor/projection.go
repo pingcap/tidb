@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -306,12 +308,16 @@ func (e *ProjectionExec) Close() error {
 			e.drainOutputCh(w.outputCh)
 		}
 	}
-	if e.runtimeStats != nil {
-		if e.isUnparallelExec() {
-			e.runtimeStats.SetConcurrencyInfo("Concurrency", 0)
-		} else {
-			e.runtimeStats.SetConcurrencyInfo("Concurrency", int(e.numWorkers))
+	if e.baseExecutor.runtimeStats != nil {
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{
+			BasicRuntimeStats: e.runtimeStats,
 		}
+		if e.isUnparallelExec() {
+			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
+		} else {
+			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", int(e.numWorkers)))
+		}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	return e.baseExecutor.Close()
 }
@@ -338,6 +344,7 @@ type projectionInputFetcher struct {
 //   a. There is no more input from child.
 //   b. "ProjectionExec" close the "globalFinishCh"
 func (f *projectionInputFetcher) run(ctx context.Context) {
+	defer trace.StartRegion(ctx, "ProjectionFetcher").End()
 	var output *projectionOutput
 	defer func() {
 		if r := recover(); r != nil {
@@ -403,6 +410,7 @@ type projectionWorker struct {
 // It is finished and exited once:
 //   a. "ProjectionExec" closes the "globalFinishCh".
 func (w *projectionWorker) run(ctx context.Context) {
+	defer trace.StartRegion(ctx, "ProjectionWorker").End()
 	var output *projectionOutput
 	defer func() {
 		if r := recover(); r != nil {
@@ -421,10 +429,9 @@ func (w *projectionWorker) run(ctx context.Context) {
 			return
 		}
 
-		mSize := output.chk.MemoryUsage()
-		// TODO: trace memory used by the evaluatorSuit including all temporal buffers it uses
+		mSize := output.chk.MemoryUsage() + input.chk.MemoryUsage()
 		err := w.evaluatorSuit.Run(w.sctx, input.chk, output.chk)
-		w.proj.memTracker.Consume(output.chk.MemoryUsage() - mSize)
+		w.proj.memTracker.Consume(output.chk.MemoryUsage() + input.chk.MemoryUsage() - mSize)
 		output.done <- err
 
 		if err != nil {

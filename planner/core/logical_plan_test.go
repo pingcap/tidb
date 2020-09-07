@@ -30,8 +30,10 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/planner/property"
+	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -464,7 +466,7 @@ func (s *testPlanSuite) TestPlanBuilder(c *C) {
 		stmt, err := s.ParseOneStmt(ca, "", "")
 		c.Assert(err, IsNil, comment)
 
-		s.ctx.GetSessionVars().HashJoinConcurrency = 1
+		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		Preprocess(s.ctx, stmt, s.is)
 		p, _, err := BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		c.Assert(err, IsNil)
@@ -768,6 +770,22 @@ func (s *testPlanSuite) TestValidate(c *C) {
 			sql: "select concat(c_str, d_str) from t group by `concat(c_str,d_str)`",
 			err: ErrUnknownColumn,
 		},
+		{
+			sql: "select a from t b having b.a",
+			err: nil,
+		},
+		{
+			sql: "select b.a from t b having b.a",
+			err: nil,
+		},
+		{
+			sql: "select b.a from t b having a",
+			err: nil,
+		},
+		{
+			sql: "select a+1 from t having t.a",
+			err: ErrUnknownColumn,
+		},
 	}
 
 	ctx := context.Background()
@@ -1067,8 +1085,8 @@ func (s *testPlanSuite) TestVisitInfo(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
-		builder.ctx.GetSessionVars().HashJoinConcurrency = 1
+		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
 		c.Assert(err, IsNil, comment)
 
@@ -1147,7 +1165,7 @@ func (s *testPlanSuite) TestUnion(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		plan, err := builder.Build(ctx, stmt)
 		s.testData.OnRecord(func() {
 			output[i].Err = err != nil
@@ -1179,7 +1197,7 @@ func (s *testPlanSuite) TestTopNPushDown(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1220,7 +1238,8 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		{"delete a from (select * from t ) as a, t", "[planner:1288]The target table a of the DELETE is not updatable"},
 		{"delete b from (select * from t ) as a, t", "[planner:1109]Unknown table 'b' in MULTI DELETE"},
 		{"select '' as fakeCol from t group by values(fakeCol)", "[planner:1054]Unknown column '' in 'VALUES() function'"},
-		{"update t, (select * from t) as b set b.a = t.a", "[planner:1288]The target table b of the UPDATE is not updatable"},
+		{"update t, (select * from ht) as b set b.a = t.a", "[planner:1288]The target table b of the UPDATE is not updatable"},
+		{"select row_number() over () from t group by 1", "[planner:1056]Can't group on 'row_number() over ()'"},
 	}
 
 	ctx := context.Background()
@@ -1228,7 +1247,7 @@ func (s *testPlanSuite) TestNameResolver(c *C) {
 		comment := Commentf("for %s", t.sql)
 		stmt, err := s.ParseOneStmt(t.sql, "", "")
 		c.Assert(err, IsNil, comment)
-		s.ctx.GetSessionVars().HashJoinConcurrency = 1
+		s.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 
 		_, _, err = BuildLogicalPlan(ctx, s.ctx, stmt, s.is)
 		if t.err == "" {
@@ -1250,7 +1269,7 @@ func (s *testPlanSuite) TestOuterJoinEliminator(c *C) {
 		stmt, err := s.ParseOneStmt(tt, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1286,7 +1305,7 @@ func (s *testPlanSuite) TestSelectView(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1367,7 +1386,7 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 			return nil, nil, err
 		}
 	}
-	builder := NewPlanBuilder(sctx, s.is, &BlockHintProcessor{})
+	builder := NewPlanBuilder(sctx, s.is, &hint.BlockHintProcessor{})
 	p, err := builder.Build(ctx, stmt)
 	if err != nil {
 		return nil, nil, err
@@ -1376,11 +1395,11 @@ func (s *testPlanSuite) optimize(ctx context.Context, sql string) (PhysicalPlan,
 	if err != nil {
 		return nil, nil, err
 	}
-	p, _, err = physicalOptimize(p.(LogicalPlan))
+	p, _, err = physicalOptimize(p.(LogicalPlan), &PlanCounterDisabled)
 	return p.(PhysicalPlan), stmt, err
 }
 
-func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
+func byItemsToProperty(byItems []*util.ByItems) *property.PhysicalProperty {
 	pp := &property.PhysicalProperty{}
 	for _, item := range byItems {
 		pp.Items = append(pp.Items, property.Item{Col: item.Expr.(*expression.Column), Desc: item.Desc})
@@ -1391,7 +1410,7 @@ func byItemsToProperty(byItems []*ByItems) *property.PhysicalProperty {
 func pathsName(paths []*candidatePath) string {
 	var names []string
 	for _, path := range paths {
-		if path.path.IsTablePath {
+		if path.path.IsTablePath() {
 			names = append(names, "PRIMARY_KEY")
 		} else {
 			names = append(names, path.path.Index.Name.O)
@@ -1449,7 +1468,7 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
 			c.Assert(err.Error(), Equals, tt.result, comment)
@@ -1459,10 +1478,10 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil, comment)
 		lp := p.(LogicalPlan)
-		_, err = lp.recursiveDeriveStats()
+		_, err = lp.recursiveDeriveStats(nil)
 		c.Assert(err, IsNil, comment)
 		var ds *DataSource
-		var byItems []*ByItems
+		var byItems []*util.ByItems
 		for ds == nil {
 			switch v := lp.(type) {
 			case *DataSource:
@@ -1471,12 +1490,12 @@ func (s *testPlanSuite) TestSkylinePruning(c *C) {
 				byItems = v.ByItems
 				lp = lp.Children()[0]
 			case *LogicalProjection:
-				newItems := make([]*ByItems, 0, len(byItems))
+				newItems := make([]*util.ByItems, 0, len(byItems))
 				for _, col := range byItems {
 					idx := v.schema.ColumnIndex(col.Expr.(*expression.Column))
 					switch expr := v.Exprs[idx].(type) {
 					case *expression.Column:
-						newItems = append(newItems, &ByItems{Expr: expr, Desc: col.Desc})
+						newItems = append(newItems, &util.ByItems{Expr: expr, Desc: col.Desc})
 					}
 				}
 				byItems = newItems
@@ -1549,11 +1568,51 @@ func (s *testPlanSuite) TestUpdateEQCond(c *C) {
 		stmt, err := s.ParseOneStmt(tt.sql, "", "")
 		c.Assert(err, IsNil, comment)
 		Preprocess(s.ctx, stmt, s.is)
-		builder := NewPlanBuilder(MockContext(), s.is, &BlockHintProcessor{})
+		builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
 		p, err := builder.Build(ctx, stmt)
 		c.Assert(err, IsNil)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
 		c.Assert(err, IsNil)
 		c.Assert(ToString(p), Equals, tt.best, comment)
 	}
+}
+
+func (s *testPlanSuite) TestConflictedJoinTypeHints(c *C) {
+	defer testleak.AfterTest(c)()
+	sql := "select /*+ INL_JOIN(t1) HASH_JOIN(t1) */ * from t t1, t t2 where t1.e = t2.e"
+	ctx := context.TODO()
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	Preprocess(s.ctx, stmt, s.is)
+	builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+	p, err := builder.Build(ctx, stmt)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+	proj, ok := p.(*LogicalProjection)
+	c.Assert(ok, IsTrue)
+	join, ok := proj.Children()[0].(*LogicalJoin)
+	c.Assert(ok, IsTrue)
+	c.Assert(join.hintInfo, IsNil)
+	c.Assert(join.preferJoinType, Equals, uint(0))
+}
+
+func (s *testPlanSuite) TestSimplyOuterJoinWithOnlyOuterExpr(c *C) {
+	defer testleak.AfterTest(c)()
+	sql := "select * from t t1 right join t t0 ON TRUE where CONCAT_WS(t0.e=t0.e, 0, NULL) IS NULL"
+	ctx := context.TODO()
+	stmt, err := s.ParseOneStmt(sql, "", "")
+	c.Assert(err, IsNil)
+	Preprocess(s.ctx, stmt, s.is)
+	builder := NewPlanBuilder(MockContext(), s.is, &hint.BlockHintProcessor{})
+	p, err := builder.Build(ctx, stmt)
+	c.Assert(err, IsNil)
+	p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
+	c.Assert(err, IsNil)
+	proj, ok := p.(*LogicalProjection)
+	c.Assert(ok, IsTrue)
+	join, ok := proj.Children()[0].(*LogicalJoin)
+	c.Assert(ok, IsTrue)
+	// previous wrong JoinType is InnerJoin
+	c.Assert(join.JoinType, Equals, RightOuterJoin)
 }

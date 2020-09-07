@@ -21,7 +21,12 @@
       "Join{DataScan(a)->DataScan(b)}(test.t.a,test.t.a)->Aggr(max(test.t.b),max(test.t.b))->Projection",
       "UnionAll{DataScan(a)->Projection->Projection->Projection->DataScan(b)->Projection->Projection->Projection}->Aggr(max(Column#38))->Projection",
       "Join{DataScan(a)->DataScan(b)}(test.t.a,test.t.a)(test.t.b,test.t.b)->Aggr(max(test.t.c))->Projection",
-      "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection->Projection"
+      "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection->Projection",
+      "UnionAll{DataScan(t1)->Projection->Aggr(count(test.t.a),sum(test.t.a))->DataScan(t2)->Projection->Aggr(count(test.t.a),sum(test.t.a))}->Aggr(avg(Column#38, Column#39))->Projection",
+      "UnionAll{DataScan(t1)->Projection->Projection->Projection->DataScan(t2)->Projection->Projection->Projection}->Aggr(count(distinct Column#25))->Projection",
+      "UnionAll{DataScan(t1)->Projection->Aggr(firstrow(test.t.b),firstrow(test.t.b))->DataScan(t2)->Projection->Aggr(firstrow(test.t.b),firstrow(test.t.b))}->Aggr(count(distinct Column#26))->Projection",
+      "UnionAll{DataScan(t1)->Projection->Aggr(approx_count_distinct(test.t.a))->DataScan(t2)->Projection->Aggr(approx_count_distinct(test.t.a))}->Aggr(approx_count_distinct(Column#38))->Projection",
+      "UnionAll{DataScan(t1)->Projection->Aggr(approx_count_distinct(test.t.b))->DataScan(t2)->Projection->Aggr(approx_count_distinct(test.t.b))}->Aggr(approx_count_distinct(Column#38))->Projection"
     ]
   },
   {
@@ -46,7 +51,7 @@
       "Join{DataScan(t1)->DataScan(t2)}->Projection",
       "Join{DataScan(t1)->DataScan(t2)}->Projection",
       "LeftHashJoin{LeftHashJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[666,666]], Table(t))}(test.t.a,test.t.b)->IndexReader(Index(t.c_d_e)[[42,42]])}(test.t.b,test.t.a)->Sel([or(Column#25, Column#38)])->Projection->Delete",
-      "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg}(test.t.b,test.t.c)->Projection->Update"
+      "LeftHashJoin{TableReader(Table(t))->IndexReader(Index(t.c_d_e)[[NULL,+inf]])->HashAgg}(test.t.b,test.t.c)->Update"
     ]
   },
   {
@@ -169,7 +174,7 @@
         "Err": false
       },
       {
-        "Best": "Apply{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(Column#4))->Projection->Dual->Projection}->Dual->Projection->MaxOneRow}->Sort->Projection",
+        "Best": "Join{UnionAll{UnionAll{Dual->Projection->Dual->Projection}->Aggr(firstrow(Column#4))->Projection->Dual->Projection}->Dual}->Sort->Projection",
         "Err": false
       }
     ]
@@ -180,7 +185,7 @@
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.a))->Projection",
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.b))->Projection",
       "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(Column#16, decimal(65,4) BINARY))->Column#17 over(partition by Column#15))->Projection",
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(order by test.t.a asc, test.t.b desc range between unbounded preceding and current row))->Projection",
+      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(order by test.t.a, test.t.b desc range between unbounded preceding and current row))->Projection",
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.a))->Projection",
       "[planner:1054]Unknown column 'z' in 'field list'",
       "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#14 over())->Sort->Projection",
@@ -213,7 +218,7 @@
       "[planner:3590]Window '<unnamed window>' has a non-constant frame bound.",
       "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
       "[planner:3588]Window '<unnamed window>' with RANGE frame has ORDER BY expression of datetime type. Only INTERVAL bound value allowed.",
-      "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#14 over(order by test.t.a asc range between 1.0 preceding and 1 following))->Projection",
+      "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#14 over(order by test.t.a range between 1.0 preceding and 1 following))->Projection",
       "IndexReader(Index(t.f)[[NULL,+inf]])->Window(row_number()->Column#14 over())->Projection",
       "TableReader(Table(t))->HashAgg->Window(max(Column#13)->Column#15 over(rows between 1 preceding and 1 following))->Projection",
       "[planner:1210]Incorrect arguments to nth_value",
@@ -223,11 +228,11 @@
       "IndexReader(Index(t.f)[[NULL,+inf]])->Window(ntile(<nil>)->Column#14 over())->Projection",
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.b))->Projection",
       "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1)->Column#14 over())->Projection",
-      "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#15, sum(cast(test.t.c, decimal(65,0) BINARY))->Column#16 over(order by test.t.a asc range between unbounded preceding and current row))->Projection",
+      "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#15, sum(cast(test.t.c, decimal(65,0) BINARY))->Column#16 over(order by test.t.a range between unbounded preceding and current row))->Projection",
       "[planner:3593]You cannot use the window function 'sum' in this context.'",
       "[planner:3593]You cannot use the window function 'sum' in this context.'",
       "[planner:3593]You cannot use the window function 'row_number' in this context.'",
-      "TableReader(Table(t))->Sort->Window(sum(cast(test.t.c, decimal(65,0) BINARY))->Column#17 over(partition by test.t.a order by test.t.c asc range between unbounded preceding and current row))->Sort->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#18 over(order by test.t.a asc, test.t.b asc, test.t.c asc range between unbounded preceding and current row))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#19 over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row))->Window(sum(cast(test.t.d, decimal(65,0) BINARY))->Column#20 over())->Projection",
+      "TableReader(Table(t))->Sort->Window(sum(cast(test.t.c, decimal(65,0) BINARY))->Column#17 over(partition by test.t.a order by test.t.c range between unbounded preceding and current row))->Sort->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#18 over(order by test.t.a, test.t.b, test.t.c range between unbounded preceding and current row))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#19 over(partition by test.t.a order by test.t.b range between unbounded preceding and current row))->Window(sum(cast(test.t.d, decimal(65,0) BINARY))->Column#20 over())->Projection",
       "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
       "TableReader(Table(t))->Sort->Window(dense_rank()->Column#14 over(partition by test.t.b order by test.t.a desc, test.t.b desc))->Projection",
       "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
@@ -253,7 +258,7 @@
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.a))->Projection",
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection",
       "IndexReader(Index(t.f)[[NULL,+inf]])->Projection->Sort->Window(avg(cast(Column#16, decimal(65,4) BINARY))->Column#17 over(partition by Column#15))->Partition(execution info: concurrency:4, data source:Projection_8)->Projection",
-      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(order by test.t.a asc, test.t.b desc range between unbounded preceding and current row))->Projection",
+      "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(order by test.t.a, test.t.b desc range between unbounded preceding and current row))->Projection",
       "TableReader(Table(t))->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.a))->Projection",
       "[planner:1054]Unknown column 'z' in 'field list'",
       "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#14 over())->Sort->Projection",
@@ -286,7 +291,7 @@
       "[planner:3590]Window '<unnamed window>' has a non-constant frame bound.",
       "[planner:3586]Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
       "[planner:3588]Window '<unnamed window>' with RANGE frame has ORDER BY expression of datetime type. Only INTERVAL bound value allowed.",
-      "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#14 over(order by test.t.a asc range between 1.0 preceding and 1 following))->Projection",
+      "TableReader(Table(t))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#14 over(order by test.t.a range between 1.0 preceding and 1 following))->Projection",
       "IndexReader(Index(t.f)[[NULL,+inf]])->Window(row_number()->Column#14 over())->Projection",
       "TableReader(Table(t))->HashAgg->Window(max(Column#13)->Column#15 over(rows between 1 preceding and 1 following))->Projection",
       "[planner:1210]Incorrect arguments to nth_value",
@@ -296,11 +301,11 @@
       "IndexReader(Index(t.f)[[NULL,+inf]])->Window(ntile(<nil>)->Column#14 over())->Projection",
       "TableReader(Table(t))->Sort->Window(avg(cast(test.t.a, decimal(65,30) BINARY))->Column#14 over(partition by test.t.b))->Partition(execution info: concurrency:4, data source:TableReader_10)->Projection",
       "TableReader(Table(t))->Window(nth_value(test.t.i_date, 1)->Column#14 over())->Projection",
-      "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#15, sum(cast(test.t.c, decimal(65,0) BINARY))->Column#16 over(order by test.t.a asc range between unbounded preceding and current row))->Projection",
+      "TableReader(Table(t))->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#15, sum(cast(test.t.c, decimal(65,0) BINARY))->Column#16 over(order by test.t.a range between unbounded preceding and current row))->Projection",
       "[planner:3593]You cannot use the window function 'sum' in this context.'",
       "[planner:3593]You cannot use the window function 'sum' in this context.'",
       "[planner:3593]You cannot use the window function 'row_number' in this context.'",
-      "TableReader(Table(t))->Sort->Window(sum(cast(test.t.c, decimal(65,0) BINARY))->Column#17 over(partition by test.t.a order by test.t.c asc range between unbounded preceding and current row))->Sort->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#18 over(order by test.t.a asc, test.t.b asc, test.t.c asc range between unbounded preceding and current row))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#19 over(partition by test.t.a order by test.t.b asc range between unbounded preceding and current row))->Window(sum(cast(test.t.d, decimal(65,0) BINARY))->Column#20 over())->Projection",
+      "TableReader(Table(t))->Sort->Window(sum(cast(test.t.c, decimal(65,0) BINARY))->Column#17 over(partition by test.t.a order by test.t.c range between unbounded preceding and current row))->Sort->Window(sum(cast(test.t.b, decimal(65,0) BINARY))->Column#18 over(order by test.t.a, test.t.b, test.t.c range between unbounded preceding and current row))->Window(sum(cast(test.t.a, decimal(65,0) BINARY))->Column#19 over(partition by test.t.a order by test.t.b range between unbounded preceding and current row))->Window(sum(cast(test.t.d, decimal(65,0) BINARY))->Column#20 over())->Projection",
       "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
       "TableReader(Table(t))->Sort->Window(dense_rank()->Column#14 over(partition by test.t.b order by test.t.a desc, test.t.b desc))->Partition(execution info: concurrency:4, data source:TableReader_9)->Projection",
       "[planner:3587]Window 'w1' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type",
@@ -558,7 +563,8 @@
       "DataScan(t)->Projection",
       "DataScan(t)->Projection",
       "DataScan(t)->Projection",
-      "DataScan(t)->Projection"
+      "DataScan(t)->Projection",
+      "DataScan(t)->Aggr(approx_count_distinct(test.t.a, test.t.b),firstrow(test.t.a))->Projection"
     ]
   },
   {
@@ -806,17 +812,17 @@
   {
     "Name": "TestTablePartition",
     "Cases": [
-      "UnionAll{Partition(41)->Partition(42)->Partition(43)->Partition(44)->Partition(45)}->Projection",
-      "UnionAll{Partition(41)->Partition(42)}->Projection",
-      "UnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
-      "UnionAll{Partition(42)->Partition(43)}->Projection",
-      "UnionAll{UnionAll{Partition(42)->Partition(43)}->Projection->Projection->UnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
-      "UnionAll{UnionAll{Partition(42)->Partition(43)}->Projection->Projection->UnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
+      "PartitionUnionAll{Partition(41)->Partition(42)->Partition(43)->Partition(44)->Partition(45)}->Projection",
+      "PartitionUnionAll{Partition(41)->Partition(42)}->Projection",
+      "PartitionUnionAll{Partition(41)->Partition(42)->Partition(43)}->Projection",
+      "PartitionUnionAll{Partition(42)->Partition(43)}->Projection",
+      "UnionAll{PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection->PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
+      "UnionAll{PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection->PartitionUnionAll{Partition(42)->Partition(43)}->Projection->Projection}",
       "Partition(41)->Projection",
       "Partition(45)->Projection",
       "Dual->Projection",
       "Partition(41)->Projection",
-      "UnionAll{Partition(41)->Partition(44)}->Projection"
+      "PartitionUnionAll{Partition(41)->Partition(44)}->Projection"
     ]
   },
   {
@@ -894,11 +900,12 @@
   {
     "Name": "TestOuterJoinEliminator",
     "Cases": [
-      "DataScan(t1)->Aggr(firstrow(test.t.a),firstrow(test.t.b))",
-      "DataScan(t2)->Aggr(firstrow(test.t.a),firstrow(test.t.b))",
+      "DataScan(t1)->Projection",
+      "DataScan(t2)->Projection",
       "DataScan(t1)->Aggr(max(test.t.a),min(test.t.b))->Projection",
-      "DataScan(t1)->Aggr(sum(test.t.a))->Projection",
-      "DataScan(t1)->Aggr(count(test.t.a, test.t.b))->Projection",
+      "DataScan(t1)->Aggr(sum(distinct test.t.a))->Projection",
+      "DataScan(t1)->Aggr(count(distinct test.t.a, test.t.b))->Projection",
+      "DataScan(t1)->Aggr(approx_count_distinct(test.t.a, test.t.b))->Projection",
       "DataScan(t1)->Projection",
       "DataScan(t2)->Projection",
       "Join{Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->DataScan(t3)->TopN([test.t.b true],0,1)}(test.t.b,test.t.b)->TopN([test.t.b true],0,1)->Aggr(max(test.t.b))->Projection",

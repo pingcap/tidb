@@ -16,7 +16,9 @@ package chunk
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,10 +36,12 @@ import (
 )
 
 func TestT(t *testing.T) {
-	cfg := config.GetGlobalConfig()
-	conf := *cfg
-	conf.TempStoragePath = "/tmp/tidb/test-temp-storage"
-	config.StoreGlobalConfig(&conf)
+	path, _ := ioutil.TempDir("", "oom-use-tmp-storage")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = path
+	})
+	_ = os.RemoveAll(path) // clean the uncleared temp file during the last run.
+	_ = os.MkdirAll(path, 0755)
 	check.TestingT(t)
 }
 

@@ -29,7 +29,11 @@
   {
     "name": "TestMaxMinEliminate",
     "cases": [
-      "explain (select max(a) from t) union (select min(a) from t)"
+      "explain (select max(a) from t) union (select min(a) from t)",
+      "explain select min(a), max(a) from cluster_index_t",
+      "explain select min(b), max(b) from cluster_index_t where a = 1",
+      "explain select min(a), max(a) from cluster_index_t where b = 1",
+      "explain select min(b), max(b) from cluster_index_t where b = 1"
     ]
   },
   {
@@ -55,30 +59,9 @@
   {
     "name": "TestIndexMerge",
     "cases": [
-      "explain select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 1 or b = 2"
-    ]
-  },
-  {
-    "name": "TestReadFromStorageHint",
-    "cases": [
-      "desc select avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(a+1) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ sum(isnull(a)) from t",
-      "desc select * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
-      "desc select /*+ read_from_storage(tiflash[tt]) */ * from tt where (tt.a > 1 and tt.a < 20) or (tt.a >= 30 and tt.a < 55)",
-      "desc select * from ttt order by ttt.a desc",
-      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a desc",
-      "desc select /*+ read_from_storage(tiflash[ttt]) */ * from ttt order by ttt.a"
-    ]
-  },
-  {
-    "name": "TestReadFromStorageHintAndIsolationRead",
-    "cases": [
-      "desc select /*+ read_from_storage(tikv[t], tiflash[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tikv[t]) */ avg(a) from t",
-      "desc select /*+ read_from_storage(tiflash[t]) */ avg(a) from t"
+      "explain select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 1 or b = 2",
+      "explain select /*+ USE_INDEX_MERGE(t, primary) */ * from t where 1 or t.c",
+      "explain select /*+ USE_INDEX_MERGE(t, a, b, c) */ * from t where 1 or t.a = 1 or t.b = 2"
     ]
   },
   {
@@ -92,6 +75,138 @@
     "cases": [
       "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
       "desc select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b"
+    ]
+  },
+  {
+    "name": "TestHintWithRequiredProperty",
+    "cases": [
+      "desc select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
+      "desc select /*+ INL_HASH_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.b order by t2.a",
+      "desc select /*+ INL_MERGE_JOIN(t2)*/ t1.a, t2.a from t t1, t t2 ,t t3 where t1.a = t2.a and t3.a=t2.a",
+      "desc select * from t t1, (select /*+ HASH_AGG() */ b, max(a) from t t2 group by b) t2 where t1.b = t2.b order by t1.b",
+      "desc select /*+ INL_HASH_JOIN(t2) */ distinct t2.a from t t1 join t t2 on t1.a = t2.a",
+      // This hint cannot work, so choose another plan.
+      "desc select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = t2.c order by t1.a"
+    ]
+  },
+  {
+    "name": "TestIndexHintWarning",
+    "cases": [
+      "select /*+ USE_INDEX(t1, j) */ * from t1",
+      "select /*+ IGNORE_INDEX(t1, j) */ * from t1",
+      "select /*+ USE_INDEX(t2, a, b, c) */ * from t1",
+      "select /*+ USE_INDEX(t2) */ * from t1",
+      "select /*+ USE_INDEX(t1, a), USE_INDEX(t2, a), USE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ USE_INDEX(t3, a), USE_INDEX(t4, b), IGNORE_INDEX(t3, a) */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ USE_INDEX_MERGE(t3, a, b, d) */ * from t1",
+      "select /*+ USE_INDEX_MERGE(t1, a, b, c, d) */ * from t1",
+      "select /*+ USE_INDEX_MERGE(t1, a, b), USE_INDEX(t1, a) */ * from t1",
+      "select /*+ USE_INDEX_MERGE(t1, a, b), IGNORE_INDEX(t1, a) */ * from t1",
+      "select /*+ USE_INDEX_MERGE(t1, primary, a, b, c) */ * from t1"
+    ]
+  },
+  {
+    "name": "TestHintWithoutTableWarning",
+    "cases": [
+      "select /*+ TIDB_SMJ() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ MERGE_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ INL_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ TIDB_INLJ() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ INL_HASH_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ INL_MERGE_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ HASH_JOIN() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ USE_INDEX() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ IGNORE_INDEX() */ * from t1, t2 where t1.a=t2.a",
+      "select /*+ USE_INDEX_MERGE() */ * from t1, t2 where t1.a=t2.a"
+    ]
+  },
+  {
+    "name": "TestPartitionPruningForInExpr",
+    "cases": [
+      "explain select * from t where a in (1, 2,'11')",
+      "explain select * from t where a in (17, null)",
+      "explain select * from t where a in (16, 'abc')",
+      "explain select * from t where a in (15, 0.12, 3.47)",
+      "explain select * from t where a in (0.12, 3.47)",
+      "explain select * from t where a in (14, floor(3.47))",
+      "explain select * from t where b in (3, 4)"
+    ]
+  },
+  {
+    "name": "TestStreamAggProp",
+    "cases": [
+      "select /*+ stream_agg() */ count(*) c from t group by a order by c limit 1",
+      "select /*+ stream_agg() */ count(*) c from t group by a order by c",
+      "select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1",
+      "select /*+ stream_agg() */ count(*) c from t group by a order by a"
+    ]
+  },
+  {
+    "name": "TestOptimizeHintOnPartitionTable",
+    "cases": [
+      "select /*+ use_index(t) */ * from t",
+      "select /*+ use_index(t partition(p0, p1) b, c) */ * from t partition(p1,p2)",
+      "select /*+ use_index(t partition(p_non_exist)) */ * from t partition(p1,p2)",
+      "select /*+ use_index(t partition(p0, p1) b, c) */ * from t",
+      "select /*+ ignore_index(t partition(p0, p1) b, c) */ * from t",
+      "select /*+ hash_join(t1, t2 partition(p0)) */ * from t t1 join t t2 on t1.a = t2.a",
+      "select /*+ use_index_merge(t partition(p0)) */ * from t where t.b = 1 or t.c = \"8\"",
+      "select /*+ use_index_merge(t partition(p0, p1) primary, b) */ * from t where t.a = 1 or t.b = 2",
+      "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)",
+      "select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t"
+    ]
+  },
+  {
+    "name": "TestAccessPathOnClusterIndex",
+    "cases": [
+      "select * from t1",
+      "select * from t1 where t1.a >= 1 and t1.a < 4",
+      "select * from t1 where t1.a = 1 and t1.b < \"333\"",
+      "select t1.a, t1.b, t1.c from t1 where t1.c = 3.3",
+      "select t1.b, t1.c from t1 where t1.c = 2.2",
+      "select /*+ use_index(t1, c) */ * from t1",
+      "select * from t1 use index(c) where t1.c in (2.2, 3.3)",
+      "select * from t1 where t1.a = 1 order by b",
+      "select * from t1 order by a, b limit 1",
+      "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a >= 1 or t1.c = 2.2",
+      "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a = 1 and t1.b = '111' or t1.c = 3.3"
+    ]
+  },
+  {
+    "name": "TestIndexJoinOnClusteredIndex",
+    "cases": [
+      "select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
+      "select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
+      "select /*+ inl_hash_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
+      "select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.b = t2.b",
+      "select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.c = t2.c"
+    ]
+  },
+  {
+    "name": "TestPartitionExplain",
+    "cases": [
+      // Table reader
+      "select * from pt where c > 10",
+      "select * from pt where c > 8",
+      "select * from pt where c < 2 or c >= 9",
+      // Index reader
+      "select c from pt",
+      "select c from pt where c > 10",
+      "select c from pt where c > 8",
+      "select c from pt where c < 2 or c >= 9",
+      // Index Lookup
+      "select /*+ use_index(pt, i_id) */ * from pt",
+      "select /*+ use_index(pt, i_id) */ * from pt where id < 4 and c > 10",
+      "select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c > 8",
+      "select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c < 2 or c >= 9",
+      // Partition selection
+      "select * from pt partition (p0) where c > 8",
+      "select c from pt partition (p0, p2) where c > 8",
+      "select /*+ use_index(pt, i_id) */ * from pt partition (p1, p2) where c < 3 and id = 5",
+
+      // Index Merge
+      "select * from pt where id = 4 or c < 7",
+      "select * from pt where id > 4 or c = 7"
     ]
   }
 ]

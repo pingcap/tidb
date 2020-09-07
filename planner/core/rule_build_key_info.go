@@ -15,6 +15,7 @@ package core
 
 import (
 	"context"
+
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
@@ -107,6 +108,22 @@ func (p *LogicalSelection) BuildKeyInfo(selfSchema *expression.Schema, childSche
 func (p *LogicalLimit) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 	if p.Count == 1 {
+		p.maxOneRow = true
+	}
+}
+
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	if p.Count == 1 {
+		p.maxOneRow = true
+	}
+}
+
+// BuildKeyInfo implements LogicalPlan BuildKeyInfo interface.
+func (p *LogicalTableDual) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
+	p.baseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	if p.RowCount == 1 {
 		p.maxOneRow = true
 	}
 }
@@ -227,7 +244,7 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath {
+		if path.IsIntHandlePath {
 			continue
 		}
 		if newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {
@@ -253,7 +270,7 @@ func (ts *LogicalTableScan) BuildKeyInfo(selfSchema *expression.Schema, childSch
 func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
 	for _, path := range is.Source.possibleAccessPaths {
-		if path.IsTablePath {
+		if path.IsTablePath() {
 			continue
 		}
 		if newKey := checkIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {

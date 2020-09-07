@@ -31,6 +31,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"io"
 	"math/rand"
@@ -66,10 +67,11 @@ import (
 )
 
 var (
-	baseConnID uint32
-	serverPID  int
-	osUser     string
-	osVersion  string
+	baseConnID  uint32
+	serverPID   int
+	osUser      string
+	osVersion   string
+	runInGoTest bool
 )
 
 func init() {
@@ -84,6 +86,7 @@ func init() {
 	if err != nil {
 		osVersion = ""
 	}
+	runInGoTest = flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil
 }
 
 var (
@@ -229,7 +232,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		s.capability |= mysql.ClientSSL
 	}
 
-	if s.cfg.Host != "" && s.cfg.Port != 0 {
+	if s.cfg.Host != "" && (s.cfg.Port != 0 || runInGoTest) {
 		addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 		if s.listener, err = net.Listen("tcp", addr); err == nil {
 			logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
@@ -238,6 +241,9 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 					logutil.BgLogger().Info("server redirecting", zap.String("from", s.cfg.Socket), zap.String("to", addr))
 					go s.forwardUnixSocketToTCP()
 				}
+			}
+			if runInGoTest && s.cfg.Port == 0 {
+				s.cfg.Port = uint(s.listener.Addr().(*net.TCPAddr).Port)
 			}
 		}
 	} else if cfg.Socket != "" {
@@ -365,19 +371,18 @@ func (s *Server) Close() {
 func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 	if err := conn.handshake(ctx); err != nil {
-		terror.Log(err)
-		if plugin.IsEnable(plugin.Audit) {
+		if plugin.IsEnable(plugin.Audit) && conn.ctx != nil {
 			conn.ctx.GetSessionVars().ConnectionInfo = conn.connectInfo()
+			err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+				authPlugin := plugin.DeclareAuditManifest(p.Manifest)
+				if authPlugin.OnConnectionEvent != nil {
+					pluginCtx := context.WithValue(context.Background(), plugin.RejectReasonCtxValue{}, err.Error())
+					return authPlugin.OnConnectionEvent(pluginCtx, plugin.Reject, conn.ctx.GetSessionVars().ConnectionInfo)
+				}
+				return nil
+			})
+			terror.Log(err)
 		}
-		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
-			authPlugin := plugin.DeclareAuditManifest(p.Manifest)
-			if authPlugin.OnConnectionEvent != nil {
-				pluginCtx := context.WithValue(context.Background(), plugin.RejectReasonCtxValue{}, err.Error())
-				return authPlugin.OnConnectionEvent(pluginCtx, plugin.Reject, conn.ctx.GetSessionVars().ConnectionInfo)
-			}
-			return nil
-		})
-		terror.Log(err)
 		// Some keep alive services will send request to TiDB and disconnect immediately.
 		// So we only record metrics.
 		metrics.HandShakeErrorCounter.Inc()
@@ -386,10 +391,10 @@ func (s *Server) onConn(conn *clientConn) {
 		return
 	}
 
-	logutil.Logger(ctx).Info("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
-		logutil.Logger(ctx).Info("connection closed")
+		logutil.Logger(ctx).Debug("connection closed")
 	}()
 	s.rwlock.Lock()
 	s.clients[conn.connectionID] = conn
@@ -458,6 +463,11 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 }
 
 func (s *Server) checkConnectionCount() error {
+	// When the value of MaxServerConnections is 0, the number of connections is unlimited.
+	if int(s.cfg.MaxServerConnections) == 0 {
+		return nil
+	}
+
 	s.rwlock.RLock()
 	conns := len(s.clients)
 	s.rwlock.RUnlock()
@@ -528,7 +538,7 @@ func (s *Server) getTLSConfig() *tls.Config {
 
 func killConn(conn *clientConn) {
 	sessVars := conn.ctx.GetSessionVars()
-	atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+	atomic.StoreUint32(&sessVars.Killed, 1)
 }
 
 // KillAllConnections kills all connections when server is not gracefully shutdown.

@@ -21,7 +21,12 @@
       "select max(a.b), max(b.b) from t a join t b on a.a = b.a group by a.c",
       "select max(c.b) from (select * from t a union all select * from t b) c group by c.a",
       "select max(a.c) from t a join t b on a.a=b.a and a.b=b.b group by a.b",
-      "select t1.a, count(t2.b) from t t1, t t2 where t1.a = t2.a group by t1.a"
+      "select t1.a, count(t2.b) from t t1, t t2 where t1.a = t2.a group by t1.a",
+      "select avg(a) from (select * from t t1 union all select * from t t2) t",
+      "select count(distinct a) from (select * from t t1 union all select * from t t2) t",
+      "select count(distinct b) from (select * from t t1 union all select * from t t2) t",
+      "select approx_count_distinct(a) from (select * from t t1 union all select * from t t2) t",
+      "select approx_count_distinct(b) from (select * from t t1 union all select * from t t2) t"
     ]
   },
   {
@@ -368,7 +373,8 @@
       "select tt.a, sum(tt.b) from (select a, b from t) tt group by tt.a",
       "select count(1) from (select count(1), a as b from t group by a) tt group by b",
       "select a, count(b) from t group by a",
-      "select a, count(distinct a, b) from t group by a"
+      "select a, count(distinct a, b) from t group by a",
+      "select a, approx_count_distinct(a, b) from t group by a"
     ]
   },
   {
@@ -509,6 +515,7 @@
       "select max(t1.a), min(test.t1.b) from t t1 left join t t2 on t1.b = t2.b",
       "select sum(distinct t1.a) from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b",
       "select count(distinct t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b",
+      "select approx_count_distinct(t1.a, t1.b) from t t1 left join t t2 on t1.b = t2.b",
       // Test left outer join
       "select t1.b from t t1 left outer join t t2 on t1.a = t2.a",
       // Test right outer join

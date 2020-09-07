@@ -17,12 +17,15 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/types"
 )
 
-func (s *pkgTestSuite) TestJoinExec(c *C) {
+func (s *pkgTestSerialSuite) TestJoinExec(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testRowContainerSpill", "return(true)"), IsNil)
+	defer func() { c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testRowContainerSpill"), IsNil) }()
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),
 		types.NewFieldType(mysql.TypeDouble),
@@ -67,7 +70,7 @@ func (s *pkgTestSuite) TestJoinExec(c *C) {
 				}
 				result.Append(chk, 0, chk.NumRows())
 			}
-			c.Assert(exec.rowContainer.alreadySpilled(), Equals, casTest.disk)
+			c.Assert(exec.rowContainer.alreadySpilledSafeForTest(), Equals, casTest.disk)
 			err = exec.Close()
 			c.Assert(err, IsNil)
 		}
@@ -100,5 +103,4 @@ func (s *pkgTestSuite) TestJoinExec(c *C) {
 			}
 		}
 	}
-
 }

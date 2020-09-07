@@ -259,7 +259,7 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 		c.Assert(tp.Tp, Equals, mysql.TypeLonglong)
 		c.Assert(tp.Charset, Equals, charset.CharsetBin)
 		c.Assert(tp.Collate, Equals, charset.CollationBin)
-		c.Assert(tp.Flag&mysql.BinaryFlag, Equals, uint(mysql.BinaryFlag))
+		c.Assert(tp.Flag&mysql.BinaryFlag, Equals, mysql.BinaryFlag)
 		c.Assert(tp.Flen, Equals, mysql.MaxIntWidth)
 		d, err := f.Eval(chunk.Row{})
 		if t.getErr {
@@ -274,7 +274,7 @@ func (s *testEvaluatorSuite) TestLastInsertID(c *C) {
 		}
 	}
 
-	_, err := funcs[ast.LastInsertId].getFunction(s.ctx, []Expression{Zero})
+	_, err := funcs[ast.LastInsertId].getFunction(s.ctx, []Expression{NewZero()})
 	c.Assert(err, IsNil)
 }
 

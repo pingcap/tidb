@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
@@ -61,13 +60,7 @@ func (s *testRangerSuite) TearDownSuite(c *C) {
 }
 
 func newDomainStoreWithBootstrap(c *C) (*domain.Domain, kv.Storage, error) {
-	cluster := mocktikv.NewCluster()
-	mocktikv.BootstrapWithSingleStore(cluster)
-	mvccStore := mocktikv.MustNewMVCCStore()
-	store, err := mockstore.NewMockTikvStore(
-		mockstore.WithCluster(cluster),
-		mockstore.WithMVCCStore(mvccStore),
-	)
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	session.SetSchemaLease(0)
 	session.DisableStats4Test()
@@ -619,6 +612,13 @@ create table t(
 			filterConds: "[eq(test.t.f, B)]",
 			resultStr:   "[[\"a\",\"a\"]]",
 		},
+		{
+			indexPos:    4,
+			exprStr:     "f like '@%' collate utf8mb4_bin",
+			accessConds: "[]",
+			filterConds: "[like(test.t.f, @%, 92)]",
+			resultStr:   "[[NULL,+inf]]",
+		},
 	}
 
 	collate.SetNewCollationEnabledForTest(true)
@@ -1073,6 +1073,23 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			resultStr:   "[[1,1] [2,2] [3,3]]",
 			length:      types.UnspecifiedLength,
 		},
+		// test cases for nulleq
+		{
+			colPos:      0,
+			exprStr:     "a <=> 1",
+			accessConds: "[nulleq(test.t.a, 1)]",
+			filterConds: "",
+			resultStr:   "[[1,1]]",
+			length:      types.UnspecifiedLength,
+		},
+		{
+			colPos:      0,
+			exprStr:     "a <=> null",
+			accessConds: "[nulleq(test.t.a, <nil>)]",
+			filterConds: "",
+			resultStr:   "[[NULL,NULL]]",
+			length:      types.UnspecifiedLength,
+		},
 	}
 
 	ctx := context.Background()
@@ -1116,15 +1133,16 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("set @@tidb_enable_clustered_index=0")
 	testKit.MustExec("create table t(a int not null, b int not null, primary key(a,b))")
 	testKit.MustExec("insert into t values(1,2)")
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("explain select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
-		"Union_11 2.00 root ",
-		"├─IndexReader_14 1.00 root index:IndexRangeScan_13",
-		"│ └─IndexRangeScan_13 1.00 cop[tikv] table:t, index:a, b, range:(0,+inf], keep order:false",
-		"└─IndexReader_17 1.00 root index:IndexRangeScan_16",
-		"  └─IndexRangeScan_16 1.00 cop[tikv] table:t, index:a, b, range:(0,+inf], keep order:false",
+		"Union_11 2.00 root  ",
+		"├─IndexReader_14 1.00 root  index:IndexRangeScan_13",
+		"│ └─IndexRangeScan_13 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
+		"└─IndexReader_17 1.00 root  index:IndexRangeScan_16",
+		"  └─IndexRangeScan_16 1.00 cop[tikv] table:t, index:PRIMARY(a, b) range:(0,+inf], keep order:false",
 	))
 	testKit.MustQuery("select * from (select * from t union all select ifnull(a,b), b from t) sub where a > 0").Check(testkit.Rows(
 		"1 2",
@@ -1158,6 +1176,69 @@ func (s *testRangerSuite) TestCompIndexInExprCorrCol(c *C) {
 			output[i].SQL = tt
 			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
 		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testRangerSuite) TestIndexStringIsTrueRange(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t0")
+	testKit.MustExec("CREATE TABLE t0(c0 TEXT(10));")
+	testKit.MustExec("INSERT INTO t0(c0) VALUES (1);")
+	testKit.MustExec("CREATE INDEX i0 ON t0(c0(10));")
+	testKit.MustExec("analyze table t0;")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testRangerSuite) TestCompIndexDNFMatch(c *C) {
+	defer testleak.AfterTest(c)()
+	dom, store, err := newDomainStoreWithBootstrap(c)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int, key(a,b,c));")
+	testKit.MustExec("insert into t values(1,2,2)")
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery("explain " + tt).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
 }

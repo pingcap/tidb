@@ -254,7 +254,7 @@ const (
 
 	fspTtForDate         uint8  = 0b1110
 	fspBitFieldMask      uint64 = 0b1110
-	coreTimeBitFieldMask uint64 = ^fspTtBitFieldMask
+	coreTimeBitFieldMask        = ^fspTtBitFieldMask
 )
 
 // NewTime constructs time from core time, type and fsp.
@@ -735,36 +735,58 @@ func TimestampDiff(unit string, t1 Time, t2 Time) int64 {
 func ParseDateFormat(format string) []string {
 	format = strings.TrimSpace(format)
 
+	if len(format) == 0 {
+		return nil
+	}
+
+	// Date format must start and end with number.
+	if !isDigit(format[0]) || !isDigit(format[len(format)-1]) {
+		return nil
+	}
+
 	start := 0
 	// Initialize `seps` with capacity of 6. The input `format` is typically
 	// a date time of the form "2006-01-02 15:04:05", which has 6 numeric parts
 	// (the fractional second part is usually removed by `splitDateTime`).
 	// Setting `seps`'s capacity to 6 avoids reallocation in this common case.
 	seps := make([]string, 0, 6)
-	for i := 0; i < len(format); i++ {
-		// Date format must start and end with number.
-		if i == 0 || i == len(format)-1 {
-			if !unicode.IsNumber(rune(format[i])) {
-				return nil
+
+	for i := 1; i < len(format)-1; i++ {
+		if isValidSeparator(format[i], len(seps)) {
+			prevParts := len(seps)
+			seps = append(seps, format[start:i])
+			start = i + 1
+
+			// consume further consecutive separators
+			for j := i + 1; j < len(format); j++ {
+				if !isValidSeparator(format[j], prevParts) {
+					break
+				}
+
+				start++
+				i++
 			}
 
 			continue
 		}
 
-		// Separator is a single none-number char.
-		if !unicode.IsNumber(rune(format[i])) {
-			if !unicode.IsNumber(rune(format[i-1])) {
-				return nil
-			}
-
-			seps = append(seps, format[start:i])
-			start = i + 1
+		if !isDigit(format[i]) {
+			return nil
 		}
-
 	}
 
 	seps = append(seps, format[start:])
 	return seps
+}
+
+// helper for date part splitting, punctuation characters are valid separators anywhere,
+// while space and 'T' are valid separators only between date and time.
+func isValidSeparator(c byte, prevParts int) bool {
+	if isPunctuation(c) {
+		return true
+	}
+
+	return prevParts == 2 && (c == ' ' || c == 'T')
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
@@ -782,9 +804,6 @@ func splitDateTime(format string) (seps []string, fracStr string) {
 
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-literals.html.
 func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat bool) (Time, error) {
-	// Try to split str with delimiter.
-	// TODO: only punctuation can be the delimiter for date parts or time parts.
-	// But only space and T can be the delimiter between the date and time part.
 	var (
 		year, month, day, hour, minute, second int
 		fracStr                                string
@@ -2479,6 +2498,10 @@ func mysqlTimeFix(t *CoreTime, ctx map[string]int) error {
 		if valueAMorPm == constForPM {
 			t.setHour(t.getHour() + 12)
 		}
+	} else {
+		if _, ok := ctx["%h"]; ok && t.Hour() == 12 {
+			t.setHour(0)
+		}
 	}
 	return nil
 }
@@ -2567,7 +2590,7 @@ var dateFormatParserTable = map[string]dateFormatParser{
 	"%d": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%e": dayOfMonthNumeric,     // Day of the month, numeric (0..31)
 	"%f": microSeconds,          // Microseconds (000000..999999)
-	"%h": hour24TwoDigits,       // Hour (01..12)
+	"%h": hour12Numeric,         // Hour (01..12)
 	"%H": hour24Numeric,         // Hour (00..23)
 	"%I": hour12Numeric,         // Hour (01..12)
 	"%i": minutesNumeric,        // Minutes, numeric (00..59)
@@ -2613,7 +2636,7 @@ func GetFormatType(format string) (isDuration, isDate bool) {
 		}
 		if len(token) >= 2 && token[0] == '%' {
 			switch token[1] {
-			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l', 'f':
+			case 'h', 'H', 'i', 'I', 's', 'S', 'k', 'l', 'f', 'r', 'T':
 				isDuration = true
 			case 'y', 'Y', 'm', 'M', 'c', 'b', 'D', 'd', 'e':
 				isDate = true
@@ -2647,15 +2670,6 @@ func parseDigits(input string, count int) (int, bool) {
 		return int(v), false
 	}
 	return int(v), true
-}
-
-func hour24TwoDigits(t *CoreTime, input string, ctx map[string]int) (string, bool) {
-	v, succ := parseDigits(input, 2)
-	if !succ || v >= 24 {
-		return input, false
-	}
-	t.setHour(uint8(v))
-	return input[2:], true
 }
 
 func secondsNumeric(t *CoreTime, input string, ctx map[string]int) (string, bool) {
@@ -2692,6 +2706,10 @@ func time12Hour(t *CoreTime, input string, ctx map[string]int) (string, bool) {
 	hour, succ := parseDigits(input, 2)
 	if !succ || hour > 12 || hour == 0 || input[2] != ':' {
 		return input, false
+	}
+	// 12:34:56 AM -> 00:34:56
+	if hour == 12 {
+		hour = 0
 	}
 
 	minute, succ := parseDigits(input[3:], 2)
@@ -2816,6 +2834,7 @@ func hour12Numeric(t *CoreTime, input string, ctx map[string]int) (string, bool)
 		return input, false
 	}
 	t.setHour(uint8(v))
+	ctx["%h"] = v
 	return input[length:], true
 }
 

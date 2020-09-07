@@ -37,14 +37,14 @@ func validInterval(sc *stmtctx.StatementContext, low, high point) (bool, error) 
 		return false, errors.Trace(err)
 	}
 	if low.excl {
-		l = []byte(kv.Key(l).PrefixNext())
+		l = kv.Key(l).PrefixNext()
 	}
 	r, err := codec.EncodeKey(sc, nil, high.value)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	if !high.excl {
-		r = []byte(kv.Key(r).PrefixNext())
+		r = kv.Key(r).PrefixNext()
 	}
 	return bytes.Compare(l, r) < 0, nil
 }
@@ -270,7 +270,7 @@ func buildColumnRange(accessConditions []expression.Expression, sc *stmtctx.Stat
 				ran.HighExclude = false
 			}
 		}
-		ranges, err = unionRanges(sc, ranges)
+		ranges, err = UnionRanges(sc, ranges, true)
 		if err != nil {
 			return nil, err
 		}
@@ -292,20 +292,18 @@ func BuildColumnRange(conds []expression.Expression, sc *stmtctx.StatementContex
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
-func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column, newTp []*types.FieldType, lengths []int,
+func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType,
 	eqAndInCount int, accessCondition []expression.Expression) ([]*Range, error) {
+	sc := d.sctx.GetSessionVars().StmtCtx
 	rb := builder{sc: sc}
 	var (
 		ranges []*Range
 		err    error
 	)
-	for _, col := range cols {
+	for _, col := range d.cols {
 		newTp = append(newTp, newFieldType(col.RetType))
 	}
 	for i := 0; i < eqAndInCount; i++ {
-		if sf, ok := accessCondition[i].(*expression.ScalarFunction); !ok || (sf.FuncName.L != ast.EQ && sf.FuncName.L != ast.In) {
-			break
-		}
 		// Build ranges for equal or in access conditions.
 		point := rb.build(accessCondition[i])
 		if rb.err != nil {
@@ -338,9 +336,9 @@ func buildCNFIndexRange(sc *stmtctx.StatementContext, cols []*expression.Column,
 	}
 
 	// Take prefix index into consideration.
-	if hasPrefix(lengths) {
-		if fixPrefixColRange(ranges, lengths, newTp) {
-			ranges, err = unionRanges(sc, ranges)
+	if hasPrefix(d.lengths) {
+		if fixPrefixColRange(ranges, d.lengths, newTp) {
+			ranges, err = UnionRanges(sc, ranges, d.mergeConsecutive)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -356,7 +354,11 @@ type sortRange struct {
 	encodedEnd    []byte
 }
 
-func unionRanges(sc *stmtctx.StatementContext, ranges []*Range) ([]*Range, error) {
+// UnionRanges sorts `ranges`, union adjacent ones if possible.
+// For two intervals [a, b], [c, d], we have guaranteed that a <= c. If b >= c. Then two intervals are overlapped.
+// And this two can be merged as [a, max(b, d)].
+// Otherwise they aren't overlapped.
+func UnionRanges(sc *stmtctx.StatementContext, ranges []*Range, mergeConsecutive bool) ([]*Range, error) {
 	if len(ranges) == 0 {
 		return nil, nil
 	}
@@ -384,10 +386,8 @@ func unionRanges(sc *stmtctx.StatementContext, ranges []*Range) ([]*Range, error
 	ranges = ranges[:0]
 	lastRange := objects[0]
 	for i := 1; i < len(objects); i++ {
-		// For two intervals [a, b], [c, d], we have guaranteed that a >= c. If b >= c. Then two intervals are overlapped.
-		// And this two can be merged as [a, max(b, d)].
-		// Otherwise they aren't overlapped.
-		if bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) >= 0 {
+		if (mergeConsecutive && bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) >= 0) ||
+			(!mergeConsecutive && bytes.Compare(lastRange.encodedEnd, objects[i].encodedStart) > 0) {
 			if bytes.Compare(lastRange.encodedEnd, objects[i].encodedEnd) < 0 {
 				lastRange.encodedEnd = objects[i].encodedEnd
 				lastRange.originalValue.HighVal = objects[i].originalValue.HighVal
@@ -527,6 +527,19 @@ func points2EqOrInCond(ctx sessionctx.Context, points []point, expr expression.E
 	if len(args) > 2 {
 		funcName = ast.In
 	}
-	f := expression.NewFunctionInternal(ctx, funcName, sf.GetType(), args...)
-	return f
+	return expression.NewFunctionInternal(ctx, funcName, sf.GetType(), args...)
+}
+
+// DetachCondAndBuildRangeForPartition will detach the index filters from table filters.
+// The returned values are encapsulated into a struct DetachRangeResult, see its comments for explanation.
+func DetachCondAndBuildRangeForPartition(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
+	lengths []int) (*DetachRangeResult, error) {
+	d := &rangeDetacher{
+		sctx:             sctx,
+		allConds:         conditions,
+		cols:             cols,
+		lengths:          lengths,
+		mergeConsecutive: false,
+	}
+	return d.detachCondAndBuildRangeForCols()
 }

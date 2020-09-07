@@ -16,7 +16,6 @@ package core_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/util/testutil"
 	"math"
 	"strings"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
+	"github.com/pingcap/tidb/util/testutil"
 	dto "github.com/prometheus/client_model/go"
 )
 
@@ -77,21 +77,21 @@ func (s *testPointGetSuite) TestPointGetPlanCache(c *C) {
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, key idx_bc(b,c))")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3)")
 	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t, handle:1",
+		"Point_Get_1 1.00 root table:t handle:1",
 	))
 	tk.MustQuery("explain select * from t where 1 = a").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t, handle:1",
+		"Point_Get_1 1.00 root table:t handle:1",
 	))
 	tk.MustQuery("explain update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
-		"Update_2 N/A root N/A",
-		"└─Point_Get_1 1.00 root table:t, handle:1",
+		"Update_2 N/A root  N/A",
+		"└─Point_Get_1 1.00 root table:t handle:1",
 	))
 	tk.MustQuery("explain delete from t where a = 1").Check(testkit.Rows(
-		"Delete_2 N/A root N/A",
-		"└─Point_Get_1 1.00 root table:t, handle:1",
+		"Delete_2 N/A root  N/A",
+		"└─Point_Get_1 1.00 root table:t handle:1",
 	))
 	tk.MustQuery("explain select a from t where a = -1").Check(testkit.Rows(
-		"TableDual_5 0.00 root rows:0",
+		"TableDual_5 0.00 root  rows:0",
 	))
 	tk.MustExec(`prepare stmt0 from "select a from t where a = ?"`)
 	tk.MustExec("set @p0 = -1")
@@ -197,7 +197,7 @@ func (s *testPointGetSuite) TestPointGetForUpdate(c *C) {
 func checkUseForUpdate(tk *testkit.TestKit, c *C, expectLock bool) {
 	res := tk.MustQuery("explain select * from fu where id = 6 for update")
 	// Point_Get_1	1.00	root	table:fu, handle:6
-	opInfo := res.Rows()[0][3]
+	opInfo := res.Rows()[0][4]
 	selectLock := strings.Contains(fmt.Sprintf("%s", opInfo), "lock")
 	c.Assert(selectLock, Equals, expectLock)
 
@@ -217,34 +217,34 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 		"4 4 5",
 	))
 	tk.MustQuery("explain select * from t where a = 1 and b = 1 and c = 1").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t, index:a b c",
+		"Point_Get_1 1.00 root table:t, index:idx_abc(a, b, c) ",
 	))
 	tk.MustQuery("explain select * from t where 1 = a and 1 = b and 1 = c").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t, index:a b c",
+		"Point_Get_1 1.00 root table:t, index:idx_abc(a, b, c) ",
 	))
 	tk.MustQuery("explain select * from t where 1 = a and b = 1 and 1 = c").Check(testkit.Rows(
-		"Point_Get_1 1.00 root table:t, index:a b c",
+		"Point_Get_1 1.00 root table:t, index:idx_abc(a, b, c) ",
 	))
 	tk.MustQuery("explain select * from t where (a, b, c) in ((1, 1, 1), (2, 2, 2))").Check(testkit.Rows(
-		"Batch_Point_Get_1 2.00 root table:t, index:a b c, keep order:false, desc:false",
+		"Batch_Point_Get_1 2.00 root table:t, index:idx_abc(a, b, c) keep order:false, desc:false",
 	))
 
 	tk.MustQuery("explain select * from t where a in (1, 2, 3, 4, 5)").Check(testkit.Rows(
-		"Batch_Point_Get_1 5.00 root table:t, handle:[1 2 3 4 5], keep order:false, desc:false",
+		"Batch_Point_Get_1 5.00 root table:t handle:[1 2 3 4 5], keep order:false, desc:false",
 	))
 
 	tk.MustQuery("explain select * from t where a in (1, 2, 3, 1, 2)").Check(testkit.Rows(
-		"Batch_Point_Get_1 5.00 root table:t, handle:[1 2 3 1 2], keep order:false, desc:false",
+		"Batch_Point_Get_1 5.00 root table:t handle:[1 2 3 1 2], keep order:false, desc:false",
 	))
 
 	tk.MustExec("begin")
 	tk.MustQuery("explain select * from t where a in (1, 2, 3, 1, 2) FOR UPDATE").Check(testkit.Rows(
-		"Batch_Point_Get_1 5.00 root table:t, handle:[1 2 3 1 2], keep order:false, desc:false, lock",
+		"Batch_Point_Get_1 5.00 root table:t handle:[1 2 3 1 2], keep order:false, desc:false, lock",
 	))
 	tk.MustExec("rollback")
 
 	tk.MustQuery("explain select * from t where (a) in ((1), (2), (3), (1), (2))").Check(testkit.Rows(
-		"Batch_Point_Get_1 5.00 root table:t, handle:[1 2 3 1 2], keep order:false, desc:false",
+		"Batch_Point_Get_1 5.00 root table:t handle:[1 2 3 1 2], keep order:false, desc:false",
 	))
 
 	tk.MustExec("use test")
@@ -258,7 +258,7 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 		"4 5 6",
 	))
 	tk.MustQuery("explain select * from t where (a, b) in ((1, 2), (2, 3))").Check(testkit.Rows(
-		"Batch_Point_Get_1 2.00 root table:t, index:a b, keep order:false, desc:false",
+		"Batch_Point_Get_1 2.00 root table:t, index:idx_ab(a, b) keep order:false, desc:false",
 	))
 	tk.MustQuery("select * from t where (a, b) in ((1, 2), (2, 3))").Check(testkit.Rows(
 		"1 2 3",
@@ -282,7 +282,7 @@ func (s *testPointGetSuite) TestWhereIn2BatchPointGet(c *C) {
 
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("explain select * from t where (a, b) in ((1, 2), (2, 3)) FOR UPDATE").Check(testkit.Rows(
-		"Batch_Point_Get_1 2.00 root table:t, index:a b, keep order:false, desc:false, lock",
+		"Batch_Point_Get_1 2.00 root table:t, index:idx_ab(a, b) keep order:false, desc:false, lock",
 	))
 	tk.MustExec("rollback")
 }
@@ -315,6 +315,7 @@ func (s *testPointGetSuite) TestCBOPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_enable_clustered_index=0")
 	tk.MustExec("create table t (a varchar(20), b int, c int, d int, primary key(a), unique key(b, c))")
 	tk.MustExec("insert into t values('1',4,4,1), ('2',3,3,2), ('3',2,2,3), ('4',1,1,4)")
 
@@ -357,7 +358,7 @@ func (s *testPointGetSuite) TestBatchPointGetPlanCache(c *C) {
 	tk.MustExec("create table t(a int primary key, b int)")
 	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3), (4, 4)")
 	tk.MustQuery("explain select * from t where a in (1, 2)").Check(testkit.Rows(
-		"Batch_Point_Get_1 2.00 root table:t, handle:[1 2], keep order:false, desc:false",
+		"Batch_Point_Get_1 2.00 root table:t handle:[1 2], keep order:false, desc:false",
 	))
 	tk.MustExec("prepare stmt from 'select * from t where a in (?,?)'")
 	tk.MustExec("set @p1 = 1, @p2 = 2")
@@ -391,18 +392,18 @@ func (s *testPointGetSuite) TestBatchPointGetPartition(c *C) {
 	tk.MustExec("create table t(a int primary key, b int) PARTITION BY HASH(a) PARTITIONS 4")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4)")
 	tk.MustQuery("explain select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows(
-		"Batch_Point_Get_1 4.00 root table:t, handle:[1 2 3 4], keep order:false, desc:false",
+		"Batch_Point_Get_1 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
 	))
 	tk.MustQuery("select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows("1 1", "2 2", "3 3", "4 4"))
 
 	tk.MustQuery("explain update t set b = b + 1 where a in (1, 2, 3, 4)").Check(testkit.Rows(
-		"Update_2 N/A root N/A]\n[└─Batch_Point_Get_1 4.00 root table:t, handle:[1 2 3 4], keep order:false, desc:false",
+		"Update_2 N/A root  N/A]\n[└─Batch_Point_Get_1 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
 	))
 	tk.MustExec("update t set b = b + 1 where a in (1, 2, 3, 4)")
 	tk.MustQuery("select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows("1 2", "2 3", "3 4", "4 5"))
 
 	tk.MustQuery("explain delete from t where a in (1, 2, 3, 4)").Check(testkit.Rows(
-		"Delete_2 N/A root N/A]\n[└─Batch_Point_Get_1 4.00 root table:t, handle:[1 2 3 4], keep order:false, desc:false",
+		"Delete_2 N/A root  N/A]\n[└─Batch_Point_Get_1 4.00 root table:t handle:[1 2 3 4], keep order:false, desc:false",
 	))
 	tk.MustExec("delete from t where a in (1, 2, 3, 4)")
 	tk.MustQuery("select * from t where a in (1, 2, 3, 4)").Check(testkit.Rows())
@@ -411,21 +412,40 @@ func (s *testPointGetSuite) TestBatchPointGetPartition(c *C) {
 	tk.MustExec("create table t(a int, b int, c int, primary key (a, b)) PARTITION BY HASH(a) PARTITIONS 4")
 	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
 	tk.MustQuery("explain select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Check(testkit.Rows(
-		"Batch_Point_Get_1 4.00 root table:t, index:a b, keep order:false, desc:false",
+		"Batch_Point_Get_1 4.00 root table:t, index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").
 		Check(testkit.Rows("1 1 1", "2 2 2", "3 3 3", "4 4 4"))
 
 	tk.MustQuery("explain update t set c = c + 1 where (a,b) in ((1,1),(2,2),(3,3),(4,4))").Check(testkit.Rows(
-		"Update_2 N/A root N/A]\n[└─Batch_Point_Get_1 4.00 root table:t, index:a b, keep order:false, desc:false",
+		"Update_2 N/A root  N/A]\n[└─Batch_Point_Get_1 4.00 root table:t, index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	tk.MustExec("update t set c = c + 1 where (a,b) in ((1,1),(2,2),(3,3),(4,4))")
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Sort().
 		Check(testkit.Rows("1 1 2", "2 2 3", "3 3 4", "4 4 5"))
 
 	tk.MustQuery("explain delete from t where (a,b) in ((1,1),(2,2),(3,3),(4,4))").Check(testkit.Rows(
-		"Delete_2 N/A root N/A]\n[└─Batch_Point_Get_1 4.00 root table:t, index:a b, keep order:false, desc:false",
+		"Delete_2 N/A root  N/A]\n[└─Batch_Point_Get_1 4.00 root table:t, index:PRIMARY(a, b) keep order:false, desc:false",
 	))
 	tk.MustExec("delete from t where (a,b) in ((1,1),(2,2),(3,3),(4,4))")
 	tk.MustQuery("select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4))").Check(testkit.Rows())
+}
+
+func (s *testPointGetSuite) TestIssue19141(c *C) {
+	// For issue 19141, fix partition selection on batch point get.
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t19141 (c_int int, primary key (c_int)) partition by hash ( c_int ) partitions 4")
+	tk.MustExec("insert into t19141 values (1), (2), (3), (4)")
+	tk.MustQuery("select * from t19141 partition (p0)").Check(testkit.Rows("4"))
+	tk.MustQuery("select * from t19141 partition (p0) where c_int = 1").Check(testkit.Rows())
+	tk.MustExec("update t19141 partition (p0) set c_int = -c_int where c_int = 1") // TableDual after partition selection.
+	tk.MustQuery("select * from t19141 order by c_int").Check(testkit.Rows("1", "2", "3", "4"))
+
+	// Bach point get
+	tk.MustQuery("select * from t19141 partition (p0, p2) where c_int in (1,2,3)").Check(testkit.Rows("2"))
+	tk.MustExec("update t19141 partition (p1) set c_int = -c_int where c_int in (2,3)") // No data changed
+	tk.MustQuery("select * from t19141 order by c_int").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustExec("delete from t19141 partition (p0) where c_int in (2,3)") // No data changed
+	tk.MustQuery("select * from t19141 order by c_int").Check(testkit.Rows("1", "2", "3", "4"))
 }

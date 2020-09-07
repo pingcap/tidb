@@ -39,7 +39,7 @@ type testTxStructureSuite struct {
 
 func (s *testTxStructureSuite) SetUpSuite(c *C) {
 	testleak.BeforeTest()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	s.store = store
 }

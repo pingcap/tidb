@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -58,7 +59,7 @@ func (e *DDLExec) toErr(err error) error {
 		logutil.BgLogger().Error("active txn failed", zap.Error(err))
 		return err1
 	}
-	schemaInfoErr := checker.Check(txn.StartTS())
+	_, schemaInfoErr := checker.Check(txn.StartTS())
 	if schemaInfoErr != nil {
 		return errors.Trace(schemaInfoErr)
 	}
@@ -227,11 +228,11 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	sessionVars := e.ctx.GetSessionVars()
 	if err == nil && strings.ToLower(sessionVars.CurrentDB) == dbName.L {
 		sessionVars.CurrentDB = ""
-		err = variable.SetSessionSystemVar(sessionVars, variable.CharsetDatabase, types.NewStringDatum("utf8"))
+		err = variable.SetSessionSystemVar(sessionVars, variable.CharsetDatabase, types.NewStringDatum(mysql.DefaultCharset))
 		if err != nil {
 			return err
 		}
-		err = variable.SetSessionSystemVar(sessionVars, variable.CollationDatabase, types.NewStringDatum("utf8_unicode_ci"))
+		err = variable.SetSessionSystemVar(sessionVars, variable.CollationDatabase, types.NewStringDatum(mysql.DefaultCollationName))
 		if err != nil {
 			return err
 		}
@@ -382,6 +383,12 @@ func (e *DDLExec) executeRecoverTable(s *ast.RecoverTableStmt) error {
 	if err != nil {
 		return err
 	}
+	// Check the table ID was not exists.
+	tbl, ok := dom.InfoSchema().TableByID(tblInfo.ID)
+	if ok {
+		return infoschema.ErrTableExists.GenWithStack("Table '%-.192s' already been recover to '%-.192s', can't be recover repeatedly", s.Table.Name.O, tbl.Meta().Name.O)
+	}
+
 	autoIncID, autoRandID, err := e.getTableAutoIDsFromSnapshot(job)
 	if err != nil {
 		return err
@@ -452,71 +459,95 @@ func (e *DDLExec) getRecoverTableByJobID(s *ast.RecoverTableStmt, t *meta.Meta, 
 	return job, table.Meta(), nil
 }
 
+// GetDropOrTruncateTableInfoFromJobs gets the dropped/truncated table information from DDL jobs,
+// it will use the `start_ts` of DDL job as snapshot to get the dropped/truncated table information.
+func GetDropOrTruncateTableInfoFromJobs(jobs []*model.Job, gcSafePoint uint64, dom *domain.Domain, fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
+	for _, job := range jobs {
+		// Check GC safe point for getting snapshot infoSchema.
+		err := gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
+		if err != nil {
+			return false, err
+		}
+		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
+			continue
+		}
+
+		snapMeta, err := dom.GetSnapshotMeta(job.StartTS)
+		if err != nil {
+			return false, err
+		}
+		tbl, err := snapMeta.GetTable(job.SchemaID, job.TableID)
+		if err != nil {
+			if meta.ErrDBNotExists.Equal(err) {
+				// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
+				// then can't find the table from the snapshot info-schema. Should just ignore error here,
+				// see more in TestParallelDropSchemaAndDropTable.
+				continue
+			}
+			return false, err
+		}
+		if tbl == nil {
+			// The dropped/truncated DDL maybe execute failed that caused by the parallel DDL execution,
+			// then can't find the table from the snapshot info-schema. Should just ignore error here,
+			// see more in TestParallelDropSchemaAndDropTable.
+			continue
+		}
+		finish, err := fn(job, tbl)
+		if err != nil || finish {
+			return finish, err
+		}
+	}
+	return false, nil
+}
+
 func (e *DDLExec) getRecoverTableByTableName(tableName *ast.TableName) (*model.Job, *model.TableInfo, error) {
 	txn, err := e.ctx.Txn(true)
 	if err != nil {
 		return nil, nil, err
 	}
-	t := meta.NewMeta(txn)
-	jobs, err := t.GetAllHistoryDDLJobs()
-	if err != nil {
-		return nil, nil, err
-	}
-	var job *model.Job
-	var tblInfo *model.TableInfo
-	gcSafePoint, err := gcutil.GetGCSafePoint(e.ctx)
-	if err != nil {
-		return nil, nil, err
-	}
 	schemaName := tableName.Schema.L
 	if schemaName == "" {
-		schemaName = e.ctx.GetSessionVars().CurrentDB
+		schemaName = strings.ToLower(e.ctx.GetSessionVars().CurrentDB)
 	}
 	if schemaName == "" {
 		return nil, nil, errors.Trace(core.ErrNoDB)
 	}
+	gcSafePoint, err := gcutil.GetGCSafePoint(e.ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	var jobInfo *model.Job
+	var tableInfo *model.TableInfo
 	dom := domain.GetDomain(e.ctx)
-	// TODO: only search recent `e.JobNum` DDL jobs.
-	for i := len(jobs) - 1; i > 0; i-- {
-		job = jobs[i]
-		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
-			continue
+	handleJobAndTableInfo := func(job *model.Job, tblInfo *model.TableInfo) (bool, error) {
+		if tblInfo.Name.L != tableName.Name.L {
+			return false, nil
 		}
-		// Check GC safe point for getting snapshot infoSchema.
-		err = gcutil.ValidateSnapshotWithGCSafePoint(job.StartTS, gcSafePoint)
-		if err != nil {
+		schema, ok := dom.InfoSchema().SchemaByID(job.SchemaID)
+		if !ok {
+			return false, nil
+		}
+		if schema.Name.L == schemaName {
+			tableInfo = tblInfo
+			jobInfo = job
+			return true, nil
+		}
+		return false, nil
+	}
+	fn := func(jobs []*model.Job) (bool, error) {
+		return GetDropOrTruncateTableInfoFromJobs(jobs, gcSafePoint, dom, handleJobAndTableInfo)
+	}
+	err = admin.IterHistoryDDLJobs(txn, fn)
+	if err != nil {
+		if terror.ErrorEqual(variable.ErrSnapshotTooOld, err) {
 			return nil, nil, errors.Errorf("Can't find dropped/truncated table '%s' in GC safe point %s", tableName.Name.O, model.TSConvert2Time(gcSafePoint).String())
 		}
-		// Get the snapshot infoSchema before drop table.
-		snapInfo, err := dom.GetSnapshotInfoSchema(job.StartTS)
-		if err != nil {
-			return nil, nil, err
-		}
-		// Get table meta from snapshot infoSchema.
-		table, ok := snapInfo.TableByID(job.TableID)
-		if !ok {
-			return nil, nil, infoschema.ErrTableNotExists.GenWithStackByArgs(
-				fmt.Sprintf("(Schema ID %d)", job.SchemaID),
-				fmt.Sprintf("(Table ID %d)", job.TableID),
-			)
-		}
-		if table.Meta().Name.L == tableName.Name.L {
-			schema, ok := dom.InfoSchema().SchemaByID(job.SchemaID)
-			if !ok {
-				return nil, nil, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(
-					fmt.Sprintf("(Schema ID %d)", job.SchemaID),
-				)
-			}
-			if schema.Name.L == schemaName {
-				tblInfo = table.Meta()
-				break
-			}
-		}
+		return nil, nil, err
 	}
-	if tblInfo == nil {
+	if tableInfo == nil || jobInfo == nil {
 		return nil, nil, errors.Errorf("Can't find dropped/truncated table: %v in DDL history jobs", tableName.Name)
 	}
-	return job, tblInfo, nil
+	return jobInfo, tableInfo, nil
 }
 
 func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {

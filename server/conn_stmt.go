@@ -39,18 +39,21 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"runtime/trace"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 )
 
-func (cc *clientConn) handleStmtPrepare(sql string) error {
+func (cc *clientConn) handleStmtPrepare(ctx context.Context, sql string) error {
 	stmt, columns, params, err := cc.ctx.Prepare(sql)
 	if err != nil {
 		return err
@@ -104,10 +107,11 @@ func (cc *clientConn) handleStmtPrepare(sql string) error {
 		}
 
 	}
-	return cc.flush()
+	return cc.flush(ctx)
 }
 
 func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err error) {
+	defer trace.StartRegion(ctx, "HandleStmtExecute").End()
 	if len(data) < 9 {
 		return mysql.ErrMalformPacket
 	}
@@ -181,12 +185,13 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 		}
 	}
+	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	rs, err := stmt.Execute(ctx, args)
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
 	}
 	if rs == nil {
-		return cc.writeOK()
+		return cc.writeOK(ctx)
 	}
 
 	// if the client wants to use cursor
@@ -202,8 +207,9 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 			cl.OnFetchReturned()
 		}
 		// explicitly flush columnInfo to client.
-		return cc.flush()
+		return cc.flush(ctx)
 	}
+	defer terror.Call(rs.Close)
 	err = cc.writeResultset(ctx, rs, true, 0, 0)
 	if err != nil {
 		return errors.Annotate(err, cc.preparedStmt2String(stmtID))
@@ -310,7 +316,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			}
 
 			if isUnsigned {
-				args[i] = types.NewUintDatum(uint64(uint8(paramValues[pos])))
+				args[i] = types.NewUintDatum(uint64(paramValues[pos]))
 			} else {
 				args[i] = types.NewIntDatum(int64(int8(paramValues[pos])))
 			}
@@ -325,7 +331,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			}
 			valU16 := binary.LittleEndian.Uint16(paramValues[pos : pos+2])
 			if isUnsigned {
-				args[i] = types.NewUintDatum(uint64(uint16(valU16)))
+				args[i] = types.NewUintDatum(uint64(valU16))
 			} else {
 				args[i] = types.NewIntDatum(int64(int16(valU16)))
 			}
@@ -339,7 +345,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			}
 			valU32 := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 			if isUnsigned {
-				args[i] = types.NewUintDatum(uint64(uint32(valU32)))
+				args[i] = types.NewUintDatum(uint64(valU32))
 			} else {
 				args[i] = types.NewIntDatum(int64(int32(valU32)))
 			}
@@ -387,7 +393,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			}
 			// See https://dev.mysql.com/doc/internals/en/binary-protocol-value.html
 			// for more details.
-			length := uint8(paramValues[pos])
+			length := paramValues[pos]
 			pos++
 			switch length {
 			case 0:
@@ -412,13 +418,13 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 			}
 			// See https://dev.mysql.com/doc/internals/en/binary-protocol-value.html
 			// for more details.
-			length := uint8(paramValues[pos])
+			length := paramValues[pos]
 			pos++
 			switch length {
 			case 0:
 				tmp = "0"
 			case 8:
-				isNegative := uint8(paramValues[pos])
+				isNegative := paramValues[pos]
 				if isNegative > 1 {
 					err = mysql.ErrMalformPacket
 					return
@@ -426,7 +432,7 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 				pos++
 				pos, tmp = parseBinaryDuration(pos, paramValues, isNegative)
 			case 12:
-				isNegative := uint8(paramValues[pos])
+				isNegative := paramValues[pos]
 				if isNegative > 1 {
 					err = mysql.ErrMalformPacket
 					return
@@ -510,20 +516,20 @@ func parseExecArgs(sc *stmtctx.StatementContext, args []types.Datum, boundParams
 func parseBinaryDate(pos int, paramValues []byte) (int, string) {
 	year := binary.LittleEndian.Uint16(paramValues[pos : pos+2])
 	pos += 2
-	month := uint8(paramValues[pos])
+	month := paramValues[pos]
 	pos++
-	day := uint8(paramValues[pos])
+	day := paramValues[pos]
 	pos++
 	return pos, fmt.Sprintf("%04d-%02d-%02d", year, month, day)
 }
 
 func parseBinaryDateTime(pos int, paramValues []byte) (int, string) {
 	pos, date := parseBinaryDate(pos, paramValues)
-	hour := uint8(paramValues[pos])
+	hour := paramValues[pos]
 	pos++
-	minute := uint8(paramValues[pos])
+	minute := paramValues[pos]
 	pos++
-	second := uint8(paramValues[pos])
+	second := paramValues[pos]
 	pos++
 	return pos, fmt.Sprintf("%s %02d:%02d:%02d", date, hour, minute, second)
 }
@@ -542,11 +548,11 @@ func parseBinaryDuration(pos int, paramValues []byte, isNegative uint8) (int, st
 	}
 	days := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 	pos += 4
-	hours := uint8(paramValues[pos])
+	hours := paramValues[pos]
 	pos++
-	minutes := uint8(paramValues[pos])
+	minutes := paramValues[pos]
 	pos++
-	seconds := uint8(paramValues[pos])
+	seconds := paramValues[pos]
 	pos++
 	return pos, fmt.Sprintf("%s%d %02d:%02d:%02d", sign, days, hours, minutes, seconds)
 }
@@ -589,7 +595,7 @@ func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 	return stmt.AppendParam(paramID, data[6:])
 }
 
-func (cc *clientConn) handleStmtReset(data []byte) (err error) {
+func (cc *clientConn) handleStmtReset(ctx context.Context, data []byte) (err error) {
 	if len(data) < 4 {
 		return mysql.ErrMalformPacket
 	}
@@ -602,11 +608,11 @@ func (cc *clientConn) handleStmtReset(data []byte) (err error) {
 	}
 	stmt.Reset()
 	stmt.StoreResultSet(nil)
-	return cc.writeOK()
+	return cc.writeOK(ctx)
 }
 
 // handleSetOption refer to https://dev.mysql.com/doc/internals/en/com-set-option.html
-func (cc *clientConn) handleSetOption(data []byte) (err error) {
+func (cc *clientConn) handleSetOption(ctx context.Context, data []byte) (err error) {
 	if len(data) < 2 {
 		return mysql.ErrMalformPacket
 	}
@@ -625,13 +631,16 @@ func (cc *clientConn) handleSetOption(data []byte) (err error) {
 		return err
 	}
 
-	return cc.flush()
+	return cc.flush(ctx)
 }
 
 func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	sv := cc.ctx.GetSessionVars()
 	if sv == nil {
 		return ""
+	}
+	if sv.EnableLogDesensitization {
+		return cc.preparedStmt2StringNoArgs(stmtID)
 	}
 	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PreparedParams.String()
 }

@@ -15,6 +15,7 @@ package privileges
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"strings"
 
@@ -66,12 +67,10 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		return true
 	// We should be very careful of limiting privileges, so ignore `mysql` for now.
 	case util.PerformanceSchemaName.L, util.MetricSchemaName.L:
-		// CREATE and DROP privileges are not limited in the older versions, so ignore them now.
-		// User may have created some tables in these schema, but predefined tables can't be altered or modified.
 		if (dbLowerName == util.PerformanceSchemaName.L && perfschema.IsPredefinedTable(table)) ||
 			(dbLowerName == util.MetricSchemaName.L && infoschema.IsMetricTable(table)) {
 			switch priv {
-			case mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
 				return false
 			case mysql.SelectPriv:
 				return true
@@ -275,6 +274,7 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 			hasCert      = false
 			matchIssuer  checkResult
 			matchSubject checkResult
+			matchSAN     checkResult
 		)
 		for _, chain := range tlsState.VerifiedChains {
 			if len(chain) == 0 {
@@ -301,17 +301,70 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 						zap.String("require", priv.Priv.X509Subject), zap.String("given", given))
 				}
 			}
+			if len(priv.Priv.SANs) > 0 {
+				matchOne := checkCertSAN(priv, cert, priv.Priv.SANs)
+				if matchOne {
+					matchSAN = pass
+				} else if matchSAN == notCheck {
+					matchSAN = fail
+				}
+			}
 			hasCert = true
 		}
-		checkResult := hasCert && matchIssuer != fail && matchSubject != fail
+		checkResult := hasCert && matchIssuer != fail && matchSubject != fail && matchSAN != fail
 		if !checkResult && !hasCert {
-			logutil.BgLogger().Info("ssl check failure, require issuer/subject but no verified cert",
+			logutil.BgLogger().Info("ssl check failure, require issuer/subject/SAN but no verified cert",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 		}
 		return checkResult
 	default:
 		panic(fmt.Sprintf("support ssl_type: %d", priv.Priv.SSLType))
 	}
+}
+
+func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.SANType][]string) (r bool) {
+	r = true
+	for typ, requireOr := range sans {
+		var (
+			unsupported bool
+			given       []string
+		)
+		switch typ {
+		case util.URI:
+			for _, uri := range cert.URIs {
+				given = append(given, uri.String())
+			}
+		case util.DNS:
+			given = cert.DNSNames
+		case util.IP:
+			for _, ip := range cert.IPAddresses {
+				given = append(given, ip.String())
+			}
+		default:
+			unsupported = true
+		}
+		if unsupported {
+			logutil.BgLogger().Warn("skip unsupported SAN type", zap.String("type", string(typ)),
+				zap.String("user", priv.User), zap.String("host", priv.Host))
+			continue
+		}
+		var givenMatchOne bool
+		for _, req := range requireOr {
+			for _, give := range given {
+				if req == give {
+					givenMatchOne = true
+					break
+				}
+			}
+		}
+		if !givenMatchOne {
+			logutil.BgLogger().Info("ssl check failure for subject", zap.String("user", priv.User), zap.String("host", priv.Host),
+				zap.String("require", priv.Priv.SAN), zap.Strings("given", given), zap.String("type", string(typ)))
+			r = false
+			return
+		}
+	}
+	return
 }
 
 // DBIsVisible implements the Manager interface.

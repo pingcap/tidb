@@ -26,7 +26,7 @@ import (
 var msgErrSelNotNil = "The selection vector of Chunk is not nil. Please file a bug to the TiDB Team"
 
 // Chunk stores multiple rows of data in Apache Arrow format.
-// See https://arrow.apache.org/docs/memory_layout.html
+// See https://arrow.apache.org/docs/format/Columnar.html#physical-memory-layout
 // Values are appended in compact format and can be directly accessed without decoding.
 // When the chunk is done processing, we can reuse the allocated memory by resetting it.
 type Chunk struct {
@@ -350,7 +350,7 @@ func (c *Chunk) GetRow(idx int) Row {
 		//	logical 2 -> physical 6.
 		// Then when we iterate this Chunk according to Row, only selected rows will be
 		// accessed while all filtered rows will be ignored.
-		return Row{c: c, idx: int(c.sel[idx])}
+		return Row{c: c, idx: c.sel[idx]}
 	}
 	return Row{c: c, idx: idx}
 }
@@ -588,7 +588,6 @@ func (c *Chunk) AppendBytes(colIdx int, b []byte) {
 }
 
 // AppendTime appends a Time value to the chunk.
-// TODO: change the time structure so it can be directly written to memory.
 func (c *Chunk) AppendTime(colIdx int, t types.Time) {
 	c.appendSel(colIdx)
 	c.columns[colIdx].AppendTime(t)

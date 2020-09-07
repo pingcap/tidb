@@ -15,7 +15,6 @@ package core_test
 
 import (
 	"context"
-	"math"
 	"regexp"
 	"sort"
 	"time"
@@ -27,6 +26,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
 )
 
@@ -38,7 +38,7 @@ type extractorSuite struct {
 }
 
 func (s *extractorSuite) SetUpSuite(c *C) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	c.Assert(store, NotNil)
 
@@ -62,7 +62,7 @@ func (s *extractorSuite) getLogicalMemTable(c *C, se session.Session, parser *pa
 	c.Assert(err, IsNil)
 
 	ctx := context.Background()
-	builder := plannercore.NewPlanBuilder(se, s.dom.InfoSchema(), &plannercore.BlockHintProcessor{})
+	builder := plannercore.NewPlanBuilder(se, s.dom.InfoSchema(), &hint.BlockHintProcessor{})
 	plan, err := builder.Build(ctx, stmt)
 	c.Assert(err, IsNil)
 
@@ -450,14 +450,12 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   math.MaxInt64,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and  time>='2019-10-11 10:10:10' and  time>='2019-10-12 10:10:10'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-12 10:10:10"),
-			endTime:   math.MaxInt64,
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where time>='2019-10-10 10:10:10' and  time>='2019-10-11 10:10:10' and  time>='2019-10-12 10:10:10' and time='2019-10-13 10:10:10'",
@@ -486,7 +484,6 @@ func (s *extractorSuite) TestClusterLogTableExtractor(c *C) {
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			startTime: timestamp(c, "2019-10-10 10:10:10"),
-			endTime:   math.MaxInt64,
 			patterns:  []string{".*a.*"},
 		},
 		{

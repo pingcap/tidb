@@ -64,21 +64,36 @@ func testDatumToBool(c *C, in interface{}, res int) {
 }
 
 func (ts *testDatumSuite) TestToBool(c *C) {
-	testDatumToBool(c, int(0), 0)
+	testDatumToBool(c, 0, 0)
 	testDatumToBool(c, int64(0), 0)
 	testDatumToBool(c, uint64(0), 0)
-	testDatumToBool(c, float32(0.1), 0)
-	testDatumToBool(c, float64(0.1), 0)
+	testDatumToBool(c, float32(0.1), 1)
+	testDatumToBool(c, float64(0.1), 1)
 	testDatumToBool(c, float64(0.5), 1)
-	testDatumToBool(c, float64(0.499), 0)
+	testDatumToBool(c, float64(0.499), 1)
 	testDatumToBool(c, "", 0)
-	testDatumToBool(c, "0.1", 0)
+	testDatumToBool(c, "0.1", 1)
 	testDatumToBool(c, []byte{}, 0)
-	testDatumToBool(c, []byte("0.1"), 0)
+	testDatumToBool(c, []byte("0.1"), 1)
 	testDatumToBool(c, NewBinaryLiteralFromUint(0, -1), 0)
 	testDatumToBool(c, Enum{Name: "a", Value: 1}, 1)
 	testDatumToBool(c, Set{Name: "a", Value: 1}, 1)
-
+	testDatumToBool(c, json.CreateBinary(int64(1)), 1)
+	testDatumToBool(c, json.CreateBinary(int64(0)), 0)
+	testDatumToBool(c, json.CreateBinary("0"), 1)
+	testDatumToBool(c, json.CreateBinary("aaabbb"), 1)
+	testDatumToBool(c, json.CreateBinary(float64(0.0)), 0)
+	testDatumToBool(c, json.CreateBinary(float64(3.1415)), 1)
+	testDatumToBool(c, json.CreateBinary([]interface{}{int64(1), int64(2)}), 1)
+	testDatumToBool(c, json.CreateBinary(map[string]interface{}{"ke": "val"}), 1)
+	testDatumToBool(c, json.CreateBinary("0000-00-00 00:00:00"), 1)
+	testDatumToBool(c, json.CreateBinary("0778"), 1)
+	testDatumToBool(c, json.CreateBinary("0000"), 1)
+	testDatumToBool(c, json.CreateBinary(nil), 1)
+	testDatumToBool(c, json.CreateBinary([]interface{}{nil}), 1)
+	testDatumToBool(c, json.CreateBinary(true), 1)
+	testDatumToBool(c, json.CreateBinary(false), 1)
+	testDatumToBool(c, json.CreateBinary(""), 1)
 	t, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6)
 	c.Assert(err, IsNil)
 	testDatumToBool(c, t, 1)
@@ -91,7 +106,7 @@ func (ts *testDatumSuite) TestToBool(c *C) {
 	ft.Decimal = 5
 	v, err := Convert(0.1415926, ft)
 	c.Assert(err, IsNil)
-	testDatumToBool(c, v, 0)
+	testDatumToBool(c, v, 1)
 	d := NewDatum(&invalidMockType{})
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
@@ -146,7 +161,7 @@ func testDatumToInt64(c *C, val interface{}, expect int64) {
 
 func (ts *testTypeConvertSuite) TestToInt64(c *C) {
 	testDatumToInt64(c, "0", int64(0))
-	testDatumToInt64(c, int(0), int64(0))
+	testDatumToInt64(c, 0, int64(0))
 	testDatumToInt64(c, int64(0), int64(0))
 	testDatumToInt64(c, uint64(0), int64(0))
 	testDatumToInt64(c, float32(3.1), int64(3))
@@ -307,6 +322,7 @@ func (ts *testDatumSuite) TestToBytes(c *C) {
 		{NewDecimalDatum(NewDecFromInt(1)), []byte("1")},
 		{NewFloat64Datum(1.23), []byte("1.23")},
 		{NewStringDatum("abc"), []byte("abc")},
+		{Datum{}, []byte{}},
 	}
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true

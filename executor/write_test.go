@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/testkit"
+	"github.com/pingcap/tidb/util/testutil"
 )
 
 type testBypassSuite struct{}
@@ -255,6 +256,8 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1.111 overflows bigint"))
 	tk.MustExec("insert into t value ('-1.111');")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
+	tk.MustExec("update t set a = -1 limit 1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
 	tk.MustExec("set @@sql_mode = @orig_sql_mode;")
@@ -300,6 +303,13 @@ func (s *testSuite) TestInsert(c *C) {
 	_, err = tk.Exec("replace into v values(1,2)")
 	c.Assert(err.Error(), Equals, "replace into view v is not supported now.")
 	tk.MustExec("drop view v")
+
+	tk.MustExec("create sequence seq")
+	_, err = tk.Exec("insert into seq values()")
+	c.Assert(err.Error(), Equals, "insert into sequence seq is not supported now.")
+	_, err = tk.Exec("replace into seq values()")
+	c.Assert(err.Error(), Equals, "replace into sequence seq is not supported now.")
+	tk.MustExec("drop sequence seq")
 }
 
 func (s *testSuiteP2) TestMultiBatch(c *C) {
@@ -829,6 +839,16 @@ func (s *testSuite4) TestInsertOnDupUpdateDefault(c *C) {
 	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(c);", mysql.ErrBadGeneratedColumn)
 	tk.MustGetErrCode("insert into t2 values (4,default,default) on duplicate key update a=default(a), c=default(a);", mysql.ErrBadGeneratedColumn)
 	tk.MustExec("drop table t1, t2")
+
+	tk.MustExec("set @@tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("create table t ( c_int int, c_string varchar(40) collate utf8mb4_bin , primary key (c_string), unique key (c_int));")
+	tk.MustExec("insert into t values (22, 'gold witch'), (24, 'gray singer'), (21, 'silver sight');")
+	tk.MustExec("begin;")
+	err := tk.ExecToErr("insert into t values (21,'black warlock'), (22, 'dark sloth'), (21,  'cyan song') on duplicate key update c_int = c_int + 1, c_string = concat(c_int, ':', c_string);")
+	c.Assert(kv.ErrKeyExists.Equal(err), IsTrue)
+	tk.MustExec("commit;")
+	tk.MustQuery("select * from t order by c_int;").Check(testutil.RowsWithSep("|", "21|silver sight", "22|gold witch", "24|gray singer"))
+	tk.MustExec("drop table t;")
 }
 
 func (s *testSuite4) TestReplace(c *C) {
@@ -1511,6 +1531,11 @@ func (s *testSuite8) TestUpdate(c *C) {
 	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
 
+	tk.MustExec("create sequence seq")
+	_, err = tk.Exec("update seq set minvalue=1")
+	c.Assert(err.Error(), Equals, "update sequence seq is not supported now.")
+	tk.MustExec("drop sequence seq")
+
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(a int, b int, c int, d int, e int, index idx(a))")
 	tk.MustExec("create table t2(a int, b int, c int)")
@@ -1811,6 +1836,11 @@ func (s *testSuite) TestDelete(c *C) {
 	_, err = tk.Exec("delete from v where name = 'aaa'")
 	c.Assert(err.Error(), Equals, core.ErrViewInvalid.GenWithStackByArgs("test", "v").Error())
 	tk.MustExec("drop view v")
+
+	tk.MustExec("create sequence seq")
+	_, err = tk.Exec("delete from seq")
+	c.Assert(err.Error(), Equals, "delete sequence seq is not supported now.")
+	tk.MustExec("drop sequence seq")
 }
 
 func (s *testSuite4) TestPartitionedTableDelete(c *C) {
@@ -1945,7 +1975,7 @@ func (s *testSuite8) TestLoadDataMissingColumn(c *C) {
 	c.Assert(ld, NotNil)
 
 	deleteSQL := "delete from load_data_missing"
-	selectSQL := "select * from load_data_missing;"
+	selectSQL := "select id, hour(t), minute(t) from load_data_missing;"
 	_, reachLimit, err := ld.InsertData(context.Background(), nil, nil)
 	c.Assert(err, IsNil)
 	c.Assert(reachLimit, IsFalse)
@@ -1953,17 +1983,20 @@ func (s *testSuite8) TestLoadDataMissingColumn(c *C) {
 	r.Check(nil)
 
 	curTime := types.CurrentTime(mysql.TypeTimestamp)
-	timeStr := curTime.String()
+	timeHour := curTime.Hour()
+	timeMinute := curTime.Minute()
 	tests := []testCase{
-		{nil, []byte("12\n"), []string{fmt.Sprintf("12|%v", timeStr)}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{nil, []byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 
 	tk.MustExec("alter table load_data_missing add column t2 timestamp null")
 	curTime = types.CurrentTime(mysql.TypeTimestamp)
-	timeStr = curTime.String()
+	timeHour = curTime.Hour()
+	timeMinute = curTime.Minute()
+	selectSQL = "select id, hour(t), minute(t), t2 from load_data_missing;"
 	tests = []testCase{
-		{nil, []byte("12\n"), []string{fmt.Sprintf("12|%v|<nil>", timeStr)}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{nil, []byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, nil, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}
 	checkCases(tests, ld, c, tk, ctx, selectSQL, deleteSQL)
 
@@ -2162,6 +2195,7 @@ func (s *testSuite4) TestLoadDataEscape(c *C) {
 		{nil, []byte("6\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'})}, nil, trivialMsg},
 		{nil, []byte("7\trtn0ZbN\n"), []string{"7|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
 		{nil, []byte("8\trtn0Zb\\N\n"), []string{"8|" + string([]byte{'r', 't', 'n', '0', 'Z', 'b', 'N'})}, nil, trivialMsg},
+		{nil, []byte("9\ttab\\	tab\n"), []string{"9|tab	tab"}, nil, trivialMsg},
 	}
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select * from load_data_test;"
@@ -2253,8 +2287,7 @@ func (s *testSuite4) TestLoadDataIntoPartitionedTable(c *C) {
 	c.Assert(err, IsNil)
 	ld.SetMaxRowsInBatch(20000)
 	ld.SetMessage()
-	err = ctx.StmtCommit(nil)
-	c.Assert(err, IsNil)
+	ctx.StmtCommit()
 	txn, err := ctx.Txn(true)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
@@ -2283,7 +2316,7 @@ func (s *testSuite4) TestNotNullDefault(c *C) {
 }
 
 func (s *testBypassSuite) TestLatch(c *C) {
-	store, err := mockstore.NewMockTikvStore(
+	store, err := mockstore.NewMockStore(
 		// Small latch slot size to make conflicts.
 		mockstore.WithTxnLocalLatches(64),
 	)
@@ -2552,7 +2585,7 @@ func (s *testSuite7) TestReplaceLog(c *C) {
 
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	_, err = indexOpr.Create(s.ctx, txn, types.MakeDatums(1), 1)
+	_, err = indexOpr.Create(s.ctx, txn.GetUnionStore(), types.MakeDatums(1), kv.IntHandle(1))
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
@@ -2792,4 +2825,45 @@ func (s *testSuite7) TestSetWithCurrentTimestampAndNow(c *C) {
 	tk.MustQuery("select c1 = c3 from t1").Check(testkit.Rows("1"))
 	tk.MustExec(`insert into t1 set c1 = current_timestamp, c2 = sleep(1);`)
 	tk.MustQuery("select c1 = c3 from t1").Check(testkit.Rows("1", "1"))
+}
+
+func (s *testSuite7) TestApplyWithPointAndBatchPointGet(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t ( c_int int, c_str varchar(40),c_datetime datetime, c_timestamp timestamp,
+c_double double, c_decimal decimal(12, 6) , primary key(c_int, c_str) , unique key(c_int) , unique key(c_str) ,
+unique key(c_decimal) , unique key(c_datetime) , key(c_timestamp) );`)
+	tk.MustExec(`insert into t values (1, 'zen ardinghelli', '2020-02-03 18:15:17', '2020-03-11 05:47:11', 36.226534, 3.763),
+(2, 'suspicious joliot', '2020-01-01 22:56:37', '2020-04-07 06:19:07', 62.756537, 5.567),
+(3, 'keen zhukovsky', '2020-01-21 04:09:20', '2020-06-06 08:32:14', 33.115065, 1.381),
+(4, 'crazy newton', '2020-02-14 21:37:56', '2020-04-28 08:33:48', 44.146318, 4.249),
+(5, 'happy black', '2020-03-12 16:04:14', '2020-01-18 09:17:37', 41.962653, 5.959);`)
+	tk.MustExec(`insert into t values (6, 'vigilant swartz', '2020-06-01 07:37:44', '2020-05-25 01:26:43', 56.352233, 2.202),
+(7, 'suspicious germain', '2020-04-16 23:25:23', '2020-03-17 05:06:57', 55.897698, 3.460),
+(8, 'festive chandrasekhar', '2020-02-11 23:40:29', '2020-04-08 10:13:04', 77.565691, 0.540),
+(9, 'vigorous meninsky', '2020-02-17 10:03:17', '2020-01-02 15:02:02', 6.484815, 6.292),
+(10, 'heuristic moser', '2020-04-20 12:18:49', '2020-06-20 20:20:18', 28.023822, 2.765);`)
+	tk.MustExec(`insert into t values (11, 'sharp carver', '2020-03-01 11:23:41', '2020-03-23 17:59:05', 40.842442, 6.345),
+(12, 'trusting noether', '2020-03-28 06:42:34', '2020-01-27 15:33:40', 49.544658, 4.811),
+(13, 'objective ishizaka', '2020-01-28 17:30:55', '2020-04-02 17:45:39', 59.523930, 5.015),
+(14, 'sad rhodes', '2020-03-30 21:43:37', '2020-06-09 06:53:53', 87.295753, 2.413),
+(15, 'wonderful shockley', '2020-04-29 09:17:11', '2020-03-14 04:36:51', 6.778588, 8.497);`)
+	tk.MustExec("begin pessimistic")
+	tk.MustExec(`insert into t values (13, 'vibrant yalow', '2020-05-15 06:59:05', '2020-05-03 05:58:45', 43.721929, 8.066),
+(14, 'xenodochial spence', '2020-02-13 17:28:07', '2020-04-01 12:18:30', 19.981331, 5.774),
+(22, 'eloquent neumann', '2020-02-10 16:00:20', '2020-03-28 00:24:42', 10.702532, 7.618)
+on duplicate key update c_int=values(c_int), c_str=values(c_str), c_double=values(c_double), c_timestamp=values(c_timestamp);`)
+	// Test pointGet.
+	tk.MustQuery(`select sum((select t1.c_str from t t1 where t1.c_int = 11 and t1.c_str > t.c_str order by t1.c_decimal limit 1) is null) nulls
+from t order by c_str;`).Check(testkit.Rows("10"))
+	// Test batchPointGet
+	tk.MustQuery(`select sum((select t1.c_str from t t1 where t1.c_int in (11, 10086) and t1.c_str > t.c_str order by t1.c_decimal limit 1) is null) nulls
+from t order by c_str;`).Check(testkit.Rows("10"))
+	tk.MustExec("commit")
+	tk.MustQuery(`select sum((select t1.c_str from t t1 where t1.c_int = 11 and t1.c_str > t.c_str order by t1.c_decimal limit 1) is null) nulls
+from t order by c_str;`).Check(testkit.Rows("10"))
+	// Test batchPointGet
+	tk.MustQuery(`select sum((select t1.c_str from t t1 where t1.c_int in (11, 10086) and t1.c_str > t.c_str order by t1.c_decimal limit 1) is null) nulls
+from t order by c_str;`).Check(testkit.Rows("10"))
 }

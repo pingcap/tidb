@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -57,10 +56,6 @@ type dagContext struct {
 
 func (h *rpcHandler) handleCopDAGRequest(req *coprocessor.Request) *coprocessor.Response {
 	resp := &coprocessor.Response{}
-	if err := h.checkRequestContext(req.GetContext()); err != nil {
-		resp.RegionError = err
-		return resp
-	}
 	dagCtx, e, dagReq, err := h.buildDAGExecutor(req)
 	if err != nil {
 		resp.OtherError = err.Error()
@@ -119,7 +114,12 @@ func (h *rpcHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		startTS:   req.StartTs,
 		evalCtx:   &evalContext{sc: sc},
 	}
-	e, err := h.buildDAG(ctx, dagReq.Executors)
+	var e executor
+	if len(dagReq.Executors) == 0 {
+		e, err = h.buildDAGForTiFlash(ctx, dagReq.RootExecutor)
+	} else {
+		e, err = h.buildDAG(ctx, dagReq.Executors)
+	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
@@ -147,9 +147,10 @@ func (h *rpcHandler) handleCopStream(ctx context.Context, req *coprocessor.Reque
 	}, nil
 }
 
-func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, error) {
+func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, *tipb.Executor, error) {
 	var currExec executor
 	var err error
+	var childExec *tipb.Executor
 	switch curr.GetTp() {
 	case tipb.ExecType_TypeTableScan:
 		currExec, err = h.buildTableScan(ctx, curr)
@@ -157,26 +158,46 @@ func (h *rpcHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, 
 		currExec, err = h.buildIndexScan(ctx, curr)
 	case tipb.ExecType_TypeSelection:
 		currExec, err = h.buildSelection(ctx, curr)
+		childExec = curr.Selection.Child
 	case tipb.ExecType_TypeAggregation:
 		currExec, err = h.buildHashAgg(ctx, curr)
+		childExec = curr.Aggregation.Child
 	case tipb.ExecType_TypeStreamAgg:
 		currExec, err = h.buildStreamAgg(ctx, curr)
+		childExec = curr.Aggregation.Child
 	case tipb.ExecType_TypeTopN:
 		currExec, err = h.buildTopN(ctx, curr)
+		childExec = curr.TopN.Child
 	case tipb.ExecType_TypeLimit:
 		currExec = &limitExec{limit: curr.Limit.GetLimit(), execDetail: new(execDetail)}
+		childExec = curr.Limit.Child
 	default:
 		// TODO: Support other types.
 		err = errors.Errorf("this exec type %v doesn't support yet.", curr.GetTp())
 	}
 
-	return currExec, errors.Trace(err)
+	return currExec, childExec, errors.Trace(err)
+}
+
+func (h *rpcHandler) buildDAGForTiFlash(ctx *dagContext, farther *tipb.Executor) (executor, error) {
+	curr, child, err := h.buildExec(ctx, farther)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if child != nil {
+		childExec, err := h.buildDAGForTiFlash(ctx, child)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		curr.SetSrcExec(childExec)
+	}
+	return curr, nil
 }
 
 func (h *rpcHandler) buildDAG(ctx *dagContext, executors []*tipb.Executor) (executor, error) {
 	var src executor
 	for i := 0; i < len(executors); i++ {
-		curr, err := h.buildExec(ctx, executors[i])
+		curr, _, err := h.buildExec(ctx, executors[i])
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -203,10 +224,8 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		col := columns[i]
 		colInfos[i] = rowcodec.ColInfo{
 			ID:         col.ColumnId,
-			Tp:         col.Tp,
-			Flag:       col.Flag,
+			Ft:         ctx.evalCtx.fieldTps[i],
 			IsPKHandle: col.GetPkHandle(),
-			Collate:    collate.CollationID2Name(col.Collation),
 		}
 	}
 	defVal := func(i int) ([]byte, error) {
@@ -220,7 +239,7 @@ func (h *rpcHandler) buildTableScan(ctx *dagContext, executor *tipb.Executor) (*
 		}
 		return col.DefaultVal, nil
 	}
-	rd := rowcodec.NewByteDecoder(colInfos, -1, defVal, nil)
+	rd := rowcodec.NewByteDecoder(colInfos, []int64{-1}, defVal, nil)
 	e := &tableScanExec{
 		TableScan:      executor.TblScan,
 		kvRanges:       ranges,
@@ -244,17 +263,16 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 	columns := executor.IdxScan.Columns
 	ctx.evalCtx.setColumnInfo(columns)
 	length := len(columns)
-	pkStatus := tablecodec.HandleNotExists
+	hdStatus := tablecodec.HandleNotNeeded
 	// The PKHandle column info has been collected in ctx.
 	if columns[length-1].GetPkHandle() {
 		if mysql.HasUnsignedFlag(uint(columns[length-1].GetFlag())) {
-			pkStatus = tablecodec.HandleIsUnsigned
+			hdStatus = tablecodec.HandleIsUnsigned
 		} else {
-			pkStatus = tablecodec.HandleIsSigned
+			hdStatus = tablecodec.HandleDefault
 		}
 		columns = columns[:length-1]
 	} else if columns[length-1].ColumnId == model.ExtraHandleID {
-		pkStatus = tablecodec.HandleIsSigned
 		columns = columns[:length-1]
 	}
 	ranges, err := h.extractKVRanges(ctx.keyRanges, executor.IdxScan.Desc)
@@ -271,10 +289,8 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		col := columns[i]
 		colInfos = append(colInfos, rowcodec.ColInfo{
 			ID:         col.ColumnId,
-			Tp:         col.Tp,
-			Flag:       col.Flag,
+			Ft:         ctx.evalCtx.fieldTps[i],
 			IsPKHandle: col.GetPkHandle(),
-			Collate:    collate.CollationID2Name(col.Collation),
 		})
 	}
 	e := &indexScanExec{
@@ -285,7 +301,7 @@ func (h *rpcHandler) buildIndexScan(ctx *dagContext, executor *tipb.Executor) (*
 		isolationLevel: h.isolationLevel,
 		resolvedLocks:  h.resolvedLocks,
 		mvccStore:      h.mvccStore,
-		hdStatus:       pkStatus,
+		hdStatus:       hdStatus,
 		execDetail:     new(execDetail),
 		colInfos:       colInfos,
 	}
@@ -468,7 +484,7 @@ func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
-	// TODO set FlagInUnionStmt,
+	// TODO set FlagInSetOprStmt,
 	return sc
 }
 
@@ -506,6 +522,42 @@ type mockCopStreamClient struct {
 	ctx      context.Context
 	dagCtx   *dagContext
 	finished bool
+}
+
+type mockBathCopErrClient struct {
+	mockClientStream
+
+	*errorpb.Error
+}
+
+func (mock *mockBathCopErrClient) Recv() (*coprocessor.BatchResponse, error) {
+	return &coprocessor.BatchResponse{
+		OtherError: mock.Error.Message,
+	}, nil
+}
+
+type mockBatchCopDataClient struct {
+	mockClientStream
+
+	chunks []tipb.Chunk
+	idx    int
+}
+
+func (mock *mockBatchCopDataClient) Recv() (*coprocessor.BatchResponse, error) {
+	if mock.idx < len(mock.chunks) {
+		res := tipb.SelectResponse{
+			Chunks: []tipb.Chunk{mock.chunks[mock.idx]},
+		}
+		raw, err := res.Marshal()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		mock.idx++
+		return &coprocessor.BatchResponse{
+			Data: raw,
+		}, nil
+	}
+	return nil, io.EOF
 }
 
 type mockCopStreamErrClient struct {
@@ -628,9 +680,6 @@ func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 	case tipb.EncodeType_TypeDefault:
 		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
 	case tipb.EncodeType_TypeChunk:
-		if dagReq.GetChunkMemoryLayout().GetEndian() != distsql.GetSystemEndian() {
-			return errors.Errorf("Mocktikv endian must be the same as TiDB system endian.")
-		}
 		colTypes := h.constructRespSchema(dagCtx)
 		loc := dagCtx.evalCtx.sc.TimeZone
 		err := h.encodeChunk(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
@@ -642,11 +691,13 @@ func (h *rpcHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 }
 
 func (h *rpcHandler) constructRespSchema(dagCtx *dagContext) []*types.FieldType {
-	root := dagCtx.dagReq.Executors[len(dagCtx.dagReq.Executors)-1]
-	agg := root.Aggregation
-	if root.StreamAgg != nil {
-		agg = root.StreamAgg
+	var root *tipb.Executor
+	if len(dagCtx.dagReq.Executors) == 0 {
+		root = dagCtx.dagReq.RootExecutor
+	} else {
+		root = dagCtx.dagReq.Executors[len(dagCtx.dagReq.Executors)-1]
 	}
+	agg := root.Aggregation
 	if agg == nil {
 		return dagCtx.evalCtx.fieldTps
 	}
@@ -791,8 +842,8 @@ func (h *rpcHandler) extractKVRanges(keyRanges []*coprocessor.KeyRange, descScan
 			break
 		}
 		var kvr kv.KeyRange
-		kvr.StartKey = kv.Key(maxStartKey(lowerKey, h.rawStartKey))
-		kvr.EndKey = kv.Key(minEndKey(upperKey, h.rawEndKey))
+		kvr.StartKey = maxStartKey(lowerKey, h.rawStartKey)
+		kvr.EndKey = minEndKey(upperKey, h.rawEndKey)
 		kvRanges = append(kvRanges, kvr)
 	}
 	if descScan {
@@ -820,15 +871,15 @@ func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
 }
 
 func maxStartKey(rangeStartKey kv.Key, regionStartKey []byte) []byte {
-	if bytes.Compare([]byte(rangeStartKey), regionStartKey) > 0 {
-		return []byte(rangeStartKey)
+	if bytes.Compare(rangeStartKey, regionStartKey) > 0 {
+		return rangeStartKey
 	}
 	return regionStartKey
 }
 
 func minEndKey(rangeEndKey kv.Key, regionEndKey []byte) []byte {
-	if len(regionEndKey) == 0 || bytes.Compare([]byte(rangeEndKey), regionEndKey) < 0 {
-		return []byte(rangeEndKey)
+	if len(regionEndKey) == 0 || bytes.Compare(rangeEndKey, regionEndKey) < 0 {
+		return rangeEndKey
 	}
 	return regionEndKey
 }

@@ -15,6 +15,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser"
@@ -29,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -117,6 +120,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderJoin(c *C) {
 	c.Assert(err, IsNil)
 	_, err = se.Execute(context.Background(), "use test")
 	c.Assert(err, IsNil)
+	ctx := se.(sessionctx.Context)
+	sessionVars := ctx.GetSessionVars()
+	sessionVars.ExecutorConcurrency = 4
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.SetHashJoinConcurrency(5)
 
 	var input []string
 	var output []struct {
@@ -154,8 +162,11 @@ func (s *testPlanSuite) TestDAGPlanBuilderSubquery(c *C) {
 	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
+	sessionVars.SetHashJoinConcurrency(5)
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.ExecutorConcurrency = 4
 	var input []string
 	var output []struct {
 		SQL  string
@@ -243,10 +254,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderBasePhysicalPlan(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Best = core.ToString(p)
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, Commentf("for %s", tt))
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, Commentf("for %s", tt))
+		c.Assert(hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, Commentf("for %s", tt))
 	}
 }
 
@@ -313,7 +324,7 @@ func (s *testPlanSuite) TestDAGPlanBuilderUnionScan(c *C) {
 		txn, err := se.Txn(true)
 		c.Assert(err, IsNil)
 		txn.Set(kv.Key("AAA"), []byte("BBB"))
-		c.Assert(se.StmtCommit(nil), IsNil)
+		se.StmtCommit()
 		p, _, err := planner.Optimize(context.TODO(), se, stmt, s.is)
 		c.Assert(err, IsNil)
 		s.testData.OnRecord(func() {
@@ -338,8 +349,10 @@ func (s *testPlanSuite) TestDAGPlanBuilderAgg(c *C) {
 	se.Execute(context.Background(), "set sql_mode='STRICT_TRANS_TABLES'") // disable only full group by
 	ctx := se.(sessionctx.Context)
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
+	sessionVars.SetDistSQLScanConcurrency(15)
+	sessionVars.ExecutorConcurrency = 4
 
 	var input []string
 	var output []struct {
@@ -486,6 +499,9 @@ func (s *testPlanSuite) TestIndexJoinUnionScan(c *C) {
 	}
 	tk.MustExec("create table t (a int primary key, b int, index idx(a))")
 	tk.MustExec("create table tt (a int primary key) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200))")
+
+	tk.MustExec("set @try_old_partition_implementation = 1")
+
 	s.testData.GetTestCases(c, &input, &output)
 	for i, ts := range input {
 		tk.MustExec("begin")
@@ -709,7 +725,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 			if len(warnings) > 0 {
 				output[i].Warning = warnings[0].Err.Error()
 			}
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best)
 		if output[i].Warning == "" {
@@ -719,7 +735,7 @@ func (s *testPlanSuite) TestJoinHints(c *C) {
 			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning)
 			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning)
 		}
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+		c.Assert(hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -737,8 +753,8 @@ func (s *testPlanSuite) TestAggregationHints(c *C) {
 	c.Assert(err, IsNil)
 
 	sessionVars := se.(sessionctx.Context).GetSessionVars()
-	sessionVars.HashAggFinalConcurrency = 1
-	sessionVars.HashAggPartialConcurrency = 1
+	sessionVars.SetHashAggFinalConcurrency(1)
+	sessionVars.SetHashAggPartialConcurrency(1)
 
 	var input []struct {
 		SQL         string
@@ -842,6 +858,157 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestPushdownDistinctEnable(c *C) {
+	defer testleak.AfterTest(c)()
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
+		"set session tidb_opt_agg_push_down = 1",
+	}
+	s.doTestPushdownDistinct(c, vars, input, output)
+}
+
+func (s *testPlanSuite) TestPushdownDistinctDisable(c *C) {
+	defer testleak.AfterTest(c)()
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		fmt.Sprintf("set @@session.%s = 0", variable.TiDBOptDistinctAggPushDown),
+		"set session tidb_opt_agg_push_down = 1",
+	}
+	s.doTestPushdownDistinct(c, vars, input, output)
+}
+
+func (s *testPlanSuite) TestPushdownDistinctEnableAggPushDownDisable(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	vars := []string{
+		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
+		"set session tidb_opt_agg_push_down = 0",
+	}
+	s.doTestPushdownDistinct(c, vars, input, output)
+}
+
+func (s *testPlanSuite) doTestPushdownDistinct(c *C, vars, input []string, output []struct {
+	SQL    string
+	Plan   []string
+	Result []string
+}) {
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index(c))")
+	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 3), (1, 2, 3), (2, 1, 3), (1, 2, NULL);")
+
+	tk.MustExec("drop table if exists pt")
+	tk.MustExec(`CREATE TABLE pt (a int, b int) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (2),
+		PARTITION p1 VALUES LESS THAN (100)
+	);`)
+
+	tk.MustExec("drop table if exists ta")
+	tk.MustExec("create table ta(a int);")
+	tk.MustExec("insert into ta values(1), (1);")
+	tk.MustExec("drop table if exists tb")
+	tk.MustExec("create table tb(a int);")
+	tk.MustExec("insert into tb values(1), (1);")
+
+	tk.MustExec("set session sql_mode=''")
+	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggPartialConcurrency))
+	tk.MustExec(fmt.Sprintf("set session %s=1", variable.TiDBHashAggFinalConcurrency))
+
+	tk.MustExec("set @try_old_partition_implementation = 1")
+
+	for _, v := range vars {
+		tk.MustExec(v)
+	}
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
+	}
+}
+
+func (s *testPlanSuite) TestGroupConcatOrderby(c *C) {
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	s.testData.GetTestCases(c, &input, &output)
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test;")
+	tk.MustExec("create table test(id int, name int)")
+	tk.MustExec("insert into test values(1, 10);")
+	tk.MustExec("insert into test values(1, 20);")
+	tk.MustExec("insert into test values(1, 30);")
+	tk.MustExec("insert into test values(2, 20);")
+	tk.MustExec("insert into test values(3, 200);")
+	tk.MustExec("insert into test values(3, 500);")
+
+	tk.MustExec("drop table if exists ptest;")
+	tk.MustExec("CREATE TABLE ptest (id int,name int) PARTITION BY RANGE ( id ) " +
+		"(PARTITION `p0` VALUES LESS THAN (2), PARTITION `p1` VALUES LESS THAN (11))")
+	tk.MustExec("insert into ptest select * from test;")
+	tk.MustExec(fmt.Sprintf("set session tidb_opt_distinct_agg_push_down = %v", 1))
+	tk.MustExec(fmt.Sprintf("set session tidb_opt_agg_push_down = %v", 1))
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
 func (s *testPlanSuite) TestHintAlias(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
@@ -924,7 +1091,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 			output[i].SQL = test
 			output[i].Best = core.ToString(p)
 			output[i].HasWarn = len(se.GetSessionVars().StmtCtx.GetWarnings()) > 0
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -933,7 +1100,7 @@ func (s *testPlanSuite) TestIndexHint(c *C) {
 		} else {
 			c.Assert(warnings, HasLen, 0, comment)
 		}
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+		c.Assert(hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -973,7 +1140,7 @@ func (s *testPlanSuite) TestIndexMergeHint(c *C) {
 			output[i].SQL = test
 			output[i].Best = core.ToString(p)
 			output[i].HasWarn = len(se.GetSessionVars().StmtCtx.GetWarnings()) > 0
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Best, comment)
 		warnings := se.GetSessionVars().StmtCtx.GetWarnings()
@@ -982,7 +1149,7 @@ func (s *testPlanSuite) TestIndexMergeHint(c *C) {
 		} else {
 			c.Assert(warnings, HasLen, 0, comment)
 		}
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+		c.Assert(hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -1017,10 +1184,10 @@ func (s *testPlanSuite) TestQueryBlockHint(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = core.ToString(p)
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+		c.Assert(hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -1062,10 +1229,10 @@ func (s *testPlanSuite) TestInlineProjection(c *C) {
 		s.testData.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Plan = core.ToString(p)
-			output[i].Hints = core.GenHintsFromPhysicalPlan(p)
+			output[i].Hints = hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p))
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
-		c.Assert(core.GenHintsFromPhysicalPlan(p), Equals, output[i].Hints, comment)
+		c.Assert(hint.RestoreOptimizerHints(core.GenHintsFromPhysicalPlan(p)), Equals, output[i].Hints, comment)
 	}
 }
 
@@ -1152,11 +1319,13 @@ func (s *testPlanSuite) TestIndexJoinHint(c *C) {
 	ctx := context.Background()
 	_, err = se.Execute(ctx, "use test")
 	c.Assert(err, IsNil)
-	_, err = se.Execute(ctx, `drop table if exists test.t1, test.t2;`)
+	_, err = se.Execute(ctx, `drop table if exists test.t1, test.t2, test.t;`)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(ctx, `create table test.t1(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
 	c.Assert(err, IsNil)
 	_, err = se.Execute(ctx, `create table test.t2(a bigint, b bigint, index idx_a(a), index idx_b(b));`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, "CREATE TABLE `t` ( `a` bigint(20) NOT NULL, `b` tinyint(1) DEFAULT NULL, `c` datetime DEFAULT NULL, `d` int(10) unsigned DEFAULT NULL, `e` varchar(20) DEFAULT NULL, `f` double DEFAULT NULL, `g` decimal(30,5) DEFAULT NULL, `h` float DEFAULT NULL, `i` date DEFAULT NULL, `j` timestamp NULL DEFAULT NULL, PRIMARY KEY (`a`), UNIQUE KEY `b` (`b`), KEY `c` (`c`,`d`,`e`), KEY `f` (`f`), KEY `g` (`g`,`h`), KEY `g_2` (`g`), UNIQUE KEY `g_3` (`g`), KEY `i` (`i`) );")
 	c.Assert(err, IsNil)
 	var input []string
 	var output []struct {
@@ -1324,4 +1493,49 @@ func (s *testPlanSuite) TestHintFromDiffDatabase(c *C) {
 		})
 		c.Assert(core.ToString(p), Equals, output[i].Plan, comment)
 	}
+}
+
+func (s *testPlanSuite) TestNthPlanHintWithExplain(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	ctx := context.Background()
+	_, err = se.Execute(ctx, "use test")
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `drop table if exists test.tt`)
+	c.Assert(err, IsNil)
+	_, err = se.Execute(ctx, `create table test.tt (a int,b int, index(a), index(b));`)
+	c.Assert(err, IsNil)
+
+	_, err = se.Execute(ctx, "insert into tt values (1, 1), (2, 2), (3, 4)")
+	c.Assert(err, IsNil)
+
+	tk.MustExec("set @try_old_partition_implementation = 1")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+
+	// This assert makes sure a query with or without nth_plan() hint output exactly the same plan(including plan ID).
+	// The query below is the same as queries in the testdata except for nth_plan() hint.
+	// Currently its output is the same as the second test case in the testdata, which is `output[1]`. If this doesn't
+	// hold in the future, you may need to modify this.
+	tk.MustQuery("explain select * from test.tt where a=1 and b=1").Check(testkit.Rows(output[1].Plan...))
 }

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // For gofail injection.
@@ -158,6 +159,15 @@ type rpcHandler struct {
 	resolvedLocks  []uint64
 }
 
+func isTiFlashStore(store *metapb.Store) bool {
+	for _, l := range store.GetLabels() {
+		if l.GetKey() == "engine" && l.GetValue() == "tiflash" {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 	ctxPeer := ctx.GetPeer()
 	if ctxPeer != nil && ctxPeer.GetStoreId() != h.storeID {
@@ -203,8 +213,8 @@ func (h *rpcHandler) checkRequestContext(ctx *kvrpcpb.Context) *errorpb.Error {
 			},
 		}
 	}
-	// The Peer on the Store is not leader.
-	if storePeer.GetId() != leaderPeer.GetId() {
+	// The Peer on the Store is not leader. If it's tiflash store , we pass this check.
+	if storePeer.GetId() != leaderPeer.GetId() && !isTiFlashStore(h.cluster.GetStore(storePeer.GetStoreId())) {
 		return &errorpb.Error{
 			Message: *proto.String("not leader"),
 			NotLeader: &errorpb.NotLeader{
@@ -252,7 +262,7 @@ func (h *rpcHandler) checkRequest(ctx *kvrpcpb.Context, size int) *errorpb.Error
 }
 
 func (h *rpcHandler) checkKeyInRegion(key []byte) bool {
-	return regionContains(h.startKey, h.endKey, []byte(NewMvccKey(key)))
+	return regionContains(h.startKey, h.endKey, NewMvccKey(key))
 }
 
 func (h *rpcHandler) handleKvGet(req *kvrpcpb.GetRequest) *kvrpcpb.GetResponse {
@@ -663,6 +673,44 @@ func (h *rpcHandler) handleSplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb
 	return resp
 }
 
+func drainRowsFromExecutor(ctx context.Context, e executor, req *tipb.DAGRequest) (tipb.Chunk, error) {
+	var chunk tipb.Chunk
+	for {
+		row, err := e.Next(ctx)
+		if err != nil {
+			return chunk, errors.Trace(err)
+		}
+		if row == nil {
+			return chunk, nil
+		}
+		for _, offset := range req.OutputOffsets {
+			chunk.RowsData = append(chunk.RowsData, row[offset]...)
+		}
+	}
+}
+
+func (h *rpcHandler) handleBatchCopRequest(ctx context.Context, req *coprocessor.BatchRequest) (*mockBatchCopDataClient, error) {
+	client := &mockBatchCopDataClient{}
+	for _, ri := range req.Regions {
+		cop := coprocessor.Request{
+			Tp:      kv.ReqTypeDAG,
+			Data:    req.Data,
+			StartTs: req.StartTs,
+			Ranges:  ri.Ranges,
+		}
+		_, exec, dagReq, err := h.buildDAGExecutor(&cop)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		chunk, err := drainRowsFromExecutor(ctx, exec, dagReq)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		client.chunks = append(client.chunks, chunk)
+	}
+	return client, nil
+}
+
 // Client is a client that sends RPC.
 // This is same with tikv.Client, define again for avoid circle import.
 type Client interface {
@@ -765,6 +813,10 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}))
 		}
 	})
+
+	// increase coverage for mock tikv
+	_ = req.Type.String()
+	_ = req.ToBatchCommandsRequest()
 
 	reqCtx := &req.Context
 	resp := &tikvrpc.Response{}
@@ -998,6 +1050,45 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			panic(fmt.Sprintf("unknown coprocessor request type: %v", r.GetTp()))
 		}
 		resp.Resp = res
+	case tikvrpc.CmdBatchCop:
+		failpoint.Inject("BatchCopCancelled", func(value failpoint.Value) {
+			if value.(bool) {
+				failpoint.Return(nil, context.Canceled)
+			}
+		})
+
+		failpoint.Inject("BatchCopRpcErr"+addr, func(value failpoint.Value) {
+			if value.(string) == addr {
+				failpoint.Return(nil, errors.New("rpc error"))
+			}
+		})
+		r := req.BatchCop()
+		if err := handler.checkRequestContext(reqCtx); err != nil {
+			resp.Resp = &tikvrpc.BatchCopStreamResponse{
+				Tikv_BatchCoprocessorClient: &mockBathCopErrClient{Error: err},
+				BatchResponse: &coprocessor.BatchResponse{
+					OtherError: err.Message,
+				},
+			}
+			return resp, nil
+		}
+		ctx1, cancel := context.WithCancel(ctx)
+		batchCopStream, err := handler.handleBatchCopRequest(ctx1, r)
+		if err != nil {
+			cancel()
+			return nil, errors.Trace(err)
+		}
+		batchResp := &tikvrpc.BatchCopStreamResponse{Tikv_BatchCoprocessorClient: batchCopStream}
+		batchResp.Lease.Cancel = cancel
+		batchResp.Timeout = timeout
+		c.streamTimeout <- &batchResp.Lease
+
+		first, err := batchResp.Recv()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		batchResp.BatchResponse = first
+		resp.Resp = batchResp
 	case tikvrpc.CmdCopStream:
 		r := req.Cop()
 		if err := handler.checkRequestContext(reqCtx); err != nil {

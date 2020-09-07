@@ -34,7 +34,7 @@ type testMemoryLeak struct {
 
 func (s *testMemoryLeak) SetUpSuite(c *C) {
 	var err error
-	s.store, err = mockstore.NewMockTikvStore()
+	s.store, err = mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	s.domain, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)

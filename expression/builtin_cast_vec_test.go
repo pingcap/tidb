@@ -21,8 +21,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 var vecBuiltinCastCases = map[string][]vecExprBenchCase{
@@ -121,7 +124,7 @@ type randJSONDuration struct{}
 
 func (g *randJSONDuration) gen() interface{} {
 	d := types.Duration{
-		Duration: time.Duration(time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond),
+		Duration: time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond,
 		Fsp:      3}
 	return json.CreateBinary(d.String())
 }
@@ -150,6 +153,99 @@ func (s *testEvaluatorSuite) TestVectorizedBuiltinCastEvalOneVec(c *C) {
 
 func (s *testEvaluatorSuite) TestVectorizedBuiltinCastFunc(c *C) {
 	testVectorizedBuiltinFunc(c, vecBuiltinCastCases)
+}
+
+func (s *testEvaluatorSuite) TestVectorizedCastRealAsTime(c *C) {
+	col := &Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}
+	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
+	if err != nil {
+		panic(err)
+	}
+	cast := &builtinCastRealAsTimeSig{baseFunc}
+
+	inputs := []*chunk.Chunk{
+		genCastRealAsTime(),
+	}
+
+	for _, input := range inputs {
+		result := chunk.NewColumn(types.NewFieldType(mysql.TypeDatetime), input.NumRows())
+		c.Assert(cast.vecEvalTime(input, result), IsNil)
+		for i := 0; i < input.NumRows(); i++ {
+			res, isNull, err := cast.evalTime(input.GetRow(i))
+			c.Assert(err, IsNil)
+			if isNull {
+				c.Assert(result.IsNull(i), IsTrue)
+				continue
+			}
+			c.Assert(result.IsNull(i), IsFalse)
+			c.Assert(result.GetTime(i).Compare(res), Equals, 0)
+		}
+	}
+}
+
+func genCastRealAsTime() *chunk.Chunk {
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 10)
+	gen := newDefaultRandGen()
+	for i := 0; i < 10; i++ {
+		if i < 5 {
+			input.AppendFloat64(0, 0)
+		} else {
+			input.AppendFloat64(0, gen.Float64()*100000)
+		}
+	}
+	return input
+}
+
+// for issue https://github.com/pingcap/tidb/issues/16825
+func (s *testEvaluatorSuite) TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(c *C) {
+	col := &Column{RetType: types.NewFieldType(mysql.TypeString), Index: 0}
+	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, 0)
+	if err != nil {
+		panic(err)
+	}
+	// set `inUnion` to `true`
+	baseCast := newBaseBuiltinCastFunc(baseFunc, true)
+	baseCast.tp = types.NewFieldType(mysql.TypeNewDecimal)
+	// set the `UnsignedFlag` bit
+	baseCast.tp.Flag |= mysql.UnsignedFlag
+	cast := &builtinCastStringAsDecimalSig{baseCast}
+
+	inputs := []*chunk.Chunk{
+		genCastStringAsDecimal(false),
+		genCastStringAsDecimal(true),
+	}
+
+	for _, input := range inputs {
+		result := chunk.NewColumn(types.NewFieldType(mysql.TypeNewDecimal), input.NumRows())
+		c.Assert(cast.vecEvalDecimal(input, result), IsNil)
+		for i := 0; i < input.NumRows(); i++ {
+			res, isNull, err := cast.evalDecimal(input.GetRow(i))
+			c.Assert(isNull, IsFalse)
+			c.Assert(err, IsNil)
+			c.Assert(result.GetDecimal(i).Compare(res), Equals, 0)
+		}
+	}
+}
+
+func genCastStringAsDecimal(isNegative bool) *chunk.Chunk {
+	var sign float64
+	if isNegative {
+		sign = -1
+	} else {
+		sign = 1
+	}
+
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 1024)
+	for i := 0; i < 1024; i++ {
+		d := new(types.MyDecimal)
+		f := sign * rand.Float64() * 100000
+		if err := d.FromFloat64(f); err != nil {
+			panic(err)
+		}
+		input.AppendString(0, d.String())
+	}
+
+	return input
 }
 
 func BenchmarkVectorizedBuiltinCastEvalOneVec(b *testing.B) {

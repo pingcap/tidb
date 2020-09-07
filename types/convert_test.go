@@ -197,7 +197,7 @@ func (s *testTypeConvertSuite) TestConvertType(c *C) {
 	c.Assert(v, Equals, uint64(100))
 	// issue 3470
 	ft = NewFieldType(mysql.TypeLonglong)
-	v, err = Convert(Duration{Duration: time.Duration(12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond), Fsp: 3}, ft)
+	v, err = Convert(Duration{Duration: 12*time.Hour + 59*time.Minute + 59*time.Second + 555*time.Millisecond, Fsp: 3}, ft)
 	c.Assert(err, IsNil)
 	c.Assert(v, Equals, int64(130000))
 	v, err = Convert(NewTime(FromDate(2017, 1, 1, 12, 59, 59, 555000), mysql.TypeDatetime, MaxFsp), ft)
@@ -317,7 +317,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 	testToString(c, "0", "0")
 	testToString(c, true, "1")
 	testToString(c, "false", "false")
-	testToString(c, int(0), "0")
+	testToString(c, 0, "0")
 	testToString(c, int64(0), "0")
 	testToString(c, uint64(0), "0")
 	testToString(c, float32(1.6), "1.6")
@@ -381,7 +381,7 @@ func (s *testTypeConvertSuite) TestConvertToString(c *C) {
 func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
-	val, err := StrToInt(sc, str)
+	val, err := StrToInt(sc, str, false)
 	if expectErr != nil {
 		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
@@ -393,7 +393,7 @@ func testStrToInt(c *C, str string, expect int64, truncateAsErr bool, expectErr 
 func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
-	val, err := StrToUint(sc, str)
+	val, err := StrToUint(sc, str, false)
 	if expectErr != nil {
 		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
@@ -405,7 +405,7 @@ func testStrToUint(c *C, str string, expect uint64, truncateAsErr bool, expectEr
 func testStrToFloat(c *C, str string, expect float64, truncateAsErr bool, expectErr error) {
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = !truncateAsErr
-	val, err := StrToFloat(sc, str)
+	val, err := StrToFloat(sc, str, false)
 	if expectErr != nil {
 		c.Assert(terror.ErrorEqual(err, expectErr), IsTrue, Commentf("err %v", err))
 	} else {
@@ -479,15 +479,15 @@ func testSelectUpdateDeleteEmptyStringError(c *C) {
 		str := ""
 		expect := 0
 
-		val, err := StrToInt(sc, str)
+		val, err := StrToInt(sc, str, false)
 		c.Assert(err, IsNil)
 		c.Assert(val, Equals, int64(expect))
 
-		val1, err := StrToUint(sc, str)
+		val1, err := StrToUint(sc, str, false)
 		c.Assert(err, IsNil)
 		c.Assert(val1, Equals, uint64(expect))
 
-		val2, err := StrToFloat(sc, str)
+		val2, err := StrToFloat(sc, str, false)
 		c.Assert(err, IsNil)
 		c.Assert(val2, Equals, float64(expect))
 	}
@@ -663,7 +663,7 @@ func (s *testTypeConvertSuite) TestConvert(c *C) {
 	signedAccept(c, mysql.TypeFloat, "23.523", "23.523")
 	signedAccept(c, mysql.TypeFloat, int64(123), "123")
 	signedAccept(c, mysql.TypeFloat, uint64(123), "123")
-	signedAccept(c, mysql.TypeFloat, int(123), "123")
+	signedAccept(c, mysql.TypeFloat, 123, "123")
 	signedAccept(c, mysql.TypeFloat, float32(123), "123")
 	signedAccept(c, mysql.TypeFloat, float64(123), "123")
 	signedAccept(c, mysql.TypeDouble, " -23.54", "-23.54")
@@ -764,11 +764,11 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 		{"-1-1", "-1", true, true},
 		{"+1+1", "+1", true, true},
 		{"123..34", "123", true, true},
-		{"123.23E-10", "123", true, true},
-		{"1.1e1.3", "1", true, true},
-		{"11e1.3", "11", true, true},
-		{"1.", "1", true, true},
-		{".1", "0", true, true},
+		{"123.23E-10", "0", true, false},
+		{"1.1e1.3", "11", true, true},
+		{"11e1.3", "110", true, true},
+		{"1.", "1", true, false},
+		{".1", "0", true, false},
 		{"", "0", true, true},
 		{"123e+", "123", true, true},
 		{"123de", "123", true, true},
@@ -777,8 +777,8 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	sc.TruncateAsWarning = true
 	sc.InSelectStmt = true
 	warningCount := 0
-	for _, tt := range tests {
-		prefix, err := getValidIntPrefix(sc, tt.origin)
+	for i, tt := range tests {
+		prefix, err := getValidIntPrefix(sc, tt.origin, false)
 		c.Assert(err, IsNil)
 		c.Assert(prefix, Equals, tt.valid)
 		if tt.signed {
@@ -789,7 +789,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 		c.Assert(err, IsNil)
 		warnings := sc.GetWarnings()
 		if tt.warning {
-			c.Assert(warnings, HasLen, warningCount+1)
+			c.Assert(warnings, HasLen, warningCount+1, Commentf("%d", i))
 			c.Assert(terror.ErrorEqual(warnings[len(warnings)-1].Err, ErrTruncatedWrongVal), IsTrue)
 			warningCount += 1
 		} else {
@@ -820,7 +820,7 @@ func (s *testTypeConvertSuite) TestGetValidInt(c *C) {
 	sc.TruncateAsWarning = false
 	sc.InSelectStmt = false
 	for _, tt := range tests2 {
-		prefix, err := getValidIntPrefix(sc, tt.origin)
+		prefix, err := getValidIntPrefix(sc, tt.origin, false)
 		if tt.warning {
 			c.Assert(terror.ErrorEqual(err, ErrTruncatedWrongVal), IsTrue)
 		} else {
@@ -854,7 +854,7 @@ func (s *testTypeConvertSuite) TestGetValidFloat(c *C) {
 	}
 	sc := new(stmtctx.StatementContext)
 	for _, tt := range tests {
-		prefix, _ := getValidFloatPrefix(sc, tt.origin)
+		prefix, _ := getValidFloatPrefix(sc, tt.origin, false)
 		c.Assert(prefix, Equals, tt.valid)
 		_, err := strconv.ParseFloat(prefix, 64)
 		c.Assert(err, IsNil)
