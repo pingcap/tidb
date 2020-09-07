@@ -25,6 +25,7 @@ import (
 )
 
 const (
+	// DefPartialResult4JsonObjectAgg is the size of partialResult4JsonObject
 	DefPartialResult4JsonObjectAgg = int64(unsafe.Sizeof(partialResult4JsonObjectAgg{}))
 )
 
