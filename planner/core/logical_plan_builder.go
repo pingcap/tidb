@@ -3794,12 +3794,32 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	proj.names = p.OutputNames()[:oldLen]
 	p = proj
 
+	handleColsMap := b.handleHelper.tailMap()
+	for _, cols := range handleColsMap {
+		for _, col := range cols {
+			for i := 0; i < col.NumCols(); i++ {
+				exprCol := col.GetCol(i)
+				if proj.Schema().Contains(exprCol) {
+					continue
+				}
+				proj.Exprs = append(proj.Exprs, exprCol)
+				proj.Schema().Columns = append(proj.Schema().Columns, exprCol)
+				proj.names = append(proj.names, types.EmptyName)
+			}
+		}
+	}
+
 	del := Delete{
 		IsMultiTable: delete.IsMultiTable,
 	}.Init(b.ctx)
 
 	del.names = p.OutputNames()
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
+	if err != nil {
+		return nil, err
+	}
+
+	tblID2Handle, err := resolveIndicesForTblID2Handle(handleColsMap, del.SelectPlan.Schema())
 	if err != nil {
 		return nil, err
 	}
@@ -3864,11 +3884,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", nil)
 		}
-	}
-
-	tblID2Handle, err := resolveIndicesForTblID2Handle(b.handleHelper.tailMap(), del.SelectPlan.Schema())
-	if err != nil {
-		return nil, err
 	}
 	if del.IsMultiTable {
 		// tblID2TableName is the table map value is an array which contains table aliases.
