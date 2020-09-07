@@ -745,6 +745,7 @@ var tokenMap = map[string]int{
 	"YEAR_MONTH":               yearMonth,
 	"YEAR":                     yearType,
 	"ZEROFILL":                 zerofill,
+	"WAIT":                     wait,
 }
 
 // See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details
