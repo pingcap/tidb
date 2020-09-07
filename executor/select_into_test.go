@@ -179,6 +179,39 @@ func (s *testSuite1) TestDeliminators(c *C) {
 	tk.MustExec(fmt.Sprintf("select * from `tx` into outfile %q FIELDS TERMINATED BY ',' ENCLOSED BY '\"' escaped by '\t' LINES TERMINATED BY '\\n'", outfile))
 	// enclosed by character & escaped by characters should be escaped, no matter what
 	cmpAndRm("\"a\t\tb\",\"1\"\n", outfile, c)
+
+	tk.MustExec("delete from tx")
+	tk.MustExec(`insert into tx values ('d","e",', 1)`)
+	tk.MustExec(`insert into tx values (unhex("00"), 2)`)
+	tk.MustExec(`insert into tx values ("\r\n\b\Z\t", 3)`)
+	tk.MustExec(`insert into tx values (null, 4)`)
+	tk.MustExec(fmt.Sprintf("select * from `tx` into outfile %q FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES TERMINATED BY '\\n'", outfile))
+	// line terminator will be escaped
+	cmpAndRm("\"d\\\",\\\"e\\\",\",\"1\"\n"+"\"\\0\",\"2\"\n"+"\"\r\\\n\b\032\t\",\"3\"\n"+"\\N,\"4\"\n", outfile, c)
+
+	tk.MustExec("create table tb (s char(10), b bit(48), bb blob(6))")
+	tk.MustExec("insert into tb values ('\\0\\b\\n\\r\\t\\Z', _binary '\\0\\b\\n\\r\\t\\Z', unhex('00080A0D091A'))")
+	tk.MustExec(fmt.Sprintf("select * from tb into outfile %q", outfile))
+	// bit type won't be escaped (verified on MySQL)
+	cmpAndRm("\\0\b\\\n\r\\\t\032\t"+"\000\b\n\r\t\032\t"+"\\0\b\\\n\r\\\t\032\n", outfile, c)
+
+	tk.MustExec("create table zero (a varchar(10), b varchar(10), c varchar(10))")
+	tk.MustExec("insert into zero values (unhex('00'), _binary '\\0', '\\0')")
+	tk.MustExec(fmt.Sprintf("select * from zero into outfile %q", outfile))
+	// zero will always be escaped
+	cmpAndRm("\\0\t\\0\t\\0\n", outfile, c)
+	tk.MustExec(fmt.Sprintf("select * from zero into outfile %q fields enclosed by '\"'", outfile))
+	// zero will always be escaped, including when being enclosed
+	cmpAndRm("\"\\0\"\t\"\\0\"\t\"\\0\"\n", outfile, c)
+
+	tk.MustExec("create table tt (a char(10), b char(10), c char(10))")
+	tk.MustExec("insert into tt values ('abcd', 'abcd', 'abcd')")
+	tk.MustExec(fmt.Sprintf("select * from tt into outfile %q fields terminated by 'a-' lines terminated by 'b--'", outfile))
+	// when not escaped, the first character of both terminators will be escaped
+	cmpAndRm("\\a\\bcda-\\a\\bcda-\\a\\bcdb--", outfile, c)
+	tk.MustExec(fmt.Sprintf("select * from tt into outfile %q fields terminated by 'a-' enclosed by '\"' lines terminated by 'b--'", outfile))
+	// when escaped, only line terminator's first character will be escaped
+	cmpAndRm("\"a\\bcd\"a-\"a\\bcd\"a-\"a\\bcd\"b--", outfile, c)
 }
 
 func (s *testSuite1) TestDumpReal(c *C) {

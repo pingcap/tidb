@@ -37,6 +37,7 @@ type SelectIntoExec struct {
 	realBuf   []byte
 	fieldBuf  []byte
 	escapeBuf []byte
+	enclosed  bool
 	writer    *bufio.Writer
 	dstFile   *os.File
 	chk       *chunk.Chunk
@@ -87,13 +88,27 @@ func (s *SelectIntoExec) considerEncloseOpt(et types.EvalType) bool {
 }
 
 func (s *SelectIntoExec) escapeField(f []byte) []byte {
+	if s.intoOpt.FieldsInfo.Escaped == 0 {
+		return f
+	}
 	s.escapeBuf = s.escapeBuf[:0]
+	escape := func() {
+		s.escapeBuf = append(s.escapeBuf, s.intoOpt.FieldsInfo.Escaped)
+	}
 	for _, b := range f {
-		switch b {
-		case 0:
-			break // we will never escape 0, because escaped by and enclosed by character can't be 0
-		case s.intoOpt.FieldsInfo.Escaped, s.intoOpt.FieldsInfo.Enclosed:
-			s.escapeBuf = append(s.escapeBuf, s.intoOpt.FieldsInfo.Escaped)
+		switch {
+		case b == 0:
+			// we always escape 0
+			escape()
+			b = '0'
+		case b == s.intoOpt.FieldsInfo.Escaped || b == s.intoOpt.FieldsInfo.Enclosed:
+			escape()
+		case !s.enclosed && len(s.intoOpt.FieldsInfo.Terminated) > 0 && b == s.intoOpt.FieldsInfo.Terminated[0]:
+			// if field is enclosed, we only escape line terminator, otherwise both field and line terminator will be escaped
+			escape()
+		case len(s.intoOpt.LinesInfo.Terminated) > 0 && b == s.intoOpt.LinesInfo.Terminated[0]:
+			// we always escape line terminator
+			escape()
 		}
 		s.escapeBuf = append(s.escapeBuf, b)
 	}
@@ -140,6 +155,9 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 			if (encloseFlag && !encloseOpt) ||
 				(encloseFlag && encloseOpt && s.considerEncloseOpt(et)) {
 				s.lineBuf = append(s.lineBuf, encloseByte)
+				s.enclosed = true
+			} else {
+				s.enclosed = false
 			}
 			s.fieldBuf = s.fieldBuf[:0]
 			switch col.GetType().Tp {
@@ -155,9 +173,12 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				s.realBuf, s.fieldBuf = DumpRealOutfile(s.realBuf, s.fieldBuf, row.GetFloat64(j), col.RetType)
 			case mysql.TypeNewDecimal:
 				s.fieldBuf = append(s.fieldBuf, row.GetMyDecimal(j).String()...)
-			case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
+			case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
 				mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 				s.fieldBuf = append(s.fieldBuf, row.GetBytes(j)...)
+			case mysql.TypeBit:
+				// bit value won't be escaped anyway (verified on MySQL, test case added)
+				s.lineBuf = append(s.lineBuf, row.GetBytes(j)...)
 			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 				s.fieldBuf = append(s.fieldBuf, row.GetTime(j).String()...)
 			case mysql.TypeDuration:
