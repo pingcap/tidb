@@ -1385,7 +1385,8 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 //                              +-------------+
 type UnionExec struct {
 	baseExecutor
-	childChan chan int
+	concurrency int
+	childIDChan chan int
 
 	stopFetchData atomic.Value
 
@@ -1393,7 +1394,6 @@ type UnionExec struct {
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
 
-	concurrency   int
 	workerResults []*chunk.Chunk
 	wg            sync.WaitGroup
 	initialized   bool
@@ -1432,7 +1432,7 @@ func (e *UnionExec) initialize(ctx context.Context) {
 	}
 	e.resultPool = make(chan *unionWorkerResult, e.concurrency)
 	e.resourcePools = make([]chan *chunk.Chunk, e.concurrency)
-	e.childChan = make(chan int, len(e.children))
+	e.childIDChan = make(chan int, len(e.children))
 	for i := 0; i < e.concurrency; i++ {
 		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
 		e.resourcePools[i] <- e.workerResults[i]
@@ -1440,9 +1440,9 @@ func (e *UnionExec) initialize(ctx context.Context) {
 		go e.resultPuller(ctx, i)
 	}
 	for i := 0; i < len(e.children); i++ {
-		e.childChan <- i
+		e.childIDChan <- i
 	}
-	close(e.childChan)
+	close(e.childIDChan)
 	go e.waitAllFinished()
 }
 
@@ -1464,7 +1464,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerId int) {
 		}
 		e.wg.Done()
 	}()
-	for childID := range e.childChan {
+	for childID := range e.childIDChan {
 		result.err = e.children[childID].Open(ctx)
 		if result.err != nil {
 			e.resultPool <- result
@@ -1525,18 +1525,18 @@ func (e *UnionExec) Close() error {
 		}
 	}
 	e.resourcePools = nil
-	if e.childChan != nil {
+	if e.childIDChan != nil {
 		// Close children manually.
-		openChildNum, ok := <- e.childChan
+		openChildNum, ok := <-e.childIDChan
 		if !ok {
 			// All children has been opened.
 			return e.baseExecutor.Close()
 		}
-		for range e.childChan {
+		for range e.childIDChan {
 
 		}
 		var firstErr error
-		for i := 0; i < openChildNum;i++  {
+		for i := 0; i < openChildNum; i++ {
 			if err := e.children[i].Close(); err != nil && firstErr == nil {
 				firstErr = err
 			}
