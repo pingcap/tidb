@@ -401,4 +401,8 @@ func baseTestSlidingWindowFunctions(tk *testkit.TestKit) {
 	result.Check(testkit.Rows("M 3", "F 4", "F 5", "F 5", "M 5", "<nil> 11", "<nil> 11"))
 	result = tk.MustQuery("SELECT sex, MAX(id) OVER (ORDER BY id DESC RANGE BETWEEN 1 PRECEDING and 2 FOLLOWING) FROM t;")
 	result.Check(testkit.Rows("<nil> 11", "<nil> 11", "M 5", "F 5", "F 4", "F 3", "M 2"))
+
+	// MAX without ORDER BY
+	result = tk.MustQuery("SELECT sex, MAX(id) OVER () FROM t;")
+	result.Check(testkit.Rows("M 11", "F 11", "F 11", "F 11", "M 11", "<nil> 11", "<nil> 11"))
 }
