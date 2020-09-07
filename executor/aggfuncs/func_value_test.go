@@ -33,18 +33,6 @@ func getEvaluatedMemDelta(row *chunk.Row, dataType *types.FieldType) (memDelta i
 	return
 }
 
-func firstValueEvaluateRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
-	memDeltas = make([]int64, 0)
-	if srcChk.NumRows() > 0 {
-		row := srcChk.GetRow(0)
-		memDeltas = append(memDeltas, getEvaluatedMemDelta(&row, dataType))
-	}
-	for i := 1; i < srcChk.NumRows(); i++ {
-		memDeltas = append(memDeltas, int64(0))
-	}
-	return memDeltas, nil
-}
-
 func lastValueEvaluateRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
@@ -69,23 +57,26 @@ func nthValueEvaluateRowUpdateMemDeltaGens(nth int) updateMemDeltaGens {
 }
 
 func (s *testSuite) TestMemValue(c *C) {
+	firstMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(1)
+	secondMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(2)
+	fifthMemDeltaGens := nthValueEvaluateRowUpdateMemDeltaGens(5)
 	tests := []windowMemTest{
 		buildWindowMemTester(ast.WindowFuncFirstValue, mysql.TypeLonglong, 0, 2, 1,
-			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4IntSize, firstValueEvaluateRowUpdateMemDeltaGens),
+			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4IntSize, firstMemDeltaGens),
 		buildWindowMemTester(ast.WindowFuncFirstValue, mysql.TypeFloat, 0, 2, 1,
-			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4Float32Size, firstValueEvaluateRowUpdateMemDeltaGens),
+			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4Float32Size, firstMemDeltaGens),
 		buildWindowMemTester(ast.WindowFuncFirstValue, mysql.TypeDouble, 0, 2, 1,
-			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4Float64Size, firstValueEvaluateRowUpdateMemDeltaGens),
+			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4Float64Size, firstMemDeltaGens),
 		buildWindowMemTester(ast.WindowFuncFirstValue, mysql.TypeNewDecimal, 0, 2, 1,
-			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4DecimalSize, firstValueEvaluateRowUpdateMemDeltaGens),
+			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4DecimalSize, firstMemDeltaGens),
 		buildWindowMemTester(ast.WindowFuncFirstValue, mysql.TypeString, 0, 2, 1,
-			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4StringSize, firstValueEvaluateRowUpdateMemDeltaGens),
+			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4StringSize, firstMemDeltaGens),
 		buildWindowMemTester(ast.WindowFuncFirstValue, mysql.TypeDate, 0, 2, 1,
-			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4TimeSize, firstValueEvaluateRowUpdateMemDeltaGens),
+			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4TimeSize, firstMemDeltaGens),
 		buildWindowMemTester(ast.WindowFuncFirstValue, mysql.TypeDuration, 0, 2, 1,
-			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4DurationSize, firstValueEvaluateRowUpdateMemDeltaGens),
+			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4DurationSize, firstMemDeltaGens),
 		buildWindowMemTester(ast.WindowFuncFirstValue, mysql.TypeJSON, 0, 2, 1,
-			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4JSONSize, firstValueEvaluateRowUpdateMemDeltaGens),
+			aggfuncs.DefPartialResult4FirstValueSize+aggfuncs.DefValue4JSONSize, firstMemDeltaGens),
 		buildWindowMemTester(ast.WindowFuncLastValue, mysql.TypeLonglong, 1, 2, 0,
 			aggfuncs.DefPartialResult4LastValueSize+aggfuncs.DefValue4IntSize, lastValueEvaluateRowUpdateMemDeltaGens),
 		buildWindowMemTester(ast.WindowFuncLastValue, mysql.TypeString, 1, 2, 0,
@@ -93,13 +84,13 @@ func (s *testSuite) TestMemValue(c *C) {
 		buildWindowMemTester(ast.WindowFuncLastValue, mysql.TypeJSON, 1, 2, 0,
 			aggfuncs.DefPartialResult4LastValueSize+aggfuncs.DefValue4JSONSize, lastValueEvaluateRowUpdateMemDeltaGens),
 		buildWindowMemTester(ast.WindowFuncNthValue, mysql.TypeLonglong, 2, 3, 0,
-			aggfuncs.DefPartialResult4NthValueSize+aggfuncs.DefValue4IntSize, nthValueEvaluateRowUpdateMemDeltaGens(2)),
+			aggfuncs.DefPartialResult4NthValueSize+aggfuncs.DefValue4IntSize, secondMemDeltaGens),
 		buildWindowMemTester(ast.WindowFuncNthValue, mysql.TypeLonglong, 5, 3, 0,
-			aggfuncs.DefPartialResult4NthValueSize+aggfuncs.DefValue4IntSize, nthValueEvaluateRowUpdateMemDeltaGens(5)),
+			aggfuncs.DefPartialResult4NthValueSize+aggfuncs.DefValue4IntSize, fifthMemDeltaGens),
 		buildWindowMemTester(ast.WindowFuncNthValue, mysql.TypeJSON, 2, 3, 0,
-			aggfuncs.DefPartialResult4NthValueSize+aggfuncs.DefValue4JSONSize, nthValueEvaluateRowUpdateMemDeltaGens(2)),
+			aggfuncs.DefPartialResult4NthValueSize+aggfuncs.DefValue4JSONSize, secondMemDeltaGens),
 		buildWindowMemTester(ast.WindowFuncNthValue, mysql.TypeString, 5, 3, 0,
-			aggfuncs.DefPartialResult4NthValueSize+aggfuncs.DefValue4StringSize, nthValueEvaluateRowUpdateMemDeltaGens(5)),
+			aggfuncs.DefPartialResult4NthValueSize+aggfuncs.DefValue4StringSize, fifthMemDeltaGens),
 	}
 	for _, test := range tests {
 		s.testWindowAggMemFunc(c, test)
