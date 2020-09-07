@@ -16,6 +16,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/privilege/privileges"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
