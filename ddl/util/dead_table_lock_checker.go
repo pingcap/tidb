@@ -44,11 +44,16 @@ func NewDeadTableLockChecker(etcdCli *clientv3.Client) DeadTableLockChecker {
 	}
 }
 
-func (d *DeadTableLockChecker) getAliveServers() (map[string]struct{}, error) {
+func (d *DeadTableLockChecker) getAliveServers(ctx context.Context) (map[string]struct{}, error) {
 	var err error
 	var resp *clientv3.GetResponse
-	allInfo := make(map[string]struct{})
+	allInfos := make(map[string]struct{})
 	for i := 0; i < defaultRetryCnt; i++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 		childCtx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
 		resp, err = d.etcdCli.Get(childCtx, DDLAllSchemaVersions, clientv3.WithPrefix())
 		cancel()
@@ -59,24 +64,29 @@ func (d *DeadTableLockChecker) getAliveServers() (map[string]struct{}, error) {
 		}
 		for _, kv := range resp.Kvs {
 			serverID := strings.TrimPrefix(string(kv.Key), DDLAllSchemaVersions+"/")
-			allInfo[serverID] = struct{}{}
+			allInfos[serverID] = struct{}{}
 		}
-		return allInfo, nil
+		return allInfos, nil
 	}
 	return nil, errors.Trace(err)
 }
 
 // GetDeadLockedTables gets dead locked tables.
-func (d *DeadTableLockChecker) GetDeadLockedTables(schemas []*model.DBInfo) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
+func (d *DeadTableLockChecker) GetDeadLockedTables(ctx context.Context, schemas []*model.DBInfo) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
 	if d.etcdCli == nil {
 		return nil, nil
 	}
-	aliveServers, err := d.getAliveServers()
+	aliveServers, err := d.getAliveServers(ctx)
 	if err != nil {
 		return nil, err
 	}
 	deadLockTables := make(map[model.SessionInfo][]model.TableLockTpInfo)
 	for _, schema := range schemas {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
 		for _, tbl := range schema.Tables {
 			if tbl.Lock == nil {
 				continue

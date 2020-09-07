@@ -571,23 +571,19 @@ func (d *ddl) startCleanDeadTableLock() {
 			if !d.ownerManager.IsOwner() {
 				continue
 			}
-			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.infoHandle.Get().AllSchemas())
+			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoHandle.Get().AllSchemas())
 			if err != nil {
 				logutil.BgLogger().Info("[ddl] clean dead table lock failed.", zap.Error(err))
 				continue
 			}
-			var wg sync.WaitGroup
 			for se, tables := range deadLockTables {
-				wg.Add(1)
-				go goutil.WithRecovery(func() {
-					defer wg.Done()
-					err := d.CleanDeadTableLock(tables, se)
-					if err != nil {
-						logutil.BgLogger().Info("[ddl] clean dead table lock failed.", zap.Error(err))
-					}
-				}, nil)
+				err := d.CleanDeadTableLock(tables, se)
+				if err != nil {
+					logutil.BgLogger().Info("[ddl] clean dead table lock failed.", zap.Error(err))
+				}
 			}
-			wg.Wait()
+		case <-d.ctx.Done():
+			return
 		}
 	}
 }
