@@ -954,15 +954,12 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	case mysql.ComStmtPrepare:
 		return cc.handleStmtPrepare(ctx, dataStr)
 	case mysql.ComStmtExecute:
-		// TODO: handle detaching stmt memory/disk tracker from global tracker
 		return cc.handleStmtExecute(ctx, data)
 	case mysql.ComStmtSendLongData:
 		return cc.handleStmtSendLongData(data)
 	case mysql.ComStmtClose:
-		// TODO: handle detaching stmt memory/disk tracker from global tracker
 		return cc.handleStmtClose(data)
 	case mysql.ComStmtReset:
-		// TODO: handle detaching stmt memory/disk tracker from global tracker
 		return cc.handleStmtReset(ctx, data)
 	case mysql.ComSetOption:
 		return cc.handleSetOption(ctx, data)
