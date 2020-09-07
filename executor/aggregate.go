@@ -503,17 +503,15 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 		if w.syncSetMap == nil {
 			continue
 		}
-		var syncSets []set.SyncSet
 		sets, ok := w.syncSetMap.Load(groupKeyStr)
 		if !ok {
-			syncSets = make([]set.SyncSet, len(w.aggFuncs))
+			syncSets := make([]set.SyncSet, len(w.aggFuncs))
 			for j := range syncSets {
 				syncSets[j] = set.NewSyncSet()
 			}
-			w.syncSetMap.Store(groupKeyStr, syncSets)
-		} else {
-			syncSets = sets.([]set.SyncSet)
+			sets, _ = w.syncSetMap.LoadOrStore(groupKeyStr, syncSets)
 		}
+		syncSets := sets.([]set.SyncSet)
 		for j, af := range w.aggFuncs {
 			af.SetSyncSet(syncSets[j], partialResults[i][j])
 		}
