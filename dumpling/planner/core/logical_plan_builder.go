@@ -2663,8 +2663,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	if sel.LockTp != ast.SelectLockNone {
-		p = b.buildSelectLock(p, sel.LockTp)
+	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
+		p = b.buildSelectLock(p, sel.LockInfo)
 	}
 	b.handleHelper.popMap()
 	b.handleHelper.pushMap(nil)
@@ -3496,7 +3496,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 			// buildSelectLock is an optimization that can reduce RPC call.
 			// We only need do this optimization for single table update which is the most common case.
 			// When TableRefs.Right is nil, it is single table update.
-			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+			p = b.buildSelectLock(p, &ast.SelectLockInfo{
+				LockType: ast.SelectLockForUpdate,
+			})
 		}
 	}
 
@@ -3770,7 +3772,9 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		if !delete.IsMultiTable {
-			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+			p = b.buildSelectLock(p, &ast.SelectLockInfo{
+				LockType: ast.SelectLockForUpdate,
+			})
 		}
 	}
 
