@@ -3307,12 +3307,8 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 	windowFuncs := make([]aggfuncs.AggFunc, 0, len(v.WindowFuncDescs))
 	partialResults := make([]aggfuncs.PartialResult, 0, len(v.WindowFuncDescs))
 	resultColIdx := v.Schema().Len() - len(v.WindowFuncDescs)
-	frameUnBounded := false
-	if v.Frame != nil && v.Frame.Start != nil && v.Frame.End != nil {
-		frameUnBounded = v.Frame.Start.UnBounded && v.Frame.End.UnBounded
-	}
 	for _, desc := range v.WindowFuncDescs {
-		aggDesc, err := aggregation.NewWindowAggFuncDesc(b.ctx, desc.Name, desc.Args, false, frameUnBounded)
+		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, desc.Name, desc.Args, false)
 		if err != nil {
 			b.err = err
 			return nil
@@ -3324,11 +3320,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) *WindowExec
 		resultColIdx++
 	}
 	var processor windowProcessor
-	// Without ORDER BY: The default frame includes all partition rows
-	// eg. MAX(a) OVER(PARTITION BY b) is same as MAX(a) OVER(PARTITION BY b ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
-	// or MAX(a) OVER(PARTITION BY b RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
-	// https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html
-	if v.Frame == nil || (len(v.OrderBy) == 0 && frameUnBounded) {
+	if v.Frame == nil {
 		processor = &aggWindowProcessor{
 			windowFuncs:    windowFuncs,
 			partialResults: partialResults,

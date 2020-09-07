@@ -19,9 +19,6 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/executor/aggfuncs"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 )
@@ -95,20 +92,4 @@ func (s *testSuite) TestMaxMin(c *C) {
 	for _, test := range tests {
 		s.testAggFunc(c, test)
 	}
-}
-
-func (s *testSuite) TestUnBoundedMaxMinBuilder(c *C) {
-	one := expression.NewOne()
-
-	desc, err := aggregation.NewWindowAggFuncDesc(s.ctx, ast.AggFuncMax, []expression.Expression{one}, false, true)
-	c.Assert(err, IsNil)
-	aggFunc := aggfuncs.BuildWindowFunctions(s.ctx, desc, 0, []*expression.Column{{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}})
-	_, ok := aggFunc.(aggfuncs.SlidingWindowAggFunc)
-	c.Assert(ok, IsFalse)
-
-	desc, err = aggregation.NewWindowAggFuncDesc(s.ctx, ast.AggFuncMax, []expression.Expression{one}, false, false)
-	c.Assert(err, IsNil)
-	aggFunc = aggfuncs.BuildWindowFunctions(s.ctx, desc, 0, []*expression.Column{{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}})
-	_, ok = aggFunc.(aggfuncs.SlidingWindowAggFunc)
-	c.Assert(ok, IsTrue)
 }

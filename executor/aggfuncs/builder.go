@@ -40,14 +40,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 	case ast.AggFuncFirstRow:
 		return buildFirstRow(aggFuncDesc, ordinal)
 	case ast.AggFuncMax:
-		if aggFuncDesc.WindowAggFuncDesc != nil {
-			return buildMaxMinSliding(aggFuncDesc, ordinal, true)
-		}
 		return buildMaxMin(aggFuncDesc, ordinal, true)
 	case ast.AggFuncMin:
-		if aggFuncDesc.WindowAggFuncDesc != nil {
-			return buildMaxMinSliding(aggFuncDesc, ordinal, false)
-		}
 		return buildMaxMin(aggFuncDesc, ordinal, false)
 	case ast.AggFuncGroupConcat:
 		return buildGroupConcat(ctx, aggFuncDesc, ordinal)
@@ -365,20 +359,6 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 		}
 	}
 	return nil
-}
-
-// buildMaxMinSliding builds the sliding window AggFunc implementation for function "MAX" and "MIN".
-func buildMaxMinSliding(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
-	base := buildMaxMin(aggFuncDesc, ordinal, isMax)
-	// We don't need to use the sliding window algo when the frame is unbounded
-	if aggFuncDesc.WindowAggFuncDesc.FrameUnBounded {
-		return base
-	}
-	switch aggFunc := base.(type) {
-	case *maxMin4Int:
-		return &maxMin4IntSliding{*aggFunc}
-	}
-	return base
 }
 
 // buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".

@@ -15,6 +15,7 @@ package aggfuncs
 
 import (
 	"container/heap"
+	"fmt"
 
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -207,10 +208,6 @@ type maxMin4Int struct {
 	baseMaxMinAggFunc
 }
 
-type maxMin4IntSliding struct {
-	maxMin4Int
-}
-
 func (e *maxMin4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinInt)
 	p.isNull = true
@@ -273,38 +270,22 @@ func (e *maxMin4Int) MergePartialResult(sctx sessionctx.Context, src, dst Partia
 	return 0, nil
 }
 
-func (e *maxMin4IntSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	p := new(partialResult4MaxMinInt)
-	p.isNull = true
+func (e *maxMin4Int) initHeap(pr PartialResult) {
+	fmt.Println("1111111111111111111111")
+	p := (*partialResult4MaxMinInt)(pr)
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})
-	return PartialResult(p), 0
+	if !p.isNull{
+		p.heap.Append(p.val)
+	}
 }
 
-func (e *maxMin4IntSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Int) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4MaxMinInt)(pr)
-	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalInt(sctx, row)
-		if err != nil {
-			return 0, err
-		}
-		if isNull {
-			continue
-		}
-		p.heap.Append(input)
+	if p.heap == nil {
+		e.initHeap(pr)
 	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(int64)
-		p.isNull = false
-	} else {
-		p.isNull = true
-	}
-	return 0, nil
-}
-
-func (e *maxMin4IntSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4MaxMinInt)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
 		input, isNull, err := e.args[0].EvalInt(sctx, rows[lastEnd+i])
 		if err != nil {
