@@ -320,10 +320,11 @@ func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
 		})
 		if err != nil {
 			task = &indexHashJoinTask{err: err}
-			ow.pushToChan(ctx, task, ow.innerCh)
 			if ow.keepOuterOrder {
+				task.keepOuterOrder, task.resultCh = true, make(chan *indexHashJoinResult, 1)
 				ow.pushToChan(ctx, task, ow.taskCh)
 			}
+			ow.pushToChan(ctx, task, ow.innerCh)
 			return
 		}
 		if task == nil {
@@ -452,12 +453,13 @@ func (iw *indexHashJoinInnerWorker) run(ctx context.Context, cancelFunc context.
 		if !ok {
 			break
 		}
+		// We need to init resultCh before the err is returned.
+		if task.keepOuterOrder {
+			resultCh = task.resultCh
+		}
 		if task.err != nil {
 			joinResult.err = task.err
 			break
-		}
-		if task.keepOuterOrder {
-			resultCh = task.resultCh
 		}
 		err := iw.handleTask(ctx, task, joinResult, h, resultCh)
 		if err != nil {

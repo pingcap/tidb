@@ -110,6 +110,8 @@ const (
 	DefFloat64Size = int64(unsafe.Sizeof(float64(0)))
 	// DefTimeSize is the size of time
 	DefTimeSize = int64(16)
+	// DefRowSize is the size of row
+	DefRowSize = int64(unsafe.Sizeof(chunk.Row{}))
 )
 
 // PartialResult represents data structure to store the partial result for the
