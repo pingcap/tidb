@@ -241,7 +241,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	s.etcdAddrs = s.etcdAddrs[0:0]
 	pdClient := s.GetRegionCache().PDClient()
 	if pdClient == nil {
-		return nil, errors.New("pd unavailable")
+		return nil, errors.New("Etcd client not found")
 	}
 	members, err := pdClient.GetMemberInfo(ctx)
 	if err != nil {
