@@ -1385,6 +1385,7 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 //                              +-------------+
 type UnionExec struct {
 	baseExecutor
+	childChan chan int
 
 	stopFetchData atomic.Value
 
@@ -1431,21 +1432,21 @@ func (e *UnionExec) initialize(ctx context.Context) {
 	}
 	e.resultPool = make(chan *unionWorkerResult, e.concurrency)
 	e.resourcePools = make([]chan *chunk.Chunk, e.concurrency)
-	childChan := make(chan int, len(e.children))
+	e.childChan = make(chan int, len(e.children))
 	for i := 0; i < e.concurrency; i++ {
 		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
 		e.resourcePools[i] <- e.workerResults[i]
 		e.wg.Add(1)
-		go e.resultPuller(ctx, i, childChan)
+		go e.resultPuller(ctx, i)
 	}
 	for i := 0; i < len(e.children); i++ {
-		childChan <- i
+		e.childChan <- i
 	}
-	close(childChan)
+	close(e.childChan)
 	go e.waitAllFinished()
 }
 
-func (e *UnionExec) resultPuller(ctx context.Context, workerId int, childIDChan <-chan int) {
+func (e *UnionExec) resultPuller(ctx context.Context, workerId int) {
 	result := &unionWorkerResult{
 		err: nil,
 		chk: nil,
@@ -1463,7 +1464,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerId int, childIDChan 
 		}
 		e.wg.Done()
 	}()
-	for childID := range childIDChan {
+	for childID := range e.childChan {
 		result.err = e.children[childID].Open(ctx)
 		if result.err != nil {
 			e.resultPool <- result
@@ -1524,7 +1525,25 @@ func (e *UnionExec) Close() error {
 		}
 	}
 	e.resourcePools = nil
-	return e.baseExecutor.Close()
+	if e.childChan != nil {
+		// Close children manually.
+		openChildNum, ok := <- e.childChan
+		if !ok {
+			// All children has been opened.
+			return e.baseExecutor.Close()
+		}
+		for range e.childChan {
+
+		}
+		var firstErr error
+		for i := 0; i < openChildNum;i++  {
+			if err := e.children[i].Close(); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		return firstErr
+	}
+	return nil
 }
 
 // ResetContextOfStmt resets the StmtContext and session variables.
