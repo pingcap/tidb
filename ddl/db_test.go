@@ -762,7 +762,15 @@ func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
 	wg.Wait()
 	c.Assert(done, IsTrue)
 	c.Assert(checkErr, NotNil)
-	c.Assert(checkErr.Error(), Equals, "[schema:1051]Unknown table 'test_drop_schema_table.t'")
+	// There are two possible assert result is because that:
+	// 1: If drop-database is finished before drop-table being put into the ddl job queue, it will return unknown table error directly in previous check .
+	// 2: If drop-table has passed the previous check and been put into the ddl job queue, then drop-database finished, it will return schema change error.
+	assertRes := checkErr.Error() == "[domain:8028]Information schema is changed during the execution of the"+
+		" statement(for example, table definition may be updated by other DDL ran in parallel). "+
+		"If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]" ||
+		checkErr.Error() == "[schema:1051]Unknown table 'test_drop_schema_table.t'"
+
+	c.Assert(assertRes, Equals, true)
 
 	// Below behaviour is use to mock query `curl "http://$IP:10080/tiflash/replica"`
 	fn := func(jobs []*model.Job) (bool, error) {
