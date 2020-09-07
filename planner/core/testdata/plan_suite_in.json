@@ -540,7 +540,8 @@
     "name": "TestTopNToCopHint",
     "cases": [
       "select /*+ TOPN_TO_COP() */ * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
-      "select * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1"
+      "select * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1",
+      "select /*+ TOPN_TO_COP() */ a from tn where mod(a, 2) order by a limit 1"
     ]
   },
   {

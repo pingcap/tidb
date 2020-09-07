@@ -876,6 +876,7 @@ func (s *testPlanSuite) TestTopNToCopHint(c *C) {
 		output []struct {
 			SQL  string
 			Plan []string
+			Warning string
 		}
 	)
 
@@ -887,6 +888,21 @@ func (s *testPlanSuite) TestTopNToCopHint(c *C) {
 			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
 		})
 		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+
+		comment := Commentf("case:%v sql:%s", i, ts)
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		s.testData.OnRecord(func() {
+			if len(warnings) > 0 {
+				output[i].Warning = warnings[0].Err.Error()
+			}
+		})
+		if output[i].Warning == "" {
+			c.Assert(len(warnings), Equals, 0, comment)
+		} else {
+			c.Assert(len(warnings), Equals, 1, comment)
+			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
+			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning, comment)
+		}
 	}
 }
 
