@@ -1446,11 +1446,11 @@ func (e *UnionExec) initialize(ctx context.Context) {
 	go e.waitAllFinished()
 }
 
-func (e *UnionExec) resultPuller(ctx context.Context, workerId int) {
+func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 	result := &unionWorkerResult{
 		err: nil,
 		chk: nil,
-		src: e.resourcePools[workerId],
+		src: e.resourcePools[workerID],
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -1478,11 +1478,11 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerId int) {
 			select {
 			case <-e.finished:
 				return
-			case result.chk = <-e.resourcePools[workerId]:
+			case result.chk = <-e.resourcePools[workerID]:
 			}
 			result.err = Next(ctx, e.children[childID], result.chk)
 			if result.err == nil && result.chk.NumRows() == 0 {
-				e.resourcePools[workerId] <- result.chk
+				e.resourcePools[workerID] <- result.chk
 				break
 			}
 			e.resultPool <- result
