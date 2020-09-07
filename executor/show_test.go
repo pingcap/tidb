@@ -160,11 +160,7 @@ func (s *testSuite2) TestShowGrantsPrivilege(c *C) {
 	tk2.MustQuery("show grants")
 }
 
-<<<<<<< HEAD
-func (s *testSuite2) TestIssue18878(c *C) {
-	errNonexistingGrant := terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
-=======
-func (s *testSuite5) TestShowStatsPrivilege(c *C) {
+func (s *testSuite2) TestShowStatsPrivilege(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create user show_stats")
 	tk1 := testkit.NewTestKit(c, s.store)
@@ -188,8 +184,8 @@ func (s *testSuite5) TestShowStatsPrivilege(c *C) {
 	tk1.MustExec("SHOW STATS_HISTOGRAMS")
 }
 
-func (s *testSuite5) TestIssue18878(c *C) {
->>>>>>> 862d8b8... check privileges for show stats (#19702)
+func (s *testSuite2) TestIssue18878(c *C) {
+	errNonexistingGrant := terror.ClassPrivilege.New(mysql.ErrNonexistingGrant, mysql.MySQLErrName[mysql.ErrNonexistingGrant])
 	tk := testkit.NewTestKit(c, s.store)
 	se, err := session.CreateSession4Test(s.store)
 	c.Assert(err, IsNil)
