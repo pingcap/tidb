@@ -14,8 +14,6 @@
 package aggfuncs_test
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -64,19 +62,5 @@ func (s *testSuite) TestMemSum(c *C) {
 	}
 	for _, test := range tests {
 		s.testAggMemFunc(c, test)
-	}
-}
-
-func BenchmarkSum(b *testing.B) {
-	s := testSuite{}
-	s.SetUpSuite(nil)
-
-	rowNum := 50000
-	tests := []aggTest{
-		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, rowNum, 0),
-		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, rowNum, 0),
-	}
-	for _, test := range tests {
-		s.benchmarkAggFunc(b, test)
 	}
 }

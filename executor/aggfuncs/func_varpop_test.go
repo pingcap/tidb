@@ -1,11 +1,10 @@
 package aggfuncs_test
 
 import (
-	"testing"
-
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -34,15 +33,14 @@ func (s *testSuite) TestVarpop(c *C) {
 	}
 }
 
-func BenchmarkVarPop(b *testing.B) {
-	s := testSuite{}
-	s.SetUpSuite(nil)
-
-	rowNum := 50000
-	tests := []aggTest{
-		buildAggTester(ast.AggFuncVarPop, mysql.TypeDouble, rowNum, nil, ""),
+func (s *testSuite) TestMemVarpop(c *C) {
+	tests := []aggMemTest{
+		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 5,
+			aggfuncs.DefPartialResult4VarPopFloat64Size, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncVarPop, mysql.TypeDouble, 5,
+			aggfuncs.DefPartialResult4VarPopDistinctFloat64Size, distinctUpdateMemDeltaGens, true),
 	}
 	for _, test := range tests {
-		s.benchmarkAggFunc(b, test)
+		s.testAggMemFunc(c, test)
 	}
 }

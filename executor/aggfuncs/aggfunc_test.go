@@ -234,6 +234,15 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 	return memDeltas, nil
 }
 
+func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, 0)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		memDelta := aggfuncs.DefRowSize
+		memDeltas = append(memDeltas, memDelta)
+	}
+	return memDeltas, nil
+}
+
 type aggMemTest struct {
 	aggTest            aggTest
 	allocMemDelta      int64
@@ -591,7 +600,8 @@ func (s *testSuite) testAggMemFunc(c *C, p aggMemTest) {
 	iter := chunk.NewIterator4Chunk(srcChk)
 	i := 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		memDelta, err := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(err, IsNil)
 		c.Assert(memDelta, Equals, updateMemDeltas[i])
 		i++
 	}
