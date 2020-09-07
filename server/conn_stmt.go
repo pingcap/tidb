@@ -640,7 +640,7 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	if sv == nil {
 		return ""
 	}
-	if config.GetGlobalConfig().EnableRedactLog {
+	if config.RedactLogEnabled() {
 		return cc.preparedStmt2StringNoArgs(stmtID)
 	}
 	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PreparedParams.String()

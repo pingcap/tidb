@@ -1421,7 +1421,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TiDBEnableParallelApply:
 		s.EnableParallelApply = TiDBOptOn(val)
 	case TiDBSlowLogMasking, TiDBRedactLog:
-		config.GetGlobalConfig().EnableRedactLog = TiDBOptOn(val)
+		config.SetRedactLog(TiDBOptOn(val))
 	case TiDBShardAllocateStep:
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	case TiDBEnableChangeColumnType:

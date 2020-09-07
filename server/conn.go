@@ -1879,7 +1879,7 @@ func (cc getLastStmtInConn) String() string {
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		sql := string(hack.String(data))
-		if config.GetGlobalConfig().EnableRedactLog {
+		if config.RedactLogEnabled() {
 			sql, _ = parser.NormalizeDigest(sql)
 		}
 		return queryStrForLog(sql)

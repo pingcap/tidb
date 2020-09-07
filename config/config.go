@@ -62,7 +62,7 @@ const (
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
 	// DefTiDBRedactLog is the default value for redact log.
-	DefTiDBRedactLog = false
+	DefTiDBRedactLog = 0
 )
 
 // Valid config maps
@@ -161,7 +161,7 @@ type Config struct {
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
 	// EnableRedactLog indicates that whether redact log.
-	EnableRedactLog bool `toml:"enable-redact-log" json:"enable-redact-log"`
+	EnableRedactLog int32 `toml:"enable-redact-log" json:"enable-redact-log"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -981,6 +981,18 @@ func TableLockEnabled() bool {
 // TableLockDelayClean uses to get the time of delay clean table lock.
 var TableLockDelayClean = func() uint64 {
 	return GetGlobalConfig().DelayCleanTableLock
+}
+
+func RedactLogEnabled() bool {
+	return atomic.LoadInt32(&GetGlobalConfig().EnableRedactLog) == 1
+}
+
+func SetRedactLog(enable bool) {
+	value := int32(0)
+	if enable {
+		value = 1
+	}
+	atomic.StoreInt32(&GetGlobalConfig().EnableRedactLog, value)
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.

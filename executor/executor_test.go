@@ -6217,7 +6217,7 @@ func (s *testSuite) TestPrevStmtDesensitization(c *C) {
 	oriCfg := config.GetGlobalConfig()
 	defer config.StoreGlobalConfig(oriCfg)
 	newCfg := *oriCfg
-	newCfg.EnableRedactLog = true
+	newCfg.EnableRedactLog = 1
 	config.StoreGlobalConfig(&newCfg)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")

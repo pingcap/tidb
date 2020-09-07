@@ -23,7 +23,7 @@ func Error(err error) error {
 	if err == nil {
 		return nil
 	}
-	if !config.GetGlobalConfig().EnableRedactLog {
+	if !config.RedactLogEnabled() {
 		return err
 	}
 	if kv.ErrKeyExists.Equal(err) {
