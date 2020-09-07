@@ -1429,8 +1429,8 @@ func (e *UnionExec) initialize(ctx context.Context) {
 	for i := 0; i < e.concurrency; i++ {
 		e.workerResults = append(e.workerResults, newFirstChunk(e.children[0]))
 	}
-	e.resultPool = make(chan *unionWorkerResult, len(e.children))
-	e.resourcePools = make([]chan *chunk.Chunk, len(e.children))
+	e.resultPool = make(chan *unionWorkerResult, e.concurrency)
+	e.resourcePools = make([]chan *chunk.Chunk, e.concurrency)
 	childChan := make(chan int, len(e.children))
 	for i := 0; i < e.concurrency; i++ {
 		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
@@ -1446,7 +1446,11 @@ func (e *UnionExec) initialize(ctx context.Context) {
 }
 
 func (e *UnionExec) resultPuller(ctx context.Context, workerId int, childIDChan <-chan int) {
-	result := &unionWorkerResult{}
+	result := &unionWorkerResult{
+		err: nil,
+		chk: nil,
+		src: e.resourcePools[workerId],
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 4096)
@@ -1460,11 +1464,6 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerId int, childIDChan 
 		e.wg.Done()
 	}()
 	for childID := range childIDChan {
-		result = &unionWorkerResult{
-			err: nil,
-			chk: nil,
-			src: e.resourcePools[workerId],
-		}
 		result.err = e.children[childID].Open(ctx)
 		if result.err != nil {
 			e.resultPool <- result
@@ -1482,6 +1481,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerId int, childIDChan 
 			}
 			result.err = Next(ctx, e.children[childID], result.chk)
 			if result.err == nil && result.chk.NumRows() == 0 {
+				e.resourcePools[workerId] <- result.chk
 				break
 			}
 			e.resultPool <- result
