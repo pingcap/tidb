@@ -368,6 +368,20 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Unlock()
 }
 
+// TruncateWarnings truncates wanrings begin from start and returns the truncated warnings.
+func (sc *StatementContext) TruncateWarnings(start int) []SQLWarn {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sz := len(sc.mu.warnings) - start
+	if sz <= 0 {
+		return nil
+	}
+	ret := make([]SQLWarn, sz)
+	copy(ret, sc.mu.warnings[start:])
+	sc.mu.warnings = sc.mu.warnings[:start]
+	return ret
+}
+
 // AppendWarning appends a warning with level 'Warning'.
 func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
@@ -499,7 +513,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 func (sc *StatementContext) ShouldClipToZero() bool {
 	// TODO: Currently altering column of integer to unsigned integer is not supported.
 	// If it is supported one day, that case should be added here.
-	return sc.InInsertStmt || sc.InLoadDataStmt
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
