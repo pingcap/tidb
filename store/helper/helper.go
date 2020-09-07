@@ -124,6 +124,9 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	}
 	pdHosts, err := etcd.EtcdAddrs()
 	if err != nil {
+		return nil, err
+	}
+	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
 	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+rw, nil)
@@ -641,6 +644,9 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 	}
 	pdHosts, err := etcd.EtcdAddrs()
 	if err != nil {
+		return err
+	}
+	if len(pdHosts) == 0 {
 		return errors.New("pd unavailable")
 	}
 
@@ -725,6 +731,9 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	}
 	pdHosts, err := etcd.EtcdAddrs()
 	if err != nil {
+		return nil, err
+	}
+	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
 	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+pdapi.Stores, nil)
@@ -757,6 +766,9 @@ func (h *Helper) GetPDAddr() ([]string, error) {
 	}
 	pdAddrs, err := etcd.EtcdAddrs()
 	if err != nil {
+		return nil, err
+	}
+	if len(pdAddrs) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
 	return pdAddrs, nil
