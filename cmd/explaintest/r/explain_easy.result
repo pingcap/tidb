@@ -53,7 +53,7 @@ HashJoin_23	4166.67	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
     └─TableFullScan_34	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	estRows	task	access object	operator info
-Update_2	N/A	root		N/A
+Update_3	N/A	root		N/A
 └─Point_Get_1	1.00	root	table:t1	handle:1
 explain delete from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
@@ -687,7 +687,7 @@ begin;
 insert into t values (1, 1);
 explain update t set j = -j where i = 1 and j = 1;
 id	estRows	task	access object	operator info
-Update_2	N/A	root		N/A
+Update_3	N/A	root		N/A
 └─Point_Get_1	1.00	root	table:t, index:i(i, j)	
 rollback;
 drop table if exists t;

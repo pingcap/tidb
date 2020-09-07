@@ -1366,21 +1366,21 @@
           "explain select /*+ TIDB_INLJ(t2) */ * from tt t1, tt t2 where t1.a = t2.a"
         ],
         "Plan": [
-          "HashJoin_19 25000.00 root  inner join, equal:[eq(test.tt.a, test.tt.a)]",
-          "├─PartitionUnion_28(Build) 20000.00 root  ",
-          "│ ├─UnionScan_29 10000.00 root  ",
-          "│ │ └─TableReader_31 10000.00 root  data:TableFullScan_30",
-          "│ │   └─TableFullScan_30 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
-          "│ └─UnionScan_32 10000.00 root  ",
-          "│   └─TableReader_34 10000.00 root  data:TableFullScan_33",
-          "│     └─TableFullScan_33 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
-          "└─PartitionUnion_21(Probe) 20000.00 root  ",
-          "  ├─UnionScan_22 10000.00 root  ",
-          "  │ └─TableReader_24 10000.00 root  data:TableFullScan_23",
-          "  │   └─TableFullScan_23 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
-          "  └─UnionScan_25 10000.00 root  ",
-          "    └─TableReader_27 10000.00 root  data:TableFullScan_26",
-          "      └─TableFullScan_26 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo"
+          "HashJoin_21 25000.00 root  inner join, equal:[eq(test.tt.a, test.tt.a)]",
+          "├─PartitionUnion_30(Build) 20000.00 root  ",
+          "│ ├─UnionScan_31 10000.00 root  ",
+          "│ │ └─TableReader_33 10000.00 root  data:TableFullScan_32",
+          "│ │   └─TableFullScan_32 10000.00 cop[tikv] table:t2, partition:p0 keep order:false, stats:pseudo",
+          "│ └─UnionScan_34 10000.00 root  ",
+          "│   └─TableReader_36 10000.00 root  data:TableFullScan_35",
+          "│     └─TableFullScan_35 10000.00 cop[tikv] table:t2, partition:p1 keep order:false, stats:pseudo",
+          "└─PartitionUnion_23(Probe) 20000.00 root  ",
+          "  ├─UnionScan_24 10000.00 root  ",
+          "  │ └─TableReader_26 10000.00 root  data:TableFullScan_25",
+          "  │   └─TableFullScan_25 10000.00 cop[tikv] table:t1, partition:p0 keep order:false, stats:pseudo",
+          "  └─UnionScan_27 10000.00 root  ",
+          "    └─TableReader_29 10000.00 root  data:TableFullScan_28",
+          "      └─TableFullScan_28 10000.00 cop[tikv] table:t1, partition:p1 keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1554,17 +1554,17 @@
       {
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
         "Plan": [
-          "HashAgg_11 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection_23 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
-          "  └─PartitionUnion_12 16000.00 root  ",
-          "    ├─HashAgg_16 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
-          "    │ └─TableReader_17 8000.00 root  data:HashAgg_13",
-          "    │   └─HashAgg_13 8000.00 cop[tikv]  group by:test.pt.b, ",
-          "    │     └─TableFullScan_15 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
-          "    └─HashAgg_21 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
-          "      └─TableReader_22 8000.00 root  data:HashAgg_18",
-          "        └─HashAgg_18 8000.00 cop[tikv]  group by:test.pt.b, ",
-          "          └─TableFullScan_20 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
+          "HashAgg_12 1.00 root  funcs:sum(distinct Column#9)->Column#4",
+          "└─Projection_24 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
+          "  └─PartitionUnion_13 16000.00 root  ",
+          "    ├─HashAgg_17 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "    │ └─TableReader_18 8000.00 root  data:HashAgg_14",
+          "    │   └─HashAgg_14 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "    │     └─TableFullScan_16 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
+          "    └─HashAgg_22 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "      └─TableReader_23 8000.00 root  data:HashAgg_19",
+          "        └─HashAgg_19 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "          └─TableFullScan_21 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "<nil>"
@@ -1683,17 +1683,17 @@
       {
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
         "Plan": [
-          "HashAgg_11 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection_23 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
-          "  └─PartitionUnion_12 16000.00 root  ",
-          "    ├─HashAgg_16 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
-          "    │ └─TableReader_17 8000.00 root  data:HashAgg_13",
-          "    │   └─HashAgg_13 8000.00 cop[tikv]  group by:test.pt.b, ",
-          "    │     └─TableFullScan_15 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
-          "    └─HashAgg_21 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
-          "      └─TableReader_22 8000.00 root  data:HashAgg_18",
-          "        └─HashAgg_18 8000.00 cop[tikv]  group by:test.pt.b, ",
-          "          └─TableFullScan_20 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
+          "HashAgg_12 1.00 root  funcs:sum(distinct Column#9)->Column#4",
+          "└─Projection_24 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
+          "  └─PartitionUnion_13 16000.00 root  ",
+          "    ├─HashAgg_17 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "    │ └─TableReader_18 8000.00 root  data:HashAgg_14",
+          "    │   └─HashAgg_14 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "    │     └─TableFullScan_16 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
+          "    └─HashAgg_22 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "      └─TableReader_23 8000.00 root  data:HashAgg_19",
+          "        └─HashAgg_19 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "          └─TableFullScan_21 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "<nil>"
@@ -1725,17 +1725,17 @@
       {
         "SQL": "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
         "Plan": [
-          "HashAgg_11 1.00 root  funcs:sum(distinct Column#9)->Column#4",
-          "└─Projection_23 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
-          "  └─PartitionUnion_12 16000.00 root  ",
-          "    ├─HashAgg_16 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
-          "    │ └─TableReader_17 8000.00 root  data:HashAgg_13",
-          "    │   └─HashAgg_13 8000.00 cop[tikv]  group by:test.pt.b, ",
-          "    │     └─TableFullScan_15 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
-          "    └─HashAgg_21 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
-          "      └─TableReader_22 8000.00 root  data:HashAgg_18",
-          "        └─HashAgg_18 8000.00 cop[tikv]  group by:test.pt.b, ",
-          "          └─TableFullScan_20 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
+          "HashAgg_12 1.00 root  funcs:sum(distinct Column#9)->Column#4",
+          "└─Projection_24 16000.00 root  cast(test.pt.b, decimal(65,0) BINARY)->Column#9",
+          "  └─PartitionUnion_13 16000.00 root  ",
+          "    ├─HashAgg_17 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "    │ └─TableReader_18 8000.00 root  data:HashAgg_14",
+          "    │   └─HashAgg_14 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "    │     └─TableFullScan_16 10000.00 cop[tikv] table:pt, partition:p0 keep order:false, stats:pseudo",
+          "    └─HashAgg_22 8000.00 root  group by:test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b, funcs:firstrow(test.pt.b)->test.pt.b",
+          "      └─TableReader_23 8000.00 root  data:HashAgg_19",
+          "        └─HashAgg_19 8000.00 cop[tikv]  group by:test.pt.b, ",
+          "          └─TableFullScan_21 10000.00 cop[tikv] table:pt, partition:p1 keep order:false, stats:pseudo"
         ],
         "Result": [
           "<nil>"

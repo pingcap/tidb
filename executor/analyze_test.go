@@ -390,8 +390,8 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 	tk.MustExec(`insert into t3 values(1, 1), (2, 2), (5, 1), (9, 3), (13, 3), (17, 5), (3, 0)`)
 	tk.MustExec(`analyze table t3`)
 	tk.MustQuery(`explain select v from t3 partition(p1) where v = 3`).Check(testkit.Rows(
-		"IndexReader_7 2.00 root  index:IndexRangeScan_6",
-		"└─IndexRangeScan_6 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
+		"IndexReader_8 2.00 root  index:IndexRangeScan_7",
+		"└─IndexRangeScan_7 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
 	))
 	tk.MustExec(`set @try_old_partition_implementation=0`)
 }

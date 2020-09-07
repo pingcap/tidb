@@ -54,7 +54,7 @@ HashJoin_22	2481.25	root		left outer join, equal:[eq(test.t1.c2, test.t2.c1)]
   └─TableRangeScan_32	1998.00	cop[tikv]	table:t1	range:(1,+inf], keep order:false
 explain update t1 set t1.c2 = 2 where t1.c1 = 1;
 id	estRows	task	access object	operator info
-Update_2	N/A	root		N/A
+Update_3	N/A	root		N/A
 └─Point_Get_1	1.00	root	table:t1	handle:1
 explain delete from t1 where t1.c2 = 1;
 id	estRows	task	access object	operator info
