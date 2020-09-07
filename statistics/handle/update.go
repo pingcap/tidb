@@ -716,7 +716,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 				continue
 			}
 			for _, def := range pi.Definitions {
-				sql := "analyze table `" + db + "`.`" + tblInfo.Name.O + "`" + " partition" + def.Name.O
+				sql := "analyze table `" + db + "`.`" + tblInfo.Name.O + "`" + " partition `" + def.Name.O + "`"
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
 				if analyzed {
