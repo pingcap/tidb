@@ -379,12 +379,6 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 			aggFunc = &maxMin4TimeSliding{*baseAggFunc}
 		case *maxMin4Duration:
 			aggFunc = &maxMin4DurationSliding{*baseAggFunc}
-		case *maxMin4JSON:
-			aggFunc = &maxMin4JSONSliding{*baseAggFunc}
-		case *maxMin4Enum:
-			aggFunc = &maxMin4EnumSliding{*baseAggFunc}
-		case *maxMin4Set:
-			aggFunc = &maxMin4SetSliding{*baseAggFunc}
 		}
 	}
 	return aggFunc

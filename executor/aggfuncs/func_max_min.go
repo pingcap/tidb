@@ -61,19 +61,10 @@ func (h *maxMinHeap) Pop() interface{} {
 	return x
 }
 
-func (h *maxMinHeap) Top() (val interface{}, isEmpty bool) {
-retry:
-	if h.Len() == 0 {
-		return nil, true
-	}
-	top := h.data[0]
-	if h.varSet[top] == 0 {
-		_ = heap.Pop(h)
-		goto retry
-	}
-	return top, false
+func (h *maxMinHeap) Reset() {
+	h.data = h.data[:0]
+	h.varSet = make(map[interface{}]int64)
 }
-
 func (h *maxMinHeap) Append(val interface{}) {
 	h.varSet[val]++
 	if h.varSet[val] == 1 {
@@ -87,6 +78,19 @@ func (h *maxMinHeap) Remove(val interface{}) {
 		panic("remove a not exist value")
 	}
 }
+func (h *maxMinHeap) Top() (val interface{}, isEmpty bool) {
+retry:
+	if h.Len() == 0 {
+		return nil, true
+	}
+	top := h.data[0]
+	if h.varSet[top] == 0 {
+		_ = heap.Pop(h)
+		goto retry
+	}
+	return top, false
+}
+
 func (h *maxMinHeap) AppendMyDecimal(val types.MyDecimal) error {
 	key, err := val.ToHashKey()
 	if err != nil {
@@ -125,10 +129,6 @@ retry:
 		goto retry
 	}
 	return top, false
-}
-func (h *maxMinHeap) Reset() {
-	h.data = h.data[:0]
-	h.varSet = make(map[interface{}]int64)
 }
 
 type partialResult4MaxMinInt struct {
@@ -186,19 +186,16 @@ type partialResult4MaxMinString struct {
 type partialResult4MaxMinJSON struct {
 	val    json.BinaryJSON
 	isNull bool
-	heap   *maxMinHeap
 }
 
 type partialResult4MaxMinEnum struct {
 	val    types.Enum
 	isNull bool
-	heap   *maxMinHeap
 }
 
 type partialResult4MaxMinSet struct {
 	val    types.Set
 	isNull bool
-	heap   *maxMinHeap
 }
 
 type baseMaxMinAggFunc struct {
@@ -1225,16 +1222,12 @@ type maxMin4JSON struct {
 func (e *maxMin4JSON) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinJSON)
 	p.isNull = true
-	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
-		return json.CompareBinary(i.(json.BinaryJSON), j.(json.BinaryJSON))
-	})
 	return PartialResult(p), 0
 }
 
 func (e *maxMin4JSON) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinJSON)(pr)
 	p.isNull = true
-	p.heap.Reset()
 }
 
 func (e *maxMin4JSON) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -1287,62 +1280,6 @@ func (e *maxMin4JSON) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	return 0, nil
 }
 
-type maxMin4JSONSliding struct {
-	maxMin4JSON
-}
-
-func (e *maxMin4JSONSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4MaxMinJSON)(pr)
-	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalJSON(sctx, row)
-		if err != nil {
-			return 0, err
-		}
-		if isNull {
-			continue
-		}
-		p.heap.Append(input.Copy())
-	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(json.BinaryJSON).Copy()
-		p.isNull = false
-	} else {
-		p.isNull = true
-	}
-	return 0, nil
-}
-
-func (e *maxMin4JSONSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4MaxMinJSON)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := e.args[0].EvalJSON(sctx, rows[lastEnd+i])
-		if err != nil {
-			return err
-		}
-		if isNull {
-			continue
-		}
-		p.heap.Append(input.Copy())
-	}
-	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[0].EvalJSON(sctx, rows[lastStart+i])
-		if err != nil {
-			return err
-		}
-		if isNull {
-			continue
-		}
-		p.heap.Remove(input)
-	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(json.BinaryJSON).Copy()
-		p.isNull = false
-	} else {
-		p.isNull = true
-	}
-	return nil
-}
-
 type maxMin4Enum struct {
 	baseMaxMinAggFunc
 }
@@ -1350,18 +1287,12 @@ type maxMin4Enum struct {
 func (e *maxMin4Enum) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinEnum)
 	p.isNull = true
-	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
-		src := i.(types.Enum)
-		dst := j.(types.Enum)
-		return types.CompareUint64(src.Value, dst.Value)
-	})
 	return PartialResult(p), 0
 }
 
 func (e *maxMin4Enum) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinEnum)(pr)
 	p.isNull = true
-	p.heap.Reset()
 }
 
 func (e *maxMin4Enum) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -1412,65 +1343,6 @@ func (e *maxMin4Enum) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	return 0, nil
 }
 
-type maxMin4EnumSliding struct {
-	maxMin4Enum
-}
-
-func (e *maxMin4EnumSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4MaxMinEnum)(pr)
-	for _, row := range rowsInGroup {
-		d, err := e.args[0].Eval(row)
-		if err != nil {
-			return 0, err
-		}
-		if d.IsNull() {
-			continue
-		}
-		en := d.GetMysqlEnum()
-		p.heap.Append(en.Copy())
-	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(types.Enum).Copy()
-		p.isNull = false
-	} else {
-		p.isNull = true
-	}
-	return 0, nil
-}
-
-func (e *maxMin4EnumSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4MaxMinEnum)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
-		d, err := e.args[0].Eval(rows[lastEnd+i])
-		if err != nil {
-			return err
-		}
-		if d.IsNull() {
-			continue
-		}
-		en := d.GetMysqlEnum()
-		p.heap.Append(en.Copy())
-	}
-	for i := uint64(0); i < shiftStart; i++ {
-		d, err := e.args[0].Eval(rows[lastStart+i])
-		if err != nil {
-			return err
-		}
-		if d.IsNull() {
-			continue
-		}
-		en := d.GetMysqlEnum()
-		p.heap.Remove(en)
-	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(types.Enum).Copy()
-		p.isNull = false
-	} else {
-		p.isNull = true
-	}
-	return nil
-}
-
 type maxMin4Set struct {
 	baseMaxMinAggFunc
 }
@@ -1478,18 +1350,12 @@ type maxMin4Set struct {
 func (e *maxMin4Set) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinSet)
 	p.isNull = true
-	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
-		src := i.(types.Set)
-		dst := j.(types.Set)
-		return types.CompareUint64(src.Value, dst.Value)
-	})
 	return PartialResult(p), 0
 }
 
 func (e *maxMin4Set) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4MaxMinSet)(pr)
 	p.isNull = true
-	p.heap.Reset()
 }
 
 func (e *maxMin4Set) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -1538,63 +1404,4 @@ func (e *maxMin4Set) MergePartialResult(sctx sessionctx.Context, src, dst Partia
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
-}
-
-type maxMin4SetSliding struct {
-	maxMin4Set
-}
-
-func (e *maxMin4SetSliding) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4MaxMinSet)(pr)
-	for _, row := range rowsInGroup {
-		d, err := e.args[0].Eval(row)
-		if err != nil {
-			return 0, err
-		}
-		if d.IsNull() {
-			continue
-		}
-		en := d.GetMysqlSet()
-		p.heap.Append(en.Copy())
-	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(types.Set).Copy()
-		p.isNull = false
-	} else {
-		p.isNull = true
-	}
-	return 0, nil
-}
-
-func (e *maxMin4SetSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
-	p := (*partialResult4MaxMinSet)(pr)
-	for i := uint64(0); i < shiftEnd; i++ {
-		d, err := e.args[0].Eval(rows[lastEnd+i])
-		if err != nil {
-			return err
-		}
-		if d.IsNull() {
-			continue
-		}
-		en := d.GetMysqlSet()
-		p.heap.Append(en.Copy())
-	}
-	for i := uint64(0); i < shiftStart; i++ {
-		d, err := e.args[0].Eval(rows[lastStart+i])
-		if err != nil {
-			return err
-		}
-		if d.IsNull() {
-			continue
-		}
-		en := d.GetMysqlSet()
-		p.heap.Remove(en)
-	}
-	if val, isEmpty := p.heap.Top(); !isEmpty {
-		p.val = val.(types.Set).Copy()
-		p.isNull = false
-	} else {
-		p.isNull = true
-	}
-	return nil
 }

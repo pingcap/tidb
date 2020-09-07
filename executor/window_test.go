@@ -408,3 +408,56 @@ func baseTestSlidingWindowFunctions(tk *testkit.TestKit) {
 	result = tk.MustQuery("SELECT sex, MAX(id) OVER (RANGE BETWEEN UNBOUNDED PRECEDING and UNBOUNDED FOLLOWING) FROM t;")
 	result.Check(testkit.Rows("M 11", "F 11", "F 11", "F 11", "M 11", "<nil> 11", "<nil> 11"))
 }
+
+func (s *testSuite7) TestMaxSlidingWindow(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a BIGINT);")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	result := tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("3", "3", "3"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a float);")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("3", "3", "3"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a double);")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("3", "3", "3"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a decimal);")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("3", "3", "3"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a text);")
+	tk.MustExec("insert into t values ('1'), ('2'), ('3')")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("3", "3", "3"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a time);")
+	tk.MustExec("insert into t values ('00:00:00'), ('01:00:00'), ('02:00:00')")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("02:00:00", "02:00:00", "02:00:00"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a date);")
+	tk.MustExec("insert into t values ('2020-09-08'), ('2020-09-09'), ('2020-09-10')")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("2020-09-10", "2020-09-10", "2020-09-10"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a datetime);")
+	tk.MustExec("insert into t values ('2020-09-08 02:00:00'), ('2020-09-09 01:00:00'), ('2020-09-10 00:00:00')")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("2020-09-10 00:00:00", "2020-09-10 00:00:00", "2020-09-10 00:00:00"))
+}
