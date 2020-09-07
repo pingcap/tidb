@@ -224,9 +224,9 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_LeastTime:
 		f = &builtinLeastTimeSig{base}
 	case tipb.ScalarFuncSig_IntervalInt:
-		f = &builtinIntervalIntSig{base}
+		f = &builtinIntervalIntSig{base, false} // Since interval function won't be pushed down to TiKV, therefore it doesn't matter what value we give to hasNullable
 	case tipb.ScalarFuncSig_IntervalReal:
-		f = &builtinIntervalRealSig{base}
+		f = &builtinIntervalRealSig{base, false}
 	case tipb.ScalarFuncSig_GEInt:
 		f = &builtinGEIntSig{base}
 	case tipb.ScalarFuncSig_GEReal:

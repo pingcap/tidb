@@ -256,6 +256,8 @@ func (s *testSuite) TestInsert(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1.111 overflows bigint"))
 	tk.MustExec("insert into t value ('-1.111');")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 BIGINT UNSIGNED value is out of range in '-1'"))
+	tk.MustExec("update t set a = -1 limit 1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 constant -1 overflows bigint"))
 	r = tk.MustQuery("select * from t;")
 	r.Check(testkit.Rows("0", "0", "18446744073709551615", "0", "0"))
 	tk.MustExec("set @@sql_mode = @orig_sql_mode;")

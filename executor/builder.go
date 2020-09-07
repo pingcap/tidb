@@ -976,8 +976,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 		// goroutines write empty DirtyTable to DirtyDB for this table concurrently. Although the DirtyDB looks
 		// safe for data race in all the cases, the map of golang will throw panic when it's accessed in parallel.
 		// So we lock it when getting dirty table.
-		physicalTableID := getPhysicalTableID(x.table)
-		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -992,8 +990,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 				}
 			}
 		}
-		physicalTableID := getPhysicalTableID(x.table)
-		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -1007,8 +1003,6 @@ func (b *executorBuilder) buildUnionScanFromReader(reader Executor, v *plannerco
 				}
 			}
 		}
-		physicalTableID := getPhysicalTableID(x.table)
-		us.dirty = GetDirtyDB(b.ctx).GetDirtyTable(physicalTableID)
 		us.conditions, us.conditionsWithVirCol = plannercore.SplitSelCondsWithVirtualColumn(v.Conditions)
 		us.columns = x.columns
 		us.table = x.table
@@ -2056,19 +2050,24 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 		if b.err != nil {
 			return
 		}
+		fastExec := &AnalyzeFastExec{
+			ctx:             b.ctx,
+			physicalTableID: task.PhysicalTableID,
+			colsInfo:        task.ColsInfo,
+			handleCols:      task.HandleCols,
+			opts:            opts,
+			tblInfo:         task.TblInfo,
+			concurrency:     concurrency,
+			wg:              &sync.WaitGroup{},
+		}
+		b.err = fastExec.calculateEstimateSampleStep()
+		if b.err != nil {
+			return
+		}
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: fastTask,
-			fastExec: &AnalyzeFastExec{
-				ctx:             b.ctx,
-				physicalTableID: task.PhysicalTableID,
-				colsInfo:        task.ColsInfo,
-				handleCols:      task.HandleCols,
-				opts:            opts,
-				tblInfo:         task.TblInfo,
-				concurrency:     concurrency,
-				wg:              &sync.WaitGroup{},
-			},
-			job: &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "fast analyze columns"},
+			fastExec: fastExec,
+			job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "fast analyze columns"},
 		})
 	}
 }
@@ -2088,18 +2087,23 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 		if b.err != nil {
 			return
 		}
+		fastExec := &AnalyzeFastExec{
+			ctx:             b.ctx,
+			physicalTableID: task.PhysicalTableID,
+			idxsInfo:        []*model.IndexInfo{task.IndexInfo},
+			opts:            opts,
+			tblInfo:         task.TblInfo,
+			concurrency:     concurrency,
+			wg:              &sync.WaitGroup{},
+		}
+		b.err = fastExec.calculateEstimateSampleStep()
+		if b.err != nil {
+			return
+		}
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: fastTask,
-			fastExec: &AnalyzeFastExec{
-				ctx:             b.ctx,
-				physicalTableID: task.PhysicalTableID,
-				idxsInfo:        []*model.IndexInfo{task.IndexInfo},
-				opts:            opts,
-				tblInfo:         task.TblInfo,
-				concurrency:     concurrency,
-				wg:              &sync.WaitGroup{},
-			},
-			job: &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: "fast analyze index " + task.IndexInfo.Name.O},
+			fastExec: fastExec,
+			job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: "fast analyze index " + task.IndexInfo.Name.O},
 		})
 	}
 }
