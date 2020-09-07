@@ -406,16 +406,21 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 // "To apply ORDER BY or LIMIT to an individual SELECT, place the clause inside the parentheses that enclose the SELECT."
 func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
-		if sel.IsInBraces {
-			continue
-		}
-		if sel.Limit != nil {
-			p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "LIMIT")
-			return
-		}
-		if sel.OrderBy != nil {
-			p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "ORDER BY")
-			return
+		switch s := sel.(type) {
+		case *ast.SelectStmt:
+			if s.IsInBraces {
+				continue
+			}
+			if s.Limit != nil {
+				p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "LIMIT")
+				return
+			}
+			if s.OrderBy != nil {
+				p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "ORDER BY")
+				return
+			}
+		case *ast.SetOprSelectList:
+			p.checkSetOprSelectList(s)
 		}
 	}
 }
@@ -516,14 +521,21 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 	}
 }
 
-func (p *preprocessor) checkCreateViewWithSelect(stmt *ast.SelectStmt) {
-	if stmt.SelectIntoOpt != nil {
-		p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
-		return
-	}
-	if stmt.LockInfo != nil && stmt.LockInfo.LockType != ast.SelectLockNone {
-		stmt.LockInfo.LockType = ast.SelectLockNone
-		return
+func (p *preprocessor) checkCreateViewWithSelect(stmt ast.Node) {
+	switch s := stmt.(type) {
+	case *ast.SelectStmt:
+		if s.SelectIntoOpt != nil {
+			p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
+			return
+		}
+		if s.LockInfo != nil && s.LockInfo.LockType != ast.SelectLockNone {
+			s.LockInfo.LockType = ast.SelectLockNone
+			return
+		}
+	case *ast.SetOprSelectList:
+		for _, sel := range s.Selects {
+			p.checkCreateViewWithSelect(sel)
+		}
 	}
 }
 

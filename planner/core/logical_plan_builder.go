@@ -1169,8 +1169,22 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 	afterSetOprs := make([]*ast.SetOprType, 0, len(setOpr.SelectList.Selects))
 	selects := setOpr.SelectList.Selects
 	for i := 0; i < len(selects); i++ {
-		intersects := []*ast.SelectStmt{selects[i]}
-		for i+1 < len(selects) && *selects[i+1].AfterSetOperator == ast.Intersect {
+		intersects := []ast.Node{selects[i]}
+		for i+1 < len(selects) {
+			breakIteration := false
+			switch x := selects[i+1].(type) {
+			case *ast.SelectStmt:
+				if *x.AfterSetOperator != ast.Intersect && *x.AfterSetOperator != ast.IntersectAll {
+					breakIteration = true
+				}
+			case *ast.SetOprSelectList:
+				if *x.AfterSetOperator != ast.Intersect && *x.AfterSetOperator != ast.IntersectAll {
+					breakIteration = true
+				}
+			}
+			if breakIteration {
+				break
+			}
 			intersects = append(intersects, selects[i+1])
 			i++
 		}
@@ -1253,18 +1267,42 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 
 // buildIntersect build the set operator for 'intersect'. It is called before buildExcept and buildUnion because of its
 // higher precedence.
-func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []*ast.SelectStmt) (LogicalPlan, *ast.SetOprType, error) {
-	leftPlan, err := b.buildSelect(ctx, selects[0])
+func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (LogicalPlan, *ast.SetOprType, error) {
+	var leftPlan LogicalPlan
+	var err error
+	var afterSetOperator *ast.SetOprType
+	switch x := selects[0].(type) {
+	case *ast.SelectStmt:
+		afterSetOperator = x.AfterSetOperator
+		leftPlan, err = b.buildSelect(ctx, x)
+	case *ast.SetOprSelectList:
+		afterSetOperator = x.AfterSetOperator
+		leftPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+	}
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(selects) == 1 {
-		return leftPlan, selects[0].AfterSetOperator, nil
+		return leftPlan, afterSetOperator, nil
 	}
 
 	columnNums := leftPlan.Schema().Len()
 	for i := 1; i < len(selects); i++ {
-		rightPlan, err := b.buildSelect(ctx, selects[i])
+		var rightPlan LogicalPlan
+		switch x := selects[i].(type) {
+		case *ast.SelectStmt:
+			if *x.AfterSetOperator == ast.IntersectAll {
+				// TODO: support intersect all
+				return nil, nil, errors.Errorf("TiDB do not support intersect all")
+			}
+			rightPlan, err = b.buildSelect(ctx, x)
+		case *ast.SetOprSelectList:
+			if *x.AfterSetOperator == ast.IntersectAll {
+				// TODO: support intersect all
+				return nil, nil, errors.Errorf("TiDB do not support intersect all")
+			}
+			rightPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1276,7 +1314,7 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []*ast.SelectS
 			return nil, nil, err
 		}
 	}
-	return leftPlan, selects[0].AfterSetOperator, nil
+	return leftPlan, afterSetOperator, nil
 }
 
 // buildExcept build the set operators for 'except', and in this function, it calls buildUnion at the same time. Because
@@ -1301,6 +1339,9 @@ func (b *PlanBuilder) buildExcept(ctx context.Context, selects []LogicalPlan, af
 			}
 			unionPlans = []LogicalPlan{leftPlan}
 			tmpAfterSetOpts = []*ast.SetOprType{nil}
+		} else if *afterSetOpts[i] == ast.ExceptAll {
+			// TODO: support except all.
+			return nil, errors.Errorf("TiDB do not support except all")
 		} else {
 			unionPlans = append(unionPlans, rightPlan)
 			tmpAfterSetOpts = append(tmpAfterSetOpts, afterSetOpts[i])

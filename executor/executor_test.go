@@ -3676,14 +3676,13 @@ func (s *testSuite3) TestForSelectScopeInUnion(c *C) {
 	c.Assert(err, NotNil)
 
 	tk1.MustExec("begin")
-	// 'For update' would be ignored if 'order by' or 'limit' exists.
 	tk1.MustQuery("select 1 as a union select a from t limit 5 for update")
 	tk1.MustQuery("select 1 as a union select a from t order by a for update")
 
 	tk2.MustExec("update t set a = a + 1")
 
 	_, err = tk1.Exec("commit")
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite3) TestUnsignedDecimalOverflow(c *C) {
