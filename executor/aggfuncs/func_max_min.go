@@ -187,6 +187,16 @@ type partialResult4MaxMinJSON struct {
 	isNull bool
 }
 
+type partialResult4MaxMinEnum struct {
+	val    types.Enum
+	isNull bool
+}
+
+type partialResult4MaxMinSet struct {
+	val    types.Set
+	isNull bool
+}
+
 type baseMaxMinAggFunc struct {
 	baseAggFunc
 
@@ -1051,6 +1061,132 @@ func (e *maxMin4JSON) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
 		p2.val = p1.val
 		p2.isNull = false
+	}
+	return 0, nil
+}
+
+type maxMin4Enum struct {
+	baseMaxMinAggFunc
+}
+
+func (e *maxMin4Enum) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p := new(partialResult4MaxMinEnum)
+	p.isNull = true
+	return PartialResult(p), 0
+}
+
+func (e *maxMin4Enum) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4MaxMinEnum)(pr)
+	p.isNull = true
+}
+
+func (e *maxMin4Enum) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4MaxMinEnum)(pr)
+	if p.isNull {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendEnum(e.ordinal, p.val)
+	return nil
+}
+
+func (e *maxMin4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4MaxMinEnum)(pr)
+	for _, row := range rowsInGroup {
+		d, err := e.args[0].Eval(row)
+		if err != nil {
+			return 0, err
+		}
+		if d.IsNull() {
+			continue
+		}
+		if p.isNull {
+			p.val = d.GetMysqlEnum().Copy()
+			p.isNull = false
+			continue
+		}
+		en := d.GetMysqlEnum()
+		if e.isMax && en.Value > p.val.Value || !e.isMax && en.Value < p.val.Value {
+			p.val = en.Copy()
+		}
+	}
+	return 0, nil
+}
+
+func (e *maxMin4Enum) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4MaxMinEnum)(src), (*partialResult4MaxMinEnum)(dst)
+	if p1.isNull {
+		return 0, nil
+	}
+	if p2.isNull {
+		*p2 = *p1
+		return 0, nil
+	}
+	if e.isMax && p1.val.Value > p2.val.Value || !e.isMax && p1.val.Value < p2.val.Value {
+		p2.val, p2.isNull = p1.val, false
+	}
+	return 0, nil
+}
+
+type maxMin4Set struct {
+	baseMaxMinAggFunc
+}
+
+func (e *maxMin4Set) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p := new(partialResult4MaxMinSet)
+	p.isNull = true
+	return PartialResult(p), 0
+}
+
+func (e *maxMin4Set) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4MaxMinSet)(pr)
+	p.isNull = true
+}
+
+func (e *maxMin4Set) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4MaxMinSet)(pr)
+	if p.isNull {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendSet(e.ordinal, p.val)
+	return nil
+}
+
+func (e *maxMin4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4MaxMinSet)(pr)
+	for _, row := range rowsInGroup {
+		d, err := e.args[0].Eval(row)
+		if err != nil {
+			return 0, err
+		}
+		if d.IsNull() {
+			continue
+		}
+		if p.isNull {
+			p.val = d.GetMysqlSet().Copy()
+			p.isNull = false
+			continue
+		}
+		s := d.GetMysqlSet()
+		if e.isMax && s.Value > p.val.Value || !e.isMax && s.Value < p.val.Value {
+			p.val = s.Copy()
+		}
+	}
+	return 0, nil
+}
+
+func (e *maxMin4Set) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4MaxMinSet)(src), (*partialResult4MaxMinSet)(dst)
+	if p1.isNull {
+		return 0, nil
+	}
+	if p2.isNull {
+		*p2 = *p1
+		return 0, nil
+	}
+	if e.isMax && p1.val.Value > p2.val.Value || !e.isMax && p1.val.Value < p2.val.Value {
+		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
 }

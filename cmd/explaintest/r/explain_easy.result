@@ -605,12 +605,12 @@ Selection_7	10000.00	root		or(ifnull(test.t.a, 1), isnull(test.t.a))
     └─TableFullScan_10	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain select * from t ta right outer join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.a, 1) or tb.a is null;
 id	estRows	task	access object	operator info
-HashJoin_7	8000.00	root		right outer join, equal:[eq(test.t.nb, test.t.nb)]
+HashJoin_7	8002.00	root		right outer join, equal:[eq(test.t.nb, test.t.nb)]
 ├─TableReader_11(Build)	3333.33	root		data:Selection_10
 │ └─Selection_10	3333.33	cop[tikv]		gt(test.t.a, 1)
 │   └─TableFullScan_9	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
-└─TableReader_14(Probe)	8000.00	root		data:Selection_13
-  └─Selection_13	8000.00	cop[tikv]		or(ifnull(test.t.a, 1), isnull(test.t.a))
+└─TableReader_14(Probe)	8002.00	root		data:Selection_13
+  └─Selection_13	8002.00	cop[tikv]		or(ifnull(test.t.a, 1), isnull(test.t.a))
     └─TableFullScan_12	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain select ifnull(t.a, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
@@ -771,4 +771,17 @@ label = "cop"
 "TableReader_7" -> "Selection_6"
 }
 
+drop table if exists t;
+create table t(a binary(16) not null, b varchar(2) default null, c varchar(100) default 'aaaa', key (a,b));
+explain select * from t where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+id	estRows	task	access object	operator info
+IndexLookUp_10	0.10	root		
+├─IndexRangeScan_8(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:["[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb","[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb"], keep order:false, stats:pseudo
+└─TableRowIDScan_9(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain update t set c = 'ssss' where a=x'FA34E1093CB428485734E3917F000000' and b='xb';
+id	estRows	task	access object	operator info
+Update_4	N/A	root		N/A
+└─IndexLookUp_11	0.10	root		
+  ├─IndexRangeScan_9(Build)	0.10	cop[tikv]	table:t, index:a(a, b)	range:["[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb","[250 52 225 9 60 180 40 72 87 52 227 145 127 0 0 0]" "xb"], keep order:false, stats:pseudo
+  └─TableRowIDScan_10(Probe)	0.10	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;

@@ -171,7 +171,7 @@ unrecognized-option-test = true
 	c.Assert(err, IsNil)
 	c.Assert(f.Sync(), IsNil)
 
-	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*unknown configuration option(?:.|\n)*")
+	c.Assert(conf.Load(configFile), ErrorMatches, "(?:.|\n)*invalid configuration option(?:.|\n)*")
 	c.Assert(conf.MaxServerConnections, Equals, uint32(0))
 
 	f.Truncate(0)
@@ -191,6 +191,7 @@ mem-quota-query = 10000
 nested-loop-join-cache-capacity = 100
 max-index-length = 3080
 skip-register-to-dashboard = true
+deprecate-integer-display-length = true
 [performance]
 txn-total-size-limit=2000
 [tikv-client]
@@ -211,6 +212,9 @@ history-size=100
 allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
+[labels]
+foo= "bar"
+group= "abc"
 [security]
 spilled-file-encryption-method = "plaintext"
 `)
@@ -255,7 +259,11 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
+	c.Assert(len(conf.Labels), Equals, 2)
+	c.Assert(conf.Labels["foo"], Equals, "bar")
+	c.Assert(conf.Labels["group"], Equals, "abc")
 	c.Assert(conf.Security.SpilledFileEncryptionMethod, Equals, SpilledFileEncryptionMethodPlaintext)
+	c.Assert(conf.DeprecateIntegerDisplayWidth, Equals, true)
 
 	_, err = f.WriteString(`
 [log.file]
