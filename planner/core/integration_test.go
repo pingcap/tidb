@@ -14,7 +14,9 @@
 package core_test
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
@@ -301,8 +303,10 @@ func (s *testIntegrationSerialSuite) TestNoneAccessPathsFoundByIsolationRead(c *
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash, tikv'")
 	tk.MustExec("select * from t")
-	config.GetGlobalConfig().IsolationRead.Engines = []string{"tiflash"}
-	defer func() { config.GetGlobalConfig().IsolationRead.Engines = []string{"tikv", "tiflash"} }()
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.IsolationRead.Engines = []string{"tiflash"}
+	})
 	// Change instance config doesn't affect isolation read.
 	tk.MustExec("select * from t")
 }
@@ -342,6 +346,73 @@ func (s *testIntegrationSerialSuite) TestSelPushDownTiFlash(c *C) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func (s *testIntegrationSerialSuite) TestBroadcastJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists d1_t")
+	tk.MustExec("create table d1_t(d1_k int, value int)")
+	tk.MustExec("insert into d1_t values(1,2),(2,3)")
+	tk.MustExec("analyze table d1_t")
+	tk.MustExec("drop table if exists d2_t")
+	tk.MustExec("create table d2_t(d2_k decimal(10,2), value int)")
+	tk.MustExec("insert into d2_t values(10.11,2),(10.12,3)")
+	tk.MustExec("analyze table d2_t")
+	tk.MustExec("drop table if exists d3_t")
+	tk.MustExec("create table d3_t(d3_k date, value int)")
+	tk.MustExec("insert into d3_t values(date'2010-01-01',2),(date'2010-01-02',3)")
+	tk.MustExec("analyze table d3_t")
+	tk.MustExec("drop table if exists fact_t")
+	tk.MustExec("create table fact_t(d1_k int, d2_k decimal(10,2), d3_k date, col1 int, col2 int, col3 int)")
+	tk.MustExec("insert into fact_t values(1,10.11,date'2010-01-01',1,2,3),(1,10.11,date'2010-01-02',1,2,3),(1,10.12,date'2010-01-01',1,2,3),(1,10.12,date'2010-01-02',1,2,3)")
+	tk.MustExec("insert into fact_t values(2,10.11,date'2010-01-01',1,2,3),(2,10.11,date'2010-01-02',1,2,3),(2,10.12,date'2010-01-01',1,2,3),(2,10.12,date'2010-01-02',1,2,3)")
+	tk.MustExec("analyze table fact_t")
+
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "fact_t" || tblInfo.Name.L == "d1_t" || tblInfo.Name.L == "d2_t" || tblInfo.Name.L == "d3_t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_allow_batch_cop = 1")
+	tk.MustExec("set @@session.tidb_opt_broadcast_join = 1")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+
+	// out table of out join should not be global
+	_, err := tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t), broadcast_join_local(d1_t) */ count(*) from fact_t left join d1_t on fact_t.d1_k = d1_t.d1_k")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	// join with non-equal condition not supported
+	_, err = tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t join d1_t on fact_t.d1_k = d1_t.d1_k and fact_t.col1 > d1_t.value")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
+	// cartsian join not supported
+	_, err = tk.Exec("explain select /*+ broadcast_join(fact_t, d1_t) */ count(*) from fact_t join d1_t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:1815]Internal : Can't find a proper physical plan for this query")
 }
 
 func (s *testIntegrationSerialSuite) TestAggPushDownEngine(c *C) {
@@ -848,6 +919,17 @@ func (s *testIntegrationSuite) TestApproxCountDistinctInPartitionTable(c *C) {
 	tk.MustQuery("select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("1 2", "3 1"))
 }
 
+func (s *testIntegrationSuite) TestIssue17813(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists hash_partition_overflow")
+	tk.MustExec("create table hash_partition_overflow (c0 bigint unsigned) partition by hash(c0) partitions 3")
+	tk.MustExec("insert into hash_partition_overflow values (9223372036854775808)")
+	tk.MustQuery("select * from hash_partition_overflow where c0 = 9223372036854775808").Check(testkit.Rows("9223372036854775808"))
+	tk.MustQuery("select * from hash_partition_overflow where c0 in (1, 9223372036854775808)").Check(testkit.Rows("9223372036854775808"))
+}
+
 func (s *testIntegrationSuite) TestHintWithRequiredProperty(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -1102,6 +1184,41 @@ func (s *testIntegrationSuite) TestOptimizeHintOnPartitionTable(c *C) {
 	}
 }
 
+func (s *testIntegrationSerialSuite) TestNotReadOnlySQLOnTiFlash(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b varchar(20))")
+	tk.MustExec(`set @@tidb_isolation_read_engines = "tiflash"`)
+	// Create virtual tiflash replica info.
+	dom := domain.GetDomain(tk.Se)
+	is := dom.InfoSchema()
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	c.Assert(exists, IsTrue)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
+	}
+	err := tk.ExecToErr("select * from t for update")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+
+	err = tk.ExecToErr("insert into t select * from t")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+
+	tk.MustExec("prepare stmt_insert from 'insert into t select * from t where t.a = ?'")
+	tk.MustExec("set @a=1")
+	err = tk.ExecToErr("execute stmt_insert using @a")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, `[planner:1815]Internal : Can not find access path matching 'tidb_isolation_read_engines'(value: 'tiflash'). Available values are 'tiflash, tikv'.`)
+}
+
 func (s *testIntegrationSuite) TestSelectLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -1187,4 +1304,57 @@ func (s *testIntegrationSuite) TestIssue16935(c *C) {
 	tk.MustExec("CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT NULL FROM t0;")
 
 	tk.MustQuery("SELECT * FROM t0 LEFT JOIN v0 ON TRUE WHERE v0.c0 IS NULL;")
+}
+
+func (s *testIntegrationSerialSuite) TestExplainAnalyzePointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b varchar(20))")
+	tk.MustExec("insert into t values (1,1)")
+
+	res := tk.MustQuery("explain analyze select * from t where a=1;")
+	checkExplain := func(rpc string) {
+		resBuff := bytes.NewBufferString("")
+		for _, row := range res.Rows() {
+			fmt.Fprintf(resBuff, "%s\n", row)
+		}
+		explain := resBuff.String()
+		c.Assert(strings.Contains(explain, rpc+":{num_rpc:"), IsTrue, Commentf("%s", explain))
+		c.Assert(strings.Contains(explain, "total_time:"), IsTrue, Commentf("%s", explain))
+	}
+	checkExplain("Get")
+	res = tk.MustQuery("explain analyze select * from t where a in (1,2,3);")
+	checkExplain("BatchGet")
+}
+
+func (s *testIntegrationSuite) TestPartialBatchPointGet(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (c_int int, c_str varchar(40), primary key(c_int, c_str))")
+	tk.MustExec("insert into t values (3, 'bose')")
+	tk.MustQuery("select * from t where c_int in (3)").Check(testkit.Rows(
+		"3 bose",
+	))
+	tk.MustQuery("select * from t where c_int in (3) or c_str in ('yalow') and c_int in (1, 2)").Check(testkit.Rows(
+		"3 bose",
+	))
+}
+
+func (s *testIntegrationSuite) TestIssue19926(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists ta;")
+	tk.MustExec("drop table if exists tb;")
+	tk.MustExec("drop table if exists tc;")
+	tk.MustExec("drop view if exists v;")
+	tk.MustExec("CREATE TABLE `ta`  (\n  `id` varchar(36) NOT NULL ,\n  `status` varchar(1) NOT NULL \n);")
+	tk.MustExec("CREATE TABLE `tb`  (\n  `id` varchar(36) NOT NULL ,\n  `status` varchar(1) NOT NULL \n);")
+	tk.MustExec("CREATE TABLE `tc`  (\n  `id` varchar(36) NOT NULL ,\n  `status` varchar(1) NOT NULL \n);")
+	tk.MustExec("insert into ta values('1','1');")
+	tk.MustExec("insert into tb values('1','1');")
+	tk.MustExec("insert into tc values('1','1');")
+	tk.MustExec("create definer='root'@'localhost' view v as\nselect \nconcat(`ta`.`status`,`tb`.`status`) AS `status`, \n`ta`.`id` AS `id`  from (`ta` join `tb`) \nwhere (`ta`.`id` = `tb`.`id`);")
+	tk.MustQuery("SELECT tc.status,v.id FROM tc, v WHERE tc.id = v.id AND v.status = '11';").Check(testkit.Rows("1 1"))
 }

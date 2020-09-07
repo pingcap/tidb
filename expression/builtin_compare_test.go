@@ -66,11 +66,9 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"-123456789123456789123456789.12345 > a", "0"},
 		{"123456789123456789123456789.12345 < a", "0"},
 		{"-123456789123456789123456789.12345 < a", "1"},
-		// This cast can not be eliminated,
-		// since converting "aaaa" to an int will cause DataTruncate error.
-		{"'aaaa'=a", "eq(cast(aaaa, double BINARY), cast(a, double BINARY))"},
+		{"'aaaa'=a", "eq(0, a)"},
 	}
-	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns)
+	cols, names := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns, tblInfo)
 	schema := NewSchema(cols...)
 	for _, t := range tests {
 		f, err := ParseSimpleExprsWithNames(s.ctx, t.exprStr, schema, names)
@@ -234,6 +232,10 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1, false},
 		{types.MakeDatums("9007199254740991", "9007199254740992"), 0, false},
 		{types.MakeDatums(1, uint32(1), uint32(1)), 0, true},
+		{types.MakeDatums(-1, 2333, nil), 0, false},
+		{types.MakeDatums(1, nil, nil, nil), 3, false},
+		{types.MakeDatums(1, nil, nil, nil, 2), 3, false},
+		{types.MakeDatums(uint64(9223372036854775808), nil, nil, nil, 4), 4, false},
 
 		// tests for appropriate precision loss
 		{types.MakeDatums(9007199254740992, "9007199254740993"), 1, false},
@@ -289,6 +291,18 @@ func (s *testEvaluatorSuite) TestGreatestLeastFuncs(c *C) {
 		{
 			[]interface{}{tm, 123},
 			curTimeInt, int64(123), false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time_1", "invalid_time_2", tmWithFsp},
+			curTimeWithFspString, "invalid_time_1", false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time_2", "invalid_time_1", tmWithFsp},
+			curTimeWithFspString, "invalid_time_2", false, false,
+		},
+		{
+			[]interface{}{tm, "invalid_time", nil, tmWithFsp},
+			nil, nil, true, false,
 		},
 		{
 			[]interface{}{duration, "123"},

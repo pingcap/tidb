@@ -254,6 +254,7 @@ func (b *builtinLeastStringSig) vecEvalString(input *chunk.Chunk, result *chunk.
 	src := result
 	arg := buf1
 	dst := buf2
+	dst.ReserveString(n)
 	for j := 1; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
 			return err
@@ -433,7 +434,11 @@ func (b *builtinIntervalIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 			i64s[i] = -1
 			continue
 		}
-		idx, err = b.binSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], input.GetRow(i))
+		if b.hasNullable {
+			idx, err = b.linearSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], input.GetRow(i))
+		} else {
+			idx, err = b.binSearch(v, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], input.GetRow(i))
+		}
 		if err != nil {
 			return err
 		}
@@ -466,7 +471,11 @@ func (b *builtinIntervalRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 			res[i] = -1
 			continue
 		}
-		idx, err = b.binSearch(f64s[i], b.args[1:], input.GetRow(i))
+		if b.hasNullable {
+			idx, err = b.linearSearch(f64s[i], b.args[1:], input.GetRow(i))
+		} else {
+			idx, err = b.binSearch(f64s[i], b.args[1:], input.GetRow(i))
+		}
 		if err != nil {
 			return err
 		}
@@ -742,7 +751,9 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 				if err = handleInvalidTimeError(b.ctx, err); err != nil {
 					return err
 				} else if !findInvalidTime[i] {
-					invalidValue[i] = result.GetString(i)
+					// Make a deep copy here.
+					// Otherwise invalidValue will internally change with result.
+					invalidValue[i] = string(result.GetBytes(i))
 					findInvalidTime[i] = true
 				}
 				continue
@@ -754,12 +765,12 @@ func (b *builtinLeastTimeSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	}
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
-		if findInvalidTime[i] {
-			result.AppendString(invalidValue[i])
-			continue
-		}
 		if dst.IsNull(i) {
 			result.AppendNull()
+			continue
+		}
+		if findInvalidTime[i] {
+			result.AppendString(invalidValue[i])
 		} else {
 			result.AppendString(dstTimes[i].String())
 		}
@@ -791,6 +802,7 @@ func (b *builtinGreatestStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	src := result
 	arg := buf1
 	dst := buf2
+	dst.ReserveString(n)
 	for j := 1; j < len(b.args); j++ {
 		if err := b.args[j].VecEvalString(b.ctx, input, arg); err != nil {
 			return err

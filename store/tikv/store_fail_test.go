@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 )
 
-func (s *testStoreFailedSuite) TestFailBusyServerKV(c *C) {
+func (s *testStoreSerialSuite) TestFailBusyServerKV(c *C) {
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	err = txn.Set([]byte("key"), []byte("value"))

@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/v4/client"
+	pd "github.com/pingcap/pd/v4/client"
 )
 
 // Use global variables to prevent pdClients from creating duplicate timestamps.
@@ -49,10 +49,6 @@ func NewPDClient(cluster *Cluster) pd.Client {
 		cluster:           cluster,
 		serviceSafePoints: make(map[string]uint64),
 	}
-}
-
-func (c *pdClient) ConfigClient() pd.ConfigClient {
-	return nil
 }
 
 func (c *pdClient) GetClusterID(ctx context.Context) uint64 {

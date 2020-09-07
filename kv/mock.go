@@ -101,6 +101,10 @@ func (t *mockTxn) GetMemBuffer() MemBuffer {
 	return nil
 }
 
+func (t *mockTxn) GetMemBufferSnapshot() MemBuffer {
+	return nil
+}
+
 func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
@@ -123,6 +127,10 @@ func (t *mockTxn) Reset() {
 
 func (t *mockTxn) SetVars(vars *Variables) {
 
+}
+
+func (t *mockTxn) GetVars() *Variables {
+	return nil
 }
 
 // NewMockTxn new a mockTxn.

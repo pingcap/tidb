@@ -146,13 +146,14 @@ type StatementContext struct {
 	planNormalized        string
 	planDigest            string
 	Tables                []TableEntry
-	PointExec             bool       // for point update cached execution, Constant expression need to set "paramMarker"
-	lockWaitStartTime     *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
+	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
+	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
 	PessimisticLockWaited int32
-	LockKeysDuration      time.Duration
+	LockKeysDuration      int64
 	LockKeysCount         int32
 	TblInfo2UnionScan     map[*model.TableInfo]bool
-	TaskID                uint64 // unique ID for an execution of a statement
+	TaskID                uint64              // unique ID for an execution of a statement
+	CheckKeyExists        map[string]struct{} // mark the keys needs to check for existence for pessimistic locks.
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -367,6 +368,20 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Unlock()
 }
 
+// TruncateWarnings truncates wanrings begin from start and returns the truncated warnings.
+func (sc *StatementContext) TruncateWarnings(start int) []SQLWarn {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sz := len(sc.mu.warnings) - start
+	if sz <= 0 {
+		return nil
+	}
+	ret := make([]SQLWarn, sz)
+	copy(ret, sc.mu.warnings[start:])
+	sc.mu.warnings = sc.mu.warnings[:start]
+	return ret
+}
+
 // AppendWarning appends a warning with level 'Warning'.
 func (sc *StatementContext) AppendWarning(warn error) {
 	sc.mu.Lock()
@@ -461,6 +476,7 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()
+	sc.CheckKeyExists = make(map[string]struct{})
 }
 
 // MergeExecDetails merges a single region execution details into self, used to print
@@ -486,7 +502,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	var details execdetails.ExecDetails
 	sc.mu.Lock()
 	details = sc.mu.execDetails
-	details.LockKeysDuration = sc.LockKeysDuration
+	details.LockKeysDuration = time.Duration(atomic.LoadInt64(&sc.LockKeysDuration))
 	sc.mu.Unlock()
 	return details
 }
@@ -497,7 +513,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 func (sc *StatementContext) ShouldClipToZero() bool {
 	// TODO: Currently altering column of integer to unsigned integer is not supported.
 	// If it is supported one day, that case should be added here.
-	return sc.InInsertStmt || sc.InLoadDataStmt
+	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt
 }
 
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
@@ -627,11 +643,12 @@ func (sc *StatementContext) SetFlagsFromPBFlag(flags uint64) {
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time
 func (sc *StatementContext) GetLockWaitStartTime() time.Time {
-	if sc.lockWaitStartTime == nil {
-		curTime := time.Now()
-		sc.lockWaitStartTime = &curTime
+	startTime := atomic.LoadInt64(&sc.lockWaitStartTime)
+	if startTime == 0 {
+		startTime = time.Now().UnixNano()
+		atomic.StoreInt64(&sc.lockWaitStartTime, startTime)
 	}
-	return *sc.lockWaitStartTime
+	return time.Unix(0, startTime)
 }
 
 //CopTasksDetails collects some useful information of cop-tasks during execution.

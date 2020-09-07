@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/expensivequery"
@@ -75,6 +76,7 @@ type Domain struct {
 	expensiveQueryHandle *expensivequery.Handle
 	wg                   sync.WaitGroup
 	statsUpdating        sync2.AtomicInt32
+	cancel               context.CancelFunc
 }
 
 // loadInfoSchema loads infoschema at startTS into handle, usedSchemaVersion is the currently used
@@ -483,7 +485,7 @@ func (do *Domain) topologySyncerKeeper() {
 	}
 }
 
-func (do *Domain) loadSchemaInLoop(lease time.Duration) {
+func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 	defer do.wg.Done()
 	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	// Lease renewal can run at any frequency.
@@ -520,7 +522,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 			// then continue to change the TiDB schema to version 3. Unfortunately, this down TiDB schema version will still be version 1.
 			// And version 1 is not consistent to version 3. So we need to stop the schema validator to prohibit the DML executing.
 			do.SchemaValidator.Stop()
-			err := do.mustRestartSyncer()
+			err := do.mustRestartSyncer(ctx)
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop, schema syncer restart failed", zap.Error(err))
 				break
@@ -542,8 +544,7 @@ func (do *Domain) loadSchemaInLoop(lease time.Duration) {
 
 // mustRestartSyncer tries to restart the SchemaSyncer.
 // It returns until it's successful or the domain is stoped.
-func (do *Domain) mustRestartSyncer() error {
-	ctx := context.Background()
+func (do *Domain) mustRestartSyncer(ctx context.Context) error {
 	syncer := do.ddl.SchemaSyncer()
 
 	for {
@@ -606,6 +607,7 @@ func (do *Domain) Close() {
 
 	do.sysSessionPool.Close()
 	do.slowQuery.Close()
+	do.cancel()
 	do.wg.Wait()
 	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
@@ -686,7 +688,8 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		return sysFactory(do)
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 2, 2, resourceIdleTimeout)
-	ctx := context.Background()
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	do.cancel = cancelFunc
 	callback := &ddlCallback{do: do}
 	d := do.ddl
 	do.ddl = ddl.NewDDL(
@@ -710,11 +713,12 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 		}
 	})
 
+	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	err = do.ddl.SchemaSyncer().Init(ctx)
 	if err != nil {
 		return err
 	}
-	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient)
+	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.etcdClient, skipRegisterToDashboard)
 	if err != nil {
 		return err
 	}
@@ -728,7 +732,7 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	if ddlLease > 0 {
 		do.wg.Add(1)
 		// Local store needs to get the change information for every DDL state in each session.
-		go do.loadSchemaInLoop(ddlLease)
+		go do.loadSchemaInLoop(ctx, ddlLease)
 	}
 	do.wg.Add(1)
 	go do.topNSlowQueryLoop()
@@ -736,8 +740,10 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 	do.wg.Add(1)
 	go do.infoSyncerKeeper()
 
-	do.wg.Add(1)
-	go do.topologySyncerKeeper()
+	if !skipRegisterToDashboard {
+		do.wg.Add(1)
+		go do.topologySyncerKeeper()
+	}
 
 	return nil
 }
@@ -939,6 +945,37 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context) {
 				err := do.bindHandle.HandleEvolvePlanTask(ctx, false)
 				if err != nil {
 					logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
+				}
+			}
+		}
+	}()
+}
+
+// TelemetryLoop create a goroutine that reports usage data in a loop, it should be called only once
+// in BootstrapSession.
+func (do *Domain) TelemetryLoop(ctx sessionctx.Context) {
+	ctx.GetSessionVars().InRestrictedSQL = true
+	do.wg.Add(1)
+	go func() {
+		defer func() {
+			do.wg.Done()
+			logutil.BgLogger().Info("handleTelemetryLoop exited.")
+			util.Recover(metrics.LabelDomain, "handleTelemetryLoop", nil, false)
+		}()
+		owner := do.newOwnerManager(telemetry.Prompt, telemetry.OwnerKey)
+		for {
+			select {
+			case <-do.exit:
+				owner.Cancel()
+				return
+			case <-time.After(telemetry.ReportInterval):
+				if !owner.IsOwner() {
+					continue
+				}
+				err := telemetry.ReportUsageData(ctx, do.GetEtcdClient())
+				if err != nil {
+					// Only status update errors will be printed out
+					logutil.BgLogger().Warn("handleTelemetryLoop status update failed", zap.Error(err))
 				}
 			}
 		}

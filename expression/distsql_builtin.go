@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -44,7 +43,7 @@ func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 
 func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
 	fieldTp := PbTypeToFieldType(tp)
-	base, err := newBaseBuiltinFunc(ctx, fmt.Sprintf("PBSig-%v", sigCode), args)
+	base, err := newBaseBuiltinFuncWithFieldType(ctx, fieldTp, args)
 	if err != nil {
 		return nil, err
 	}
@@ -225,9 +224,9 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_LeastTime:
 		f = &builtinLeastTimeSig{base}
 	case tipb.ScalarFuncSig_IntervalInt:
-		f = &builtinIntervalIntSig{base}
+		f = &builtinIntervalIntSig{base, false} // Since interval function won't be pushed down to TiKV, therefore it doesn't matter what value we give to hasNullable
 	case tipb.ScalarFuncSig_IntervalReal:
-		f = &builtinIntervalRealSig{base}
+		f = &builtinIntervalRealSig{base, false}
 	case tipb.ScalarFuncSig_GEInt:
 		f = &builtinGEIntSig{base}
 	case tipb.ScalarFuncSig_GEReal:
@@ -1132,11 +1131,6 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 		return nil, err
 	}
 
-	// recover collation information
-	if collate.NewCollationEnabled() {
-		tp := sf.GetType()
-		sf.SetCharsetAndCollation(tp.Charset, tp.Collate)
-	}
 	return sf, nil
 }
 

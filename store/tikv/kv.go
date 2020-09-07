@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/oracle/oracles"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
@@ -96,6 +97,7 @@ func (d Driver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	pdCli = execdetails.InterceptedPDClient{Client: pdCli}
 
 	// FIXME: uuid will be a very long and ugly string, simplify it.
 	uuid := fmt.Sprintf("tikv-%v", pdCli.GetClusterID(context.TODO()))
@@ -326,7 +328,7 @@ func (s *tikvStore) UUID() string {
 }
 
 func (s *tikvStore) CurrentVersion() (kv.Version, error) {
-	bo := NewBackoffer(context.Background(), tsoMaxBackoff)
+	bo := NewBackofferWithVars(context.Background(), tsoMaxBackoff, nil)
 	startTS, err := s.getTimestampWithRetry(bo)
 	if err != nil {
 		return kv.NewVersion(0), errors.Trace(err)
