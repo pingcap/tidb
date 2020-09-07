@@ -720,14 +720,15 @@ func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
 	tk.MustQuery("explain select * from t where a = 999").Check(testkit.Rows("IndexReader_6 0.00 root  index:IndexRangeScan_5",
 		"└─IndexRangeScan_5 0.00 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
 
-	tk.MustExec("create table t1 (a int, key(a));")
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, key(a));")
 	for i := 0; i < 2048; i++ {
-		tk.MustExec("insert into t1 values (0)")
+		tk.MustExec("insert into t values (0)")
 	}
 	for i := 1; i < 2049; i++ {
-		tk.MustExec("insert into t1 values (?)", i)
+		tk.MustExec("insert into t values (?)", i)
 	}
-	tk.MustExec("analyze table t1 with 0 topn;")
-	tk.MustQuery("explain select * from t1 where a = 1").Check(testkit.Rows("IndexReader_6 1.00 root  index:IndexRangeScan_5",
-		"└─IndexRangeScan_5 1.00 cop[tikv] table:t1, index:a(a) range:[1,1], keep order:false"))
+	tk.MustExec("analyze table t with 0 topn;")
+	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 1.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
 }
