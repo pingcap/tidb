@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -34,6 +35,12 @@ type windowTest struct {
 	args        []expression.Expression
 	orderByCols []*expression.Column
 	results     []types.Datum
+}
+
+type windowMemTest struct {
+	windowTest         windowTest
+	allocMemDelta      int64
+	updateMemDeltaGens updateMemDeltaGens
 }
 
 func (s *testSuite) testWindowFunc(c *C, p windowTest) {
@@ -69,7 +76,7 @@ func (s *testSuite) testWindowFunc(c *C, p windowTest) {
 	finalFunc.ResetPartialResult(finalPr)
 }
 
-func (s *testSuite) testWindowMemFunc(c *C, p windowMemTest) {
+func (s *testSuite) testWindowAggMemFunc(c *C, p windowMemTest) {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.windowTest.dataType}, p.windowTest.numRows)
 	dataGen := getDataGenFunc(p.windowTest.dataType)
 	for i := 0; i < p.windowTest.numRows; i++ {
@@ -88,10 +95,9 @@ func (s *testSuite) testWindowMemFunc(c *C, p windowMemTest) {
 	i := 0
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		memDelta, err := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		memDelta, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 		c.Assert(err, IsNil)
 		c.Assert(memDelta, Equals, updateMemDeltas[i])
-		i++
 	}
 }
 
@@ -137,20 +143,12 @@ func buildWindowTester(funcName string, tp byte, constantArg uint64, orderByCols
 	return pt
 }
 
-type windowMemTest struct {
-	windowTest         windowTest
-	allocMemDelta      int64
-	updateMemDeltaGens updateMemDeltaGens
-	isDistinct         bool
-}
-
-func buildWindowMemTester(funcName string, tp byte, constantArg uint64, orderByCols int, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens, isDistinct bool) windowMemTest {
+func buildWindowMemTester(funcName string, tp byte, constantArg uint64, numRows int, orderByCols int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens) windowMemTest {
 	windowTest := buildWindowTester(funcName, tp, constantArg, orderByCols, numRows)
 	pt := windowMemTest{
 		windowTest:         windowTest,
 		allocMemDelta:      allocMemDelta,
 		updateMemDeltaGens: updateMemDeltaGens,
-		isDistinct:         isDistinct,
 	}
 	return pt
 }
@@ -193,5 +191,19 @@ func (s *testSuite) TestWindowFunctions(c *C) {
 	}
 	for _, test := range tests {
 		s.testWindowFunc(c, test)
+	}
+}
+
+func (s *testSuite) TestMemRank(c *C) {
+	tests := []windowMemTest{
+		buildWindowMemTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 1, 1,
+			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
+		buildWindowMemTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 3, 0,
+			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
+		buildWindowMemTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 4, 1,
+			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
+	}
+	for _, test := range tests {
+		s.testWindowAggMemFunc(c, test)
 	}
 }

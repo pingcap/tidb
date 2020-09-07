@@ -10,9 +10,9 @@ import (
 func (s *testSuite) TestMemRowNumber(c *C) {
 	tests := []windowMemTest{
 		buildWindowMemTester(ast.WindowFuncRowNumber, mysql.TypeLonglong, 0, 0, 4,
-			aggfuncs.DefPartialResult4RowNumberSize, defaultUpdateMemDeltaGens, false),
+			aggfuncs.DefPartialResult4RowNumberSize, defaultUpdateMemDeltaGens),
 	}
 	for _, test := range tests {
-		s.testWindowMemFunc(c, test)
+		s.testWindowAggMemFunc(c, test)
 	}
 }
