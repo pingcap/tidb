@@ -217,7 +217,7 @@ func (s *testSuite) TestMemMaxMin(c *C) {
 			aggfuncs.DefPartialResult4MaxMinJSONSize, maxUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncMax, mysql.TypeEnum, 5,
 			aggfuncs.DefPartialResult4MaxMinEnumSize, maxUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMax, mysql.TypeSet, 2,
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeSet, 5,
 			aggfuncs.DefPartialResult4MaxMinSetSize, maxUpdateMemDeltaGens, false),
 
 		buildAggMemTester(ast.AggFuncMin, mysql.TypeLonglong, 5,
