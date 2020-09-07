@@ -755,14 +755,61 @@ type Delete struct {
 	TblColPosInfos TblColPosInfoSlice
 }
 
+// AnalyzeTableID is hybrid table id used to analyze table.
+type AnalyzeTableID struct {
+	PersistID  int64
+	CollectIDs []int64
+}
+
+// StoreAsCollectID indicates whether collect table id is same as persist table id.
+// for new partition implementation is TRUE but FALSE for old partition implementation
+func (h *AnalyzeTableID) StoreAsCollectID() bool {
+	return h.PersistID == h.CollectIDs[0]
+}
+
+func (h *AnalyzeTableID) String() string {
+	return fmt.Sprintf("%d => %v", h.CollectIDs, h.PersistID)
+}
+
+// Equals indicates whether two table id is equal.
+func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
+	if h == t {
+		return true
+	}
+	if h == nil || t == nil {
+		return false
+	}
+	if h.PersistID != t.PersistID {
+		return false
+	}
+	if len(h.CollectIDs) != len(t.CollectIDs) {
+		return false
+	}
+	if len(h.CollectIDs) == 1 {
+		return h.CollectIDs[0] == t.CollectIDs[0]
+	}
+	for _, hp := range h.CollectIDs {
+		var matchOne bool
+		for _, tp := range t.CollectIDs {
+			if tp == hp {
+				matchOne = true
+				break
+			}
+		}
+		if !matchOne {
+			return false
+		}
+	}
+	return true
+}
+
 // analyzeInfo is used to store the database name, table name and partition name of analyze task.
 type analyzeInfo struct {
 	DBName        string
 	TableName     string
 	PartitionName string
-	// PhysicalTableID is the id for a partition or a table.
-	PhysicalTableID int64
-	Incremental     bool
+	TableID       AnalyzeTableID
+	Incremental   bool
 }
 
 // AnalyzeColumnsTask is used for analyze columns.
