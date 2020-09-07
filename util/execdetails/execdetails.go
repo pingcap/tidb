@@ -405,8 +405,23 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	return copStats
 }
 
+func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int, bool) {
+	if summary.GetExecutorId() != "" {
+		strs := strings.Split(summary.GetExecutorId(), "_")
+		if id, err := strconv.Atoi(strs[len(strs)-1]); err == nil {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
 // RecordOneCopTask records a specific cop tasks's execution detail.
 func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary *tipb.ExecutorExecutionSummary) {
+	// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
+	// summary, use it overwrite the planID
+	if id, valid := getPlanIDFromExecutionSummary(summary); valid {
+		planID = id
+	}
 	copStats := e.GetCopStats(planID)
 	copStats.RecordOneCopTask(address, summary)
 }
