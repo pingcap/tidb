@@ -521,8 +521,8 @@ func (p *preprocessor) checkCreateViewWithSelect(stmt *ast.SelectStmt) {
 		p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
 		return
 	}
-	if stmt.LockTp != ast.SelectLockNone {
-		stmt.LockTp = ast.SelectLockNone
+	if stmt.LockInfo != nil && stmt.LockInfo.LockType != ast.SelectLockNone {
+		stmt.LockInfo.LockType = ast.SelectLockNone
 		return
 	}
 }

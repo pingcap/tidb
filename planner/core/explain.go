@@ -49,7 +49,7 @@ type partitionAccesser interface {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLock) ExplainInfo() string {
-	return p.Lock.String()
+	return fmt.Sprintf("%s %v", p.Lock.LockType.String(), p.Lock.WaitSec)
 }
 
 // ExplainID overrides the ExplainID in order to match different range.
