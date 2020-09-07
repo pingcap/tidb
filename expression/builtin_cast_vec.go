@@ -522,7 +522,12 @@ func (b *builtinCastRealAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if buf.IsNull(i) {
 			continue
 		}
-		tm, err := types.ParseTime(stmt, strconv.FormatFloat(f64s[i], 'f', -1, 64), b.tp.Tp, fsp)
+		fv := strconv.FormatFloat(f64s[i], 'f', -1, 64)
+		if fv == "0" {
+			times[i] = types.ZeroTime
+			continue
+		}
+		tm, err := types.ParseTime(stmt, fv, b.tp.Tp, fsp)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
@@ -807,6 +812,9 @@ func (b *builtinCastRealAsDecimalSig) vecEvalDecimal(input *chunk.Chunk, result 
 	bufreal := buf.Float64s()
 	resdecimal := result.Decimals()
 	for i := 0; i < n; i++ {
+		if result.IsNull(i) {
+			continue
+		}
 		if !b.inUnion || bufreal[i] >= 0 {
 			if err = resdecimal[i].FromFloat64(bufreal[i]); err != nil {
 				if types.ErrOverflow.Equal(err) {

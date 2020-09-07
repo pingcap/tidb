@@ -66,6 +66,8 @@ var (
 	_ AggFunc = (*maxMin4String)(nil)
 	_ AggFunc = (*maxMin4Duration)(nil)
 	_ AggFunc = (*maxMin4JSON)(nil)
+	_ AggFunc = (*maxMin4Enum)(nil)
+	_ AggFunc = (*maxMin4Set)(nil)
 
 	// All the AggFunc implementations for "AVG" are listed here.
 	_ AggFunc = (*avgOriginal4Decimal)(nil)
@@ -108,6 +110,8 @@ const (
 	DefFloat64Size = int64(unsafe.Sizeof(float64(0)))
 	// DefTimeSize is the size of time
 	DefTimeSize = int64(16)
+	// DefRowSize is the size of row
+	DefRowSize = int64(unsafe.Sizeof(chunk.Row{}))
 )
 
 // PartialResult represents data structure to store the partial result for the
