@@ -416,11 +416,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r expression.Expression, not bool) {
 	var condition expression.Expression
 	if rCol, ok := r.(*expression.Column); ok && (er.asScalar || not) {
-		rCol.InOperand = true
 		// If both input columns of `!= all / = any` expression are not null, we can treat the expression
 		// as normal column equal condition.
-		if lCol, ok := l.(*expression.Column); ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
-			rCol.InOperand = false
+		if lCol, ok := l.(*expression.Column); !ok || !mysql.HasNotNullFlag(lCol.GetType().Flag) || !mysql.HasNotNullFlag(rCol.GetType().Flag) {
+			rColCopy := *rCol
+			rColCopy.InOperand = true
+			r = &rColCopy
 		}
 	}
 	condition, er.err = er.constructBinaryOpFunction(l, r, ast.EQ)

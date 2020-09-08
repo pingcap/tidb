@@ -645,13 +645,15 @@ type AnalyzeFastExec struct {
 	collectors      []*statistics.SampleCollector
 	randSeed        int64
 	job             *statistics.AnalyzeJob
+	estSampStep     uint32
 }
 
-func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
+func (e *AnalyzeFastExec) calculateEstimateSampleStep() (err error) {
 	sql := fmt.Sprintf("select flag from mysql.stats_histograms where table_id = %d;", e.physicalTableID)
-	rows, _, err := e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
+	var rows []chunk.Row
+	rows, _, err = e.ctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(sql)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return
 	}
 	var historyRowCount uint64
 	hasBeenAnalyzed := len(rows) != 0 && rows[0].GetInt64(0) == statistics.AnalyzeFlag
@@ -660,12 +662,19 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
 	} else {
 		dbInfo, ok := domain.GetDomain(e.ctx).InfoSchema().SchemaByTable(e.tblInfo)
 		if !ok {
-			return 0, errors.Trace(errors.Errorf("database not found for table '%s'", e.tblInfo.Name))
+			err = errors.Errorf("database not found for table '%s'", e.tblInfo.Name)
+			return
 		}
-		rollbackFn, err := e.activateTxnForRowCount()
+		var rollbackFn func() error
+		rollbackFn, err = e.activateTxnForRowCount()
 		if err != nil {
-			return 0, err
+			return
 		}
+		defer func() {
+			if rollbackFn != nil {
+				err = rollbackFn()
+			}
+		}()
 		var partition string
 		if e.tblInfo.ID != e.physicalTableID {
 			for _, definition := range e.tblInfo.Partition.Definitions {
@@ -679,32 +688,31 @@ func (e *AnalyzeFastExec) calculateEstimateSampleStep() (uint32, error) {
 		if len(partition) > 0 {
 			sql += partition
 		}
-		recordSets, err := e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
+		var recordSets []sqlexec.RecordSet
+		recordSets, err = e.ctx.(sqlexec.SQLExecutor).ExecuteInternal(context.TODO(), sql)
 		if err != nil || len(recordSets) == 0 {
-			return 0, errors.Trace(err)
+			return
 		}
 		if len(recordSets) == 0 {
-			return 0, errors.Trace(errors.Errorf("empty record set"))
+			err = errors.Trace(errors.Errorf("empty record set"))
+			return
 		}
+		defer func() {
+			for _, r := range recordSets {
+				terror.Call(r.Close)
+			}
+		}()
 		chk := recordSets[0].NewChunk()
 		err = recordSets[0].Next(context.TODO(), chk)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return
 		}
 		e.rowCount = chk.GetRow(0).GetInt64(0)
 		historyRowCount = uint64(e.rowCount)
-		if rollbackFn != nil {
-			err := rollbackFn()
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-		}
-		for _, r := range recordSets {
-			terror.Call(r.Close)
-		}
 	}
 	totalSampSize := e.opts[ast.AnalyzeOptNumSamples]
-	return uint32(historyRowCount / totalSampSize), nil
+	e.estSampStep = uint32(historyRowCount / totalSampSize)
+	return
 }
 
 func (e *AnalyzeFastExec) activateTxnForRowCount() (rollbackFn func() error, err error) {
@@ -771,24 +779,20 @@ func (e *AnalyzeFastExec) buildSampTask() (err error) {
 	return nil
 }
 
-func (e *AnalyzeFastExec) decodeValues(handle kv.Handle, sValue []byte) (values map[int64]types.Datum, err error) {
+func (e *AnalyzeFastExec) decodeValues(handle kv.Handle, sValue []byte, wantCols map[int64]*types.FieldType) (values map[int64]types.Datum, err error) {
 	loc := e.ctx.GetSessionVars().Location()
-	colID2FieldTypes := make(map[int64]*types.FieldType, len(e.colsInfo))
-	for _, col := range e.colsInfo {
-		colID2FieldTypes[col.ID] = &col.FieldType
-	}
-	values, err = tablecodec.DecodeRowToDatumMap(sValue, colID2FieldTypes, loc)
+	values, err = tablecodec.DecodeRowToDatumMap(sValue, wantCols, loc)
 	if err != nil || e.handleCols == nil {
 		return values, err
 	}
-	colID2FieldTypes = make(map[int64]*types.FieldType, len(e.colsInfo))
+	wantCols = make(map[int64]*types.FieldType, e.handleCols.NumCols())
 	handleColIDs := make([]int64, e.handleCols.NumCols())
 	for i := 0; i < e.handleCols.NumCols(); i++ {
 		c := e.handleCols.GetCol(i)
 		handleColIDs[i] = c.ID
-		colID2FieldTypes[c.ID] = c.RetType
+		wantCols[c.ID] = c.RetType
 	}
-	return tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, colID2FieldTypes, loc, values)
+	return tablecodec.DecodeHandleToDatumMap(handle, handleColIDs, wantCols, loc, values)
 }
 
 func (e *AnalyzeFastExec) getValueByInfo(colInfo *model.ColumnInfo, values map[int64]types.Datum) (types.Datum, error) {
@@ -805,9 +809,26 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 	if err != nil {
 		return err
 	}
+
+	// Decode cols for analyze table
+	wantCols := make(map[int64]*types.FieldType, len(e.colsInfo))
+	for _, col := range e.colsInfo {
+		wantCols[col.ID] = &col.FieldType
+	}
+
+	// Pre-build index->cols relationship and refill wantCols if not exists(analyze index)
+	index2Cols := make([][]*model.ColumnInfo, len(e.idxsInfo))
+	for i, idxInfo := range e.idxsInfo {
+		for _, idxCol := range idxInfo.Columns {
+			colInfo := e.tblInfo.Columns[idxCol.Offset]
+			index2Cols[i] = append(index2Cols[i], colInfo)
+			wantCols[colInfo.ID] = &colInfo.FieldType
+		}
+	}
+
 	// Decode the cols value in order.
 	var values map[int64]types.Datum
-	values, err = e.decodeValues(handle, sValue)
+	values, err = e.decodeValues(handle, sValue, wantCols)
 	if err != nil {
 		return err
 	}
@@ -841,17 +862,13 @@ func (e *AnalyzeFastExec) updateCollectorSamples(sValue []byte, sKey kv.Key, sam
 	// Update the indexes' collectors.
 	for j, idxInfo := range e.idxsInfo {
 		idxVals := make([]types.Datum, 0, len(idxInfo.Columns))
-		for _, idxCol := range idxInfo.Columns {
-			for _, colInfo := range e.tblInfo.Columns {
-				if colInfo.Name == idxCol.Name {
-					v, err := e.getValueByInfo(colInfo, values)
-					if err != nil {
-						return err
-					}
-					idxVals = append(idxVals, v)
-					break
-				}
+		cols := index2Cols[j]
+		for _, colInfo := range cols {
+			v, err := e.getValueByInfo(colInfo, values)
+			if err != nil {
+				return err
 			}
+			idxVals = append(idxVals, v)
 		}
 		var bytes []byte
 		bytes, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, bytes, idxVals...)
@@ -1047,13 +1064,9 @@ func (e *AnalyzeFastExec) runTasks() ([]*statistics.Histogram, []*statistics.CMS
 	}
 
 	e.wg.Add(e.concurrency)
-	estSampStep, err := e.calculateEstimateSampleStep()
-	if err != nil {
-		return nil, nil, err
-	}
 	bo := tikv.NewBackofferWithVars(context.Background(), 500, nil)
 	for i := 0; i < e.concurrency; i++ {
-		go e.handleSampTasks(i, estSampStep, &errs[i])
+		go e.handleSampTasks(i, e.estSampStep, &errs[i])
 	}
 	e.wg.Wait()
 	for _, err := range errs {
