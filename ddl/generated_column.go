@@ -247,9 +247,6 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 		// Aggregate function is not allowed
 		c.hasAggFunc = true
 		return inNode, true
-	case *ast.RowExpr:
-		c.hasIllegalFunc = true
-		return inNode, true
 	}
 	return inNode, false
 }
