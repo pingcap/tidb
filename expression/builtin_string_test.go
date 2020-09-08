@@ -1825,7 +1825,6 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(f3, NotNil)
 	r3, err := evalBuiltinFunc(f3, chunk.Row{})
-	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatTests3.locale))
 	showwarnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
 	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatTests3.ret))
 	c.Assert(terror.ErrorEqual(errUnknownLocale, showwarnings[0].Err), IsTrue)
