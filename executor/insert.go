@@ -82,7 +82,6 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			return err
 		}
 	} else {
-		// 在这里计时
 		for i, row := range rows {
 			var err error
 			sizeHintStep := int(sessVars.ShardAllocateStep)

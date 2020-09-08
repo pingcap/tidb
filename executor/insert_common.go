@@ -76,7 +76,7 @@ type InsertValues struct {
 	lazyFillAutoID bool
 	memTracker     *memory.Tracker
 
-	stats *runtimeStatsWithSnapshot
+	stats *insertRuntimeStat
 }
 
 type defaultVal struct {
@@ -933,9 +933,12 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
 			snapshotStats := &tikv.SnapshotRuntimeStats{}
-			e.stats = &runtimeStatsWithSnapshot{
+			stats := &runtimeStatsWithSnapshot{
 				BasicRuntimeStats:    e.runtimeStats,
 				SnapshotRuntimeStats: snapshotStats,
+			}
+			e.stats = &insertRuntimeStat{
+				runtimeStatsWithSnapshot: stats,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -972,10 +975,12 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}
 	}
+	rpcStart := time.Now()
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
+	e.stats.RpcTime = time.Since(rpcStart)
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
 		skip := false
@@ -1012,8 +1017,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 	}
-	end := time.Since(start)
-	end = end
+	e.stats.CheckInsertTime = time.Since(start)
 	return nil
 }
 
