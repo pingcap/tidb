@@ -323,7 +323,6 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 	if fieldType.Tp == mysql.TypeBit {
 		evalType = types.ETString
 	}
-	var aggFunc AggFunc
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
@@ -334,6 +333,7 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 			return &maxMin4Set{base}
 		}
 
+		var aggFunc AggFunc
 		switch evalType {
 		case types.ETInt:
 			if mysql.HasUnsignedFlag(fieldType.Flag) {
@@ -358,30 +358,32 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 		case types.ETJson:
 			return &maxMin4JSON{base}
 		}
+
+		// build max/min aggFunc for window function using sliding window
+		if aggFuncDesc.IsWindowAggFunc {
+			switch baseAggFunc := aggFunc.(type) {
+			case *maxMin4Int:
+				return &maxMin4IntSliding{*baseAggFunc}
+			case *maxMin4Uint:
+				return &maxMin4UintSliding{*baseAggFunc}
+			case *maxMin4Float32:
+				return &maxMin4Float32Sliding{*baseAggFunc}
+			case *maxMin4Float64:
+				return &maxMin4Float64Sliding{*baseAggFunc}
+			case *maxMin4Decimal:
+				return &maxMin4DecimalSliding{*baseAggFunc}
+			case *maxMin4String:
+				return &maxMin4StringSliding{*baseAggFunc}
+			case *maxMin4Time:
+				return &maxMin4TimeSliding{*baseAggFunc}
+			case *maxMin4Duration:
+				return &maxMin4DurationSliding{*baseAggFunc}
+			}
+		}
+		return aggFunc
 	}
 
-	// build max/min aggFunc for window function using sliding window
-	if aggFuncDesc.IsWindowAggFunc {
-		switch baseAggFunc := aggFunc.(type) {
-		case *maxMin4Int:
-			aggFunc = &maxMin4IntSliding{*baseAggFunc}
-		case *maxMin4Uint:
-			aggFunc = &maxMin4UintSliding{*baseAggFunc}
-		case *maxMin4Float32:
-			aggFunc = &maxMin4Float32Sliding{*baseAggFunc}
-		case *maxMin4Float64:
-			aggFunc = &maxMin4Float64Sliding{*baseAggFunc}
-		case *maxMin4Decimal:
-			aggFunc = &maxMin4DecimalSliding{*baseAggFunc}
-		case *maxMin4String:
-			aggFunc = &maxMin4StringSliding{*baseAggFunc}
-		case *maxMin4Time:
-			aggFunc = &maxMin4TimeSliding{*baseAggFunc}
-		case *maxMin4Duration:
-			aggFunc = &maxMin4DurationSliding{*baseAggFunc}
-		}
-	}
-	return aggFunc
+	return nil
 }
 
 // buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".
