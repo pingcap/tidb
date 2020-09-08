@@ -271,6 +271,7 @@ func noZeroUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (m
 func maxUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, srcChk.NumRows())
 <<<<<<< HEAD
+<<<<<<< HEAD
 	var memDelta int64
 >>>>>>> a8bdbf02f... add maxUpdateMemDeltaGens and minUpdateMemDeltaGens functions
 =======
@@ -278,6 +279,15 @@ func maxUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 	var preMemDelta int64 = 0
 	var first bool = true
 >>>>>>> 3aeca2333... modify unit test
+=======
+	var (
+		preStringVal string
+		preJSONVal   string
+		preEnumVal   types.Enum
+		preSetVal    types.Set
+	)
+
+>>>>>>> 5d707a0fb... complete unit test
 	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
@@ -285,37 +295,58 @@ func maxUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 		}
 		switch dataType.Tp {
 		case mysql.TypeString:
-			stringT := row.GetString(0)
-			curMemDelta = int64(len(stringT))
+			curVal := row.GetString(0)
+			if i == 0 {
+				memDeltas[i] = int64(len(curVal))
+				preStringVal = curVal
+			} else if curVal > preStringVal {
+				memDeltas[i] = int64(len(curVal)) - int64(len(preStringVal))
+				preStringVal = curVal
+			}
 		case mysql.TypeJSON:
-			jsonT := row.GetJSON(0)
-			curMemDelta = int64(len(jsonT.Value))
+			curVal := row.GetJSON(0)
+			bytes := make([]byte, 0)
+			bytes = append(bytes, curVal.Value...)
+			curStringVal := string(bytes)
+			if i == 0 {
+				memDeltas[i] = int64(len(curStringVal))
+				preJSONVal = curStringVal
+			} else if curStringVal > preJSONVal {
+				memDeltas[i] = int64(len(curStringVal)) - int64(len(preJSONVal))
+				preJSONVal = curStringVal
+			}
 		case mysql.TypeEnum:
-			enumT := row.GetEnum(0)
-			curMemDelta = int64(len(enumT.Name))
+			curVal := row.GetEnum(0)
+			if i == 0 {
+				memDeltas[i] = int64(len(curVal.Name))
+				preEnumVal = curVal
+			} else if curVal.Value > preEnumVal.Value {
+				memDeltas[i] = int64(len(curVal.Name)) - int64(len(preEnumVal.Name))
+				preEnumVal = curVal
+			}
 		case mysql.TypeSet:
-			setT := row.GetSet(0)
-			curMemDelta = int64(len(setT.Name))
+			curVal := row.GetSet(0)
+			if i == 0 {
+				memDeltas[i] = int64(len(curVal.Name))
+				preSetVal = curVal
+			} else if curVal.Value > preSetVal.Value {
+				memDeltas[i] = int64(len(curVal.Name)) - int64(len(preSetVal.Name))
+				preSetVal = curVal
+			}
 		}
-
-		if first {
-			memDeltas[i] = curMemDelta
-			first = false
-			preMemDelta = curMemDelta
-			continue
-		}
-
-		memDeltas[i] = curMemDelta - preMemDelta
-		preMemDelta = curMemDelta
 	}
 	return memDeltas, nil
 }
 
 func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, srcChk.NumRows())
-	var curMemDelta int64 = 0
-	var preMemDelta int64 = 0
-	var first bool = true
+	var (
+		preStringVal string
+		preJSONVal   string
+		preEnumVal   types.Enum
+		preSetVal    types.Set
+	)
+
 	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
@@ -323,29 +354,44 @@ func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 		}
 		switch dataType.Tp {
 		case mysql.TypeString:
-			stringT := row.GetString(0)
-			curMemDelta = int64(len(stringT))
+			curVal := row.GetString(0)
+			if i == 0 {
+				memDeltas[i] = int64(len(curVal))
+				preStringVal = curVal
+			} else if curVal < preStringVal {
+				memDeltas[i] = int64(len(curVal)) - int64(len(preStringVal))
+				preStringVal = curVal
+			}
 		case mysql.TypeJSON:
-			jsonT := row.GetJSON(0)
-			curMemDelta = int64(len(jsonT.Value))
+			curVal := row.GetJSON(0)
+			bytes := make([]byte, 0)
+			bytes = append(bytes, curVal.Value...)
+			curStringVal := string(bytes)
+			if i == 0 {
+				memDeltas[i] = int64(len(curStringVal))
+				preJSONVal = curStringVal
+			} else if curStringVal < preJSONVal {
+				memDeltas[i] = int64(len(curStringVal)) - int64(len(preJSONVal))
+				preJSONVal = curStringVal
+			}
 		case mysql.TypeEnum:
-			enumT := row.GetEnum(0)
-			curMemDelta = int64(len(enumT.Name))
+			curVal := row.GetEnum(0)
+			if i == 0 {
+				memDeltas[i] = int64(len(curVal.Name))
+				preEnumVal = curVal
+			} else if curVal.Value < preEnumVal.Value {
+				memDeltas[i] = int64(len(curVal.Name)) - int64(len(preEnumVal.Name))
+				preEnumVal = curVal
+			}
 		case mysql.TypeSet:
-			setT := row.GetSet(0)
-			curMemDelta = int64(len(setT.Name))
-		}
-
-		if first {
-			memDeltas[i] = curMemDelta
-			first = false
-			preMemDelta = curMemDelta
-			continue
-		}
-
-		if curMemDelta < preMemDelta && curMemDelta != 0 {
-			memDeltas[i] = curMemDelta
-			preMemDelta = curMemDelta
+			curVal := row.GetSet(0)
+			if i == 0 {
+				memDeltas[i] = int64(len(curVal.Name))
+				preSetVal = curVal
+			} else if curVal.Value < preSetVal.Value {
+				memDeltas[i] = int64(len(curVal.Name)) - int64(len(preSetVal.Name))
+				preSetVal = curVal
+			}
 		}
 >>>>>>> a1270a633... modify maxMin4Enum.UpdatePartialResult and maxMin4Set.UpdatePartialResult function to calculate memory change
 	}
