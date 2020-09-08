@@ -102,7 +102,7 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 					foldedExpr.GetType().Decimal = expr.GetType().Decimal
 					return foldedExpr, isDeferredConst
 				}
-				return  foldedExpr, isDeferredConst
+				return foldedExpr, isDeferredConst
 			}
 		} else {
 			hasNonConstCondition = true
