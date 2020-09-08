@@ -35,9 +35,12 @@ func getEvaluatedMemDelta(row *chunk.Row, dataType *types.FieldType) (memDelta i
 
 func lastValueEvaluateRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
+	lastMemDelta := int64(0)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(0)
-		memDeltas = append(memDeltas, getEvaluatedMemDelta(&row, dataType))
+		curMemDelta := getEvaluatedMemDelta(&row, dataType)
+		memDeltas = append(memDeltas, curMemDelta-lastMemDelta)
+		lastMemDelta = curMemDelta
 	}
 	return memDeltas, nil
 }

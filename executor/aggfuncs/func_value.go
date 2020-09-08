@@ -139,8 +139,9 @@ type value4String struct {
 }
 
 func (v *value4String) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
+	originalLength := len(v.val)
 	v.val, v.isNull, err = expr.EvalString(ctx, row)
-	return int64(len(v.val)), err
+	return int64(len(v.val) - originalLength), err
 }
 
 func (v *value4String) appendResult(chk *chunk.Chunk, colIdx int) {
@@ -193,9 +194,10 @@ type value4JSON struct {
 }
 
 func (v *value4JSON) evaluateRow(ctx sessionctx.Context, expr expression.Expression, row chunk.Row) (memDelta int64, err error) {
+	originalLength := len(v.val.Value)
 	v.val, v.isNull, err = expr.EvalJSON(ctx, row)
 	v.val = v.val.Copy() // deep copy to avoid content change.
-	return int64(len(v.val.Value)), err
+	return int64(len(v.val.Value) - originalLength), err
 }
 
 func (v *value4JSON) appendResult(chk *chunk.Chunk, colIdx int) {
