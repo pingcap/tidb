@@ -1296,79 +1296,11 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		}
 		return executor.ErrQueryInterrupted
 	}
-<<<<<<< HEAD
 	if rss != nil {
 		if len(rss) == 1 {
 			err = cc.writeResultset(ctx, rss[0], false, 0, 0)
 		} else {
 			err = cc.writeMultiResultset(ctx, rss, false)
-=======
-	if len(idxKeys) == 0 && len(rowKeys) == 0 {
-		return pointPlans, nil
-	}
-	snapshot := txn.GetSnapshot()
-	idxVals, err1 := snapshot.BatchGet(ctx, idxKeys)
-	if err1 != nil {
-		return nil, err1
-	}
-	for idxKey, idxVal := range idxVals {
-		h, err2 := tablecodec.DecodeHandleInUniqueIndexValue(idxVal, false)
-		if err2 != nil {
-			return nil, err2
-		}
-		tblID := tablecodec.DecodeTableID(hack.Slice(idxKey))
-		rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tblID, h))
-	}
-	if vars.TxnCtx.IsPessimistic {
-		allKeys := append(rowKeys, idxKeys...)
-		err = executor.LockKeys(ctx, cc.ctx, vars.LockWaitTimeout, allKeys...)
-		if err != nil {
-			// suppress the lock error, we are not going to handle it here for simplicity.
-			err = nil
-			logutil.BgLogger().Warn("lock keys error on prefetch", zap.Error(err))
-		}
-	} else {
-		_, err = snapshot.BatchGet(ctx, rowKeys)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return pointPlans, nil
-}
-
-func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) error {
-	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
-	reg := trace.StartRegion(ctx, "ExecuteStmt")
-	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
-	reg.End()
-	// The session tracker detachment from global tracker is solved in the `rs.Close` in most cases.
-	// If the rs is nil, the detachment will be done in the `handleNoDelay`.
-	if rs != nil {
-		defer terror.Call(rs.Close)
-	}
-	if err != nil {
-		return err
-	}
-
-	if lastStmt {
-		cc.ctx.GetSessionVars().StmtCtx.AppendWarnings(warns)
-	}
-
-	status := cc.ctx.Status()
-	if !lastStmt {
-		status |= mysql.ServerMoreResultsExists
-	}
-
-	if rs != nil {
-		connStatus := atomic.LoadInt32(&cc.status)
-		if connStatus == connStatusShutdown || connStatus == connStatusWaitShutdown {
-			return executor.ErrQueryInterrupted
-		}
-
-		err = cc.writeResultset(ctx, rs, false, status, 0)
-		if err != nil {
-			return err
->>>>>>> 4727044... server: fix the missing detachment for the mem/disk tracker (#19794)
 		}
 	} else {
 		loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
