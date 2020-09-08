@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/logutil"
@@ -327,18 +326,6 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 	}
 
 	if err != nil {
-<<<<<<< HEAD
-=======
-		if job.Error == nil {
-			job.Error = toTError(err)
-		}
-		if !job.Error.Equal(errCancelledDDLJob) {
-			job.Error = terror.GetErrClass(job.Error).Synthesize(terror.ErrCode(job.Error.Code()),
-				fmt.Sprintf("DDL job rollback, error msg: %s", terror.ToSQLError(job.Error).Message))
-		}
-		job.ErrorCount++
-
->>>>>>> 449587a... *: using standard error to replace terror (#19425)
 		if job.State != model.JobStateRollingback && job.State != model.JobStateCancelled {
 			logutil.Logger(w.logCtx).Error("[ddl] run DDL job failed", zap.String("job", job.String()), zap.Error(err))
 		} else {
