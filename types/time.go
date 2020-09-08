@@ -1965,13 +1965,15 @@ func parseSingleTimeValue(unit string, format string, strictCheck bool) (int64, 
 	lf := len(format) - 1
 	// Has fraction part
 	if decimalPointPos < lf {
-		if lf-decimalPointPos >= 6 {
+		dvPre := oneToSixDigitRegex.FindString(format[decimalPointPos+1:]) // the numberical prefix of the fraction part
+		dvPreLen := len(dvPre)
+		if dvPreLen >= 6 {
 			// MySQL rounds down to 1e-6.
-			if dv, err = strconv.ParseInt(format[decimalPointPos+1:decimalPointPos+7], 10, 64); err != nil {
+			if dv, err = strconv.ParseInt(dvPre[0:6], 10, 64); err != nil {
 				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		} else {
-			if dv, err = strconv.ParseInt(format[decimalPointPos+1:]+"000000"[:6-(lf-decimalPointPos)], 10, 64); err != nil {
+			if dv, err = strconv.ParseInt(dvPre[:]+"000000"[:6-dvPreLen], 10, 64); err != nil {
 				return 0, 0, 0, 0, ErrWrongValue.GenWithStackByArgs(DateTimeStr, format)
 			}
 		}
