@@ -1737,3 +1737,52 @@ func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
 	// Restore.
 	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = 1;")
 }
+
+func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk4 := testkit.NewTestKitWithInit(c, s.store)
+	tk5 := testkit.NewTestKitWithInit(c, s.store)
+
+	// tk2 lock c1 = 5
+	tk2.MustExec("begin pessimistic")
+	tk3.MustExec("begin pessimistic")
+	tk4.MustExec("begin pessimistic")
+	tk5.MustExec("begin pessimistic")
+	tk2.MustExec("select * from tk where c1 = 5 or c1 = 1 for update")
+	start := time.Now()
+	errCh := make(chan error, 3)
+	go func() {
+		// tk3 try lock c1 = 1 timeout 1sec, the default innodb_lock_wait_timeout value is 50s.
+		err := tk3.ExecToErr("select * from tk where c1 = 1 for update wait 1")
+		errCh <- err
+	}()
+	go func() {
+		// Lock use selectLockExec.
+		err := tk4.ExecToErr("select * from tk where c1 >= 1 for update wait 1")
+		errCh <- err
+	}()
+	go func() {
+		// Lock use batchPointGetExec.
+		err := tk5.ExecToErr("select c2 from tk where c1 in (1, 5) for update wait 1")
+		errCh <- err
+	}()
+	waitErr := <-errCh
+	waitErr2 := <-errCh
+	waitErr3 := <-errCh
+	c.Assert(waitErr, NotNil)
+	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	c.Assert(waitErr2, NotNil)
+	c.Check(waitErr2.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	c.Assert(waitErr3, NotNil)
+	c.Check(waitErr3.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	c.Assert(time.Since(start).Seconds(), Less, 45.0)
+	tk2.MustExec("commit")
+	tk3.MustExec("rollback")
+	tk4.MustExec("rollback")
+	tk5.MustExec("rollback")
+}
