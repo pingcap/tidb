@@ -61,7 +61,7 @@ func (s *testUtilSuite) TestWriteInsert(c *C) {
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
 	bf := &bytes.Buffer{}
 
-	err := WriteInsert(context.Background(), tableIR, bf)
+	err := WriteInsert(context.Background(), tableIR, bf, UnspecifiedSize, UnspecifiedSize)
 	c.Assert(err, IsNil)
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
@@ -91,7 +91,7 @@ func (s *testUtilSuite) TestWriteInsertReturnsError(c *C) {
 	tableIR.rowErr = rowErr
 	bf := &bytes.Buffer{}
 
-	err := WriteInsert(context.Background(), tableIR, bf)
+	err := WriteInsert(context.Background(), tableIR, bf, UnspecifiedSize, UnspecifiedSize)
 	c.Assert(err, Equals, rowErr)
 	expected := "/*!40101 SET NAMES binary*/;\n" +
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;\n" +
@@ -115,7 +115,7 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: doubleQuotationMark, nullValue: "\\N"}
-	err := WriteInsertInCsv(context.Background(), tableIR, bf, true, opt)
+	err := WriteInsertInCsv(context.Background(), tableIR, bf, true, opt, UnspecifiedSize)
 	c.Assert(err, IsNil)
 	expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\\N\n" +
 		"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"healthy\"\n" +
@@ -126,7 +126,8 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	// test delimiter
 	bf.Reset()
 	opt.delimiter = quotationMark
-	err = WriteInsertInCsv(context.Background(), tableIR, bf, true, opt)
+	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
+	err = WriteInsertInCsv(context.Background(), tableIR, bf, true, opt, UnspecifiedSize)
 	c.Assert(err, IsNil)
 	expected = "1,'male','bob@mail.com','020-1234',\\N\n" +
 		"2,'female','sarah@mail.com','020-1253','healthy'\n" +
@@ -137,7 +138,8 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	// test separator
 	bf.Reset()
 	opt.separator = []byte(";")
-	err = WriteInsertInCsv(context.Background(), tableIR, bf, true, opt)
+	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
+	err = WriteInsertInCsv(context.Background(), tableIR, bf, true, opt, UnspecifiedSize)
 	c.Assert(err, IsNil)
 	expected = "1;'male';'bob@mail.com';'020-1234';\\N\n" +
 		"2;'female';'sarah@mail.com';'020-1253';'healthy'\n" +
@@ -149,8 +151,9 @@ func (s *testUtilSuite) TestWriteInsertInCsv(c *C) {
 	bf.Reset()
 	opt.separator = []byte("&;,?")
 	opt.delimiter = []byte("ma")
+	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	tableIR.colNames = []string{"id", "gender", "email", "phone_number", "status"}
-	err = WriteInsertInCsv(context.Background(), tableIR, bf, false, opt)
+	err = WriteInsertInCsv(context.Background(), tableIR, bf, false, opt, UnspecifiedSize)
 	c.Assert(err, IsNil)
 	expected = "maidma&;,?magenderma&;,?maemamailma&;,?maphone_numberma&;,?mastatusma\n" +
 		"1&;,?mamamalema&;,?mabob@mamail.comma&;,?ma020-1234ma&;,?\\N\n" +
@@ -175,7 +178,7 @@ func (s *testUtilSuite) TestSQLDataTypes(c *C) {
 		tableIR := newMockTableIR("test", "t", tableData, nil, colType)
 		bf := &bytes.Buffer{}
 
-		err := WriteInsert(context.Background(), tableIR, bf)
+		err := WriteInsert(context.Background(), tableIR, bf, UnspecifiedSize, UnspecifiedSize)
 		c.Assert(err, IsNil)
 		lines := strings.Split(bf.String(), "\n")
 		c.Assert(len(lines), Equals, 3)

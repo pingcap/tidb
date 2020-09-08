@@ -25,14 +25,6 @@ func (s *simpleRowReceiver) BindAddress(args []interface{}) {
 	}
 }
 
-func (s *simpleRowReceiver) ReportSize() uint64 {
-	var sum uint64
-	for _, datum := range s.data {
-		sum += uint64(len(datum))
-	}
-	return sum
-}
-
 func (s *testIRImplSuite) TestRowIter(c *C) {
 	db, mock, err := sqlmock.New()
 	c.Assert(err, IsNil)
@@ -93,30 +85,33 @@ func (s *testIRImplSuite) TestChunkRowIter(c *C) {
 		}
 	)
 
-	sqlRowIter := SQLRowIter(&fileRowIter{
-		rowIter:            newRowIter(rows, 2),
-		fileSizeLimit:      testFileSize,
-		statementSizeLimit: testStatementSize,
-	})
+	sqlRowIter := newRowIter(rows, 2)
 
 	res := newSimpleRowReceiver(2)
+	wp := newWriterPipe(nil, testFileSize, testStatementSize)
 
 	var resSize [][]uint64
-	for sqlRowIter.HasNextSQLRowIter() {
-		sqlRowIter = sqlRowIter.NextSQLRowIter()
-		fileRowIter, ok := sqlRowIter.(*fileRowIter)
-		c.Assert(ok, IsTrue)
-
+	for sqlRowIter.HasNext() {
+		wp.currentStatementSize = 0
 		for sqlRowIter.HasNext() {
 			c.Assert(sqlRowIter.Decode(res), IsNil)
+			sz := uint64(len(res.data[0]) + len(res.data[1]))
+			wp.AddFileSize(sz)
 			sqlRowIter.Next()
-			resSize = append(resSize, []uint64{fileRowIter.currentFileSize, fileRowIter.currentStatementSize})
+			resSize = append(resSize, []uint64{wp.currentFileSize, wp.currentStatementSize})
+			if wp.ShouldSwitchStatement() {
+				break
+			}
+		}
+		if wp.ShouldSwitchFile() {
+			break
 		}
 	}
 
 	c.Assert(resSize, DeepEquals, expectedSize)
-	c.Assert(sqlRowIter.HasNextSQLRowIter(), IsFalse)
-	c.Assert(sqlRowIter.HasNext(), IsFalse)
+	c.Assert(sqlRowIter.HasNext(), IsTrue)
+	c.Assert(wp.ShouldSwitchFile(), IsTrue)
+	c.Assert(wp.ShouldSwitchStatement(), IsTrue)
 	rows.Close()
 	c.Assert(sqlRowIter.Decode(res), NotNil)
 	sqlRowIter.Next()

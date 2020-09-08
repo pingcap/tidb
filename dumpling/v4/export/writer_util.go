@@ -25,15 +25,26 @@ type writerPipe struct {
 	closed chan struct{}
 	errCh  chan error
 
+	currentFileSize      uint64
+	currentStatementSize uint64
+
+	fileSizeLimit      uint64
+	statementSizeLimit uint64
+
 	w io.Writer
 }
 
-func newWriterPipe(w io.Writer) *writerPipe {
+func newWriterPipe(w io.Writer, fileSizeLimit, statementSizeLimit uint64) *writerPipe {
 	return &writerPipe{
 		input:  make(chan *bytes.Buffer, 8),
 		closed: make(chan struct{}),
 		errCh:  make(chan error, 1),
 		w:      w,
+
+		currentFileSize:      0,
+		currentStatementSize: 0,
+		fileSizeLimit:        fileSizeLimit,
+		statementSizeLimit:   statementSizeLimit,
 	}
 }
 
@@ -62,6 +73,11 @@ func (b *writerPipe) Run(ctx context.Context) {
 	}
 }
 
+func (b *writerPipe) AddFileSize(fileSize uint64) {
+	b.currentFileSize += fileSize
+	b.currentStatementSize += fileSize
+}
+
 func (b *writerPipe) Error() error {
 	select {
 	case err := <-b.errCh:
@@ -69,6 +85,15 @@ func (b *writerPipe) Error() error {
 	default:
 		return nil
 	}
+}
+
+func (b *writerPipe) ShouldSwitchFile() bool {
+	return b.fileSizeLimit != UnspecifiedSize && b.currentFileSize >= b.fileSizeLimit
+}
+
+func (b *writerPipe) ShouldSwitchStatement() bool {
+	return (b.fileSizeLimit != UnspecifiedSize && b.currentFileSize >= b.fileSizeLimit) ||
+		(b.statementSizeLimit != UnspecifiedSize && b.currentStatementSize >= b.statementSizeLimit)
 }
 
 func WriteMeta(meta MetaIR, w io.StringWriter) error {
@@ -89,7 +114,7 @@ func WriteMeta(meta MetaIR, w io.StringWriter) error {
 	return nil
 }
 
-func WriteInsert(pCtx context.Context, tblIR TableDataIR, w io.Writer) error {
+func WriteInsert(pCtx context.Context, tblIR TableDataIR, w io.Writer, fileSizeLimit, statementSizeLimit uint64) error {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
 		return nil
@@ -100,7 +125,7 @@ func WriteInsert(pCtx context.Context, tblIR TableDataIR, w io.Writer) error {
 		bf.Grow(lengthLimit - bfCap)
 	}
 
-	wp := newWriterPipe(w)
+	wp := newWriterPipe(w, fileSizeLimit, statementSizeLimit)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -119,6 +144,7 @@ func WriteInsert(pCtx context.Context, tblIR TableDataIR, w io.Writer) error {
 		bf.WriteString(specCmtIter.Next())
 		bf.WriteByte('\n')
 	}
+	wp.currentFileSize += uint64(bf.Len())
 
 	var (
 		insertStatementPrefix string
@@ -137,22 +163,27 @@ func WriteInsert(pCtx context.Context, tblIR TableDataIR, w io.Writer) error {
 		insertStatementPrefix = fmt.Sprintf("INSERT INTO %s VALUES\n",
 			wrapBackTicks(escapeString(tblIR.TableName())))
 	}
+	insertStatementPrefixLen := uint64(len(insertStatementPrefix))
 
-	for fileRowIter.HasNextSQLRowIter() {
+	for fileRowIter.HasNext() {
+		wp.currentStatementSize = 0
 		bf.WriteString(insertStatementPrefix)
+		wp.AddFileSize(insertStatementPrefixLen)
 
-		fileRowIter = fileRowIter.NextSQLRowIter()
 		for fileRowIter.HasNext() {
 			if err = fileRowIter.Decode(row); err != nil {
 				log.Error("scanning from sql.Row failed", zap.Error(err))
 				return err
 			}
 
+			lastBfSize := bf.Len()
 			row.WriteToBuffer(bf, escapeBackSlash)
 			counter += 1
+			wp.AddFileSize(uint64(bf.Len()-lastBfSize) + 2) // 2 is for ",\n" and ";\n"
 
 			fileRowIter.Next()
-			if fileRowIter.HasNext() {
+			shouldSwitch := wp.ShouldSwitchStatement()
+			if fileRowIter.HasNext() && !shouldSwitch {
 				bf.WriteString(",\n")
 			} else {
 				bf.WriteString(";\n")
@@ -172,6 +203,13 @@ func WriteInsert(pCtx context.Context, tblIR TableDataIR, w io.Writer) error {
 				return err
 			default:
 			}
+
+			if shouldSwitch {
+				break
+			}
+		}
+		if wp.ShouldSwitchFile() {
+			break
 		}
 	}
 	log.Debug("dumping table",
@@ -188,7 +226,7 @@ func WriteInsert(pCtx context.Context, tblIR TableDataIR, w io.Writer) error {
 	return wp.Error()
 }
 
-func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w io.Writer, noHeader bool, opt *csvOption) error {
+func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w io.Writer, noHeader bool, opt *csvOption, fileSizeLimit uint64) error {
 	fileRowIter := tblIR.Rows()
 	if !fileRowIter.HasNext() {
 		return nil
@@ -199,7 +237,7 @@ func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w io.Writer, noHe
 		bf.Grow(lengthLimit - bfCap)
 	}
 
-	wp := newWriterPipe(w)
+	wp := newWriterPipe(w, fileSizeLimit, UnspecifiedSize)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -231,36 +269,38 @@ func WriteInsertInCsv(pCtx context.Context, tblIR TableDataIR, w io.Writer, noHe
 		}
 		bf.WriteByte('\n')
 	}
+	wp.currentFileSize += uint64(bf.Len())
 
-	for fileRowIter.HasNextSQLRowIter() {
-		fileRowIter = fileRowIter.NextSQLRowIter()
-		for fileRowIter.HasNext() {
-			if err = fileRowIter.Decode(row); err != nil {
-				log.Error("scanning from sql.Row failed", zap.Error(err))
-				return err
+	for fileRowIter.HasNext() {
+		if err = fileRowIter.Decode(row); err != nil {
+			log.Error("scanning from sql.Row failed", zap.Error(err))
+			return err
+		}
+
+		lastBfSize := bf.Len()
+		row.WriteToBufferInCsv(bf, escapeBackSlash, opt)
+		counter += 1
+		wp.currentFileSize += uint64(bf.Len()-lastBfSize) + 1 // 1 is for "\n"
+
+		bf.WriteByte('\n')
+		if bf.Len() >= lengthLimit {
+			wp.input <- bf
+			bf = pool.Get().(*bytes.Buffer)
+			if bfCap := bf.Cap(); bfCap < lengthLimit {
+				bf.Grow(lengthLimit - bfCap)
 			}
+		}
 
-			row.WriteToBufferInCsv(bf, escapeBackSlash, opt)
-			counter += 1
-
-			if bf.Len() >= lengthLimit {
-				wp.input <- bf
-				bf = pool.Get().(*bytes.Buffer)
-				if bfCap := bf.Cap(); bfCap < lengthLimit {
-					bf.Grow(lengthLimit - bfCap)
-				}
-			}
-
-			fileRowIter.Next()
-			bf.WriteByte('\n')
-
-			select {
-			case <-pCtx.Done():
-				return pCtx.Err()
-			case err := <-wp.errCh:
-				return err
-			default:
-			}
+		fileRowIter.Next()
+		select {
+		case <-pCtx.Done():
+			return pCtx.Err()
+		case err := <-wp.errCh:
+			return err
+		default:
+		}
+		if wp.ShouldSwitchFile() {
+			break
 		}
 	}
 

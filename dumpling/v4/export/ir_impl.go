@@ -50,74 +50,6 @@ func (iter *rowIter) HasNext() bool {
 	return iter.hasNext
 }
 
-func (iter *rowIter) HasNextSQLRowIter() bool {
-	return iter.hasNext
-}
-
-func (iter *rowIter) NextSQLRowIter() SQLRowIter {
-	return iter
-}
-
-type fileRowIter struct {
-	rowIter            SQLRowIter
-	fileSizeLimit      uint64
-	statementSizeLimit uint64
-
-	currentStatementSize uint64
-	currentFileSize      uint64
-}
-
-func (c *fileRowIter) Close() error {
-	return c.rowIter.Close()
-}
-
-func (c *fileRowIter) Decode(row RowReceiver) error {
-	err := c.rowIter.Decode(row)
-	if err != nil {
-		return err
-	}
-	size := row.ReportSize()
-	c.currentFileSize += size
-	c.currentStatementSize += size
-	return nil
-}
-
-func (c *fileRowIter) Error() error {
-	return c.rowIter.Error()
-}
-
-func (c *fileRowIter) Next() {
-	c.rowIter.Next()
-}
-
-func (c *fileRowIter) HasNext() bool {
-	if c.fileSizeLimit != UnspecifiedSize && c.currentFileSize >= c.fileSizeLimit {
-		return false
-	}
-
-	if c.statementSizeLimit != UnspecifiedSize && c.currentStatementSize >= c.statementSizeLimit {
-		return false
-	}
-	return c.rowIter.HasNext()
-}
-
-func (c *fileRowIter) HasNextSQLRowIter() bool {
-	if c.fileSizeLimit != UnspecifiedSize && c.currentFileSize >= c.fileSizeLimit {
-		return false
-	}
-	return c.rowIter.HasNext()
-}
-
-func (c *fileRowIter) NextSQLRowIter() SQLRowIter {
-	return &fileRowIter{
-		rowIter:              c.rowIter,
-		fileSizeLimit:        c.fileSizeLimit,
-		statementSizeLimit:   c.statementSizeLimit,
-		currentFileSize:      c.currentFileSize,
-		currentStatementSize: 0,
-	}
-}
-
 type stringIter struct {
 	idx int
 	ss  []string
@@ -153,6 +85,7 @@ type tableData struct {
 	selectedField   string
 	specCmts        []string
 	escapeBackslash bool
+	SQLRowIter
 }
 
 func (td *tableData) Start(ctx context.Context, conn *sql.Conn) error {
@@ -197,7 +130,10 @@ func (td *tableData) ColumnCount() uint {
 }
 
 func (td *tableData) Rows() SQLRowIter {
-	return newRowIter(td.rows, len(td.colTypes))
+	if td.SQLRowIter == nil {
+		td.SQLRowIter = newRowIter(td.rows, len(td.colTypes))
+	}
+	return td.SQLRowIter
 }
 
 func (td *tableData) SelectedField() string {
@@ -213,37 +149,6 @@ func (td *tableData) SpecialComments() StringIter {
 
 func (td *tableData) EscapeBackSlash() bool {
 	return td.escapeBackslash
-}
-
-type tableDataChunks struct {
-	TableDataIR
-	rows               SQLRowIter
-	chunkSizeLimit     uint64
-	statementSizeLimit uint64
-}
-
-func (t *tableDataChunks) Rows() SQLRowIter {
-	if t.rows == nil {
-		t.rows = t.TableDataIR.Rows()
-	}
-
-	return &fileRowIter{
-		rowIter:            t.rows,
-		statementSizeLimit: t.statementSizeLimit,
-		fileSizeLimit:      t.chunkSizeLimit,
-	}
-}
-
-func (t *tableDataChunks) EscapeBackSlash() bool {
-	return t.TableDataIR.EscapeBackSlash()
-}
-
-func buildChunksIter(td TableDataIR, chunkSize uint64, statementSize uint64) *tableDataChunks {
-	return &tableDataChunks{
-		TableDataIR:        td,
-		chunkSizeLimit:     chunkSize,
-		statementSizeLimit: statementSize,
-	}
 }
 
 func splitTableDataIntoChunks(

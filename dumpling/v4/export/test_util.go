@@ -86,6 +86,7 @@ type mockTableIR struct {
 	colNames        []string
 	escapeBackSlash bool
 	rowErr          error
+	SQLRowIter
 }
 
 func (m *mockTableIR) Start(ctx context.Context, conn *sql.Conn) error {
@@ -128,25 +129,27 @@ func (m *mockTableIR) SpecialComments() StringIter {
 }
 
 func (m *mockTableIR) Rows() SQLRowIter {
-	mockRows := sqlmock.NewRows(m.colTypes)
-	for _, datum := range m.data {
-		mockRows.AddRow(datum...)
+	if m.SQLRowIter == nil {
+		mockRows := sqlmock.NewRows(m.colTypes)
+		for _, datum := range m.data {
+			mockRows.AddRow(datum...)
+		}
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			panic(fmt.Sprintf("sqlmock.New return error: %v", err))
+		}
+		defer db.Close()
+		mock.ExpectQuery("select 1").WillReturnRows(mockRows)
+		if m.rowErr != nil {
+			mockRows.RowError(len(m.data)-1, m.rowErr)
+		}
+		rows, err := db.Query("select 1")
+		if err != nil {
+			panic(fmt.Sprintf("sqlmock.New return error: %v", err))
+		}
+		m.SQLRowIter = newRowIter(rows, len(m.colTypes))
 	}
-	db, mock, err := sqlmock.New()
-	if err != nil {
-		panic(fmt.Sprintf("sqlmock.New return error: %v", err))
-	}
-	defer db.Close()
-	mock.ExpectQuery("select 1").WillReturnRows(mockRows)
-	if m.rowErr != nil {
-		mockRows.RowError(len(m.data)-1, m.rowErr)
-	}
-	rows, err := db.Query("select 1")
-	if err != nil {
-		panic(fmt.Sprintf("sqlmock.New return error: %v", err))
-	}
-
-	return newRowIter(rows, len(m.colTypes))
+	return m.SQLRowIter
 }
 
 func (m *mockTableIR) EscapeBackSlash() bool {
@@ -161,5 +164,6 @@ func newMockTableIR(databaseName, tableName string, data [][]driver.Value, speci
 		specCmt:       specialComments,
 		selectedField: "*",
 		colTypes:      colTypes,
+		SQLRowIter:    nil,
 	}
 }
