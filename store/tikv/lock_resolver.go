@@ -237,6 +237,17 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 			return false, err
 		}
 
+		// If the transaction uses async commit, CheckTxnStatus will reject rolling back the primary lock.
+		// Then we need to check the secondary locks to determine the final status of the transaction.
+		if status.primaryLock != nil && status.primaryLock.UseAsyncCommit {
+			resolveData, err := lr.checkAllSecondaries(bo, l, &status)
+			if err != nil {
+				return false, err
+			}
+			txnInfos[l.TxnID] = resolveData.commitTs
+			continue
+		}
+
 		if status.ttl > 0 {
 			logutil.BgLogger().Error("BatchResolveLocks fail to clean locks, this result is not expected!")
 			return false, errors.New("TiDB ask TiKV to rollback locks but it doesn't, the protocol maybe wrong")
@@ -718,9 +729,50 @@ func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys []
 func (lr *LockResolver) resolveLockAsync(bo *Backoffer, l *Lock, status TxnStatus) error {
 	tikvLockResolverCountWithResolveAsync.Inc()
 
-	regions, _, err := lr.store.GetRegionCache().GroupKeysByRegion(bo, status.primaryLock.Secondaries, nil)
+	resolveData, err := lr.checkAllSecondaries(bo, l, &status)
+	if err != nil {
+		return err
+	}
+
+	status.commitTS = resolveData.commitTs
+
+	resolveData.keys = append(resolveData.keys, l.Primary)
+	keysByRegion, _, err := lr.store.GetRegionCache().GroupKeysByRegion(bo, resolveData.keys, nil)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	errChan := make(chan error, len(keysByRegion))
+	// Resolve every lock in the transaction.
+	for region, locks := range keysByRegion {
+		curLocks := locks
+		curRegion := region
+		go func() {
+			errChan <- lr.resolveRegionLocks(bo, l, curRegion, curLocks, status)
+		}()
+	}
+
+	var errs []string
+	for range keysByRegion {
+		err1 := <-errChan
+		if err1 != nil {
+			errs = append(errs, err1.Error())
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Errorf("async commit recovery (sending ResolveLock) finished with errors: %v", errs)
+	}
+
+	return nil
+}
+
+// checkAllSecondaries checks the secondary locks of an async commit transaction to find out the final
+// status of the transaction
+func (lr *LockResolver) checkAllSecondaries(bo *Backoffer, l *Lock, status *TxnStatus) (*asyncResolveData, error) {
+	regions, _, err := lr.store.GetRegionCache().GroupKeysByRegion(bo, status.primaryLock.Secondaries, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	shared := asyncResolveData{
@@ -750,42 +802,12 @@ func (lr *LockResolver) resolveLockAsync(bo *Backoffer, l *Lock, status TxnStatu
 	}
 
 	if len(errs) > 0 {
-		return errors.Errorf("async commit recovery (sending CheckSecondaryLocks) finished with errors: %v", errs)
-	}
-
-	shared.keys = append(shared.keys, l.Primary)
-	keysByRegion, _, err := lr.store.GetRegionCache().GroupKeysByRegion(bo, shared.keys, nil)
-	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Errorf("async commit recovery (sending CheckSecondaryLocks) finished with errors: %v", errs)
 	}
 
 	// TODO(nrc, cfzjywxk) schema lease check
 
-	status.commitTS = shared.commitTs
-
-	errChan = make(chan error, len(shared.keys))
-	// Resolve every lock in the transaction.
-	for region, locks := range keysByRegion {
-		curLocks := locks
-		curRegion := region
-		go func() {
-			errChan <- lr.resolveRegionLocks(bo, l, curRegion, curLocks, status)
-		}()
-	}
-
-	errs = nil
-	for range shared.keys {
-		err1 := <-errChan
-		if err1 != nil {
-			errs = append(errs, err1.Error())
-		}
-	}
-
-	if len(errs) > 0 {
-		return errors.Errorf("async commit recovery (sending ResolveLock) finished with errors: %v", errs)
-	}
-
-	return nil
+	return &shared, nil
 }
 
 // resolveRegionLocks is essentially the same as resolveLock, but we resolve all keys in the same region at the same time.
