@@ -1776,7 +1776,7 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		precision interface{}
 		locale    string
 		ret       interface{}
-	}{12332.2, 2, "de_DE", "12332.20"}
+	}{12332.2, 2, "de_DE", 12332.2}
 	formatTests4 := struct {
 		number    interface{}
 		precision interface{}
