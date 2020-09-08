@@ -369,7 +369,22 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}, nil
 }
 
-func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (bool, sqlexec.RecordSet, error) {
+func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic bool) (handled bool, rs sqlexec.RecordSet, err error) {
+	sc := a.Ctx.GetSessionVars().StmtCtx
+	defer func() {
+		// If the stmt have no rs like `insert`, The session tracker detachment will be directly
+		// done in the `defer` function. If the rs is not nil, the detachment will be done in
+		// `rs.Close` in `handleStmt`
+		if sc != nil && rs == nil {
+			if sc.MemTracker != nil {
+				sc.MemTracker.DetachFromGlobalTracker()
+			}
+			if sc.DiskTracker != nil {
+				sc.DiskTracker.DetachFromGlobalTracker()
+			}
+		}
+	}()
+
 	toCheck := e
 	if explain, ok := e.(*ExplainExec); ok {
 		if explain.analyzeExec != nil {
@@ -544,8 +559,13 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		}
 		seVars := sctx.GetSessionVars()
 		lockCtx := newLockCtx(seVars, seVars.LockWaitTimeout)
+		var lockKeyStats *execdetails.LockKeysDetails
+		ctx = context.WithValue(ctx, execdetails.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
 		err = txn.LockKeys(ctx, lockCtx, keys...)
+		if lockKeyStats != nil {
+			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
+		}
 		if err == nil {
 			return nil
 		}
@@ -773,10 +793,21 @@ var (
 // 3. record execute duration metric.
 // 4. update the `PrevStmt` in session variable.
 func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults bool) {
+	sessVars := a.Ctx.GetSessionVars()
+	execDetail := sessVars.StmtCtx.GetExecDetails()
+	// Attach commit/lockKeys runtime stats to executor runtime stats.
+	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
+		stats := sessVars.StmtCtx.RuntimeStatsColl.GetRootStats(a.Plan.ID())
+		statsWithCommit := &execdetails.RuntimeStatsWithCommit{
+			RuntimeStats: stats,
+			Commit:       execDetail.CommitDetail,
+			LockKeys:     execDetail.LockKeysDetail,
+		}
+		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
+	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
-	sessVars := a.Ctx.GetSessionVars()
 	prevStmt := a.GetTextToLog()
 	if sessVars.EnableLogDesensitization {
 		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
@@ -843,16 +874,6 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		stmtDetail = *(stmtDetailRaw.(*execdetails.StmtExecDetails))
 	}
 	execDetail := sessVars.StmtCtx.GetExecDetails()
-
-	// Attach commit runtime stats to executor runtime stats.
-	if execDetail.CommitDetail != nil && sessVars.StmtCtx.RuntimeStatsColl != nil {
-		stats := sessVars.StmtCtx.RuntimeStatsColl.GetRootStats(a.Plan.ID())
-		statsWithCommit := &execdetails.RuntimeStatsWithCommit{
-			RuntimeStats: stats,
-			Commit:       execDetail.CommitDetail,
-		}
-		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
-	}
 	copTaskInfo := sessVars.StmtCtx.CopTasksDetails()
 	statsInfos := plannercore.GetStatsInfo(a.Plan)
 	memMax := sessVars.StmtCtx.MemTracker.MaxConsumed()

@@ -28,9 +28,15 @@ import (
 )
 
 type commitDetailCtxKeyType struct{}
+type lockKeysDetailCtxKeyType struct{}
 
-// CommitDetailCtxKey presents CommitDetail info key in context.
-var CommitDetailCtxKey = commitDetailCtxKeyType{}
+var (
+	// CommitDetailCtxKey presents CommitDetail info key in context.
+	CommitDetailCtxKey = commitDetailCtxKeyType{}
+
+	// LockKeysDetailCtxKey presents LockKeysDetail info key in context.
+	LockKeysDetailCtxKey = lockKeysDetailCtxKeyType{}
+)
 
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
@@ -46,6 +52,7 @@ type ExecDetails struct {
 	TotalKeys        int64
 	ProcessedKeys    int64
 	CommitDetail     *CommitDetails
+	LockKeysDetail   *LockKeysDetails
 }
 
 type stmtExecDetailKeyType struct{}
@@ -79,6 +86,35 @@ type CommitDetails struct {
 	WriteSize         int
 	PrewriteRegionNum int32
 	TxnRetry          int
+}
+
+// LockKeysDetails contains pessimistic lock keys detail information.
+type LockKeysDetails struct {
+	TotalTime       time.Duration
+	RegionNum       int32
+	LockKeys        int32
+	ResolveLockTime int64
+	BackoffTime     int64
+	Mu              struct {
+		sync.Mutex
+		BackoffTypes []fmt.Stringer
+	}
+	LockRPCTime  int64
+	LockRPCCount int64
+	RetryCount   int
+}
+
+// Merge merges lock keys execution details into self.
+func (ld *LockKeysDetails) Merge(lockKey *LockKeysDetails) {
+	ld.TotalTime += lockKey.TotalTime
+	ld.RegionNum += lockKey.RegionNum
+	ld.LockKeys += lockKey.LockKeys
+	ld.ResolveLockTime += lockKey.ResolveLockTime
+	ld.BackoffTime += lockKey.BackoffTime
+	ld.LockRPCTime += lockKey.LockRPCTime
+	ld.LockRPCCount += ld.LockRPCCount
+	ld.Mu.BackoffTypes = append(ld.Mu.BackoffTypes, lockKey.Mu.BackoffTypes...)
+	ld.RetryCount++
 }
 
 const (
@@ -406,8 +442,23 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	return copStats
 }
 
+func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int, bool) {
+	if summary.GetExecutorId() != "" {
+		strs := strings.Split(summary.GetExecutorId(), "_")
+		if id, err := strconv.Atoi(strs[len(strs)-1]); err == nil {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
 // RecordOneCopTask records a specific cop tasks's execution detail.
 func (e *RuntimeStatsColl) RecordOneCopTask(planID int, address string, summary *tipb.ExecutorExecutionSummary) {
+	// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
+	// summary, use it overwrite the planID
+	if id, valid := getPlanIDFromExecutionSummary(summary); valid {
+		planID = id
+	}
 	copStats := e.GetCopStats(planID)
 	copStats.RecordOneCopTask(address, summary)
 }
@@ -481,80 +532,130 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.
 type RuntimeStatsWithCommit struct {
 	RuntimeStats
-	Commit *CommitDetails
+	Commit   *CommitDetails
+	LockKeys *LockKeysDetails
 }
 
 func (e *RuntimeStatsWithCommit) String() string {
-	var result string
+	buf := bytes.NewBuffer(make([]byte, 0, 32))
 	if e.RuntimeStats != nil {
-		result = e.RuntimeStats.String()
+		buf.WriteString(e.RuntimeStats.String())
 	}
-	if e.Commit == nil {
-		return result
-	}
-	buf := bytes.NewBuffer(make([]byte, 0, len(result)+32))
-	buf.WriteString(result)
-	if e.Commit.PrewriteTime > 0 {
-		buf.WriteString(", prewrite:")
-		buf.WriteString(e.Commit.PrewriteTime.String())
-	}
-	if e.Commit.WaitPrewriteBinlogTime > 0 {
-		buf.WriteString(", wait_prewrite_binlog:")
-		buf.WriteString(e.Commit.WaitPrewriteBinlogTime.String())
-	}
-	if e.Commit.GetCommitTsTime > 0 {
-		buf.WriteString(", get_commit_ts:")
-		buf.WriteString(e.Commit.GetCommitTsTime.String())
-	}
-	if e.Commit.CommitTime > 0 {
-		buf.WriteString(", commit:")
-		buf.WriteString(e.Commit.CommitTime.String())
-	}
-	commitBackoffTime := atomic.LoadInt64(&e.Commit.CommitBackoffTime)
-	if commitBackoffTime > 0 {
-		buf.WriteString(", commit_backoff: {time: ")
-		buf.WriteString(time.Duration(commitBackoffTime).String())
-		tpMap := make(map[string]struct{})
-		tpArray := []string{}
-		e.Commit.Mu.Lock()
-		if len(e.Commit.Mu.BackoffTypes) > 0 {
-			for _, tp := range e.Commit.Mu.BackoffTypes {
-				tpStr := tp.String()
-				_, ok := tpMap[tpStr]
-				if ok {
-					continue
-				}
-				tpMap[tpStr] = struct{}{}
-				tpArray = append(tpArray, tpStr)
-			}
-			buf.WriteString(", type: ")
-			sort.Strings(tpArray)
-			buf.WriteString(fmt.Sprintf("%v", tpArray))
+	if e.Commit != nil {
+		buf.WriteString(", commit_txn: {")
+		if e.Commit.PrewriteTime > 0 {
+			buf.WriteString("prewrite:")
+			buf.WriteString(e.Commit.PrewriteTime.String())
 		}
-		e.Commit.Mu.Unlock()
+		if e.Commit.WaitPrewriteBinlogTime > 0 {
+			buf.WriteString(", wait_prewrite_binlog:")
+			buf.WriteString(e.Commit.WaitPrewriteBinlogTime.String())
+		}
+		if e.Commit.GetCommitTsTime > 0 {
+			buf.WriteString(", get_commit_ts:")
+			buf.WriteString(e.Commit.GetCommitTsTime.String())
+		}
+		if e.Commit.CommitTime > 0 {
+			buf.WriteString(", commit:")
+			buf.WriteString(e.Commit.CommitTime.String())
+		}
+		commitBackoffTime := atomic.LoadInt64(&e.Commit.CommitBackoffTime)
+		if commitBackoffTime > 0 {
+			buf.WriteString(", backoff: {time: ")
+			buf.WriteString(time.Duration(commitBackoffTime).String())
+			e.Commit.Mu.Lock()
+			if len(e.Commit.Mu.BackoffTypes) > 0 {
+				buf.WriteString(", type: ")
+				buf.WriteString(e.formatBackoff(e.Commit.Mu.BackoffTypes))
+			}
+			e.Commit.Mu.Unlock()
+			buf.WriteString("}")
+		}
+		if e.Commit.ResolveLockTime > 0 {
+			buf.WriteString(", resolve_lock: ")
+			buf.WriteString(time.Duration(e.Commit.ResolveLockTime).String())
+		}
+
+		prewriteRegionNum := atomic.LoadInt32(&e.Commit.PrewriteRegionNum)
+		if prewriteRegionNum > 0 {
+			buf.WriteString(", region_num:")
+			buf.WriteString(strconv.FormatInt(int64(prewriteRegionNum), 10))
+		}
+		if e.Commit.WriteKeys > 0 {
+			buf.WriteString(", write_keys:")
+			buf.WriteString(strconv.FormatInt(int64(e.Commit.WriteKeys), 10))
+		}
+		if e.Commit.WriteSize > 0 {
+			buf.WriteString(", write_byte:")
+			buf.WriteString(strconv.FormatInt(int64(e.Commit.WriteSize), 10))
+		}
+		if e.Commit.TxnRetry > 0 {
+			buf.WriteString(", txn_retry:")
+			buf.WriteString(strconv.FormatInt(int64(e.Commit.TxnRetry), 10))
+		}
 		buf.WriteString("}")
 	}
-	if e.Commit.ResolveLockTime > 0 {
-		buf.WriteString(", resolve_lock: ")
-		buf.WriteString(time.Duration(e.Commit.ResolveLockTime).String())
-	}
-
-	prewriteRegionNum := atomic.LoadInt32(&e.Commit.PrewriteRegionNum)
-	if prewriteRegionNum > 0 {
-		buf.WriteString(", region_num:")
-		buf.WriteString(strconv.FormatInt(int64(prewriteRegionNum), 10))
-	}
-	if e.Commit.WriteKeys > 0 {
-		buf.WriteString(", write_keys:")
-		buf.WriteString(strconv.FormatInt(int64(e.Commit.WriteKeys), 10))
-	}
-	if e.Commit.WriteSize > 0 {
-		buf.WriteString(", write_byte:")
-		buf.WriteString(strconv.FormatInt(int64(e.Commit.WriteSize), 10))
-	}
-	if e.Commit.TxnRetry > 0 {
-		buf.WriteString(", txn_retry:")
-		buf.WriteString(strconv.FormatInt(int64(e.Commit.TxnRetry), 10))
+	if e.LockKeys != nil {
+		buf.WriteString(", lock_keys: {")
+		if e.LockKeys.TotalTime > 0 {
+			buf.WriteString("time:")
+			buf.WriteString(e.LockKeys.TotalTime.String())
+		}
+		if e.LockKeys.RegionNum > 0 {
+			buf.WriteString(", region:")
+			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.RegionNum), 10))
+		}
+		if e.LockKeys.LockKeys > 0 {
+			buf.WriteString(", keys:")
+			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.LockKeys), 10))
+		}
+		if e.LockKeys.ResolveLockTime > 0 {
+			buf.WriteString(", resolve_lock:")
+			buf.WriteString(time.Duration(e.LockKeys.ResolveLockTime).String())
+		}
+		if e.LockKeys.BackoffTime > 0 {
+			buf.WriteString(", backoff: {time: ")
+			buf.WriteString(time.Duration(e.LockKeys.BackoffTime).String())
+			e.LockKeys.Mu.Lock()
+			if len(e.LockKeys.Mu.BackoffTypes) > 0 {
+				buf.WriteString(", type: ")
+				buf.WriteString(e.formatBackoff(e.LockKeys.Mu.BackoffTypes))
+			}
+			e.LockKeys.Mu.Unlock()
+			buf.WriteString("}")
+		}
+		if e.LockKeys.LockRPCTime > 0 {
+			buf.WriteString(", lock_rpc:")
+			buf.WriteString(time.Duration(e.LockKeys.LockRPCTime).String())
+		}
+		if e.LockKeys.LockRPCCount > 0 {
+			buf.WriteString(", rpc_count:")
+			buf.WriteString(strconv.FormatInt(e.LockKeys.LockRPCCount, 10))
+		}
+		if e.LockKeys.RetryCount > 0 {
+			buf.WriteString(", retry_count:")
+			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.RetryCount), 10))
+		}
+		buf.WriteString("}")
 	}
 	return buf.String()
+}
+
+func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []fmt.Stringer) string {
+	if len(backoffTypes) == 0 {
+		return ""
+	}
+	tpMap := make(map[string]struct{})
+	tpArray := []string{}
+	for _, tp := range backoffTypes {
+		tpStr := tp.String()
+		_, ok := tpMap[tpStr]
+		if ok {
+			continue
+		}
+		tpMap[tpStr] = struct{}{}
+		tpArray = append(tpArray, tpStr)
+	}
+	sort.Strings(tpArray)
+	return fmt.Sprintf("%v", tpArray)
 }
