@@ -7005,3 +7005,14 @@ func (s *testIntegrationSerialSuite) TestIssue17233(c *C) {
 	tk.MustQuery("SELECT col_1 FROM test.view_4").Sort().Check(testkit.Rows("8", "8", "8", "8", "8"))
 	tk.MustQuery("SELECT view_10.col_1 FROM view_4 JOIN view_10").Check(testkit.Rows("16", "16", "16", "16", "16", "18", "18", "18", "18", "18", "19", "19", "19", "19", "19"))
 }
+
+func (s *testIntegrationSuite) TestIssue19596(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (10));")
+	tk.MustGetErrMsg("alter table t add partition (partition p1 values less than (a));", "[expression:1054]Unknown column 'a' in 'expression'")
+	tk.MustQuery("select * from t;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustGetErrMsg("create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (a));", "[expression:1054]Unknown column 'a' in 'expression'")
+}
