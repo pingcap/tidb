@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util/testkit"
 )
 
 func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
@@ -92,4 +93,56 @@ func (s *testSuite) TestMaxMin(c *C) {
 	for _, test := range tests {
 		s.testAggFunc(c, test)
 	}
+}
+
+func (s *testSuite) TestMaxSlidingWindow(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a BIGINT);")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	result := tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("3", "3", "3"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a float);")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("3", "3", "3"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a double);")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("3", "3", "3"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a decimal);")
+	tk.MustExec("insert into t values (1), (2), (3)")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("3", "3", "3"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a text);")
+	tk.MustExec("insert into t values ('1'), ('2'), ('3')")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("3", "3", "3"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a time);")
+	tk.MustExec("insert into t values ('00:00:00'), ('01:00:00'), ('02:00:00')")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("02:00:00", "02:00:00", "02:00:00"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a date);")
+	tk.MustExec("insert into t values ('2020-09-08'), ('2020-09-09'), ('2020-09-10')")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("2020-09-10", "2020-09-10", "2020-09-10"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (a datetime);")
+	tk.MustExec("insert into t values ('2020-09-08 02:00:00'), ('2020-09-09 01:00:00'), ('2020-09-10 00:00:00')")
+	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
+	result.Check(testkit.Rows("2020-09-10 00:00:00", "2020-09-10 00:00:00", "2020-09-10 00:00:00"))
 }
