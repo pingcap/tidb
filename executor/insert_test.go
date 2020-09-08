@@ -320,7 +320,7 @@ func (s *testSuite3) TestInsertWarnDataTruncated(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec(`drop table if exists t1;`)
 	tk.MustExec(`create table t1 (col0 VARCHAR(0), col1 TINYINT, col2 TEXT, col3 BLOB, col4 BIGINT);`)
-	_, err := tk.Exec(`insert into t0 values (NULL, '-128', 't', 'b', '2 ^ 63 - 1');`)
+	_, err := tk.Exec(`insert into t1 values (NULL, '-128', 't', 'b', '2 ^ 63 - 1');`)
 	c.Assert(terror.ErrorEqual(err, table.ErrWarnDataTruncated), IsTrue)
 }
 
