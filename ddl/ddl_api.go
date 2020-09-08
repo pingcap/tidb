@@ -760,15 +760,16 @@ func setSetDefaultValue(v types.Datum, col *table.Column) (string, error) {
 		return str, nil
 	}
 
+	ctor := collate.GetCollator(col.Collate)
 	valMap := make(map[string]struct{}, len(col.Elems))
-	dVals := strings.Split(strings.ToLower(str), ",")
+	dVals := strings.Split(str, ",")
 	for _, dv := range dVals {
-		valMap[dv] = struct{}{}
+		valMap[string(ctor.Key(dv))] = struct{}{}
 	}
 	var existCnt int
 	for dv := range valMap {
 		for i := range col.Elems {
-			e := strings.ToLower(col.Elems[i])
+			e := string(ctor.Key(col.Elems[i]))
 			if e == dv {
 				existCnt++
 				break
@@ -2248,7 +2249,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
 	// and TiDB-B finds 100 < 30001 but returns without any handling,
 	// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
-	newBase = mathutil.MaxInt64(newBase, autoID)
+	newBase = int64(mathutil.MaxUint64(uint64(newBase), uint64(autoID)))
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
