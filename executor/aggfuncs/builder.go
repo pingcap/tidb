@@ -369,7 +369,6 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 // buildMaxMin builds the AggFunc implementation for function "MAX" and "MIN" using by window function.
 func buildMaxMinInWindowFunction(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
 	base := buildMaxMin(aggFuncDesc, ordinal, isMax)
-
 	// build max/min aggFunc for window function using sliding window
 	switch baseAggFunc := base.(type) {
 	case *maxMin4Int:
