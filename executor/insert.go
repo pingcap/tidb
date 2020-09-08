@@ -252,6 +252,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			newRows[i] = nil
 			break
 		}
+
 		// If row was checked with no duplicate keys,
 		// we should do insert the row,
 		// and key-values should be filled back to dupOldRowValues for the further row check,

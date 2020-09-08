@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -466,27 +465,9 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 	return nil
 }
 
-type insertValueStat struct {
-	*runtimeStatsWithSnapshot
-	check  time.Duration
-	insert time.Duration
-}
-
 type runtimeStatsWithSnapshot struct {
 	*execdetails.BasicRuntimeStats
 	*tikv.SnapshotRuntimeStats
-}
-
-func (e *insertValueStat) String() string {
-	var checkStr, insertStr string
-	if e.check != 0 {
-		checkStr = "check:" + e.check.String()
-	}
-	if e.insert != 0 {
-		insertStr = "write_txn_mem:" + e.insert.String()
-	}
-	runtimeStatsStr := e.runtimeStatsWithSnapshot.String()
-	return runtimeStatsStr + ", " + checkStr + ", " + insertStr
 }
 
 func (e *runtimeStatsWithSnapshot) String() string {
