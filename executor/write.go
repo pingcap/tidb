@@ -85,7 +85,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 	// 2. Handle the bad null error.
 	for i, col := range t.Cols() {
 		var err error
-		if newData[i], err = col.HandleBadNull(newData[i], sc); err != nil {
+		if err = col.HandleBadNull(&newData[i], sc); err != nil {
 			return false, err
 		}
 	}
@@ -124,6 +124,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 				for _, idxCol := range pkIdx.Columns {
 					pkDts = append(pkDts, newData[idxCol.Offset])
 				}
+				tablecodec.TruncateIndexValues(t.Meta(), pkIdx, pkDts)
 				handleBytes, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, pkDts...)
 				if err != nil {
 					return false, err
@@ -207,7 +208,7 @@ func updateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, old
 		}
 	} else {
 		// Update record to new value and update index.
-		if err = t.UpdateRecord(sctx, h, oldData, newData, modified); err != nil {
+		if err = t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
 			return false, err
 		}
 		if onDup {

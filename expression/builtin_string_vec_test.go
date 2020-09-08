@@ -320,7 +320,8 @@ var vecBuiltinStringCases = map[string][]vecExprBenchCase{
 		{
 			retEvalType:   types.ETString,
 			childrenTypes: []types.EvalType{types.ETInt, types.ETInt, types.ETInt, types.ETString},
-			geners:        []dataGenerator{&charInt64Gener{}, &charInt64Gener{}, &charInt64Gener{}, &charsetStringGener{}},
+			geners:        []dataGenerator{&charInt64Gener{}, &charInt64Gener{}, &charInt64Gener{}, nil},
+			constants:     []*Constant{nil, nil, nil, {Value: types.NewDatum("ascii"), RetType: types.NewFieldType(mysql.TypeString)}},
 		},
 	},
 	ast.FindInSet: {

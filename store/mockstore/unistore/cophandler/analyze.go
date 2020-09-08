@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/net/context"
@@ -56,13 +57,13 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 		resp.OtherError = err.Error()
 		return resp
 	}
-	y.Assert(len(ranges) == 1)
+	y.Assert(len(ranges) >= 1)
 	if analyzeReq.Tp == tipb.AnalyzeType_TypeIndex {
-		resp, err = handleAnalyzeIndexReq(dbReader, ranges[0], analyzeReq, req.StartTs)
+		resp, err = handleAnalyzeIndexReq(dbReader, ranges, analyzeReq, req.StartTs)
 	} else if analyzeReq.Tp == tipb.AnalyzeType_TypeCommonHandle {
-		resp, err = handleAnalyzeCommonHandleReq(dbReader, ranges[0], analyzeReq, req.StartTs)
+		resp, err = handleAnalyzeCommonHandleReq(dbReader, ranges, analyzeReq, req.StartTs)
 	} else {
-		resp, err = handleAnalyzeColumnsReq(dbReader, ranges[0], analyzeReq, req.StartTs)
+		resp, err = handleAnalyzeColumnsReq(dbReader, ranges, analyzeReq, req.StartTs)
 	}
 	if err != nil {
 		resp = &coprocessor.Response{
@@ -72,7 +73,7 @@ func handleCopAnalyzeRequest(dbReader *dbreader.DBReader, req *coprocessor.Reque
 	return resp
 }
 
-func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
 	processor := &analyzeIndexProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
 		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
@@ -80,9 +81,11 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyze
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
 	}
-	err := dbReader.Scan(ran.StartKey, ran.EndKey, math.MaxInt64, startTS, processor)
-	if err != nil {
-		return nil, err
+	for _, ran := range rans {
+		err := dbReader.Scan(ran.StartKey, ran.EndKey, math.MaxInt64, startTS, processor)
+		if err != nil {
+			return nil, err
+		}
 	}
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
@@ -96,7 +99,7 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyze
 	return &coprocessor.Response{Data: data}, nil
 }
 
-func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
 	processor := &analyzeCommonHandleProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
 		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob)),
@@ -104,9 +107,11 @@ func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, ran kv.KeyRange, 
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
 	}
-	err := dbReader.Scan(ran.StartKey, ran.EndKey, math.MaxInt64, startTS, processor)
-	if err != nil {
-		return nil, err
+	for _, ran := range rans {
+		err := dbReader.Scan(ran.StartKey, ran.EndKey, math.MaxInt64, startTS, processor)
+		if err != nil {
+			return nil, err
+		}
 	}
 	hg := statistics.HistogramToProto(processor.statsBuilder.Hist())
 	var cm *tipb.CMSketch
@@ -181,6 +186,8 @@ func (p *analyzeCommonHandleProcessor) Process(key, value []byte) error {
 type analyzeColumnsExec struct {
 	skipVal
 	reader  *dbreader.DBReader
+	ranges  []kv.KeyRange
+	curRan  int
 	seekKey []byte
 	endKey  []byte
 	startTS uint64
@@ -192,20 +199,25 @@ type analyzeColumnsExec struct {
 	fields  []*ast.ResultField
 }
 
-func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
+func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*coprocessor.Response, error) {
 	sc := flagsToStatementContext(analyzeReq.Flags)
 	sc.TimeZone = time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
+	if len(analyzeReq.ColReq.PrimaryColumnIds) > 0 {
+		evalCtx.primaryCols = analyzeReq.ColReq.PrimaryColumnIds
+	}
 	decoder, err := evalCtx.newRowDecoder()
 	if err != nil {
 		return nil, err
 	}
 	e := &analyzeColumnsExec{
 		reader:  dbReader,
-		seekKey: ran.StartKey,
-		endKey:  ran.EndKey,
+		seekKey: rans[0].StartKey,
+		endKey:  rans[0].EndKey,
+		ranges:  rans,
+		curRan:  0,
 		startTS: startTS,
 		chk:     chunk.NewChunkWithCapacity(evalCtx.fieldTps, 1),
 		decoder: decoder,
@@ -223,7 +235,17 @@ func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analy
 	numCols := len(columns)
 	if columns[0].GetPkHandle() {
 		pkID = columns[0].ColumnId
+		columns = columns[1:]
 		numCols--
+	}
+	collators := make([]collate.Collator, numCols)
+	fts := make([]*types.FieldType, numCols)
+	for i, col := range columns {
+		ft := fieldTypeFromPBColumn(col)
+		fts[i] = ft
+		if ft.EvalType() == types.ETString {
+			collators[i] = collate.GetCollator(ft.Collate)
+		}
 	}
 	colReq := analyzeReq.ColReq
 	builder := statistics.SampleBuilder{
@@ -233,6 +255,8 @@ func handleAnalyzeColumnsReq(dbReader *dbreader.DBReader, ran kv.KeyRange, analy
 		MaxBucketSize:   colReq.BucketSize,
 		MaxFMSketchSize: colReq.SketchSize,
 		MaxSampleSize:   colReq.SampleSize,
+		Collators:       collators,
+		ColsFieldType:   fts,
 	}
 	if pkID != -1 {
 		builder.PkBuilder = statistics.NewSortedBuilder(sc, builder.MaxBucketSize, pkID, types.NewFieldType(mysql.TypeBlob))
@@ -272,7 +296,13 @@ func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	if req.NumRows() < req.Capacity() {
-		e.seekKey = e.endKey
+		if e.curRan == len(e.ranges)-1 {
+			e.seekKey = e.endKey
+		} else {
+			e.curRan++
+			e.seekKey = e.ranges[e.curRan].StartKey
+			e.endKey = e.ranges[e.curRan].EndKey
+		}
 	}
 	return nil
 }

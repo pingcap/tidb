@@ -40,13 +40,17 @@ import (
 const dbName = "test"
 
 var (
-	logLevel string
-	record   bool
-	create   bool
+	logLevel   string
+	port       uint
+	statusPort uint
+	record     bool
+	create     bool
 )
 
 func init() {
 	flag.StringVar(&logLevel, "log-level", "error", "set log level: info, warn, error, debug [default: error]")
+	flag.UintVar(&port, "port", 4000, "tidb server port [default: 4000]")
+	flag.UintVar(&statusPort, "status", 10080, "tidb server status port [default: 10080]")
 	flag.BoolVar(&record, "record", false, "record the test output in the result file")
 	flag.BoolVar(&create, "create", false, "create and import data into table, and save json file of stats")
 }
@@ -375,7 +379,7 @@ func filterWarning(err error) error {
 func (t *tester) create(tableName string, qText string) error {
 	fmt.Printf("import data for table %s of test %s:\n", tableName, t.name)
 
-	path := "./importer -t \"" + qText + "\" -P 4001 -n 2000 -c 100"
+	path := "./importer -t \"" + qText + "\"" + "-P" + fmt.Sprint(port) + "-n 2000 -c 100"
 	cmd := exec.Command("sh", "-c", path)
 	stdoutIn, err := cmd.StdoutPipe()
 	if err != nil {
@@ -419,7 +423,7 @@ func (t *tester) create(tableName string, qText string) error {
 		return err
 	}
 
-	resp, err := http.Get("http://127.0.0.1:10081/stats/dump/" + dbName + "/" + tableName)
+	resp, err := http.Get("http://127.0.0.1:" + fmt.Sprint(statusPort) + "/stats/dump/" + dbName + "/" + tableName)
 	if err != nil {
 		return err
 	}
@@ -616,7 +620,7 @@ func main() {
 
 	mdb, err = openDBWithRetry(
 		"mysql",
-		"root@tcp(localhost:4001)/"+dbName+"?allowAllFiles=true",
+		"root@tcp(localhost:"+fmt.Sprint(port)+")/"+dbName+"?allowAllFiles=true",
 	)
 	if err != nil {
 		log.Fatal("open DB failed", zap.Error(err))
@@ -643,6 +647,21 @@ func main() {
 	}
 	if _, err = mdb.Exec("set @@tidb_hash_join_concurrency=1"); err != nil {
 		log.Fatal("set @@tidb_hash_join_concurrency=1 failed", zap.Error(err))
+	}
+	resets := []string{
+		"set @@tidb_index_lookup_concurrency=4",
+		"set @@tidb_index_lookup_join_concurrency=4",
+		"set @@tidb_hashagg_final_concurrency=4",
+		"set @@tidb_hashagg_partial_concurrency=4",
+		"set @@tidb_window_concurrency=4",
+		"set @@tidb_projection_concurrency=4",
+		"set @@tidb_distsql_scan_concurrency=15",
+		"set @@tidb_enable_clustered_index=0;",
+	}
+	for _, sql := range resets {
+		if _, err = mdb.Exec(sql); err != nil {
+			log.Fatal(fmt.Sprintf("%s failed", sql), zap.Error(err))
+		}
 	}
 
 	if _, err = mdb.Exec("set sql_mode='STRICT_TRANS_TABLES'"); err != nil {

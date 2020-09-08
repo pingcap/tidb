@@ -17,7 +17,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +30,8 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -47,6 +52,8 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/stringutil"
+	"go.etcd.io/etcd/clientv3"
 )
 
 type memtableRetriever struct {
@@ -78,8 +85,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			e.setDataForStatistics(sctx, dbs)
 		case infoschema.TableTables:
 			err = e.setDataFromTables(sctx, dbs)
-		case infoschema.TableColumns:
-			e.setDataForColumns(sctx, dbs)
 		case infoschema.TableSequences:
 			e.setDataFromSequences(sctx, dbs)
 		case infoschema.TablePartitions:
@@ -152,18 +157,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		ret[i-e.rowIdx] = e.rows[i]
 	}
 	e.rowIdx += retCount
-	if len(e.columns) == len(e.table.Columns) {
-		return ret, nil
-	}
-	rows := make([][]types.Datum, len(ret))
-	for i, fullRow := range ret {
-		row := make([]types.Datum, len(e.columns))
-		for j, col := range e.columns {
-			row[j] = fullRow[col.Offset]
-		}
-		rows[i] = row
-	}
-	return rows, nil
+	return adjustColumns(ret, e.columns, e.table), nil
 }
 
 func getRowCountAllTable(ctx sessionctx.Context) (map[int64]uint64, error) {
@@ -278,7 +272,7 @@ func (c *statsCache) get(ctx sessionctx.Context) (map[int64]uint64, map[tableHis
 }
 
 func getAutoIncrementID(ctx sessionctx.Context, schema *model.DBInfo, tblInfo *model.TableInfo) (int64, error) {
-	is := ctx.GetSessionVars().TxnCtx.InfoSchema.(infoschema.InfoSchema)
+	is := infoschema.GetInfoSchema(ctx)
 	tbl, err := is.TableByName(schema.Name, tblInfo.Name)
 	if err != nil {
 		return 0, err
@@ -353,7 +347,7 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 					"",                    // COMMENT
 					"",                    // INDEX_COMMENT
 					"YES",                 // IS_VISIBLE
-					"NULL",                // Expression
+					nil,                   // Expression
 				)
 				rows = append(rows, record)
 			}
@@ -381,7 +375,8 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 			}
 
 			colName := col.Name.O
-			expression := "NULL"
+			var expression interface{}
+			expression = nil
 			tblCol := table.Columns[col.Offset]
 			if tblCol.Hidden {
 				colName = "NULL"
@@ -441,7 +436,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-
+			pkType := "NON-CLUSTERED"
 			if !table.IsView() {
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
@@ -471,13 +466,14 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
 				}
-				var tableType string
-				switch schema.Name.L {
-				case util.InformationSchemaName.L, util.PerformanceSchemaName.L,
-					util.MetricSchemaName.L:
+				tableType := "BASE TABLE"
+				if util.IsSystemView(schema.Name.L) {
 					tableType = "SYSTEM VIEW"
-				default:
-					tableType = "BASE TABLE"
+				}
+				if table.PKIsHandle {
+					pkType = "INT CLUSTERED"
+				} else if table.IsCommonHandle {
+					pkType = "COMMON CLUSTERED"
 				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
 				record := types.MakeDatums(
@@ -504,6 +500,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 					table.Comment,         // TABLE_COMMENT
 					table.ID,              // TIDB_TABLE_ID
 					shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
+					pkType,                // TIDB_PK_TYPE
 				)
 				rows = append(rows, record)
 			} else {
@@ -531,6 +528,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 					"VIEW",                // TABLE_COMMENT
 					table.ID,              // TIDB_TABLE_ID
 					nil,                   // TIDB_ROW_ID_SHARDING_INFO
+					pkType,                // TIDB_PK_TYPE
 				)
 				rows = append(rows, record)
 			}
@@ -540,24 +538,30 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 	return nil
 }
 
-func (e *memtableRetriever) setDataForColumns(ctx sessionctx.Context, schemas []*model.DBInfo) {
+func (e *hugeMemTableRetriever) setDataForColumns(ctx sessionctx.Context) error {
 	checker := privilege.GetPrivilegeManager(ctx)
-	var rows [][]types.Datum
-	for _, schema := range schemas {
-		for _, table := range schema.Tables {
+	e.rows = e.rows[:0]
+	batch := 1024
+	for ; e.dbsIdx < len(e.dbs); e.dbsIdx++ {
+		schema := e.dbs[e.dbsIdx]
+		for e.tblIdx < len(schema.Tables) {
+			table := schema.Tables[e.tblIdx]
+			e.tblIdx++
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 
-			rs := e.dataForColumnsInTable(schema, table)
-			rows = append(rows, rs...)
+			e.dataForColumnsInTable(schema, table)
+			if len(e.rows) >= batch {
+				return nil
+			}
 		}
+		e.tblIdx = 0
 	}
-	e.rows = rows
+	return nil
 }
 
-func (e *memtableRetriever) dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) [][]types.Datum {
-	rows := make([][]types.Datum, 0, len(tbl.Columns))
+func (e *hugeMemTableRetriever) dataForColumnsInTable(schema *model.DBInfo, tbl *model.TableInfo) {
 	for i, col := range tbl.Columns {
 		if col.Hidden {
 			continue
@@ -638,9 +642,8 @@ func (e *memtableRetriever) dataForColumnsInTable(schema *model.DBInfo, tbl *mod
 			columnDesc.Comment,                   // COLUMN_COMMENT
 			col.GeneratedExprString,              // GENERATION_EXPRESSION
 		)
-		rows = append(rows, record)
+		e.rows = append(e.rows, record)
 	}
-	return rows
 }
 
 func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schemas []*model.DBInfo) error {
@@ -709,32 +712,39 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 						partitionDesc = pi.LessThan[0]
 					}
 
+					partitionMethod := table.Partition.Type.String()
+					partitionExpr := table.Partition.Expr
+					if table.Partition.Type == model.PartitionTypeRange && len(table.Partition.Columns) > 0 {
+						partitionMethod = "RANGE COLUMNS"
+						partitionExpr = table.Partition.Columns[0].String()
+					}
+
 					record := types.MakeDatums(
-						infoschema.CatalogVal,         // TABLE_CATALOG
-						schema.Name.O,                 // TABLE_SCHEMA
-						table.Name.O,                  // TABLE_NAME
-						pi.Name.O,                     // PARTITION_NAME
-						nil,                           // SUBPARTITION_NAME
-						i+1,                           // PARTITION_ORDINAL_POSITION
-						nil,                           // SUBPARTITION_ORDINAL_POSITION
-						table.Partition.Type.String(), // PARTITION_METHOD
-						nil,                           // SUBPARTITION_METHOD
-						table.Partition.Expr,          // PARTITION_EXPRESSION
-						nil,                           // SUBPARTITION_EXPRESSION
-						partitionDesc,                 // PARTITION_DESCRIPTION
-						rowCount,                      // TABLE_ROWS
-						avgRowLength,                  // AVG_ROW_LENGTH
-						dataLength,                    // DATA_LENGTH
-						uint64(0),                     // MAX_DATA_LENGTH
-						indexLength,                   // INDEX_LENGTH
-						uint64(0),                     // DATA_FREE
-						createTime,                    // CREATE_TIME
-						nil,                           // UPDATE_TIME
-						nil,                           // CHECK_TIME
-						nil,                           // CHECKSUM
-						pi.Comment,                    // PARTITION_COMMENT
-						nil,                           // NODEGROUP
-						nil,                           // TABLESPACE_NAME
+						infoschema.CatalogVal, // TABLE_CATALOG
+						schema.Name.O,         // TABLE_SCHEMA
+						table.Name.O,          // TABLE_NAME
+						pi.Name.O,             // PARTITION_NAME
+						nil,                   // SUBPARTITION_NAME
+						i+1,                   // PARTITION_ORDINAL_POSITION
+						nil,                   // SUBPARTITION_ORDINAL_POSITION
+						partitionMethod,       // PARTITION_METHOD
+						nil,                   // SUBPARTITION_METHOD
+						partitionExpr,         // PARTITION_EXPRESSION
+						nil,                   // SUBPARTITION_EXPRESSION
+						partitionDesc,         // PARTITION_DESCRIPTION
+						rowCount,              // TABLE_ROWS
+						avgRowLength,          // AVG_ROW_LENGTH
+						dataLength,            // DATA_LENGTH
+						uint64(0),             // MAX_DATA_LENGTH
+						indexLength,           // INDEX_LENGTH
+						uint64(0),             // DATA_FREE
+						createTime,            // CREATE_TIME
+						nil,                   // UPDATE_TIME
+						nil,                   // CHECK_TIME
+						nil,                   // CHECKSUM
+						pi.Comment,            // PARTITION_COMMENT
+						nil,                   // NODEGROUP
+						nil,                   // TABLESPACE_NAME
 					)
 					rows = append(rows, record)
 				}
@@ -771,8 +781,9 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 					pkCol.Name.O,  // COLUMN_NAME
 					nil,           // SUB_PART
 					"",            // INDEX_COMMENT
-					"NULL",        // Expression
+					nil,           // Expression
 					0,             // INDEX_ID
+					"YES",         // IS_VISIBLE
 				)
 				rows = append(rows, record)
 			}
@@ -790,11 +801,16 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 						subPart = col.Length
 					}
 					colName := col.Name.O
-					expression := "NULL"
+					var expression interface{}
+					expression = nil
 					tblCol := tb.Columns[col.Offset]
 					if tblCol.Hidden {
 						colName = "NULL"
 						expression = fmt.Sprintf("(%s)", tblCol.GeneratedExprString)
+					}
+					visible := "YES"
+					if idxInfo.Invisible {
+						visible = "NO"
 					}
 					record := types.MakeDatums(
 						schema.Name.O,   // TABLE_SCHEMA
@@ -807,6 +823,7 @@ func (e *memtableRetriever) setDataFromIndexes(ctx sessionctx.Context, schemas [
 						idxInfo.Comment, // INDEX_COMMENT
 						expression,      // Expression
 						idxInfo.ID,      // INDEX_ID
+						visible,         // IS_VISIBLE
 					)
 					rows = append(rows, record)
 				}
@@ -1654,6 +1671,7 @@ func (e *memtableRetriever) setDataForServersInfo() error {
 			info.Version,         // VERSION
 			info.GitHash,         // GIT_HASH
 			info.BinlogStatus,    // BINLOG_STATUS
+			stringutil.BuildStringFromLabels(info.Labels), // LABELS
 		)
 		rows = append(rows, row)
 	}
@@ -1759,4 +1777,241 @@ func (e *memtableRetriever) setDataForStatementsSummary(ctx sessionctx.Context, 
 		e.rows = rows
 	}
 	return nil
+}
+
+type hugeMemTableRetriever struct {
+	dummyCloser
+	table       *model.TableInfo
+	columns     []*model.ColumnInfo
+	retrieved   bool
+	initialized bool
+	rows        [][]types.Datum
+	dbs         []*model.DBInfo
+	dbsIdx      int
+	tblIdx      int
+}
+
+// retrieve implements the infoschemaRetriever interface
+func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.retrieved {
+		return nil, nil
+	}
+
+	if !e.initialized {
+		is := infoschema.GetInfoSchema(sctx)
+		dbs := is.AllSchemas()
+		sort.Sort(infoschema.SchemasSorter(dbs))
+		e.dbs = dbs
+		e.initialized = true
+		e.rows = make([][]types.Datum, 0, 1024)
+	}
+
+	var err error
+	switch e.table.Name.O {
+	case infoschema.TableColumns:
+		err = e.setDataForColumns(sctx)
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.retrieved = len(e.rows) == 0
+
+	return adjustColumns(e.rows, e.columns, e.table), nil
+}
+
+func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table *model.TableInfo) [][]types.Datum {
+	if len(outColumns) == len(table.Columns) {
+		return input
+	}
+	rows := make([][]types.Datum, len(input))
+	for i, fullRow := range input {
+		row := make([]types.Datum, len(outColumns))
+		for j, col := range outColumns {
+			row[j] = fullRow[col.Offset]
+		}
+		rows[i] = row
+	}
+	return rows
+}
+
+// TiFlashSystemTableRetriever is used to read system table from tiflash.
+type TiFlashSystemTableRetriever struct {
+	dummyCloser
+	table         *model.TableInfo
+	outputCols    []*model.ColumnInfo
+	instanceCount int
+	instanceIdx   int
+	instanceInfos []tiflashInstanceInfo
+	rowIdx        int
+	retrieved     bool
+	initialized   bool
+	extractor     *plannercore.TiFlashSystemTableExtractor
+}
+
+func (e *TiFlashSystemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	if e.extractor.SkipRequest || e.retrieved {
+		return nil, nil
+	}
+	if !e.initialized {
+		err := e.initialize(sctx, e.extractor.TiFlashInstances)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if e.instanceCount == 0 || e.instanceIdx >= e.instanceCount {
+		e.retrieved = true
+		return nil, nil
+	}
+
+	for {
+		rows, err := e.dataForTiFlashSystemTables(sctx, e.extractor.TiDBDatabases, e.extractor.TiDBTables)
+		if err != nil {
+			return nil, err
+		}
+		if len(rows) > 0 || e.instanceIdx >= e.instanceCount {
+			return rows, nil
+		}
+	}
+}
+
+type tiflashInstanceInfo struct {
+	id  string
+	url string
+}
+
+func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
+	store := sctx.GetStore()
+	if etcd, ok := store.(tikv.EtcdBackend); ok {
+		if addrs := etcd.EtcdAddrs(); addrs != nil {
+			domainFromCtx := domain.GetDomain(sctx)
+			if domainFromCtx != nil {
+				cli := domainFromCtx.GetEtcdClient()
+				prefix := "/tiflash/cluster/http_port/"
+				kv := clientv3.NewKV(cli)
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				resp, err := kv.Get(ctx, prefix, clientv3.WithPrefix())
+				cancel()
+				if err != nil {
+					return errors.Trace(err)
+				}
+				for _, ev := range resp.Kvs {
+					id := string(ev.Key)[len(prefix):]
+					if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
+						continue
+					}
+					url := fmt.Sprintf("%s://%s", util.InternalHTTPSchema(), ev.Value)
+					req, err := http.NewRequest(http.MethodGet, url, nil)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					_, err = util.InternalHTTPClient().Do(req)
+					if err != nil {
+						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						continue
+					}
+					e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
+						id:  id,
+						url: url,
+					})
+					e.instanceCount += 1
+				}
+				e.initialized = true
+				return nil
+			}
+			return errors.Errorf("Etcd client not found")
+		}
+		return errors.Errorf("Etcd addrs not found")
+	}
+	return errors.Errorf("%T not an etcd backend", store)
+}
+
+func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
+	var columnNames []string
+	for _, c := range e.outputCols {
+		if c.Name.O == "TIFLASH_INSTANCE" {
+			continue
+		}
+		columnNames = append(columnNames, c.Name.L)
+	}
+	maxCount := 1024
+	targetTable := strings.ToLower(strings.Replace(e.table.Name.O, "TIFLASH", "DT", 1))
+	var filters []string
+	if len(tidbDatabases) > 0 {
+		filters = append(filters, fmt.Sprintf("tidb_database IN (%s)", strings.ReplaceAll(tidbDatabases, "\"", "'")))
+	}
+	if len(tidbTables) > 0 {
+		filters = append(filters, fmt.Sprintf("tidb_table IN (%s)", strings.ReplaceAll(tidbTables, "\"", "'")))
+	}
+	sql := fmt.Sprintf("SELECT %s FROM system.%s", strings.Join(columnNames, ","), targetTable)
+	if len(filters) > 0 {
+		sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(filters, " AND "))
+	}
+	sql = fmt.Sprintf("%s LIMIT %d, %d", sql, e.rowIdx, maxCount)
+	notNumber := "nan"
+	instanceInfo := e.instanceInfos[e.instanceIdx]
+	url := instanceInfo.url
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	q := req.URL.Query()
+	q.Add("query", sql)
+	req.URL.RawQuery = q.Encode()
+	resp, err := util.InternalHTTPClient().Do(req)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	body, err := ioutil.ReadAll(resp.Body)
+	terror.Log(resp.Body.Close())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	records := strings.Split(string(body), "\n")
+	var rows [][]types.Datum
+	for _, record := range records {
+		if len(record) == 0 {
+			continue
+		}
+		fields := strings.Split(record, "\t")
+		if len(fields) < len(e.outputCols)-1 {
+			return nil, errors.Errorf("Record from tiflash doesn't match schema %v", fields)
+		}
+		row := make([]types.Datum, len(e.outputCols))
+		for index, column := range e.outputCols {
+			if column.Name.O == "TIFLASH_INSTANCE" {
+				continue
+			}
+			if column.Tp == mysql.TypeVarchar {
+				row[index].SetString(fields[index], mysql.DefaultCollationName)
+			} else if column.Tp == mysql.TypeLonglong {
+				if fields[index] == notNumber {
+					continue
+				}
+				value, err := strconv.ParseInt(fields[index], 10, 64)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				row[index].SetInt64(value)
+			} else if column.Tp == mysql.TypeDouble {
+				if fields[index] == notNumber {
+					continue
+				}
+				value, err := strconv.ParseFloat(fields[index], 64)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				row[index].SetFloat64(value)
+			} else {
+				return nil, errors.Errorf("Meet column of unknown type %v", column)
+			}
+		}
+		row[len(e.outputCols)-1].SetString(instanceInfo.id, mysql.DefaultCollationName)
+		rows = append(rows, row)
+	}
+	e.rowIdx += len(rows)
+	if len(rows) < maxCount {
+		e.instanceIdx += 1
+		e.rowIdx = 0
+	}
+	return rows, nil
 }

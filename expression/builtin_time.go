@@ -4760,7 +4760,9 @@ func (b *builtinUnixTimestampCurrentSig) evalInt(row chunk.Row) (int64, bool, er
 		return 0, true, err
 	}
 	intVal, err := dec.ToInt()
-	terror.Log(err)
+	if !terror.ErrorEqual(err, types.ErrTruncated) {
+		terror.Log(err)
+	}
 	return intVal, false, nil
 }
 
@@ -4800,7 +4802,9 @@ func (b *builtinUnixTimestampIntSig) evalIntWithCtx(ctx sessionctx.Context, row 
 		return 0, true, err
 	}
 	intVal, err := dec.ToInt()
-	terror.Log(err)
+	if !terror.ErrorEqual(err, types.ErrTruncated) {
+		terror.Log(err)
+	}
 	return intVal, false, nil
 }
 
@@ -4867,7 +4871,7 @@ func (c *timestampFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	isFloat := false
 	switch args[0].GetType().Tp {
-	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDecimal:
+	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
 		isFloat = true
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, evalTps...)
@@ -5774,20 +5778,8 @@ func (c *makeTimeFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	default:
 		flen, decimal = 17, 6
 	}
-	arg0Type, arg1Type := args[0].GetType().EvalType(), args[1].GetType().EvalType()
-	// For ETString type, arg must be evaluated rounding down to int64
-	// For other types, arg is evaluated rounding to int64
-	if arg0Type == types.ETString {
-		arg0Type = types.ETReal
-	} else {
-		arg0Type = types.ETInt
-	}
-	if arg1Type == types.ETString {
-		arg1Type = types.ETReal
-	} else {
-		arg1Type = types.ETInt
-	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, arg0Type, arg1Type, types.ETReal)
+	// MySQL will cast the first and second arguments to INT, and the third argument to DECIMAL.
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDuration, types.ETInt, types.ETInt, types.ETReal)
 	if err != nil {
 		return nil, err
 	}
@@ -5805,15 +5797,6 @@ func (b *builtinMakeTimeSig) Clone() builtinFunc {
 	newSig := &builtinMakeTimeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
-}
-
-func (b *builtinMakeTimeSig) getIntParam(arg Expression, row chunk.Row) (int64, bool, error) {
-	if arg.GetType().EvalType() == types.ETReal {
-		fRes, isNull, err := arg.EvalReal(b.ctx, row)
-		return int64(fRes), isNull, handleInvalidTimeError(b.ctx, err)
-	}
-	iRes, isNull, err := arg.EvalInt(b.ctx, row)
-	return iRes, isNull, handleInvalidTimeError(b.ctx, err)
 }
 
 func (b *builtinMakeTimeSig) makeTime(hour int64, minute int64, second float64, hourUnsignedFlag bool) (types.Duration, error) {
@@ -5849,11 +5832,11 @@ func (b *builtinMakeTimeSig) makeTime(hour int64, minute int64, second float64, 
 func (b *builtinMakeTimeSig) evalDuration(row chunk.Row) (types.Duration, bool, error) {
 	dur := types.ZeroDuration
 	dur.Fsp = types.MaxFsp
-	hour, isNull, err := b.getIntParam(b.args[0], row)
+	hour, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return dur, isNull, err
 	}
-	minute, isNull, err := b.getIntParam(b.args[1], row)
+	minute, isNull, err := b.args[1].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return dur, isNull, err
 	}

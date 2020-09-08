@@ -107,7 +107,7 @@ var (
 )
 
 // RecordIterFunc is used for low-level record iteration.
-type RecordIterFunc func(h int64, rec []types.Datum, cols []*Column) (more bool, err error)
+type RecordIterFunc func(h kv.Handle, rec []types.Datum, cols []*Column) (more bool, err error)
 
 // AddRecordOpt contains the options will be used when adding a record.
 type AddRecordOpt struct {
@@ -168,9 +168,8 @@ type Table interface {
 	// Writable states includes Public, WriteOnly, WriteOnlyReorganization.
 	WritableCols() []*Column
 
-	// DeletableCols returns columns of the table in deletable states.
-	// Writable states includes Public, WriteOnly, WriteOnlyReorganization, DeleteOnly.
-	DeletableCols() []*Column
+	// FullHiddenColsAndVisibleCols returns hidden columns in all states and unhidden columns in public states.
+	FullHiddenColsAndVisibleCols() []*Column
 
 	// Indices returns the indices of the table.
 	Indices() []Index
@@ -197,7 +196,7 @@ type Table interface {
 	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
-	UpdateRecord(ctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error
+	UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error
 
 	// RemoveRecord removes a row in the table.
 	RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error

@@ -14,6 +14,7 @@
 package privileges
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -804,6 +805,10 @@ func (record *baseRecord) match(user, host string) bool {
 		record.hostMatch(host))
 }
 
+func (record *baseRecord) fullyMatch(user, host string) bool {
+	return record.User == user && record.Host == host
+}
+
 func (record *dbRecord) match(user, host, db string) bool {
 	return record.baseRecord.match(user, host) &&
 		patternMatch(strings.ToUpper(db), record.dbPatChars, record.dbPatTypes)
@@ -1003,10 +1008,22 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	allRoles := p.FindAllRole(roles)
 	// Show global grants.
 	var currentPriv mysql.PrivilegeType
-	var hasGrantOptionPriv = false
+	var hasGrantOptionPriv, userExists = false, false
+	// Check whether user exists.
+	if userList, ok := p.UserMap[user]; ok {
+		for _, record := range userList {
+			if record.fullyMatch(user, host) {
+				userExists = true
+				break
+			}
+		}
+		if !userExists {
+			return gs
+		}
+	}
 	var g string
 	for _, record := range p.User {
-		if record.baseRecord.match(user, host) {
+		if record.fullyMatch(user, host) {
 			hasGlobalGrant = true
 			if (record.Privileges & mysql.GrantPriv) > 0 {
 				hasGrantOptionPriv = true
@@ -1055,7 +1072,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	// Show db scope grants.
 	dbPrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.DB {
-		if record.baseRecord.match(user, host) {
+		if record.fullyMatch(user, host) {
 			if _, ok := dbPrivTable[record.DB]; ok {
 				if (record.Privileges & mysql.GrantPriv) > 0 {
 					hasGrantOptionPriv = true
@@ -1112,7 +1129,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	tablePrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.TablesPriv {
 		recordKey := record.DB + "." + record.TableName
-		if record.baseRecord.match(user, host) {
+		if user == record.User && host == record.Host {
 			if _, ok := dbPrivTable[record.DB]; ok {
 				if (record.TablePriv & mysql.GrantPriv) > 0 {
 					hasGrantOptionPriv = true
@@ -1163,6 +1180,22 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		}
 	}
 
+	// Show column scope grants, column and table are combined.
+	// A map of "DB.Table" => Priv(col1, col2 ...)
+	columnPrivTable := make(map[string]privOnColumns)
+	for _, record := range p.ColumnsPriv {
+		if !collectColumnGrant(&record, user, host, columnPrivTable) {
+			for _, r := range allRoles {
+				collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable)
+			}
+		}
+	}
+	for k, v := range columnPrivTable {
+		privCols := privOnColumnsToString(v)
+		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
+		gs = append(gs, s)
+	}
+
 	// Show role grants.
 	graphKey := user + "@" + host
 	edgeTable, ok := p.RoleGraph[graphKey]
@@ -1186,6 +1219,55 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 		gs = append(gs, s)
 	}
 	return gs
+}
+
+type columnStr = string
+type columnStrs = []columnStr
+type privOnColumns = map[mysql.PrivilegeType]columnStrs
+
+func privOnColumnsToString(p privOnColumns) string {
+	var buf bytes.Buffer
+	idx := 0
+	for _, priv := range mysql.AllColumnPrivs {
+		v, ok := p[priv]
+		if !ok || len(v) == 0 {
+			continue
+		}
+
+		if idx > 0 {
+			buf.WriteString(", ")
+		}
+		fmt.Fprintf(&buf, "%s(", mysql.Priv2Str[priv])
+		for i, col := range v {
+			if i > 0 {
+				fmt.Fprintf(&buf, ", ")
+			}
+			buf.WriteString(col)
+		}
+		buf.WriteString(")")
+		idx++
+	}
+	return buf.String()
+}
+
+func collectColumnGrant(record *columnsPrivRecord, user, host string, columnPrivTable map[string]privOnColumns) bool {
+	if record.baseRecord.match(user, host) {
+		recordKey := record.DB + "." + record.TableName
+		privColumns, ok := columnPrivTable[recordKey]
+		if !ok {
+			privColumns = make(map[mysql.PrivilegeType]columnStrs)
+		}
+
+		for _, priv := range mysql.AllColumnPrivs {
+			if priv&record.ColumnPriv > 0 {
+				old := privColumns[priv]
+				privColumns[priv] = append(old, record.ColumnName)
+				columnPrivTable[recordKey] = privColumns
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func userPrivToString(privs mysql.PrivilegeType) string {

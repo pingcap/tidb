@@ -836,9 +836,18 @@ func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	allInt := true
+	hasNullable := false
+	// if we have nullable columns in the argument list, we won't do a binary search, instead we will linearly scan the arguments.
+	// this behavior is in line with MySQL's, see MySQL's source code here:
+	// https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/item_cmpfunc.cc#L2713-L2788
+	// https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/item_cmpfunc.cc#L2632-L2686
 	for i := range args {
-		if args[i].GetType().EvalType() != types.ETInt {
+		tp := args[i].GetType()
+		if tp.EvalType() != types.ETInt {
 			allInt = false
+		}
+		if !mysql.HasNotNullFlag(tp.Flag) {
+			hasNullable = true
 		}
 	}
 
@@ -855,10 +864,10 @@ func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	var sig builtinFunc
 	if allInt {
-		sig = &builtinIntervalIntSig{bf}
+		sig = &builtinIntervalIntSig{bf, hasNullable}
 		sig.setPbCode(tipb.ScalarFuncSig_IntervalInt)
 	} else {
-		sig = &builtinIntervalRealSig{bf}
+		sig = &builtinIntervalRealSig{bf, hasNullable}
 		sig.setPbCode(tipb.ScalarFuncSig_IntervalReal)
 	}
 	return sig, nil
@@ -866,6 +875,7 @@ func (c *intervalFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 type builtinIntervalIntSig struct {
 	baseBuiltinFunc
+	hasNullable bool
 }
 
 func (b *builtinIntervalIntSig) Clone() builtinFunc {
@@ -877,15 +887,50 @@ func (b *builtinIntervalIntSig) Clone() builtinFunc {
 // evalInt evals a builtinIntervalIntSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
 func (b *builtinIntervalIntSig) evalInt(row chunk.Row) (int64, bool, error) {
-	args0, isNull, err := b.args[0].EvalInt(b.ctx, row)
+	arg0, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if err != nil {
 		return 0, true, err
 	}
 	if isNull {
 		return -1, false, nil
 	}
-	idx, err := b.binSearch(args0, mysql.HasUnsignedFlag(b.args[0].GetType().Flag), b.args[1:], row)
+	isUint1 := mysql.HasUnsignedFlag(b.args[0].GetType().Flag)
+	var idx int
+	if b.hasNullable {
+		idx, err = b.linearSearch(arg0, isUint1, b.args[1:], row)
+	} else {
+		idx, err = b.binSearch(arg0, isUint1, b.args[1:], row)
+	}
 	return int64(idx), err != nil, err
+}
+
+// linearSearch linearly scans the argument least to find the position of the first value that is larger than the given target.
+func (b *builtinIntervalIntSig) linearSearch(target int64, isUint1 bool, args []Expression, row chunk.Row) (i int, err error) {
+	i = 0
+	for ; i < len(args); i++ {
+		isUint2 := mysql.HasUnsignedFlag(args[i].GetType().Flag)
+		arg, isNull, err := args[i].EvalInt(b.ctx, row)
+		if err != nil {
+			return 0, err
+		}
+		var less bool
+		if !isNull {
+			switch {
+			case !isUint1 && !isUint2:
+				less = target < arg
+			case isUint1 && isUint2:
+				less = uint64(target) < uint64(arg)
+			case !isUint1 && isUint2:
+				less = target < 0 || uint64(target) < uint64(arg)
+			case isUint1 && !isUint2:
+				less = arg > 0 && uint64(target) < uint64(arg)
+			}
+		}
+		if less {
+			break
+		}
+	}
+	return i, nil
 }
 
 // binSearch is a binary search method.
@@ -926,26 +971,47 @@ func (b *builtinIntervalIntSig) binSearch(target int64, isUint1 bool, args []Exp
 
 type builtinIntervalRealSig struct {
 	baseBuiltinFunc
+	hasNullable bool
 }
 
 func (b *builtinIntervalRealSig) Clone() builtinFunc {
 	newSig := &builtinIntervalRealSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.hasNullable = b.hasNullable
 	return newSig
 }
 
 // evalInt evals a builtinIntervalRealSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_interval
 func (b *builtinIntervalRealSig) evalInt(row chunk.Row) (int64, bool, error) {
-	args0, isNull, err := b.args[0].EvalReal(b.ctx, row)
+	arg0, isNull, err := b.args[0].EvalReal(b.ctx, row)
 	if err != nil {
 		return 0, true, err
 	}
 	if isNull {
 		return -1, false, nil
 	}
-	idx, err := b.binSearch(args0, b.args[1:], row)
+	var idx int
+	if b.hasNullable {
+		idx, err = b.linearSearch(arg0, b.args[1:], row)
+	} else {
+		idx, err = b.binSearch(arg0, b.args[1:], row)
+	}
 	return int64(idx), err != nil, err
+}
+
+func (b *builtinIntervalRealSig) linearSearch(target float64, args []Expression, row chunk.Row) (i int, err error) {
+	i = 0
+	for ; i < len(args); i++ {
+		arg, isNull, err := args[i].EvalReal(b.ctx, row)
+		if err != nil {
+			return 0, err
+		}
+		if !isNull && target < arg {
+			break
+		}
+	}
+	return i, nil
 }
 
 func (b *builtinIntervalRealSig) binSearch(target float64, args []Expression, row chunk.Row) (_ int, err error) {
@@ -2101,14 +2167,14 @@ func (b *builtinNullEQIntSig) evalInt(row chunk.Row) (val int64, isNull bool, er
 	case !isUnsigned0 && !isUnsigned1 && types.CompareInt64(arg0, arg1) == 0:
 		res = 1
 	case isUnsigned0 && !isUnsigned1:
-		if arg1 < 0 || arg0 > math.MaxInt64 {
+		if arg1 < 0 {
 			break
 		}
 		if types.CompareInt64(arg0, arg1) == 0 {
 			res = 1
 		}
 	case !isUnsigned0 && isUnsigned1:
-		if arg0 < 0 || arg1 > math.MaxInt64 {
+		if arg0 < 0 {
 			break
 		}
 		if types.CompareInt64(arg0, arg1) == 0 {

@@ -184,10 +184,10 @@ func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode
 
 func recordAbortTxnDuration(sessVars *variable.SessionVars) {
 	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
-	if sessVars.InRestrictedSQL {
-		transactionDurationInternalAbort.Observe(duration)
+	if sessVars.TxnCtx.IsPessimistic {
+		transactionDurationPessimisticAbort.Observe(duration)
 	} else {
-		transactionDurationGeneralAbort.Observe(duration)
+		transactionDurationOptimisticAbort.Observe(duration)
 	}
 }
 

@@ -9,7 +9,7 @@ advertise-address = ""
 # TiDB server port.
 port = 4000
 
-# Registered store name, [tikv, unistore]
+# Registered store name, [tikv, mocktikv, unistore]
 store = "unistore"
 
 # TiDB storage path.
@@ -33,6 +33,9 @@ token-limit = 1000
 
 # The maximum memory available for a single SQL statement. Default: 1GB
 mem-quota-query = 1073741824
+
+# The maximum number available of a NLJ cache for a single SQL statement. Default: 20MB
+nested-loop-join-cache-capacity = 20971520
 
 # Controls whether to enable the temporary storage for some operators when a single SQL statement exceeds the memory quota specified by mem-quota-query.
 oom-use-tmp-storage = true
@@ -106,6 +109,20 @@ max-server-connections = 0
 # Whether new collations are enabled, as indicated by its name, this configuration entry take effect ONLY when a TiDB cluster bootstraps for the first time.
 new_collations_enabled_on_first_bootstrap = false
 
+# Don't register information of this TiDB to etcd, so this instance of TiDB won't appear in the services like dashboard.
+# This option is useful when you want to embed TiDB into your service(i.e. use TiDB as a library).
+# *If you want to start a TiDB service, NEVER enable this.*
+skip-register-to-dashboard = false
+
+# When enabled, usage data (for example, instance versions) will be reported to PingCAP periodically for user experience analytics.
+# If this config is set to `false` on all TiDB servers, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
+# See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
+enable-telemetry = true
+
+# deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
+# a warning like `Integer display width is deprecated and will be removed in a future release`.
+deprecate-integer-display-length = false
+
 [log]
 # Log level: debug, info, warn, error, fatal.
 level = "info"
@@ -171,6 +188,11 @@ cluster-ssl-cert = ""
 # Path of file that contains X509 key in PEM format for connection with cluster components.
 cluster-ssl-key = ""
 
+# Configurations of the encryption method to use for encrypting the spilled data files.
+# Possible values are "plaintext", "aes128-ctr", if not set, it will be "plaintext" by default.
+# "plaintext" means encryption is disabled.
+spilled-file-encryption-method = "plaintext"
+
 [status]
 # If enable status report HTTP service.
 report-status = true
@@ -197,8 +219,8 @@ record-db-qps = false
 # Max CPUs to use, 0 use number of CPUs in the machine.
 max-procs = 0
 
-# Max memory size to use, 0 use the total usable memory in the machine.
-max-memory = 0
+# Memory size quota for tidb server, 0 means unlimited
+server-memory-quota = 0
 
 # StmtCountLimit limits the max count of statement inside a transaction.
 stmt-count-limit = 5000
@@ -219,7 +241,7 @@ run-auto-analyze = true
 feedback-probability = 0.05
 
 # The max number of query feedback that cache in memory.
-query-feedback-limit = 1024
+query-feedback-limit = 512
 
 # Pseudo stats will be used if the ratio between the modify count and
 # row count in statistics of a table is greater than it.
@@ -242,11 +264,15 @@ distinct-agg-push-down = false
 # If binlog is disabled or binlog is enabled without Kafka, this value should be less than 10737418240(10G).
 txn-total-size-limit = 104857600
 
+# The limitation of the size in byte for each entry in one transaction.
+# NOTE: Increasing this limit may cause performance problems.
+txn-entry-size-limit = 6291456
+
 # The max number of running concurrency two phase committer request for an SQL.
 committer-concurrency = 16
 
 # max lifetime of transaction ttl manager.
-max-txn-ttl = 600000
+max-txn-ttl = 3600000
 
 # the interval duration between two memory profile into global tracker
 mem-profile-interval = "1m"
@@ -330,6 +356,9 @@ grpc-keepalive-timeout = 3
 # Max time for commit command, must be twice bigger than raft election timeout.
 commit-timeout = "41s"
 
+# Enable async commit for all transactions.
+enable-async-commit = false
+
 # Max batch size in gRPC.
 max-batch-size = 128
 # Overload threshold of TiKV.
@@ -352,7 +381,11 @@ region-cache-ttl = 600
 store-limit = 0
 
 # store-liveness-timeout is used to control timeout for store liveness after sending request failed.
-store-liveness-timeout = "120s"
+store-liveness-timeout = "5s"
+
+# ttl-refreshed-txn-size decides whether a transaction should update its lock TTL.
+# If the size(in byte) of a transaction is large than `ttl-refreshed-txn-size`, it update the lock TTL during the 2PC.
+ttl-refreshed-txn-size = 33554432
 
 [tikv-client.copr-cache]
 # Whether to enable the copr cache. The copr cache saves the result from TiKV Coprocessor in the memory and

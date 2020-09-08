@@ -55,6 +55,10 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildVarPop(aggFuncDesc, ordinal)
 	case ast.AggFuncJsonObjectAgg:
 		return buildJSONObjectAgg(aggFuncDesc, ordinal)
+	case ast.AggFuncApproxCountDistinct:
+		return buildApproxCountDistinct(aggFuncDesc, ordinal)
+	case ast.AggFuncStddevPop:
+		return buildStdDevPop(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -87,6 +91,39 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
+}
+
+func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseApproxCountDistinct{baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}}
+
+	// In partition table, union need to compute partial result into partial result.
+	// We can detect and handle this case by checking whether return type is string.
+
+	switch aggFuncDesc.RetTp.Tp {
+	case mysql.TypeLonglong:
+		switch aggFuncDesc.Mode {
+		case aggregation.CompleteMode:
+			return &approxCountDistinctOriginal{base}
+		case aggregation.Partial1Mode:
+			return &approxCountDistinctPartial1{approxCountDistinctOriginal{base}}
+		case aggregation.Partial2Mode:
+			return &approxCountDistinctPartial2{approxCountDistinctPartial1{approxCountDistinctOriginal{base}}}
+		case aggregation.FinalMode:
+			return &approxCountDistinctFinal{approxCountDistinctPartial2{approxCountDistinctPartial1{approxCountDistinctOriginal{base}}}}
+		}
+	case mysql.TypeString:
+		switch aggFuncDesc.Mode {
+		case aggregation.CompleteMode, aggregation.Partial1Mode:
+			return &approxCountDistinctPartial1{approxCountDistinctOriginal{base}}
+		case aggregation.Partial2Mode, aggregation.FinalMode:
+			return &approxCountDistinctPartial2{approxCountDistinctPartial1{approxCountDistinctOriginal{base}}}
+		}
+	}
+
+	return nil
 }
 
 // buildCount builds the AggFunc implementation for function "COUNT".
@@ -289,6 +326,13 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
+		switch fieldType.Tp {
+		case mysql.TypeEnum:
+			return &maxMin4Enum{base}
+		case mysql.TypeSet:
+			return &maxMin4Set{base}
+		}
+
 		switch evalType {
 		case types.ETInt:
 			if mysql.HasUnsignedFlag(fieldType.Flag) {
@@ -407,6 +451,29 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 			return &varPop4DistinctFloat64{base}
 		}
 		return &varPop4Float64{base}
+	}
+}
+
+// buildStdDevPop builds the AggFunc implementation for function "STD()/STDDEV()/STDDEV_POP()"
+func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseStdDevPopAggFunc{
+		varPop4Float64{
+			baseVarPopAggFunc{
+				baseAggFunc{
+					args:    aggFuncDesc.Args,
+					ordinal: ordinal,
+				},
+			},
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &stdDevPop4DistinctFloat64{base}
+		}
+		return &stdDevPop4Float64{base}
 	}
 }
 

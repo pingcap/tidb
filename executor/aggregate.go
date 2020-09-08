@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 )
 
@@ -246,7 +246,9 @@ func (e *HashAggExec) Close() error {
 		}
 		partialConcurrencyInfo := execdetails.NewConcurrencyInfo("PartialConcurrency", partialConcurrency)
 		finalConcurrencyInfo := execdetails.NewConcurrencyInfo("FinalConcurrency", finalConcurrency)
-		e.runtimeStats.SetConcurrencyInfo(partialConcurrencyInfo, finalConcurrencyInfo)
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{BasicRuntimeStats: e.runtimeStats}
+		runtimeStats.SetConcurrencyInfo(partialConcurrencyInfo, finalConcurrencyInfo)
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 	}
 	return e.baseExecutor.Close()
 }
@@ -279,8 +281,8 @@ func (e *HashAggExec) initForUnparallelExec() {
 
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	sessionVars := e.ctx.GetSessionVars()
-	finalConcurrency := sessionVars.HashAggFinalConcurrency
-	partialConcurrency := sessionVars.HashAggPartialConcurrency
+	finalConcurrency := sessionVars.HashAggFinalConcurrency()
+	partialConcurrency := sessionVars.HashAggPartialConcurrency()
 	e.isChildReturnEmpty = true
 	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency)
 	e.inputCh = make(chan *HashAggInput, partialConcurrency)
@@ -401,7 +403,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 	for i := 0; i < numRows; i++ {
 		for j, af := range w.aggFuncs {
 			rows[0] = chk.GetRow(i)
-			if err = af.UpdatePartialResult(ctx, rows, partialResults[i][j]); err != nil {
+			if _, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j]); err != nil {
 				return err
 			}
 		}
@@ -479,7 +481,8 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 			continue
 		}
 		for _, af := range w.aggFuncs {
-			partialResults[i] = append(partialResults[i], af.AllocPartialResult())
+			partialResult, _ := af.AllocPartialResult()
+			partialResults[i] = append(partialResults[i], partialResult)
 		}
 		mapper[string(groupKey[i])] = partialResults[i]
 	}
@@ -528,7 +531,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 				}
 				prs := intermDataBuffer[i]
 				for j, af := range w.aggFuncs {
-					if err = af.MergePartialResult(sctx, prs[j], finalPartialResults[i][j]); err != nil {
+					if _, err = af.MergePartialResult(sctx, prs[j], finalPartialResults[i][j]); err != nil {
 						return err
 					}
 				}
@@ -789,10 +792,11 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			}
 			partialResults := e.getPartialResults(groupKey)
 			for i, af := range e.PartialAggFuncs {
-				err = af.UpdatePartialResult(e.ctx, []chunk.Row{e.childResult.GetRow(j)}, partialResults[i])
+				memDelta, err := af.UpdatePartialResult(e.ctx, []chunk.Row{e.childResult.GetRow(j)}, partialResults[i])
 				if err != nil {
 					return err
 				}
+				e.memTracker.Consume(memDelta)
 			}
 		}
 	}
@@ -803,7 +807,9 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 	if !ok {
 		partialResults = make([]aggfuncs.PartialResult, 0, len(e.PartialAggFuncs))
 		for _, af := range e.PartialAggFuncs {
-			partialResults = append(partialResults, af.AllocPartialResult())
+			partialResult, memDelta := af.AllocPartialResult()
+			partialResults = append(partialResults, partialResult)
+			e.memTracker.Consume(memDelta)
 		}
 		e.partialResultMap[groupKey] = partialResults
 	}
@@ -844,7 +850,9 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 
 	e.partialResults = make([]aggfuncs.PartialResult, 0, len(e.aggFuncs))
 	for _, aggFunc := range e.aggFuncs {
-		e.partialResults = append(e.partialResults, aggFunc.AllocPartialResult())
+		partialResult, memDelta := aggFunc.AllocPartialResult()
+		e.partialResults = append(e.partialResults, partialResult)
+		e.memTracker.Consume(memDelta)
 	}
 
 	// bytesLimit <= 0 means no limit, for now we just track the memory footprint
@@ -928,10 +936,11 @@ func (e *StreamAggExec) consumeGroupRows() error {
 	}
 
 	for i, aggFunc := range e.aggFuncs {
-		err := aggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i])
+		memDelta, err := aggFunc.UpdatePartialResult(e.ctx, e.groupRows, e.partialResults[i])
 		if err != nil {
 			return err
 		}
+		e.memTracker.Consume(memDelta)
 	}
 	e.groupRows = e.groupRows[:0]
 	return nil

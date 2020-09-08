@@ -26,9 +26,9 @@ import (
 
 // AggFuncToPBExpr converts aggregate function to pb.
 func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *AggFuncDesc) *tipb.Expr {
-	if aggFunc.HasDistinct {
-		// do nothing and ignore aggFunc.HasDistinct
-	}
+	// if aggFunc.HasDistinct {
+	// do nothing and ignore aggFunc.HasDistinct
+	// }
 	if len(aggFunc.OrderByItems) > 0 {
 		return nil
 	}
@@ -37,6 +37,8 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 	switch aggFunc.Name {
 	case ast.AggFuncCount:
 		tp = tipb.ExprType_Count
+	case ast.AggFuncApproxCountDistinct:
+		tp = tipb.ExprType_ApproxCountDistinct
 	case ast.AggFuncFirstRow:
 		tp = tipb.ExprType_First
 	case ast.AggFuncGroupConcat:
@@ -59,6 +61,8 @@ func AggFuncToPBExpr(sc *stmtctx.StatementContext, client kv.Client, aggFunc *Ag
 		tp = tipb.ExprType_VarPop
 	case ast.AggFuncJsonObjectAgg:
 		tp = tipb.ExprType_JsonObjectAgg
+	case ast.AggFuncStddevPop:
+		tp = tipb.ExprType_StddevPop
 	}
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
@@ -81,6 +85,8 @@ func PBExprToAggFuncDesc(ctx sessionctx.Context, aggFunc *tipb.Expr, fieldTps []
 	switch aggFunc.Tp {
 	case tipb.ExprType_Count:
 		name = ast.AggFuncCount
+	case tipb.ExprType_ApproxCountDistinct:
+		name = ast.AggFuncApproxCountDistinct
 	case tipb.ExprType_First:
 		name = ast.AggFuncFirstRow
 	case tipb.ExprType_GroupConcat:

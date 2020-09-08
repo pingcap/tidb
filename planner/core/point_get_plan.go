@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -54,7 +55,9 @@ type PointGetPlan struct {
 	HandleParam        *driver.ParamMarkerExpr
 	IndexValues        []types.Datum
 	IndexValueParams   []*driver.ParamMarkerExpr
-	expr               expression.Expression
+	IdxCols            []*expression.Column
+	IdxColLens         []int
+	AccessConditions   []expression.Expression
 	ctx                sessionctx.Context
 	UnsignedHandle     bool
 	IsTableDual        bool
@@ -71,14 +74,6 @@ type nameValuePair struct {
 	param   *driver.ParamMarkerExpr
 }
 
-// Init initializes PointGetPlan.
-func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PointGetPlan {
-	p.basePlan = newBasePlan(ctx, plancodec.TypePointGet, offset)
-	p.stats = stats
-	p.Columns = ExpandVirtualColumn(p.Columns, p.schema, p.TblInfo.Columns)
-	return &p
-}
-
 // Schema implements the Plan interface.
 func (p *PointGetPlan) Schema() *expression.Schema {
 	return p.schema
@@ -91,8 +86,13 @@ func (p *PointGetPlan) attach2Task(...task) task {
 }
 
 // ToPB converts physical plan to tipb executor.
-func (p *PointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
+func (p *PointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
 	return nil, nil
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *PointGetPlan) Clone() (PhysicalPlan, error) {
+	return nil, errors.Errorf("%T doesn't support cloning.", p)
 }
 
 // ExplainInfo implements Plan interface.
@@ -219,7 +219,7 @@ func (p *PointGetPlan) GetCost(cols []*expression.Column) float64 {
 	}
 	cost += rowSize * sessVars.NetworkFactor
 	cost += sessVars.SeekFactor
-	cost /= float64(sessVars.DistSQLScanConcurrency)
+	cost /= float64(sessVars.DistSQLScanConcurrency())
 	return cost
 }
 
@@ -236,12 +236,20 @@ type BatchPointGetPlan struct {
 	HandleParams     []*driver.ParamMarkerExpr
 	IndexValues      [][]types.Datum
 	IndexValueParams [][]*driver.ParamMarkerExpr
+	AccessConditions []expression.Expression
+	IdxCols          []*expression.Column
+	IdxColLens       []int
 	PartitionColPos  int
 	KeepOrder        bool
 	Desc             bool
 	Lock             bool
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo
+}
+
+// Clone implements PhysicalPlan interface.
+func (p *BatchPointGetPlan) Clone() (PhysicalPlan, error) {
+	return nil, errors.Errorf("%T doesn't support cloning", p)
 }
 
 // ExtractCorrelatedCols implements PhysicalPlan interface.
@@ -256,7 +264,7 @@ func (p *BatchPointGetPlan) attach2Task(...task) task {
 }
 
 // ToPB converts physical plan to tipb executor.
-func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context) (*tipb.Executor, error) {
+func (p *BatchPointGetPlan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.Executor, error) {
 	return nil, nil
 }
 
@@ -364,8 +372,17 @@ func (p *BatchPointGetPlan) GetCost(cols []*expression.Column) float64 {
 	}
 	cost += rowCount * rowSize * sessVars.NetworkFactor
 	cost += rowCount * sessVars.SeekFactor
-	cost /= float64(sessVars.DistSQLScanConcurrency)
+	cost /= float64(sessVars.DistSQLScanConcurrency())
 	return cost
+}
+
+// PointPlanKey is used to get point plan that is pre-built for multi-statement query.
+const PointPlanKey = stringutil.StringerStr("pointPlanKey")
+
+// PointPlanVal is used to store point plan that is pre-built for multi-statement query.
+// Save the plan in a struct so even if the point plan is nil, we don't need to try again.
+type PointPlanVal struct {
+	Plan Plan
 }
 
 // TryFastPlan tries to use the PointGetPlan for the query.
@@ -386,7 +403,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 			if checkFastPlanPrivilege(ctx, fp.dbName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return
 			}
-			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockTp)
+			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
 			p = fp
 			return
 		}
@@ -401,7 +418,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 				p = tableDual.Init(ctx, &property.StatsInfo{}, 0)
 				return
 			}
-			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockTp)
+			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
 			p = fp
 			return
 		}
@@ -413,18 +430,32 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 	return nil
 }
 
-func getLockWaitTime(ctx sessionctx.Context, lockTp ast.SelectLockType) (lock bool, waitTime int64) {
-	if lockTp == ast.SelectLockForUpdate || lockTp == ast.SelectLockForUpdateNoWait {
-		// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
-		// is disabled (either by beginning transaction with START TRANSACTION or by setting
-		// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
-		// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
-		sessVars := ctx.GetSessionVars()
-		if !sessVars.IsAutocommit() || sessVars.InTxn() {
-			lock = true
-			waitTime = sessVars.LockWaitTimeout
-			if lockTp == ast.SelectLockForUpdateNoWait {
-				waitTime = kv.LockNoWait
+// IsSelectForUpdateLockType checks if the select lock type is for update type.
+func IsSelectForUpdateLockType(lockType ast.SelectLockType) bool {
+	if lockType == ast.SelectLockForUpdate ||
+		lockType == ast.SelectLockForUpdateNoWait ||
+		lockType == ast.SelectLockForUpdateWaitN {
+		return true
+	}
+	return true
+}
+
+func getLockWaitTime(ctx sessionctx.Context, lockInfo *ast.SelectLockInfo) (lock bool, waitTime int64) {
+	if lockInfo != nil {
+		if IsSelectForUpdateLockType(lockInfo.LockType) {
+			// Locking of rows for update using SELECT FOR UPDATE only applies when autocommit
+			// is disabled (either by beginning transaction with START TRANSACTION or by setting
+			// autocommit to 0. If autocommit is enabled, the rows matching the specification are not locked.
+			// See https://dev.mysql.com/doc/refman/5.7/en/innodb-locking-reads.html
+			sessVars := ctx.GetSessionVars()
+			if !sessVars.IsAutocommit() || sessVars.InTxn() {
+				lock = true
+				waitTime = sessVars.LockWaitTimeout
+				if lockInfo.LockType == ast.SelectLockForUpdateWaitN {
+					waitTime = int64(lockInfo.WaitSec * 1000)
+				} else if lockInfo.LockType == ast.SelectLockForUpdateNoWait {
+					waitTime = kv.LockNoWait
+				}
 			}
 		}
 	}
@@ -437,9 +468,12 @@ func newBatchPointGetPlan(
 	names []*types.FieldName, whereColNames []string,
 ) *BatchPointGetPlan {
 	statsInfo := &property.StatsInfo{RowCount: float64(len(patternInExpr.List))}
-	partitionColName := getHashPartitionColumnName(ctx, tbl)
-	if tbl.GetPartitionInfo() != nil && partitionColName == nil {
-		return nil
+	var partitionColName *ast.ColumnName
+	if tbl.GetPartitionInfo() != nil {
+		partitionColName = getHashPartitionColumnName(ctx, tbl)
+		if partitionColName == nil {
+			return nil
+		}
 	}
 	if handleCol != nil {
 		var handles = make([]kv.Handle, len(patternInExpr.List))
@@ -581,6 +615,10 @@ func tryWhereIn2BatchPointGet(ctx sessionctx.Context, selStmt *ast.SelectStmt) *
 	if tbl == nil {
 		return nil
 	}
+	// Skip the optimization with partition selection.
+	if len(tblName.PartitionNames) > 0 {
+		return nil
+	}
 
 	for _, col := range tbl.Columns {
 		if col.IsGenerated() || col.State != model.StatePublic {
@@ -709,6 +747,14 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		if partitionInfo == nil {
 			return nil
 		}
+		// Take partition selection into consideration.
+		if len(tblName.PartitionNames) > 0 {
+			if !partitionNameInSet(partitionInfo.Name, tblName.PartitionNames) {
+				p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
+				p.IsTableDual = true
+				return p
+			}
+		}
 	}
 
 	handlePair, fieldType := findPKHandle(tbl, pairs)
@@ -755,6 +801,16 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt) *PointGetP
 		return p
 	}
 	return nil
+}
+
+func partitionNameInSet(name model.CIStr, pnames []model.CIStr) bool {
+	for _, pname := range pnames {
+		// Case insensitive, create table partition p0, query using P0 is OK.
+		if name.L == pname.L {
+			return true
+		}
+	}
+	return false
 }
 
 func newPointGetPlan(ctx sessionctx.Context, dbName string, schema *expression.Schema, tbl *model.TableInfo, names []*types.FieldName) *PointGetPlan {
@@ -1020,14 +1076,14 @@ func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan
 			}.Init(ctx, &property.StatsInfo{}, 0)
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
-			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, ast.SelectLockForUpdate)
+			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
 		return buildPointUpdatePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo, updateStmt)
 	}
 	batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt)
 	if batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
-			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, ast.SelectLockForUpdate)
+			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
 		return buildPointUpdatePlan(ctx, batchPointGet, batchPointGet.dbName, batchPointGet.TblInfo, updateStmt)
 	}
@@ -1042,7 +1098,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	if orderedList == nil {
 		return nil
 	}
-	handleCols := findHandleColIdx(tbl, pointPlan.Schema())
+	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())
 	updatePlan := Update{
 		SelectPlan:  pointPlan,
 		OrderedList: orderedList,
@@ -1051,7 +1107,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 				TblID:          tbl.ID,
 				Start:          0,
 				End:            pointPlan.Schema().Len(),
-				HandleOrdinal:  handleCols,
+				HandleCols:     handleCols,
 				IsCommonHandle: tbl.IsCommonHandle,
 			},
 		},
@@ -1112,13 +1168,13 @@ func tryDeletePointPlan(ctx sessionctx.Context, delStmt *ast.DeleteStmt) Plan {
 			}.Init(ctx, &property.StatsInfo{}, 0)
 		}
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
-			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, ast.SelectLockForUpdate)
+			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
 		return buildPointDeletePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo)
 	}
 	if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt); batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
-			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, ast.SelectLockForUpdate)
+			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
 		return buildPointDeletePlan(ctx, batchPointGet, batchPointGet.dbName, batchPointGet.TblInfo)
 	}
@@ -1129,7 +1185,7 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
-	handleCols := findHandleColIdx(tbl, pointPlan.Schema())
+	handleCols := buildHandleCols(ctx, tbl, pointPlan.Schema())
 	delPlan := Delete{
 		SelectPlan: pointPlan,
 		TblColPosInfos: TblColPosInfoSlice{
@@ -1137,7 +1193,7 @@ func buildPointDeletePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 				TblID:          tbl.ID,
 				Start:          0,
 				End:            pointPlan.Schema().Len(),
-				HandleOrdinal:  handleCols,
+				HandleCols:     handleCols,
 				IsCommonHandle: tbl.IsCommonHandle,
 			},
 		},
@@ -1164,28 +1220,24 @@ func colInfoToColumn(col *model.ColumnInfo, idx int) *expression.Column {
 	}
 }
 
-func findHandleColIdx(tbl *model.TableInfo, schema *expression.Schema) (ids []int) {
+func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expression.Schema) HandleCols {
 	// fields len is 0 for update and delete.
 	if tbl.PKIsHandle {
 		for i, col := range tbl.Columns {
-			if mysql.HasPriKeyFlag(col.Flag) && tbl.PKIsHandle {
-				return []int{schema.Columns[i].Index}
+			if mysql.HasPriKeyFlag(col.Flag) {
+				return &IntHandleCols{col: schema.Columns[i]}
 			}
 		}
 	}
 
 	if tbl.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tbl)
-		var handleCols []int
-		for _, idxCol := range pkIdx.Columns {
-			handleCols = append(handleCols, schema.Columns[idxCol.Offset].Index)
-		}
-		return handleCols
+		return NewCommonHandleCols(ctx.GetSessionVars().StmtCtx, tbl, pkIdx, schema.Columns)
 	}
 
 	handleCol := colInfoToColumn(model.NewExtraHandleColInfo(), schema.Len())
 	schema.Append(handleCol)
-	return []int{handleCol.Index}
+	return &IntHandleCols{col: handleCol}
 }
 
 func findHandleCol(tbl *model.TableInfo, schema *expression.Schema) *expression.Column {

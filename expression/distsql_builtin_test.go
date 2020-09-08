@@ -54,6 +54,8 @@ func (s *testEvalSerialSuite) TestPBToExprWithNewCollation(c *C) {
 		{"utf8mb4_general_ci", "utf8mb4_general_ci", 45, 45},
 		{"", "utf8mb4_bin", 46, 46},
 		{"some_error_collation", "utf8mb4_bin", 46, 46},
+		{"utf8_unicode_ci", "utf8_unicode_ci", 192, 192},
+		{"utf8mb4_unicode_ci", "utf8mb4_unicode_ci", 224, 224},
 	}
 
 	for _, cs := range cases {

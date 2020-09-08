@@ -53,4 +53,8 @@ const (
 	AutoRandomOnNonBigIntColumn = "auto_random option must be defined on `bigint` column, but not on `%s` column"
 	// AutoRandomRebaseNotApplicable is reported when alter auto_random base on a non auto_random table.
 	AutoRandomRebaseNotApplicable = "alter auto_random_base of a non auto_random table"
+	// AutoRandomRebaseOverflow is reported when alter auto_random_base to a value that overflows the incremental bits.
+	AutoRandomRebaseOverflow = "alter auto_random_base to %d overflows the incremental bits, max allowed base is %d"
+	// AutoRandomAlterAddColumn is reported when adding an auto_random column.
+	AutoRandomAlterAddColumn = "unsupported add column '%s' constraint AUTO_RANDOM when altering '%s.%s'"
 )

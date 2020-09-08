@@ -126,7 +126,7 @@ func (o *outerJoinEliminator) isInnerJoinKeysContainIndex(innerPlan LogicalPlan,
 		return false, nil
 	}
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath() || !path.Index.Unique || len(path.IdxCols) == 0 {
+		if path.IsIntHandlePath || !path.Index.Unique || len(path.IdxCols) == 0 {
 			continue
 		}
 		joinKeysContainIndex := true
@@ -164,7 +164,8 @@ func GetDupAgnosticAggCols(
 		if !aggDesc.HasDistinct &&
 			aggDesc.Name != ast.AggFuncFirstRow &&
 			aggDesc.Name != ast.AggFuncMax &&
-			aggDesc.Name != ast.AggFuncMin {
+			aggDesc.Name != ast.AggFuncMin &&
+			aggDesc.Name != ast.AggFuncApproxCountDistinct {
 			// If not all aggregate functions are duplicate agnostic,
 			// we should clean the aggCols, so `return true, newAggCols[:0]`.
 			return true, newAggCols[:0]
