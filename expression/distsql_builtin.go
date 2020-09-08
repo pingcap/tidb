@@ -15,6 +15,11 @@ package expression
 
 import (
 	"fmt"
+<<<<<<< HEAD
+=======
+	"strconv"
+	"sync"
+>>>>>>> 0e26d40... distsql: fix wrong default max allowed packet (#19573)
 	"time"
 
 	"github.com/pingcap/errors"
@@ -22,6 +27,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mock"
@@ -40,8 +46,21 @@ func pbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 }
 
 func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
+<<<<<<< HEAD
 	fieldTp := pbTypeToFieldType(tp)
 	base := newBaseBuiltinFunc(ctx, args)
+=======
+	fieldTp := PbTypeToFieldType(tp)
+	base, err := newBaseBuiltinFuncWithFieldType(ctx, fieldTp, args)
+	if err != nil {
+		return nil, err
+	}
+	valStr, _ := ctx.GetSessionVars().GetSystemVar(variable.MaxAllowedPacket)
+	maxAllowedPacket, err := strconv.ParseUint(valStr, 10, 64)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+>>>>>>> 0e26d40... distsql: fix wrong default max allowed packet (#19573)
 	base.tp = fieldTp
 	switch sigCode {
 	case tipb.ScalarFuncSig_CastIntAsInt:
@@ -494,6 +513,349 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 
 	case tipb.ScalarFuncSig_DateFormatSig:
 		f = &builtinDateFormatSig{base}
+<<<<<<< HEAD
+=======
+	//case tipb.ScalarFuncSig_DateLiteral:
+	//	f = &builtinDateLiteralSig{base}
+	case tipb.ScalarFuncSig_DateDiff:
+		f = &builtinDateDiffSig{base}
+	case tipb.ScalarFuncSig_NullTimeDiff:
+		f = &builtinNullTimeDiffSig{base}
+	case tipb.ScalarFuncSig_TimeStringTimeDiff:
+		f = &builtinTimeStringTimeDiffSig{base}
+	case tipb.ScalarFuncSig_DurationStringTimeDiff:
+		f = &builtinDurationStringTimeDiffSig{base}
+	case tipb.ScalarFuncSig_DurationDurationTimeDiff:
+		f = &builtinDurationDurationTimeDiffSig{base}
+	case tipb.ScalarFuncSig_StringTimeTimeDiff:
+		f = &builtinStringTimeTimeDiffSig{base}
+	case tipb.ScalarFuncSig_StringDurationTimeDiff:
+		f = &builtinStringDurationTimeDiffSig{base}
+	case tipb.ScalarFuncSig_StringStringTimeDiff:
+		f = &builtinStringStringTimeDiffSig{base}
+	case tipb.ScalarFuncSig_TimeTimeTimeDiff:
+		f = &builtinTimeTimeTimeDiffSig{base}
+	case tipb.ScalarFuncSig_Date:
+		f = &builtinDateSig{base}
+	case tipb.ScalarFuncSig_Hour:
+		f = &builtinHourSig{base}
+	case tipb.ScalarFuncSig_Minute:
+		f = &builtinMinuteSig{base}
+	case tipb.ScalarFuncSig_Second:
+		f = &builtinSecondSig{base}
+	case tipb.ScalarFuncSig_MicroSecond:
+		f = &builtinMicroSecondSig{base}
+	case tipb.ScalarFuncSig_Month:
+		f = &builtinMonthSig{base}
+	case tipb.ScalarFuncSig_MonthName:
+		f = &builtinMonthNameSig{base}
+	case tipb.ScalarFuncSig_NowWithArg:
+		f = &builtinNowWithArgSig{base}
+	case tipb.ScalarFuncSig_NowWithoutArg:
+		f = &builtinNowWithoutArgSig{base}
+	case tipb.ScalarFuncSig_DayName:
+		f = &builtinDayNameSig{base}
+	case tipb.ScalarFuncSig_DayOfMonth:
+		f = &builtinDayOfMonthSig{base}
+	case tipb.ScalarFuncSig_DayOfWeek:
+		f = &builtinDayOfWeekSig{base}
+	case tipb.ScalarFuncSig_DayOfYear:
+		f = &builtinDayOfYearSig{base}
+	case tipb.ScalarFuncSig_WeekWithMode:
+		f = &builtinWeekWithModeSig{base}
+	case tipb.ScalarFuncSig_WeekWithoutMode:
+		f = &builtinWeekWithoutModeSig{base}
+	case tipb.ScalarFuncSig_WeekDay:
+		f = &builtinWeekDaySig{base}
+	case tipb.ScalarFuncSig_WeekOfYear:
+		f = &builtinWeekOfYearSig{base}
+	case tipb.ScalarFuncSig_Year:
+		f = &builtinYearSig{base}
+	case tipb.ScalarFuncSig_YearWeekWithMode:
+		f = &builtinYearWeekWithModeSig{base}
+	case tipb.ScalarFuncSig_YearWeekWithoutMode:
+		f = &builtinYearWeekWithoutModeSig{base}
+	case tipb.ScalarFuncSig_GetFormat:
+		f = &builtinGetFormatSig{base}
+	case tipb.ScalarFuncSig_SysDateWithFsp:
+		f = &builtinSysDateWithFspSig{base}
+	case tipb.ScalarFuncSig_SysDateWithoutFsp:
+		f = &builtinSysDateWithoutFspSig{base}
+	case tipb.ScalarFuncSig_CurrentDate:
+		f = &builtinCurrentDateSig{base}
+	case tipb.ScalarFuncSig_CurrentTime0Arg:
+		f = &builtinCurrentTime0ArgSig{base}
+	case tipb.ScalarFuncSig_CurrentTime1Arg:
+		f = &builtinCurrentTime1ArgSig{base}
+	case tipb.ScalarFuncSig_Time:
+		f = &builtinTimeSig{base}
+	//case tipb.ScalarFuncSig_TimeLiteral:
+	//	f = &builtinTimeLiteralSig{base}
+	case tipb.ScalarFuncSig_UTCDate:
+		f = &builtinUTCDateSig{base}
+	case tipb.ScalarFuncSig_UTCTimestampWithArg:
+		f = &builtinUTCTimestampWithArgSig{base}
+	case tipb.ScalarFuncSig_UTCTimestampWithoutArg:
+		f = &builtinUTCTimestampWithoutArgSig{base}
+	case tipb.ScalarFuncSig_AddDatetimeAndDuration:
+		f = &builtinAddDatetimeAndDurationSig{base}
+	case tipb.ScalarFuncSig_AddDatetimeAndString:
+		f = &builtinAddDatetimeAndStringSig{base}
+	case tipb.ScalarFuncSig_AddTimeDateTimeNull:
+		f = &builtinAddTimeDateTimeNullSig{base}
+	case tipb.ScalarFuncSig_AddStringAndDuration:
+		f = &builtinAddStringAndDurationSig{base}
+	case tipb.ScalarFuncSig_AddStringAndString:
+		f = &builtinAddStringAndStringSig{base}
+	case tipb.ScalarFuncSig_AddTimeStringNull:
+		f = &builtinAddTimeStringNullSig{base}
+	case tipb.ScalarFuncSig_AddDurationAndDuration:
+		f = &builtinAddDurationAndDurationSig{base}
+	case tipb.ScalarFuncSig_AddDurationAndString:
+		f = &builtinAddDurationAndStringSig{base}
+	case tipb.ScalarFuncSig_AddTimeDurationNull:
+		f = &builtinAddTimeDurationNullSig{base}
+	case tipb.ScalarFuncSig_AddDateAndDuration:
+		f = &builtinAddDateAndDurationSig{base}
+	case tipb.ScalarFuncSig_AddDateAndString:
+		f = &builtinAddDateAndStringSig{base}
+	case tipb.ScalarFuncSig_SubDatetimeAndDuration:
+		f = &builtinSubDatetimeAndDurationSig{base}
+	case tipb.ScalarFuncSig_SubDatetimeAndString:
+		f = &builtinSubDatetimeAndStringSig{base}
+	case tipb.ScalarFuncSig_SubTimeDateTimeNull:
+		f = &builtinSubTimeDateTimeNullSig{base}
+	case tipb.ScalarFuncSig_SubStringAndDuration:
+		f = &builtinSubStringAndDurationSig{base}
+	case tipb.ScalarFuncSig_SubStringAndString:
+		f = &builtinSubStringAndStringSig{base}
+	case tipb.ScalarFuncSig_SubTimeStringNull:
+		f = &builtinSubTimeStringNullSig{base}
+	case tipb.ScalarFuncSig_SubDurationAndDuration:
+		f = &builtinSubDurationAndDurationSig{base}
+	case tipb.ScalarFuncSig_SubDurationAndString:
+		f = &builtinSubDurationAndStringSig{base}
+	case tipb.ScalarFuncSig_SubTimeDurationNull:
+		f = &builtinSubTimeDurationNullSig{base}
+	case tipb.ScalarFuncSig_SubDateAndDuration:
+		f = &builtinSubDateAndDurationSig{base}
+	case tipb.ScalarFuncSig_SubDateAndString:
+		f = &builtinSubDateAndStringSig{base}
+	case tipb.ScalarFuncSig_UnixTimestampCurrent:
+		f = &builtinUnixTimestampCurrentSig{base}
+	case tipb.ScalarFuncSig_UnixTimestampInt:
+		f = &builtinUnixTimestampIntSig{base}
+	case tipb.ScalarFuncSig_UnixTimestampDec:
+		f = &builtinUnixTimestampDecSig{base}
+	//case tipb.ScalarFuncSig_ConvertTz:
+	//	f = &builtinConvertTzSig{base}
+	case tipb.ScalarFuncSig_MakeDate:
+		f = &builtinMakeDateSig{base}
+	case tipb.ScalarFuncSig_MakeTime:
+		f = &builtinMakeTimeSig{base}
+	case tipb.ScalarFuncSig_PeriodAdd:
+		f = &builtinPeriodAddSig{base}
+	case tipb.ScalarFuncSig_PeriodDiff:
+		f = &builtinPeriodDiffSig{base}
+	case tipb.ScalarFuncSig_Quarter:
+		f = &builtinQuarterSig{base}
+	case tipb.ScalarFuncSig_SecToTime:
+		f = &builtinSecToTimeSig{base}
+	case tipb.ScalarFuncSig_TimeToSec:
+		f = &builtinTimeToSecSig{base}
+	case tipb.ScalarFuncSig_TimestampAdd:
+		f = &builtinTimestampAddSig{base}
+	case tipb.ScalarFuncSig_ToDays:
+		f = &builtinToDaysSig{base}
+	case tipb.ScalarFuncSig_ToSeconds:
+		f = &builtinToSecondsSig{base}
+	case tipb.ScalarFuncSig_UTCTimeWithArg:
+		f = &builtinUTCTimeWithArgSig{base}
+	case tipb.ScalarFuncSig_UTCTimeWithoutArg:
+		f = &builtinUTCTimeWithoutArgSig{base}
+	//case tipb.ScalarFuncSig_Timestamp1Arg:
+	//	f = &builtinTimestamp1ArgSig{base}
+	//case tipb.ScalarFuncSig_Timestamp2Args:
+	//	f = &builtinTimestamp2ArgsSig{base}
+	//case tipb.ScalarFuncSig_TimestampLiteral:
+	//	f = &builtinTimestampLiteralSig{base}
+	case tipb.ScalarFuncSig_LastDay:
+		f = &builtinLastDaySig{base}
+	case tipb.ScalarFuncSig_StrToDateDate:
+		f = &builtinStrToDateDateSig{base}
+	case tipb.ScalarFuncSig_StrToDateDatetime:
+		f = &builtinStrToDateDatetimeSig{base}
+	case tipb.ScalarFuncSig_StrToDateDuration:
+		f = &builtinStrToDateDurationSig{base}
+	case tipb.ScalarFuncSig_FromUnixTime1Arg:
+		f = &builtinFromUnixTime1ArgSig{base}
+	case tipb.ScalarFuncSig_FromUnixTime2Arg:
+		f = &builtinFromUnixTime2ArgSig{base}
+	case tipb.ScalarFuncSig_ExtractDatetime:
+		f = &builtinExtractDatetimeSig{base}
+	case tipb.ScalarFuncSig_ExtractDuration:
+		f = &builtinExtractDurationSig{base}
+	//case tipb.ScalarFuncSig_AddDateStringString:
+	//	f = &builtinAddDateStringStringSig{base}
+	//case tipb.ScalarFuncSig_AddDateStringInt:
+	//	f = &builtinAddDateStringIntSig{base}
+	//case tipb.ScalarFuncSig_AddDateStringDecimal:
+	//	f = &builtinAddDateStringDecimalSig{base}
+	//case tipb.ScalarFuncSig_AddDateIntString:
+	//	f = &builtinAddDateIntStringSig{base}
+	//case tipb.ScalarFuncSig_AddDateIntInt:
+	//	f = &builtinAddDateIntIntSig{base}
+	//case tipb.ScalarFuncSig_AddDateDatetimeString:
+	//	f = &builtinAddDateDatetimeStringSig{base}
+	//case tipb.ScalarFuncSig_AddDateDatetimeInt:
+	//	f = &builtinAddDateDatetimeIntSig{base}
+	//case tipb.ScalarFuncSig_SubDateStringString:
+	//	f = &builtinSubDateStringStringSig{base}
+	//case tipb.ScalarFuncSig_SubDateStringInt:
+	//	f = &builtinSubDateStringIntSig{base}
+	//case tipb.ScalarFuncSig_SubDateStringDecimal:
+	//	f = &builtinSubDateStringDecimalSig{base}
+	//case tipb.ScalarFuncSig_SubDateIntString:
+	//	f = &builtinSubDateIntStringSig{base}
+	//case tipb.ScalarFuncSig_SubDateIntInt:
+	//	f = &builtinSubDateIntIntSig{base}
+	//case tipb.ScalarFuncSig_SubDateDatetimeString:
+	//	f = &builtinSubDateDatetimeStringSig{base}
+	//case tipb.ScalarFuncSig_SubDateDatetimeInt:
+	//	f = &builtinSubDateDatetimeIntSig{base}
+	case tipb.ScalarFuncSig_FromDays:
+		f = &builtinFromDaysSig{base}
+	case tipb.ScalarFuncSig_TimeFormat:
+		f = &builtinTimeFormatSig{base}
+	case tipb.ScalarFuncSig_TimestampDiff:
+		f = &builtinTimestampDiffSig{base}
+	case tipb.ScalarFuncSig_BitLength:
+		f = &builtinBitLengthSig{base}
+	case tipb.ScalarFuncSig_Bin:
+		f = &builtinBinSig{base}
+	case tipb.ScalarFuncSig_ASCII:
+		f = &builtinASCIISig{base}
+	case tipb.ScalarFuncSig_Char:
+		f = &builtinCharSig{base}
+	case tipb.ScalarFuncSig_CharLengthUTF8:
+		f = &builtinCharLengthUTF8Sig{base}
+	case tipb.ScalarFuncSig_Concat:
+		f = &builtinConcatSig{base, maxAllowedPacket}
+	case tipb.ScalarFuncSig_ConcatWS:
+		f = &builtinConcatWSSig{base, maxAllowedPacket}
+	case tipb.ScalarFuncSig_Convert:
+		f = &builtinConvertSig{base}
+	case tipb.ScalarFuncSig_Elt:
+		f = &builtinEltSig{base}
+	case tipb.ScalarFuncSig_ExportSet3Arg:
+		f = &builtinExportSet3ArgSig{base}
+	case tipb.ScalarFuncSig_ExportSet4Arg:
+		f = &builtinExportSet4ArgSig{base}
+	case tipb.ScalarFuncSig_ExportSet5Arg:
+		f = &builtinExportSet5ArgSig{base}
+	case tipb.ScalarFuncSig_FieldInt:
+		f = &builtinFieldIntSig{base}
+	case tipb.ScalarFuncSig_FieldReal:
+		f = &builtinFieldRealSig{base}
+	case tipb.ScalarFuncSig_FieldString:
+		f = &builtinFieldStringSig{base}
+	case tipb.ScalarFuncSig_FindInSet:
+		f = &builtinFindInSetSig{base}
+	case tipb.ScalarFuncSig_Format:
+		f = &builtinFormatSig{base}
+	case tipb.ScalarFuncSig_FormatWithLocale:
+		f = &builtinFormatWithLocaleSig{base}
+	case tipb.ScalarFuncSig_FromBase64:
+		f = &builtinFromBase64Sig{base, maxAllowedPacket}
+	case tipb.ScalarFuncSig_HexIntArg:
+		f = &builtinHexIntArgSig{base}
+	case tipb.ScalarFuncSig_HexStrArg:
+		f = &builtinHexStrArgSig{base}
+	case tipb.ScalarFuncSig_InsertUTF8:
+		f = &builtinInsertUTF8Sig{base, maxAllowedPacket}
+	case tipb.ScalarFuncSig_Insert:
+		f = &builtinInsertSig{base, maxAllowedPacket}
+	case tipb.ScalarFuncSig_InstrUTF8:
+		f = &builtinInstrUTF8Sig{base}
+	case tipb.ScalarFuncSig_Instr:
+		f = &builtinInstrSig{base}
+	case tipb.ScalarFuncSig_LTrim:
+		f = &builtinLTrimSig{base}
+	case tipb.ScalarFuncSig_LeftUTF8:
+		f = &builtinLeftUTF8Sig{base}
+	case tipb.ScalarFuncSig_Left:
+		f = &builtinLeftSig{base}
+	case tipb.ScalarFuncSig_Length:
+		f = &builtinLengthSig{base}
+	case tipb.ScalarFuncSig_Locate2ArgsUTF8:
+		f = &builtinLocate2ArgsUTF8Sig{base}
+	case tipb.ScalarFuncSig_Locate3ArgsUTF8:
+		f = &builtinLocate3ArgsUTF8Sig{base}
+	case tipb.ScalarFuncSig_Locate2Args:
+		f = &builtinLocate2ArgsSig{base}
+	case tipb.ScalarFuncSig_Locate3Args:
+		f = &builtinLocate3ArgsSig{base}
+	case tipb.ScalarFuncSig_Lower:
+		f = &builtinLowerSig{base}
+	case tipb.ScalarFuncSig_LpadUTF8:
+		f = &builtinLpadUTF8Sig{base, maxAllowedPacket}
+	case tipb.ScalarFuncSig_Lpad:
+		f = &builtinLpadSig{base, maxAllowedPacket}
+	case tipb.ScalarFuncSig_MakeSet:
+		f = &builtinMakeSetSig{base}
+	case tipb.ScalarFuncSig_OctInt:
+		f = &builtinOctIntSig{base}
+	case tipb.ScalarFuncSig_OctString:
+		f = &builtinOctStringSig{base}
+	case tipb.ScalarFuncSig_Ord:
+		f = &builtinOrdSig{base}
+	case tipb.ScalarFuncSig_Quote:
+		f = &builtinQuoteSig{base}
+	case tipb.ScalarFuncSig_RTrim:
+		f = &builtinRTrimSig{base}
+	case tipb.ScalarFuncSig_Repeat:
+		f = &builtinRepeatSig{base, maxAllowedPacket}
+	case tipb.ScalarFuncSig_Replace:
+		f = &builtinReplaceSig{base}
+	case tipb.ScalarFuncSig_ReverseUTF8:
+		f = &builtinReverseUTF8Sig{base}
+	case tipb.ScalarFuncSig_Reverse:
+		f = &builtinReverseSig{base}
+	case tipb.ScalarFuncSig_RightUTF8:
+		f = &builtinRightUTF8Sig{base}
+	case tipb.ScalarFuncSig_Right:
+		f = &builtinRightSig{base}
+	case tipb.ScalarFuncSig_RpadUTF8:
+		f = &builtinRpadUTF8Sig{base, maxAllowedPacket}
+	case tipb.ScalarFuncSig_Rpad:
+		f = &builtinRpadSig{base, maxAllowedPacket}
+	case tipb.ScalarFuncSig_Space:
+		f = &builtinSpaceSig{base, maxAllowedPacket}
+	case tipb.ScalarFuncSig_Strcmp:
+		f = &builtinStrcmpSig{base}
+	case tipb.ScalarFuncSig_Substring2ArgsUTF8:
+		f = &builtinSubstring2ArgsUTF8Sig{base}
+	case tipb.ScalarFuncSig_Substring3ArgsUTF8:
+		f = &builtinSubstring3ArgsUTF8Sig{base}
+	case tipb.ScalarFuncSig_Substring2Args:
+		f = &builtinSubstring2ArgsSig{base}
+	case tipb.ScalarFuncSig_Substring3Args:
+		f = &builtinSubstring3ArgsSig{base}
+	case tipb.ScalarFuncSig_SubstringIndex:
+		f = &builtinSubstringIndexSig{base}
+	case tipb.ScalarFuncSig_ToBase64:
+		f = &builtinToBase64Sig{base, maxAllowedPacket}
+	case tipb.ScalarFuncSig_Trim1Arg:
+		f = &builtinTrim1ArgSig{base}
+	case tipb.ScalarFuncSig_Trim2Args:
+		f = &builtinTrim2ArgsSig{base}
+	case tipb.ScalarFuncSig_Trim3Args:
+		f = &builtinTrim3ArgsSig{base}
+	case tipb.ScalarFuncSig_UnHex:
+		f = &builtinUnHexSig{base}
+	case tipb.ScalarFuncSig_Upper:
+		f = &builtinUpperSig{base}
+>>>>>>> 0e26d40... distsql: fix wrong default max allowed packet (#19573)
 
 	default:
 		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
