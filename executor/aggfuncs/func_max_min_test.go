@@ -97,11 +97,12 @@ func (s *testSuite) TestMaxMin(c *C) {
 }
 
 type maxSlidingWindowTestCase struct {
-	rowType     string
-	insertValue string
-	expect      []string
-	orderBy     bool
-	frameType   ast.FrameType
+	rowType       string
+	insertValue   string
+	expect        []string
+	orderByExpect []string
+	orderBy       bool
+	frameType     ast.FrameType
 }
 
 func testMaxSlidingWindow(tk *testkit.TestKit, tc maxSlidingWindowTestCase) {
@@ -119,6 +120,10 @@ func testMaxSlidingWindow(tk *testkit.TestKit, tc maxSlidingWindowTestCase) {
 		result = tk.MustQuery(fmt.Sprintf("SELECT max(a) OVER (%s RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;", orderBy))
 	default:
 		result = tk.MustQuery(fmt.Sprintf("SELECT max(a) OVER (%s) FROM t;", orderBy))
+		if tc.orderBy {
+			result.Check(testkit.Rows(tc.orderByExpect...))
+			return
+		}
 	}
 	result.Check(testkit.Rows(tc.expect...))
 }
@@ -127,54 +132,65 @@ func (s *testSuite) TestMaxSlidingWindow(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	testCases := []maxSlidingWindowTestCase{
 		{
-			rowType:     "bigint",
-			insertValue: "(1), (2), (3)",
-			expect:      []string{"3", "3", "3"},
+			rowType:       "bigint",
+			insertValue:   "(1), (3), (2)",
+			expect:        []string{"3", "3", "3"},
+			orderByExpect: []string{"1", "2", "3"},
 		},
 		{
-			rowType:     "float",
-			insertValue: "(1.1), (2.2), (3.3)",
-			expect:      []string{"3.3", "3.3", "3.3"},
+			rowType:       "float",
+			insertValue:   "(1.1), (3.3), (2.2)",
+			expect:        []string{"3.3", "3.3", "3.3"},
+			orderByExpect: []string{"1.1", "2.2", "3.3"},
 		},
 		{
-			rowType:     "double",
-			insertValue: "(1.1), (2.2), (3.3)",
-			expect:      []string{"3.3", "3.3", "3.3"},
+			rowType:       "double",
+			insertValue:   "(1.1), (3.3), (2.2)",
+			expect:        []string{"3.3", "3.3", "3.3"},
+			orderByExpect: []string{"1.1", "2.2", "3.3"},
 		},
 		{
-			rowType:     "decimal(5, 2)",
-			insertValue: "(1.1), (2.2), (3.3)",
-			expect:      []string{"3.30", "3.30", "3.30"},
+			rowType:       "decimal(5, 2)",
+			insertValue:   "(1.1), (3.3), (2.2)",
+			expect:        []string{"3.30", "3.30", "3.30"},
+			orderByExpect: []string{"1.10", "2.20", "3.30"},
 		},
 		{
-			rowType:     "text",
-			insertValue: "('1.1'), ('2.2'), ('3.3')",
-			expect:      []string{"3.3", "3.3", "3.3"},
+			rowType:       "text",
+			insertValue:   "('1.1'), ('3.3'), ('2.2')",
+			expect:        []string{"3.3", "3.3", "3.3"},
+			orderByExpect: []string{"1.1", "2.2", "3.3"},
 		},
 		{
-			rowType:     "time",
-			insertValue: "('00:00:00'), ('01:00:00'), ('02:00:00')",
-			expect:      []string{"02:00:00", "02:00:00", "02:00:00"},
+			rowType:       "time",
+			insertValue:   "('00:00:00'), ('03:00:00'), ('02:00:00')",
+			expect:        []string{"03:00:00", "03:00:00", "03:00:00"},
+			orderByExpect: []string{"00:00:00", "02:00:00", "03:00:00"},
 		},
 		{
-			rowType:     "date",
-			insertValue: "('2020-09-08'), ('2020-09-09'), ('2020-09-10')",
-			expect:      []string{"2020-09-10", "2020-09-10", "2020-09-10"},
+			rowType:       "date",
+			insertValue:   "('2020-09-08'), ('2022-09-10'), ('2020-09-10')",
+			expect:        []string{"2022-09-10", "2022-09-10", "2022-09-10"},
+			orderByExpect: []string{"2020-09-08", "2020-09-10", "2022-09-10"},
 		},
 		{
-			rowType:     "datetime",
-			insertValue: "('2020-09-08 02:00:00'), ('2020-09-09 01:00:00'), ('2020-09-10 00:00:00')",
-			expect:      []string{"2020-09-10 00:00:00", "2020-09-10 00:00:00", "2020-09-10 00:00:00"},
+			rowType:       "datetime",
+			insertValue:   "('2020-09-08 02:00:00'), ('2022-09-10 00:00:00'), ('2020-09-10 00:00:00')",
+			expect:        []string{"2022-09-10 00:00:00", "2022-09-10 00:00:00", "2022-09-10 00:00:00"},
+			orderByExpect: []string{"2020-09-08 02:00:00", "2020-09-10 00:00:00", "2022-09-10 00:00:00"},
 		},
 	}
 
+	orderBy := []bool{false, true}
 	frameType := []ast.FrameType{ast.Rows, ast.Ranges, -1}
-	for _, f := range frameType {
-		for _, tc := range testCases {
-			tc.frameType = f
-			tc.orderBy = tc.frameType != -1 // no order by when empty frame.
-			tk.MustExec("drop table if exists t;")
-			testMaxSlidingWindow(tk, tc)
+	for _, o := range orderBy {
+		for _, f := range frameType {
+			for _, tc := range testCases {
+				tc.frameType = f
+				tc.orderBy = o
+				tk.MustExec("drop table if exists t;")
+				testMaxSlidingWindow(tk, tc)
+			}
 		}
 	}
 }
