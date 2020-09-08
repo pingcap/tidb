@@ -46,26 +46,14 @@ const (
 )
 
 var (
-<<<<<<< HEAD
-	tikvBackoffCounterRPC            = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
-	tikvBackoffCounterLock           = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
-	tikvBackoffCounterLockFast       = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
-	tikvBackoffCounterPD             = metrics.TiKVBackoffCounter.WithLabelValues("pdRPC")
-	tikvBackoffCounterRegionMiss     = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
-	tikvBackoffCounterUpdateLeader   = metrics.TiKVBackoffCounter.WithLabelValues("updateLeader")
-	tikvBackoffCounterServerBusy     = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
-	tikvBackoffCounterStaleCmd       = metrics.TiKVBackoffCounter.WithLabelValues("staleCommand")
-	tikvBackoffCounterEmpty          = metrics.TiKVBackoffCounter.WithLabelValues("")
-	tikvBackoffHistogramRPC          = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
-	tikvBackoffHistogramLock         = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
-	tikvBackoffHistogramLockFast     = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
-	tikvBackoffHistogramPD           = metrics.TiKVBackoffHistogram.WithLabelValues("pdRPC")
-	tikvBackoffHistogramRegionMiss   = metrics.TiKVBackoffHistogram.WithLabelValues("regionMiss")
-	tikvBackoffHistogramUpdateLeader = metrics.TiKVBackoffHistogram.WithLabelValues("updateLeader")
-	tikvBackoffHistogramServerBusy   = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
-	tikvBackoffHistogramStaleCmd     = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
-	tikvBackoffHistogramEmpty        = metrics.TiKVBackoffHistogram.WithLabelValues("")
-=======
+	tikvBackoffCounterRPC          = metrics.TiKVBackoffCounter.WithLabelValues("tikvRPC")
+	tikvBackoffCounterLock         = metrics.TiKVBackoffCounter.WithLabelValues("txnLock")
+	tikvBackoffCounterLockFast     = metrics.TiKVBackoffCounter.WithLabelValues("tikvLockFast")
+	tikvBackoffCounterPD           = metrics.TiKVBackoffCounter.WithLabelValues("pdRPC")
+	tikvBackoffCounterRegionMiss   = metrics.TiKVBackoffCounter.WithLabelValues("regionMiss")
+	tikvBackoffCounterServerBusy   = metrics.TiKVBackoffCounter.WithLabelValues("serverBusy")
+	tikvBackoffCounterStaleCmd     = metrics.TiKVBackoffCounter.WithLabelValues("staleCommand")
+	tikvBackoffCounterEmpty        = metrics.TiKVBackoffCounter.WithLabelValues("")
 	tikvBackoffHistogramRPC        = metrics.TiKVBackoffHistogram.WithLabelValues("tikvRPC")
 	tikvBackoffHistogramLock       = metrics.TiKVBackoffHistogram.WithLabelValues("txnLock")
 	tikvBackoffHistogramLockFast   = metrics.TiKVBackoffHistogram.WithLabelValues("tikvLockFast")
@@ -74,7 +62,6 @@ var (
 	tikvBackoffHistogramServerBusy = metrics.TiKVBackoffHistogram.WithLabelValues("serverBusy")
 	tikvBackoffHistogramStaleCmd   = metrics.TiKVBackoffHistogram.WithLabelValues("staleCommand")
 	tikvBackoffHistogramEmpty      = metrics.TiKVBackoffHistogram.WithLabelValues("")
->>>>>>> bd586dc... tikv: remove the update leader backoff (#17541)
 )
 
 func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
@@ -88,13 +75,7 @@ func (t backoffType) metric() (prometheus.Counter, prometheus.Observer) {
 	case BoPDRPC:
 		return tikvBackoffCounterPD, tikvBackoffHistogramPD
 	case BoRegionMiss:
-<<<<<<< HEAD
 		return tikvBackoffCounterRegionMiss, tikvBackoffHistogramRegionMiss
-	case BoUpdateLeader:
-		return tikvBackoffCounterUpdateLeader, tikvBackoffHistogramUpdateLeader
-=======
-		return tikvBackoffHistogramRegionMiss
->>>>>>> bd586dc... tikv: remove the update leader backoff (#17541)
 	case boServerBusy:
 		return tikvBackoffCounterServerBusy, tikvBackoffHistogramServerBusy
 	case boStaleCmd:
@@ -180,13 +161,6 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 	case BoRegionMiss:
 		// change base time to 2ms, because it may recover soon.
 		return NewBackoffFn(2, 500, NoJitter)
-<<<<<<< HEAD
-	case BoUpdateLeader:
-		return NewBackoffFn(1, 10, NoJitter)
-=======
-	case boTxnNotFound:
-		return NewBackoffFn(2, 500, NoJitter)
->>>>>>> bd586dc... tikv: remove the update leader backoff (#17541)
 	case boServerBusy:
 		return NewBackoffFn(2000, 10000, EqualJitter)
 	case boStaleCmd:
