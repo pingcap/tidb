@@ -92,8 +92,8 @@ func (s *SelectIntoExec) escapeField(f []byte) []byte {
 		return f
 	}
 	s.escapeBuf = s.escapeBuf[:0]
-	escape := false
 	for _, b := range f {
+		escape := false
 		switch {
 		case b == 0:
 			// we always escape 0
