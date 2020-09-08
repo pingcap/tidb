@@ -1227,10 +1227,13 @@ func (d *MyDecimal) WriteBin(precision, frac int, buf []byte) ([]byte, error) {
 		}
 	}
 
-	if fracSize < fracSizeFrom {
+	if fracSize < fracSizeFrom ||
+		(fracSize == fracSizeFrom && (trailingDigits <= trailingDigitsFrom || wordsFrac <= wordsFracFrom)) {
+		if fracSize < fracSizeFrom || (fracSize == fracSizeFrom && trailingDigits < trailingDigitsFrom) || (fracSize == fracSizeFrom && wordsFrac < wordsFracFrom) {
+			err = ErrTruncated
+		}
 		wordsFracFrom = wordsFrac
 		trailingDigitsFrom = trailingDigits
-		err = ErrTruncated
 	} else if fracSize > fracSizeFrom && trailingDigitsFrom > 0 {
 		if wordsFrac == wordsFracFrom {
 			trailingDigitsFrom = trailingDigits
@@ -1301,6 +1304,7 @@ func (d *MyDecimal) ToHashKey() ([]byte, error) {
 		// thus ErrTruncated may be raised, we can ignore it here.
 		err = nil
 	}
+	buf = append(buf, byte(digitsFrac))
 	return buf, err
 }
 
@@ -2277,6 +2281,10 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	if idxTo != 0 {
 		copy(to.wordBuf[:], to.wordBuf[idxTo:])
 	}
+
+	if to.IsZero() {
+		to.negative = false
+	}
 	return err
 }
 
@@ -2332,6 +2340,24 @@ func NewMaxOrMinDec(negative bool, prec, frac int) *MyDecimal {
 		str[0] = '+'
 	}
 	str[1+prec-frac] = '.'
+	dec := new(MyDecimal)
+	err := dec.FromString(str)
+	terror.Log(errors.Trace(err))
+	return dec
+}
+
+// NewZeroDec returns the zero value decimal for given precision and fraction.
+func NewZeroDec(prec, frac int) *MyDecimal {
+	if prec == UnspecifiedLength {
+		return NewDecFromInt(0)
+	}
+	str := make([]byte, prec+1)
+	for i := 0; i < len(str); i++ {
+		str[i] = '0'
+	}
+	if frac != UnspecifiedLength {
+		str[prec-frac] = '.'
+	}
 	dec := new(MyDecimal)
 	err := dec.FromString(str)
 	terror.Log(errors.Trace(err))
