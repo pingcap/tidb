@@ -1,3 +1,16 @@
+// Copyright 2020 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package main
 
 import (
@@ -219,12 +232,6 @@ func (r *FailpointChecker) CheckStmts(stmts []ast.Stmt) error {
 	for _, block := range stmts {
 		switch v := block.(type) {
 		case *ast.DeclStmt:
-			// var fn1, fn2, fn3, ... = func(){...}, func(){...}, func(){...}, ...
-			// var x, fn = 100, func() {
-			//     failpoint.Marker(fpname, func() {
-			//         ...
-			//     })
-			// }
 			specs := v.Decl.(*ast.GenDecl).Specs
 			for _, spec := range specs {
 				vs, ok := spec.(*ast.ValueSpec)
@@ -244,14 +251,6 @@ func (r *FailpointChecker) CheckStmts(stmts []ast.Stmt) error {
 			}
 
 		case *ast.ExprStmt:
-			// failpoint.Marker("failpoint.name", func(context.Context, *failpoint.Arg)) {...}
-			// failpoint.Break()
-			// failpoint.Break("label")
-			// failpoint.Continue()
-			// failpoint.Fallthrough()
-			// failpoint.Continue("label")
-			// failpoint.Goto("label")
-			// failpoint.Label("label")
 			call, ok := v.X.(*ast.CallExpr)
 			if !ok {
 				break
