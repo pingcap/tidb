@@ -254,32 +254,17 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 	return memDeltas, nil
 }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
 func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		memDelta := aggfuncs.DefRowSize
 		memDeltas = append(memDeltas, memDelta)
-=======
-func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
-=======
-func noZeroUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
->>>>>>> 730d9e2a3... modify UpdatePartialResult functions
-=======
+	}
+	return memDeltas, nil
+}
+
 func maxUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, srcChk.NumRows())
-<<<<<<< HEAD
-<<<<<<< HEAD
-	var memDelta int64
->>>>>>> a8bdbf02f... add maxUpdateMemDeltaGens and minUpdateMemDeltaGens functions
-=======
-	var curMemDelta int64 = 0
-	var preMemDelta int64 = 0
-	var first bool = true
->>>>>>> 3aeca2333... modify unit test
-=======
 	var (
 		preStringVal string
 		preJSONVal   string
@@ -287,7 +272,6 @@ func maxUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 		preSetVal    types.Set
 	)
 
->>>>>>> 5d707a0fb... complete unit test
 	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
@@ -389,7 +373,6 @@ func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 				preSetVal = curVal
 			}
 		}
->>>>>>> a1270a633... modify maxMin4Enum.UpdatePartialResult and maxMin4Set.UpdatePartialResult function to calculate memory change
 	}
 	return memDeltas, nil
 }
