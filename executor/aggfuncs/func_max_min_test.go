@@ -14,6 +14,7 @@
 package aggfuncs_test
 
 import (
+	"fmt"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -95,122 +96,85 @@ func (s *testSuite) TestMaxMin(c *C) {
 	}
 }
 
-func (s *testSuite) TestMaxSlidingWindowWithoutOrderBy(c *C) {
-	tk := testkit.NewTestKitWithInit(c, s.store)
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a BIGINT);")
-	tk.MustExec("insert into t values (1), (2), (3)")
-	result := tk.MustQuery("SELECT max(a) OVER () FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a float);")
-	tk.MustExec("insert into t values (1), (2), (3)")
-	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a double);")
-	tk.MustExec("insert into t values (1), (2), (3)")
-	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a decimal);")
-	tk.MustExec("insert into t values (1), (2), (3)")
-	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a text);")
-	tk.MustExec("insert into t values ('1'), ('2'), ('3')")
-	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a time);")
-	tk.MustExec("insert into t values ('00:00:00'), ('01:00:00'), ('02:00:00')")
-	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
-	result.Check(testkit.Rows("02:00:00", "02:00:00", "02:00:00"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a date);")
-	tk.MustExec("insert into t values ('2020-09-08'), ('2020-09-09'), ('2020-09-10')")
-	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
-	result.Check(testkit.Rows("2020-09-10", "2020-09-10", "2020-09-10"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a datetime);")
-	tk.MustExec("insert into t values ('2020-09-08 02:00:00'), ('2020-09-09 01:00:00'), ('2020-09-10 00:00:00')")
-	result = tk.MustQuery("SELECT max(a) OVER () FROM t;")
-	result.Check(testkit.Rows("2020-09-10 00:00:00", "2020-09-10 00:00:00", "2020-09-10 00:00:00"))
+type maxSlidingWindowTestCase struct {
+	rowType     string
+	insertValue string
+	expect      []string
+	orderBy     bool
+	frameType   ast.FrameType
 }
 
-func (s *testSuite) TestMaxSlidingWindowWithOrderByAndWholeFrame(c *C) {
+func testMaxSlidingWindow(tk *testkit.TestKit, tc maxSlidingWindowTestCase) {
+	tk.MustExec(fmt.Sprintf("CREATE TABLE t (a %s);", tc.rowType))
+	tk.MustExec(fmt.Sprintf("insert into t values %s;", tc.insertValue))
+	var orderBy string
+	if tc.orderBy {
+		orderBy = "ORDER BY a"
+	}
+	var result *testkit.Result
+	switch tc.frameType {
+	case ast.Rows:
+		result = tk.MustQuery(fmt.Sprintf("SELECT max(a) OVER (%s ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;", orderBy))
+	case ast.Ranges:
+		result = tk.MustQuery(fmt.Sprintf("SELECT max(a) OVER (%s RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;", orderBy))
+	default:
+		result = tk.MustQuery(fmt.Sprintf("SELECT max(a) OVER (%s) FROM t;", orderBy))
+	}
+	result.Check(testkit.Rows(tc.expect...))
+}
+
+func (s *testSuite) TestMaxSlidingWindow(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
+	testCases := []maxSlidingWindowTestCase{
+		{
+			rowType:     "bigint",
+			insertValue: "(1), (2), (3)",
+			expect:      []string{"3", "3", "3"},
+		},
+		{
+			rowType:     "float",
+			insertValue: "(1.1), (2.2), (3.3)",
+			expect:      []string{"3.3", "3.3", "3.3"},
+		},
+		{
+			rowType:     "double",
+			insertValue: "(1.1), (2.2), (3.3)",
+			expect:      []string{"3.3", "3.3", "3.3"},
+		},
+		{
+			rowType:     "decimal(5, 2)",
+			insertValue: "(1.1), (2.2), (3.3)",
+			expect:      []string{"3.30", "3.30", "3.30"},
+		},
+		{
+			rowType:     "text",
+			insertValue: "('1.1'), ('2.2'), ('3.3')",
+			expect:      []string{"3.3", "3.3", "3.3"},
+		},
+		{
+			rowType:     "time",
+			insertValue: "('00:00:00'), ('01:00:00'), ('02:00:00')",
+			expect:      []string{"02:00:00", "02:00:00", "02:00:00"},
+		},
+		{
+			rowType:     "date",
+			insertValue: "('2020-09-08'), ('2020-09-09'), ('2020-09-10')",
+			expect:      []string{"2020-09-10", "2020-09-10", "2020-09-10"},
+		},
+		{
+			rowType:     "datetime",
+			insertValue: "('2020-09-08 02:00:00'), ('2020-09-09 01:00:00'), ('2020-09-10 00:00:00')",
+			expect:      []string{"2020-09-10 00:00:00", "2020-09-10 00:00:00", "2020-09-10 00:00:00"},
+		},
+	}
 
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a BIGINT);")
-	tk.MustExec("insert into t values (1), (2), (3)")
-	result := tk.MustQuery("SELECT max(a) OVER (ORDER BY a RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a float);")
-	tk.MustExec("insert into t values (1), (2), (3)")
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a double);")
-	tk.MustExec("insert into t values (1), (2), (3)")
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a decimal);")
-	tk.MustExec("insert into t values (1), (2), (3)")
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a text);")
-	tk.MustExec("insert into t values ('1'), ('2'), ('3')")
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("3", "3", "3"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a time);")
-	tk.MustExec("insert into t values ('00:00:00'), ('01:00:00'), ('02:00:00')")
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("02:00:00", "02:00:00", "02:00:00"))
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("02:00:00", "02:00:00", "02:00:00"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a date);")
-	tk.MustExec("insert into t values ('2020-09-08'), ('2020-09-09'), ('2020-09-10')")
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("2020-09-10", "2020-09-10", "2020-09-10"))
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("2020-09-10", "2020-09-10", "2020-09-10"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t (a datetime);")
-	tk.MustExec("insert into t values ('2020-09-08 02:00:00'), ('2020-09-09 01:00:00'), ('2020-09-10 00:00:00')")
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("2020-09-10 00:00:00", "2020-09-10 00:00:00", "2020-09-10 00:00:00"))
-	result = tk.MustQuery("SELECT max(a) OVER (ORDER BY a ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM t;")
-	result.Check(testkit.Rows("2020-09-10 00:00:00", "2020-09-10 00:00:00", "2020-09-10 00:00:00"))
+	frameType := []ast.FrameType{ast.Rows, ast.Ranges, -1}
+	for _, f := range frameType {
+		for _, tc := range testCases {
+			tc.frameType = f
+			tc.orderBy = tc.frameType != -1 // no order by when empty frame.
+			tk.MustExec("drop table if exists t;")
+			testMaxSlidingWindow(tk, tc)
+		}
+	}
 }
