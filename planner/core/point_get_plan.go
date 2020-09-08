@@ -148,7 +148,7 @@ func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 			if p.UnsignedHandle {
 				fmt.Fprintf(buffer, "handle:%d, ", uint64(p.Handle.IntValue()))
 			} else {
-				fmt.Fprintf(buffer, "handle:%v, ", p.Handle)
+				fmt.Fprintf(buffer, "handle:%s, ", p.Handle)
 			}
 		}
 	}
