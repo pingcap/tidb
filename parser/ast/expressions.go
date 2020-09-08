@@ -625,13 +625,6 @@ func (n *DefaultExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DefaultExpr)
-	if n.Name != nil {
-		node, ok := n.Name.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Name = node.(*ColumnName)
-	}
 	return v.Leave(n)
 }
 
