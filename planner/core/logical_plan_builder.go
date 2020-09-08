@@ -4471,13 +4471,12 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 		}
 		return &newSpec, true
 	}
-	if needFrame && spec.Frame != nil && spec.OrderBy == nil {
-		// Without order by, "RANGE/ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING" is equivalent to no frame.
-		if spec.Frame.Extent.Start.UnBounded && spec.Frame.Extent.End.UnBounded {
-			newSpec := *spec
-			newSpec.Frame = nil
-			return &newSpec, true
-		}
+	// "RANGE/ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING" is equivalent to empty frame.
+	if needFrame && spec.Frame != nil &&
+		spec.Frame.Extent.Start.UnBounded && spec.Frame.Extent.End.UnBounded {
+		newSpec := *spec
+		newSpec.Frame = nil
+		return &newSpec, true
 	}
 	// For functions that operate on the entire partition, the frame clause will be ignored.
 	if !needFrame && spec.Frame != nil {
