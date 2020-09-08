@@ -881,7 +881,7 @@ func IsFunctionSupported(name string) bool {
 // GetBuiltinList returns a list of builtin functions
 func GetBuiltinList() []string {
 	res := make([]string, 0, len(funcs))
-	notImplementedFunctions := []string{ast.RowFunc}
+	notImplementedFunctions := []string{ast.RowFunc, ast.IsTruthWithNull}
 	for funcName := range funcs {
 		skipFunc := false
 		// Skip not implemented functions
