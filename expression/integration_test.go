@@ -7241,6 +7241,21 @@ func (s *testIntegrationSerialSuite) TestIssue17063(c *C) {
 	tk.MustQuery(`select coercibility(lag(b, 1, 'B') over w) from t window w as (order by b);`).Check(testkit.Rows("2", "2"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue11177(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery("SELECT 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0;").Check(testkit.Rows("0"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'lvuleck'", "Warning 1292 Truncated incorrect FLOAT value: '2008-09-16 22:23:50'"))
+	tk.MustQuery("SELECT 'aa' BETWEEN 'bb' AND 0;").Check(testkit.Rows("1"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'aa'", "Warning 1292 Truncated incorrect FLOAT value: 'bb'"))
+	tk.MustQuery("select 1 between 0 and b'110';").Check(testkit.Rows("1"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows())
+	tk.MustQuery("select 'b' between 'a' and b'110';").Check(testkit.Rows("0"))
+	tk.MustQuery("show warnings;").Check(testkit.Rows())
+}
+
 func (s *testIntegrationSuite) TestIssue19504(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7267,19 +7282,4 @@ func (s *testIntegrationSerialSuite) TestIssue18949(c *C) {
 	tk.MustExec(`alter table t change a aa enum('a   ', 'b\t', ' c ');`)
 	result = tk.MustQuery("show create table t").Rows()[0][1]
 	c.Assert(result, Matches, `(?s).*enum\('a','b	',' c'\).*set\('a','b	',' c'\).*`)
-}
-
-func (s *testIntegrationSerialSuite) TestIssue11177(c *C) {
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(false)
-
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustQuery("SELECT 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0;").Check(testkit.Rows("0"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'lvuleck'", "Warning 1292 Truncated incorrect FLOAT value: '2008-09-16 22:23:50'"))
-	tk.MustQuery("SELECT 'aa' BETWEEN 'bb' AND 0;").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect FLOAT value: 'aa'", "Warning 1292 Truncated incorrect FLOAT value: 'bb'"))
-	tk.MustQuery("select 1 between 0 and b'110';").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows())
-	tk.MustQuery("select 'b' between 'a' and b'110';").Check(testkit.Rows("0"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows())
 }
