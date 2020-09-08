@@ -873,9 +873,9 @@ func execRestrictedSQL(ctx context.Context, se *session, sql string) ([]chunk.Ro
 	recordSets, err := se.Execute(ctx, sql)
 	defer func() {
 		for _, rs := range recordSets {
-			close_err := rs.Close()
-			if close_err != nil && err == nil {
-				err = close_err
+			closeErr := rs.Close()
+			if closeErr != nil && err == nil {
+				err = closeErr
 			}
 		}
 	}()
