@@ -1535,10 +1535,13 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
+<<<<<<< HEAD
 	// Detach the disk tracker for the previous stmtctx from GlobalDiskUsageTracker
 	if vars.StmtCtx != nil && vars.StmtCtx.DiskTracker != nil {
 		vars.StmtCtx.DiskTracker.DetachFromGlobalTracker()
 	}
+=======
+>>>>>>> 4727044... server: fix the missing detachment for the mem/disk tracker (#19794)
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
 		MemTracker:  memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),

@@ -344,7 +344,34 @@ func (t *Tracker) DetachFromGlobalTracker() {
 	}
 	parent := t.parent
 	parent.Consume(-t.BytesConsumed())
+<<<<<<< HEAD
 	t.parent = nil
+=======
+	t.setParent(nil)
+}
+
+// ReplaceBytesUsed replace bytesConsume for the tracker
+func (t *Tracker) ReplaceBytesUsed(bytes int64) {
+	t.Consume(-t.BytesConsumed())
+	t.Consume(bytes)
+}
+
+// SetMaxConsumed should only be used in unit test.
+func (t *Tracker) SetMaxConsumed(value int64) {
+	atomic.StoreInt64(&t.maxConsumed, value)
+}
+
+func (t *Tracker) getParent() *Tracker {
+	t.parMu.Lock()
+	defer t.parMu.Unlock()
+	return t.parMu.parent
+}
+
+func (t *Tracker) setParent(parent *Tracker) {
+	t.parMu.Lock()
+	defer t.parMu.Unlock()
+	t.parMu.parent = parent
+>>>>>>> 4727044... server: fix the missing detachment for the mem/disk tracker (#19794)
 }
 
 const (
