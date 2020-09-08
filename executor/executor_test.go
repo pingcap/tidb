@@ -1421,6 +1421,18 @@ func (s *testSuiteP2) TestUnion(c *C) {
 	tk.MustQuery("select count(distinct a), sum(distinct a), avg(distinct a) from (select a from t union all select b from t) tmp;").Check(testkit.Rows("1 1.000 1.0000000"))
 }
 
+func (s *testSuite2) TestUnionLimit(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists union_limit")
+	tk.MustExec("create table union_limit (id int) partition by hash(id) partitions 30")
+	for i := 0; i < 60; i++ {
+		tk.MustExec(fmt.Sprintf("insert into union_limit values (%d)", i))
+	}
+	// Cover the code for worker count limit in the union executor.
+	tk.MustQuery("select * from union_limit limit 10")
+}
+
 func (s *testSuiteP1) TestNeighbouringProj(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -2655,6 +2667,12 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustExec("create table t (id int, c1 datetime);")
 	tk.MustExec("insert into t values (1, '2015-06-07 12:12:12')")
 	tk.MustQuery("select id from t where c1 = '2015-06-07 12:12:12'").Check(testkit.Rows("1"))
+
+	// Test issue 17816
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT)")
+	tk.MustExec("INSERT INTO t0 VALUES (100000)")
+	tk.MustQuery("SELECT * FROM t0 WHERE NOT SPACE(t0.c0)").Check(testkit.Rows("100000"))
 }
 
 func (s *testSuite) TestTimestampTimeZone(c *C) {
