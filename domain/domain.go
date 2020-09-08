@@ -705,7 +705,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 			}
 			do.etcdClient = cli
 		}
-
 	}
 
 	// TODO: Here we create new sessions with sysFac in DDL,
