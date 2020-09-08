@@ -2536,6 +2536,12 @@ func (s *testSuite) TestSimpleDAG(c *C) {
 	tk.MustExec("create table t (id int, c1 datetime);")
 	tk.MustExec("insert into t values (1, '2015-06-07 12:12:12')")
 	tk.MustQuery("select id from t where c1 = '2015-06-07 12:12:12'").Check(testkit.Rows("1"))
+
+	// Test issue 17816
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT)")
+	tk.MustExec("INSERT INTO t0 VALUES (100000)")
+	tk.MustQuery("SELECT * FROM t0 WHERE NOT SPACE(t0.c0)").Check(testkit.Rows("100000"))
 }
 
 func (s *testSuite) TestTimestampTimeZone(c *C) {
