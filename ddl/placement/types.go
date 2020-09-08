@@ -13,6 +13,10 @@
 
 package placement
 
+import (
+	"encoding/json"
+)
+
 // Refer to https://github.com/tikv/pd/issues/2701 .
 // IMO, it is indeed not bad to have a copy of definition.
 // After all, placement rules are communicated using an HTTP API. Loose
@@ -96,4 +100,12 @@ func (op *RuleOp) Clone() *RuleOp {
 	newOp.Rule = &Rule{}
 	*newOp.Rule = *op.Rule
 	return newOp
+}
+
+func (op *RuleOp) String() string {
+	b, err := json.Marshal(op)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
