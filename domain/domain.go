@@ -699,8 +699,6 @@ func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.R
 				return errors.Trace(err)
 			}
 			do.etcdClient = cli
-		} else {
-			return err
 		}
 	}
 

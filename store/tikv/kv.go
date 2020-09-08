@@ -236,6 +236,9 @@ func (s *tikvStore) IsLatchEnabled() bool {
 }
 
 func (s *tikvStore) EtcdAddrs() ([]string, error) {
+	if s.etcdAddrs == nil {
+		return nil, errors.New("pd unavailable")
+	}
 	ctx := context.Background()
 	bo := NewBackofferWithVars(ctx, GetMemberInfoBackoff, nil)
 	s.etcdAddrs = s.etcdAddrs[0:0]
@@ -258,9 +261,6 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 			continue
 		}
 		s.etcdAddrs = append(s.etcdAddrs, u.Host)
-	}
-	if s.etcdAddrs == nil {
-		return nil, errors.New("pd unavailable")
 	}
 	return s.etcdAddrs, nil
 }
