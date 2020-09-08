@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync"
@@ -260,6 +261,9 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		span1 := span.Tracer().StartSpan(fmt.Sprintf("%T.Next", e), opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+	if trace.IsEnabled() {
+		defer trace.StartRegion(ctx, fmt.Sprintf("%T.Next", e)).End()
 	}
 	err := e.Next(ctx, req)
 
@@ -865,7 +869,7 @@ func (e *ShowSlowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 type SelectLockExec struct {
 	baseExecutor
 
-	Lock ast.SelectLockType
+	Lock *ast.SelectLockInfo
 	keys []kv.Key
 
 	tblID2Handle     map[int64][]plannercore.HandleCols
@@ -903,7 +907,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return err
 	}
 	// If there's no handle or it's not a `SELECT FOR UPDATE` statement.
-	if len(e.tblID2Handle) == 0 || (e.Lock != ast.SelectLockForUpdate && e.Lock != ast.SelectLockForUpdateNoWait) {
+	if len(e.tblID2Handle) == 0 || (!plannercore.IsSelectForUpdateLockType(e.Lock.LockType)) {
 		return nil
 	}
 
@@ -933,8 +937,10 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	lockWaitTime := e.ctx.GetSessionVars().LockWaitTimeout
-	if e.Lock == ast.SelectLockForUpdateNoWait {
+	if e.Lock.LockType == ast.SelectLockForUpdateNoWait {
 		lockWaitTime = kv.LockNoWait
+	} else if e.Lock.LockType == ast.SelectLockForUpdateWaitN {
+		lockWaitTime = int64(e.Lock.WaitSec) * 1000
 	}
 
 	return doLockKeys(ctx, e.ctx, newLockCtx(e.ctx.GetSessionVars(), lockWaitTime), e.keys...)
@@ -967,7 +973,13 @@ func doLockKeys(ctx context.Context, se sessionctx.Context, lockCtx *kv.LockCtx,
 	if err != nil {
 		return err
 	}
-	return txn.LockKeys(sessionctx.SetCommitCtx(ctx, se), lockCtx, keys...)
+	var lockKeyStats *execdetails.LockKeysDetails
+	ctx = context.WithValue(ctx, execdetails.LockKeysDetailCtxKey, &lockKeyStats)
+	err = txn.LockKeys(sessionctx.SetCommitCtx(ctx, se), lockCtx, keys...)
+	if lockKeyStats != nil {
+		sctx.MergeLockKeysExecDetails(lockKeyStats)
+	}
+	return err
 }
 
 // LimitExec represents limit executor
@@ -1505,15 +1517,6 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
-	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
-	if stmtCtx := vars.StmtCtx; stmtCtx != nil {
-		if stmtCtx.DiskTracker != nil {
-			stmtCtx.DiskTracker.DetachFromGlobalTracker()
-		}
-		if stmtCtx.MemTracker != nil {
-			stmtCtx.MemTracker.DetachFromGlobalTracker()
-		}
-	}
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
 		MemTracker:  memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),

@@ -2281,6 +2281,10 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 	if idxTo != 0 {
 		copy(to.wordBuf[:], to.wordBuf[idxTo:])
 	}
+
+	if to.IsZero() {
+		to.negative = false
+	}
 	return err
 }
 
@@ -2336,6 +2340,24 @@ func NewMaxOrMinDec(negative bool, prec, frac int) *MyDecimal {
 		str[0] = '+'
 	}
 	str[1+prec-frac] = '.'
+	dec := new(MyDecimal)
+	err := dec.FromString(str)
+	terror.Log(errors.Trace(err))
+	return dec
+}
+
+// NewZeroDec returns the zero value decimal for given precision and fraction.
+func NewZeroDec(prec, frac int) *MyDecimal {
+	if prec == UnspecifiedLength {
+		return NewDecFromInt(0)
+	}
+	str := make([]byte, prec+1)
+	for i := 0; i < len(str); i++ {
+		str[i] = '0'
+	}
+	if frac != UnspecifiedLength {
+		str[prec-frac] = '.'
+	}
 	dec := new(MyDecimal)
 	err := dec.FromString(str)
 	terror.Log(errors.Trace(err))
