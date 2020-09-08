@@ -375,9 +375,6 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 		// done in the `defer` function. If the rs is not nil, the detachment will be done in
 		// `rs.Close` in `handleStmt`
 		if sc != nil && rs == nil {
-			if sc.MemTracker != nil {
-				sc.MemTracker.DetachFromGlobalTracker()
-			}
 			if sc.DiskTracker != nil {
 				sc.DiskTracker.DetachFromGlobalTracker()
 			}
