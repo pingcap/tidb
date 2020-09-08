@@ -1953,7 +1953,8 @@ func (b *builtinCoalesceStringSig) vecEvalString(input *chunk.Chunk, result *chu
 	argLen := len(b.args)
 
 	bufs := make([]*chunk.Column, argLen)
-
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
 	for i := 0; i < argLen; i++ {
 		buf, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
@@ -1961,8 +1962,12 @@ func (b *builtinCoalesceStringSig) vecEvalString(input *chunk.Chunk, result *chu
 		}
 		defer b.bufAllocator.put(buf)
 		err = b.args[i].VecEvalString(b.ctx, input, buf)
-		if err != nil {
-			return err
+		afterWarns := sc.WarningCount()
+		if err != nil || afterWarns > beforeWarns {
+			if afterWarns > beforeWarns {
+				sc.TruncateWarnings(int(beforeWarns))
+			}
+			return b.fallbackEvalString(input, result)
 		}
 		bufs[i] = buf
 	}
@@ -2125,7 +2130,8 @@ func (b *builtinCoalesceJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.C
 	argLen := len(b.args)
 
 	bufs := make([]*chunk.Column, argLen)
-
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
 	for i := 0; i < argLen; i++ {
 		buf, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
@@ -2133,8 +2139,12 @@ func (b *builtinCoalesceJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.C
 		}
 		defer b.bufAllocator.put(buf)
 		err = b.args[i].VecEvalJSON(b.ctx, input, buf)
-		if err != nil {
-			return err
+		afterWarns := sc.WarningCount()
+		if err != nil || afterWarns > beforeWarns {
+			if afterWarns > beforeWarns {
+				sc.TruncateWarnings(int(beforeWarns))
+			}
+			return b.fallbackEvalJSON(input, result)
 		}
 		bufs[i] = buf
 	}

@@ -248,7 +248,8 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 	argLen := len(b.args)
 
 	bufs := make([]*chunk.Column, argLen)
-
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
 	for i := 0; i < argLen; i++ {
 		buf, err := b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
@@ -256,8 +257,12 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 		}
 		defer b.bufAllocator.put(buf)
 		err = b.args[i].VecEval{{ .type.TypeName }}(b.ctx, input, buf)
-		if err != nil {
-			return err
+		afterWarns := sc.WarningCount()
+		if err != nil || afterWarns > beforeWarns {
+			if afterWarns > beforeWarns {
+				sc.TruncateWarnings(int(beforeWarns))
+			}
+			return b.fallbackEval{{ .type.TypeName }}(input, result)
 		}
 		bufs[i]=buf
 	}
