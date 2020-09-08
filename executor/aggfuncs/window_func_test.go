@@ -207,17 +207,3 @@ func (s *testSuite) TestMemRank(c *C) {
 		s.testWindowAggMemFunc(c, test)
 	}
 }
-
-func (s *testSuite) TestMemPercentRank(c *C) {
-	tests := []windowMemTest{
-		buildWindowMemTester(ast.WindowFuncPercentRank, mysql.TypeLonglong, 0, 1, 1,
-			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
-		buildWindowMemTester(ast.WindowFuncPercentRank, mysql.TypeLonglong, 0, 3, 0,
-			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
-		buildWindowMemTester(ast.WindowFuncPercentRank, mysql.TypeLonglong, 0, 4, 1,
-			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
-	}
-	for _, test := range tests {
-		s.testWindowAggMemFunc(c, test)
-	}
-}
