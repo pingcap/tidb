@@ -64,13 +64,13 @@ func (f SQLWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 		return err
 	}
 	fileName += ".sql"
-	chunksIter := buildChunksIter(ir, f.cfg.FileSize, f.cfg.StatementSize)
+	chunksIter := ir
 	defer chunksIter.Rows().Close()
 
 	for {
 		filePath := path.Join(f.cfg.OutputDirPath, fileName)
 		fileWriter, tearDown := buildInterceptFileWriter(filePath)
-		err := WriteInsert(ctx, chunksIter, fileWriter)
+		err := WriteInsert(ctx, chunksIter, fileWriter, f.cfg.FileSize, f.cfg.StatementSize)
 		tearDown()
 		if err != nil {
 			return err
@@ -152,7 +152,7 @@ func (f CSVWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 		return err
 	}
 	fileName += ".csv"
-	chunksIter := buildChunksIter(ir, f.cfg.FileSize, f.cfg.StatementSize)
+	chunksIter := ir
 	defer chunksIter.Rows().Close()
 
 	opt := &csvOption{
@@ -164,7 +164,7 @@ func (f CSVWriter) WriteTableData(ctx context.Context, ir TableDataIR) error {
 	for {
 		filePath := path.Join(f.cfg.OutputDirPath, fileName)
 		fileWriter, tearDown := buildInterceptFileWriter(filePath)
-		err := WriteInsertInCsv(ctx, chunksIter, fileWriter, f.cfg.NoHeader, opt)
+		err := WriteInsertInCsv(ctx, chunksIter, fileWriter, f.cfg.NoHeader, opt, f.cfg.FileSize)
 		tearDown()
 		if err != nil {
 			return err

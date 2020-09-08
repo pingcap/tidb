@@ -110,6 +110,13 @@ func (s *testDumpSuite) TestWriteTableDataWithFileSize(c *C) {
 	config.OutputDirPath = dir
 	config.FileSize = 50
 	ctx := context.Background()
+	specCmts := []string{
+		"/*!40101 SET NAMES binary*/;",
+		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
+	}
+	config.FileSize += uint64(len(specCmts[0]) + 1)
+	config.FileSize += uint64(len(specCmts[1]) + 1)
+	config.FileSize += uint64(len("INSERT INTO `employees` VALUES\n"))
 
 	simpleWriter, err := NewSimpleWriter(config)
 	c.Assert(err, IsNil)
@@ -122,10 +129,6 @@ func (s *testDumpSuite) TestWriteTableDataWithFileSize(c *C) {
 		{"4", "female", "sarah@mail.com", "020-1235", "healthy"},
 	}
 	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "TEXT"}
-	specCmts := []string{
-		"/*!40101 SET NAMES binary*/;",
-		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
-	}
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
 	err = writer.WriteTableData(ctx, tableIR)
 	c.Assert(err, IsNil)
@@ -160,6 +163,7 @@ func (s *testDumpSuite) TestWriteTableDataWithStatementSize(c *C) {
 	config := DefaultConfig()
 	config.OutputDirPath = dir
 	config.StatementSize = 50
+	config.StatementSize += uint64(len("INSERT INTO `employee` VALUES\n"))
 	config.OutputFileTemplate, err = ParseOutputFileTemplate("specified-name")
 	c.Assert(err, IsNil)
 	ctx := context.Background()
@@ -206,8 +210,11 @@ func (s *testDumpSuite) TestWriteTableDataWithStatementSize(c *C) {
 	}
 
 	// with file size and statement size
-	config.FileSize = 90
-	config.StatementSize = 30
+	config.FileSize = 204
+	config.StatementSize = 95
+	config.FileSize += uint64(len(specCmts[0]) + 1)
+	config.FileSize += uint64(len(specCmts[1]) + 1)
+	config.StatementSize += uint64(len("INSERT INTO `employee` VALUES\n"))
 	// test specifying filename format
 	config.OutputFileTemplate, err = ParseOutputFileTemplate("{{.Index}}-{{.Table}}-{{fn .DB}}")
 	c.Assert(err, IsNil)
@@ -230,6 +237,7 @@ func (s *testDumpSuite) TestWriteTableDataWithStatementSize(c *C) {
 			"(4,'female','sarah@mail.com','020-1235','healthy');\n",
 	}
 
+	tableIR = newMockTableIR("te%/st", "employee", data, specCmts, colTypes)
 	c.Assert(writer.WriteTableData(ctx, tableIR), IsNil)
 	c.Assert(err, IsNil)
 	for p, expected := range cases {
