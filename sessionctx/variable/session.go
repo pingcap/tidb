@@ -1681,6 +1681,11 @@ func (c *Concurrency) IndexSerialScanConcurrency() int {
 	return c.indexSerialScanConcurrency
 }
 
+// UnionConcurrency return the num of concurrent union worker.
+func (c *Concurrency) UnionConcurrency() int {
+	return c.ExecutorConcurrency
+}
+
 // MemQuota defines memory quota values.
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
