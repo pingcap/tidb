@@ -1396,9 +1396,9 @@ type UnionExec struct {
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
 
-	workerResults []*chunk.Chunk
-	wg            sync.WaitGroup
-	initialized   bool
+	results     []*chunk.Chunk
+	wg          sync.WaitGroup
+	initialized bool
 }
 
 // unionWorkerResult stores the result for a union worker.
@@ -1432,14 +1432,14 @@ func (e *UnionExec) initialize(ctx context.Context) {
 		e.concurrency = len(e.children)
 	}
 	for i := 0; i < e.concurrency; i++ {
-		e.workerResults = append(e.workerResults, newFirstChunk(e.children[0]))
+		e.results = append(e.results, newFirstChunk(e.children[0]))
 	}
 	e.resultPool = make(chan *unionWorkerResult, e.concurrency)
 	e.resourcePools = make([]chan *chunk.Chunk, e.concurrency)
 	e.childIDChan = make(chan int, len(e.children))
 	for i := 0; i < e.concurrency; i++ {
 		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
-		e.resourcePools[i] <- e.workerResults[i]
+		e.resourcePools[i] <- e.results[i]
 		e.wg.Add(1)
 		go e.resultPuller(ctx, i)
 	}
@@ -1517,7 +1517,7 @@ func (e *UnionExec) Close() error {
 	if e.finished != nil {
 		close(e.finished)
 	}
-	e.workerResults = nil
+	e.results = nil
 	if e.resultPool != nil {
 		for range e.resultPool {
 		}
