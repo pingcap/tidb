@@ -79,7 +79,6 @@ type StatementContext struct {
 	BatchCheck             bool
 	InNullRejectCheck      bool
 	AllowInvalidDate       bool
-	CanRuntimePrune        bool
 
 	// mu struct holds variables that change during execution.
 	mu struct {

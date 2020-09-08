@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -934,12 +933,6 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 	tn.TableInfo = tableInfo
 	tn.DBInfo = dbInfo
-	if tn.TableInfo.Partition != nil {
-		if !domain.CanRuntimePruneTbl(p.ctx, tableInfo) && p.ctx.GetSessionVars().StmtCtx.CanRuntimePrune {
-			// Query can use new stats when all touched partition table have new stats.
-			p.ctx.GetSessionVars().StmtCtx.CanRuntimePrune = false
-		}
-	}
 }
 
 func (p *preprocessor) checkNotInRepair(tn *ast.TableName) {
