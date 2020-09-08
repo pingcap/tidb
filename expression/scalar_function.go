@@ -213,7 +213,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	if fold == 1 {
 		return FoldConstant(sf), nil
 	} else if fold == -1 {
-		// try to fold constants, and return the original if errors/warnings occur
+		// try to fold constants, and return the original function if errors/warnings occur
 		sc := ctx.GetSessionVars().StmtCtx
 		beforeWarns := sc.WarningCount()
 		newSf := FoldConstant(sf)
@@ -221,9 +221,8 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 		if afterWarns > beforeWarns {
 			sc.TruncateWarnings(int(beforeWarns))
 			return sf, nil
-		} else {
-			return newSf, nil
 		}
+		return newSf, nil
 	}
 	return sf, nil
 }
