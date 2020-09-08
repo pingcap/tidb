@@ -315,6 +315,15 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`我 `))
 }
 
+func (s *testSuite3) TestInsertWarnDataTruncated(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t1;`)
+	tk.MustExec(`create table t1 (col0 VARCHAR(0), col1 TINYINT, col2 TEXT, col3 BLOB, col4 BIGINT);`)
+	_, err := tk.Exec(`insert into t0 values (NULL, '-128', 't', 'b', '2 ^ 63 - 1');`)
+	c.Assert(terror.ErrorEqual(err, table.ErrWarnDataTruncated), IsTrue)
+}
+
 func (s *testSuite3) TestInsertDateTimeWithTimeZone(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
