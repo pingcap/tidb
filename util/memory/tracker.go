@@ -53,20 +53,11 @@ type Tracker struct {
 		parent *Tracker // The parent memory tracker.
 	}
 
-<<<<<<< HEAD
-	label         int      // Label of this "Tracker".
-	bytesConsumed int64    // Consumed bytes.
-	bytesLimit    int64    // bytesLimit <= 0 means no limit.
-	maxConsumed   int64    // max number of bytes consumed during execution.
-	parent        *Tracker // The parent memory tracker.
-	isGlobal      bool     // isGlobal indicates whether this tracker is global tracker
-=======
-	label         fmt.Stringer // Label of this "Tracker".
-	bytesConsumed int64        // Consumed bytes.
-	bytesLimit    int64        // bytesLimit <= 0 means no limit.
-	maxConsumed   int64        // max number of bytes consumed during execution.
-	isGlobal      bool         // isGlobal indicates whether this tracker is global tracker
->>>>>>> 3f2d35a... RFC + executor: Support global memory tracker (#16777)
+	label         int   // Label of this "Tracker".
+	bytesConsumed int64 // Consumed bytes.
+	bytesLimit    int64 // bytesLimit <= 0 means no limit.
+	maxConsumed   int64 // max number of bytes consumed during execution.
+	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
 }
 
 // NewTracker creates a memory tracker.
@@ -180,19 +171,11 @@ func (t *Tracker) remove(oldChild *Tracker) {
 			found = true
 			break
 		}
-<<<<<<< HEAD
 	}
 	t.mu.Unlock()
 	if found {
-		oldChild.parent = nil
-		t.Consume(-oldChild.BytesConsumed())
-=======
-
-		t.Consume(-oldChild.BytesConsumed())
 		oldChild.setParent(nil)
-		t.mu.children = append(t.mu.children[:i], t.mu.children[i+1:]...)
-		break
->>>>>>> 3f2d35a... RFC + executor: Support global memory tracker (#16777)
+		t.Consume(-oldChild.BytesConsumed())
 	}
 }
 

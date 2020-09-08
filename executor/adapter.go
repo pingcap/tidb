@@ -769,9 +769,14 @@ var (
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 	a.FinishExecuteStmt(txnStartTS, lastErr == nil, false)
 	a.logAudit()
-	// Detach the disk tracker from GlobalDiskUsageTracker after every execution
-	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil && stmtCtx.DiskTracker != nil {
-		stmtCtx.DiskTracker.DetachFromGlobalTracker()
+	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
+	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
+		if stmtCtx.DiskTracker != nil {
+			stmtCtx.DiskTracker.DetachFromGlobalTracker()
+		}
+		if stmtCtx.MemTracker != nil {
+			stmtCtx.MemTracker.DetachFromGlobalTracker()
+		}
 	}
 }
 
@@ -795,24 +800,6 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	}
 }
 
-<<<<<<< HEAD
-=======
-// CloseRecordSet will finish the execution of current statement and do some record work
-func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
-	a.FinishExecuteStmt(txnStartTS, lastErr == nil, false)
-	a.logAudit()
-	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
-	if stmtCtx := a.Ctx.GetSessionVars().StmtCtx; stmtCtx != nil {
-		if stmtCtx.DiskTracker != nil {
-			stmtCtx.DiskTracker.DetachFromGlobalTracker()
-		}
-		if stmtCtx.MemTracker != nil {
-			stmtCtx.MemTracker.DetachFromGlobalTracker()
-		}
-	}
-}
-
->>>>>>> 3f2d35a... RFC + executor: Support global memory tracker (#16777)
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()

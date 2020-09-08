@@ -573,16 +573,6 @@ func setGlobalVars() {
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
-<<<<<<< HEAD
-	executor.GlobalDiskUsageTracker.SetBytesLimit(config.GetGlobalConfig().TempStorageQuota)
-
-	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
-	if err != nil {
-		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
-			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
-	}
-	tikv.StoreLivenessTimeout = t
-=======
 	c := config.GetGlobalConfig()
 	executor.GlobalDiskUsageTracker.SetBytesLimit(c.TempStorageQuota)
 	if c.Performance.MaxMemory < 1 {
@@ -592,7 +582,13 @@ func setGlobalVars() {
 		executor.GlobalMemoryUsageTracker.SetBytesLimit(int64(c.Performance.MaxMemory))
 	}
 	kvcache.GlobalLRUMemUsageTracker.AttachToGlobalTracker(executor.GlobalMemoryUsageTracker)
->>>>>>> 3f2d35a... RFC + executor: Support global memory tracker (#16777)
+
+	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
+	if err != nil {
+		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
+			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
+	}
+	tikv.StoreLivenessTimeout = t
 }
 
 func setupLog() {
