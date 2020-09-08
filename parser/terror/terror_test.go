@@ -65,7 +65,7 @@ func (s *testTErrorSuite) TestTError(c *C) {
 	kvErr := ClassKV.New(1062, "key already exist")
 	e := kvErr.FastGen("Duplicate entry '%d' for key 'PRIMARY'", 1)
 	c.Assert(e.Error(), Equals, "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
-	sqlErr := errors.Cause(e).(*Error).ToSQLError()
+	sqlErr := ToSQLError(errors.Cause(e).(*Error))
 	c.Assert(sqlErr.Message, Equals, "Duplicate entry '1' for key 'PRIMARY'")
 	c.Assert(sqlErr.Code, Equals, uint16(1062))
 
@@ -77,14 +77,10 @@ func (s *testTErrorSuite) TestTError(c *C) {
 }
 
 func (s *testTErrorSuite) TestJson(c *C) {
-	prevTErr := &Error{
-		class:   ClassTable,
-		code:    CodeExecResultIsEmpty,
-		message: "json test",
-	}
+	prevTErr := errors.Normalize("json test", errors.MySQLErrorCode(int(CodeExecResultIsEmpty)))
 	buf, err := json.Marshal(prevTErr)
 	c.Assert(err, IsNil)
-	var curTErr Error
+	var curTErr errors.Error
 	err = json.Unmarshal(buf, &curTErr)
 	c.Assert(err, IsNil)
 	isEqual := prevTErr.Equal(&curTErr)
