@@ -1838,7 +1838,7 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(r4, testutil.DatumEquals, types.NewDatum(formatTests4.ret))
 	warnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(len(warnings), Equals, 1)
+	c.Assert(len(warnings), Equals, 2)
 	c.Assert(terror.ErrorEqual(errUnknownLocale, warnings[0].Err), IsTrue)
 	s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
 }
