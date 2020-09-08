@@ -1776,7 +1776,7 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 		precision interface{}
 		locale    string
 		ret       interface{}
-	}{12332.2, 2, "de_DE", 12332.20}
+	}{12332.2, 2, "de_DE", 12332.2}
 	formatTests4 := struct {
 		number    interface{}
 		precision interface{}
@@ -1825,8 +1825,9 @@ func (s *testEvaluatorSuite) TestFormat(c *C) {
 	c.Assert(err, IsNil)
 	c.Assert(f3, NotNil)
 	r3, err := evalBuiltinFunc(f3, chunk.Row{})
+	c.Assert(err, IsNil)
+	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatTests3.ret))
 	showwarnings := s.ctx.GetSessionVars().StmtCtx.GetWarnings()
-	c.Assert(r3, testutil.DatumEquals, types.NewDatum(formatTests3.ret), Commentf("test %v", formatTests3.ret))
 	c.Assert(terror.ErrorEqual(errUnknownLocale, showwarnings[0].Err), IsTrue)
 	s.ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
 
