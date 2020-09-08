@@ -311,6 +311,34 @@ func buildFirstRow(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildMaxMin builds the AggFunc implementation for function "MAX" and "MIN".
 func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
+	base := buildBaseMaxMin(aggFuncDesc, ordinal, isMax)
+
+	// build max/min aggFunc for window function using sliding window
+	if aggFuncDesc.IsWindowAggFunc {
+		switch baseAggFunc := base.(type) {
+		case *maxMin4Int:
+			return &maxMin4IntSliding{*baseAggFunc}
+		case *maxMin4Uint:
+			return &maxMin4UintSliding{*baseAggFunc}
+		case *maxMin4Float32:
+			return &maxMin4Float32Sliding{*baseAggFunc}
+		case *maxMin4Float64:
+			return &maxMin4Float64Sliding{*baseAggFunc}
+		case *maxMin4Decimal:
+			return &maxMin4DecimalSliding{*baseAggFunc}
+		case *maxMin4String:
+			return &maxMin4StringSliding{*baseAggFunc}
+		case *maxMin4Time:
+			return &maxMin4TimeSliding{*baseAggFunc}
+		case *maxMin4Duration:
+			return &maxMin4DurationSliding{*baseAggFunc}
+		}
+	}
+	return base
+}
+
+// buildBaseMaxMin builds the AggFunc implementation for function "MAX" and "MIN".
+func buildBaseMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
 	base := baseMaxMinAggFunc{
 		baseAggFunc: baseAggFunc{
 			args:    aggFuncDesc.Args,
@@ -333,56 +361,31 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 			return &maxMin4Set{base}
 		}
 
-		var aggFunc AggFunc
 		switch evalType {
 		case types.ETInt:
 			if mysql.HasUnsignedFlag(fieldType.Flag) {
-				aggFunc = &maxMin4Uint{base}
+				return &maxMin4Uint{base}
 			}
-			aggFunc = &maxMin4Int{base}
+			return &maxMin4Int{base}
 		case types.ETReal:
 			switch fieldType.Tp {
 			case mysql.TypeFloat:
-				aggFunc = &maxMin4Float32{base}
+				return &maxMin4Float32{base}
 			case mysql.TypeDouble:
-				aggFunc = &maxMin4Float64{base}
+				return &maxMin4Float64{base}
 			}
 		case types.ETDecimal:
-			aggFunc = &maxMin4Decimal{base}
+			return &maxMin4Decimal{base}
 		case types.ETString:
-			aggFunc = &maxMin4String{baseMaxMinAggFunc: base, retTp: aggFuncDesc.RetTp}
+			return &maxMin4String{baseMaxMinAggFunc: base, retTp: aggFuncDesc.RetTp}
 		case types.ETDatetime, types.ETTimestamp:
-			aggFunc = &maxMin4Time{base}
+			return &maxMin4Time{base}
 		case types.ETDuration:
-			aggFunc = &maxMin4Duration{base}
+			return &maxMin4Duration{base}
 		case types.ETJson:
 			return &maxMin4JSON{base}
 		}
-
-		// build max/min aggFunc for window function using sliding window
-		if aggFuncDesc.IsWindowAggFunc {
-			switch baseAggFunc := aggFunc.(type) {
-			case *maxMin4Int:
-				return &maxMin4IntSliding{*baseAggFunc}
-			case *maxMin4Uint:
-				return &maxMin4UintSliding{*baseAggFunc}
-			case *maxMin4Float32:
-				return &maxMin4Float32Sliding{*baseAggFunc}
-			case *maxMin4Float64:
-				return &maxMin4Float64Sliding{*baseAggFunc}
-			case *maxMin4Decimal:
-				return &maxMin4DecimalSliding{*baseAggFunc}
-			case *maxMin4String:
-				return &maxMin4StringSliding{*baseAggFunc}
-			case *maxMin4Time:
-				return &maxMin4TimeSliding{*baseAggFunc}
-			case *maxMin4Duration:
-				return &maxMin4DurationSliding{*baseAggFunc}
-			}
-		}
-		return aggFunc
 	}
-
 	return nil
 }
 
