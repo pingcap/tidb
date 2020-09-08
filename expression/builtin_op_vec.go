@@ -474,14 +474,14 @@ func (b *builtinRealIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
-	bufI64s := buf.Int64s()
+	bufF64s := buf.Float64s()
 	for i := 0; i < numRows; i++ {
 		isNull := buf.IsNull(i)
 		if b.keepNull && isNull {
 			result.SetNull(i, true)
 			continue
 		}
-		if isNull || bufI64s[i] != 0 {
+		if isNull || bufF64s[i] != 0 {
 			i64s[i] = 0
 		} else {
 			i64s[i] = 1

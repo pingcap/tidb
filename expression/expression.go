@@ -727,7 +727,7 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
 func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
-	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns, tbl)
+	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -777,9 +777,6 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
-		if col.State != model.StatePublic {
-			continue
-		}
 		names = append(names, &types.FieldName{
 			OrigTblName: tblName,
 			OrigColName: col.Name,
@@ -806,9 +803,6 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	}()
 	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
 	for i, col := range colInfos {
-		if col.State != model.StatePublic {
-			continue
-		}
 		if col.IsGenerated() && !col.GeneratedStored {
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
 			if err != nil {
@@ -1119,7 +1113,9 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bo
 		return false
 	}
 	switch x := expr.(type) {
-	case *Constant, *CorrelatedColumn:
+	case *CorrelatedColumn:
+		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column) != nil
+	case *Constant:
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
 		return pc.columnToPBExpr(x) != nil

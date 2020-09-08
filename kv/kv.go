@@ -173,6 +173,14 @@ type MemBufferIterator interface {
 type MemBuffer interface {
 	RetrieverMutator
 
+	// RLock locks the MemBuffer for shared read.
+	// In the most case, MemBuffer will only used by single goroutine,
+	// but it will be read by multiple goroutine when combined with executor.UnionScanExec.
+	// To avoid race introduced by executor.UnionScanExec, MemBuffer expose read lock for it.
+	RLock()
+	// RUnlock unlocks the MemBuffer.
+	RUnlock()
+
 	// GetFlags returns the latest flags associated with key.
 	GetFlags(Key) (KeyFlags, error)
 	// IterWithFlags returns a MemBufferIterator.
@@ -201,6 +209,11 @@ type MemBuffer interface {
 	Cleanup(StagingHandle)
 	// InspectStage used to inspect the value updates in the given stage.
 	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
+
+	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
+	SnapshotGetter() Getter
+	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+	SnapshotIter(k, upperbound Key) Iterator
 
 	// Size returns sum of keys and values length.
 	Size() int
@@ -270,6 +283,7 @@ type LockCtx struct {
 	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
+	Stats                 *execdetails.LockKeysDetails
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
@@ -380,8 +394,6 @@ type ResultSubset interface {
 	GetData() []byte
 	// GetStartKey gets the start key.
 	GetStartKey() Key
-	// GetExecDetails gets the detail information.
-	GetExecDetails() *execdetails.ExecDetails
 	// MemSize returns how many bytes of memory this result use for tracing memory usage.
 	MemSize() int64
 	// RespTime returns the response time for the request.
