@@ -357,17 +357,14 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 		// function.
 		// Note: If the `Tp` of argument is the same as the `Tp` of the
 		// aggregation function, it will not wrap cast function on it
-		// internally. The reason of the special handling for `Column` is
-		// that the `RetType` of `Column` refers to the `infoschema`, so we
-		// need to set a new variable for it to avoid modifying the
-		// definition in `infoschema`.
-		if col, ok := a.Args[i].(*expression.Column); ok {
-			col.RetType = types.NewFieldType(col.RetType.Tp)
+		// internally.
+		switch x := a.Args[i].(type) {
+		case *expression.Column:
+			x.RetType = a.RetTp
+		case *expression.ScalarFunction:
+			x.RetType = a.RetTp
+		case *expression.CorrelatedColumn:
+			x.RetType = a.RetTp
 		}
-		// originTp is used when the the `Tp` of column is TypeFloat32 while
-		// the type of the aggregation function is TypeFloat64.
-		originTp := a.Args[i].GetType().Tp
-		*(a.Args[i].GetType()) = *(a.RetTp)
-		a.Args[i].GetType().Tp = originTp
 	}
 }

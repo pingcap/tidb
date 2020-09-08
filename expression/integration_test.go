@@ -136,38 +136,17 @@ func (s *testIntegrationSuite) Test19654(c *C) {
 	tk.MustQuery("select /*+ inl_join(t2)*/ * from t1, t2 where t1.b=t2.b;").Check(testkit.Rows("a a"))
 }
 
-func (s *testIntegrationSuite) TestFuncREPEAT(c *C) {
+func (s *testIntegrationSuite) Test19387(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	defer s.cleanEnv(c)
 	tk.MustExec("USE test;")
-	tk.MustExec("DROP TABLE IF EXISTS table_string;")
-	tk.MustExec("CREATE TABLE table_string(a CHAR(20), b VARCHAR(20), c TINYTEXT, d TEXT(20), e MEDIUMTEXT, f LONGTEXT, g BIGINT);")
-	tk.MustExec("INSERT INTO table_string (a, b, c, d, e, f, g) VALUES ('a', 'b', 'c', 'd', 'e', 'f', 2);")
-	tk.CheckExecResult(1, 0)
 
-	r := tk.MustQuery("SELECT REPEAT(a, g), REPEAT(b, g), REPEAT(c, g), REPEAT(d, g), REPEAT(e, g), REPEAT(f, g) FROM table_string;")
-	r.Check(testkit.Rows("aa bb cc dd ee ff"))
-
-	r = tk.MustQuery("SELECT REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g), REPEAT(NULL, g) FROM table_string;")
-	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
-
-	r = tk.MustQuery("SELECT REPEAT(a, NULL), REPEAT(b, NULL), REPEAT(c, NULL), REPEAT(d, NULL), REPEAT(e, NULL), REPEAT(f, NULL) FROM table_string;")
-	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
-
-	r = tk.MustQuery("SELECT REPEAT(a, 2), REPEAT(b, 2), REPEAT(c, 2), REPEAT(d, 2), REPEAT(e, 2), REPEAT(f, 2) FROM table_string;")
-	r.Check(testkit.Rows("aa bb cc dd ee ff"))
-
-	r = tk.MustQuery("SELECT REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2), REPEAT(NULL, 2) FROM table_string;")
-	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
-
-	r = tk.MustQuery("SELECT REPEAT(a, -1), REPEAT(b, -2), REPEAT(c, -2), REPEAT(d, -2), REPEAT(e, -2), REPEAT(f, -2) FROM table_string;")
-	r.Check(testkit.Rows("     "))
-
-	r = tk.MustQuery("SELECT REPEAT(a, 0), REPEAT(b, 0), REPEAT(c, 0), REPEAT(d, 0), REPEAT(e, 0), REPEAT(f, 0) FROM table_string;")
-	r.Check(testkit.Rows("     "))
-
-	r = tk.MustQuery("SELECT REPEAT(a, 16777217), REPEAT(b, 16777217), REPEAT(c, 16777217), REPEAT(d, 16777217), REPEAT(e, 16777217), REPEAT(f, 16777217) FROM table_string;")
-	r.Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil> <nil>"))
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a decimal(16, 2));")
+	tk.MustExec("select sum(case when 1 then a end) from t group by a;")
+	res := tk.MustQuery("show create table t")
+	c.Assert(len(res.Rows()), Equals, 1)
+	str := res.Rows()[0][1].(string)
+	c.Assert(strings.Contains(str, "decimal(16,2)"), IsTrue)
 }
 
 func (s *testIntegrationSuite) TestFuncLpadAndRpad(c *C) {
