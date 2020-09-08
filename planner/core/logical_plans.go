@@ -1018,7 +1018,7 @@ type LogicalLimit struct {
 type LogicalLock struct {
 	baseLogicalPlan
 
-	Lock             ast.SelectLockType
+	Lock             *ast.SelectLockInfo
 	tblID2Handle     map[int64][]HandleCols
 	partitionedTable []table.PartitionedTable
 }
