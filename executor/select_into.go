@@ -92,23 +92,24 @@ func (s *SelectIntoExec) escapeField(f []byte) []byte {
 		return f
 	}
 	s.escapeBuf = s.escapeBuf[:0]
-	escape := func() {
-		s.escapeBuf = append(s.escapeBuf, s.intoOpt.FieldsInfo.Escaped)
-	}
+	escape := false
 	for _, b := range f {
 		switch {
 		case b == 0:
 			// we always escape 0
-			escape()
+			escape = true
 			b = '0'
 		case b == s.intoOpt.FieldsInfo.Escaped || b == s.intoOpt.FieldsInfo.Enclosed:
-			escape()
+			escape = true
 		case !s.enclosed && len(s.intoOpt.FieldsInfo.Terminated) > 0 && b == s.intoOpt.FieldsInfo.Terminated[0]:
 			// if field is enclosed, we only escape line terminator, otherwise both field and line terminator will be escaped
-			escape()
+			escape = true
 		case len(s.intoOpt.LinesInfo.Terminated) > 0 && b == s.intoOpt.LinesInfo.Terminated[0]:
 			// we always escape line terminator
-			escape()
+			escape = true
+		}
+		if escape {
+			s.escapeBuf = append(s.escapeBuf, s.intoOpt.FieldsInfo.Escaped)
 		}
 		s.escapeBuf = append(s.escapeBuf, b)
 	}
