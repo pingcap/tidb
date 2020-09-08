@@ -305,9 +305,7 @@ func maxUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 			}
 		case mysql.TypeJSON:
 			curVal := row.GetJSON(0)
-			bytes := make([]byte, 0)
-			bytes = append(bytes, curVal.Value...)
-			curStringVal := string(bytes)
+			curStringVal := string(curVal.Value)
 			if i == 0 {
 				memDeltas[i] = int64(len(curStringVal))
 				preJSONVal = curStringVal
@@ -364,9 +362,7 @@ func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memD
 			}
 		case mysql.TypeJSON:
 			curVal := row.GetJSON(0)
-			bytes := make([]byte, 0)
-			bytes = append(bytes, curVal.Value...)
-			curStringVal := string(bytes)
+			curStringVal := string(curVal.Value)
 			if i == 0 {
 				memDeltas[i] = int64(len(curStringVal))
 				preJSONVal = curStringVal
