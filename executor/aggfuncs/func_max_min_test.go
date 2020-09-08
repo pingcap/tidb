@@ -23,8 +23,77 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/util/testkit"
+=======
+	"github.com/pingcap/tidb/util/chunk"
+>>>>>>> 05020ee93... modify unit test
 )
+
+func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, isMax bool) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, srcChk.NumRows())
+	var (
+		preStringVal string
+		preJSONVal   string
+		preEnumVal   types.Enum
+		preSetVal    types.Set
+	)
+
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			continue
+		}
+		switch dataType.Tp {
+		case mysql.TypeString:
+			curVal := row.GetString(0)
+			if i == 0 {
+				memDeltas[i] = int64(len(curVal))
+				preStringVal = curVal
+			} else if isMax && curVal > preStringVal || !isMax && curVal < preStringVal {
+				memDeltas[i] = int64(len(curVal)) - int64(len(preStringVal))
+				preStringVal = curVal
+			}
+		case mysql.TypeJSON:
+			curVal := row.GetJSON(0)
+			curStringVal := string(curVal.Value)
+			if i == 0 {
+				memDeltas[i] = int64(len(curStringVal))
+				preJSONVal = curStringVal
+			} else if isMax && curStringVal > preJSONVal || !isMax && curStringVal < preJSONVal {
+				memDeltas[i] = int64(len(curStringVal)) - int64(len(preJSONVal))
+				preJSONVal = curStringVal
+			}
+		case mysql.TypeEnum:
+			curVal := row.GetEnum(0)
+			if i == 0 {
+				memDeltas[i] = int64(len(curVal.Name))
+				preEnumVal = curVal
+			} else if isMax && curVal.Value > preEnumVal.Value || !isMax && curVal.Value < preEnumVal.Value {
+				memDeltas[i] = int64(len(curVal.Name)) - int64(len(preEnumVal.Name))
+				preEnumVal = curVal
+			}
+		case mysql.TypeSet:
+			curVal := row.GetSet(0)
+			if i == 0 {
+				memDeltas[i] = int64(len(curVal.Name))
+				preSetVal = curVal
+			} else if isMax && curVal.Value > preSetVal.Value || !isMax && curVal.Value < preSetVal.Value {
+				memDeltas[i] = int64(len(curVal.Name)) - int64(len(preSetVal.Name))
+				preSetVal = curVal
+			}
+		}
+	}
+	return memDeltas, nil
+}
+
+func maxUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	return maxMinUpdateMemDeltaGens(srcChk, dataType, true)
+}
+
+func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	return maxMinUpdateMemDeltaGens(srcChk, dataType, false)
+}
 
 func (s *testSuite) TestMergePartialResult4MaxMin(c *C) {
 	elems := []string{"a", "b", "c", "d", "e"}
