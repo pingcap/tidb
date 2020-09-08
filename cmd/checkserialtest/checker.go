@@ -79,7 +79,6 @@ func (r *FailpointChecker) check(isTest bool) error {
 		if !isTest && strings.Contains(path, "checkserialtest/testdata") {
 			return nil
 		}
-		// Will rewrite a file only if the file has imported "github.com/pingcap/failpoint"
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 		if err != nil {
@@ -218,8 +217,7 @@ func (r *FailpointChecker) CheckFuncDecl(fn *ast.FuncDecl) error {
 			return errors.New("didn't find the package")
 		}
 		isSerial, ok := packageMap[ident.Name]
-		if ok {
-			r.isCurrentTestSerial = isSerial
+		if ok && !isSerial {
 			r.currSuiteName = ident.Name
 			r.currTestName = fn.Name.Name
 			return r.CheckStmts(fn.Body.List)
@@ -684,14 +682,10 @@ func (r *FailpointChecker) checkSelector(v ast.SelectorExpr) error {
 	}
 	packageName, ok := v.X.(*ast.Ident)
 	if ok && packageName.Name == r.failpointName && strings.EqualFold(v.Sel.Name, "Enable") {
-		// Find a usage of failpoint, check that whether the testSuite is serial.
-		if !r.isCurrentTestSerial {
-			err := errors.New(fmt.Sprintf("Find failpoint in non-serial testSuite, package: %s, test name: %s", r.currentFile.Name, r.currTestName))
-			r.errList = append(r.errList, err)
-			return nil
-		} else {
-			return nil
-		}
+		// Detect an illegal usage.
+		err := errors.New(fmt.Sprintf("Find failpoint in non-serial testSuite, package: %s, test name: %s", r.currentFile.Name, r.currTestName))
+		r.errList = append(r.errList, err)
+		return nil
 	} else {
 		return r.checkExpr(v.X)
 	}
