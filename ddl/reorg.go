@@ -510,8 +510,6 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elem
 	info.PhysicalTableID = pid
 	info.currElement = element
 	info.elements = elements
-	logutil.BgLogger().Warn(fmt.Sprintf("xxx ------------------------------------------- get reorg info, first:%v, start:%v, end:%v, curr e:%v, isHandle:%v",
-		info.first, start, end, info.currElement, tbl.Meta().IsCommonHandle))
 
 	return &info, nil
 }
@@ -522,6 +520,5 @@ func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle k
 	}
 
 	t := meta.NewMeta(txn)
-	logutil.BgLogger().Warn(fmt.Sprintf("update reorg ================================================= job:%v, e:%v, [%v:%v], id:%v", r.Job, element, startHandle, endHandle, physicalTableID))
 	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalTableID, element))
 }

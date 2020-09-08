@@ -3819,7 +3819,7 @@ func (s *testDBSuite1) TestModifyColumnNullToNotNull(c *C) {
 	testModifyColumnNullToNotNull(c, s.testDBSuite, false, sql1, sql2)
 }
 
-func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal1(c *C) {
+func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal(c *C) {
 	sql1 := "alter table t1 change c2 c2 tinyint not null;"
 	sql2 := "alter table t1 change c2 c2 tinyint not null;"
 	testModifyColumnNullToNotNull(c, s.testDBSuite, true, sql1, sql2)

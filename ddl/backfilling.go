@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"strconv"
 	"sync/atomic"
@@ -172,7 +171,6 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 
 		taskCtx, err := bf.BackfillDataInTxn(handleRange)
 		if err != nil {
-			logutil.BgLogger().Warn("++++++++++++++++++++++++++++++++++++++++++++++ failed")
 			result.err = err
 			return result
 		}
@@ -480,8 +478,6 @@ func (w *worker) writePhysicalTableRecord(t table.PhysicalTable, bfWorkerType ba
 		if len(kvRanges) < int(workerCnt) {
 			workerCnt = int32(len(kvRanges))
 		}
-		logutil.BgLogger().Warn(fmt.Sprintf("++++++++++++++++++++++++++++++++++++++++++++++, write record, start:%v, end:%v, backfill cnt:%v, worker cnt:%v",
-			startHandle, endHandle, len(backfillWorkers), workerCnt))
 		// Enlarge the worker size.
 		for i := len(backfillWorkers); i < int(workerCnt); i++ {
 			sessCtx := newContext(reorgInfo.d.store)

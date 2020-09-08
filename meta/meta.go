@@ -920,7 +920,6 @@ func (e *Element) EncodeElement() []byte {
 // DecodeElement decodes values from a byte slice generated with an element.
 // It's exported for testing.
 func DecodeElement(b []byte) (*Element, error) {
-	logutil.BgLogger().Warn(fmt.Sprintf("decode -------------------- %s", b))
 	var tp []byte
 	prefix := b[:5]
 	b = b[5:]
@@ -939,7 +938,6 @@ func DecodeElement(b []byte) (*Element, error) {
 
 // UpdateDDLReorgStartHandle saves the job reorganization latest processed element and start handle for later resuming.
 func (m *Meta) UpdateDDLReorgStartHandle(job *model.Job, element *Element, startHandle kv.Handle) error {
-	logutil.BgLogger().Warn(fmt.Sprintf("start reorg ================================================= e:%v, key:%s, [%v:]", element, m.jobListKey, startHandle))
 	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID), element.EncodeElement())
 	if err != nil {
 		return errors.Trace(err)
@@ -949,7 +947,6 @@ func (m *Meta) UpdateDDLReorgStartHandle(job *model.Job, element *Element, start
 
 // UpdateDDLReorgHandle saves the job reorganization latest processed information for later resuming.
 func (m *Meta) UpdateDDLReorgHandle(job *model.Job, startHandle, endHandle kv.Handle, physicalTableID int64, element *Element) error {
-	logutil.BgLogger().Warn(fmt.Sprintf("update reorg ================================================= e:%v, key:%s, [%v:%v], id:%v", element, m.jobListKey, startHandle, endHandle, physicalTableID))
 	err := m.txn.HSet(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID), element.EncodeElement())
 	if err != nil {
 		return errors.Trace(err)
@@ -982,7 +979,6 @@ func setReorgJobFieldHandle(t *structure.TxStructure, reorgJobField []byte, hand
 // RemoveDDLReorgHandle removes the job reorganization related handles.
 func (m *Meta) RemoveDDLReorgHandle(job *model.Job, elements []*Element) error {
 	for _, element := range elements {
-		logutil.BgLogger().Warn(fmt.Sprintf("remove reorg ================================================= e:%v, key:%s", element, m.jobListKey))
 		err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))
 		if err != nil {
 			return errors.Trace(err)
@@ -1029,7 +1025,6 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job, isCommonHandle bool) (element *
 		err = errors.Trace(err)
 		return
 	}
-	logutil.BgLogger().Warn(fmt.Sprintf("get reorg ================================================= e:%v, key:%s, [%v:%v], id:%v", element, m.jobListKey, startHandle, endHandle, physicalTableID))
 
 	// physicalTableID may be 0, because older version TiDB (without table partition) doesn't store them.
 	// update them to table's in this case.

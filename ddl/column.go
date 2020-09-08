@@ -852,7 +852,6 @@ func (w *worker) doModifyColumnTypeWithData(
 				// TODO: Do rollback. Remove the following line when the rollback is done.
 				job.State = model.JobStateRollbackDone
 			}
-			logutil.BgLogger().Warn("[ddl] xxx run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 			// Clean up the channel of notifyCancelReorgJob. Make sure it can't affect other jobs.
 			w.reorgCtx.cleanNotifyReorgCancel()
 			return ver, errors.Trace(err)
@@ -914,7 +913,6 @@ func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colIn
 func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.ColumnInfo, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		logutil.BgLogger().Warn(fmt.Sprintf("************************************************* e:%v, initail s:%v", reorgInfo.currElement, reorgInfo.StartHandle))
 		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
@@ -926,14 +924,12 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
 		for i, idx := range idxes {
 			if reorgInfo.currElement.ID == idx.ID {
-				logutil.BgLogger().Warn(fmt.Sprintf("continue ************************************************ e:%v, initail s:%v", reorgInfo.currElement, reorgInfo.StartHandle))
 				startElementOffset = i
 			}
 		}
 	}
 	for i := startElementOffset; i < len(idxes); i++ {
 		reorgInfo.currElement = reorgInfo.elements[i+1]
-		logutil.BgLogger().Warn(fmt.Sprintf("************************************************ e:%v, initail s:%v", reorgInfo.currElement, reorgInfo.StartHandle))
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
 		err := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
 			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, reorgInfo.StartHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID, reorgInfo.currElement))

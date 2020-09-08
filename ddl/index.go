@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -418,7 +417,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	}
 
 	indexInfo := tblInfo.FindIndexByName(indexName.L)
-	logutil.BgLogger().Warn(fmt.Sprintf("xxx ============================== tbl:%v, name:%v, idx:%v", tblInfo, indexName, indexInfo))
 	if indexInfo != nil && indexInfo.State == model.StatePublic {
 		job.State = model.JobStateCancelled
 		err = ErrDupKeyName.GenWithStack("index already exist %s", indexName)
@@ -557,7 +555,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			if kv.ErrKeyExists.Equal(err) || errCancelledDDLJob.Equal(err) || errCantDecodeRecord.Equal(err) {
 				logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				ver, err = convertAddIdxJob2RollbackJob(t, job, tblInfo, indexInfo, err)
-				logutil.BgLogger().Warn(fmt.Sprintf("yyy ============================== name:%v, idx:%v", indexName, indexInfo))
 				if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
 					logutil.BgLogger().Warn("[ddl] run add index job failed, convert job to rollback, RemoveDDLReorgHandle failed", zap.String("job", job.String()), zap.Error(err1))
 				}
