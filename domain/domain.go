@@ -675,35 +675,37 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
 	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
-		if addrs, err := ebd.EtcdAddrs(); err == nil {
-			if addrs != nil {
-				cfg := config.GetGlobalConfig()
-				// silence etcd warn log, when domain closed, it won't randomly print warn log
-				// see details at the issue https://github.com/pingcap/tidb/issues/15479
-				etcdLogCfg := zap.NewProductionConfig()
-				etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
-				cli, err := clientv3.New(clientv3.Config{
-					LogConfig:        &etcdLogCfg,
-					Endpoints:        addrs,
-					AutoSyncInterval: 30 * time.Second,
-					DialTimeout:      5 * time.Second,
-					DialOptions: []grpc.DialOption{
-						grpc.WithBackoffMaxDelay(time.Second * 3),
-						grpc.WithKeepaliveParams(keepalive.ClientParameters{
-							Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
-							Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
-						}),
-					},
-					TLS: ebd.TLSConfig(),
-				})
-				if err != nil {
-					return errors.Trace(err)
-				}
-				do.etcdClient = cli
-			}
-		} else {
+		var addrs []string
+		var err error
+		if addrs, err = ebd.EtcdAddrs(); err != nil {
 			return err
 		}
+		if addrs != nil {
+			cfg := config.GetGlobalConfig()
+			// silence etcd warn log, when domain closed, it won't randomly print warn log
+			// see details at the issue https://github.com/pingcap/tidb/issues/15479
+			etcdLogCfg := zap.NewProductionConfig()
+			etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+			cli, err := clientv3.New(clientv3.Config{
+				LogConfig:        &etcdLogCfg,
+				Endpoints:        addrs,
+				AutoSyncInterval: 30 * time.Second,
+				DialTimeout:      5 * time.Second,
+				DialOptions: []grpc.DialOption{
+					grpc.WithBackoffMaxDelay(time.Second * 3),
+					grpc.WithKeepaliveParams(keepalive.ClientParameters{
+						Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
+						Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
+					}),
+				},
+				TLS: ebd.TLSConfig(),
+			})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			do.etcdClient = cli
+		}
+
 	}
 
 	// TODO: Here we create new sessions with sysFac in DDL,
