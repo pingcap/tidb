@@ -114,3 +114,29 @@ func (s *testMemoryLeak) memDiff(m1, m2 uint64) uint64 {
 	}
 	return m2 - m1
 }
+<<<<<<< HEAD
+=======
+
+func (s *testMemoryLeak) TestGlobalMemoryTrackerOnCleanUp(c *C) {
+	// TODO: assert the memory consume has happened in another way
+	originConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+
+	// assert insert
+	tk.MustExec("insert t (id) values (1)")
+	tk.MustExec("insert t (id) values (2)")
+	tk.MustExec("insert t (id) values (3)")
+	afterConsume := executor.GlobalMemoryUsageTracker.BytesConsumed()
+	c.Assert(originConsume, Equals, afterConsume)
+
+	// assert update
+	tk.MustExec("update t set id = 4 where id = 1")
+	tk.MustExec("update t set id = 5 where id = 2")
+	tk.MustExec("update t set id = 6 where id = 3")
+	afterConsume = executor.GlobalMemoryUsageTracker.BytesConsumed()
+	c.Assert(originConsume, Equals, afterConsume)
+}
+>>>>>>> 2f2c57e... executor, util: fix TestGlobalMemoryTrackerOnCleanUp ci error (#19863)

@@ -344,7 +344,29 @@ func (t *Tracker) DetachFromGlobalTracker() {
 	}
 	parent := t.parent
 	parent.Consume(-t.BytesConsumed())
+<<<<<<< HEAD
 	t.parent = nil
+=======
+	t.setParent(nil)
+}
+
+// ReplaceBytesUsed replace bytesConsume for the tracker
+func (t *Tracker) ReplaceBytesUsed(bytes int64) {
+	t.Consume(-t.BytesConsumed())
+	t.Consume(bytes)
+}
+
+func (t *Tracker) getParent() *Tracker {
+	t.parMu.Lock()
+	defer t.parMu.Unlock()
+	return t.parMu.parent
+}
+
+func (t *Tracker) setParent(parent *Tracker) {
+	t.parMu.Lock()
+	defer t.parMu.Unlock()
+	t.parMu.parent = parent
+>>>>>>> 2f2c57e... executor, util: fix TestGlobalMemoryTrackerOnCleanUp ci error (#19863)
 }
 
 const (
