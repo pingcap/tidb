@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -117,6 +118,16 @@ func buildWindowTester(funcName string, tp byte, constantArg uint64, orderByCols
 	return pt
 }
 
+func buildWindowMemTester(funcName string, tp byte, constantArg uint64, numRows int, orderByCols int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens) windowMemTest {
+	windowTest := buildWindowTester(funcName, tp, constantArg, orderByCols, numRows)
+	pt := windowMemTest{
+		windowTest:         windowTest,
+		allocMemDelta:      allocMemDelta,
+		updateMemDeltaGens: updateMemDeltaGens,
+	}
+	return pt
+}
+
 func (s *testSuite) TestWindowFunctions(c *C) {
 	tests := []windowTest{
 		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 1, 1, 1),
@@ -158,14 +169,18 @@ func (s *testSuite) TestWindowFunctions(c *C) {
 	}
 }
 
-func buildWindowMemTester(funcName string, tp byte, constantArg uint64, numRows int, orderByCols int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens) windowMemTest {
-	windowTest := buildWindowTester(funcName, tp, constantArg, orderByCols, numRows, nil)
-	pt := windowMemTest{
-		windowTest:         windowTest,
-		allocMemDelta:      allocMemDelta,
-		updateMemDeltaGens: updateMemDeltaGens,
+func (s *testSuite) TestMemRank(c *C) {
+	tests := []windowMemTest{
+		buildWindowMemTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 1, 1,
+			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
+		buildWindowMemTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 3, 0,
+			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
+		buildWindowMemTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 4, 1,
+			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
 	}
-	return pt
+	for _, test := range tests {
+		s.testWindowAggMemFunc(c, test)
+	}
 }
 
 func (s *testSuite) TestMemNtile(c *C) {
