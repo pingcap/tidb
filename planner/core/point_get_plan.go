@@ -123,7 +123,7 @@ func (p *PointGetPlan) AccessObject() string {
 	}
 	if p.IndexInfo != nil {
 		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
-			buffer.WriteString(", cluster index:" + p.IndexInfo.Name.O + "(")
+			buffer.WriteString(", clustered index:" + p.IndexInfo.Name.O + "(")
 		} else {
 			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
 		}
@@ -289,7 +289,7 @@ func (p *BatchPointGetPlan) AccessObject() string {
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.IndexInfo != nil {
 		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
-			buffer.WriteString(", cluster index:" + p.IndexInfo.Name.O + "(")
+			buffer.WriteString(", clustered index:" + p.IndexInfo.Name.O + "(")
 		} else {
 			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
 		}
