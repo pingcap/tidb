@@ -155,10 +155,8 @@ func firstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 			val := row.GetString(0)
 			memDeltas = append(memDeltas, int64(len(val)))
 		case mysql.TypeJSON:
-			json := row.GetJSON(0)
-			bytes := make([]byte, 0)
-			bytes = append(bytes, json.Value...)
-			memDeltas = append(memDeltas, int64(len(string(bytes))))
+			jsonVal := row.GetJSON(0)
+			memDeltas = append(memDeltas, int64(len(string(jsonVal.Value))))
 		case mysql.TypeEnum:
 			enum := row.GetEnum(0)
 			memDeltas = append(memDeltas, int64(len(enum.Name)))
@@ -242,10 +240,10 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 			val = strconv.FormatInt(row.GetInt64(0), 10)
 			memDelta = aggfuncs.DefInt64Size
 		case mysql.TypeJSON:
-			json := row.GetJSON(0)
+			jsonVal := row.GetJSON(0)
 			bytes := make([]byte, 0)
-			bytes = append(bytes, json.TypeCode)
-			bytes = append(bytes, json.Value...)
+			bytes = append(bytes, jsonVal.TypeCode)
+			bytes = append(bytes, jsonVal.Value...)
 			val = string(bytes)
 			memDelta = int64(len(val))
 		default:
