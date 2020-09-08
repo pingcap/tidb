@@ -104,6 +104,8 @@ var (
 	ErrSequenceHasRunOut = terror.ClassTable.New(mysql.ErrSequenceRunOut, mysql.MySQLErrName[mysql.ErrSequenceRunOut])
 	// ErrRowDoesNotMatchGivenPartitionSet returns when the destination partition conflict with the partition selection.
 	ErrRowDoesNotMatchGivenPartitionSet = terror.ClassTable.NewStd(mysql.ErrRowDoesNotMatchGivenPartitionSet)
+	// ErrTruncated returns for warning of truncate wrong value
+	ErrWarnDataTruncated = terror.ClassTable.New(mysql.WarnDataTruncated, mysql.MySQLErrName[mysql.WarnDataTruncated])
 )
 
 // RecordIterFunc is used for low-level record iteration.
