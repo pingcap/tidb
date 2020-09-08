@@ -362,11 +362,6 @@ func (t *Tracker) ReplaceBytesUsed(bytes int64) {
 	t.Consume(bytes)
 }
 
-// SetMaxConsumed should only be used in unit test.
-func (t *Tracker) SetMaxConsumed(value int64) {
-	atomic.StoreInt64(&t.maxConsumed, value)
-}
-
 func (t *Tracker) getParent() *Tracker {
 	t.parMu.Lock()
 	defer t.parMu.Unlock()
