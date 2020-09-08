@@ -174,6 +174,8 @@ func typeInferForNull(args []Expression) {
 }
 
 // newFunctionImpl creates a new scalar function or constant.
+// fold: 1 means folding constants, while 0 means not,
+// -1 means try to fold constants if without errors/warnings, otherwise not.
 func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
