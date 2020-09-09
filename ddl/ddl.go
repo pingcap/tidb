@@ -573,7 +573,7 @@ func (d *ddl) startCleanDeadTableLock() {
 			}
 			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoHandle.Get().AllSchemas())
 			if err != nil {
-				logutil.BgLogger().Info("[ddl] clean dead table lock failed.", zap.Error(err))
+				logutil.BgLogger().Info("[ddl] get dead table lock failed.", zap.Error(err))
 				continue
 			}
 			for se, tables := range deadLockTables {
