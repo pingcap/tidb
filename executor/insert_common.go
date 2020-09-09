@@ -939,6 +939,8 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 			}
 			e.stats = &insertRuntimeStat{
 				runtimeStatsWithSnapshot: stats,
+				RPCTime:                  0,
+				CheckInsertTime:          0,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
