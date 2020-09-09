@@ -661,7 +661,7 @@ type modifyColumnJobParameter struct {
 	pos                   *ast.ColumnPosition
 }
 
-func checkModifyColumn(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, *modifyColumnJobParameter, error) {
+func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ColumnInfo, *modifyColumnJobParameter, error) {
 	jp := &modifyColumnJobParameter{pos: &ast.ColumnPosition{}}
 	err := job.DecodeArgs(&jp.newCol, &jp.oldColName, jp.pos, &jp.modifyColumnTp, &jp.updatedAutoRandomBits, &jp.changingCol, &jp.changingIdxs)
 	if err != nil {
@@ -689,18 +689,18 @@ func checkModifyColumn(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.Tabl
 }
 
 func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	dbInfo, tblInfo, oldCol, jp, err := checkModifyColumn(t, job)
+	dbInfo, tblInfo, oldCol, jp, err := getModifyColumnInfo(t, job)
 	if err != nil {
 		return ver, err
 	}
 
 	if job.IsRollingback() {
-		// For those column-type-change type which doesn't reorg the data.
+		// For those column-type-change jobs which don't reorg the data.
 		if !needChangeColumnData(oldCol, jp.newCol) {
 			return rollbackModifyColumnJob(t, tblInfo, job, oldCol, jp.modifyColumnTp)
 		}
-		// For those column-type-change type which doe reorg the data.
-		return rollbackModifyColumnType(t, tblInfo, job, oldCol, jp)
+		// For those column-type-change jobs which reorg the data.
+		return rollbackModifyColumnJobWithData(t, tblInfo, job, oldCol, jp)
 	}
 
 	// If we want to rename the column name, we need to check whether it already exists.
@@ -767,13 +767,13 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 	return w.doModifyColumnTypeWithData(d, t, job, dbInfo, tblInfo, jp.changingCol, oldCol, jp.newCol.Name, jp.pos, jp.changingIdxs)
 }
 
-// rollbackModifyColumnType is used to rollback modify-column job in the copy-change type.
-func rollbackModifyColumnType(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, jp *modifyColumnJobParameter) (ver int64, err error) {
-	// If the not-null change is include, we should clean the flag info in oldCol.
+// rollbackModifyColumnJobWithData is used to rollback modify-column job which need to reorg the data.
+func rollbackModifyColumnJobWithData(t *meta.Meta, tblInfo *model.TableInfo, job *model.Job, oldCol *model.ColumnInfo, jp *modifyColumnJobParameter) (ver int64, err error) {
+	// If the not-null change is included, we should clean the flag info in oldCol.
 	if jp.modifyColumnTp == mysql.TypeNull {
-		// field NotNullFlag flag reset.
+		// Reset NotNullFlag flag.
 		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.NotNullFlag
-		// field PreventNullInsertFlag flag reset.
+		// Reset PreventNullInsertFlag flag.
 		tblInfo.Columns[oldCol.Offset].Flag = oldCol.Flag &^ mysql.PreventNullInsertFlag
 	}
 	if jp.changingCol != nil {
@@ -792,8 +792,7 @@ func rollbackModifyColumnType(t *meta.Meta, tblInfo *model.TableInfo, job *model
 	for _, idx := range jp.changingIdxs {
 		idxIDs = append(idxIDs, idx.ID)
 	}
-	job.Args[0] = idxIDs
-	job.Args[1] = getPartitionIDs(tblInfo)
+	job.Args = []interface{}{idxIDs, getPartitionIDs(tblInfo)}
 	return ver, nil
 }
 
@@ -923,8 +922,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
-		job.Args[0] = oldIdxIDs
-		job.Args[1] = getPartitionIDs(tblInfo)
+		job.Args = []interface{}{oldIdxIDs, getPartitionIDs(tblInfo)}
 		// TODO: Change column ID.
 		// asyncNotifyEvent(d, &util.Event{Tp: model.ActionAddColumn, TableInfo: tblInfo, ColumnInfos: []*model.ColumnInfo{changingCol}})
 	default:
@@ -1215,11 +1213,11 @@ func adjustColumnInfoInModifyColumn(
 		// Reorder columns in place.
 		if newPos < oldPos {
 			// ******** +(new) ****** -(old) ********
-			// [newPos:old-1] should shift right for one position.
+			// [newPos:old-1] should shift one step to the right.
 			copy(cols[newPos+1:], cols[newPos:oldPos])
 		} else {
 			// ******** -(old) ****** +(new) ********
-			// [old+1:newPos] should shift left for one position.
+			// [old+1:newPos] should shift one step to the left.
 			copy(cols[oldPos:], cols[oldPos+1:newPos+1])
 		}
 		cols[newPos] = newCol

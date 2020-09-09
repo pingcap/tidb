@@ -111,9 +111,6 @@ func IsJobRollbackable(job *model.Job) bool {
 		}
 	case model.ActionAddTablePartition:
 		return job.SchemaState == model.StateNone || job.SchemaState == model.StateReplicaOnly
-	case model.ActionModifyColumn:
-		return job.SchemaState == model.StateNone || job.SchemaState == model.StateDeleteOnly ||
-			job.SchemaState == model.StateWriteOnly || job.SchemaState == model.StateWriteReorganization
 	case model.ActionDropColumn, model.ActionDropColumns, model.ActionDropTablePartition,
 		model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionTruncateTable, model.ActionAddForeignKey,

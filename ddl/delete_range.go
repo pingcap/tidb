@@ -385,15 +385,15 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
 			return errors.Trace(err)
 		}
-		if len(indexIDs) > 0 {
-			if len(partitionIDs) > 0 {
-				for _, pid := range partitionIDs {
-					if err := doBatchDeleteIndiceRange(s, job.ID, pid, indexIDs, now); err != nil {
-						return errors.Trace(err)
-					}
-				}
-			} else {
-				return doBatchDeleteIndiceRange(s, job.ID, job.TableID, indexIDs, now)
+		if len(indexIDs) == 0 {
+			return nil
+		}
+		if len(partitionIDs) == 0 {
+			return doBatchDeleteIndiceRange(s, job.ID, job.TableID, indexIDs, now)
+		}
+		for _, pid := range partitionIDs {
+			if err := doBatchDeleteIndiceRange(s, job.ID, pid, indexIDs, now); err != nil {
+				return errors.Trace(err)
 			}
 		}
 	}

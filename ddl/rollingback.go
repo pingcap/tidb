@@ -110,7 +110,7 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 // normal-type has only two states:    None -> Public
 // reorg-type has five states:         None -> Delete-only -> Write-only -> Write-org -> Public
 func rollingbackModifyColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, _, oldCol, jp, err := checkModifyColumn(t, job)
+	_, _, oldCol, jp, err := getModifyColumnInfo(t, job)
 	if err != nil {
 		return ver, err
 	}
