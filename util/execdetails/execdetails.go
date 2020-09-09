@@ -362,6 +362,11 @@ func (e *BasicRuntimeStats) String() string {
 	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
 }
 
+// GetTime get the int64 total time
+func (e *BasicRuntimeStats) GetTime() int64 {
+	return e.consume
+}
+
 // RuntimeStatsColl collects executors's execution info.
 type RuntimeStatsColl struct {
 	mu        sync.Mutex
