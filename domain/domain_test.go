@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -270,7 +271,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(is, NotNil)
 
 	// for updating the self schema version
-	goCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	goCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
 	cancel()
 	c.Assert(err, IsNil)
@@ -278,7 +279,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(snapIs, NotNil)
 	c.Assert(err, IsNil)
 	// Make sure that the self schema version doesn't be changed.
-	goCtx, cancel = context.WithTimeout(context.Background(), 10*time.Millisecond)
+	goCtx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
 	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
 	cancel()
 	c.Assert(err, IsNil)
@@ -462,6 +463,6 @@ func (*testSuite) TestSessionPool(c *C) {
 }
 
 func (*testSuite) TestErrorCode(c *C) {
-	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, errno.ErrInfoSchemaExpired)
-	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, errno.ErrInfoSchemaChanged)
+	c.Assert(int(terror.ToSQLError(ErrInfoSchemaExpired).Code), Equals, errno.ErrInfoSchemaExpired)
+	c.Assert(int(terror.ToSQLError(ErrInfoSchemaChanged).Code), Equals, errno.ErrInfoSchemaChanged)
 }
