@@ -516,8 +516,7 @@ func getReorgInfoFromPartitions(d *ddlCtx, t *meta.Meta, job *model.Job, tbl tab
 			return nil, errors.Trace(err)
 		}
 		pid = partitionIDs[0]
-		var tb table.PhysicalTable
-		tb = tbl.(table.PartitionedTable).GetPartition(pid)
+		tb := tbl.(table.PartitionedTable).GetPartition(pid)
 		start, end, err = getTableRange(d, tb, ver.Ver, job.Priority)
 		if err != nil {
 			return nil, errors.Trace(err)
