@@ -1588,7 +1588,7 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 	}
 	e := &UnionExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExecs...),
-		concurrency:  b.ctx.GetSessionVars().UnionConcurrency(),
+		concurrency:  b.ctx.GetSessionVars().Concurrency.UnionConcurrency,
 	}
 	return e
 }
@@ -2344,80 +2344,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) *
 	ret.ranges = ts.Ranges
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
-<<<<<<< HEAD
 	return ret
-=======
-
-	// TODO: Remove the following 3 lines code when the code is full implemented.
-	if tryOldPartitionImplementation(b.ctx) {
-		return ret
-	}
-
-	if pi := ts.Table.GetPartitionInfo(); pi == nil {
-		return ret
-	}
-
-	if v.StoreType == kv.TiFlash {
-		tmp, _ := b.is.TableByID(ts.Table.ID)
-		tbl := tmp.(table.PartitionedTable)
-		partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
-		if err != nil {
-			b.err = err
-			return nil
-		}
-		partsExecutor := make([]Executor, 0, len(partitions))
-		for _, part := range partitions {
-			exec, err := buildNoRangeTableReader(b, v)
-			if err != nil {
-				b.err = err
-				return nil
-			}
-			exec.ranges = ts.Ranges
-			nexec, err := nextPartitionForTableReader{exec: exec}.nextPartition(context.Background(), part)
-			if err != nil {
-				b.err = err
-				return nil
-			}
-			partsExecutor = append(partsExecutor, nexec)
-		}
-		if len(partsExecutor) == 0 {
-			return &TableDualExec{baseExecutor: *ret.base()}
-		}
-		if len(partsExecutor) == 1 {
-			return partsExecutor[0]
-		}
-		return &UnionExec{
-			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), partsExecutor...),
-			concurrency:  b.ctx.GetSessionVars().UnionConcurrency(),
-		}
-	}
-
-	nextPartition := nextPartitionForTableReader{ret}
-	exec, err := buildPartitionTable(b, ts.Table, &v.PartitionInfo, ret, nextPartition)
-	if err != nil {
-		b.err = err
-		return nil
-	}
-	return exec
-}
-
-func buildPartitionTable(b *executorBuilder, tblInfo *model.TableInfo, partitionInfo *plannercore.PartitionInfo, e Executor, n nextPartition) (Executor, error) {
-	tmp, _ := b.is.TableByID(tblInfo.ID)
-	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.ctx, tbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(partitions) == 0 {
-		return &TableDualExec{baseExecutor: *e.base()}, nil
-	}
-	return &PartitionTableExecutor{
-		baseExecutor:  *e.base(),
-		partitions:    partitions,
-		nextPartition: n,
-	}, nil
->>>>>>> 354f399... executor: add concurrency limit on union executor (#19827)
 }
 
 func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexReader) (*IndexReaderExecutor, error) {
