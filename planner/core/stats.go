@@ -226,7 +226,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	}
 	// Consider the IndexMergePath. Now, we just generate `IndexMergePath` in DNF case.
 	isPossibleIdxMerge := len(ds.pushedDownConds) > 0 && len(ds.possibleAccessPaths) > 1
-	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || ds.indexMergeHints != nil) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
+	sessionAndStmtPermission := (ds.ctx.GetSessionVars().GetEnableIndexMerge() || len(ds.indexMergeHints) > 0) && !ds.ctx.GetSessionVars().StmtCtx.NoIndexMergeHint
 	// If there is an index path, we current do not consider `IndexMergePath`.
 	needConsiderIndexMerge := true
 	for i := 1; i < len(ds.possibleAccessPaths); i++ {
@@ -237,7 +237,7 @@ func (ds *DataSource) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 	}
 	if isPossibleIdxMerge && sessionAndStmtPermission && needConsiderIndexMerge && isReadOnlyTxn {
 		ds.generateAndPruneIndexMergePath(ds.indexMergeHints != nil)
-	} else if ds.indexMergeHints != nil {
+	} else if len(ds.indexMergeHints) > 0 {
 		ds.indexMergeHints = nil
 		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("IndexMerge is inapplicable or disabled"))
 	}
@@ -248,7 +248,7 @@ func (ds *DataSource) generateAndPruneIndexMergePath(needPrune bool) {
 	regularPathCount := len(ds.possibleAccessPaths)
 	ds.generateIndexMergeOrPaths()
 	// If without hints, it means that `enableIndexMerge` is true
-	if ds.indexMergeHints == nil {
+	if len(ds.indexMergeHints) == 0 {
 		return
 	}
 	// With hints and without generated IndexMerge paths
@@ -347,15 +347,15 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 
 // isInIndexMergeHints checks whether current index or primary key is in IndexMerge hints.
 func (ds *DataSource) isInIndexMergeHints(name string) bool {
-	if ds.indexMergeHints == nil {
+	if len(ds.indexMergeHints) == 0 {
 		return true
 	}
 	for _, hint := range ds.indexMergeHints {
-		if hint.IndexNames == nil {
+		if hint.indexHint == nil || len(hint.indexHint.IndexNames) == 0 {
 			return true
 		}
-		for _, index := range hint.IndexNames {
-			if name == index.L {
+		for _, hintName := range hint.indexHint.IndexNames {
+			if name == hintName.String() {
 				return true
 			}
 		}

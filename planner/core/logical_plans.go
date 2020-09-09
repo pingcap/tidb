@@ -467,15 +467,16 @@ type LogicalUnionScan struct {
 type DataSource struct {
 	logicalSchemaProducer
 
-	indexHints []*ast.IndexHint
-	table      table.Table
-	tableInfo  *model.TableInfo
-	Columns    []*model.ColumnInfo
-	DBName     model.CIStr
+	astIndexHints []*ast.IndexHint
+	IndexHints    []indexHintInfo
+	table         table.Table
+	tableInfo     *model.TableInfo
+	Columns       []*model.ColumnInfo
+	DBName        model.CIStr
 
 	TableAsName *model.CIStr
 	// indexMergeHints are the hint for indexmerge.
-	indexMergeHints []*ast.IndexHint
+	indexMergeHints []indexHintInfo
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
@@ -502,8 +503,10 @@ type DataSource struct {
 	// TblColHists contains the Histogram of all original table columns,
 	// it is converted from statisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
-	//preferStoreType means the DataSource is enforced to which storage.
+	// preferStoreType means the DataSource is enforced to which storage.
 	preferStoreType int
+	// preferPartitions store the map, the key represents store type, the value represents the partition name list.
+	preferPartitions map[int][]model.CIStr
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
