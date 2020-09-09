@@ -152,7 +152,7 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 		if err != nil {
 			return err
 		}
-		data := make([]string, len(cols))
+		data := make([]sql.NullString, len(cols))
 		args := make([]interface{}, 0, len(cols))
 		for i := range data {
 			args = append(args, &data[i])
@@ -162,18 +162,20 @@ func (m *globalMetadata) recordGlobalMetaData(db *sql.Conn, serverType ServerTyp
 		}
 		var connName, pos, logFile, host, gtidSet string
 		for i, col := range cols {
-			col = strings.ToLower(col)
-			switch col {
-			case "connection_name":
-				connName = data[i]
-			case "exec_master_log_pos":
-				pos = data[i]
-			case "relay_master_log_file":
-				logFile = data[i]
-			case "master_host":
-				host = data[i]
-			case "executed_gtid_set":
-				gtidSet = data[i]
+			if data[i].Valid {
+				col = strings.ToLower(col)
+				switch col {
+				case "connection_name":
+					connName = data[i].String
+				case "exec_master_log_pos":
+					pos = data[i].String
+				case "relay_master_log_file":
+					logFile = data[i].String
+				case "master_host":
+					host = data[i].String
+				case "executed_gtid_set":
+					gtidSet = data[i].String
+				}
 			}
 		}
 		if len(host) > 0 {
