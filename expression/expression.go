@@ -891,7 +891,7 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.In,
 		ast.IsNull,
 		ast.Like,
-		ast.IsTruth,
+		ast.IsTruthWithoutNull,
 		ast.IsTruthWithNull,
 		ast.IsFalsity,
 
@@ -1215,14 +1215,14 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 	if keepNull {
 		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithNull, 1, 1}, opcode.IsTruth, keepNull}
 	} else {
-		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithoutNull, 1, 1}, opcode.IsTruth, keepNull}
 	}
 	f, err := fc.getFunction(ctx, []Expression{arg})
 	if err != nil {
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.IsTruth),
+		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
 	}

@@ -502,7 +502,7 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 
 func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	switch n := expr.FuncName.L; n {
-	case ast.IsTruth:
+	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 1, false)
 	case ast.IsTruthWithNull:
 		return r.buildFromIsTrue(expr, 1, true)
@@ -560,7 +560,7 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []point {
 		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	case ast.LogicOr:
 		return r.union(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
-	case ast.IsTruth:
+	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 0, false)
 	case ast.IsTruthWithNull:
 		return r.buildFromIsTrue(expr, 0, true)
