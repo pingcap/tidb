@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/parser/opcode"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -1534,25 +1535,45 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 			return nil, err
 		}
 		for _, idx := range idxInfo {
-			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+			if domain.CanRuntimePruneTbl(b.ctx, tbl.TableInfo) {
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, TableID: AnalyzeTableID{PersistID: tbl.TableInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
 				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
-					IndexInfo:   idx,
-					analyzeInfo: info,
-					TblInfo:     tbl.TableInfo,
+					IndexInfo:        idx,
+					analyzeInfo:      info,
+					TblInfo:          tbl.TableInfo,
+					SampleLocalIndex: true,
 				})
+			} else {
+				for i, id := range physicalIDs {
+					info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+					p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
+						IndexInfo:   idx,
+						analyzeInfo: info,
+						TblInfo:     tbl.TableInfo,
+					})
+				}
 			}
 		}
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo)
 		if len(colInfo) > 0 || handleCols != nil {
-			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+			if domain.CanRuntimePruneTbl(b.ctx, tbl.TableInfo) {
+				info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, TableID: AnalyzeTableID{PersistID: tbl.TableInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
 				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
 					HandleCols:  handleCols,
 					ColsInfo:    colInfo,
 					analyzeInfo: info,
 					TblInfo:     tbl.TableInfo,
 				})
+			} else {
+				for i, id := range physicalIDs {
+					info := analyzeInfo{DBName: tbl.Schema.O, TableName: tbl.Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
+						HandleCols:  handleCols,
+						ColsInfo:    colInfo,
+						analyzeInfo: info,
+						TblInfo:     tbl.TableInfo,
+					})
+				}
 			}
 		}
 	}
@@ -1570,9 +1591,14 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if isPrimaryIndex(idxName) {
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
 			if handleCols != nil {
-				for i, id := range physicalIDs {
-					info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+				if domain.CanRuntimePruneTbl(b.ctx, tblInfo) {
+					info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, TableID: AnalyzeTableID{PersistID: tblInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
 					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+				} else {
+					for i, id := range physicalIDs {
+						info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+						p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+					}
 				}
 				continue
 			}
@@ -1581,9 +1607,14 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if idx == nil || idx.State != model.StatePublic {
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
 		}
-		for i, id := range physicalIDs {
-			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+		if domain.CanRuntimePruneTbl(b.ctx, tblInfo) {
+			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, TableID: AnalyzeTableID{PersistID: tblInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
+			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo, SampleLocalIndex: true})
+		} else {
+			for i, id := range physicalIDs {
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+			}
 		}
 	}
 	return p, nil
@@ -1598,17 +1629,27 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
-			for i, id := range physicalIDs {
-				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+			if domain.CanRuntimePruneTbl(b.ctx, tblInfo) {
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, TableID: AnalyzeTableID{PersistID: tblInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
+				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo, SampleLocalIndex: true})
+			} else {
+				for i, id := range physicalIDs {
+					info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+					p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, analyzeInfo: info, TblInfo: tblInfo})
+				}
 			}
 		}
 	}
 	handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo)
 	if handleCols != nil {
-		for i, id := range physicalIDs {
-			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+		if domain.CanRuntimePruneTbl(b.ctx, tblInfo) {
+			info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, TableID: AnalyzeTableID{PersistID: tblInfo.ID, CollectIDs: physicalIDs}, Incremental: as.Incremental}
 			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+		} else {
+			for i, id := range physicalIDs {
+				info := analyzeInfo{DBName: as.TableNames[0].Schema.O, TableName: as.TableNames[0].Name.O, PartitionName: names[i], TableID: AnalyzeTableID{PersistID: id, CollectIDs: []int64{id}}, Incremental: as.Incremental}
+				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, analyzeInfo: info, TblInfo: tblInfo})
+			}
 		}
 	}
 	return p, nil

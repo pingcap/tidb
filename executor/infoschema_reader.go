@@ -451,7 +451,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				}
 
 				var rowCount, dataLength, indexLength uint64
-				if table.GetPartitionInfo() == nil {
+				if table.GetPartitionInfo() == nil || domain.CanRuntimePruneTbl(ctx, table) {
 					rowCount = tableRowsMap[table.ID]
 					dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount, colLengthMap)
 				} else {

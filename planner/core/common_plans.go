@@ -783,6 +783,7 @@ type AnalyzeIndexTask struct {
 	IndexInfo *model.IndexInfo
 	TblInfo   *model.TableInfo
 	analyzeInfo
+	SampleLocalIndex bool
 }
 
 // Analyze represents an analyze plan
