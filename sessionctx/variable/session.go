@@ -710,6 +710,30 @@ type SessionVars struct {
 
 	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
 	EnableAmendPessimisticTxn bool
+
+	// PartitionPruneMode indicates how and when to prune partitions.
+	PartitionPruneMode PartitionPruneMode
+}
+
+func (s *SessionVars) UseDynamicPartitionPrune() bool {
+	return s.PartitionPruneMode == DynamicOnly
+}
+
+type PartitionPruneMode string
+
+const (
+	StaticOnly              PartitionPruneMode = "static-only"
+	DynamicOnly             PartitionPruneMode = "dynamic-only"
+	StaticButPrepareDynamic PartitionPruneMode = "static-collect-dynamic"
+)
+
+func (p PartitionPruneMode) Valid() bool {
+	switch p {
+	case StaticOnly, StaticButPrepareDynamic, DynamicOnly:
+		return true
+	default:
+		return false
+	}
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -1422,6 +1446,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	case TiDBEnableClusteredIndex:
 		s.EnableClusteredIndex = TiDBOptOn(val)
+	case TiDBPartitionPruneMode:
+		s.PartitionPruneMode = PartitionPruneMode(strings.ToLower(strings.TrimSpace(val)))
 	case TiDBEnableParallelApply:
 		s.EnableParallelApply = TiDBOptOn(val)
 	case TiDBSlowLogMasking, TiDBLogDesensitization:

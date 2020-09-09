@@ -427,6 +427,9 @@ const (
 	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
 
+	// TiDBPartitionPruneMode indicates the partition prune mode used.
+	TiDBPartitionPruneMode = "tidb_partition_prune_mode"
+
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
 	// Deprecated: use TiDBLogDesensitization instead.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
