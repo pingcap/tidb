@@ -729,6 +729,7 @@ func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys []
 func (lr *LockResolver) resolveLockAsync(bo *Backoffer, l *Lock, status TxnStatus) error {
 	tikvLockResolverCountWithResolveAsync.Inc()
 
+	//<<<<<<< HEAD
 	resolveData, err := lr.checkAllSecondaries(bo, l, &status)
 	if err != nil {
 		return err
