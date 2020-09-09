@@ -381,6 +381,49 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 	}
 
 	durationColumn.RetType.Decimal = 1
+	castToDecRangeCases := []struct {
+		before  *Column
+		flen    int
+		decimal int
+		after   *types.MyDecimal
+		row     chunk.MutRow
+	}{
+		// cast int as decimal,too Big Precision
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
+			66,
+			3,
+			types.NewDecFromStringForTest("1234.000"),
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1234)}),
+		},
+		// cast int as decimal. too Big Scale
+		{
+			&Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0},
+			7,
+			62,
+			types.NewDecFromStringForTest("1234.000"),
+			chunk.MutRowFromDatums([]types.Datum{types.NewIntDatum(1234)}),
+		},
+	}
+
+	for _, t := range castToDecRangeCases {
+		args := []Expression{t.before}
+		tp := types.NewFieldType(mysql.TypeNewDecimal)
+		tp.Flen, tp.Decimal = t.flen, t.decimal
+		b, err := newBaseBuiltinFunc(ctx, "", args, 0)
+		c.Assert(err, IsNil)
+		decFunc := newBaseBuiltinCastFunc(b, false)
+		decFunc.tp = tp
+		sig = &builtinCastIntAsDecimalSig{decFunc}
+
+		_, isNull, err := sig.evalDecimal(t.row.ToRow())
+		c.Assert(isNull, Equals, false)
+		c.Assert(err, NotNil)
+		//c.Assert(res.ToString(), DeepEquals, t.after.ToString())
+	}
+
+
+	durationColumn.RetType.Decimal = 1
 	castToDecCases2 := []struct {
 		before  *Column
 		flen    int
