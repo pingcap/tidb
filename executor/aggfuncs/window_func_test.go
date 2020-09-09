@@ -37,6 +37,16 @@ type windowTest struct {
 	results     []types.Datum
 }
 
+func (p *windowTest) genSrcChk() *chunk.Chunk {
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
+	dataGen := getDataGenFunc(p.dataType)
+	for i := 0; i < p.numRows; i++ {
+		dt := dataGen(i)
+		srcChk.AppendDatum(0, &dt)
+	}
+	return srcChk
+}
+
 type windowMemTest struct {
 	windowTest         windowTest
 	allocMemDelta      int64
@@ -44,12 +54,7 @@ type windowMemTest struct {
 }
 
 func (s *testSuite) testWindowFunc(c *C, p windowTest) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
-	dataGen := getDataGenFunc(p.dataType)
-	for i := 0; i < p.numRows; i++ {
-		dt := dataGen(i)
-		srcChk.AppendDatum(0, &dt)
-	}
+	srcChk := p.genSrcChk()
 
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, p.args, false)
 	c.Assert(err, IsNil)
@@ -77,12 +82,7 @@ func (s *testSuite) testWindowFunc(c *C, p windowTest) {
 }
 
 func (s *testSuite) testWindowAggMemFunc(c *C, p windowMemTest) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.windowTest.dataType}, p.windowTest.numRows)
-	dataGen := getDataGenFunc(p.windowTest.dataType)
-	for i := 0; i < p.windowTest.numRows; i++ {
-		dt := dataGen(i)
-		srcChk.AppendDatum(0, &dt)
-	}
+	srcChk := p.windowTest.genSrcChk()
 
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.windowTest.funcName, p.windowTest.args, false)
 	c.Assert(err, IsNil)
@@ -92,12 +92,14 @@ func (s *testSuite) testWindowAggMemFunc(c *C, p windowMemTest) {
 
 	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.windowTest.dataType)
 	c.Assert(err, IsNil)
+
 	i := 0
 	iter := chunk.NewIterator4Chunk(srcChk)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		memDelta, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 		c.Assert(err, IsNil)
 		c.Assert(memDelta, Equals, updateMemDeltas[i])
+		i++
 	}
 }
 
