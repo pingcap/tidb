@@ -258,10 +258,11 @@ type explainAnalyzeResult struct {
 
 func (sh *sqlInfoFetcher) getExplainAnalyze(ctx context.Context, sql string, resultChan chan<- *explainAnalyzeResult) {
 	recordSets, err := sh.s.(sqlexec.SQLExecutor).Execute(ctx, fmt.Sprintf("explain analyze %s", sql))
-	if len(recordSets) > 0 {
-		defer terror.Call(recordSets[0].Close)
-	}
 	if err != nil {
+		for _, rs := range recordSets {
+			err1 := rs.Close()
+			terror.Log(err1)
+		}
 		resultChan <- &explainAnalyzeResult{err: err}
 		return
 	}

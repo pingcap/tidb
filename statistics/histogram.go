@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -776,7 +777,23 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*ranger.Range, modifyCount int64, pkIsHandle bool) (float64, error) {
 	var rowCount float64
 	for _, rg := range ranges {
-		cmp, err := rg.LowVal[0].CompareDatum(sc, &rg.HighVal[0])
+		highVal := *rg.HighVal[0].Clone()
+		lowVal := *rg.LowVal[0].Clone()
+		if highVal.Kind() == types.KindString {
+			highVal.SetBytesAsString(collate.GetCollator(
+				highVal.Collation()).Key(highVal.GetString()),
+				highVal.Collation(),
+				uint32(highVal.Length()),
+			)
+		}
+		if lowVal.Kind() == types.KindString {
+			lowVal.SetBytesAsString(collate.GetCollator(
+				lowVal.Collation()).Key(lowVal.GetString()),
+				lowVal.Collation(),
+				uint32(lowVal.Length()),
+			)
+		}
+		cmp, err := lowVal.CompareDatum(sc, &highVal)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -789,7 +806,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 					continue
 				}
 				var cnt float64
-				cnt, err = c.equalRowCount(sc, rg.LowVal[0], modifyCount)
+				cnt, err = c.equalRowCount(sc, lowVal, modifyCount)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
@@ -797,7 +814,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			}
 			continue
 		}
-		rangeVals := enumRangeValues(rg.LowVal[0], rg.HighVal[0], rg.LowExclude, rg.HighExclude)
+		rangeVals := enumRangeValues(lowVal, highVal, rg.LowExclude, rg.HighExclude)
 		// The small range case.
 		if rangeVals != nil {
 			for _, val := range rangeVals {
@@ -810,7 +827,6 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 			continue
 		}
 		// The interval case.
-		lowVal, highVal := rg.LowVal[0], rg.HighVal[0]
 		cnt := c.BetweenRowCount(lowVal, highVal)
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
 			cnt += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount()
@@ -818,18 +834,18 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boudaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
 		// where null is the lower bound.
-		if rg.LowExclude && !rg.LowVal[0].IsNull() {
-			lowCnt, err := c.equalRowCount(sc, rg.LowVal[0], modifyCount)
+		if rg.LowExclude && !lowVal.IsNull() {
+			lowCnt, err := c.equalRowCount(sc, lowVal, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
 			cnt -= lowCnt
 		}
-		if !rg.LowExclude && rg.LowVal[0].IsNull() {
+		if !rg.LowExclude && lowVal.IsNull() {
 			cnt += float64(c.NullCount)
 		}
 		if !rg.HighExclude {
-			highCnt, err := c.equalRowCount(sc, rg.HighVal[0], modifyCount)
+			highCnt, err := c.equalRowCount(sc, highVal, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}

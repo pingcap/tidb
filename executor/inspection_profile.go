@@ -542,13 +542,13 @@ func (pb *profileBuilder) formatValueByTp(value float64) string {
 		if math.IsNaN(value) {
 			return ""
 		}
-		if value > 1 {
+		if math.Abs(value) > 1 {
 			// second unit
 			return fmt.Sprintf("%.2fs", value)
-		} else if value*1000 > 1 {
+		} else if math.Abs(value*1000) > 1 {
 			// millisecond unit
 			return fmt.Sprintf("%.2f ms", value*1000)
-		} else if value*1000*1000 > 1 {
+		} else if math.Abs(value*1000*1000) > 1 {
 			// microsecond unit
 			return fmt.Sprintf("%.2f ms", value*1000*1000)
 		}
@@ -635,8 +635,9 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 						table: "tikv_cop_request",
 						children: []*metricNode{
 							{
-								table: "tikv_cop_wait",
-								label: []string{"type"},
+								table:     "tikv_cop_wait",
+								label:     []string{"type"},
+								condition: "type != 'all'",
 							},
 							{table: "tikv_cop_handle"},
 						},
