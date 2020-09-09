@@ -622,6 +622,8 @@ func checkPartitionExprValid(ctx sessionctx.Context, tblInfo *model.TableInfo, e
 			return errors.Trace(err)
 		}
 		return nil
+	case *ast.ParenthesesExpr:
+		return checkPartitionExprValid(ctx, tblInfo, v.Expr)
 	}
 	return nil
 }
@@ -897,6 +899,21 @@ func getTableInfoWithDroppingPartitions(t *model.TableInfo) *model.TableInfo {
 	return nt
 }
 
+func buildPlacementDropRules(schemaID, tableID int64, partitionIDs []int64) []*placement.RuleOp {
+	rules := make([]*placement.RuleOp, 0, len(partitionIDs))
+	for _, partitionID := range partitionIDs {
+		rules = append(rules, &placement.RuleOp{
+			Action:           placement.RuleOpDel,
+			DeleteByIDPrefix: true,
+			Rule: &placement.Rule{
+				GroupID: placement.RuleDefaultGroupID,
+				ID:      fmt.Sprintf("%d_t%d_p%d", schemaID, tableID, partitionID),
+			},
+		})
+	}
+	return rules
+}
+
 // onDropTablePartition deletes old partition meta.
 func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var partNames []string
@@ -912,6 +929,12 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	if job.Type == model.ActionAddTablePartition {
 		// It is rollbacked from adding table partition, just remove addingDefinitions from tableInfo.
 		physicalTableIDs = rollbackAddingPartitionInfo(tblInfo)
+		rules := buildPlacementDropRules(job.SchemaID, tblInfo.ID, physicalTableIDs)
+		err = infosync.UpdatePlacementRules(nil, rules)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
 		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 		job.Args = []interface{}{physicalTableIDs}
 		return ver, nil
@@ -933,6 +956,12 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			return ver, errors.Trace(err)
 		}
 		updateDroppingPartitionInfo(tblInfo, partNames)
+		rules := buildPlacementDropRules(job.SchemaID, tblInfo.ID, physicalTableIDs)
+		err = infosync.UpdatePlacementRules(nil, rules)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		}
 		job.SchemaState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != job.SchemaState)
 	case model.StateDeleteOnly:
@@ -990,6 +1019,32 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 	return ver, errors.Trace(err)
 }
 
+func buildPlacementTruncateRules(rules []*placement.RuleOp, schemaID, tableID, jobID int64, oldIDs []int64, newPartitions []model.PartitionDefinition) []*placement.RuleOp {
+	newRules := make([]*placement.RuleOp, 0, len(oldIDs))
+	for i, oldID := range oldIDs {
+		prefix := fmt.Sprintf("%d_t%d_p%d", schemaID, tableID, oldID)
+		for _, rule := range rules {
+			if strings.HasPrefix(rule.ID, prefix) {
+				// delete the old rule
+				newRules = append(newRules, &placement.RuleOp{
+					Action: placement.RuleOpDel,
+					Rule: &placement.Rule{
+						GroupID: placement.RuleDefaultGroupID,
+						ID:      rule.ID,
+					},
+				})
+
+				// add the new rule
+				rule.Action = placement.RuleOpAdd
+				rule.ID = fmt.Sprintf("%d_t%d_p%d_%s_%d_%d", schemaID, tableID, newPartitions[i].ID, rule.Role, jobID, i)
+				newRules = append(newRules, rule)
+				break
+			}
+		}
+	}
+	return newRules
+}
+
 // onTruncateTablePartition truncates old partition meta.
 func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, error) {
 	var ver int64
@@ -1041,6 +1096,24 @@ func onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (int64, e
 				}
 			}
 		}
+	}
+
+	var rules []*placement.RuleOp
+
+	// TODO: maybe add a middle state
+	rules, err = infosync.GetPlacementRules(nil)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to retrieve placement rules from PD")
+	}
+
+	// TODO: simplify the definition and logic use new PD group bundle API
+	rules = buildPlacementTruncateRules(rules, job.SchemaID, tblInfo.ID, job.ID, oldIDs, newPartitions)
+
+	err = infosync.UpdatePlacementRules(nil, rules)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
 	ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)

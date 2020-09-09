@@ -1102,16 +1102,6 @@ func DecodeHandleInUniqueIndexValue(data []byte, isCommonHandle bool) (kv.Handle
 	return h, nil
 }
 
-// DecodeHandleInUniqueIndexValueDeprecated decodes old handle in data.
-// TODO: remove me after ddl full support cluster index
-func DecodeHandleInUniqueIndexValueDeprecated(data []byte) (int64, error) {
-	dLen := len(data)
-	if dLen <= MaxOldEncodeValueLen {
-		return int64(binary.BigEndian.Uint64(data)), nil
-	}
-	return int64(binary.BigEndian.Uint64(data[dLen-int(data[0]):])), nil
-}
-
 func encodePartitionID(idxVal []byte, partitionID int64) []byte {
 	idxVal = append(idxVal, PartitionIDFlag)
 	idxVal = codec.EncodeInt(idxVal, partitionID)
