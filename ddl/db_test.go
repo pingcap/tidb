@@ -762,7 +762,15 @@ func (s *testDBSuite5) TestParallelDropSchemaAndDropTable(c *C) {
 	wg.Wait()
 	c.Assert(done, IsTrue)
 	c.Assert(checkErr, NotNil)
-	c.Assert(checkErr.Error(), Equals, "[schema:1051]Unknown table 'test_drop_schema_table.t'")
+	// There are two possible assert result because:
+	// 1: If drop-database is finished before drop-table being put into the ddl job queue, it will return "unknown table" error directly in the previous check.
+	// 2: If drop-table has passed the previous check and been put into the ddl job queue, then drop-database finished, it will return schema change error.
+	assertRes := checkErr.Error() == "[domain:8028]Information schema is changed during the execution of the"+
+		" statement(for example, table definition may be updated by other DDL ran in parallel). "+
+		"If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]" ||
+		checkErr.Error() == "[schema:1051]Unknown table 'test_drop_schema_table.t'"
+
+	c.Assert(assertRes, Equals, true)
 
 	// Below behaviour is use to mock query `curl "http://$IP:10080/tiflash/replica"`
 	fn := func(jobs []*model.Job) (bool, error) {
@@ -2584,7 +2592,7 @@ func (s *testSerialDBSuite) TestCreateTable(c *C) {
 	tk.MustExec("drop table y;")
 }
 
-func (s *testDBSuite5) TestRepairTable(c *C) {
+func (s *testSerialDBSuite) TestRepairTable(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"), IsNil)
@@ -2736,7 +2744,7 @@ func turnRepairModeAndInit(on bool) {
 	domainutil.RepairInfo.SetRepairTableList(list)
 }
 
-func (s *testDBSuite5) TestRepairTableWithPartition(c *C) {
+func (s *testSerialDBSuite) TestRepairTableWithPartition(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable", `return(true)`), IsNil)
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/infoschema/repairFetchCreateTable"), IsNil)
@@ -4117,10 +4125,10 @@ func testAddIndexForGeneratedColumn(tk *testkit.TestKit, s *testSerialDBSuite, c
 }
 func (s *testSerialDBSuite) TestAddIndexForGeneratedColumn(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.AlterPrimaryKey = false
 	})
-	defer config.RestoreFunc()()
 
 	testAddIndexForGeneratedColumn(tk, s, c)
 	tk.MustExec("set @@tidb_enable_clustered_index = 1;")
