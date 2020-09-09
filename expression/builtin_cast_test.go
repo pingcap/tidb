@@ -422,7 +422,6 @@ func (s *testEvaluatorSuite) TestCastFuncSig(c *C) {
 		//c.Assert(res.ToString(), DeepEquals, t.after.ToString())
 	}
 
-
 	durationColumn.RetType.Decimal = 1
 	castToDecCases2 := []struct {
 		before  *Column
