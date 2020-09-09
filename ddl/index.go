@@ -531,7 +531,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, errors.Trace(err)
 		}
 
-		elements := []*meta.Element{{indexInfo.ID, meta.IndexElementKey}}
+		elements := []*meta.Element{{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
 		reorgInfo, err := getReorgInfo(d, t, job, tbl, elements)
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version

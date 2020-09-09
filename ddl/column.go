@@ -897,9 +897,9 @@ func (w *worker) doModifyColumnTypeWithData(
 // BuildElements is exported for testing.
 func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo) []*meta.Element {
 	elements := make([]*meta.Element, 0, len(changingIdxs)+1)
-	elements = append(elements, &meta.Element{changingCol.ID, meta.ColumnElementKey})
+	elements = append(elements, &meta.Element{ID: changingCol.ID, TypeKey: meta.ColumnElementKey})
 	for _, idx := range changingIdxs {
-		elements = append(elements, &meta.Element{idx.ID, meta.IndexElementKey})
+		elements = append(elements, &meta.Element{ID: idx.ID, TypeKey: meta.IndexElementKey})
 	}
 	return elements
 }
@@ -934,6 +934,9 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 		err := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
 			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, reorgInfo.StartHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID, reorgInfo.currElement))
 		})
+		if err != nil {
+			return errors.Trace(err)
+		}
 		err = w.addTableIndex(t, idxes[i], reorgInfo)
 		if err != nil {
 			return errors.Trace(err)

@@ -709,14 +709,14 @@ func (m *Meta) jobIDKey(id int64) []byte {
 
 func (m *Meta) reorgJobCurrentElement(id int64) []byte {
 	b := make([]byte, 0, 12)
-	b = m.jobIDKey(id)
+	b = append(b, m.jobIDKey(id)...)
 	b = append(b, "_ele"...)
 	return b
 }
 
 func (m *Meta) reorgJobStartHandle(id int64, element *Element) []byte {
 	b := make([]byte, 0, 16+len(element.TypeKey))
-	b = m.jobIDKey(id)
+	b = append(b, m.jobIDKey(id)...)
 	b = append(b, element.TypeKey...)
 	eID := make([]byte, 8)
 	binary.BigEndian.PutUint64(eID, uint64(element.ID))
