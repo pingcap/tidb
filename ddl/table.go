@@ -966,8 +966,8 @@ func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.Tabl
 		case 1:
 			failpoint.Return(ver, errors.New("mock update version and tableInfo error"))
 		case 2:
-			// We change the state to `JobStateCancelled` directly here, because we want to get the original error with the job id appended.
-			// The job id will be used to get the job from history queue and we will assert it's args.
+			// We change it cancelled directly here, because we want to get the original error with the job id appended.
+			// The job ID will be used to get the job from history queue and we will assert it's args.
 			job.State = model.JobStateCancelled
 			failpoint.Return(ver, errors.New("mock update version and tableInfo error, jobID="+strconv.Itoa(int(job.ID))))
 		default:
