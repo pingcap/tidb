@@ -88,6 +88,11 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 		return buildLead(windowFuncDesc, ordinal)
 	case ast.WindowFuncLag:
 		return buildLag(windowFuncDesc, ordinal)
+	case ast.AggFuncMax:
+		// The max/min aggFunc using in the window function will using the sliding window algo.
+		return buildMaxMinInWindowFunction(windowFuncDesc, ordinal, true)
+	case ast.AggFuncMin:
+		return buildMaxMinInWindowFunction(windowFuncDesc, ordinal, false)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
@@ -326,6 +331,13 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
+		switch fieldType.Tp {
+		case mysql.TypeEnum:
+			return &maxMin4Enum{base}
+		case mysql.TypeSet:
+			return &maxMin4Set{base}
+		}
+
 		switch evalType {
 		case types.ETInt:
 			if mysql.HasUnsignedFlag(fieldType.Flag) {
@@ -352,6 +364,31 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 		}
 	}
 	return nil
+}
+
+// buildMaxMin builds the AggFunc implementation for function "MAX" and "MIN" using by window function.
+func buildMaxMinInWindowFunction(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
+	base := buildMaxMin(aggFuncDesc, ordinal, isMax)
+	// build max/min aggFunc for window function using sliding window
+	switch baseAggFunc := base.(type) {
+	case *maxMin4Int:
+		return &maxMin4IntSliding{*baseAggFunc}
+	case *maxMin4Uint:
+		return &maxMin4UintSliding{*baseAggFunc}
+	case *maxMin4Float32:
+		return &maxMin4Float32Sliding{*baseAggFunc}
+	case *maxMin4Float64:
+		return &maxMin4Float64Sliding{*baseAggFunc}
+	case *maxMin4Decimal:
+		return &maxMin4DecimalSliding{*baseAggFunc}
+	case *maxMin4String:
+		return &maxMin4StringSliding{*baseAggFunc}
+	case *maxMin4Time:
+		return &maxMin4TimeSliding{*baseAggFunc}
+	case *maxMin4Duration:
+		return &maxMin4DurationSliding{*baseAggFunc}
+	}
+	return base
 }
 
 // buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".
@@ -565,7 +602,8 @@ func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
-	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: buildValueEvaluator(aggFuncDesc.RetTp)}
+	ve, _ := buildValueEvaluator(aggFuncDesc.RetTp)
+	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: ve}
 }
 
 func buildLead(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
