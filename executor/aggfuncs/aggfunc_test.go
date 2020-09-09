@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2020 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -139,31 +139,6 @@ func defaultUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (
 	memDeltas = make([]int64, 0)
 	for i := 0; i < srcChk.NumRows(); i++ {
 		memDeltas = append(memDeltas, int64(0))
-	}
-	return memDeltas, nil
-}
-
-func firstRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
-	for i := 0; i < srcChk.NumRows(); i++ {
-		row := srcChk.GetRow(i)
-		if i > 0 {
-			memDeltas = append(memDeltas, int64(0))
-			continue
-		}
-		switch dataType.Tp {
-		case mysql.TypeString:
-			val := row.GetString(0)
-			memDeltas = append(memDeltas, int64(len(val)))
-		case mysql.TypeJSON:
-			jsonVal := row.GetJSON(0)
-			memDeltas = append(memDeltas, int64(len(string(jsonVal.Value))))
-		case mysql.TypeEnum:
-			enum := row.GetEnum(0)
-			memDeltas = append(memDeltas, int64(len(enum.Name)))
-		case mysql.TypeSet:
-			typeSet := row.GetSet(0)
-			memDeltas = append(memDeltas, int64(len(typeSet.Name)))
-		}
 	}
 	return memDeltas, nil
 }
