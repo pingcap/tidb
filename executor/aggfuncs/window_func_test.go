@@ -98,6 +98,7 @@ func (s *testSuite) testWindowAggMemFunc(c *C, p windowMemTest) {
 		memDelta, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 		c.Assert(err, IsNil)
 		c.Assert(memDelta, Equals, updateMemDeltas[i])
+		i++
 	}
 }
 
@@ -191,19 +192,5 @@ func (s *testSuite) TestWindowFunctions(c *C) {
 	}
 	for _, test := range tests {
 		s.testWindowFunc(c, test)
-	}
-}
-
-func (s *testSuite) TestMemRank(c *C) {
-	tests := []windowMemTest{
-		buildWindowMemTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 1, 1,
-			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
-		buildWindowMemTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 3, 0,
-			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
-		buildWindowMemTester(ast.WindowFuncRank, mysql.TypeLonglong, 0, 4, 1,
-			aggfuncs.DefPartialResult4RankSize, rowMemDeltaGens),
-	}
-	for _, test := range tests {
-		s.testWindowAggMemFunc(c, test)
 	}
 }
