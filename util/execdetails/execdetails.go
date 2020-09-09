@@ -689,14 +689,35 @@ func (e *RuntimeStatsWithCommit) Merge(rs RuntimeStats) {
 func (e *RuntimeStatsWithCommit) Clone() RuntimeStats {
 	newRs := RuntimeStatsWithCommit{}
 	if e.Commit != nil {
-		commit := *e.Commit
+		commit := &CommitDetails{
+			GetCommitTsTime:        e.Commit.GetCommitTsTime,
+			PrewriteTime:           e.Commit.PrewriteTime,
+			WaitPrewriteBinlogTime: e.Commit.WaitPrewriteBinlogTime,
+			CommitTime:             e.Commit.CommitTime,
+			LocalLatchTime:         e.Commit.LocalLatchTime,
+			CommitBackoffTime:      e.Commit.CommitBackoffTime,
+			ResolveLockTime:        e.Commit.ResolveLockTime,
+			WriteKeys:              e.Commit.WriteKeys,
+			WriteSize:              e.Commit.WriteSize,
+			PrewriteRegionNum:      e.Commit.PrewriteRegionNum,
+			TxnRetry:               e.Commit.TxnRetry,
+		}
 		commit.Mu.BackoffTypes = append([]fmt.Stringer{}, e.Commit.Mu.BackoffTypes...)
-		newRs.Commit = &commit
+		newRs.Commit = commit
 	}
 	if e.LockKeys != nil {
-		lock := *e.LockKeys
+		lock := &LockKeysDetails{
+			TotalTime:       e.LockKeys.TotalTime,
+			RegionNum:       e.LockKeys.RegionNum,
+			LockKeys:        e.LockKeys.LockKeys,
+			ResolveLockTime: e.LockKeys.ResolveLockTime,
+			BackoffTime:     e.LockKeys.BackoffTime,
+			LockRPCTime:     e.LockKeys.LockRPCTime,
+			LockRPCCount:    e.LockKeys.LockRPCCount,
+			RetryCount:      e.LockKeys.RetryCount,
+		}
 		lock.Mu.BackoffTypes = append([]fmt.Stringer{}, e.LockKeys.Mu.BackoffTypes...)
-		newRs.LockKeys = &lock
+		newRs.LockKeys = lock
 	}
 	return &newRs
 }
