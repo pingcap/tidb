@@ -14,11 +14,8 @@
 package aggfuncs
 
 import (
-<<<<<<< HEAD
 	"container/heap"
-=======
 	"unsafe"
->>>>>>> e3888f4e9... Implement memDelta for max min functions to track memUsage
 
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -27,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 )
 
-<<<<<<< HEAD
 type maxMinHeap struct {
 	data    []interface{}
 	h       heap.Interface
@@ -135,7 +131,7 @@ retry:
 	}
 	return top, false
 }
-=======
+
 const (
 	// DefPartialResult4MaxMinIntSize is the size of partialResult4MaxMinInt
 	DefPartialResult4MaxMinIntSize = int64(unsafe.Sizeof(partialResult4MaxMinInt{}))
@@ -160,7 +156,6 @@ const (
 	// DefPartialResult4MaxMinSetSize is the size of partialResult4MaxMinSet
 	DefPartialResult4MaxMinSetSize = int64(unsafe.Sizeof(partialResult4MaxMinSet{}))
 )
->>>>>>> e3888f4e9... Implement memDelta for max min functions to track memUsage
 
 type partialResult4MaxMinInt struct {
 	val int64
@@ -242,14 +237,10 @@ type maxMin4Int struct {
 func (e *maxMin4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinInt)
 	p.isNull = true
-<<<<<<< HEAD
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})
-	return PartialResult(p), 0
-=======
 	return PartialResult(p), DefPartialResult4MaxMinIntSize
->>>>>>> e3888f4e9... Implement memDelta for max min functions to track memUsage
 }
 
 func (e *maxMin4Int) ResetPartialResult(pr PartialResult) {
@@ -369,14 +360,10 @@ type maxMin4Uint struct {
 func (e *maxMin4Uint) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinUint)
 	p.isNull = true
-<<<<<<< HEAD
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		return types.CompareUint64(i.(uint64), j.(uint64))
 	})
-	return PartialResult(p), 0
-=======
 	return PartialResult(p), DefPartialResult4MaxMinUintSize
->>>>>>> e3888f4e9... Implement memDelta for max min functions to track memUsage
 }
 
 func (e *maxMin4Uint) ResetPartialResult(pr PartialResult) {
@@ -498,14 +485,10 @@ type maxMin4Float32 struct {
 func (e *maxMin4Float32) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinFloat32)
 	p.isNull = true
-<<<<<<< HEAD
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		return types.CompareFloat64(float64(i.(float32)), float64(j.(float32)))
 	})
-	return PartialResult(p), 0
-=======
 	return PartialResult(p), DefPartialResult4MaxMinFloat32Size
->>>>>>> e3888f4e9... Implement memDelta for max min functions to track memUsage
 }
 
 func (e *maxMin4Float32) ResetPartialResult(pr PartialResult) {
@@ -626,14 +609,10 @@ type maxMin4Float64 struct {
 func (e *maxMin4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinFloat64)
 	p.isNull = true
-<<<<<<< HEAD
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		return types.CompareFloat64(i.(float64), j.(float64))
 	})
-	return PartialResult(p), 0
-=======
 	return PartialResult(p), DefPartialResult4MaxMinFloat64Size
->>>>>>> e3888f4e9... Implement memDelta for max min functions to track memUsage
 }
 
 func (e *maxMin4Float64) ResetPartialResult(pr PartialResult) {
@@ -753,16 +732,12 @@ type maxMin4Decimal struct {
 func (e *maxMin4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinDecimal)
 	p.isNull = true
-<<<<<<< HEAD
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		src := i.(types.MyDecimal)
 		dst := j.(types.MyDecimal)
 		return src.Compare(&dst)
 	})
-	return PartialResult(p), 0
-=======
 	return PartialResult(p), DefPartialResult4MaxMinDecimalSize
->>>>>>> e3888f4e9... Implement memDelta for max min functions to track memUsage
 }
 
 func (e *maxMin4Decimal) ResetPartialResult(pr PartialResult) {
@@ -890,15 +865,11 @@ type maxMin4String struct {
 func (e *maxMin4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinString)
 	p.isNull = true
-<<<<<<< HEAD
 	tp := e.args[0].GetType()
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		return types.CompareString(i.(string), j.(string), tp.Collate)
 	})
-	return PartialResult(p), 0
-=======
 	return PartialResult(p), DefPartialResult4MaxMinStringSize
->>>>>>> e3888f4e9... Implement memDelta for max min functions to track memUsage
 }
 
 func (e *maxMin4String) ResetPartialResult(pr PartialResult) {
@@ -1029,16 +1000,12 @@ type maxMin4Time struct {
 func (e *maxMin4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4Time)
 	p.isNull = true
-<<<<<<< HEAD
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		src := i.(types.Time)
 		dst := j.(types.Time)
 		return src.Compare(dst)
 	})
-	return PartialResult(p), 0
-=======
 	return PartialResult(p), DefPartialResult4TimeSize
->>>>>>> e3888f4e9... Implement memDelta for max min functions to track memUsage
 }
 
 func (e *maxMin4Time) ResetPartialResult(pr PartialResult) {
@@ -1159,16 +1126,12 @@ type maxMin4Duration struct {
 func (e *maxMin4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinDuration)
 	p.isNull = true
-<<<<<<< HEAD
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		src := i.(types.Duration)
 		dst := j.(types.Duration)
 		return src.Compare(dst)
 	})
-	return PartialResult(p), 0
-=======
 	return PartialResult(p), DefPartialResult4MaxMinDurationSize
->>>>>>> e3888f4e9... Implement memDelta for max min functions to track memUsage
 }
 
 func (e *maxMin4Duration) ResetPartialResult(pr PartialResult) {
