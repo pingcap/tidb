@@ -174,7 +174,9 @@ func typeInferForNull(args []Expression) {
 }
 
 // newFunctionImpl creates a new scalar function or constant.
-func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+// fold: 1 means folding constants, while 0 means not,
+// -1 means try to fold constants if without errors/warnings, otherwise not.
+func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction.")
 	}
@@ -210,20 +212,36 @@ func newFunctionImpl(ctx sessionctx.Context, fold bool, funcName string, retType
 		RetType:  retType,
 		Function: f,
 	}
-	if fold {
+	if fold == 1 {
 		return FoldConstant(sf), nil
+	} else if fold == -1 {
+		// try to fold constants, and return the original function if errors/warnings occur
+		sc := ctx.GetSessionVars().StmtCtx
+		beforeWarns := sc.WarningCount()
+		newSf := FoldConstant(sf)
+		afterWarns := sc.WarningCount()
+		if afterWarns > beforeWarns {
+			sc.TruncateWarnings(int(beforeWarns))
+			return sf, nil
+		}
+		return newSf, nil
 	}
 	return sf, nil
 }
 
 // NewFunction creates a new scalar function or constant via a constant folding.
 func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, true, funcName, retType, args...)
+	return newFunctionImpl(ctx, 1, funcName, retType, args...)
 }
 
 // NewFunctionBase creates a new scalar function with no constant folding.
 func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
-	return newFunctionImpl(ctx, false, funcName, retType, args...)
+	return newFunctionImpl(ctx, 0, funcName, retType, args...)
+}
+
+// NewFunctionTryFold creates a new scalar function with trying constant folding.
+func NewFunctionTryFold(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+	return newFunctionImpl(ctx, -1, funcName, retType, args...)
 }
 
 // NewFunctionInternal is similar to NewFunction, but do not returns error, should only be used internally.
