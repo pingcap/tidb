@@ -177,7 +177,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		if err1 != nil {
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
 		}
-		err = sc.HandleTruncate(types.ErrTruncated.GenWithStackByArgs(col.FieldType.CompactStr(), str))
+		err = sc.HandleTruncate(types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str))
 	} else {
 		err = sc.HandleTruncate(err)
 	}
