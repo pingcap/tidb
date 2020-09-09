@@ -994,7 +994,10 @@ func SetRedactLog(enable bool) {
 	if enable {
 		value = 1
 	}
-	atomic.StoreInt32(&GetGlobalConfig().EnableRedactLog, value)
+	g := GetGlobalConfig()
+	newConf := *g
+	newConf.EnableRedactLog = value
+	StoreGlobalConfig(&newConf)
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
