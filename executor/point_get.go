@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/util/execdetails"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -472,4 +473,35 @@ func (e *runtimeStatsWithSnapshot) String() string {
 		return e.SnapshotRuntimeStats.String()
 	}
 	return ""
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *runtimeStatsWithSnapshot) Clone() execdetails.RuntimeStats {
+	newRs := &runtimeStatsWithSnapshot{}
+	if e.SnapshotRuntimeStats != nil {
+		snapshotStats := e.SnapshotRuntimeStats.Clone()
+		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *runtimeStatsWithSnapshot) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*runtimeStatsWithSnapshot)
+	if !ok {
+		return
+	}
+	if tmp.SnapshotRuntimeStats != nil {
+		if e.SnapshotRuntimeStats == nil {
+			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
+			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+			return
+		}
+		e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *runtimeStatsWithSnapshot) Tp() int {
+	return execdetails.TpRuntimeStatsWithSnapshot
 }

@@ -1034,6 +1034,11 @@ func (e *joinRuntimeStats) String() string {
 	return buf.String()
 }
 
+// Tp implements the RuntimeStats interface.
+func (e *joinRuntimeStats) Tp() int {
+	return execdetails.TpJoinRuntimeStats
+}
+
 type hashJoinRuntimeStats struct {
 	fetchAndBuildHashTable time.Duration
 	hashStat               hashStatistic
@@ -1053,6 +1058,11 @@ func (e *hashJoinRuntimeStats) setMaxFetchAndProbeTime(t int64) {
 			return
 		}
 	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *hashJoinRuntimeStats) Tp() int {
+	return execdetails.TpHashJoinRuntimeStats
 }
 
 func (e *hashJoinRuntimeStats) String() string {

@@ -346,14 +346,16 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		backoffSleep: make(map[string]time.Duration, len(s.backoffSleep)),
 		rpcStat:      tikv.NewRegionRequestRuntimeStats(),
 	}
-	newRs.copRespTime = append(s.copRespTime, s.copRespTime...)
-	newRs.procKeys = append(s.procKeys, s.procKeys...)
+	newRs.copRespTime = append(newRs.copRespTime, s.copRespTime...)
+	newRs.procKeys = append(newRs.procKeys, s.procKeys...)
 	for k, v := range s.backoffSleep {
 		newRs.backoffSleep[k] += v
 	}
 	newRs.totalProcessTime += s.totalProcessTime
 	newRs.totalWaitTime += s.totalWaitTime
-	newRs.rpcStat.Merge(s.rpcStat)
+	for k, v := range s.rpcStat.Stats {
+		newRs.rpcStat.Stats[k] = v
+	}
 	return &newRs
 }
 
@@ -442,4 +444,9 @@ func (s *selectResultRuntimeStats) String() string {
 		buf.WriteString("}")
 	}
 	return buf.String()
+}
+
+// Tp implements the RuntimeStats interface.
+func (s *selectResultRuntimeStats) Tp() int {
+	return execdetails.TpSelectResultRuntimeStats
 }

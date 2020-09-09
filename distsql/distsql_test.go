@@ -167,7 +167,7 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
 		totalProcessTime: time.Second,
 		totalWaitTime:    time.Second,
-		rpcStat:          tikv.RegionRequestRuntimeStats{},
+		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
 	}
 	s2 := *s1
 	stmtStats := execdetails.NewRuntimeStatsColl()

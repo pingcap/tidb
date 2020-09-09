@@ -803,3 +803,8 @@ func (e *indexLookUpJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	e.innerWorker.build += tmp.innerWorker.build
 	e.innerWorker.join += tmp.innerWorker.join
 }
+
+// Tp implements the RuntimeStats interface.
+func (e *indexLookUpJoinRuntimeStats) Tp() int {
+	return execdetails.TpIndexLookUpJoinRuntimeStats
+}

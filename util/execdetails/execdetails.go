@@ -16,7 +16,6 @@ package execdetails
 import (
 	"bytes"
 	"fmt"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -377,11 +376,33 @@ func (crs *CopRuntimeStats) String() string {
 		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
 }
 
+const (
+	// TpBasicRuntimeStats is the tp for BasicRuntimeStats.
+	TpBasicRuntimeStats int = iota
+	// TpRuntimeStatsWithCommit is the tp for RuntimeStatsWithCommit.
+	TpRuntimeStatsWithCommit
+	// TpRuntimeStatsWithConcurrencyInfo is the tp for RuntimeStatsWithConcurrencyInfo.
+	TpRuntimeStatsWithConcurrencyInfo
+	// TpSnapshotRuntimeStats is the tp for SnapshotRuntimeStats.
+	TpSnapshotRuntimeStats
+	// TpHashJoinRuntimeStats is the tp for HashJoinRuntimeStats.
+	TpHashJoinRuntimeStats
+	// TpIndexLookUpJoinRuntimeStats is the tp for IndexLookUpJoinRuntimeStats.
+	TpIndexLookUpJoinRuntimeStats
+	// TpRuntimeStatsWithSnapshot is the tp for RuntimeStatsWithSnapshot.
+	TpRuntimeStatsWithSnapshot
+	// TpJoinRuntimeStats is the tp for JoinRuntimeStats.
+	TpJoinRuntimeStats
+	// TpSelectResultRuntimeStats is the tp for SelectResultRuntimeStats.
+	TpSelectResultRuntimeStats
+)
+
 // RuntimeStats is used to express the executor runtime information.
 type RuntimeStats interface {
 	String() string
 	Merge(RuntimeStats)
 	Clone() RuntimeStats
+	Tp() int
 }
 
 // BasicRuntimeStats is the basic runtime stats.
@@ -417,6 +438,11 @@ func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 	e.loop += tmp.loop
 	e.consume += tmp.consume
 	e.rows += tmp.rows
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *BasicRuntimeStats) Tp() int {
+	return TpBasicRuntimeStats
 }
 
 // RootRuntimeStats is the executor runtime stats that combine with multiple runtime stats.
@@ -511,13 +537,13 @@ func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 	if basic, ok := info.(*BasicRuntimeStats); ok {
 		stats.basics = append(stats.basics, basic)
 	} else {
-		tp := reflect.TypeOf(info)
+		tp := info.Tp()
 		found := false
 		for i, rss := range stats.groupRss {
 			if len(rss) == 0 {
 				continue
 			}
-			if reflect.TypeOf(rss[0]) == tp {
+			if rss[0].Tp() == tp {
 				stats.groupRss[i] = append(stats.groupRss[i], info)
 				found = true
 				break
@@ -610,6 +636,11 @@ type RuntimeStatsWithConcurrencyInfo struct {
 	concurrency []*ConcurrencyInfo
 }
 
+// Tp implements the RuntimeStats interface.
+func (e *RuntimeStatsWithConcurrencyInfo) Tp() int {
+	return TpRuntimeStatsWithConcurrencyInfo
+}
+
 // SetConcurrencyInfo sets the concurrency informations.
 // We must clear the concurrencyInfo first when we call the SetConcurrencyInfo.
 // When the num <= 0, it means the exector operator is not executed parallel.
@@ -662,6 +693,11 @@ func (e *RuntimeStatsWithConcurrencyInfo) Merge(rs RuntimeStats) {
 type RuntimeStatsWithCommit struct {
 	Commit   *CommitDetails
 	LockKeys *LockKeysDetails
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *RuntimeStatsWithCommit) Tp() int {
+	return TpRuntimeStatsWithCommit
 }
 
 // Merge implements the RuntimeStats interface.

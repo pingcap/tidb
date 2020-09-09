@@ -658,11 +658,18 @@ type SnapshotRuntimeStats struct {
 	backoffTimes   map[backoffType]int
 }
 
+// Tp implements the RuntimeStats interface.
+func (rs *SnapshotRuntimeStats) Tp() int {
+	return execdetails.TpSnapshotRuntimeStats
+}
+
 // Clone implements the RuntimeStats interface.
 func (rs *SnapshotRuntimeStats) Clone() execdetails.RuntimeStats {
 	newRs := SnapshotRuntimeStats{rpcStats: NewRegionRequestRuntimeStats()}
 	if rs.rpcStats.Stats != nil {
-		newRs.rpcStats.Merge(rs.rpcStats)
+		for k, v := range rs.rpcStats.Stats {
+			newRs.rpcStats.Stats[k] = v
+		}
 	}
 	if len(rs.backoffSleepMS) > 0 {
 		newRs.backoffSleepMS = make(map[backoffType]int)
