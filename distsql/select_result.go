@@ -346,7 +346,14 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		backoffSleep: make(map[string]time.Duration, len(s.backoffSleep)),
 		rpcStat:      tikv.NewRegionRequestRuntimeStats(),
 	}
-	newRs.Merge(s)
+	newRs.copRespTime = append(s.copRespTime, s.copRespTime...)
+	newRs.procKeys = append(s.procKeys, s.procKeys...)
+	for k, v := range s.backoffSleep {
+		newRs.backoffSleep[k] += v
+	}
+	newRs.totalProcessTime += s.totalProcessTime
+	newRs.totalWaitTime += s.totalWaitTime
+	newRs.rpcStat.Merge(s.rpcStat)
 	return &newRs
 }
 

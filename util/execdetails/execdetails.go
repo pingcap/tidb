@@ -688,7 +688,16 @@ func (e *RuntimeStatsWithCommit) Merge(rs RuntimeStats) {
 // Clone implements the RuntimeStats interface.
 func (e *RuntimeStatsWithCommit) Clone() RuntimeStats {
 	newRs := RuntimeStatsWithCommit{}
-	newRs.Merge(e)
+	if e.Commit != nil {
+		commit := *e.Commit
+		commit.Mu.BackoffTypes = append([]fmt.Stringer{}, e.Commit.Mu.BackoffTypes...)
+		newRs.Commit = &commit
+	}
+	if e.LockKeys != nil {
+		lock := *e.LockKeys
+		lock.Mu.BackoffTypes = append([]fmt.Stringer{}, e.LockKeys.Mu.BackoffTypes...)
+		newRs.LockKeys = &lock
+	}
 	return &newRs
 }
 
