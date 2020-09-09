@@ -1577,6 +1577,15 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
+	childrenUsed := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())[0]
+	if childrenUsed != nil {
+		sortExec.childrenUsed = make([]int, 0, len(childrenUsed))
+		for i, used := range childrenUsed {
+			if used {
+				sortExec.childrenUsed = append(sortExec.childrenUsed, i)
+			}
+		}
+	}
 	executorCounterSortExec.Inc()
 	return &sortExec
 }
@@ -1590,6 +1599,15 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec),
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
+	}
+	childrenUsed := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())[0]
+	if childrenUsed != nil {
+		sortExec.childrenUsed = make([]int, 0, len(childrenUsed))
+		for i, used := range childrenUsed {
+			if used {
+				sortExec.childrenUsed = append(sortExec.childrenUsed, i)
+			}
+		}
 	}
 	executorCounterTopNExec.Inc()
 	return &TopNExec{

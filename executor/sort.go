@@ -59,6 +59,8 @@ type SortExec struct {
 	multiWayMerge *multiWayMerge
 	// spillAction save the Action for spill disk.
 	spillAction *chunk.SortAndSpillDiskAction
+
+	childrenUsed []int
 }
 
 // Close implements the Executor Close interface.
@@ -131,7 +133,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if err != nil {
 				return err
 			}
-			req.AppendRow(row)
+			req.AppendRowByColIdxs(row, e.childrenUsed)
 			e.Idx++
 		}
 	}
@@ -187,7 +189,7 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 
 	for !req.IsFull() && e.multiWayMerge.Len() > 0 {
 		partitionPtr := e.multiWayMerge.elements[0]
-		req.AppendRow(partitionPtr.row)
+		req.AppendRowByColIdxs(partitionPtr.row, e.childrenUsed)
 		partitionPtr.consumed++
 		if partitionPtr.consumed >= e.partitionList[partitionPtr.partitionID].NumRow() {
 			heap.Remove(e.multiWayMerge, 0)
@@ -409,7 +411,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	for !req.IsFull() && e.Idx < len(e.rowPtrs) {
 		row := e.rowChunks.GetRow(e.rowPtrs[e.Idx])
-		req.AppendRow(row)
+		req.AppendRowByColIdxs(row, e.childrenUsed)
 		e.Idx++
 	}
 	return nil
@@ -479,7 +481,7 @@ func (e *TopNExec) processChildChk(childRowChk *chunk.Chunk) error {
 		next = childRowChk.GetRow(i)
 		if e.chkHeap.greaterRow(heapMax, next) {
 			// Evict heap max, keep the next row.
-			e.rowPtrs[0] = e.rowChunks.AppendRow(childRowChk.GetRow(i))
+			e.rowPtrs[0] = e.rowChunks.AppendRowByColIdxs(childRowChk.GetRow(i), e.childrenUsed)
 			heap.Fix(e.chkHeap, 0)
 		}
 	}
