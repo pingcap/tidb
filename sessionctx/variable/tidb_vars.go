@@ -483,7 +483,7 @@ const (
 	DefTiDBHashAggPartialConcurrency   = 4
 	DefTiDBHashAggFinalConcurrency     = 4
 	DefTiDBWindowConcurrency           = 4
-	DefTiDBUnionConcurrency = 4
+	DefTiDBUnionConcurrency            = 4
 	DefTiDBForcePriority               = mysql.NoPriority
 	DefTiDBUseRadixJoin                = false
 	DefEnableWindowFunction            = true
