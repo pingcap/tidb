@@ -183,19 +183,6 @@ func (s *testSuite) TestMemRank(c *C) {
 	}
 }
 
-func (s *testSuite) TestMemNtile(c *C) {
-	tests := []windowMemTest{
-		buildWindowMemTester(ast.WindowFuncNtile, mysql.TypeLonglong, 1, 1, 1,
-			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens),
-		buildWindowMemTester(ast.WindowFuncNtile, mysql.TypeLonglong, 1, 3, 0,
-			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens),
-		buildWindowMemTester(ast.WindowFuncNtile, mysql.TypeLonglong, 1, 4, 1,
-			aggfuncs.DefPartialResult4Ntile, defaultUpdateMemDeltaGens),
-	}
-	for _, test := range tests {
-		s.testWindowAggMemFunc(c, test)
-	}
-}
 
 func (s *testSuite) testWindowAggMemFunc(c *C, p windowMemTest) {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.windowTest.dataType}, p.windowTest.numRows)
