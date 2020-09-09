@@ -235,7 +235,7 @@ const (
 
 var (
 	// CommitMaxBackoff is max sleep time of the 'commit' command
-	CommitMaxBackoff = 41000
+	CommitMaxBackoff = uint64(41000)
 
 	// PrewriteMaxBackoff is max sleep time of the `pre-write` command.
 	PrewriteMaxBackoff = 20000

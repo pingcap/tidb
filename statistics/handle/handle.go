@@ -275,6 +275,26 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	return tbl
 }
 
+// CanRuntimePrune indicates whether tbl support runtime prune for table and first partition id.
+func (h *Handle) CanRuntimePrune(tid, p0Id int64) bool {
+	if h == nil {
+		return false
+	}
+	if tid == p0Id {
+		return false
+	}
+	statsCache := h.statsCache.Load().(statsCache)
+	_, tblExists := statsCache.tables[tid]
+	if tblExists {
+		return true
+	}
+	_, partExists := statsCache.tables[p0Id]
+	if !partExists {
+		return true
+	}
+	return false
+}
+
 func (h *Handle) updateStatsCache(newCache statsCache) {
 	h.statsCache.Lock()
 	oldCache := h.statsCache.Load().(statsCache)
