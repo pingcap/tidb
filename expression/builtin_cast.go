@@ -527,6 +527,12 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(row chunk.Row) (res *types.MyDe
 	} else {
 		res = types.NewDecFromUint(uint64(val))
 	}
+	if b.tp.Flen > mysql.MaxDecimalWidth {
+		return res, isNull, types.ErrTooBigPrecision.GenWithStackByArgs(b.tp.Flen, string(res.ToString()), mysql.MaxDecimalWidth)
+	}
+	if b.tp.Decimal > mysql.MaxDecimalScale {
+		return res, isNull, types.ErrTooBigScale.GenWithStackByArgs(b.tp.Flen, string(res.ToString()), mysql.MaxDecimalScale)
+	}
 	res, err = types.ProduceDecWithSpecifiedTp(res, b.tp, b.ctx.GetSessionVars().StmtCtx)
 	return res, isNull, err
 }

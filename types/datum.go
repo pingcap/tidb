@@ -1288,12 +1288,6 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 		if flen < decimal {
 			return nil, ErrMBiggerThanD.GenWithStackByArgs("")
 		}
-		if flen > mysql.MaxDecimalWidth {
-			return nil, ErrTooBigPrecision.GenWithStackByArgs(flen, string(dec.ToString()), mysql.MaxDecimalWidth)
-		}
-		if decimal > mysql.MaxDecimalScale {
-			return nil, ErrTooBigScale.GenWithStackByArgs(decimal, string(dec.ToString()), mysql.MaxDecimalScale)
-		}
 		prec, frac := dec.PrecisionAndFrac()
 		if !dec.IsZero() && prec-frac > flen-decimal {
 			dec = NewMaxOrMinDec(dec.IsNegative(), flen, decimal)
