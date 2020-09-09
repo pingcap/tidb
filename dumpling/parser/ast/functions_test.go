@@ -105,7 +105,8 @@ func (ts *testFunctionsSuite) TestFuncCallExprRestore(c *C) {
 
 func (ts *testFunctionsSuite) TestFuncCastExprRestore(c *C) {
 	testCases := []NodeRestoreTestCase{
-		{"CONVERT('Müller' USING UtF8Mb4)", "CONVERT('Müller' USING UTF8MB4)"},
+		{"CONVERT('Müller' USING UtF8)", "CONVERT('Müller' USING 'utf8')"},
+		{"CONVERT('Müller' USING UtF8Mb4)", "CONVERT('Müller' USING 'utf8mb4')"},
 		{"CONVERT('Müller', CHAR(32) CHARACTER SET UtF8)", "CONVERT('Müller', CHAR(32) CHARSET UTF8)"},
 		{"CAST('test' AS CHAR CHARACTER SET UtF8)", "CAST('test' AS CHAR CHARSET UTF8)"},
 		{"BINARY 'New York'", "BINARY 'New York'"},
