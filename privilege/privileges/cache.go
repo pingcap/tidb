@@ -337,7 +337,7 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 func noSuchTable(err error) bool {
 	e1 := errors.Cause(err)
 	if e2, ok := e1.(*terror.Error); ok {
-		if e2.Code() == terror.ErrCode(mysql.ErrNoSuchTable) {
+		if terror.ErrCode(e2.Code()) == terror.ErrCode(mysql.ErrNoSuchTable) {
 			return true
 		}
 	}
@@ -804,6 +804,10 @@ func (record *baseRecord) match(user, host string) bool {
 		record.hostMatch(host))
 }
 
+func (record *baseRecord) fullyMatch(user, host string) bool {
+	return record.User == user && record.Host == host
+}
+
 func (record *dbRecord) match(user, host, db string) bool {
 	return record.baseRecord.match(user, host) &&
 		patternMatch(strings.ToUpper(db), record.dbPatChars, record.dbPatTypes)
@@ -1007,7 +1011,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	// Check whether user exists.
 	if userList, ok := p.UserMap[user]; ok {
 		for _, record := range userList {
-			if host == record.Host || record.hostMatch(host) {
+			if record.fullyMatch(user, host) {
 				userExists = true
 				break
 			}
@@ -1018,7 +1022,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	}
 	var g string
 	for _, record := range p.User {
-		if record.baseRecord.match(user, host) {
+		if record.fullyMatch(user, host) {
 			hasGlobalGrant = true
 			if (record.Privileges & mysql.GrantPriv) > 0 {
 				hasGrantOptionPriv = true
@@ -1067,7 +1071,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	// Show db scope grants.
 	dbPrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.DB {
-		if record.baseRecord.match(user, host) {
+		if record.fullyMatch(user, host) {
 			if _, ok := dbPrivTable[record.DB]; ok {
 				if (record.Privileges & mysql.GrantPriv) > 0 {
 					hasGrantOptionPriv = true
@@ -1124,7 +1128,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	tablePrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.TablesPriv {
 		recordKey := record.DB + "." + record.TableName
-		if record.baseRecord.match(user, host) {
+		if user == record.User && host == record.Host {
 			if _, ok := dbPrivTable[record.DB]; ok {
 				if (record.TablePriv & mysql.GrantPriv) > 0 {
 					hasGrantOptionPriv = true
