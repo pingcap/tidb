@@ -1338,7 +1338,7 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 		warn := errors.Cause(w.Err)
 		switch x := warn.(type) {
 		case *terror.Error:
-			sqlErr := x.ToSQLError()
+			sqlErr := terror.ToSQLError(x)
 			e.appendRow([]interface{}{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
 			e.appendRow([]interface{}{w.Level, int64(mysql.ErrUnknown), warn.Error()})

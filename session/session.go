@@ -1033,6 +1033,22 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 	s.processInfo.Store(&pi)
 }
 
+// execStmtResult is the return value of ExecuteStmt and it implements the sqlexec.RecordSet interface.
+// Why we need a struct to wrap a RecordSet and provide another RecordSet?
+// This is because there are so many session state related things that definitely not belongs to the original
+// RecordSet, so this struct exists and RecordSet.Close() is overrided handle that.
+type execStmtResult struct {
+	sqlexec.RecordSet
+	se  *session
+	sql sqlexec.Statement
+}
+
+func (rs *execStmtResult) Close() error {
+	se := rs.se
+	err := rs.RecordSet.Close()
+	return finishStmt(context.Background(), se, err, rs.sql)
+}
+
 func (s *session) executeStatement(ctx context.Context, stmt *executor.ExecStmt, recordSets []sqlexec.RecordSet, inMulitQuery bool) ([]sqlexec.RecordSet, error) {
 	logStmt(stmt, s.sessionVars)
 	recordSet, err := runStmt(ctx, s, stmt)
@@ -1918,6 +1934,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
 	variable.TiDBWindowConcurrency,
+	variable.TiDBUnionConcurrency,
 	variable.TiDBBackoffLockFast,
 	variable.TiDBBackOffWeight,
 	variable.TiDBConstraintCheckInPlace,
