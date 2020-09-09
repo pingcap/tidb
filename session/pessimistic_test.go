@@ -1786,3 +1786,21 @@ func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
 	tk4.MustExec("rollback")
 	tk5.MustExec("rollback")
 }
+
+func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2)")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk2.MustExec("begin pessimistic")
+	tk3.MustExec("begin pessimistic")
+	tk2.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
+	go func() {
+		tk3.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
+		tk3.MustExec("commit")
+	}()
+	tk2.MustExec("commit")
+}
