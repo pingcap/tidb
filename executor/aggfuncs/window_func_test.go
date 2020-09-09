@@ -76,6 +76,31 @@ func (s *testSuite) testWindowFunc(c *C, p windowTest) {
 	finalFunc.ResetPartialResult(finalPr)
 }
 
+func (s *testSuite) testWindowAggMemFunc(c *C, p windowMemTest) {
+	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.windowTest.dataType}, p.windowTest.numRows)
+	dataGen := getDataGenFunc(p.windowTest.dataType)
+	for i := 0; i < p.windowTest.numRows; i++ {
+		dt := dataGen(i)
+		srcChk.AppendDatum(0, &dt)
+	}
+
+	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.windowTest.funcName, p.windowTest.args, false)
+	c.Assert(err, IsNil)
+	finalFunc := aggfuncs.BuildWindowFunctions(s.ctx, desc, 0, p.windowTest.orderByCols)
+	finalPr, memDelta := finalFunc.AllocPartialResult()
+	c.Assert(memDelta, Equals, p.allocMemDelta)
+
+	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.windowTest.dataType)
+	c.Assert(err, IsNil)
+	i := 0
+	iter := chunk.NewIterator4Chunk(srcChk)
+	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+		memDelta, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(err, IsNil)
+		c.Assert(memDelta, Equals, updateMemDeltas[i])
+	}
+}
+
 func buildWindowTesterWithArgs(funcName string, tp byte, args []expression.Expression, orderByCols int, numRows int, results ...interface{}) windowTest {
 	pt := windowTest{
 		dataType: types.NewFieldType(tp),
@@ -180,31 +205,5 @@ func (s *testSuite) TestMemRank(c *C) {
 	}
 	for _, test := range tests {
 		s.testWindowAggMemFunc(c, test)
-	}
-}
-
-
-func (s *testSuite) testWindowAggMemFunc(c *C, p windowMemTest) {
-	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.windowTest.dataType}, p.windowTest.numRows)
-	dataGen := getDataGenFunc(p.windowTest.dataType)
-	for i := 0; i < p.windowTest.numRows; i++ {
-		dt := dataGen(i)
-		srcChk.AppendDatum(0, &dt)
-	}
-
-	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.windowTest.funcName, p.windowTest.args, false)
-	c.Assert(err, IsNil)
-	finalFunc := aggfuncs.BuildWindowFunctions(s.ctx, desc, 0, p.windowTest.orderByCols)
-	finalPr, memDelta := finalFunc.AllocPartialResult()
-	c.Assert(memDelta, Equals, p.allocMemDelta)
-
-	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.windowTest.dataType)
-	c.Assert(err, IsNil)
-	i := 0
-	iter := chunk.NewIterator4Chunk(srcChk)
-	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		memDelta, err = finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
-		c.Assert(err, IsNil)
-		c.Assert(memDelta, Equals, updateMemDeltas[i])
 	}
 }
