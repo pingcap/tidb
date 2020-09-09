@@ -56,9 +56,9 @@ func (v *lead) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult
 	p := (*partialResult4LeadLag)(pr)
 	var err error
 	if p.curIdx+v.offset < uint64(len(p.rows)) {
-		err = v.evaluateRow(sctx, v.args[0], p.rows[p.curIdx+v.offset])
+		_, err = v.evaluateRow(sctx, v.args[0], p.rows[p.curIdx+v.offset])
 	} else {
-		err = v.evaluateRow(sctx, v.defaultExpr, p.rows[p.curIdx])
+		_, err = v.evaluateRow(sctx, v.defaultExpr, p.rows[p.curIdx])
 	}
 	if err != nil {
 		return err
@@ -76,9 +76,9 @@ func (v *lag) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult,
 	p := (*partialResult4LeadLag)(pr)
 	var err error
 	if p.curIdx >= v.offset {
-		err = v.evaluateRow(sctx, v.args[0], p.rows[p.curIdx-v.offset])
+		_, err = v.evaluateRow(sctx, v.args[0], p.rows[p.curIdx-v.offset])
 	} else {
-		err = v.evaluateRow(sctx, v.defaultExpr, p.rows[p.curIdx])
+		_, err = v.evaluateRow(sctx, v.defaultExpr, p.rows[p.curIdx])
 	}
 	if err != nil {
 		return err
