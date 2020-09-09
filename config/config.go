@@ -663,7 +663,7 @@ var defaultConf = Config{
 		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
 		DistinctAggPushDown:  false,
 		CommitterConcurrency: 16,
-		MaxTxnTTL:            10 * 60 * 1000, // 10min
+		MaxTxnTTL:            60 * 60 * 1000, // 1hour
 		MemProfileInterval:   "1m",
 	},
 	ProxyProtocol: ProxyProtocol{
