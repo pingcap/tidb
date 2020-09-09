@@ -980,7 +980,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
-	e.stats.RpcTime = time.Since(rpcStart)
+	e.stats.RPCTime = time.Since(rpcStart)
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
 		skip := false
@@ -1007,7 +1007,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 		// If row was checked with no duplicate keys,
-		// it should be add to values map for the further` row check.
+		// it should be add to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
 		if !skip {
 			e.ctx.GetSessionVars().StmtCtx.AddCopiedRows(1)
