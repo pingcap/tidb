@@ -834,7 +834,7 @@ func (w *baseIndexWorker) AddMetricInfo(cnt float64) {
 
 // getIndexRecord gets index columns values use w.rowDecoder, and generate indexRecord.
 func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Handle, recordKey []byte) (*indexRecord, error) {
-	cols := w.table.Cols()
+	cols := w.table.WritableCols()
 	sysZone := timeutil.SystemLocation()
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	var err error
@@ -934,7 +934,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			if err != nil {
 				return false, err
 			}
-			for _, index := range w.indexes { //TODO: BUG, this line pass by value.
+			for _, index := range w.indexes {
 				idxRecord, err1 := w.getIndexRecord(index.Meta(), handle, recordKey)
 				if err1 != nil {
 					return false, errors.Trace(err1)

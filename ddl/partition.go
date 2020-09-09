@@ -935,6 +935,10 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			job.State = model.JobStateCancelled
 			return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
+		ver, err = updateVersionAndTableInfo(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 		job.Args = []interface{}{physicalTableIDs}
 		return ver, nil
