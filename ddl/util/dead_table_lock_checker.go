@@ -54,7 +54,7 @@ func (d *DeadTableLockChecker) getAliveServers(ctx context.Context) (map[string]
 			return nil, ctx.Err()
 		default:
 		}
-		childCtx, cancel := context.WithTimeout(context.Background(), defaultTimeout)
+		childCtx, cancel := context.WithTimeout(ctx, defaultTimeout)
 		resp, err = d.etcdCli.Get(childCtx, DDLAllSchemaVersions, clientv3.WithPrefix())
 		cancel()
 		if err != nil {
