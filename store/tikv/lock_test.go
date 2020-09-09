@@ -20,6 +20,7 @@ import (
 	"math/rand"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -54,6 +55,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 		err = txn.Delete(key)
 	}
 	c.Assert(err, IsNil)
+
 	if len(primaryValue) > 0 {
 		err = txn.Set(primaryKey, primaryValue)
 	} else {
@@ -71,7 +73,7 @@ func (s *testLockSuite) lockKey(c *C, key, value, primaryKey, primaryValue []byt
 	if commitPrimary {
 		tpc.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 		c.Assert(err, IsNil)
-		err = tpc.commitMutations(NewBackofferWithVars(ctx, CommitMaxBackoff, nil), tpc.mutationsOfKeys([][]byte{primaryKey}))
+		err = tpc.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), tpc.mutationsOfKeys([][]byte{primaryKey}))
 		c.Assert(err, IsNil)
 	}
 	return txn.startTS, tpc.commitTS
