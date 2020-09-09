@@ -233,6 +233,10 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1, false},
 		{types.MakeDatums("9007199254740991", "9007199254740992"), 0, false},
 		{types.MakeDatums(1, uint32(1), uint32(1)), 0, true},
+		{types.MakeDatums(-1, 2333, nil), 0, false},
+		{types.MakeDatums(1, nil, nil, nil), 3, false},
+		{types.MakeDatums(1, nil, nil, nil, 2), 3, false},
+		{types.MakeDatums(uint64(9223372036854775808), nil, nil, nil, 4), 4, false},
 
 		// tests for appropriate precision loss
 		{types.MakeDatums(9007199254740992, "9007199254740993"), 1, false},

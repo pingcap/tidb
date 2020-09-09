@@ -134,7 +134,6 @@ type stmtFuture struct {
 type TransactionContext struct {
 	forUpdateTS   uint64
 	stmtFuture    oracle.Future
-	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
 	History       interface{}
@@ -254,7 +253,6 @@ func (tc *TransactionContext) SetPessimisticLockCache(key kv.Key, val []byte) {
 // Cleanup clears up transaction info that no longer use.
 func (tc *TransactionContext) Cleanup() {
 	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
-	tc.DirtyDB = nil
 	tc.Binlog = nil
 	tc.History = nil
 	tc.TableDeltaMap = nil
@@ -1681,6 +1679,11 @@ func (c *Concurrency) WindowConcurrency() int {
 // This option is not sync with ExecutorConcurrency since it's used by Analyze table.
 func (c *Concurrency) IndexSerialScanConcurrency() int {
 	return c.indexSerialScanConcurrency
+}
+
+// UnionConcurrency return the num of concurrent union worker.
+func (c *Concurrency) UnionConcurrency() int {
+	return c.ExecutorConcurrency
 }
 
 // MemQuota defines memory quota values.
