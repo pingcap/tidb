@@ -1179,8 +1179,7 @@ func (w *worker) doModifyColumn(
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
-	job.Args[0] = []int64{}
-	job.Args[1] = []int64{}
+	job.Args = []interface{}{[]int64{}, []int64{}}
 	return ver, nil
 }
 
@@ -1407,8 +1406,7 @@ func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
-	job.Args[0] = []int64{}
-	job.Args[1] = []int64{}
+	job.Args = []interface{}{[]int64{}, []int64{}}
 	return ver, nil
 }
 
