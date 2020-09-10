@@ -14,3 +14,7 @@ set session tidb_hashagg_final_concurrency = 1;
 explain select group_concat(a) from t group by id;
 explain select group_concat(a, b) from t group by id;
 drop table t;
+
+drop view if exists v;
+create view v as select cast(replace(substring_index(substring_index("",',',1),':',-1),'"','') as CHAR(32)) as event_id;
+desc v;
