@@ -1809,14 +1809,16 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	tsCh := make(chan uint64)
 	go func() {
 		tk3.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
-		tk3.MustExec("commit")
 		lastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
 		c.Assert(err, IsNil)
 		tsCh <- lastTS
+		tk3.MustExec("commit")
 	}()
-	tk2.MustExec("commit")
+	// tk2LastTS should be its forUpdateTS
 	tk2LastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
 	c.Assert(err, IsNil)
+	tk2.MustExec("commit")
+
 	tk3LastTs := <-tsCh
 	// it must get a new ts on pessimistic write conflict so the latest timestamp
 	// should increase
