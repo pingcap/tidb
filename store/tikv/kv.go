@@ -246,23 +246,29 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	if pdClient == nil {
 		return nil, errors.New("Etcd client not found")
 	}
-	members, err := pdClient.GetMemberInfo(ctx)
-	if err != nil {
-		err = bo.Backoff(BoRegionMiss, errors.New(err.Error()))
-	} else {
-		err = bo.Backoff(BoRegionMiss, errors.New("GetMemberInfo Timeout"))
-	}
-	if err != nil {
-		return nil, err
-	}
-	for _, member := range members {
-		u, err := url.Parse(member.ClientUrls[0])
+	var backoffErr error
+	for {
+		if backoffErr != nil {
+			err := bo.Backoff(BoRegionMiss, backoffErr)
+			if err != nil {
+				return nil, err
+			}
+		}
+		members, err := pdClient.GetMemberInfo(ctx)
 		if err != nil {
+			backoffErr = err
 			continue
 		}
-		etcdAddrs = append(etcdAddrs, u.Host)
+		for _, member := range members {
+			u, err := url.Parse(member.ClientUrls[0])
+			if err != nil {
+				continue
+			}
+			etcdAddrs = append(etcdAddrs, u.Host)
+		}
+		return etcdAddrs, nil
 	}
-	return etcdAddrs, nil
+
 }
 
 func (s *tikvStore) TLSConfig() *tls.Config {
