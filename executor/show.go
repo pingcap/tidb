@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
+	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/format"
@@ -385,6 +386,8 @@ func (e *ShowExec) fetchShowTables() error {
 			tableTypes[v.Meta().Name.O] = "VIEW"
 		} else if v.Meta().IsSequence() {
 			tableTypes[v.Meta().Name.O] = "SEQUENCE"
+		} else if util.IsSystemView(e.DBName.L) {
+			tableTypes[v.Meta().Name.O] = "SYSTEM VIEW"
 		} else {
 			tableTypes[v.Meta().Name.O] = "BASE TABLE"
 		}
@@ -1363,7 +1366,7 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 		warn := errors.Cause(w.Err)
 		switch x := warn.(type) {
 		case *terror.Error:
-			sqlErr := x.ToSQLError()
+			sqlErr := terror.ToSQLError(x)
 			e.appendRow([]interface{}{w.Level, int64(sqlErr.Code), sqlErr.Message})
 		default:
 			e.appendRow([]interface{}{w.Level, int64(mysql.ErrUnknown), warn.Error()})

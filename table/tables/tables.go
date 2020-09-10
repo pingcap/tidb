@@ -416,8 +416,6 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 	memBuffer.Release(sh)
-	sctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
-	sctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, h)
 	if shouldWriteBinlog(sctx) {
 		if !t.meta.PKIsHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
@@ -731,7 +729,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			_, err = txn.Get(ctx, key)
 		}
 		if err == nil {
-			return recordID, kv.ErrKeyExists.FastGenByArgs(recordID.String(), "PRIMARY")
+			handleStr := kv.GetDuplicateErrorHandleString(recordID)
+			return recordID, kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
 		} else if !kv.ErrNotExist.Equal(err) {
 			return recordID, err
 		}
@@ -762,7 +761,6 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 
 	memBuffer.Release(sh)
-	sctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
 
 	if shouldWriteBinlog(sctx) {
 		// For insert, TiDB and Binlog can use same row and schema.
@@ -977,7 +975,6 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 
-	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
 	if shouldWriteBinlog(ctx) {
 		cols := t.Cols()
 		colIDs := make([]int64, 0, len(cols)+1)
@@ -989,11 +986,18 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 			colIDs = append(colIDs, model.ExtraHandleID)
 			binlogRow = make([]types.Datum, 0, len(r)+1)
 			binlogRow = append(binlogRow, r...)
-			binlogRow = append(binlogRow, types.NewIntDatum(h.IntValue()))
+			handleData, err := h.Data()
+			if err != nil {
+				return err
+			}
+			binlogRow = append(binlogRow, handleData...)
 		} else {
 			binlogRow = r
 		}
 		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
+	}
+	if ctx.GetSessionVars().TxnCtx == nil {
+		return nil
 	}
 	colSize := make(map[int64]int64, len(t.Cols()))
 	sc := ctx.GetSessionVars().StmtCtx
@@ -1010,7 +1014,11 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 
 func (t *TableCommon) addInsertBinlog(ctx sessionctx.Context, h kv.Handle, row []types.Datum, colIDs []int64) error {
 	mutation := t.getMutation(ctx)
-	pk, err := codec.EncodeValue(ctx.GetSessionVars().StmtCtx, nil, types.NewIntDatum(h.IntValue()))
+	handleData, err := h.Data()
+	if err != nil {
+		return err
+	}
+	pk, err := codec.EncodeValue(ctx.GetSessionVars().StmtCtx, nil, handleData...)
 	if err != nil {
 		return err
 	}
@@ -1455,7 +1463,8 @@ func CheckHandleExists(ctx context.Context, sctx sessionctx.Context, t table.Tab
 	recordKey := t.RecordKey(recordID)
 	_, err = txn.Get(ctx, recordKey)
 	if err == nil {
-		return kv.ErrKeyExists.FastGenByArgs(recordID.String(), "PRIMARY")
+		handleStr := kv.GetDuplicateErrorHandleString(recordID)
+		return kv.ErrKeyExists.FastGenByArgs(handleStr, "PRIMARY")
 	} else if !kv.ErrNotExist.Equal(err) {
 		return err
 	}

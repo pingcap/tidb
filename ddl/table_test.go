@@ -394,29 +394,3 @@ func (s *testTableSuite) TestTable(c *C) {
 	testCheckJobDone(c, d, job, true)
 	checkTableLockedTest(c, d, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, model.TableLockWrite)
 }
-
-func (s *testTableSuite) TestTableResume(c *C) {
-	d := s.d
-
-	testCheckOwner(c, d, true)
-
-	tblInfo := testTableInfo(c, d, "t1", 3)
-	job := &model.Job{
-		SchemaID:   s.dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionCreateTable,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tblInfo},
-	}
-	testRunInterruptedJob(c, d, job)
-	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StatePublic)
-
-	job = &model.Job{
-		SchemaID:   s.dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionDropTable,
-		BinlogInfo: &model.HistoryInfo{},
-	}
-	testRunInterruptedJob(c, d, job)
-	testCheckTableState(c, d, s.dbInfo, tblInfo, model.StateNone)
-}

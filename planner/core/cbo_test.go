@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
@@ -376,6 +377,8 @@ func (s *testAnalyzeSuite) TestAnalyze(c *C) {
 		c.Assert(err, IsNil)
 		c.Assert(stmts, HasLen, 1)
 		stmt := stmts[0]
+		err = executor.ResetContextOfStmt(ctx, stmt)
+		c.Assert(err, IsNil)
 		is := domain.GetDomain(ctx).InfoSchema()
 		err = core.Preprocess(ctx, stmt, is)
 		c.Assert(err, IsNil)
@@ -872,6 +875,7 @@ func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
 	}()
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t, t1")
+	testKit.MustExec("set @@tidb_enable_clustered_index=0")
 	testKit.MustExec("CREATE TABLE t(a bigint(20) NOT NULL, b bigint(20) NOT NULL, c bigint(20) NOT NULL, PRIMARY KEY (a,c,b), KEY (b))")
 	err = s.loadTableStats("analyzeSuiteTestIndexEqualUnknownT.json", dom)
 	c.Assert(err, IsNil)
