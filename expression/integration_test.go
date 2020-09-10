@@ -7292,10 +7292,10 @@ func (s *testIntegrationSuite) TestIssue19596(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (10));")
-	tk.MustGetErrMsg("alter table t add partition (partition p1 values less than (a));", "[expression:1054]Unknown column 'a' in 'expression'")
+	tk.MustGetErrMsg("alter table t add partition (partition p1 values less than (a));", "[planner:1054]Unknown column 'a' in ''")
 	tk.MustQuery("select * from t;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustGetErrMsg("create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (a));", "[expression:1054]Unknown column 'a' in 'expression'")
+	tk.MustGetErrMsg("create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (a));", "[planner:1054]Unknown column 'a' in ''")
 }
 
 func (s *testIntegrationSuite) TestIssue17476(c *C) {
