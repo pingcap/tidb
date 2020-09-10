@@ -796,7 +796,7 @@ func getRegionInfo(store tikv.Storage, regions []regionMeta) ([]regionMeta, erro
 	if err != nil {
 		return regions, err
 	}
-	if pdHosts == nil || len(pdHosts) == 0 {
+	if len(pdHosts) == 0 {
 		return regions, nil
 	}
 	tikvHelper := &helper.Helper{

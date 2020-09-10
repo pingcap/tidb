@@ -1092,7 +1092,7 @@ func (h tableHandler) getPDAddr() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(pdAddrs) < 0 {
+	if len(pdAddrs) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
 	return pdAddrs, nil
