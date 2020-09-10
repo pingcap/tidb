@@ -280,7 +280,7 @@ type ReturnedValue struct {
 // Client is used to send request to KV layer.
 type Client interface {
 	// Send sends request to KV layer, returns a Response.
-	Send(ctx context.Context, req *Request, vars *Variables) Response
+	Send(ctx context.Context, req *Request, vars *Variables) (Response, memory.ActionOnExceed)
 
 	// IsRequestTypeSupported checks if reqType and subType is supported.
 	IsRequestTypeSupported(reqType, subType int64) bool

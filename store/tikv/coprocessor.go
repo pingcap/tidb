@@ -56,16 +56,16 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) kv.Response {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) (kv.Response, memory.ActionOnExceed) {
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
-		return c.sendBatch(ctx, req, vars)
+		return c.sendBatch(ctx, req, vars), nil
 	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
 	if err != nil {
-		return copErrorResponse{err}
+		return copErrorResponse{err}, nil
 	}
 	it := &copIterator{
 		store:           c.store,
@@ -117,7 +117,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	}
 	it.open(ctx)
-	return it
+	return it, it.actionOnExceed
 }
 
 // copTask contains a related Region and KeyRange for a kv.Request.

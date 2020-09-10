@@ -374,13 +374,6 @@ func (t *Tracker) setParent(parent *Tracker) {
 	t.parMu.parent = parent
 }
 
-// GetActionOnExceed return the actionOnExceed
-func (t *Tracker) GetActionOnExceed() ActionOnExceed {
-	t.actionMu.Lock()
-	defer t.actionMu.Unlock()
-	return t.actionMu.actionOnExceed
-}
-
 const (
 	// LabelForSQLText represents the label of the SQL Text
 	LabelForSQLText int = -1

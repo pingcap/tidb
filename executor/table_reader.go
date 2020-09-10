@@ -15,11 +15,9 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"sort"
 
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
@@ -161,12 +159,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 	if err != nil {
 		e.feedback.Invalidate()
 		return err
-	}
-	actionExceed := e.memTracker.GetActionOnExceed()
-	if actionExceed != nil {
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionExceed)
-	} else {
-		return errors.Trace(fmt.Errorf("failed to find actionExceed in TableReaderExecutor Open phase"))
 	}
 
 	if len(secondPartRanges) == 0 {
