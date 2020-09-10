@@ -104,6 +104,25 @@ func (cd *CommitDetails) Merge(other *CommitDetails) {
 	cd.Mu.BackoffTypes = append(cd.Mu.BackoffTypes, other.Mu.BackoffTypes...)
 }
 
+// Clone returns a deep copy of itself.
+func (cd *CommitDetails) Clone() *CommitDetails {
+	commit := &CommitDetails{
+		GetCommitTsTime:        cd.GetCommitTsTime,
+		PrewriteTime:           cd.PrewriteTime,
+		WaitPrewriteBinlogTime: cd.WaitPrewriteBinlogTime,
+		CommitTime:             cd.CommitTime,
+		LocalLatchTime:         cd.LocalLatchTime,
+		CommitBackoffTime:      cd.CommitBackoffTime,
+		ResolveLockTime:        cd.ResolveLockTime,
+		WriteKeys:              cd.WriteKeys,
+		WriteSize:              cd.WriteSize,
+		PrewriteRegionNum:      cd.PrewriteRegionNum,
+		TxnRetry:               cd.TxnRetry,
+	}
+	commit.Mu.BackoffTypes = append([]fmt.Stringer{}, cd.Mu.BackoffTypes...)
+	return commit
+}
+
 // LockKeysDetails contains pessimistic lock keys detail information.
 type LockKeysDetails struct {
 	TotalTime       time.Duration
@@ -131,6 +150,22 @@ func (ld *LockKeysDetails) Merge(lockKey *LockKeysDetails) {
 	ld.LockRPCCount += ld.LockRPCCount
 	ld.Mu.BackoffTypes = append(ld.Mu.BackoffTypes, lockKey.Mu.BackoffTypes...)
 	ld.RetryCount++
+}
+
+// Clone returns a deep copy of itself.
+func (ld *LockKeysDetails) Clone() *LockKeysDetails {
+	lock := &LockKeysDetails{
+		TotalTime:       ld.TotalTime,
+		RegionNum:       ld.RegionNum,
+		LockKeys:        ld.LockKeys,
+		ResolveLockTime: ld.ResolveLockTime,
+		BackoffTime:     ld.BackoffTime,
+		LockRPCTime:     ld.LockRPCTime,
+		LockRPCCount:    ld.LockRPCCount,
+		RetryCount:      ld.RetryCount,
+	}
+	lock.Mu.BackoffTypes = append([]fmt.Stringer{}, ld.Mu.BackoffTypes...)
+	return lock
 }
 
 const (
@@ -725,35 +760,10 @@ func (e *RuntimeStatsWithCommit) Merge(rs RuntimeStats) {
 func (e *RuntimeStatsWithCommit) Clone() RuntimeStats {
 	newRs := RuntimeStatsWithCommit{}
 	if e.Commit != nil {
-		commit := &CommitDetails{
-			GetCommitTsTime:        e.Commit.GetCommitTsTime,
-			PrewriteTime:           e.Commit.PrewriteTime,
-			WaitPrewriteBinlogTime: e.Commit.WaitPrewriteBinlogTime,
-			CommitTime:             e.Commit.CommitTime,
-			LocalLatchTime:         e.Commit.LocalLatchTime,
-			CommitBackoffTime:      e.Commit.CommitBackoffTime,
-			ResolveLockTime:        e.Commit.ResolveLockTime,
-			WriteKeys:              e.Commit.WriteKeys,
-			WriteSize:              e.Commit.WriteSize,
-			PrewriteRegionNum:      e.Commit.PrewriteRegionNum,
-			TxnRetry:               e.Commit.TxnRetry,
-		}
-		commit.Mu.BackoffTypes = append([]fmt.Stringer{}, e.Commit.Mu.BackoffTypes...)
-		newRs.Commit = commit
+		newRs.Commit = e.Commit.Clone()
 	}
 	if e.LockKeys != nil {
-		lock := &LockKeysDetails{
-			TotalTime:       e.LockKeys.TotalTime,
-			RegionNum:       e.LockKeys.RegionNum,
-			LockKeys:        e.LockKeys.LockKeys,
-			ResolveLockTime: e.LockKeys.ResolveLockTime,
-			BackoffTime:     e.LockKeys.BackoffTime,
-			LockRPCTime:     e.LockKeys.LockRPCTime,
-			LockRPCCount:    e.LockKeys.LockRPCCount,
-			RetryCount:      e.LockKeys.RetryCount,
-		}
-		lock.Mu.BackoffTypes = append([]fmt.Stringer{}, e.LockKeys.Mu.BackoffTypes...)
-		newRs.LockKeys = lock
+		newRs.LockKeys = e.LockKeys.Clone()
 	}
 	return &newRs
 }
