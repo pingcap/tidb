@@ -15,6 +15,7 @@ package aggfuncs
 
 import (
 	"container/heap"
+	"unsafe"
 
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -131,6 +132,31 @@ retry:
 	return top, false
 }
 
+const (
+	// DefPartialResult4MaxMinIntSize is the size of partialResult4MaxMinInt
+	DefPartialResult4MaxMinIntSize = int64(unsafe.Sizeof(partialResult4MaxMinInt{}))
+	// DefPartialResult4MaxMinUintSize is the size of partialResult4MaxMinUint
+	DefPartialResult4MaxMinUintSize = int64(unsafe.Sizeof(partialResult4MaxMinUint{}))
+	// DefPartialResult4MaxMinDecimalSize is the size of partialResult4MaxMinDecimal
+	DefPartialResult4MaxMinDecimalSize = int64(unsafe.Sizeof(partialResult4MaxMinDecimal{}))
+	// DefPartialResult4MaxMinFloat32Size is the size of partialResult4MaxMinFloat32
+	DefPartialResult4MaxMinFloat32Size = int64(unsafe.Sizeof(partialResult4MaxMinFloat32{}))
+	// DefPartialResult4MaxMinFloat64Size is the size of partialResult4MaxMinFloat64
+	DefPartialResult4MaxMinFloat64Size = int64(unsafe.Sizeof(partialResult4MaxMinFloat64{}))
+	// DefPartialResult4TimeSize is the size of partialResult4Time
+	DefPartialResult4TimeSize = int64(unsafe.Sizeof(partialResult4Time{}))
+	// DefPartialResult4MaxMinDurationSize is the size of partialResult4MaxMinDuration
+	DefPartialResult4MaxMinDurationSize = int64(unsafe.Sizeof(partialResult4MaxMinDuration{}))
+	// DefPartialResult4MaxMinStringSize is the size of partialResult4MaxMinString
+	DefPartialResult4MaxMinStringSize = int64(unsafe.Sizeof(partialResult4MaxMinString{}))
+	// DefPartialResult4MaxMinJSONSize is the size of partialResult4MaxMinJSON
+	DefPartialResult4MaxMinJSONSize = int64(unsafe.Sizeof(partialResult4MaxMinJSON{}))
+	// DefPartialResult4MaxMinEnumSize is the size of partialResult4MaxMinEnum
+	DefPartialResult4MaxMinEnumSize = int64(unsafe.Sizeof(partialResult4MaxMinEnum{}))
+	// DefPartialResult4MaxMinSetSize is the size of partialResult4MaxMinSet
+	DefPartialResult4MaxMinSetSize = int64(unsafe.Sizeof(partialResult4MaxMinSet{}))
+)
+
 type partialResult4MaxMinInt struct {
 	val int64
 	// isNull is used to indicates:
@@ -214,7 +240,7 @@ func (e *maxMin4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		return types.CompareInt64(i.(int64), j.(int64))
 	})
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4MaxMinIntSize
 }
 
 func (e *maxMin4Int) ResetPartialResult(pr PartialResult) {
@@ -337,7 +363,7 @@ func (e *maxMin4Uint) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		return types.CompareUint64(i.(uint64), j.(uint64))
 	})
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4MaxMinUintSize
 }
 
 func (e *maxMin4Uint) ResetPartialResult(pr PartialResult) {
@@ -462,7 +488,7 @@ func (e *maxMin4Float32) AllocPartialResult() (pr PartialResult, memDelta int64)
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		return types.CompareFloat64(float64(i.(float32)), float64(j.(float32)))
 	})
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4MaxMinFloat32Size
 }
 
 func (e *maxMin4Float32) ResetPartialResult(pr PartialResult) {
@@ -586,7 +612,7 @@ func (e *maxMin4Float64) AllocPartialResult() (pr PartialResult, memDelta int64)
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		return types.CompareFloat64(i.(float64), j.(float64))
 	})
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4MaxMinFloat64Size
 }
 
 func (e *maxMin4Float64) ResetPartialResult(pr PartialResult) {
@@ -711,7 +737,7 @@ func (e *maxMin4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64)
 		dst := j.(types.MyDecimal)
 		return src.Compare(&dst)
 	})
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4MaxMinDecimalSize
 }
 
 func (e *maxMin4Decimal) ResetPartialResult(pr PartialResult) {
@@ -843,7 +869,7 @@ func (e *maxMin4String) AllocPartialResult() (pr PartialResult, memDelta int64) 
 	p.heap = newMaxMinHeap(e.isMax, func(i, j interface{}) int {
 		return types.CompareString(i.(string), j.(string), tp.Collate)
 	})
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4MaxMinStringSize
 }
 
 func (e *maxMin4String) ResetPartialResult(pr PartialResult) {
@@ -868,7 +894,7 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalString(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if isNull {
 			continue
@@ -879,15 +905,19 @@ func (e *maxMin4String) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			// We have to deep copy that string to avoid some potential risks
 			// when the content of that underlying buffer changed.
 			p.val = stringutil.Copy(input)
+			memDelta += int64(len(input))
 			p.isNull = false
 			continue
 		}
 		cmp := types.CompareString(input, p.val, tp.Collate)
 		if e.isMax && cmp == 1 || !e.isMax && cmp == -1 {
+			oldMem := len(p.val)
+			newMem := len(input)
+			memDelta += int64(newMem - oldMem)
 			p.val = stringutil.Copy(input)
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *maxMin4String) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
@@ -975,7 +1005,7 @@ func (e *maxMin4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
 		dst := j.(types.Time)
 		return src.Compare(dst)
 	})
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4TimeSize
 }
 
 func (e *maxMin4Time) ResetPartialResult(pr PartialResult) {
@@ -1101,7 +1131,7 @@ func (e *maxMin4Duration) AllocPartialResult() (pr PartialResult, memDelta int64
 		dst := j.(types.Duration)
 		return src.Compare(dst)
 	})
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4MaxMinDurationSize
 }
 
 func (e *maxMin4Duration) ResetPartialResult(pr PartialResult) {
@@ -1222,7 +1252,7 @@ type maxMin4JSON struct {
 func (e *maxMin4JSON) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinJSON)
 	p.isNull = true
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4MaxMinJSONSize
 }
 
 func (e *maxMin4JSON) ResetPartialResult(pr PartialResult) {
@@ -1245,22 +1275,26 @@ func (e *maxMin4JSON) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalJSON(sctx, row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if isNull {
 			continue
 		}
 		if p.isNull {
 			p.val = input.Copy()
+			memDelta += int64(len(input.Value))
 			p.isNull = false
 			continue
 		}
 		cmp := json.CompareBinary(input, p.val)
 		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
+			oldMem := len(p.val.Value)
+			newMem := len(input.Value)
+			memDelta += int64(newMem - oldMem)
 			p.val = input.Copy()
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *maxMin4JSON) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
@@ -1287,7 +1321,7 @@ type maxMin4Enum struct {
 func (e *maxMin4Enum) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinEnum)
 	p.isNull = true
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4MaxMinEnumSize
 }
 
 func (e *maxMin4Enum) ResetPartialResult(pr PartialResult) {
@@ -1310,22 +1344,26 @@ func (e *maxMin4Enum) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		d, err := e.args[0].Eval(row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if d.IsNull() {
 			continue
 		}
 		if p.isNull {
 			p.val = d.GetMysqlEnum().Copy()
+			memDelta += int64(len(d.GetMysqlEnum().Name))
 			p.isNull = false
 			continue
 		}
 		en := d.GetMysqlEnum()
 		if e.isMax && en.Value > p.val.Value || !e.isMax && en.Value < p.val.Value {
+			oldMem := len(p.val.Name)
+			newMem := len(en.Name)
+			memDelta += int64(newMem - oldMem)
 			p.val = en.Copy()
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *maxMin4Enum) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
@@ -1350,7 +1388,7 @@ type maxMin4Set struct {
 func (e *maxMin4Set) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4MaxMinSet)
 	p.isNull = true
-	return PartialResult(p), 0
+	return PartialResult(p), DefPartialResult4MaxMinSetSize
 }
 
 func (e *maxMin4Set) ResetPartialResult(pr PartialResult) {
@@ -1373,22 +1411,26 @@ func (e *maxMin4Set) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []
 	for _, row := range rowsInGroup {
 		d, err := e.args[0].Eval(row)
 		if err != nil {
-			return 0, err
+			return memDelta, err
 		}
 		if d.IsNull() {
 			continue
 		}
 		if p.isNull {
 			p.val = d.GetMysqlSet().Copy()
+			memDelta += int64(len(d.GetMysqlSet().Name))
 			p.isNull = false
 			continue
 		}
 		s := d.GetMysqlSet()
 		if e.isMax && s.Value > p.val.Value || !e.isMax && s.Value < p.val.Value {
+			oldMem := len(p.val.Name)
+			newMem := len(s.Name)
+			memDelta += int64(newMem - oldMem)
 			p.val = s.Copy()
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }
 
 func (e *maxMin4Set) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
