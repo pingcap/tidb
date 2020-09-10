@@ -319,7 +319,6 @@ func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldT
 	return memDeltas, nil
 }
 
-
 type aggMemTest struct {
 	aggTest            aggTest
 	allocMemDelta      int64
@@ -339,16 +338,16 @@ func buildAggMemTester(funcName string, tp byte, numRows int, allocMemDelta int6
 }
 
 type multiArgsAggMemTest struct {
-	multiArgsAggTest   multiArgsAggTest
-	allocMemDelta      int64
+	multiArgsAggTest            multiArgsAggTest
+	allocMemDelta               int64
 	multiArgsUpdateMemDeltaGens multiArgsUpdateMemDeltaGens
 }
 
 func buildMultiArgsAggMemTester(funcName string, tps []byte, rt byte, numRows int, allocMemDelta int64, updateMemDeltaGens multiArgsUpdateMemDeltaGens, results ...interface{}) multiArgsAggMemTest {
 	multiArgsAggTest := buildMultiArgsAggTester(funcName, tps, rt, numRows, results...)
 	pt := multiArgsAggMemTest{
-		multiArgsAggTest:   multiArgsAggTest,
-		allocMemDelta:      allocMemDelta,
+		multiArgsAggTest:            multiArgsAggTest,
+		allocMemDelta:               allocMemDelta,
 		multiArgsUpdateMemDeltaGens: updateMemDeltaGens,
 	}
 	return pt
