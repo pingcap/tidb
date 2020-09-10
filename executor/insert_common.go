@@ -946,6 +946,10 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 		}
 		return true
 	}
+	e.stats = &insertRuntimeStat{
+		RPCTime:         0,
+		CheckInsertTime: 0,
+	}
 	return false
 }
 
