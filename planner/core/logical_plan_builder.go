@@ -2663,8 +2663,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		}
 	}
 
-	if sel.LockTp != ast.SelectLockNone {
-		p = b.buildSelectLock(p, sel.LockTp)
+	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
+		p = b.buildSelectLock(p, sel.LockInfo)
 	}
 	b.handleHelper.popMap()
 	b.handleHelper.pushMap(nil)
@@ -3496,7 +3496,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 			// buildSelectLock is an optimization that can reduce RPC call.
 			// We only need do this optimization for single table update which is the most common case.
 			// When TableRefs.Right is nil, it is single table update.
-			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+			p = b.buildSelectLock(p, &ast.SelectLockInfo{
+				LockType: ast.SelectLockForUpdate,
+			})
 		}
 	}
 
@@ -3770,7 +3772,9 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, delete *ast.DeleteStmt) (
 	}
 	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
 		if !delete.IsMultiTable {
-			p = b.buildSelectLock(p, ast.SelectLockForUpdate)
+			p = b.buildSelectLock(p, &ast.SelectLockInfo{
+				LockType: ast.SelectLockForUpdate,
+			})
 		}
 	}
 
@@ -4453,8 +4457,9 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 	needFrame := aggregation.NeedFrame(windowFuncName)
 	// According to MySQL, In the absence of a frame clause, the default frame depends on whether an ORDER BY clause is present:
 	//   (1) With order by, the default frame is equivalent to "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW";
-	//   (2) Without order by, the default frame is equivalent to "RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING",
-	//       which is the same as an empty frame.
+	//   (2) Without order by, the default frame is includes all partition rows, equivalent to "RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING",
+	//       or "ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING", which is the same as an empty frame.
+	// https://dev.mysql.com/doc/refman/8.0/en/window-functions-frames.html
 	if needFrame && spec.Frame == nil && spec.OrderBy != nil {
 		newSpec := *spec
 		newSpec.Frame = &ast.FrameClause{
@@ -4464,6 +4469,13 @@ func (b *PlanBuilder) handleDefaultFrame(spec *ast.WindowSpec, windowFuncName st
 				End:   ast.FrameBound{Type: ast.CurrentRow},
 			},
 		}
+		return &newSpec, true
+	}
+	// "RANGE/ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING" is equivalent to empty frame.
+	if needFrame && spec.Frame != nil &&
+		spec.Frame.Extent.Start.UnBounded && spec.Frame.Extent.End.UnBounded {
+		newSpec := *spec
+		newSpec.Frame = nil
 		return &newSpec, true
 	}
 	// For functions that operate on the entire partition, the frame clause will be ignored.

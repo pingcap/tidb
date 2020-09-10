@@ -1711,6 +1711,7 @@ func (b *executorBuilder) buildUnionAll(v *plannercore.PhysicalUnionAll) Executo
 	}
 	e := &UnionExec{
 		baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), childExecs...),
+		concurrency:  b.ctx.GetSessionVars().UnionConcurrency(),
 	}
 	return e
 }
@@ -1890,11 +1891,11 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
 	e := &AnalyzeIndexExec{
-		ctx:             b.ctx,
-		physicalTableID: task.PhysicalTableID,
-		isCommonHandle:  task.TblInfo.IsCommonHandle,
-		idxInfo:         task.IndexInfo,
-		concurrency:     b.ctx.GetSessionVars().IndexSerialScanConcurrency(),
+		ctx:            b.ctx,
+		tableID:        task.TableID,
+		isCommonHandle: task.TblInfo.IsCommonHandle,
+		idxInfo:        task.IndexInfo,
+		concurrency:    b.ctx.GetSessionVars().IndexSerialScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			Flags:          sc.PushDownFlags(),
@@ -1919,7 +1920,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 
 func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
-	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.PhysicalTableID)
+	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.PersistID)
 	analyzeTask := b.buildAnalyzeIndexPushdown(task, opts, "")
 	if statsTbl.Pseudo {
 		return analyzeTask
@@ -1968,11 +1969,11 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 	_, offset := timeutil.Zone(b.ctx.GetSessionVars().Location())
 	sc := b.ctx.GetSessionVars().StmtCtx
 	e := &AnalyzeColumnsExec{
-		ctx:             b.ctx,
-		physicalTableID: task.PhysicalTableID,
-		colsInfo:        task.ColsInfo,
-		handleCols:      task.HandleCols,
-		concurrency:     b.ctx.GetSessionVars().DistSQLScanConcurrency(),
+		ctx:         b.ctx,
+		tableID:     task.TableID,
+		colsInfo:    task.ColsInfo,
+		handleCols:  task.HandleCols,
+		concurrency: b.ctx.GetSessionVars().DistSQLScanConcurrency(),
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeColumn,
 			Flags:          sc.PushDownFlags(),
@@ -2000,7 +2001,7 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeCo
 
 func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) *analyzeTask {
 	h := domain.GetDomain(b.ctx).StatsHandle()
-	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.PhysicalTableID)
+	statsTbl := h.GetPartitionStats(&model.TableInfo{}, task.TableID.PersistID)
 	analyzeTask := b.buildAnalyzeColumnsPushdown(task, opts, "")
 	if statsTbl.Pseudo {
 		return analyzeTask
@@ -2038,7 +2039,7 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) {
 	findTask := false
 	for _, eTask := range e.tasks {
-		if eTask.fastExec.physicalTableID == task.PhysicalTableID {
+		if eTask.fastExec != nil && eTask.fastExec.tableID.Equals(&task.TableID) {
 			eTask.fastExec.colsInfo = append(eTask.fastExec.colsInfo, task.ColsInfo...)
 			findTask = true
 			break
@@ -2050,19 +2051,24 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 		if b.err != nil {
 			return
 		}
+		fastExec := &AnalyzeFastExec{
+			ctx:         b.ctx,
+			tableID:     task.TableID,
+			colsInfo:    task.ColsInfo,
+			handleCols:  task.HandleCols,
+			opts:        opts,
+			tblInfo:     task.TblInfo,
+			concurrency: concurrency,
+			wg:          &sync.WaitGroup{},
+		}
+		b.err = fastExec.calculateEstimateSampleStep()
+		if b.err != nil {
+			return
+		}
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: fastTask,
-			fastExec: &AnalyzeFastExec{
-				ctx:             b.ctx,
-				physicalTableID: task.PhysicalTableID,
-				colsInfo:        task.ColsInfo,
-				handleCols:      task.HandleCols,
-				opts:            opts,
-				tblInfo:         task.TblInfo,
-				concurrency:     concurrency,
-				wg:              &sync.WaitGroup{},
-			},
-			job: &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "fast analyze columns"},
+			fastExec: fastExec,
+			job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "fast analyze columns"},
 		})
 	}
 }
@@ -2070,7 +2076,7 @@ func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercor
 func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64) {
 	findTask := false
 	for _, eTask := range e.tasks {
-		if eTask.fastExec.physicalTableID == task.PhysicalTableID {
+		if eTask.fastExec != nil && eTask.fastExec.tableID.Equals(&task.TableID) {
 			eTask.fastExec.idxsInfo = append(eTask.fastExec.idxsInfo, task.IndexInfo)
 			findTask = true
 			break
@@ -2082,18 +2088,23 @@ func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore
 		if b.err != nil {
 			return
 		}
+		fastExec := &AnalyzeFastExec{
+			ctx:         b.ctx,
+			tableID:     task.TableID,
+			idxsInfo:    []*model.IndexInfo{task.IndexInfo},
+			opts:        opts,
+			tblInfo:     task.TblInfo,
+			concurrency: concurrency,
+			wg:          &sync.WaitGroup{},
+		}
+		b.err = fastExec.calculateEstimateSampleStep()
+		if b.err != nil {
+			return
+		}
 		e.tasks = append(e.tasks, &analyzeTask{
 			taskType: fastTask,
-			fastExec: &AnalyzeFastExec{
-				ctx:             b.ctx,
-				physicalTableID: task.PhysicalTableID,
-				idxsInfo:        []*model.IndexInfo{task.IndexInfo},
-				opts:            opts,
-				tblInfo:         task.TblInfo,
-				concurrency:     concurrency,
-				wg:              &sync.WaitGroup{},
-			},
-			job: &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: "fast analyze index " + task.IndexInfo.Name.O},
+			fastExec: fastExec,
+			job:      &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: "fast analyze index " + task.IndexInfo.Name.O},
 		})
 	}
 }
@@ -2549,6 +2560,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) E
 		}
 		return &UnionExec{
 			baseExecutor: newBaseExecutor(b.ctx, v.Schema(), v.ID(), partsExecutor...),
+			concurrency:  b.ctx.GetSessionVars().UnionConcurrency(),
 		}
 	}
 
