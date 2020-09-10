@@ -111,3 +111,9 @@ func MockCommitErrorDisable() {
 func IsMockCommitErrorEnable() bool {
 	return atomic.LoadInt64(&mockCommitErrorEnable) == 1
 }
+
+// TxnInfo is used to keep track the info of a committed transaction (mainly for diagnosis and testing)
+type TxnInfo struct {
+	StartTS  uint64
+	CommitTS uint64
+}

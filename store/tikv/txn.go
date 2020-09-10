@@ -82,6 +82,8 @@ type tikvTxn struct {
 	txnInfoSchema SchemaVer
 	// SchemaAmender is used amend pessimistic txn commit mutations for schema change
 	schemaAmender SchemaAmender
+	// commitCallback is called after current transaction gets committed
+	commitCallback func(info kv.TxnInfo, err error)
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -186,6 +188,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.txnInfoSchema = val.(SchemaVer)
 	case kv.SchemaAmender:
 		txn.schemaAmender = val.(SchemaAmender)
+	case kv.CommitHook:
+		txn.commitCallback = val.(func(info kv.TxnInfo, err error))
 	}
 }
 
@@ -268,6 +272,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// pessimistic transaction should also bypass latch.
 	if txn.store.txnLatches == nil || txn.IsPessimistic() {
 		err = committer.execute(ctx)
+		txn.onCommitted(err)
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -286,6 +291,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		return kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
 	}
 	err = committer.execute(ctx)
+	txn.onCommitted(err)
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}
@@ -336,6 +342,12 @@ func (txn *tikvTxn) collectLockedKeys() [][]byte {
 		}
 	}
 	return keys
+}
+
+func (txn *tikvTxn) onCommitted(err error) {
+	if txn.commitCallback != nil {
+		txn.commitCallback(kv.TxnInfo{StartTS: txn.startTS, CommitTS: txn.commitTS}, err)
+	}
 }
 
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock

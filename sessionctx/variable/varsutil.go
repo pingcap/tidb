@@ -116,6 +116,10 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	switch sysVar.Name {
 	case TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
+	case TiDBLastStartTS:
+		return fmt.Sprintf("%d", s.LastTxnInfo.StartTS), true, nil
+	case TiDBLastCommitTS:
+		return fmt.Sprintf("%d", s.LastTxnInfo.CommitTS), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
 	case TiDBPProfSQLCPU:
