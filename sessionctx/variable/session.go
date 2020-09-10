@@ -132,13 +132,14 @@ type stmtFuture struct {
 
 // TransactionContext is used to store variables that has transaction scope.
 type TransactionContext struct {
-	forUpdateTS   uint64
 	stmtFuture    oracle.Future
 	Binlog        interface{}
 	InfoSchema    interface{}
 	History       interface{}
 	SchemaVersion int64
 	StartTS       uint64
+	forUpdateTS   uint64
+	CommitTS      uint64
 
 	// ShardStep indicates the max size of continuous rowid shard in one transaction.
 	ShardStep    int
@@ -1742,6 +1743,8 @@ const (
 	SlowLogStartPrefixStr = SlowLogRowPrefixStr + SlowLogTimeStr + SlowLogSpaceMarkStr
 	// SlowLogTxnStartTSStr is slow log field name.
 	SlowLogTxnStartTSStr = "Txn_start_ts"
+	// SlowLogTxnStartTSStr is slow log field name.
+	SlowLogTxnCommitTSStr = "Txn_commit_ts"
 	// SlowLogUserAndHostStr is the user and host field name, which is compatible with MySQL.
 	SlowLogUserAndHostStr = "User@Host"
 	// SlowLogUserStr is slow log field name.
@@ -1840,6 +1843,7 @@ const (
 // slow query log.
 type SlowQueryLogItems struct {
 	TxnTS             uint64
+	CommitTS          uint64
 	SQL               string
 	Digest            string
 	TimeTotal         time.Duration
@@ -1894,6 +1898,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	var buf bytes.Buffer
 
 	writeSlowLogItem(&buf, SlowLogTxnStartTSStr, strconv.FormatUint(logItems.TxnTS, 10))
+	if logItems.CommitTS != 0 {
+		writeSlowLogItem(&buf, SlowLogTxnCommitTSStr, strconv.FormatUint(logItems.CommitTS, 10))
+	}
 	if s.User != nil {
 		hostAddress := s.User.Hostname
 		if s.ConnectionInfo != nil {

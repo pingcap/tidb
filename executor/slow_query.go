@@ -390,6 +390,7 @@ func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offs
 type slowQueryTuple struct {
 	time                   types.Time
 	txnStartTs             uint64
+	txnCommitTs            uint64
 	user                   string
 	host                   string
 	connID                 uint64
@@ -465,6 +466,8 @@ func (st *slowQueryTuple) setFieldValue(tz *time.Location, field, value string, 
 		}
 	case variable.SlowLogTxnStartTSStr:
 		st.txnStartTs, err = strconv.ParseUint(value, 10, 64)
+	case variable.SlowLogTxnCommitTSStr:
+		st.txnCommitTs, err = strconv.ParseUint(value, 10, 64)
 	case variable.SlowLogUserStr:
 		// the old User format is kept for compatibility
 		fields := strings.SplitN(value, "@", 2)
@@ -605,6 +608,7 @@ func (st *slowQueryTuple) convertToDatumRow() []types.Datum {
 	record := make([]types.Datum, 0, 64)
 	record = append(record, types.NewTimeDatum(st.time))
 	record = append(record, types.NewUintDatum(st.txnStartTs))
+	record = append(record, types.NewUintDatum(st.txnCommitTs))
 	record = append(record, types.NewStringDatum(st.user))
 	record = append(record, types.NewStringDatum(st.host))
 	record = append(record, types.NewUintDatum(st.connID))

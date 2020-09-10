@@ -537,6 +537,10 @@ func (txn *tikvTxn) StartTS() uint64 {
 	return txn.startTS
 }
 
+func (txn *tikvTxn) CommitTS() uint64 {
+	return txn.commitTS
+}
+
 func (txn *tikvTxn) Valid() bool {
 	return txn.valid
 }

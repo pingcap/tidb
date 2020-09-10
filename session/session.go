@@ -446,7 +446,9 @@ func (s *session) doCommit(ctx context.Context) error {
 		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
 	}
 
-	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
+	err := s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
+	s.sessionVars.TxnCtx.CommitTS = s.txn.CommitTS()
+	return err
 }
 
 func (s *session) doCommitWithRetry(ctx context.Context) error {
@@ -1246,7 +1248,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 
 	// If it is not a select statement, we record its slow log here,
 	// then it could include the transaction commit time.
-	s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err == nil, false)
+	s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, se.sessionVars.TxnCtx.CommitTS, err == nil, false)
 	return nil, err
 }
 

@@ -176,6 +176,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	var memMax int64 = 2333
 	var diskMax int64 = 6666
 	resultFields := `# Txn_start_ts: 406649736972468225
+# Txn_commit_ts: 406649736972468226
 # User@Host: root[root] @ 192.168.0.1 [192.168.0.1]
 # Conn_ID: 1
 # Exec_retry_time: 5.1 Exec_retry_count: 3
@@ -211,6 +212,7 @@ func (*testSessionSuite) TestSlowLogFormat(c *C) {
 	_, digest := parser.NormalizeDigest(sql)
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
+		CommitTS:          txnTS + 1,
 		SQL:               sql,
 		Digest:            digest,
 		TimeTotal:         costTime,
