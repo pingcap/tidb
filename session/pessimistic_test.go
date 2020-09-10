@@ -14,7 +14,9 @@
 package session_test
 
 import (
+	"context"
 	"fmt"
+	"github.com/pingcap/tidb/config"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1788,6 +1790,11 @@ func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
 }
 
 func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableAsyncCommit = true
+	})
+
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists tk")
 	tk.MustExec("create table tk (c1 int primary key, c2 int)")
@@ -1798,9 +1805,20 @@ func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
 	tk2.MustExec("begin pessimistic")
 	tk3.MustExec("begin pessimistic")
 	tk2.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
+	tk3.MustExec("update tk set c2 = c2 + 1 where c2 = 2")
+	tsCh := make(chan uint64)
 	go func() {
 		tk3.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
 		tk3.MustExec("commit")
+		lastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
+		c.Assert(err, IsNil)
+		tsCh <- lastTS
 	}()
 	tk2.MustExec("commit")
+	tk2LastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
+	c.Assert(err, IsNil)
+	tk3LastTs := <-tsCh
+	// it must get a new ts on pessimistic write conflict so the latest timestamp
+	// should increase
+	c.Assert(tk3LastTs, Greater, tk2LastTS)
 }
