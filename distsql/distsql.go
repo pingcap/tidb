@@ -49,7 +49,7 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 		err := errors.New("client returns nil response")
 		return nil, err
 	}
-	if memTracker := sctx.GetSessionVars().StmtCtx.MemTracker; memTracker != nil {
+	if memTracker := sctx.GetSessionVars().StmtCtx.MemTracker; memTracker != nil && actionOnExceed != nil {
 		memTracker.FallbackOldAndSetNewAction(actionOnExceed)
 	}
 
