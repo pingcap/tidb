@@ -480,7 +480,9 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		if e.Column != nil && e.Column.Name.L != col.Name.L {
 			continue
 		}
-
+		if col.Tp == mysql.TypeVarString {
+			col.Tp = mysql.TypeVarchar
+		}
 		desc := table.NewColDesc(col)
 		var columnDefault interface{}
 		if desc.DefaultValue != nil {
