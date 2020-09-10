@@ -88,7 +88,7 @@ type CommitDetails struct {
 	TxnRetry          int
 }
 
-// Merge merges commit details into self.
+// Merge merges commit details into itself.
 func (cd *CommitDetails) Merge(other *CommitDetails) {
 	cd.GetCommitTsTime += other.GetCommitTsTime
 	cd.PrewriteTime += other.PrewriteTime
