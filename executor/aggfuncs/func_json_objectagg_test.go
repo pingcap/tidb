@@ -132,7 +132,7 @@ func (s *testSuite) TestMemJsonObjectagg(c *C) {
 			entries[keyString] = secondArg.GetValue()
 		}
 
-		aggTest := buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg, defaultUpdateMemDeltaGens, nil, json.CreateBinary(entries))
+		aggTest := buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg, defaultMultiArgsMemDeltaGens, nil, json.CreateBinary(entries))
 
 		tests = append(tests, aggTest)
 	}

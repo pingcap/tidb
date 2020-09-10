@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
+
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
@@ -263,6 +264,62 @@ func rowMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas 
 	return memDeltas, nil
 }
 
+type multiArgsUpdateMemDeltaGens func(*chunk.Chunk, []*types.FieldType) (memDeltas []int64, err error)
+
+func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldType) (memDeltas []int64, err error) {
+	memDeltas = make([]int64, 0)
+	m := make(map[string]bool)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
+		if row.IsNull(0) {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		memDelta := int64(0)
+		val := ""
+		memValDelta := int64(0)
+		memKeyDelta := int64(0)
+		for j, dataType := range dataTypes {
+			switch dataType.Tp {
+			case mysql.TypeLonglong:
+				val = strconv.FormatInt(row.GetInt64(j), 10)
+				row.GetRaw(0)
+				memValDelta = aggfuncs.DefUint64Size
+				memKeyDelta = int64(len(val))
+			case mysql.TypeDouble:
+				val = strconv.FormatFloat(row.GetFloat64(j), 'f', 0, 64)
+				memValDelta = aggfuncs.DefFloat64Size
+				memKeyDelta = int64(len(val))
+			case mysql.TypeString:
+				val = row.GetString(j)
+				memValDelta = int64(len(val))
+				memKeyDelta = int64(len(val))
+			case mysql.TypeJSON:
+				json := row.GetJSON(j)
+				memValDelta = int64(unsafe.Sizeof(json))
+				val = json.String()
+				memKeyDelta = int64(len(val))
+			default:
+				return memDeltas, errors.Errorf("unsupported type - %v", dataType.Tp)
+			}
+
+			if j == 0 {
+				if _, ok := m[val]; ok {
+					memDeltas = append(memDeltas, int64(0))
+					break
+				}
+				m[val] = true
+				memDelta += memKeyDelta
+			} else {
+				memDelta += memValDelta
+				memDeltas = append(memDeltas, memDelta)
+			}
+		}
+	}
+	return memDeltas, nil
+}
+
+
 type aggMemTest struct {
 	aggTest            aggTest
 	allocMemDelta      int64
@@ -284,15 +341,15 @@ func buildAggMemTester(funcName string, tp byte, numRows int, allocMemDelta int6
 type multiArgsAggMemTest struct {
 	multiArgsAggTest   multiArgsAggTest
 	allocMemDelta      int64
-	updateMemDeltaGens updateMemDeltaGens
+	multiArgsUpdateMemDeltaGens multiArgsUpdateMemDeltaGens
 }
 
-func buildMultiArgsAggMemTester(funcName string, tps []byte, rt byte, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens, results ...interface{}) multiArgsAggMemTest {
+func buildMultiArgsAggMemTester(funcName string, tps []byte, rt byte, numRows int, allocMemDelta int64, updateMemDeltaGens multiArgsUpdateMemDeltaGens, results ...interface{}) multiArgsAggMemTest {
 	multiArgsAggTest := buildMultiArgsAggTester(funcName, tps, rt, numRows, results...)
 	pt := multiArgsAggMemTest{
 		multiArgsAggTest:   multiArgsAggTest,
 		allocMemDelta:      allocMemDelta,
-		updateMemDeltaGens: updateMemDeltaGens,
+		multiArgsUpdateMemDeltaGens: updateMemDeltaGens,
 	}
 	return pt
 }
@@ -740,7 +797,7 @@ func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
 	c.Assert(memDelta, Equals, p.allocMemDelta)
 
 	resultChk := chunk.NewChunkWithCapacity([]*types.FieldType{desc.RetTp}, 1)
-	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.multiArgsAggTest.retType)
+	updateMemDeltas, err := p.multiArgsUpdateMemDeltaGens(srcChk, p.multiArgsAggTest.dataTypes)
 	c.Assert(err, IsNil)
 	iter := chunk.NewIterator4Chunk(srcChk)
 	i := 0
@@ -764,7 +821,7 @@ func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
 
 	resultChk.Reset()
 	srcChk = p.multiArgsAggTest.genSrcChk()
-	updateMemDeltas, err = p.updateMemDeltaGens(srcChk, p.multiArgsAggTest.retType)
+	updateMemDeltas, err = p.multiArgsUpdateMemDeltaGens(srcChk, p.multiArgsAggTest.dataTypes)
 	c.Assert(err, IsNil)
 	iter = chunk.NewIterator4Chunk(srcChk)
 	i = 0

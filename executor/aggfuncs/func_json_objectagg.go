@@ -104,12 +104,44 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		realVal := value.Clone().GetValue()
 		switch x := realVal.(type) {
 		case nil, bool, int64, uint64, float64, string, json.BinaryJSON, *types.MyDecimal, []uint8, types.Time, types.Duration:
+			if _, ok := p.entries[keyString]; !ok {
+				memDelta += int64(len(keyString))
+				memDelta += getValMemDelta(realVal)
+			}
 			p.entries[keyString] = realVal
 		default:
 			return 0, json.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
 	}
-	return 0, nil
+	return memDelta, nil
+}
+
+func getValMemDelta(val interface{}) (memDelta int64) {
+	switch val.(type) {
+	case nil:
+		return 0
+	case bool:
+		memDelta = DefBoolSize
+	case int64:
+		memDelta = DefInt64Size
+	case uint64:
+		memDelta = DefUint64Size
+	case float64:
+		memDelta = DefFloat64Size
+	case string:
+		memDelta = int64(len(val.(string)))
+	case json.BinaryJSON:
+		memDelta = int64(unsafe.Sizeof(val.(json.BinaryJSON)))
+	case *types.MyDecimal:
+		memDelta = int64(unsafe.Sizeof(val.(*types.MyDecimal)))
+	case []uint8:
+		memDelta = int64(unsafe.Sizeof(val.([]uint8)))
+	case types.Time:
+		memDelta = int64(unsafe.Sizeof(val.(types.Time)))
+	case types.Duration:
+		memDelta = int64(unsafe.Sizeof(val.(types.Duration)))
+	}
+	return memDelta
 }
 
 func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
@@ -117,12 +149,7 @@ func (e *jsonObjectAgg) MergePartialResult(sctx sessionctx.Context, src, dst Par
 	// When the result of this function is normalized, values having duplicate keys are discarded,
 	// and only the last value encountered is used with that key in the returned object
 	for k, v := range p1.entries {
-		if _, ok := p2.entries[k]; !ok {
-			memDelta += int64(unsafe.Sizeof(k))
-			memDelta += int64(unsafe.Sizeof(v))
-		}
-
 		p2.entries[k] = v
 	}
-	return memDelta, nil
+	return 0, nil
 }
