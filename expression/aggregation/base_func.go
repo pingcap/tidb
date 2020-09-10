@@ -321,6 +321,10 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 	if _, ok := noNeedCastAggFuncs[a.Name]; ok {
 		return
 	}
+	if a.Name == ast.AggFuncGroupConcat && a.Args[0].GetType().EvalType() == types.ETDecimal {
+		// `group_concat` have special treats to decimals
+		return
+	}
 	var castFunc func(ctx sessionctx.Context, expr expression.Expression) expression.Expression
 	switch retTp := a.RetTp; retTp.EvalType() {
 	case types.ETInt:

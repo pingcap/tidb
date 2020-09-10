@@ -71,6 +71,27 @@ func (e *baseGroupConcat4String) truncatePartialResultIfNeed(sctx sessionctx.Con
 	return nil
 }
 
+func evalStringWithFrac(sctx sessionctx.Context, arg expression.Expression, row chunk.Row) (str string, isNull bool, err error) {
+	if arg.GetType().EvalType() == types.ETDecimal {
+		var dec *types.MyDecimal
+		dec, isNull, err = arg.EvalDecimal(sctx, row)
+		if err != nil {
+			return
+		}
+		if isNull {
+			return
+		}
+		err = dec.Round(dec, arg.GetType().Decimal, types.ModeHalfEven)
+		if err != nil {
+			return
+		}
+		str = string(hack.String(dec.ToString()))
+		return
+	}
+	str, isNull, err = arg.EvalString(sctx, row)
+	return
+}
+
 type basePartialResult4GroupConcat struct {
 	valsBuf *bytes.Buffer
 	buffer  *bytes.Buffer
@@ -101,7 +122,7 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 	for _, row := range rowsInGroup {
 		p.valsBuf.Reset()
 		for _, arg := range e.args {
-			v, isNull, err = arg.EvalString(sctx, row)
+			v, isNull, err = evalStringWithFrac(sctx, arg, row)
 			if err != nil {
 				return 0, err
 			}
@@ -179,7 +200,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		p.valsBuf.Reset()
 		p.encodeBytesBuffer = p.encodeBytesBuffer[:0]
 		for _, arg := range e.args {
-			v, isNull, err = arg.EvalString(sctx, row)
+			v, isNull, err = evalStringWithFrac(sctx, arg, row)
 			if err != nil {
 				return 0, err
 			}
@@ -370,7 +391,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 	for _, row := range rowsInGroup {
 		buffer := new(bytes.Buffer)
 		for _, arg := range e.args {
-			v, isNull, err = arg.EvalString(sctx, row)
+			v, isNull, err = evalStringWithFrac(sctx, arg, row)
 			if err != nil {
 				return 0, err
 			}
@@ -473,7 +494,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 		buffer := new(bytes.Buffer)
 		p.encodeBytesBuffer = p.encodeBytesBuffer[:0]
 		for _, arg := range e.args {
-			v, isNull, err = arg.EvalString(sctx, row)
+			v, isNull, err = evalStringWithFrac(sctx, arg, row)
 			if err != nil {
 				return 0, err
 			}

@@ -435,6 +435,10 @@ func (e *firstRow4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		}
 		p.gotFirstRow, p.isNull = true, isNull
 		if input != nil {
+			err = input.Round(input, e.args[0].GetType().Decimal, types.ModeHalfEven)
+			if err != nil {
+				return 0, err
+			}
 			p.val = *input
 		}
 	}
