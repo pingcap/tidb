@@ -489,27 +489,26 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 	n := len(groupKey)
 	partialResults := make([][]aggfuncs.PartialResult, n)
 	for i := 0; i < n; i++ {
-		groupKeyStr := string(groupKey[i])
 		var ok bool
-		if partialResults[i], ok = mapper[groupKeyStr]; ok {
+		if partialResults[i], ok = mapper[string(groupKey[i])]; ok {
 			continue
 		}
 		for _, af := range w.aggFuncs {
 			partialResult, _ := af.AllocPartialResult()
 			partialResults[i] = append(partialResults[i], partialResult)
 		}
-		mapper[groupKeyStr] = partialResults[i]
+		mapper[string(groupKey[i])] = partialResults[i]
 
 		if w.syncSetMap == nil {
 			continue
 		}
-		sets, ok := w.syncSetMap.Load(groupKeyStr)
+		sets, ok := w.syncSetMap.Load(string(groupKey[i]))
 		if !ok {
 			syncSets := make([]set.SyncSet, len(w.aggFuncs))
 			for j := range syncSets {
 				syncSets[j] = set.NewSyncSet()
 			}
-			sets, _ = w.syncSetMap.LoadOrStore(groupKeyStr, syncSets)
+			sets, _ = w.syncSetMap.LoadOrStore(string(groupKey[i]), syncSets)
 		}
 		syncSets := sets.([]set.SyncSet)
 		for j, af := range w.aggFuncs {
