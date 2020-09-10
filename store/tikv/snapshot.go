@@ -692,7 +692,7 @@ func (rs *SnapshotRuntimeStats) Merge(other execdetails.RuntimeStats) {
 	}
 	if tmp.rpcStats.Stats != nil {
 		if rs.rpcStats.Stats == nil {
-			rs.rpcStats.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
+			rs.rpcStats.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats, len(tmp.rpcStats.Stats))
 		}
 		rs.rpcStats.Merge(tmp.rpcStats)
 	}
