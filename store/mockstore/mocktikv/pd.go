@@ -51,6 +51,10 @@ func NewPDClient(cluster *Cluster) pd.Client {
 	}
 }
 
+func (c *pdClient) GetMemberInfo(ctx context.Context) ([]*pdpb.Member, error) {
+	return []*pdpb.Member{}, nil
+}
+
 func (c *pdClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
 }
@@ -164,6 +168,10 @@ func (c *pdClient) Close() {
 }
 
 func (c *pdClient) ScatterRegion(ctx context.Context, regionID uint64) error {
+	return nil
+}
+
+func (c *pdClient) ScatterRegionWithOption(ctx context.Context, regionID uint64, opts ...pd.ScatterRegionOption) error {
 	return nil
 }
 
