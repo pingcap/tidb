@@ -918,28 +918,6 @@ func (s *testMyDecimalSuite) TestMaxOrMin(c *C) {
 	}
 }
 
-func (s *testMyDecimalSuite) TestZero(c *C) {
-	type tcase struct {
-		prec   int
-		frac   int
-		result string
-	}
-	tests := []tcase{
-		{2, 1, "0.0"},
-		{4, 2, "0.00"},
-		{65, 2, "0.00"},
-		{65, 6, "0.000000"},
-		{1, 1, "0.0"},
-		{1, 0, "0"},
-		{2, 0, "0"},
-		{0, 0, "0"},
-	}
-	for _, tt := range tests {
-		dec := NewZeroDec(tt.prec, tt.frac)
-		c.Assert(dec.String(), Equals, tt.result)
-	}
-}
-
 func (s *testMyDecimalSuite) TestReset(c *C) {
 	var x1, y1, z1 MyDecimal
 	c.Assert(x1.FromString([]byte("38520.130741106671")), IsNil)
