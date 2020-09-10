@@ -284,9 +284,9 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = resetErrDataTooLong(colName, rowIdx+1, err)
 	} else if types.ErrOverflow.Equal(err) {
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
-	} else if types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
+	} else if types.ErrTruncated.Equal(err)  {
 		err = table.ErrWarnDataTruncated.GenWithStackByArgs(colName, rowIdx+1)
-	} else if types.ErrWrongValue.Equal(err) {
+	} else if types.ErrWrongValue.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("truncate value failed", zap.Error(err1))
