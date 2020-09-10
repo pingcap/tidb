@@ -106,12 +106,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	stmtHints, warns := handleStmtHints(tableHints)
-	defer func() {
-		for _, warn := range warns {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
-		}
-	}()
 	sessVars.StmtCtx.StmtHints = stmtHints
+	for _, warn := range warns {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
 		return nil, nil, err
@@ -142,6 +140,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	bestPlanHintStr := hint.RestoreOptimizerHints(bestPlanHint)
 
+	defer func() {
+		sessVars.StmtCtx.StmtHints = stmtHints
+		for _, warn := range warns {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+		}
+	}()
 	binding := bindRecord.FindBinding(bestPlanHintStr)
 	// If the best bestPlan is in baselines, just use it.
 	if binding != nil && binding.Status == bindinfo.Using {
