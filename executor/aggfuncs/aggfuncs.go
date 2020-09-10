@@ -104,6 +104,8 @@ var (
 const (
 	// DefUint32Size is the size of uint32
 	DefUint32Size = int64(unsafe.Sizeof(uint32(0)))
+	// DefUint64Size is the size of uint64
+	DefUint64Size = int64(unsafe.Sizeof(uint64(0)))
 	// DefInt64Size is the size of int64
 	DefInt64Size = int64(unsafe.Sizeof(int64(0)))
 	// DefFloat64Size is the size of float64
