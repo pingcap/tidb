@@ -154,6 +154,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	rewriter.preprocess = nil
 	rewriter.insertPlan = nil
 	rewriter.disableFoldCounter = 0
+	rewriter.tryFoldCounter = 0
 	rewriter.ctxStack = rewriter.ctxStack[:0]
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
 	rewriter.ctx = ctx
@@ -226,6 +227,7 @@ type expressionRewriter struct {
 	// leaving the scope(enable again), the counter will -1.
 	// NOTE: This value can be changed during expression rewritten.
 	disableFoldCounter int
+	tryFoldCounter     int
 }
 
 func (er *expressionRewriter) ctxStackLen() int {
@@ -401,6 +403,16 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter++
 		}
+		if _, ok := expression.TryFoldFunctions[v.FnName.L]; ok {
+			er.tryFoldCounter++
+		}
+	case *ast.CaseExpr:
+		if _, ok := expression.DisableFoldFunctions["case"]; ok {
+			er.disableFoldCounter++
+		}
+		if _, ok := expression.TryFoldFunctions["case"]; ok {
+			er.tryFoldCounter++
+		}
 	case *ast.SetCollationExpr:
 		// Do nothing
 	default:
@@ -412,11 +424,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np LogicalPlan, l, r expression.Expression, not bool) {
 	var condition expression.Expression
 	if rCol, ok := r.(*expression.Column); ok && (er.asScalar || not) {
-		rCol.InOperand = true
 		// If both input columns of `!= all / = any` expression are not null, we can treat the expression
 		// as normal column equal condition.
-		if lCol, ok := l.(*expression.Column); ok && mysql.HasNotNullFlag(lCol.GetType().Flag) && mysql.HasNotNullFlag(rCol.GetType().Flag) {
-			rCol.InOperand = false
+		if lCol, ok := l.(*expression.Column); !ok || !mysql.HasNotNullFlag(lCol.GetType().Flag) || !mysql.HasNotNullFlag(rCol.GetType().Flag) {
+			rColCopy := *rCol
+			rColCopy.InOperand = true
+			r = &rColCopy
 		}
 	}
 	condition, er.err = er.constructBinaryOpFunction(l, r, ast.EQ)
@@ -943,6 +956,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
 	case *ast.FuncCallExpr:
+		if _, ok := expression.TryFoldFunctions[v.FnName.L]; ok {
+			er.tryFoldCounter--
+		}
 		er.funcCallToExpression(v)
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter--
@@ -958,7 +974,13 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	case *ast.BetweenExpr:
 		er.betweenToExpression(v)
 	case *ast.CaseExpr:
+		if _, ok := expression.TryFoldFunctions["case"]; ok {
+			er.tryFoldCounter--
+		}
 		er.caseToExpression(v)
+		if _, ok := expression.DisableFoldFunctions["case"]; ok {
+			er.disableFoldCounter--
+		}
 	case *ast.FuncCastExpr:
 		arg := er.ctxStack[len(er.ctxStack)-1]
 		er.err = expression.CheckArgsNotMultiColumnRow(arg)
@@ -1051,6 +1073,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 func (er *expressionRewriter) newFunction(funcName string, retType *types.FieldType, args ...expression.Expression) (expression.Expression, error) {
 	if er.disableFoldCounter > 0 {
 		return expression.NewFunctionBase(er.sctx, funcName, retType, args...)
+	}
+	if er.tryFoldCounter > 0 {
+		return expression.NewFunctionTryFold(er.sctx, funcName, retType, args...)
 	}
 	return expression.NewFunction(er.sctx, funcName, retType, args...)
 }
@@ -1225,7 +1250,7 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 
 func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 	stkLen := len(er.ctxStack)
-	op := ast.IsTruth
+	op := ast.IsTruthWithoutNull
 	if v.True == 0 {
 		op = ast.IsFalsity
 	}
