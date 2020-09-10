@@ -242,7 +242,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 	ctx := context.Background()
 	bo := NewBackofferWithVars(ctx, GetMemberInfoBackoff, nil)
 	etcdAddrs := make([]string, 0)
-	pdClient := s.GetRegionCache().PDClient()
+	pdClient := s.pdClient
 	if pdClient == nil {
 		return nil, errors.New("Etcd client not found")
 	}
@@ -260,15 +260,16 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 			continue
 		}
 		for _, member := range members {
-			u, err := url.Parse(member.ClientUrls[0])
-			if err != nil {
-				continue
+			if len(member.ClientUrls) > 0 {
+				u, err := url.Parse(member.ClientUrls[0])
+				if err != nil {
+					continue
+				}
+				etcdAddrs = append(etcdAddrs, u.Host)
 			}
-			etcdAddrs = append(etcdAddrs, u.Host)
 		}
 		return etcdAddrs, nil
 	}
-
 }
 
 func (s *tikvStore) TLSConfig() *tls.Config {
