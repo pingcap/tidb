@@ -290,9 +290,8 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 			logutil.BgLogger().Warn("truncate value failed", zap.Error(err1))
 		}
 		err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
-	} else if types.ErrWarnDataOutOfRange.Equal(err) {
-		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	}
+
 	if !e.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning {
 		return err
 	}

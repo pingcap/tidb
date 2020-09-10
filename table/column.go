@@ -193,7 +193,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	}
 
 	if col.Tp == mysql.TypeFloat && casted.GetFloat32() > math.MaxFloat32 {
-		err := types.ErrWarnDataOutOfRange.FastGen("Out of range value for column '%s' at row %d")
+		err := types.ErrOverflow.FastGen("%s value is out of range in '%s'")
 		casted = types.NewFloat32Datum(math.MaxFloat32)
 		return casted, err
 	}
