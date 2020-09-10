@@ -16,7 +16,6 @@ package executor
 import (
 	"context"
 	"math"
-	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -945,10 +944,10 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 		}
 		return true
 	}
-	e.stats = &insertRuntimeStat{
-		RPCTime:         0,
-		CheckInsertTime: 0,
-	}
+	//e.stats = &insertRuntimeStat{
+	//	RPCTime:         0,
+	//	CheckInsertTime: 0,
+	//}
 	return false
 }
 
@@ -962,7 +961,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		defer span1.Finish()
 		opentracing.ContextWithSpan(ctx, span1)
 	}
-	start := time.Now()
+	//start := time.Now()
 	// Get keys need to be checked.
 	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, rows)
 	if err != nil {
@@ -980,12 +979,12 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}
 	}
-	rpcStart := time.Now()
+	//rpcStart := time.Now()
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
-	e.stats.RPCTime = time.Since(rpcStart)
+	//e.stats.RPCTime = time.Since(rpcStart)
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
 		skip := false
@@ -1022,7 +1021,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 	}
-	e.stats.CheckInsertTime = time.Since(start)
+	//e.stats.CheckInsertTime = time.Since(start)
 	return nil
 }
 

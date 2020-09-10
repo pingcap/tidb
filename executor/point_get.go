@@ -15,7 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -479,18 +478,27 @@ type runtimeStatsWithSnapshot struct {
 }
 
 func (e *insertRuntimeStat) String() string {
-	var basic, prepareStr, rpcStatsStr, checkInsertStr string
+	//var basic, prepareStr, rpcStatsStr, checkInsertStr string
+	var basic, rpcStatsStr string
 	if e.runtimeStatsWithSnapshot.BasicRuntimeStats != nil {
 		basic = e.runtimeStatsWithSnapshot.BasicRuntimeStats.String()
-		prepareStr = fmt.Sprintf("prepare:%v", time.Duration(e.runtimeStatsWithSnapshot.BasicRuntimeStats.GetTime())-e.CheckInsertTime)
+		//prepareStr = fmt.Sprintf("prepare:%v", time.Duration(e.runtimeStatsWithSnapshot.BasicRuntimeStats.GetTime())-e.CheckInsertTime)
 	}
-	if e.CheckInsertTime != 0 && e.RPCTime != 0 {
-		checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, rpc:{time:%v}}", e.CheckInsertTime, e.CheckInsertTime-e.RPCTime, e.RPCTime)
-	}
+	/*
+		if e.CheckInsertTime != 0 && e.RPCTime != 0 {
+			checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, rpc:{time:%v}}", e.CheckInsertTime, e.CheckInsertTime-e.RPCTime, e.RPCTime)
+		}
+	*/
 	if e.runtimeStatsWithSnapshot.SnapshotRuntimeStats != nil {
 		rpcStatsStr = e.SnapshotRuntimeStats.String()
 	}
-	return basic + ", " + prepareStr + ", " + checkInsertStr + ", " + rpcStatsStr
+	if rpcStatsStr == "" {
+		return basic
+	}
+	if basic == "" {
+		return rpcStatsStr
+	}
+	return basic + ", " + rpcStatsStr
 }
 
 func (e *runtimeStatsWithSnapshot) String() string {
