@@ -114,8 +114,6 @@ const (
 	DefTimeSize = int64(16)
 	// DefRowSize is the size of row
 	DefRowSize = int64(unsafe.Sizeof(chunk.Row{}))
-	// DefUint64Size is the size of uint64
-	DefUint64Size = int64(unsafe.Sizeof(uint64(0)))
 	// DefBoolSize is the size of bool
 	DefBoolSize = int64(unsafe.Sizeof(false))
 )
