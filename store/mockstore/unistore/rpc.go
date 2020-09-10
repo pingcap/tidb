@@ -135,6 +135,8 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp, err = c.usSvr.KvCleanup(ctx, req.Cleanup())
 	case tikvrpc.CmdCheckTxnStatus:
 		resp.Resp, err = c.usSvr.KvCheckTxnStatus(ctx, req.CheckTxnStatus())
+	case tikvrpc.CmdCheckSecondaryLocks:
+		resp.Resp, err = c.usSvr.KvCheckSecondaryLocks(ctx, req.CheckSecondaryLocks())
 	case tikvrpc.CmdTxnHeartBeat:
 		resp.Resp, err = c.usSvr.KvTxnHeartBeat(ctx, req.TxnHeartBeat())
 	case tikvrpc.CmdBatchGet:
