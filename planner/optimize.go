@@ -107,7 +107,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	stmtHints, warns := handleStmtHints(tableHints)
 	defer func() {
-		sessVars.StmtCtx.StmtHints = stmtHints
 		for _, warn := range warns {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 		}
