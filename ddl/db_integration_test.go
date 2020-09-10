@@ -270,7 +270,7 @@ func (s *testIntegrationSuite2) TestIssue6101(c *C) {
 	tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
 	_, err := tk.Exec("insert into t1 values (500), (-500), (~0), (-1);")
 	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(errno.ErrWarnDataOutOfRange))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.ErrWarnDataOutOfRange))
 	tk.MustExec("drop table t1")
 
 	tk.MustExec("set sql_mode=''")
@@ -2080,8 +2080,6 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 
-	tk.MustGetErrCode("create table t(a int, b int, index((a+b)));", errno.ErrNotSupportedYet)
-
 	tk.MustExec("create table t (a int, b real);")
 	tk.MustExec("insert into t values (1, 2.1);")
 	tk.MustExec("alter table t add index idx((a+b));")
@@ -2125,6 +2123,9 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 	tk.MustExec("create table t1 (a varchar(10), b varchar(10));")
 	tk.MustExec("alter table t1 add unique index ei_ab ((concat(a, b)));")
 	tk.MustExec("alter table t1 alter index ei_ab invisible;")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, key((a+1)), key((a+2)), key idx((a+3)), key((a+4)));")
 
 	// Test experiment switch.
 	config.UpdateGlobal(func(conf *config.Config) {
