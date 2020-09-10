@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
-
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/expression"
@@ -283,7 +282,6 @@ func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldT
 			switch dataType.Tp {
 			case mysql.TypeLonglong:
 				val = strconv.FormatInt(row.GetInt64(j), 10)
-				row.GetRaw(0)
 				memValDelta = aggfuncs.DefUint64Size
 				memKeyDelta = int64(len(val))
 			case mysql.TypeDouble:
