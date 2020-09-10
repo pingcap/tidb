@@ -209,6 +209,10 @@ func (e *UpdateExec) handleErr(colName model.CIStr, rowIdx int, err error) error
 		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
 	}
 
+	if types.ErrWarnDataOutOfRange.Equal(err) {
+		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
+	}
+
 	return err
 }
 
