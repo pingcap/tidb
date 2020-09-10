@@ -793,7 +793,10 @@ func getRegionInfo(store tikv.Storage, regions []regionMeta) ([]regionMeta, erro
 		return regions, nil
 	}
 	pdHosts, err := etcd.EtcdAddrs()
-	if err != nil || len(pdHosts) == 0 {
+	if err != nil {
+		return regions, err
+	}
+	if pdHosts == nil || len(pdHosts) == 0 {
 		return regions, nil
 	}
 	tikvHelper := &helper.Helper{

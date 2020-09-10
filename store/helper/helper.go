@@ -126,7 +126,7 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(pdHosts) == 0 {
+	if pdHosts == nil || len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
 	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+rw, nil)
@@ -646,7 +646,7 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 	if err != nil {
 		return err
 	}
-	if len(pdHosts) == 0 {
+	if pdHosts == nil || len(pdHosts) == 0 {
 		return errors.New("pd unavailable")
 	}
 	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+pdHosts[0]+uri))
@@ -732,7 +732,7 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(pdHosts) == 0 {
+	if pdHosts == nil || len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
 	req, err := http.NewRequest("GET", util.InternalHTTPSchema()+"://"+pdHosts[0]+pdapi.Stores, nil)
@@ -767,7 +767,7 @@ func (h *Helper) GetPDAddr() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(pdAddrs) == 0 {
+	if pdAddrs == nil || len(pdAddrs) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
 	return pdAddrs, nil

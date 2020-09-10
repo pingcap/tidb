@@ -1347,8 +1347,9 @@ func FormatVersion(TiDBVersion string, isDefaultVersion bool) string {
 	return version
 }
 
-// GetPDServerInfo return all pd server info
+// GetPDServerInfo returns all PD nodes information of cluster
 func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	// Get PD servers info.
 	store := ctx.GetStore()
 	etcd, ok := store.(tikv.EtcdBackend)
 	if !ok {
@@ -1360,6 +1361,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		return nil, errors.Trace(err)
 	}
 	for _, addr := range members {
+		// Get PD version
 		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.ClusterVersion)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
@@ -1376,6 +1378,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		version := strings.Trim(strings.Trim(string(pdVersion), "\n"), "\"")
+
 		// Get PD git_hash
 		url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.Status)
 		req, err = http.NewRequest(http.MethodGet, url, nil)
