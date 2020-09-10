@@ -6271,40 +6271,62 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 	// Assert Coprocessor OOMAction
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
+	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
+	// create table for non keep-order case
 	tk.MustExec("drop table if exists t5")
 	tk.MustExec("create table t5(id int)")
-	tk.MustExec(`set @@tidb_wait_split_region_finish=1`)
 	tk.MustQuery(`split table t5 between (0) and (10000) regions 10`).Check(testkit.Rows("9 1"))
-	// assert oom action worked in non keep order case
+	// create table for keep-order case
+	tk.MustExec("drop table if exists t6")
+	tk.MustExec("create table t6(id int, index(id))")
+	tk.MustQuery(`split table t6 between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
 	count := 10
 	for i := 0; i < count; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t5 (id) values (%v)", i))
+		tk.MustExec(fmt.Sprintf("insert into t6 (id) values (%v)", i))
 	}
-	sm := &mockSessionManager1{
-		PS: make([]*util.ProcessInfo, 0),
+
+	testcases := []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "keep Order",
+			sql:  "select * from t6",
+		},
+		{
+			name: "non keep Order",
+			sql:  "select * from t5",
+		},
 	}
-	tk.Se.SetSessionManager(sm)
-	s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	// let ticket count be great enough to handle the query during oom action
-	tk.MustExec("set tidb_distsql_scan_concurrency = 30")
-	quota := count * 15
-	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
-	var expect []string
-	for i := 0; i < count; i++ {
-		expect = append(expect, fmt.Sprintf("%v", i))
-	}
-	tk.MustQuery("select * from t5").Sort().Check(testkit.Rows(expect...))
-	// assert oom action worked by max consumed > memory quota
-	c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		sm := &mockSessionManager1{
+			PS: make([]*util.ProcessInfo, 0),
+		}
+		tk.Se.SetSessionManager(sm)
+		s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
+		// let ticket count be great enough to handle the query during oom action
+		tk.MustExec("set tidb_distsql_scan_concurrency = 30")
+		quota := count * 15
+		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
+		var expect []string
+		for i := 0; i < count; i++ {
+			expect = append(expect, fmt.Sprintf("%v", i))
+		}
+		tk.MustQuery(testcase.sql).Sort().Check(testkit.Rows(expect...))
+		// assert oom action worked by max consumed > memory quota
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
 
-	// assert delegate to fallback action
-	tk.MustExec("set tidb_distsql_scan_concurrency = 2")
-	tk.MustExec("set @@tidb_mem_quota_query=1;")
-	err := tk.QueryToErr("select * from t5")
-	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+		// assert delegate to fallback action
+		tk.MustExec("set tidb_distsql_scan_concurrency = 2")
+		tk.MustExec("set @@tidb_mem_quota_query=1;")
+		err := tk.QueryToErr(testcase.sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+	}
 }

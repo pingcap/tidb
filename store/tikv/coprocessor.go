@@ -1283,6 +1283,7 @@ type taskRateLimitAction struct {
 		tearedTicket     uint
 		teared           bool
 		sendRate         *rateLimit
+		// maxRunningTaskID indicates the max id of the running copTask
 		maxRunningTaskID int
 	}
 }
