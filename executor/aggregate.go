@@ -46,8 +46,8 @@ type baseHashAggWorker struct {
 	ctx          sessionctx.Context
 	finishCh     <-chan struct{}
 	aggFuncs     []aggfuncs.AggFunc
-	syncSetMap   *sync.Map
 	maxChunkSize int
+	syncSetMap   *sync.Map
 }
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, maxChunkSize int) baseHashAggWorker {
@@ -55,16 +55,6 @@ func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggF
 		ctx:          ctx,
 		finishCh:     finishCh,
 		aggFuncs:     aggFuncs,
-		maxChunkSize: maxChunkSize,
-	}
-}
-
-func newBaseHashAggWorkerSync(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, syncSetMap *sync.Map, maxChunkSize int) baseHashAggWorker {
-	return baseHashAggWorker{
-		ctx:          ctx,
-		finishCh:     finishCh,
-		aggFuncs:     aggFuncs,
-		syncSetMap:   syncSetMap,
 		maxChunkSize: maxChunkSize,
 	}
 }
@@ -316,7 +306,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
 		w := HashAggPartialWorker{
-			baseHashAggWorker: newBaseHashAggWorkerSync(e.ctx, e.finishCh, e.PartialAggFuncs, e.syncSetMap, e.maxChunkSize),
+			baseHashAggWorker: newBaseHashAggWorker(e.ctx, e.finishCh, e.PartialAggFuncs, e.maxChunkSize),
 			inputCh:           e.partialInputChs[i],
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
@@ -327,6 +317,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			groupKey:          make([][]byte, 0, 8),
 			memTracker:        e.memTracker,
 		}
+		w.syncSetMap = e.syncSetMap
 		e.memTracker.Consume(w.chk.MemoryUsage())
 		e.partialWorkers[i] = w
 
