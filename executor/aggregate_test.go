@@ -464,6 +464,13 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
+	// For issue #19676 The result of stddev_pop(distinct xxx) is wrong
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (id int);")
+	tk.MustExec("insert into t1 values (1),(2);")
+	tk.MustQuery("select  stddev_pop(id) from t1;").Check(testkit.Rows("0.5"))
+	tk.MustExec("insert into t1 values (1);")
+	tk.MustQuery("select  stddev_pop(distinct id) from t1;").Check(testkit.Rows("0.5"))
 }
 
 func (s *testSuiteAgg) TestAggPrune(c *C) {
