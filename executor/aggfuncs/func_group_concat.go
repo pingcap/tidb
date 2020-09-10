@@ -81,9 +81,11 @@ func evalStringWithFrac(sctx sessionctx.Context, arg expression.Expression, row 
 		if isNull {
 			return
 		}
-		err = dec.Round(dec, arg.GetType().Decimal, types.ModeHalfEven)
-		if err != nil {
-			return
+		if decimal := arg.GetType().Decimal; decimal >= 0 {
+			err = dec.Round(dec, decimal, types.ModeHalfEven)
+			if err != nil {
+				return
+			}
 		}
 		str = string(hack.String(dec.ToString()))
 		return

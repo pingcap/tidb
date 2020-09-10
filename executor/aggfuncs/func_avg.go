@@ -103,9 +103,11 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if isNull {
 			continue
 		}
-		err = input.Round(input, e.args[0].GetType().Decimal, types.ModeHalfEven)
-		if err != nil {
-			return 0, err
+		if decimal := e.args[0].GetType().Decimal; decimal >= 0 {
+			err = input.Round(input, decimal, types.ModeHalfEven)
+			if err != nil {
+				return 0, err
+			}
 		}
 
 		newSum := new(types.MyDecimal)
@@ -170,9 +172,11 @@ func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 		if isNull {
 			continue
 		}
-		err = inputSum.Round(inputSum, e.args[1].GetType().Decimal, types.ModeHalfEven)
-		if err != nil {
-			return 0, err
+		if decimal := e.args[1].GetType().Decimal; decimal >= 0 {
+			err = inputSum.Round(inputSum, decimal, types.ModeHalfEven)
+			if err != nil {
+				return 0, err
+			}
 		}
 
 		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
@@ -242,9 +246,11 @@ func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Contex
 		if isNull {
 			continue
 		}
-		err = input.Round(input, e.args[0].GetType().Decimal, types.ModeHalfEven)
-		if err != nil {
-			return memDelta, err
+		if decimal := e.args[0].GetType().Decimal; decimal >= 0 {
+			err = input.Round(input, decimal, types.ModeHalfEven)
+			if err != nil {
+				return memDelta, err
+			}
 		}
 
 		hash, err := input.ToHashKey()

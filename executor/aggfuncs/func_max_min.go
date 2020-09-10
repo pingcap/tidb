@@ -740,9 +740,11 @@ func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGrou
 		if isNull {
 			continue
 		}
-		err = input.Round(input, e.args[0].GetType().Decimal, types.ModeHalfEven)
-		if err != nil {
-			return 0, err
+		if decimal := e.args[0].GetType().Decimal; decimal >= 0 {
+			err = input.Round(input, decimal, types.ModeHalfEven)
+			if err != nil {
+				return 0, err
+			}
 		}
 
 		if p.isNull {

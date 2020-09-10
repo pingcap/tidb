@@ -180,9 +180,11 @@ func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		if isNull {
 			continue
 		}
-		err = input.Round(input, e.args[0].GetType().Decimal, types.ModeHalfEven)
-		if err != nil {
-			return memDelta, err
+		if decimal := e.args[0].GetType().Decimal; decimal >= 0 {
+			err = input.Round(input, decimal, types.ModeHalfEven)
+			if err != nil {
+				return 0, err
+			}
 		}
 
 		if p.notNullRowCount == 0 {
@@ -335,9 +337,11 @@ func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if isNull {
 			continue
 		}
-		err = input.Round(input, e.args[0].GetType().Decimal, types.ModeHalfEven)
-		if err != nil {
-			return memDelta, err
+		if decimal := e.args[0].GetType().Decimal; decimal >= 0 {
+			err = input.Round(input, decimal, types.ModeHalfEven)
+			if err != nil {
+				return memDelta, err
+			}
 		}
 
 		hash, err := input.ToHashKey()
