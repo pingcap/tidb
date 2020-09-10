@@ -95,9 +95,20 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 	workersCond := sync.NewCond(&sync.Mutex{})
 	it.actionOnExceed = &taskRateLimitAction{
-		workersCond: workersCond,
+		cond: struct {
+			*sync.Cond
+			once             sync.Once
+			exceed           bool
+			tearedTicket     uint
+			teared           bool
+			sendRate         *rateLimit
+			maxRunningTaskID int
+		}{
+			Cond:     workersCond,
+			sendRate: it.sendRate,
+		},
 	}
-	it.actionOnExceed.sendRate = it.sendRate
+
 	if it.memTracker != nil {
 		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
@@ -512,24 +523,26 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		}
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
-		worker.actionOnExceed.workersCond.L.Lock()
-		if task.id > worker.actionOnExceed.maxRunningTaskID {
-			worker.actionOnExceed.maxRunningTaskID = task.id
+
+		worker.actionOnExceed.cond.L.Lock()
+		if task.id > worker.actionOnExceed.cond.maxRunningTaskID {
+			worker.actionOnExceed.cond.maxRunningTaskID = task.id
 		}
 		// If actionOnExceed has been triggered and there is no ticket have been spilled before,
 		// spill one ticket.
-		if worker.actionOnExceed.exceed && !worker.actionOnExceed.teared {
-			worker.actionOnExceed.tearedTicket = worker.actionOnExceed.tearedTicket + 1
-			worker.actionOnExceed.teared = true
+		if worker.actionOnExceed.cond.exceed && !worker.actionOnExceed.cond.teared {
+			worker.actionOnExceed.cond.tearedTicket = worker.actionOnExceed.cond.tearedTicket + 1
+			worker.actionOnExceed.cond.teared = true
 		} else {
 			worker.sendRate.putToken()
 		}
 
 		// check worker whether need to suspend running.
-		for worker.actionOnExceed.exceed {
-			worker.actionOnExceed.workersCond.Wait()
+		for worker.actionOnExceed.cond.exceed {
+			worker.actionOnExceed.cond.Wait()
 		}
-		worker.actionOnExceed.workersCond.L.Unlock()
+		worker.actionOnExceed.cond.L.Unlock()
+
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
@@ -579,9 +592,9 @@ func (it *copIterator) open(ctx context.Context) {
 	}
 	taskSender.respChan = it.respChan
 	go taskSender.run()
-	it.actionOnExceed.workersCond.L.Lock()
-	it.actionOnExceed.taskStarted = true
-	it.actionOnExceed.workersCond.L.Unlock()
+	it.actionOnExceed.mu.Lock()
+	it.actionOnExceed.mu.running = true
+	it.actionOnExceed.mu.Unlock()
 }
 
 func (sender *copIteratorTaskSender) run() {
@@ -673,10 +686,11 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		closed bool
 	)
 
+	// broadcast should be called under it.actionOnExceed.cond critical area
 	broadcast := func() {
-		it.actionOnExceed.exceed = false
-		it.actionOnExceed.workersCond.Broadcast()
-		it.actionOnExceed.once = sync.Once{}
+		it.actionOnExceed.cond.exceed = false
+		it.actionOnExceed.cond.Broadcast()
+		it.actionOnExceed.cond.once = sync.Once{}
 		logutil.BgLogger().Debug("taskRateLimitAction Broadcast")
 	}
 	// If data order matters, response should be returned in the same order as copTask slice.
@@ -687,12 +701,12 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		if !ok || closed {
 			return nil, nil
 		}
-		it.actionOnExceed.workersCond.L.Lock()
+		it.actionOnExceed.cond.L.Lock()
 		// The respCh have been drained out
-		if it.actionOnExceed.exceed && len(it.respChan) < 1 {
+		if it.actionOnExceed.cond.exceed && len(it.respChan) < 1 {
 			broadcast()
 		}
-		it.actionOnExceed.workersCond.L.Unlock()
+		it.actionOnExceed.cond.L.Unlock()
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
@@ -711,14 +725,14 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
-			it.actionOnExceed.workersCond.L.Lock()
+			it.actionOnExceed.cond.L.Lock()
 			// The tasks whose id is less than maxRunningTaskID are assumed that being sending to their task channel.
 			// So the response channel would be thought as drained out if the current taskID is greater or equal than
 			// the maxRunningTaskID as all the workers are being suspended at that time.
-			if it.actionOnExceed.exceed && it.tasks[it.curr].id >= it.actionOnExceed.maxRunningTaskID {
+			if it.actionOnExceed.cond.exceed && it.tasks[it.curr].id >= it.actionOnExceed.cond.maxRunningTaskID {
 				broadcast()
 			}
-			it.actionOnExceed.workersCond.L.Unlock()
+			it.actionOnExceed.cond.L.Unlock()
 		}
 	}
 
@@ -1201,13 +1215,16 @@ func (it *copIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 		close(it.finishCh)
 	}
+	it.actionOnExceed.mu.Lock()
+	it.actionOnExceed.mu.running = false
+	it.actionOnExceed.mu.Unlock()
 	it.rpcCancel.CancelAll()
-	it.wg.Wait()
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
-	it.actionOnExceed.workersCond.L.Lock()
-	it.actionOnExceed.exceed = false
-	it.actionOnExceed.workersCond.Broadcast()
-	it.actionOnExceed.workersCond.L.Unlock()
+	it.actionOnExceed.cond.L.Lock()
+	it.actionOnExceed.cond.exceed = false
+	it.actionOnExceed.cond.Broadcast()
+	it.actionOnExceed.cond.L.Unlock()
+	it.wg.Wait()
 	return nil
 }
 
@@ -1250,40 +1267,57 @@ func (it copErrorResponse) Close() error {
 }
 
 type taskRateLimitAction struct {
-	taskStarted    bool
-	once           sync.Once
+	mu struct {
+		sync.Mutex
+		running bool
+	}
+	//taskStarted    bool
 	fallbackAction memory.ActionOnExceed
-	workersCond    *sync.Cond
-	// exceed indicates whether have encountered OOM situation.
-	exceed bool
-	// tearedTicket indicates the count of tickets which have been teared up.
-	tearedTicket     uint
-	teared           bool
-	sendRate         *rateLimit
-	maxRunningTaskID int
+
+	cond struct {
+		*sync.Cond
+		once sync.Once
+		// exceed indicates whether have encountered OOM situation.
+		exceed bool
+		// tearedTicket indicates the count of tickets which have been teared up.
+		tearedTicket     uint
+		teared           bool
+		sendRate         *rateLimit
+		maxRunningTaskID int
+	}
 }
 
 // Action implements ActionOnExceed.Action
 func (e *taskRateLimitAction) Action(t *memory.Tracker) {
-	e.workersCond.L.Lock()
-	defer e.workersCond.L.Unlock()
-	if !e.taskStarted {
-		e.fallbackAction.Action(t)
+	if !e.checkRunning(t) {
 		return
 	}
-	e.once.Do(func() {
-		if e.tearedTicket >= uint(cap(e.sendRate.token)-1) {
+
+	e.cond.L.Lock()
+	defer e.cond.L.Unlock()
+	e.cond.once.Do(func() {
+		if e.cond.tearedTicket >= uint(cap(e.cond.sendRate.token)-1) {
 			logutil.BgLogger().Info("taskRateLimitAction delegate to fallback action",
-				zap.Int("ticketTotal", cap(e.sendRate.token)))
+				zap.Int("ticketTotal", cap(e.cond.sendRate.token)))
 			e.fallbackAction.Action(t)
 			return
 		}
 		logutil.BgLogger().Info("taskRateLimitAction exceed signal.",
 			zap.Int64("consumed", t.BytesConsumed()),
-			zap.Uint("tearedTicket", e.tearedTicket))
-		e.teared = false
-		e.exceed = true
+			zap.Uint("tearedTicket", e.cond.tearedTicket))
+		e.cond.teared = false
+		e.cond.exceed = true
 	})
+}
+
+func (e *taskRateLimitAction) checkRunning(t *memory.Tracker) (allowAction bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.mu.running && e.fallbackAction != nil {
+		e.fallbackAction.Action(t)
+		return false
+	}
+	return true
 }
 
 // SetLogHook implements ActionOnExceed.SetLogHook
