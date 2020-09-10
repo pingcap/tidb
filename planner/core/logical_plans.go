@@ -985,9 +985,10 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type LogicalTopN struct {
 	baseLogicalPlan
 
-	ByItems []*util.ByItems
-	Offset  uint64
-	Count   uint64
+	ByItems   []*util.ByItems
+	Offset    uint64
+	Count     uint64
+	topnHints topnHintInfo
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1008,8 +1009,9 @@ func (lt *LogicalTopN) isLimit() bool {
 type LogicalLimit struct {
 	baseLogicalPlan
 
-	Offset uint64
-	Count  uint64
+	Offset    uint64
+	Count     uint64
+	topnHints topnHintInfo
 }
 
 // LogicalLock represents a select lock plan.
