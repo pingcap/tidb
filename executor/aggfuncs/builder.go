@@ -486,14 +486,10 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildStdDevPop builds the AggFunc implementation for function "STD()/STDDEV()/STDDEV_POP()"
 func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	base := baseStdDevPopAggFunc{
-		varPop4Float64{
-			baseVarPopAggFunc{
-				baseAggFunc{
-					args:    aggFuncDesc.Args,
-					ordinal: ordinal,
-				},
-			},
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
 		},
 	}
 	switch aggFuncDesc.Mode {
@@ -501,9 +497,9 @@ func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		return nil
 	default:
 		if aggFuncDesc.HasDistinct {
-			return &stdDevPop4DistinctFloat64{base}
+			return &stdDevPop4DistinctFloat64{varPop4DistinctFloat64{base}}
 		}
-		return &stdDevPop4Float64{base}
+		return &stdDevPop4Float64{varPop4Float64{base}}
 	}
 }
 
@@ -602,7 +598,8 @@ func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
-	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: buildValueEvaluator(aggFuncDesc.RetTp)}
+	ve, _ := buildValueEvaluator(aggFuncDesc.RetTp)
+	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: ve}
 }
 
 func buildLead(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
