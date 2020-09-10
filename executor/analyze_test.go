@@ -592,3 +592,85 @@ func (s *testSuite1) TestHashInTopN(c *C) {
 		}
 	}
 }
+<<<<<<< HEAD
+=======
+
+func (s *testSuite1) TestNormalAnalyzeOnCommonHandle(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3, t4")
+	tk.Se.GetSessionVars().EnableClusteredIndex = true
+	tk.MustExec("CREATE TABLE t1 (a int primary key, b int)")
+	tk.MustExec("insert into t1 values(1,1), (2,2), (3,3)")
+	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")
+	tk.MustExec("insert into t2 values(\"111\",1), (\"222\",2), (\"333\",3)")
+	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b), key(c))")
+	tk.MustExec("insert into t3 values(1,1,1), (2,2,2), (3,3,3)")
+
+	tk.MustExec("analyze table t1, t2, t3")
+
+	tk.MustQuery(`show stats_buckets where table_name in ("t1", "t2", "t3")`).Sort().Check(testkit.Rows(
+		"test t1  a 0 0 1 1 1 1",
+		"test t1  a 0 1 2 1 2 2",
+		"test t1  a 0 2 3 1 3 3",
+		"test t1  b 0 0 1 1 1 1",
+		"test t1  b 0 1 2 1 2 2",
+		"test t1  b 0 2 3 1 3 3",
+		"test t2  PRIMARY 1 0 1 1 111 111",
+		"test t2  PRIMARY 1 1 2 1 222 222",
+		"test t2  PRIMARY 1 2 3 1 333 333",
+		"test t2  a 0 0 1 1 111 111",
+		"test t2  a 0 1 2 1 222 222",
+		"test t2  a 0 2 3 1 333 333",
+		"test t2  b 0 0 1 1 1 1",
+		"test t2  b 0 1 2 1 2 2",
+		"test t2  b 0 2 3 1 3 3",
+		"test t3  PRIMARY 1 0 1 1 (1, 1) (1, 1)",
+		"test t3  PRIMARY 1 1 2 1 (2, 2) (2, 2)",
+		"test t3  PRIMARY 1 2 3 1 (3, 3) (3, 3)",
+		"test t3  a 0 0 1 1 1 1",
+		"test t3  a 0 1 2 1 2 2",
+		"test t3  a 0 2 3 1 3 3",
+		"test t3  b 0 0 1 1 1 1",
+		"test t3  b 0 1 2 1 2 2",
+		"test t3  b 0 2 3 1 3 3",
+		"test t3  c 0 0 1 1 1 1",
+		"test t3  c 0 1 2 1 2 2",
+		"test t3  c 0 2 3 1 3 3",
+		"test t3  c 1 0 1 1 1 1",
+		"test t3  c 1 1 2 1 2 2",
+		"test t3  c 1 2 3 1 3 3"))
+}
+
+func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_default_val_for_analyze;")
+	tk.MustExec("create database test_default_val_for_analyze;")
+	tk.MustExec("use test_default_val_for_analyze")
+
+	tk.MustExec("create table t (a int, key(a));")
+	for i := 0; i < 2048; i++ {
+		tk.MustExec("insert into t values (0)")
+	}
+	for i := 1; i < 4; i++ {
+		tk.MustExec("insert into t values (?)", i)
+	}
+	tk.MustExec("analyze table t with 0 topn;")
+	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 512.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
+	tk.MustQuery("explain select * from t where a = 999").Check(testkit.Rows("IndexReader_6 0.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 0.00 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, key(a));")
+	for i := 0; i < 2048; i++ {
+		tk.MustExec("insert into t values (0)")
+	}
+	for i := 1; i < 2049; i++ {
+		tk.MustExec("insert into t values (?)", i)
+	}
+	tk.MustExec("analyze table t with 0 topn;")
+	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 1.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
+}
+>>>>>>> 0859e75... statistics: add default value of CMSketch for `Analyze` (#19455)
