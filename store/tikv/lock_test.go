@@ -486,7 +486,7 @@ func (s *testLockSuite) TestBatchResolveLocks(c *C) {
 	c.Assert(err, IsNil)
 	committer.setAsyncCommit(true)
 	committer.lockTTL = 20000
-	err = committer.prewriteMutations(NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil), committer.mutations)
+	err = committer.prewriteTxnMutations(NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil))
 	c.Assert(err, IsNil)
 
 	var locks []*Lock
