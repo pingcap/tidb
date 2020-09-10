@@ -1320,12 +1320,9 @@ func allKeysNoDups(req *kvrpcpb.PrewriteRequest) bool {
 }
 
 func (c *twoPhaseCommitter) collectPrewriteMutationsBatch(bo *Backoffer) (*batchMutations, error) {
-	sizer := func(m *mutation) int { return len(m.key) + len(m.value) }
-
 	it := committerTxnMutations{c, true}.Iter(nil, nil)
 	collector := &mutationBatchCollector{
 		src:            c.mapWithRegion(bo, it),
-		sizer:          sizer,
 		limit:          txnCommitBatchSize,
 		primaryKey:     c.primaryKey,
 		onlyCollectKey: false,

@@ -237,14 +237,8 @@ func (c *execController) getCollector(start, end []byte) *mutationBatchCollector
 		it.WithFilter(c.filter)
 	}
 
-	sizer := func(m *mutation) int { return len(m.key) }
-	if actionIsPrewrite {
-		sizer = func(m *mutation) int { return len(m.key) + len(m.value) }
-	}
-
 	return &mutationBatchCollector{
 		src:            c.committer.mapWithRegion(c.bo, it),
-		sizer:          sizer,
 		limit:          txnCommitBatchSize,
 		primaryKey:     c.committer.primaryKey,
 		onlyCollectKey: !actionIsPrewrite,
@@ -476,7 +470,6 @@ func (it *mutationWithRegionIter) Next() (mutationWithRegion, error) {
 
 type mutationBatchCollector struct {
 	src            *mutationWithRegionIter
-	sizer          func(*mutation) int
 	primaryKey     []byte
 	limit          int
 	init           bool
@@ -517,14 +510,15 @@ func (c *mutationBatchCollector) Collect() (*batchMutations, error) {
 
 		if c.onlyCollectKey {
 			mutations.keys = append(mutations.keys, m.key)
+			size += len(m.key)
 		} else {
 			mutations.Push(m.op, m.key, m.value, m.isPessimisticLock)
+			size += len(m.key) + len(m.value)
 		}
 
 		if !isPrimary {
 			isPrimary = bytes.Equal(m.key, c.primaryKey)
 		}
-		size += c.sizer(&m.mutation)
 
 		m, err = c.src.Next()
 		if err != nil {
