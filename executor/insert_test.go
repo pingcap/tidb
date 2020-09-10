@@ -1355,4 +1355,5 @@ func (s *testSuite10) TestFloatOutRange(c *C) {
 	tk.MustGetErrCode("update t1 set a = 999999999999999999999999999999999999999", errno.ErrWarnDataOutOfRange)
 	_, err = tk.Exec("update t1 set a = 999999999999999999999999999999999999999")
 	c.Assert(err.Error(), Matches, ".*Out of range value for column 'a' at.*")
+	tk.MustExec(`drop table if exists t1,t2`)
 }
