@@ -592,8 +592,6 @@ func (s *testSuite1) TestHashInTopN(c *C) {
 		}
 	}
 }
-<<<<<<< HEAD
-=======
 
 func (s *testSuite1) TestNormalAnalyzeOnCommonHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -673,4 +671,3 @@ func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
 	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 1.00 root  index:IndexRangeScan_5",
 		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
 }
->>>>>>> 0859e75... statistics: add default value of CMSketch for `Analyze` (#19455)
