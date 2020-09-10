@@ -122,6 +122,9 @@ func applyFlagsOps(origin KeyFlags, ops ...FlagsOp) KeyFlags {
 
 var tombstone = []byte{}
 
+// IsTombstone returns whether the value is a tombstone.
+func IsTombstone(val []byte) bool { return len(val) == 0 }
+
 // memdb is rollbackable Red-Black Tree optimized for TiDB's transaction states buffer use scenario.
 // You can think memdb is a combination of two separate tree map, one for key => value and another for key => keyFlags.
 //

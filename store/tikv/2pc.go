@@ -44,7 +44,6 @@ import (
 type twoPhaseCommitAction interface {
 	handleSingleBatch(*twoPhaseCommitter, *Backoffer, *batchMutations) (bool, error)
 	tiKVTxnRegionsNumHistogram() prometheus.Observer
-	collectMutation(acc *CommitterMutations, m *mutation)
 	String() string
 }
 

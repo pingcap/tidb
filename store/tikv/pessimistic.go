@@ -55,10 +55,6 @@ func (actionPessimisticRollback) tiKVTxnRegionsNumHistogram() prometheus.Observe
 	return tiKVTxnRegionsNumHistogramPessimisticRollback
 }
 
-func (actionPessimisticLock) collectMutation(acc *CommitterMutations, m *mutation) {
-	acc.keys = append(acc.keys, m.key)
-}
-
 func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch *batchMutations) (bool, error) {
 	m := &batch.mutations
 	mutations := make([]*pb.Mutation, m.len())
@@ -189,10 +185,6 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			}
 		}
 	}
-}
-
-func (actionPessimisticRollback) collectMutation(acc *CommitterMutations, m *mutation) {
-	acc.keys = append(acc.keys, m.key)
 }
 
 func (actionPessimisticRollback) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch *batchMutations) (bool, error) {

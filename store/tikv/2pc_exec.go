@@ -243,11 +243,11 @@ func (c *execController) getCollector(start, end []byte) *mutationBatchCollector
 	}
 
 	return &mutationBatchCollector{
-		src:        c.committer.mapWithRegion(c.bo, it),
-		sizer:      sizer,
-		limit:      txnCommitBatchSize,
-		primaryKey: c.committer.primaryKey,
-		collector:  c.action.collectMutation,
+		src:            c.committer.mapWithRegion(c.bo, it),
+		sizer:          sizer,
+		limit:          txnCommitBatchSize,
+		primaryKey:     c.committer.primaryKey,
+		onlyCollectKey: !actionIsPrewrite,
 	}
 }
 
@@ -441,7 +441,7 @@ type mutationWithRegion struct {
 	region RegionVerID
 }
 
-type mapWithRegionIter struct {
+type mutationWithRegionIter struct {
 	src mutationsIter
 
 	rc  *RegionCache
@@ -449,15 +449,15 @@ type mapWithRegionIter struct {
 	bo  *Backoffer
 }
 
-func (c *twoPhaseCommitter) mapWithRegion(bo *Backoffer, src mutationsIter) *mapWithRegionIter {
-	return &mapWithRegionIter{
+func (c *twoPhaseCommitter) mapWithRegion(bo *Backoffer, src mutationsIter) *mutationWithRegionIter {
+	return &mutationWithRegionIter{
 		src: src,
 		rc:  c.store.regionCache,
 		bo:  bo,
 	}
 }
 
-func (it *mapWithRegionIter) Next() (mutationWithRegion, error) {
+func (it *mutationWithRegionIter) Next() (mutationWithRegion, error) {
 	m := it.src.Next()
 	if m.key == nil {
 		return mutationWithRegion{}, nil
@@ -475,13 +475,13 @@ func (it *mapWithRegionIter) Next() (mutationWithRegion, error) {
 }
 
 type mutationBatchCollector struct {
-	src        *mapWithRegionIter
-	sizer      func(*mutation) int
-	primaryKey []byte
-	limit      int
-	init       bool
-	done       bool
-	collector  func(*CommitterMutations, *mutation)
+	src            *mutationWithRegionIter
+	sizer          func(*mutation) int
+	primaryKey     []byte
+	limit          int
+	init           bool
+	done           bool
+	onlyCollectKey bool
 
 	curr    mutationWithRegion
 	lenHint int
@@ -515,7 +515,12 @@ func (c *mutationBatchCollector) Collect() (*batchMutations, error) {
 			break
 		}
 
-		c.collector(&mutations, &m.mutation)
+		if c.onlyCollectKey {
+			mutations.keys = append(mutations.keys, m.key)
+		} else {
+			mutations.Push(m.op, m.key, m.value, m.isPessimisticLock)
+		}
+
 		if !isPrimary {
 			isPrimary = bytes.Equal(m.key, c.primaryKey)
 		}

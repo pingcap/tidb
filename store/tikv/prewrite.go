@@ -90,10 +90,6 @@ func (c *twoPhaseCommitter) buildPrewriteRequest(batch *batchMutations, txnSize 
 	return tikvrpc.NewRequest(tikvrpc.CmdPrewrite, req, pb.Context{Priority: c.priority, SyncLog: c.syncLog})
 }
 
-func (action actionPrewrite) collectMutation(acc *CommitterMutations, m *mutation) {
-	acc.Push(m.op, m.key, m.value, m.isPessimisticLock)
-}
-
 func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoffer, batch *batchMutations) (bool, error) {
 	txnSize := uint64(c.regionTxnSize[batch.region.id])
 	// When we retry because of a region miss, we don't know the transaction size. We set the transaction size here

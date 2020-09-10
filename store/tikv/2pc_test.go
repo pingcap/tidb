@@ -1324,11 +1324,11 @@ func (c *twoPhaseCommitter) collectPrewriteMutationsBatch(bo *Backoffer) (*batch
 
 	it := committerTxnMutations{c, true}.Iter(nil, nil)
 	collector := &mutationBatchCollector{
-		src:        c.mapWithRegion(bo, it),
-		sizer:      sizer,
-		limit:      txnCommitBatchSize,
-		primaryKey: c.primaryKey,
-		collector:  actionPrewrite{}.collectMutation,
+		src:            c.mapWithRegion(bo, it),
+		sizer:          sizer,
+		limit:          txnCommitBatchSize,
+		primaryKey:     c.primaryKey,
+		onlyCollectKey: false,
 	}
 	return collector.Collect()
 }

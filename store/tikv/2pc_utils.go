@@ -361,21 +361,15 @@ func (it *txnMutationsIter) fillMutationForPrewrite(m *mutation, src kv.MemBuffe
 	flags := src.Flags()
 
 	if !src.HasValue() {
-		if !flags.HasLocked() {
+		if flags.HasLocked() {
+			m.op = pb.Op_Lock
+		} else {
+			// 2PC don't care other flags.
 			return true
 		}
-		m.op = pb.Op_Lock
 	} else {
 		m.value = src.Value()
-		if len(m.value) > 0 {
-			if tablecodec.IsUntouchedIndexKValue(m.key, m.value) {
-				return true
-			}
-			m.op = pb.Op_Put
-			if flags.HasPresumeKeyNotExists() {
-				m.op = pb.Op_Insert
-			}
-		} else {
+		if kv.IsTombstone(m.value) {
 			if !it.isPessimistic && flags.HasPresumeKeyNotExists() {
 				// delete-your-writes keys in optimistic txn need check not exists in prewrite-phase
 				// due to `Op_CheckNotExists` doesn't prewrite lock, so mark those keys should not be used in commit-phase.
@@ -386,6 +380,14 @@ func (it *txnMutationsIter) fillMutationForPrewrite(m *mutation, src kv.MemBuffe
 				// normal delete keys in optimistic txn can be delete without not exists checking
 				// delete-your-writes keys in pessimistic txn can ensure must be no exists so can directly delete them
 				m.op = pb.Op_Del
+			}
+		} else {
+			if tablecodec.IsUntouchedIndexKValue(m.key, m.value) {
+				return true
+			}
+			m.op = pb.Op_Put
+			if flags.HasPresumeKeyNotExists() {
+				m.op = pb.Op_Insert
 			}
 		}
 	}
