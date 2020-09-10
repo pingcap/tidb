@@ -134,31 +134,31 @@ func (s *testDDLSuite) TestReorg(c *C) {
 
 	element := &meta.Element{ID: 123, TypeKey: meta.ColumnElementKey}
 	info := &reorgInfo{
-		Job:         job,
-		currElement: element,
+		Job:             job,
+		d:               d.ddlCtx,
+		currElement:     element,
+		StartHandle:     s.NewHandle().Int(1).Common(100, "string"),
+		EndHandle:       s.NewHandle().Int(0).Common(101, "string"),
+		PhysicalTableID: 456,
 	}
-	startHandle := s.NewHandle().Int(1).Common(100, "string")
-	endHandle := s.NewHandle().Int(0).Common(101, "string")
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		_, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
 		c.Assert(err1, NotNil)
-		err1 = info.UpdateReorgMeta(txn, startHandle, endHandle, 1, element)
-		c.Assert(err1, IsNil)
-		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
-		c.Assert(err1, IsNil)
 		return nil
 	})
 	c.Assert(err, IsNil)
-
+	err = info.UpdateReorgMeta()
+	c.Assert(err, IsNil)
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		var err1 error
-		info, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
+		info1, err1 := getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
 		c.Assert(err1, IsNil)
-		c.Assert(info.StartHandle, HandleEquals, startHandle)
-		c.Assert(info.EndHandle, HandleEquals, endHandle)
+		c.Assert(info1.currElement, DeepEquals, info.currElement)
+		c.Assert(info1.StartHandle, HandleEquals, info.StartHandle)
+		c.Assert(info1.EndHandle, HandleEquals, info.EndHandle)
+		c.Assert(info1.PhysicalTableID, Equals, info.PhysicalTableID)
 		return nil
 	})
 	c.Assert(err, IsNil)

@@ -931,9 +931,7 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 	for i := startElementOffset; i < len(idxes); i++ {
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
-		err := kv.RunInNewTxn(reorgInfo.d.store, true, func(txn kv.Transaction) error {
-			return errors.Trace(reorgInfo.UpdateReorgMeta(txn, reorgInfo.StartHandle, reorgInfo.EndHandle, reorgInfo.PhysicalTableID, reorgInfo.currElement))
-		})
+		err := reorgInfo.UpdateReorgMeta()
 		if err != nil {
 			return errors.Trace(err)
 		}

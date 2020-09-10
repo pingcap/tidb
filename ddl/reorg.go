@@ -514,11 +514,17 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elem
 	return &info, nil
 }
 
-func (r *reorgInfo) UpdateReorgMeta(txn kv.Transaction, startHandle, endHandle kv.Handle, physicalTableID int64, element *meta.Element) error {
-	if startHandle == nil && endHandle == nil {
+func (r *reorgInfo) UpdateReorgMeta() error {
+	if r.StartHandle == nil && r.EndHandle == nil {
 		return nil
 	}
 
-	t := meta.NewMeta(txn)
-	return errors.Trace(t.UpdateDDLReorgHandle(r.Job, startHandle, endHandle, physicalTableID, element))
+	err := kv.RunInNewTxn(r.d.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		return errors.Trace(t.UpdateDDLReorgHandle(r.Job, r.StartHandle, r.EndHandle, r.PhysicalTableID, r.currElement))
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
 }
