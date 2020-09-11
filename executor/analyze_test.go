@@ -593,53 +593,6 @@ func (s *testSuite1) TestHashInTopN(c *C) {
 	}
 }
 
-func (s *testSuite1) TestNormalAnalyzeOnCommonHandle(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2, t3, t4")
-	tk.Se.GetSessionVars().EnableClusteredIndex = true
-	tk.MustExec("CREATE TABLE t1 (a int primary key, b int)")
-	tk.MustExec("insert into t1 values(1,1), (2,2), (3,3)")
-	tk.MustExec("CREATE TABLE t2 (a varchar(255) primary key, b int)")
-	tk.MustExec("insert into t2 values(\"111\",1), (\"222\",2), (\"333\",3)")
-	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b), key(c))")
-	tk.MustExec("insert into t3 values(1,1,1), (2,2,2), (3,3,3)")
-
-	tk.MustExec("analyze table t1, t2, t3")
-
-	tk.MustQuery(`show stats_buckets where table_name in ("t1", "t2", "t3")`).Sort().Check(testkit.Rows(
-		"test t1  a 0 0 1 1 1 1",
-		"test t1  a 0 1 2 1 2 2",
-		"test t1  a 0 2 3 1 3 3",
-		"test t1  b 0 0 1 1 1 1",
-		"test t1  b 0 1 2 1 2 2",
-		"test t1  b 0 2 3 1 3 3",
-		"test t2  PRIMARY 1 0 1 1 111 111",
-		"test t2  PRIMARY 1 1 2 1 222 222",
-		"test t2  PRIMARY 1 2 3 1 333 333",
-		"test t2  a 0 0 1 1 111 111",
-		"test t2  a 0 1 2 1 222 222",
-		"test t2  a 0 2 3 1 333 333",
-		"test t2  b 0 0 1 1 1 1",
-		"test t2  b 0 1 2 1 2 2",
-		"test t2  b 0 2 3 1 3 3",
-		"test t3  PRIMARY 1 0 1 1 (1, 1) (1, 1)",
-		"test t3  PRIMARY 1 1 2 1 (2, 2) (2, 2)",
-		"test t3  PRIMARY 1 2 3 1 (3, 3) (3, 3)",
-		"test t3  a 0 0 1 1 1 1",
-		"test t3  a 0 1 2 1 2 2",
-		"test t3  a 0 2 3 1 3 3",
-		"test t3  b 0 0 1 1 1 1",
-		"test t3  b 0 1 2 1 2 2",
-		"test t3  b 0 2 3 1 3 3",
-		"test t3  c 0 0 1 1 1 1",
-		"test t3  c 0 1 2 1 2 2",
-		"test t3  c 0 2 3 1 3 3",
-		"test t3  c 1 0 1 1 1 1",
-		"test t3  c 1 1 2 1 2 2",
-		"test t3  c 1 2 3 1 3 3"))
-}
-
 func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("drop database if exists test_default_val_for_analyze;")
