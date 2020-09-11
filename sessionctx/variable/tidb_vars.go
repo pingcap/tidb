@@ -69,11 +69,8 @@ const (
 	// It is read-only.
 	TiDBCurrentTS = "tidb_current_ts"
 
-	// TiDBLastStartTS is used to get the last start ts within the current session.
-	TiDBLastStartTS = "tidb_last_start_ts"
-
-	// TiDBLastCommitTS is used to get the last commit ts within the current session.
-	TiDBLastCommitTS = "tidb_last_commit_ts"
+	// TiDBLastTxnInfo is used to get the last transaction info within the current session.
+	TiDBLastTxnInfo = "tidb_last_txn_info"
 
 	// tidb_config is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"

@@ -272,7 +272,9 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// pessimistic transaction should also bypass latch.
 	if txn.store.txnLatches == nil || txn.IsPessimistic() {
 		err = committer.execute(ctx)
-		txn.onCommitted(err)
+		if val == nil || connID > 0 {
+			txn.onCommitted(err)
+		}
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -291,7 +293,9 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		return kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
 	}
 	err = committer.execute(ctx)
-	txn.onCommitted(err)
+	if val == nil || connID > 0 {
+		txn.onCommitted(err)
+	}
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}
@@ -346,7 +350,11 @@ func (txn *tikvTxn) collectLockedKeys() [][]byte {
 
 func (txn *tikvTxn) onCommitted(err error) {
 	if txn.commitCallback != nil {
-		txn.commitCallback(kv.TxnInfo{StartTS: txn.startTS, CommitTS: txn.commitTS}, err)
+		info := kv.TxnInfo{StartTS: txn.startTS, CommitTS: txn.commitTS}
+		if err != nil {
+			info.ErrMsg = err.Error()
+		}
+		txn.commitCallback(info, err)
 	}
 }
 
