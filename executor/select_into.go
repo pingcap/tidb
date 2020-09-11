@@ -33,12 +33,15 @@ type SelectIntoExec struct {
 	baseExecutor
 	intoOpt *ast.SelectIntoOption
 
-	lineBuf []byte
-	realBuf []byte
-	writer  *bufio.Writer
-	dstFile *os.File
-	chk     *chunk.Chunk
-	started bool
+	lineBuf   []byte
+	realBuf   []byte
+	fieldBuf  []byte
+	escapeBuf []byte
+	enclosed  bool
+	writer    *bufio.Writer
+	dstFile   *os.File
+	chk       *chunk.Chunk
+	started   bool
 }
 
 // Open implements the Executor Open interface.
@@ -57,6 +60,8 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 	s.writer = bufio.NewWriter(s.dstFile)
 	s.chk = newFirstChunk(s.children[0])
 	s.lineBuf = make([]byte, 0, 1024)
+	s.fieldBuf = make([]byte, 0, 64)
+	s.escapeBuf = make([]byte, 0, 64)
 	return s.baseExecutor.Open(ctx)
 }
 
@@ -82,6 +87,35 @@ func (s *SelectIntoExec) considerEncloseOpt(et types.EvalType) bool {
 		et == types.ETJson
 }
 
+func (s *SelectIntoExec) escapeField(f []byte) []byte {
+	if s.intoOpt.FieldsInfo.Escaped == 0 {
+		return f
+	}
+	s.escapeBuf = s.escapeBuf[:0]
+	for _, b := range f {
+		escape := false
+		switch {
+		case b == 0:
+			// we always escape 0
+			escape = true
+			b = '0'
+		case b == s.intoOpt.FieldsInfo.Escaped || b == s.intoOpt.FieldsInfo.Enclosed:
+			escape = true
+		case !s.enclosed && len(s.intoOpt.FieldsInfo.Terminated) > 0 && b == s.intoOpt.FieldsInfo.Terminated[0]:
+			// if field is enclosed, we only escape line terminator, otherwise both field and line terminator will be escaped
+			escape = true
+		case len(s.intoOpt.LinesInfo.Terminated) > 0 && b == s.intoOpt.LinesInfo.Terminated[0]:
+			// we always escape line terminator
+			escape = true
+		}
+		if escape {
+			s.escapeBuf = append(s.escapeBuf, s.intoOpt.FieldsInfo.Escaped)
+		}
+		s.escapeBuf = append(s.escapeBuf, b)
+	}
+	return s.escapeBuf
+}
+
 func (s *SelectIntoExec) dumpToOutfile() error {
 	lineTerm := "\n"
 	if s.intoOpt.LinesInfo.Terminated != "" {
@@ -102,6 +136,8 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 	nullTerm := []byte("\\N")
 	if s.intoOpt.FieldsInfo.Escaped != byte(0) {
 		nullTerm[0] = s.intoOpt.FieldsInfo.Escaped
+	} else {
+		nullTerm = []byte("NULL")
 	}
 
 	cols := s.children[0].Schema().Columns
@@ -120,34 +156,42 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 			if (encloseFlag && !encloseOpt) ||
 				(encloseFlag && encloseOpt && s.considerEncloseOpt(et)) {
 				s.lineBuf = append(s.lineBuf, encloseByte)
+				s.enclosed = true
+			} else {
+				s.enclosed = false
 			}
+			s.fieldBuf = s.fieldBuf[:0]
 			switch col.GetType().Tp {
 			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong:
-				s.lineBuf = strconv.AppendInt(s.lineBuf, row.GetInt64(j), 10)
+				s.fieldBuf = strconv.AppendInt(s.fieldBuf, row.GetInt64(j), 10)
 			case mysql.TypeLonglong:
 				if mysql.HasUnsignedFlag(col.GetType().Flag) {
-					s.lineBuf = strconv.AppendUint(s.lineBuf, row.GetUint64(j), 10)
+					s.fieldBuf = strconv.AppendUint(s.fieldBuf, row.GetUint64(j), 10)
 				} else {
-					s.lineBuf = strconv.AppendInt(s.lineBuf, row.GetInt64(j), 10)
+					s.fieldBuf = strconv.AppendInt(s.fieldBuf, row.GetInt64(j), 10)
 				}
 			case mysql.TypeFloat, mysql.TypeDouble:
-				s.realBuf, s.lineBuf = DumpRealOutfile(s.realBuf, s.lineBuf, row.GetFloat64(j), col.RetType)
+				s.realBuf, s.fieldBuf = DumpRealOutfile(s.realBuf, s.fieldBuf, row.GetFloat64(j), col.RetType)
 			case mysql.TypeNewDecimal:
-				s.lineBuf = append(s.lineBuf, row.GetMyDecimal(j).String()...)
-			case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar, mysql.TypeBit,
+				s.fieldBuf = append(s.fieldBuf, row.GetMyDecimal(j).String()...)
+			case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
 				mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
+				s.fieldBuf = append(s.fieldBuf, row.GetBytes(j)...)
+			case mysql.TypeBit:
+				// bit value won't be escaped anyway (verified on MySQL, test case added)
 				s.lineBuf = append(s.lineBuf, row.GetBytes(j)...)
 			case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-				s.lineBuf = append(s.lineBuf, row.GetTime(j).String()...)
+				s.fieldBuf = append(s.fieldBuf, row.GetTime(j).String()...)
 			case mysql.TypeDuration:
-				s.lineBuf = append(s.lineBuf, row.GetDuration(j, col.GetType().Decimal).String()...)
+				s.fieldBuf = append(s.fieldBuf, row.GetDuration(j, col.GetType().Decimal).String()...)
 			case mysql.TypeEnum:
-				s.lineBuf = append(s.lineBuf, row.GetEnum(j).String()...)
+				s.fieldBuf = append(s.fieldBuf, row.GetEnum(j).String()...)
 			case mysql.TypeSet:
-				s.lineBuf = append(s.lineBuf, row.GetSet(j).String()...)
+				s.fieldBuf = append(s.fieldBuf, row.GetSet(j).String()...)
 			case mysql.TypeJSON:
-				s.lineBuf = append(s.lineBuf, row.GetJSON(j).String()...)
+				s.fieldBuf = append(s.fieldBuf, row.GetJSON(j).String()...)
 			}
+			s.lineBuf = append(s.lineBuf, s.escapeField(s.fieldBuf)...)
 			if (encloseFlag && !encloseOpt) ||
 				(encloseFlag && encloseOpt && s.considerEncloseOpt(et)) {
 				s.lineBuf = append(s.lineBuf, encloseByte)
