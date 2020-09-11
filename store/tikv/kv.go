@@ -259,7 +259,6 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 			if len(member.ClientUrls) > 0 {
 				u, err := url.Parse(member.ClientUrls[0])
 				if err != nil {
-					errors.Trace(err)
 					continue
 				}
 				etcdAddrs = append(etcdAddrs, u.Host)
