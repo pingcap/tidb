@@ -325,7 +325,7 @@ type selectResultRuntimeStats struct {
 	totalProcessTime time.Duration
 	totalWaitTime    time.Duration
 	rpcStat          tikv.RegionRequestRuntimeStats
-	CoprCacheHit     int64
+	CoprCacheHitNum  int64
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
@@ -339,7 +339,7 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntim
 	s.totalWaitTime += copStats.WaitTime
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
 	if copStats.CoprCacheHit {
-		s.CoprCacheHit++
+		s.CoprCacheHitNum++
 	}
 }
 
@@ -377,7 +377,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.totalProcessTime += other.totalProcessTime
 	s.totalWaitTime += other.totalWaitTime
 	s.rpcStat.Merge(other.rpcStat)
-	s.CoprCacheHit += other.CoprCacheHit
+	s.CoprCacheHitNum += other.CoprCacheHitNum
 }
 
 func (s *selectResultRuntimeStats) String() string {
@@ -428,7 +428,7 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(time.Duration(copRPC.Consume).String())
 		}
 		buf.WriteString(fmt.Sprintf(", copr_cache_hit_rate: %v",
-			strconv.FormatFloat(float64(s.CoprCacheHit)/float64(len(s.copRespTime)), 'f', 2, 64)))
+			strconv.FormatFloat(float64(s.CoprCacheHitNum)/float64(len(s.copRespTime)), 'f', 2, 64)))
 		buf.WriteString("}")
 	}
 
