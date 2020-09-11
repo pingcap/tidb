@@ -106,20 +106,9 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 
 func (s *testSuite9) TestPreparedStmtWithHint(c *C) {
 	// see https://github.com/pingcap/tidb/issues/18535
-	store, dom, err := newStoreWithBootstrap()
-	c.Assert(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	defer func() {
-		dom.Close()
-		store.Close()
-	}()
-	orgEnable := plannercore.PreparedPlanCacheEnabled()
-	defer func() {
-		plannercore.SetPreparedPlanCache(orgEnable)
-	}()
-	plannercore.SetPreparedPlanCache(true)
+	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("prepare stmt from \"select /*+ max_execution_time(10) */ sleep(1)\"")
+	tk.MustExec("prepare stmt from \"select /*+ max_execution_time(100) */ sleep(1)\"")
 	tk.MustQuery("execute stmt").Check(testkit.Rows("1")) // hint should work and interrupt the sleep execution
 }
 
