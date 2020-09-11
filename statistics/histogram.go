@@ -296,6 +296,23 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 	return str, err
 }
 
+// IndexValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
+// idxCols equals to number of origin values, else idxCols is 0.
+func IndexValueToString(value *types.Datum, idxCols int, idxColumnType []byte) (string, error) {
+	if idxCols == 0 {
+		return value.ToString()
+	}
+	// Ignore the error and treat remaining part that cannot decode successfully as bytes.
+	decodedVals, remained, err := codec.DecodeIndexRange(value.GetBytes(), idxCols, idxColumnType)
+	// Ignore err explicit to pass errcheck.
+	_ = err
+	if len(remained) > 0 {
+		decodedVals = append(decodedVals, types.NewBytesDatum(remained))
+	}
+	str, err := types.DatumsToString(decodedVals, true)
+	return str, err
+}
+
 // BucketToString change the given bucket to string format.
 func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 	upperVal, err := ValueToString(hg.GetUpper(bktID), idxCols)

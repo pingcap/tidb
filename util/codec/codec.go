@@ -759,6 +759,50 @@ func DecodeRange(b []byte, size int) ([]types.Datum, []byte, error) {
 	return values, nil, nil
 }
 
+func DecodeIndexRange(b []byte, size int, idxColumnType []byte) ([]types.Datum, []byte, error) {
+	if len(b) < 1 {
+		return nil, b, errors.New("invalid encoded key: length of key is zero")
+	}
+
+	var (
+		err    error
+		values = make([]types.Datum, 0, size)
+	)
+
+	i := 0
+	for len(b) > 1 {
+		var d types.Datum
+		if i >= len(idxColumnType) {
+			return values, b, errors.New("invalid length of index's columns.")
+		}
+		if idxColumnType[i] == mysql.TypeDatetime {
+			b, d, err = DecodeIndexOne(b)
+		} else {
+			b, d, err = DecodeOne(b)
+		}
+		if err != nil {
+			return values, b, errors.Trace(err)
+		}
+		values = append(values, d)
+		i++
+	}
+
+	if len(b) == 1 {
+		switch b[0] {
+		case NilFlag:
+			values = append(values, types.Datum{})
+		case bytesFlag:
+			values = append(values, types.MinNotNullDatum())
+		// `maxFlag + 1` for PrefixNext
+		case maxFlag, maxFlag + 1:
+			values = append(values, types.MaxValueDatum())
+		default:
+			return values, b, errors.Errorf("invalid encoded key flag %v", b[0])
+		}
+	}
+	return values, nil, nil
+}
+
 // DecodeOne decodes on datum from a byte slice generated with EncodeKey or EncodeValue.
 func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 	if len(b) < 1 {
@@ -824,6 +868,34 @@ func DecodeOne(b []byte) (remain []byte, d types.Datum, err error) {
 		d.SetMysqlJSON(j)
 		b = b[size:]
 	case NilFlag:
+	default:
+		return b, d, errors.Errorf("invalid encoded key flag %v", flag)
+	}
+	if err != nil {
+		return b, d, errors.Trace(err)
+	}
+	return b, d, nil
+}
+
+// DecodeIndexOne decodes on datum from []byte of `KindMysqlTime`.
+func DecodeIndexOne(b []byte) (remain []byte, d types.Datum, err error) {
+	if len(b) < 1 {
+		return nil, d, errors.New("invalid encoded key")
+	}
+	flag := b[0]
+	b = b[1:]
+	switch flag {
+	case uintFlag:
+		var v uint64
+		b, v, err = DecodeUint(b)
+		if err != nil {
+			return b, d, err
+		}
+		t := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, 0)
+		err = t.FromPackedUint(v)
+		if err == nil {
+			d.SetMysqlTime(t)
+		}
 	default:
 		return b, d, errors.Errorf("invalid encoded key flag %v", flag)
 	}

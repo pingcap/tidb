@@ -82,6 +82,15 @@ func (s *testShowStatsSuite) TestShowStatsBuckets(c *C) {
 	result.Check(testkit.Rows("test t  a 0 0 1 1 1 1", "test t  b 0 0 1 1 1 1", "test t  idx 1 0 1 1 (1, 1) (1, 1)"))
 	result = tk.MustQuery("show stats_buckets where column_name = 'idx'")
 	result.Check(testkit.Rows("test t  idx 1 0 1 1 (1, 1) (1, 1)"))
+
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (`a` datetime, `b` int, key `idx`(`a`, `b`))")
+	tk.MustExec("insert into t values (\"2020-01-01\", 1)")
+	tk.MustExec("analyze table t")
+	result = tk.MustQuery("show stats_buckets").Sort()
+	result.Check(testkit.Rows("test t  a 0 0 1 1 2020-01-01 00:00:00 2020-01-01 00:00:00", "test t  b 0 0 1 1 1 1", "test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1)"))
+	result = tk.MustQuery("show stats_buckets where column_name = 'idx'")
+	result.Check(testkit.Rows("test t  idx 1 0 1 1 (2020-01-01 00:00:00, 1) (2020-01-01 00:00:00, 1)"))
 }
 
 func (s *testShowStatsSuite) TestShowStatsHasNullValue(c *C) {

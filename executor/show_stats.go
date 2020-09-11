@@ -139,14 +139,20 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 	if statsTbl.Pseudo {
 		return nil
 	}
+	colNameToType := make(map[string]byte)
 	for _, col := range statsTbl.Columns {
 		err := e.bucketsToRows(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		colNameToType[col.Info.Name.O] = col.Histogram.Tp.Tp
 	}
 	for _, idx := range statsTbl.Indices {
-		err := e.bucketsToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram)
+		var idxColumnType []byte
+		for i := 0; i < len(idx.Info.Columns); i++ {
+			idxColumnType = append(idxColumnType, colNameToType[idx.Info.Columns[i].Name.O])
+		}
+		err := e.indexBucketsToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram, idxColumnType)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -167,6 +173,36 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string,
 			return errors.Trace(err)
 		}
 		upperBoundStr, err := statistics.ValueToString(hist.GetUpper(i), numOfCols)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		e.appendRow([]interface{}{
+			dbName,
+			tblName,
+			partitionName,
+			colName,
+			isIndex,
+			i,
+			hist.Buckets[i].Count,
+			hist.Buckets[i].Repeat,
+			lowerBoundStr,
+			upperBoundStr,
+		})
+	}
+	return nil
+}
+
+func (e *ShowExec) indexBucketsToRows(dbName, tblName, partitionName, colName string, numOfCols int, hist statistics.Histogram, idxColumnType []byte) error {
+	isIndex := 0
+	if numOfCols > 0 {
+		isIndex = 1
+	}
+	for i := 0; i < hist.Len(); i++ {
+		lowerBoundStr, err := statistics.IndexValueToString(hist.GetLower(i), numOfCols, idxColumnType)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		upperBoundStr, err := statistics.IndexValueToString(hist.GetUpper(i), numOfCols, idxColumnType)
 		if err != nil {
 			return errors.Trace(err)
 		}
