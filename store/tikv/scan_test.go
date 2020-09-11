@@ -89,14 +89,22 @@ func (s *testScanSuite) TestScan(c *C) {
 		}
 		err := txn.Commit(context.Background())
 		c.Assert(err, IsNil)
-
+		mockTableID := int64(999)
 		if rowNum > 123 {
+<<<<<<< HEAD
 			_, err = s.store.SplitRegions(context.Background(), [][]byte{encodeKey(s.prefix, s08d("key", 123))}, false)
+=======
+			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(123))}, false, &mockTableID)
+>>>>>>> 8446ec9... tikv: support scatter region with option api (#19844)
 			c.Assert(err, IsNil)
 		}
 
 		if rowNum > 456 {
+<<<<<<< HEAD
 			_, err = s.store.SplitRegions(context.Background(), [][]byte{encodeKey(s.prefix, s08d("key", 456))}, false)
+=======
+			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(456))}, false, &mockTableID)
+>>>>>>> 8446ec9... tikv: support scatter region with option api (#19844)
 			c.Assert(err, IsNil)
 		}
 

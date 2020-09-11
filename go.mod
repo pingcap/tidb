@@ -44,7 +44,12 @@ require (
 	github.com/soheilhy/cmux v0.1.4
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/pd v1.1.0-beta.0.20200907080620-6830f5bb92a2
+=======
+	github.com/tikv/pd v1.1.0-beta.0.20200907085700-5b04bec39b99
+	github.com/twmb/murmur3 v1.1.3
+>>>>>>> 8446ec9... tikv: support scatter region with option api (#19844)
 	github.com/uber-go/atomic v1.3.2
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
