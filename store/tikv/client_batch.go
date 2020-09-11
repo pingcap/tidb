@@ -368,6 +368,7 @@ func (c *batchCommandsClient) batchRecvLoop(cfg config.TiKVClient, tikvTransport
 				continue
 			}
 			entry := value.(*batchCommandsEntry)
+
 			if trace.IsEnabled() {
 				trace.Log(entry.ctx, "rpc", "received")
 			}
