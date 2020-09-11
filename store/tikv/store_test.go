@@ -215,6 +215,14 @@ func (c *mockPDClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.
 
 func (c *mockPDClient) GetLeaderAddr() string { return "mockpd" }
 
+func (c *mockPDClient) ScatterRegionWithOption(ctx context.Context, regionID uint64, opts ...pd.ScatterRegionOption) error {
+	return nil
+}
+
+func (c *mockPDClient) GetMemberInfo(ctx context.Context) ([]*pdpb.Member, error) {
+	return nil, nil
+}
+
 type checkRequestClient struct {
 	Client
 	priority pb.CommandPri
