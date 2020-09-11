@@ -930,11 +930,16 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 		if col.ID == model.ExtraHandleID {
 			continue
 		}
-		if !indexCoveringCol(col, indexColumns, idxColLens) && !indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens) {
+		coveredByPlainIndex := indexCoveringCol(col, indexColumns, idxColLens)
+		coveredByClusteredIndex := indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens)
+		if !coveredByPlainIndex && !coveredByClusteredIndex {
 			return false
 		}
-		if collate.NewCollationEnabled() && indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens) &&
-			col.GetType().EvalType() == types.ETString && !mysql.HasBinaryFlag(col.GetType().Flag) {
+
+		isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
+			col.GetType().EvalType() == types.ETString &&
+			!mysql.HasBinaryFlag(col.GetType().Flag)
+		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx {
 			return false
 		}
 	}

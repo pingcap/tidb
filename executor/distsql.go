@@ -367,11 +367,11 @@ type IndexLookUpExecutor struct {
 	PushedLimit *plannercore.PushedDownLimit
 }
 
-type getHandleType bool
+type getHandleType int8
 
 const (
-	getHandleFromIndex = true
-	getHandleFromTable = false
+	getHandleFromIndex getHandleType = iota
+	getHandleFromTable
 )
 
 type checkIndexValue struct {
@@ -866,10 +866,9 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			rtp := e.handleCols[i].RetType
 			if collate.NewCollationEnabled() && rtp.EvalType() == types.ETString &&
 				!mysql.HasBinaryFlag(rtp.Flag) && tp == getHandleFromIndex {
-				origin := rtp.Collate
+				rtp = rtp.Clone()
 				rtp.Collate = charset.CollationUTF8MB4
-				datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
-				rtp.Collate = origin
+				datums = append(datums, row.GetDatum(idx, rtp))
 				continue
 			}
 			datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
