@@ -742,6 +742,8 @@ func (lr *LockResolver) resolveLockAsync(bo *Backoffer, l *Lock, status TxnStatu
 		return errors.Trace(err)
 	}
 
+	logutil.BgLogger().Info("resolve async commit", zap.Uint64("startTS", l.TxnID), zap.Uint64("commitTS", status.commitTS))
+
 	errChan := make(chan error, len(keysByRegion))
 	// Resolve every lock in the transaction.
 	for region, locks := range keysByRegion {
