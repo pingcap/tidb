@@ -491,10 +491,10 @@ func (e *insertRuntimeStat) String() string {
 		result += prepareStr
 	}
 	if checkInsertStr != "" {
-		result += checkInsertStr
+		result += ", " + checkInsertStr
 	}
 	if rpcStatsStr != "" {
-		result += rpcStatsStr
+		result += ", " + rpcStatsStr
 	}
 	return result
 }
