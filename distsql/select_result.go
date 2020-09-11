@@ -427,8 +427,8 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(", rpc_time: ")
 			buf.WriteString(time.Duration(copRPC.Consume).String())
 		}
-    buf.WriteString(fmt.Sprintf(", copr_cache_hit_rate: %v",
-		  strconv.FormatFloat(float64(s.CoprCacheHit)/float64(len(s.copRespTime)), 'f',2, 64)))
+		buf.WriteString(fmt.Sprintf(", copr_cache_hit_rate: %v",
+			strconv.FormatFloat(float64(s.CoprCacheHit)/float64(len(s.copRespTime)), 'f', 2, 64)))
 		buf.WriteString("}")
 	}
 
