@@ -997,6 +997,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				return err
 			}
 		}
+
 		// If row was checked with no duplicate keys,
 		// it should be add to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
