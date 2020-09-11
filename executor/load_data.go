@@ -594,7 +594,7 @@ func (e *LoadDataInfo) colsToRow(ctx context.Context, cols []field) []types.Datu
 	}
 
 	// a new row buffer will be allocated in getRow
-	newRow, err := e.getRow(ctx, row)
+	newRow, err := e.getRow(ctx, row, 0)
 	if err != nil {
 		e.handleWarning(err)
 		return nil
