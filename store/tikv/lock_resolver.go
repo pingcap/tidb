@@ -48,10 +48,12 @@ var (
 	tikvLockResolverCountWithWaitExpired              = metrics.TiKVLockResolverCounter.WithLabelValues("wait_expired")
 	tikvLockResolverCountWithResolve                  = metrics.TiKVLockResolverCounter.WithLabelValues("resolve")
 	tikvLockResolverCountWithResolveForWrite          = metrics.TiKVLockResolverCounter.WithLabelValues("resolve_for_write")
+	tikvLockResolverCountWithResolveAsync             = metrics.TiKVLockResolverCounter.WithLabelValues("resolve_async_commit")
 	tikvLockResolverCountWithWriteConflict            = metrics.TiKVLockResolverCounter.WithLabelValues("write_conflict")
 	tikvLockResolverCountWithQueryTxnStatus           = metrics.TiKVLockResolverCounter.WithLabelValues("query_txn_status")
 	tikvLockResolverCountWithQueryTxnStatusCommitted  = metrics.TiKVLockResolverCounter.WithLabelValues("query_txn_status_committed")
 	tikvLockResolverCountWithQueryTxnStatusRolledBack = metrics.TiKVLockResolverCounter.WithLabelValues("query_txn_status_rolled_back")
+	tikvLockResolverCountWithQueryCheckSecondaryLocks = metrics.TiKVLockResolverCounter.WithLabelValues("query_check_secondary_locks")
 	tikvLockResolverCountWithResolveLocks             = metrics.TiKVLockResolverCounter.WithLabelValues("query_resolve_locks")
 	tikvLockResolverCountWithResolveLockLite          = metrics.TiKVLockResolverCounter.WithLabelValues("query_resolve_lock_lite")
 )
@@ -116,9 +118,10 @@ func NewLockResolver(etcdAddrs []string, security config.Security, opts ...pd.Cl
 
 // TxnStatus represents a txn's final status. It should be Lock or Commit or Rollback.
 type TxnStatus struct {
-	ttl      uint64
-	commitTS uint64
-	action   kvrpcpb.Action
+	ttl         uint64
+	commitTS    uint64
+	action      kvrpcpb.Action
+	primaryLock *kvrpcpb.LockInfo
 }
 
 // IsCommitted returns true if the txn's final status is Commit.
@@ -149,7 +152,9 @@ type Lock struct {
 	TTL             uint64
 	TxnSize         uint64
 	LockType        kvrpcpb.Op
+	UseAsyncCommit  bool
 	LockForUpdateTS uint64
+	MinCommitTS     uint64
 }
 
 func (l *Lock) String() string {
@@ -158,7 +163,7 @@ func (l *Lock) String() string {
 	prettyWriteKey(buf, l.Key)
 	buf.WriteString(", primary: ")
 	prettyWriteKey(buf, l.Primary)
-	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, ttl: %d, type: %s", buf.String(), l.TxnID, l.LockForUpdateTS, l.TTL, l.LockType)
+	return fmt.Sprintf("%s, txnStartTS: %d, lockForUpdateTS:%d, minCommitTs:%d, ttl: %d, type: %s", buf.String(), l.TxnID, l.LockForUpdateTS, l.MinCommitTS, l.TTL, l.LockType)
 }
 
 // NewLock creates a new *Lock.
@@ -170,7 +175,9 @@ func NewLock(l *kvrpcpb.LockInfo) *Lock {
 		TTL:             l.GetLockTtl(),
 		TxnSize:         l.GetTxnSize(),
 		LockType:        l.LockType,
+		UseAsyncCommit:  l.UseAsyncCommit,
 		LockForUpdateTS: l.LockForUpdateTs,
+		MinCommitTS:     l.MinCommitTs,
 	}
 }
 
@@ -228,6 +235,17 @@ func (lr *LockResolver) BatchResolveLocks(bo *Backoffer, locks []*Lock, loc Regi
 		status, err := lr.getTxnStatus(bo, l.TxnID, l.Primary, callerStartTS, math.MaxUint64, true)
 		if err != nil {
 			return false, err
+		}
+
+		// If the transaction uses async commit, CheckTxnStatus will reject rolling back the primary lock.
+		// Then we need to check the secondary locks to determine the final status of the transaction.
+		if status.primaryLock != nil && status.primaryLock.UseAsyncCommit {
+			resolveData, err := lr.checkAllSecondaries(bo, l, &status)
+			if err != nil {
+				return false, err
+			}
+			txnInfos[l.TxnID] = resolveData.commitTs
+			continue
 		}
 
 		if status.ttl > 0 {
@@ -342,7 +360,9 @@ func (lr *LockResolver) resolveLocks(bo *Backoffer, callerStartTS uint64, locks 
 				cleanTxns[l.TxnID] = cleanRegions
 			}
 
-			if l.LockType == kvrpcpb.Op_PessimisticLock {
+			if status.primaryLock != nil && status.primaryLock.UseAsyncCommit && !exists {
+				err = lr.resolveLockAsync(bo, l, status)
+			} else if l.LockType == kvrpcpb.Op_PessimisticLock {
 				err = lr.resolvePessimisticLock(bo, l, cleanRegions)
 			} else {
 				err = lr.resolveLock(bo, l, status, lite, cleanRegions)
@@ -425,7 +445,7 @@ func (t *txnExpireTime) value() int64 {
 // seconds before calling it after Prewrite.
 func (lr *LockResolver) GetTxnStatus(txnID uint64, callerStartTS uint64, primary []byte) (TxnStatus, error) {
 	var status TxnStatus
-	bo := NewBackofferWithVars(context.Background(), cleanupMaxBackoff, nil)
+	bo := NewBackoffer(context.Background(), cleanupMaxBackoff)
 	currentTS, err := lr.store.GetOracle().GetLowResolutionTimestamp(bo.ctx)
 	if err != nil {
 		return status, err
@@ -437,7 +457,12 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 	var currentTS uint64
 	var err error
 	var status TxnStatus
-	if l.TTL == 0 {
+	if l.UseAsyncCommit {
+		// Async commit doesn't need the current ts since it uses the minCommitTS.
+		currentTS = 0
+		// Set to 0 so as not to push forward min commit ts.
+		callerStartTS = 0
+	} else if l.TTL == 0 {
 		// NOTE: l.TTL = 0 is a special protocol!!!
 		// When the pessimistic txn prewrite meets locks of a txn, it should resolve the lock **unconditionally**.
 		// In this case, TiKV use lock TTL = 0 to notify TiDB, and TiDB should resolve the lock!
@@ -466,7 +491,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 		}
 
 		failpoint.Inject("txnNotFoundRetTTL", func() {
-			failpoint.Return(TxnStatus{l.TTL, 0, kvrpcpb.Action_NoAction}, nil)
+			failpoint.Return(TxnStatus{ttl: l.TTL, action: kvrpcpb.Action_NoAction}, nil)
 		})
 
 		// Handle txnNotFound error.
@@ -483,7 +508,7 @@ func (lr *LockResolver) getTxnStatusFromLock(bo *Backoffer, l *Lock, callerStart
 				zap.Stringer("lock str", l))
 			if l.LockType == kvrpcpb.Op_PessimisticLock {
 				failpoint.Inject("txnExpireRetTTL", func() {
-					failpoint.Return(TxnStatus{l.TTL, 0, kvrpcpb.Action_NoAction},
+					failpoint.Return(TxnStatus{ttl: l.TTL, action: kvrpcpb.Action_NoAction},
 						errors.New("error txn not found and lock expired"))
 				})
 				return TxnStatus{}, nil
@@ -566,7 +591,13 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			return status, err
 		}
 		status.action = cmdResp.Action
-		if cmdResp.LockTtl != 0 {
+		status.primaryLock = cmdResp.LockInfo
+
+		if status.primaryLock != nil && status.primaryLock.UseAsyncCommit {
+			if !lr.store.GetOracle().IsExpired(txnID, cmdResp.LockTtl) {
+				status.ttl = cmdResp.LockTtl
+			}
+		} else if cmdResp.LockTtl != 0 {
 			status.ttl = cmdResp.LockTtl
 		} else {
 			if cmdResp.CommitVersion == 0 {
@@ -578,8 +609,260 @@ func (lr *LockResolver) getTxnStatus(bo *Backoffer, txnID uint64, primary []byte
 			status.commitTS = cmdResp.CommitVersion
 			lr.saveResolved(txnID, status)
 		}
+
 		return status, nil
 	}
+}
+
+// asyncResolveData is data contributed by multiple goroutines when resolving locks using the async commit protocol. All
+// data should be protected by the mutex field.
+type asyncResolveData struct {
+	mutex sync.Mutex
+	// If any key has been committed (missingLock is true), then this is the commit ts. In that case, all locks should
+	// be committed with the same commit timestamp. If no locks have been committed (missingLock is false), then we will
+	// use max(all min commit ts) from all locks; i.e., it is the commit ts we should use. Note that a secondary lock's
+	// commit ts may or may not be the same as the primary lock's min commit ts.
+	commitTs    uint64
+	keys        [][]byte
+	missingLock bool
+}
+
+// addKeys adds the keys from locks to data, keeping other fields up to date. startTS and commitTS are for the
+// transaction being resolved.
+//
+// In the async commit protocol when checking locks, we send a list of keys to check and get back a list of locks. There
+// will be a lock for every key which is locked. If there are fewer locks than keys, then a lock is missing because it
+// has been committed, rolled back, or was never locked.
+//
+// In this function, locks is the list of locks, and expected is the number of keys. asyncResolveData.missingLock will be
+// set to true if the lengths don't match. If the lengths do match, then the locks are added to asyncResolveData.locks
+// and will need to be resolved by the caller.
+func (data *asyncResolveData) addKeys(locks []*kvrpcpb.LockInfo, expected int, startTS uint64, commitTS uint64) error {
+	data.mutex.Lock()
+	defer data.mutex.Unlock()
+
+	// Check locks to see if any have been committed or rolled back.
+	if len(locks) < expected {
+		logutil.BgLogger().Debug("addKeys: lock has been committed or rolled back", zap.Uint64("commit ts", commitTS), zap.Uint64("start ts", startTS))
+		// A lock is missing - the transaction must either have been rolled back or committed.
+		if !data.missingLock {
+			// commitTS == 0 => lock has been rolled back.
+			if commitTS != 0 && commitTS < data.commitTs {
+				return errors.Errorf("commit TS must be greater or equal to min commit TS: commit ts: %v, min commit ts: %v", commitTS, data.commitTs)
+			}
+			data.commitTs = commitTS
+		}
+		data.missingLock = true
+
+		if data.commitTs != commitTS {
+			return errors.Errorf("commit TS mismatch in async commit recovery: %v and %v", data.commitTs, commitTS)
+		}
+
+		// We do not need to resolve the remaining locks because TiKV will have resolved them as appropriate.
+		return nil
+	}
+
+	logutil.BgLogger().Debug("addKeys: all locks present", zap.Uint64("start ts", startTS))
+	// Save all locks to be resolved.
+	for _, lockInfo := range locks {
+		if lockInfo.LockVersion != startTS {
+			err := errors.Errorf("unexpected timestamp, expected: %v, found: %v", startTS, lockInfo.LockVersion)
+			logutil.BgLogger().Error("addLocks error", zap.Error(err))
+			return err
+		}
+
+		if !data.missingLock && lockInfo.MinCommitTs > data.commitTs {
+			data.commitTs = lockInfo.MinCommitTs
+		}
+		data.keys = append(data.keys, lockInfo.Key)
+	}
+
+	return nil
+}
+
+func (lr *LockResolver) checkSecondaries(bo *Backoffer, txnID uint64, curKeys [][]byte, curRegionID RegionVerID, shared *asyncResolveData) error {
+	checkReq := &kvrpcpb.CheckSecondaryLocksRequest{
+		Keys:         curKeys,
+		StartVersion: txnID,
+	}
+	req := tikvrpc.NewRequest(tikvrpc.CmdCheckSecondaryLocks, checkReq)
+	tikvLockResolverCountWithQueryCheckSecondaryLocks.Inc()
+	resp, err := lr.store.SendReq(bo, req, curRegionID, readTimeoutShort)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	regionErr, err := resp.GetRegionError()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if regionErr != nil {
+		err = bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		logutil.BgLogger().Debug("checkSecondaries: region error, regrouping", zap.Uint64("txn id", txnID), zap.Uint64("region", curRegionID.GetID()))
+
+		// If regions have changed, then we might need to regroup the keys. Since this should be rare and for the sake
+		// of simplicity, we will resolve regions sequentially.
+		regions, _, err := lr.store.GetRegionCache().GroupKeysByRegion(bo, curKeys, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for regionID, keys := range regions {
+			// Recursion will terminate because the resolve request succeeds or the Backoffer reaches its limit.
+			if err = lr.checkSecondaries(bo, txnID, keys, regionID, shared); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if resp.Resp == nil {
+		return errors.Trace(ErrBodyMissing)
+	}
+
+	checkResp := resp.Resp.(*kvrpcpb.CheckSecondaryLocksResponse)
+	return shared.addKeys(checkResp.Locks, len(curKeys), txnID, checkResp.CommitTs)
+}
+
+// resolveLockAsync resolves l assuming it was locked using the async commit protocol.
+func (lr *LockResolver) resolveLockAsync(bo *Backoffer, l *Lock, status TxnStatus) error {
+	tikvLockResolverCountWithResolveAsync.Inc()
+
+	resolveData, err := lr.checkAllSecondaries(bo, l, &status)
+	if err != nil {
+		return err
+	}
+
+	status.commitTS = resolveData.commitTs
+
+	resolveData.keys = append(resolveData.keys, l.Primary)
+	keysByRegion, _, err := lr.store.GetRegionCache().GroupKeysByRegion(bo, resolveData.keys, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	logutil.BgLogger().Info("resolve async commit", zap.Uint64("startTS", l.TxnID), zap.Uint64("commitTS", status.commitTS))
+
+	errChan := make(chan error, len(keysByRegion))
+	// Resolve every lock in the transaction.
+	for region, locks := range keysByRegion {
+		curLocks := locks
+		curRegion := region
+		go func() {
+			errChan <- lr.resolveRegionLocks(bo, l, curRegion, curLocks, status)
+		}()
+	}
+
+	var errs []string
+	for range keysByRegion {
+		err1 := <-errChan
+		if err1 != nil {
+			errs = append(errs, err1.Error())
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Errorf("async commit recovery (sending ResolveLock) finished with errors: %v", errs)
+	}
+
+	return nil
+}
+
+// checkAllSecondaries checks the secondary locks of an async commit transaction to find out the final
+// status of the transaction
+func (lr *LockResolver) checkAllSecondaries(bo *Backoffer, l *Lock, status *TxnStatus) (*asyncResolveData, error) {
+	regions, _, err := lr.store.GetRegionCache().GroupKeysByRegion(bo, status.primaryLock.Secondaries, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	shared := asyncResolveData{
+		mutex:       sync.Mutex{},
+		commitTs:    status.primaryLock.MinCommitTs,
+		keys:        [][]byte{},
+		missingLock: false,
+	}
+
+	errChan := make(chan error, len(regions))
+
+	for regionID, keys := range regions {
+		curRegionID := regionID
+		curKeys := keys
+
+		go func() {
+			errChan <- lr.checkSecondaries(bo, l.TxnID, curKeys, curRegionID, &shared)
+		}()
+	}
+
+	var errs []string
+	for range regions {
+		err1 := <-errChan
+		if err1 != nil {
+			errs = append(errs, err1.Error())
+		}
+	}
+
+	if len(errs) > 0 {
+		return nil, errors.Errorf("async commit recovery (sending CheckSecondaryLocks) finished with errors: %v", errs)
+	}
+
+	// TODO(nrc, cfzjywxk) schema lease check
+
+	return &shared, nil
+}
+
+// resolveRegionLocks is essentially the same as resolveLock, but we resolve all keys in the same region at the same time.
+func (lr *LockResolver) resolveRegionLocks(bo *Backoffer, l *Lock, region RegionVerID, keys [][]byte, status TxnStatus) error {
+	lreq := &kvrpcpb.ResolveLockRequest{
+		StartVersion: l.TxnID,
+	}
+	if status.IsCommitted() {
+		lreq.CommitVersion = status.CommitTS()
+	}
+	lreq.Keys = keys
+	req := tikvrpc.NewRequest(tikvrpc.CmdResolveLock, lreq)
+
+	resp, err := lr.store.SendReq(bo, req, region, readTimeoutShort)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	regionErr, err := resp.GetRegionError()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if regionErr != nil {
+		err := bo.Backoff(BoRegionMiss, errors.New(regionErr.String()))
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		logutil.BgLogger().Info("resolveRegionLocks region error, regrouping", zap.String("lock", l.String()), zap.Uint64("region", region.GetID()))
+
+		// Regroup locks.
+		regions, _, err := lr.store.GetRegionCache().GroupKeysByRegion(bo, keys, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for regionID, keys := range regions {
+			// Recursion will terminate because the resolve request succeeds or the Backoffer reaches its limit.
+			if err = lr.resolveRegionLocks(bo, l, regionID, keys, status); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if resp.Resp == nil {
+		return errors.Trace(ErrBodyMissing)
+	}
+	cmdResp := resp.Resp.(*kvrpcpb.ResolveLockResponse)
+	if keyErr := cmdResp.GetError(); keyErr != nil {
+		err = errors.Errorf("unexpected resolve err: %s, lock: %v", keyErr, l)
+		logutil.BgLogger().Error("resolveLock error", zap.Error(err))
+	}
+
+	return nil
 }
 
 func (lr *LockResolver) resolveLock(bo *Backoffer, l *Lock, status TxnStatus, lite bool, cleanRegions map[RegionVerID]struct{}) error {
