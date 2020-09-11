@@ -223,10 +223,6 @@ func (c *mockPDClient) ScatterRegionWithOption(ctx context.Context, regionID uin
 	return nil
 }
 
-func (c *mockPDClient) GetMemberInfo(ctx context.Context) ([]*pdpb.Member, error) {
-	return nil, nil
-}
-
 type checkRequestClient struct {
 	Client
 	priority pb.CommandPri
