@@ -218,6 +218,10 @@ func (it *lockKeysMutationsIter) Next() mutation {
 			continue
 		}
 
+		if len(it.end) > 0 && bytes.Compare(key, it.end) >= 0 {
+			return mutation{}
+		}
+
 		it.idx++
 		return mutation{key: key}
 	}
