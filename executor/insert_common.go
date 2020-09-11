@@ -938,8 +938,8 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 			}
 			e.stats = &insertRuntimeStat{
 				runtimeStatsWithSnapshot: stats,
-				RPCTime:                  0,
-				CheckInsertTime:          0,
+				rpcTime:                  0,
+				checkInsertTime:          0,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -947,8 +947,8 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 	}
 	if e.stats == nil {
 		e.stats = &insertRuntimeStat{
-			RPCTime:         0,
-			CheckInsertTime: 0,
+			rpcTime:         0,
+			checkInsertTime: 0,
 		}
 	}
 	return false
@@ -986,7 +986,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
-	e.stats.RPCTime += time.Since(rpcStart)
+	e.stats.rpcTime += time.Since(rpcStart)
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
 		skip := false
@@ -1023,7 +1023,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 	}
-	e.stats.CheckInsertTime += time.Since(start)
+	e.stats.checkInsertTime += time.Since(start)
 	return nil
 }
 

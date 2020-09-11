@@ -469,8 +469,8 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 
 type insertRuntimeStat struct {
 	*runtimeStatsWithSnapshot
-	CheckInsertTime time.Duration
-	RPCTime         time.Duration
+	checkInsertTime time.Duration
+	rpcTime         time.Duration
 }
 
 type runtimeStatsWithSnapshot struct {
@@ -483,9 +483,9 @@ func (e *insertRuntimeStat) String() string {
 	if e.runtimeStatsWithSnapshot.BasicRuntimeStats != nil {
 		basic = e.runtimeStatsWithSnapshot.BasicRuntimeStats.String()
 	}
-	if e.CheckInsertTime != 0 && e.RPCTime != 0 {
-		prepareStr = fmt.Sprintf("prepare:%v", time.Duration(e.runtimeStatsWithSnapshot.BasicRuntimeStats.GetTime())-e.CheckInsertTime)
-		checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, rpc:{time:%v}}", e.CheckInsertTime, e.CheckInsertTime-e.RPCTime, e.RPCTime)
+	if e.checkInsertTime != 0 && e.rpcTime != 0 {
+		prepareStr = fmt.Sprintf("prepare:%v", time.Duration(e.runtimeStatsWithSnapshot.BasicRuntimeStats.GetTime())-e.checkInsertTime)
+		checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, rpc:{time:%v}}", e.checkInsertTime, e.checkInsertTime-e.rpcTime, e.rpcTime)
 	}
 	if e.runtimeStatsWithSnapshot.SnapshotRuntimeStats != nil {
 		rpcStatsStr = e.SnapshotRuntimeStats.String()
