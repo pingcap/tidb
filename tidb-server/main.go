@@ -115,7 +115,7 @@ var (
 	configStrict = flagBoolean(nmConfigStrict, false, "enforce config file validity")
 
 	// Base
-	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
+	store            = flag.String(nmStore, "unistore", "registered store name, [tikv, mocktikv, unistore]")
 	storePath        = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
 	host             = flag.String(nmHost, "0.0.0.0", "tidb server host")
 	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
@@ -579,7 +579,7 @@ func setGlobalVars() {
 		}
 	}
 
-	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
+	atomic.StoreUint64(&tikv.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
