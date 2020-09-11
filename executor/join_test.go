@@ -1471,7 +1471,7 @@ func (s *testSuite2) TestIssue19112(c *C) {
 		"3 1.010000 3 1.010000"))
 }
 
-func (s *testSuiteJoin3) TestIssue11896(c *C) {
+func (s *testSuite2) TestIssue11896(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
 	// compare bigint to bit(64)
