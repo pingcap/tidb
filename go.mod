@@ -49,7 +49,7 @@ require (
 	github.com/sirupsen/logrus v1.6.0
 	github.com/soheilhy/cmux v0.1.4
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/pd v1.1.0-beta.0.20200911085735-b994e4d9ed6e
+	github.com/tikv/pd v1.1.0-beta.0.20200907085700-5b04bec39b99
 	github.com/twmb/murmur3 v1.1.3
 	github.com/uber-go/atomic v1.3.2
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -57,7 +57,7 @@ require (
 	go.uber.org/atomic v1.6.0
 	go.uber.org/automaxprocs v1.2.0
 	go.uber.org/zap v1.16.0
-	golang.org/x/net v0.0.0-20200813134508-3edf25e44fcc	
+	golang.org/x/net v0.0.0-20200813134508-3edf25e44fcc
 	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
 	golang.org/x/sys v0.0.0-20200819171115-d785dc25833f
 	golang.org/x/text v0.3.3
