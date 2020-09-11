@@ -1584,6 +1584,6 @@ func (s *testIntegrationSerialSuite) Test19942(c *C) {
 		"    KEY `s_idx` (`s`)" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
 	tk.MustExec("INSERT INTO test.t (a, b, c, s) VALUES (1, 1, '0', 1);")
-	tk.MustQuery("SELECT * FROM `test`.`t`;").Check(testkit.Rows("1 1 0 1"))
+	tk.MustQuery("SELECT * FROM `test`.`t` use index (`a_idx`);").Check(testkit.Rows("1 1 0 1"))
 	tk.MustExec("admin check table t")
 }
