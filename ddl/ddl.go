@@ -79,7 +79,7 @@ const (
 var (
 	// TableColumnCountLimit is limit of the number of columns in a table.
 	// It's exported for testing.
-	TableColumnCountLimit = uint32(512)
+	TableColumnCountLimit = uint32(1024)
 	// EnableSplitTableRegion is a flag to decide whether to split a new region for
 	// a newly created table. It takes effect only if the Storage supports split
 	// region.
