@@ -932,8 +932,7 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
 			snapshotStats := &tikv.SnapshotRuntimeStats{}
-			stats := &runtimeStatsWithSnapshot{
-				BasicRuntimeStats:    e.runtimeStats,
+			e.stats = &runtimeStatsWithSnapshot{
 				SnapshotRuntimeStats: snapshotStats,
 			}
 			e.stats = &insertRuntimeStat{
