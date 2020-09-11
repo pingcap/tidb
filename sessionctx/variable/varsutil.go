@@ -229,7 +229,7 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch sysVar.Scope {
-	case ScopeGlobal, ScopeNone:
+	case ScopeGlobal:
 		if !isGlobal {
 			return ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
 		}
