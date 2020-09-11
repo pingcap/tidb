@@ -1280,9 +1280,9 @@ type taskRateLimitAction struct {
 		// exceed indicates whether have encountered OOM situation.
 		exceed bool
 		// tearedTicket indicates the count of tickets which have been teared up.
-		tearedTicket     uint
-		teared           bool
-		sendRate         *rateLimit
+		tearedTicket uint
+		teared       bool
+		sendRate     *rateLimit
 		// maxRunningTaskID indicates the max id of the running copTask
 		maxRunningTaskID int
 	}
