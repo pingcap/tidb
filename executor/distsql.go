@@ -867,7 +867,7 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			if collate.NewCollationEnabled() && rtp.EvalType() == types.ETString &&
 				!mysql.HasBinaryFlag(rtp.Flag) && tp == getHandleFromIndex {
 				rtp = rtp.Clone()
-				rtp.Collate = charset.CollationUTF8MB4
+				rtp.Collate = charset.CollationBin
 				datums = append(datums, row.GetDatum(idx, rtp))
 				continue
 			}
