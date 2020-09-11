@@ -137,7 +137,6 @@ func (p *multiArgsAggTest) genSrcChk() *chunk.Chunk {
 			srcChk.AppendDatum(j, &fdt)
 		}
 	}
-	//srcChk.AppendDatum(0, &types.Datum{})
 	return srcChk
 }
 
