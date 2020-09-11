@@ -20,6 +20,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
@@ -493,10 +495,11 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
 			d.cancel()
 		})
-
+		watcher := clientv3.NewWatcher(d.ddlCtx.schemaSyncer.GetEtcdClient())
+		watchRespChan := watcher.Watch(d.ctx, "/ddl/job/done/"+strconv.FormatInt(jobID, 10))
 		select {
 		case <-d.ddlJobDoneCh:
-		case <-ticker.C:
+		case <-watchRespChan:
 		case <-d.ctx.Done():
 			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done", zap.Error(d.ctx.Err()))
 			err := d.ctx.Err()

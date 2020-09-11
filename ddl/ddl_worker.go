@@ -16,6 +16,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,6 +36,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
+	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
@@ -133,24 +135,15 @@ func (w *worker) start(d *ddlCtx) {
 		fmt.Sprintf("DDL ID %s, %s start", d.uuid, w),
 		nil, true,
 	)
-
-	// We use 4 * lease time to check owner's timeout, so here, we will update owner's status
-	// every 2 * lease time. If lease is 0, we will use default 1s.
-	// But we use etcd to speed up, normally it takes less than 1s now, so we use 1s as the max value.
-	checkTime := chooseLeaseTime(2*d.lease, 1*time.Second)
-
-	ticker := time.NewTicker(checkTime)
-	defer ticker.Stop()
-
 	for {
+		watcher := clientv3.NewWatcher(d.schemaSyncer.GetEtcdClient())
+		watchRespChan := watcher.Watch(w.ctx, "/ddl/job/await")
 		select {
-		case <-ticker.C:
-			logutil.Logger(w.logCtx).Debug("[ddl] wait to check DDL status again", zap.Duration("interval", checkTime))
+		case <-watchRespChan:
 		case <-w.ddlJobCh:
 		case <-w.ctx.Done():
 			return
 		}
-
 		err := w.handleDDLJobQueue(d)
 		if err != nil {
 			logutil.Logger(w.logCtx).Error("[ddl] handle DDL job failed", zap.Error(err))
@@ -690,7 +683,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		job.State = model.JobStateCancelled
 		err = errInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
-
+	kv := clientv3.NewKV(d.schemaSyncer.GetEtcdClient())
 	// Save errors in job, so that others can know errors happened.
 	if err != nil {
 		job.Error = toTError(err)
@@ -699,6 +692,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
 		if job.State == model.JobStateCancelled {
 			logutil.Logger(w.logCtx).Info("[ddl] DDL job is cancelled normally", zap.Error(err))
+			kv.Put(w.ctx, "/ddl/job/done/"+strconv.FormatInt(job.ID, 10), "1")
 			return ver, nil
 		}
 		logutil.Logger(w.logCtx).Error("[ddl] run DDL job error", zap.Error(err))
@@ -713,6 +707,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 			job.State = model.JobStateCancelling
 		}
 	}
+	kv.Put(w.ctx, "/ddl/job/done/"+strconv.FormatInt(job.ID, 10), "1")
 	return
 }
 
