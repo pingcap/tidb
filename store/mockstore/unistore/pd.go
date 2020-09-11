@@ -93,6 +93,10 @@ func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetO
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
 }
 
+func (c *pdClient) ScatterRegionWithOption(ctx context.Context, regionID uint64, opts ...pd.ScatterRegionOption) error {
+	return nil
+}
+
 func (c *pdClient) GetMemberInfo(ctx context.Context) ([]*pdpb.Member, error) {
 	return nil, nil
 }

@@ -14,6 +14,7 @@
 package tikv
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -463,25 +464,61 @@ func (s *testLockSuite) TestLockTTL(c *C) {
 }
 
 func (s *testLockSuite) TestBatchResolveLocks(c *C) {
+	// The first transaction is a normal transaction with a long TTL
 	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
-	txn.Set(kv.Key("key"), []byte("value"))
-	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 1000)
-	l := s.mustGetLock(c, []byte("key"))
-	msBeforeLockExpired := s.store.GetOracle().UntilExpired(l.TxnID, l.TTL)
+	txn.Set(kv.Key("k1"), []byte("v1"))
+	txn.Set(kv.Key("k2"), []byte("v2"))
+	s.prewriteTxnWithTTL(c, txn.(*tikvTxn), 20000)
+
+	// The second transaction is an async commit transaction
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set(kv.Key("k3"), []byte("v3"))
+	txn.Set(kv.Key("k4"), []byte("v4"))
+	tikvTxn := txn.(*tikvTxn)
+	committer, err := newTwoPhaseCommitterWithInit(tikvTxn, 0)
+	c.Assert(err, IsNil)
+	committer.setAsyncCommit(true)
+	committer.lockTTL = 20000
+	err = committer.prewriteMutations(NewBackofferWithVars(context.Background(), PrewriteMaxBackoff, nil), committer.mutations)
+	c.Assert(err, IsNil)
+
+	var locks []*Lock
+	for _, key := range []string{"k1", "k2", "k3", "k4"} {
+		l := s.mustGetLock(c, []byte(key))
+		locks = append(locks, l)
+	}
+
+	// Locks may not expired
+	msBeforeLockExpired := s.store.GetOracle().UntilExpired(locks[0].TxnID, locks[1].TTL)
+	c.Assert(msBeforeLockExpired, Greater, int64(0))
+	msBeforeLockExpired = s.store.GetOracle().UntilExpired(locks[3].TxnID, locks[3].TTL)
 	c.Assert(msBeforeLockExpired, Greater, int64(0))
 
 	lr := newLockResolver(s.store)
 	bo := NewBackofferWithVars(context.Background(), GcResolveLockMaxBackoff, nil)
-	loc, err := lr.store.GetRegionCache().LocateKey(bo, l.Primary)
+	loc, err := lr.store.GetRegionCache().LocateKey(bo, locks[0].Primary)
 	c.Assert(err, IsNil)
 	// Check BatchResolveLocks resolve the lock even the ttl is not expired.
-	succ, err := lr.BatchResolveLocks(bo, []*Lock{l}, loc.Region)
-	c.Assert(succ, IsTrue)
+	success, err := lr.BatchResolveLocks(bo, locks, loc.Region)
+	c.Assert(success, IsTrue)
 	c.Assert(err, IsNil)
 
-	err = txn.Commit(context.Background())
-	c.Assert(err, NotNil)
+	txn, err = s.store.Begin()
+	c.Assert(err, IsNil)
+	// transaction 1 is rolled back
+	_, err = txn.Get(context.Background(), kv.Key("k1"))
+	c.Assert(err, Equals, kv.ErrNotExist)
+	_, err = txn.Get(context.Background(), kv.Key("k2"))
+	c.Assert(err, Equals, kv.ErrNotExist)
+	// transaction 2 is committed
+	v, err := txn.Get(context.Background(), kv.Key("k3"))
+	c.Assert(err, IsNil)
+	c.Assert(bytes.Equal(v, []byte("v3")), IsTrue)
+	v, err = txn.Get(context.Background(), kv.Key("k4"))
+	c.Assert(err, IsNil)
+	c.Assert(bytes.Equal(v, []byte("v4")), IsTrue)
 }
 
 func (s *testLockSuite) TestNewLockZeroTTL(c *C) {
