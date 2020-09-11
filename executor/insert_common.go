@@ -980,6 +980,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if e.stats != nil {
 		e.stats.rpcTime += time.Since(rpcStart)
 	}
+
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
 		skip := false
@@ -1005,6 +1006,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				return err
 			}
 		}
+
 		// If row was checked with no duplicate keys,
 		// it should be add to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
