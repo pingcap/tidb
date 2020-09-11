@@ -312,6 +312,8 @@ type CopRuntimeStats struct {
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
 	stats map[string][]*BasicRuntimeStats
+
+	copCacheHit bool
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
