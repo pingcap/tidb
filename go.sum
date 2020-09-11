@@ -687,7 +687,6 @@ github.com/yookoala/realpath v1.0.0/go.mod h1:gJJMA9wuX7AcqLy1+ffPatSCySA1FQ2S8Y
 github.com/yuin/goldmark v1.1.25/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.1.32/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
-github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/zhangjinpeng1987/raft v0.0.0-20190624145930-deeb32d6553d/go.mod h1:1KDQ09J8MRHEtHze4at7BJZDW/doUAgkJ8w9KjEUhSo=
 github.com/zhangjinpeng1987/raft v0.0.0-20200819064223-df31bb68a018 h1:T3OrqVdcH6z6SakR7WkECvGpdkfB0MAur/6zf66GPxQ=
 github.com/zhangjinpeng1987/raft v0.0.0-20200819064223-df31bb68a018/go.mod h1:rTSjwgeYU2on64W50csWDlhyy0x9UYVYJUovHlYdt5s=

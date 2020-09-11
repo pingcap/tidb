@@ -57,11 +57,11 @@ require (
 	go.uber.org/atomic v1.6.0
 	go.uber.org/automaxprocs v1.2.0
 	go.uber.org/zap v1.16.0
-	golang.org/x/net v0.0.0-20200904194848-62affa334b73
+	golang.org/x/net v0.0.0-20200813134508-3edf25e44fcc	
 	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
-	golang.org/x/sys v0.0.0-20200909081042-eff7692f9009
+	golang.org/x/sys v0.0.0-20200819171115-d785dc25833f
 	golang.org/x/text v0.3.3
-	golang.org/x/tools v0.0.0-20200911040025-d179df38ff46
+	golang.org/x/tools v0.0.0-20200820010801-b793a1359eac
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	google.golang.org/grpc v1.26.0
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0
