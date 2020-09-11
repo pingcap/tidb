@@ -36,14 +36,10 @@ const (
 
 type FailpointChecker struct {
 	dir                 string
-	currentPath         string
 	currentFile         *ast.File
 	currsetFset         *token.FileSet
-	isCurrentTestSerial bool
 	failpointName       string
-	currSuiteName       string
 	currTestName        string
-	rewritten           bool
 	Mode                checkMode
 	testSuiteMap        map[string]map[string]bool
 	errList             []error
@@ -112,7 +108,6 @@ func (r *FailpointChecker) CheckFile(path string) error {
 	if len(file.Decls) < 1 {
 		return nil
 	}
-	r.currentPath = path
 	r.currentFile = file
 	r.currsetFset = fset
 
@@ -218,7 +213,6 @@ func (r *FailpointChecker) CheckFuncDecl(fn *ast.FuncDecl) error {
 		}
 		isSerial, ok := packageMap[ident.Name]
 		if ok && !isSerial {
-			r.currSuiteName = ident.Name
 			r.currTestName = fn.Name.Name
 			return r.CheckStmts(fn.Body.List)
 		}
