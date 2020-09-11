@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
@@ -930,6 +931,10 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 			continue
 		}
 		if !indexCoveringCol(col, indexColumns, idxColLens) && !indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens) {
+			return false
+		}
+		if collate.NewCollationEnabled() && indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens) &&
+			col.GetType().EvalType() == types.ETString && !mysql.HasBinaryFlag(col.GetType().Flag) {
 			return false
 		}
 	}

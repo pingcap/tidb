@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -1563,4 +1564,26 @@ func (s *testIntegrationSuite) TestDeleteUsingJoin(c *C) {
 	tk.MustExec("delete t1.* from t1 join t2 using (a)")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("2 2"))
+}
+
+func (s *testIntegrationSerialSuite) Test19942(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("SET @@tidb_enable_clustered_index=1;")
+	tk.MustExec("CREATE TABLE test.`t` (" +
+		"    `a` int(11) NOT NULL," +
+		"    `b` int(11) NOT NULL," +
+		"    `c` varchar(50) COLLATE utf8_general_ci NOT NULL," +
+		"    `s` tinyint(1) NOT NULL," +
+		"    PRIMARY KEY (`c`)," +
+		"    KEY `a_idx` (`a`)," +
+		"    KEY `b_idx` (`b`)," +
+		"    KEY `s_idx` (`s`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
+	tk.MustExec("INSERT INTO test.t (a, b, c, s) VALUES (1, 1, '0', 1);")
+	tk.MustQuery("SELECT * FROM `test`.`t`;").Check(testkit.Rows("1 1 0 1"))
+	tk.MustExec("admin check table t")
 }
