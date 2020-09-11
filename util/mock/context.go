@@ -114,7 +114,7 @@ func (c *Context) GetClient() kv.Client {
 	return c.Store.GetClient()
 }
 
-// GetClient implements sessionctx.Context GetClient interface.
+// GetMPPClient implements sessionctx.Context GetMPPClient interface.
 func (c *Context) GetMPPClient() kv.MPPClient {
 	if c.Store == nil {
 		return nil

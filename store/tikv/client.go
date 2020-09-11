@@ -16,7 +16,6 @@ package tikv
 
 import (
 	"context"
-	"github.com/pingcap/kvproto/pkg/mpp"
 	"io"
 	"math"
 	"strconv"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/debugpb"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"

@@ -16,7 +16,6 @@ package tikvrpc
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/kvproto/pkg/mpp"
 	"sync/atomic"
 	"time"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/kv"
 )
@@ -329,7 +329,7 @@ func (req *Request) DispatchMPPTask() *mpp.DispatchTaskRequest {
 	return req.Req.(*mpp.DispatchTaskRequest)
 }
 
-// EsitablishMPPConn returns stablishMPPConnectionRequest in request.
+// EstablishMPPConn returns stablishMPPConnectionRequest in request.
 func (req *Request) EstablishMPPConn() *mpp.EstablishMPPConnectionRequest {
 	return req.Req.(*mpp.EstablishMPPConnectionRequest)
 }

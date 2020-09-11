@@ -15,6 +15,11 @@ package tikv
 
 import (
 	"context"
+	"io"
+	"sync"
+	"sync/atomic"
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -24,20 +29,19 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"io"
-	"sync"
-	"sync/atomic"
-	"time"
 )
 
+// MPPClient servers MPP requests.
 type MPPClient struct {
 	store *tikvStore
 }
 
+// GetAddress returns the network address.
 func (c *batchCopTask) GetAddress() string {
 	return c.storeAddr
 }
 
+// ScheduleMPPTasks receives ScheduleRequset, which are actually collects of kv ranges. We allocates MPPTask for them and returns.
 func (c *MPPClient) ScheduleMPPTasks(ctx context.Context, req *kv.MPPScheduleRequest) ([]kv.MPPTask, error) {
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTS)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, nil)
@@ -52,33 +56,38 @@ func (c *MPPClient) ScheduleMPPTasks(ctx context.Context, req *kv.MPPScheduleReq
 	return mppTasks, nil
 }
 
-type MPPResponse struct {
+// mppResponse wraps mpp data packet.
+type mppResponse struct {
 	pbResp *mpp.MPPDataPacket
 
 	err error
 }
 
-func (m *MPPResponse) GetData() []byte {
+// GetData implements the kv.ResultSubset GetData interface.
+func (m *mppResponse) GetData() []byte {
 	return m.pbResp.Data
 }
 
-func (m *MPPResponse) GetStartKey() kv.Key {
+// GetStartKey implements the kv.ResultSubset GetStartKey interface.
+func (m *mppResponse) GetStartKey() kv.Key {
 	return nil
 }
 
-func (m *MPPResponse) GetCopRuntimeStats() *CopRuntimeStats {
+// GetExecDetails is unavailable currently.
+func (m *mppResponse) GetCopRuntimeStats() *CopRuntimeStats {
 	return nil
 }
 
-func (m *MPPResponse) MemSize() int64 {
+// MemSize returns how many bytes of memory this response use
+func (m *mppResponse) MemSize() int64 {
 	return int64(m.pbResp.Size())
 }
 
-func (m *MPPResponse) RespTime() time.Duration {
+func (m *mppResponse) RespTime() time.Duration {
 	return 0
 }
 
-type MPPIterator struct {
+type mppIterator struct {
 	store *tikvStore
 
 	tasks    []*kv.MPPDispatchRequest
@@ -86,7 +95,7 @@ type MPPIterator struct {
 
 	startTs uint64
 
-	respChan chan *MPPResponse
+	respChan chan *mppResponse
 
 	rpcCancel *RPCCanceller
 
@@ -95,7 +104,7 @@ type MPPIterator struct {
 	closed uint32
 }
 
-func (m *MPPIterator) run(ctx context.Context) {
+func (m *mppIterator) run(ctx context.Context) {
 	for _, task := range m.tasks {
 		m.wg.Add(1)
 		bo := NewBackoffer(ctx, copNextMaxBackoff)
@@ -105,11 +114,11 @@ func (m *MPPIterator) run(ctx context.Context) {
 	close(m.respChan)
 }
 
-func (m *MPPIterator) sendError(err error) {
-	m.sendToRespCh(&MPPResponse{err: err})
+func (m *mppIterator) sendError(err error) {
+	m.sendToRespCh(&mppResponse{err: err})
 }
 
-func (m *MPPIterator) sendToRespCh(resp *MPPResponse) (exit bool) {
+func (m *mppIterator) sendToRespCh(resp *mppResponse) (exit bool) {
 	select {
 	case m.respChan <- resp:
 	case <-m.finishCh:
@@ -121,7 +130,7 @@ func (m *MPPIterator) sendToRespCh(resp *MPPResponse) (exit bool) {
 // TODO:: Consider that which way is better:
 // - dispatch all tasks at once, and connect tasks at second.
 // - dispatch tasks and establish connection at the same time.
-func (m *MPPIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req *kv.MPPDispatchRequest) {
+func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req *kv.MPPDispatchRequest) {
 	defer func() {
 		m.wg.Done()
 	}()
@@ -210,6 +219,10 @@ func (m *MPPIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 	// TODO: cancel the whole process when some error happens
 	for {
 		err := m.handleMPPStreamResponse(resp, req)
+		if err != nil {
+			m.sendError(err)
+			return
+		}
 		resp, err = stream.Recv()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
@@ -223,7 +236,7 @@ func (m *MPPIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 					logutil.BgLogger().Info("stream unknown error", zap.Error(err))
 				}
 			}
-			m.sendToRespCh(&MPPResponse{
+			m.sendToRespCh(&mppResponse{
 				err: errors.New(realResp.Error.Error.Msg),
 			})
 			return
@@ -232,7 +245,7 @@ func (m *MPPIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 }
 
 // TODO: Test the case that user cancels the query.
-func (m *MPPIterator) Close() error {
+func (m *mppIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&m.closed, 0, 1) {
 		close(m.finishCh)
 	}
@@ -241,7 +254,7 @@ func (m *MPPIterator) Close() error {
 	return nil
 }
 
-func (m *MPPIterator) handleMPPStreamResponse(response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
+func (m *mppIterator) handleMPPStreamResponse(response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
 	if response.Error != nil {
 		err = errors.Errorf("other error for mpp stream: %s", response.Error.Error.Msg)
 		logutil.BgLogger().Warn("other error",
@@ -251,7 +264,7 @@ func (m *MPPIterator) handleMPPStreamResponse(response *mpp.MPPDataPacket, req *
 		return err
 	}
 
-	resp := &MPPResponse{
+	resp := &mppResponse{
 		pbResp: response,
 	}
 
@@ -259,7 +272,7 @@ func (m *MPPIterator) handleMPPStreamResponse(response *mpp.MPPDataPacket, req *
 	return
 }
 
-func (m *MPPIterator) nextImpl(ctx context.Context) (resp *MPPResponse, ok bool, exit bool, err error) {
+func (m *mppIterator) nextImpl(ctx context.Context) (resp *mppResponse, ok bool, exit bool, err error) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -281,8 +294,11 @@ func (m *MPPIterator) nextImpl(ctx context.Context) (resp *MPPResponse, ok bool,
 	}
 }
 
-func (m *MPPIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
+func (m *mppIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	resp, ok, closed, err := m.nextImpl(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if !ok || closed {
 		return nil, nil
 	}
@@ -298,13 +314,14 @@ func (m *MPPIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
+// DispatchMPPTasks dispatches all the mpp task and waits for the reponses.
 func (c *MPPClient) DispatchMPPTasks(ctx context.Context, dispatchReqs []*kv.MPPDispatchRequest) kv.Response {
-	iter := &MPPIterator{
+	iter := &mppIterator{
 		store:     c.store,
 		tasks:     dispatchReqs,
 		finishCh:  make(chan struct{}),
 		rpcCancel: NewRPCanceller(),
-		respChan:  make(chan *MPPResponse, 4096),
+		respChan:  make(chan *mppResponse, 4096),
 	}
 	ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, iter.rpcCancel)
 

@@ -16,7 +16,6 @@ package tikv
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/kvproto/pkg/mpp"
 	"net"
 	"sync"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"

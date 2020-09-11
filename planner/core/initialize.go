@@ -477,6 +477,7 @@ func (p PointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsInfo, of
 	return &p
 }
 
+// InitBasePlan only assigns type and context.
 func (p *PhysicalExchangerBase) InitBasePlan(ctx sessionctx.Context, tp string) {
 	p.basePlan = newBasePlan(ctx, tp, 0)
 }

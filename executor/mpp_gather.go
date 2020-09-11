@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/parser/model"
@@ -51,6 +52,7 @@ type mppTask struct {
 	tableID  int64 // physical table id
 }
 
+// ToPB generates the pb structure.
 func (t *mppTask) ToPB() *mpp.TaskMeta {
 	meta := &mpp.TaskMeta{
 		QueryTs: t.startTs,
@@ -69,15 +71,15 @@ type planFragment struct {
 
 	/// following field are filled during getPlanFragment.
 	// TODO: Strictly speaking, not all plan fragment contain table scan. we can do this assumption until more plans are supported.
-	tableScan        *plannercore.PhysicalTableScan // result physical table scan
-	exchangerClients []*ExchangerClient             // data receivers
+	tableScan       *plannercore.PhysicalTableScan // result physical table scan
+	exchangeClients []*ExchangeClient              // data receivers
 
 	// following fields are filled after scheduling.
-	exchanger *Exchanger // data exporter
+	exchangeServer *ExchangeServer // data exporter
 }
 
-// ExchangerClient establishes connection actively and receives data passively.
-type ExchangerClient struct {
+// ExchangeClient establishes connection actively and receives data passively.
+type ExchangeClient struct {
 	plannercore.PhysicalExchangerBase
 
 	tasks   []*mppTask
@@ -85,7 +87,8 @@ type ExchangerClient struct {
 	schema  *expression.Schema
 }
 
-func (e *ExchangerClient) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+// ToPB generates the pb structure.
+func (e *ExchangeClient) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 
 	encodedTask := make([][]byte, 0, len(e.tasks))
 
@@ -107,21 +110,22 @@ func (e *ExchangerClient) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
-		Tp:              tipb.ExecType_TypeExchangeClient,
+		Tp:             tipb.ExecType_TypeExchangeClient,
 		ExchangeClient: ecExec,
-		ExecutorId:      &executorID,
+		ExecutorId:     &executorID,
 	}, nil
 }
 
-// Exchanger dispatches data to upstream tasks. That means push mode processing,
-type Exchanger struct {
+// ExchangeServer dispatches data to upstream tasks. That means push mode processing,
+type ExchangeServer struct {
 	plannercore.PhysicalExchangerBase
 
 	tasks        []*mppTask
 	exchangeType tipb.ExchangeType
 }
 
-func (e *Exchanger) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
+// ToPB generates the pb structure.
+func (e *ExchangeServer) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.Executor, error) {
 	child, err := e.Children()[0].ToPB(ctx, kv.TiFlash)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -145,9 +149,9 @@ func (e *Exchanger) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*tipb.
 	// TODO: Refine the executor ID. We should use integer executor id for best implementation.
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
-		Tp:         tipb.ExecType_TypeExchangeServer,
-		ExchangeServer:  ecExec,
-		ExecutorId: &executorID,
+		Tp:             tipb.ExecType_TypeExchangeServer,
+		ExchangeServer: ecExec,
+		ExecutorId:     &executorID,
 	}, nil
 }
 
@@ -208,16 +212,16 @@ func (e *MPPGather) getPlanFragments(p plannercore.PhysicalPlan, pf *planFragmen
 	case *plannercore.PhysicalBroadCastJoin:
 		// This is a pipeline breaker. So we replace broadcast side with a exchangerClient
 		bcChild := x.Children()[x.InnerChildIdx]
-		exc := &Exchanger{exchangeType: tipb.ExchangeType_Broadcast}
-		exc.InitBasePlan(e.ctx, plancodec.TypeExchanger)
-		npf := &planFragment{p: bcChild, exchanger: exc}
-		exchangeClient := &ExchangerClient{
+		exc := &ExchangeServer{exchangeType: tipb.ExchangeType_Broadcast}
+		exc.InitBasePlan(e.ctx, plancodec.TypeExchangeServer)
+		npf := &planFragment{p: bcChild, exchangeServer: exc}
+		exchangeClient := &ExchangeClient{
 			childPf: npf,
 			schema:  bcChild.Schema(),
 		}
-		exchangeClient.InitBasePlan(e.ctx, plancodec.TypeExchangerClient)
+		exchangeClient.InitBasePlan(e.ctx, plancodec.TypeExchangeClient)
 		x.Children()[x.InnerChildIdx] = exchangeClient
-		pf.exchangerClients = append(pf.exchangerClients, exchangeClient)
+		pf.exchangeClients = append(pf.exchangeClients, exchangeClient)
 
 		// For the inner side of join, we use a new plan fragment.
 		e.getPlanFragments(bcChild, npf)
@@ -230,8 +234,8 @@ func (e *MPPGather) getPlanFragments(p plannercore.PhysicalPlan, pf *planFragmen
 }
 
 func (e *MPPGather) appendMPPDispatchReq(pf *planFragment, tasks []*mppTask, isRoot bool) error {
-	pf.exchanger.SetChildren(pf.p)
-	dagReq, _, err := constructDAGReq(e.ctx, []plannercore.PhysicalPlan{pf.exchanger}, kv.TiFlash)
+	pf.exchangeServer.SetChildren(pf.p)
+	dagReq, _, err := constructDAGReq(e.ctx, []plannercore.PhysicalPlan{pf.exchangeServer}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -239,7 +243,10 @@ func (e *MPPGather) appendMPPDispatchReq(pf *planFragment, tasks []*mppTask, isR
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
 	for _, mppTask := range tasks {
-		updateExecutorTableID(context.Background(), dagReq.RootExecutor, mppTask.tableID, true)
+		err := updateExecutorTableID(context.Background(), dagReq.RootExecutor, mppTask.tableID, true)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		pbData, err := dagReq.Marshal()
 		if err != nil {
 			return errors.Trace(err)
@@ -264,14 +271,17 @@ func (e *MPPGather) schedulePlanFragment(ctx context.Context, pf *planFragment, 
 		return nil, errors.Trace(err)
 	}
 
-	for _, client := range pf.exchangerClients {
-		client.childPf.exchanger.tasks = tasks
+	for _, client := range pf.exchangeClients {
+		client.childPf.exchangeServer.tasks = tasks
 		client.tasks, err = e.schedulePlanFragment(ctx, client.childPf, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	e.appendMPPDispatchReq(pf, tasks, isRoot)
+	err = e.appendMPPDispatchReq(pf, tasks, isRoot)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return tasks, nil
 }
 
@@ -284,8 +294,8 @@ func (e *MPPGather) Open(ctx context.Context) error {
 		id:      -1,
 	}
 	rootPf := &planFragment{
-		p:         e.originalPlan,
-		exchanger: &Exchanger{exchangeType: tipb.ExchangeType_PassThrough, tasks: []*mppTask{tidbTask}},
+		p:              e.originalPlan,
+		exchangeServer: &ExchangeServer{exchangeType: tipb.ExchangeType_PassThrough, tasks: []*mppTask{tidbTask}},
 	}
 
 	e.getPlanFragments(e.originalPlan, rootPf)
@@ -308,6 +318,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return errors.Trace(err)
 }
 
+// Close and release the used resources.
 func (e *MPPGather) Close() error {
 	return e.respIter.Close()
 }

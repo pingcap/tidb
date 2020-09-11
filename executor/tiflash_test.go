@@ -93,4 +93,3 @@ func (s *tiflashTestSuite) TestReadPartitionTable(c *C) {
 	tk.MustQuery("select /*+ STREAM_AGG() */ count(*) from t").Check(testkit.Rows("6"))
 	tk.MustExec("commit")
 }
-

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 )
 
+// DispatchMPPTasks dispathes all tasks and returns an iterator.
 func DispatchMPPTasks(ctx context.Context, sctx sessionctx.Context, tasks []*kv.MPPDispatchRequest, fieldTypes []*types.FieldType) (SelectResult, error) {
 	resp := sctx.GetMPPClient().DispatchMPPTasks(ctx, tasks)
 	if resp == nil {

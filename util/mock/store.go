@@ -28,6 +28,7 @@ type Store struct {
 // GetClient implements kv.Storage interface.
 func (s *Store) GetClient() kv.Client { return s.Client }
 
+// GetMPPClient implements kv.Storage interface.
 func (s *Store) GetMPPClient() kv.MPPClient { return nil }
 
 // GetOracle implements kv.Storage interface.
