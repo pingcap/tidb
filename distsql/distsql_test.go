@@ -175,7 +175,7 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 	stmtStats.RegisterStats(1, s1)
 	stmtStats.RegisterStats(1, &s2)
 	stats := stmtStats.GetRootStats(1)
-	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s}, backoff{RegionMiss: 2ms}"
+	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_rate: 0.00}, backoff{RegionMiss: 2ms}"
 	c.Assert(stats.String(), Equals, expect)
 	// Test for idempotence.
 	c.Assert(stats.String(), Equals, expect)
