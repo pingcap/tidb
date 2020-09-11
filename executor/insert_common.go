@@ -423,7 +423,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 		for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
 			innerRow := innerChunkRow.GetDatumRow(fields)
 			e.rowCount++
-			row, err := e.getRow(ctx, innerRow, int(e.rowCount))
+			row, err := e.getRow(ctx, innerRow)
 			if err != nil {
 				return err
 			}
@@ -470,12 +470,12 @@ func (e *InsertValues) doBatchInsert(ctx context.Context) error {
 // getRow gets the row which from `insert into select from` or `load data`.
 // The input values from these two statements are datums instead of
 // expressions which are used in `insert into set x=y`.
-func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum, rowIdx int) ([]types.Datum, error) {
+func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.Datum, error) {
 	row := make([]types.Datum, len(e.Table.Cols()))
 	hasValue := make([]bool, len(e.Table.Cols()))
 	for i, v := range vals {
 		casted, err := table.CastValue(e.ctx, v, e.insertColumns[i].ToInfo(), false, false)
-		if err := e.handleErr(e.insertColumns[i], &v, rowIdx, err); err != nil {
+		if e.handleErr(nil, &v, 0, err) != nil {
 			return nil, err
 		}
 
