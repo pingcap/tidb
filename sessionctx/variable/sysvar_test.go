@@ -89,6 +89,6 @@ func (*testSysVarSuite) TestError(c *C) {
 		ErrUnsupportedIsolationLevel,
 	}
 	for _, err := range kvErrs {
-		c.Assert(terror.ToSQLError(err).Code != mysql.ErrUnknown, IsTrue)
+		c.Assert(err.ToSQLError().Code != mysql.ErrUnknown, IsTrue)
 	}
 }
