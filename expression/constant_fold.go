@@ -56,12 +56,8 @@ func ifFoldHandler(expr *ScalarFunction) (Expression, bool) {
 		}
 		return foldConstant(args[2])
 	}
-	var isDeferred, isDeferredConst bool
-	expr.GetArgs()[1], isDeferred = foldConstant(args[1])
-	isDeferredConst = isDeferredConst || isDeferred
-	expr.GetArgs()[2], isDeferred = foldConstant(args[2])
-	isDeferredConst = isDeferredConst || isDeferred
-	return expr, isDeferredConst
+	// if the condition is not const, which branch is unknown to run, so directly return.
+	return expr, false
 }
 
 func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
@@ -76,18 +72,17 @@ func ifNullFoldHandler(expr *ScalarFunction) (Expression, bool) {
 		}
 		return constArg, isDeferred
 	}
-	var isDeferredConst bool
-	expr.GetArgs()[1], isDeferredConst = foldConstant(args[1])
-	return expr, isDeferredConst
+	// if the condition is not const, which branch is unknown to run, so directly return.
+	return expr, false
 }
 
 func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 	args, l := expr.GetArgs(), len(expr.GetArgs())
-	var isDeferred, isDeferredConst, hasNonConstCondition bool
+	var isDeferred, isDeferredConst bool
 	for i := 0; i < l-1; i += 2 {
 		expr.GetArgs()[i], isDeferred = foldConstant(args[i])
 		isDeferredConst = isDeferredConst || isDeferred
-		if _, isConst := expr.GetArgs()[i].(*Constant); isConst && !hasNonConstCondition {
+		if _, isConst := expr.GetArgs()[i].(*Constant); isConst {
 			// If the condition is const and true, and the previous conditions
 			// has no expr, then the folded execution body is returned, otherwise
 			// the arguments of the casewhen are folded and replaced.
@@ -105,20 +100,14 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 				return foldedExpr, isDeferredConst
 			}
 		} else {
-			hasNonConstCondition = true
+			// for no-const, here should return directly, because the following branches are unknown to be run or not
+			return expr, false
 		}
-		expr.GetArgs()[i+1], isDeferred = foldConstant(args[i+1])
-		isDeferredConst = isDeferredConst || isDeferred
 	}
-
-	if l%2 == 0 {
-		return expr, isDeferredConst
-	}
-
 	// If the number of arguments in casewhen is odd, and the previous conditions
-	// is const and false, then the folded else execution body is returned. otherwise
+	// is false, then the folded else execution body is returned. otherwise
 	// the execution body of the else are folded and replaced.
-	if !hasNonConstCondition {
+	if l%2 == 1 {
 		foldedExpr, isDeferred := foldConstant(args[l-1])
 		isDeferredConst = isDeferredConst || isDeferred
 		if _, isConst := foldedExpr.(*Constant); isConst {
@@ -127,10 +116,6 @@ func caseWhenHandler(expr *ScalarFunction) (Expression, bool) {
 		}
 		return BuildCastFunction(expr.GetCtx(), foldedExpr, foldedExpr.GetType()), isDeferredConst
 	}
-
-	expr.GetArgs()[l-1], isDeferred = foldConstant(args[l-1])
-	isDeferredConst = isDeferredConst || isDeferred
-
 	return expr, isDeferredConst
 }
 

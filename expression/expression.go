@@ -891,7 +891,8 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.In,
 		ast.IsNull,
 		ast.Like,
-		ast.IsTruth,
+		ast.IsTruthWithoutNull,
+		ast.IsTruthWithNull,
 		ast.IsFalsity,
 
 		// arithmetical functions.
@@ -1187,6 +1188,14 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		default:
 			return false
 		}
+	case ast.Round:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal,
+			tipb.ScalarFuncSig_RoundDec:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}
@@ -1210,15 +1219,23 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 			}
 		}
 	}
-	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
+	var fc *isTrueOrFalseFunctionClass
+	if keepNull {
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithNull, 1, 1}, opcode.IsTruth, keepNull}
+	} else {
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithoutNull, 1, 1}, opcode.IsTruth, keepNull}
+	}
 	f, err := fc.getFunction(ctx, []Expression{arg})
 	if err != nil {
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.IsTruth),
+		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
+	}
+	if keepNull {
+		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(sf), nil
 }
