@@ -858,6 +858,54 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	}
 }
 
+func (s *testPlanSuite) TestTopNToCopHint(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk := testkit.NewTestKit(c, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tn")
+	tk.MustExec("create table tn(a int, b int, c int, d int, key (a, b, c, d))")
+
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning string
+		}
+	)
+
+	s.testData.GetTestCases(c, &input, &output)
+
+	for i, ts := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
+		})
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
+
+		comment := Commentf("case:%v sql:%s", i, ts)
+		warnings := tk.Se.GetSessionVars().StmtCtx.GetWarnings()
+		s.testData.OnRecord(func() {
+			if len(warnings) > 0 {
+				output[i].Warning = warnings[0].Err.Error()
+			}
+		})
+		if output[i].Warning == "" {
+			c.Assert(len(warnings), Equals, 0, comment)
+		} else {
+			c.Assert(len(warnings), Equals, 1, comment)
+			c.Assert(warnings[0].Level, Equals, stmtctx.WarnLevelWarning, comment)
+			c.Assert(warnings[0].Err.Error(), Equals, output[i].Warning, comment)
+		}
+	}
+}
+
 func (s *testPlanSuite) TestPushdownDistinctEnable(c *C) {
 	defer testleak.AfterTest(c)()
 	var (
