@@ -278,3 +278,20 @@ func (e *UpdateExec) setMessage() {
 	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUpdateInfo], numMatched, numChanged, numWarnings)
 	stmtCtx.SetMessage(msg)
 }
+<<<<<<< HEAD
+=======
+
+func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
+	if e.runtimeStats != nil {
+		if e.stats == nil {
+			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			e.stats = &runtimeStatsWithSnapshot{
+				SnapshotRuntimeStats: snapshotStats,
+			}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		}
+		return true
+	}
+	return false
+}
+>>>>>>> bada280... *: fix cop task runtime information is wrong in the concurrent executor (#19849)

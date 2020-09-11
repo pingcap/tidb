@@ -144,6 +144,13 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
+<<<<<<< HEAD
+=======
+	if e.runtimeStats != nil {
+		e.stats = &indexLookUpJoinRuntimeStats{}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
+>>>>>>> bada280... *: fix cop task runtime information is wrong in the concurrent executor (#19849)
 	e.startWorkers(ctx)
 	return nil
 }

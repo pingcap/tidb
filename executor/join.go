@@ -174,6 +174,15 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	if e.buildTypes == nil {
 		e.buildTypes = retTypes(e.buildSideExec)
 	}
+<<<<<<< HEAD
+=======
+	if e.runtimeStats != nil {
+		e.stats = &hashJoinRuntimeStats{
+			concurrent: cap(e.joiners),
+		}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
+>>>>>>> bada280... *: fix cop task runtime information is wrong in the concurrent executor (#19849)
 	return nil
 }
 
@@ -771,6 +780,22 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.innerRows = nil
 
 	e.memTracker = nil
+<<<<<<< HEAD
+=======
+	if e.runtimeStats != nil {
+		runtimeStats := newJoinRuntimeStats()
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
+		if e.canUseCache {
+			var hitRatio float64
+			if e.cacheAccessCounter > 0 {
+				hitRatio = float64(e.cacheHitCounter) / float64(e.cacheAccessCounter)
+			}
+			runtimeStats.setCacheInfo(true, hitRatio)
+		} else {
+			runtimeStats.setCacheInfo(false, 0)
+		}
+	}
+>>>>>>> bada280... *: fix cop task runtime information is wrong in the concurrent executor (#19849)
 	return e.outerExec.Close()
 }
 
@@ -907,11 +932,9 @@ type joinRuntimeStats struct {
 	hashStat    hashStatistic
 }
 
-func newJoinRuntimeStats(basic *execdetails.BasicRuntimeStats) *joinRuntimeStats {
+func newJoinRuntimeStats() *joinRuntimeStats {
 	stats := &joinRuntimeStats{
-		RuntimeStatsWithConcurrencyInfo: &execdetails.RuntimeStatsWithConcurrencyInfo{
-			BasicRuntimeStats: basic,
-		},
+		RuntimeStatsWithConcurrencyInfo: &execdetails.RuntimeStatsWithConcurrencyInfo{},
 	}
 	return stats
 }
@@ -942,7 +965,99 @@ func (e *joinRuntimeStats) String() string {
 		}
 	}
 	if e.hasHashStat {
+<<<<<<< HEAD
 		result += ", " + e.hashStat.String()
+=======
+		buf.WriteString(", " + e.hashStat.String())
+	}
+	return buf.String()
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *joinRuntimeStats) Tp() int {
+	return execdetails.TpJoinRuntimeStats
+}
+
+type hashJoinRuntimeStats struct {
+	fetchAndBuildHashTable time.Duration
+	hashStat               hashStatistic
+	fetchAndProbe          int64
+	probe                  int64
+	concurrent             int
+	maxFetchAndProbe       int64
+}
+
+func (e *hashJoinRuntimeStats) setMaxFetchAndProbeTime(t int64) {
+	for {
+		value := atomic.LoadInt64(&e.maxFetchAndProbe)
+		if t <= value {
+			return
+		}
+		if atomic.CompareAndSwapInt64(&e.maxFetchAndProbe, value, t) {
+			return
+		}
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *hashJoinRuntimeStats) Tp() int {
+	return execdetails.TpHashJoinRuntimeStats
+}
+
+func (e *hashJoinRuntimeStats) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 128))
+	if e.fetchAndBuildHashTable > 0 {
+		buf.WriteString("build_hash_table:{total:")
+		buf.WriteString(e.fetchAndBuildHashTable.String())
+		buf.WriteString(", fetch:")
+		buf.WriteString((e.fetchAndBuildHashTable - e.hashStat.buildTableElapse).String())
+		buf.WriteString(", build:")
+		buf.WriteString(e.hashStat.buildTableElapse.String())
+		buf.WriteString("}")
+	}
+	if e.probe > 0 {
+		buf.WriteString(", probe:{concurrency:")
+		buf.WriteString(strconv.Itoa(e.concurrent))
+		buf.WriteString(", total:")
+		buf.WriteString(time.Duration(e.fetchAndProbe).String())
+		buf.WriteString(", max:")
+		buf.WriteString(time.Duration(atomic.LoadInt64(&e.maxFetchAndProbe)).String())
+		buf.WriteString(", probe:")
+		buf.WriteString(time.Duration(e.probe).String())
+		buf.WriteString(", fetch:")
+		buf.WriteString(time.Duration(e.fetchAndProbe - e.probe).String())
+		if e.hashStat.probeCollision > 0 {
+			buf.WriteString(", probe_collision:")
+			buf.WriteString(strconv.Itoa(e.hashStat.probeCollision))
+		}
+		buf.WriteString("}")
+>>>>>>> bada280... *: fix cop task runtime information is wrong in the concurrent executor (#19849)
 	}
 	return result
+}
+
+func (e *hashJoinRuntimeStats) Clone() execdetails.RuntimeStats {
+	return &hashJoinRuntimeStats{
+		fetchAndBuildHashTable: e.fetchAndBuildHashTable,
+		hashStat:               e.hashStat,
+		fetchAndProbe:          e.fetchAndProbe,
+		probe:                  e.probe,
+		concurrent:             e.concurrent,
+		maxFetchAndProbe:       e.maxFetchAndProbe,
+	}
+}
+
+func (e *hashJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
+	tmp, ok := rs.(*hashJoinRuntimeStats)
+	if !ok {
+		return
+	}
+	e.fetchAndBuildHashTable += tmp.fetchAndBuildHashTable
+	e.hashStat.buildTableElapse += tmp.hashStat.buildTableElapse
+	e.hashStat.probeCollision += tmp.hashStat.probeCollision
+	e.fetchAndProbe += tmp.fetchAndProbe
+	e.probe += tmp.probe
+	if e.maxFetchAndProbe < tmp.maxFetchAndProbe {
+		e.maxFetchAndProbe = tmp.maxFetchAndProbe
+	}
 }

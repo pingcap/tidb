@@ -158,3 +158,105 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		t.Fatal("table_reader not exists")
 	}
 }
+<<<<<<< HEAD
+=======
+func TestRuntimeStatsWithCommit(t *testing.T) {
+	commitDetail := &CommitDetails{
+		GetCommitTsTime:   time.Second,
+		PrewriteTime:      time.Second,
+		CommitTime:        time.Second,
+		CommitBackoffTime: int64(time.Second),
+		Mu: struct {
+			sync.Mutex
+			BackoffTypes []fmt.Stringer
+		}{BackoffTypes: []fmt.Stringer{
+			stringutil.MemoizeStr(func() string {
+				return "backoff1"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff2"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff1"
+			}),
+		}},
+		ResolveLockTime:   int64(time.Second),
+		WriteKeys:         3,
+		WriteSize:         66,
+		PrewriteRegionNum: 5,
+		TxnRetry:          2,
+	}
+	stats := &RuntimeStatsWithCommit{
+		Commit: commitDetail,
+	}
+	expect := "commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, type: [backoff1 backoff2]}, resolve_lock: 1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
+	if stats.String() != expect {
+		t.Fatalf("%v != %v", stats.String(), expect)
+	}
+	lockDetail := &LockKeysDetails{
+		TotalTime:       time.Second,
+		RegionNum:       2,
+		LockKeys:        10,
+		ResolveLockTime: int64(time.Second * 2),
+		BackoffTime:     int64(time.Second * 3),
+		Mu: struct {
+			sync.Mutex
+			BackoffTypes []fmt.Stringer
+		}{BackoffTypes: []fmt.Stringer{
+			stringutil.MemoizeStr(func() string {
+				return "backoff4"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff5"
+			}),
+			stringutil.MemoizeStr(func() string {
+				return "backoff5"
+			}),
+		}},
+		LockRPCTime:  int64(time.Second * 5),
+		LockRPCCount: 50,
+		RetryCount:   2,
+	}
+	stats = &RuntimeStatsWithCommit{
+		LockKeys: lockDetail,
+	}
+	expect = "lock_keys: {time:1s, region:2, keys:10, resolve_lock:2s, backoff: {time: 3s, type: [backoff4 backoff5]}, lock_rpc:5s, rpc_count:50, retry_count:2}"
+	if stats.String() != expect {
+		t.Fatalf("%v != %v", stats.String(), expect)
+	}
+}
+
+func TestRootRuntimeStats(t *testing.T) {
+	basic1 := &BasicRuntimeStats{}
+	basic2 := &BasicRuntimeStats{}
+	basic1.Record(time.Second, 20)
+	basic2.Record(time.Second*2, 30)
+	pid := 1
+	stmtStats := NewRuntimeStatsColl()
+	stmtStats.RegisterStats(pid, basic1)
+	stmtStats.RegisterStats(pid, basic2)
+	concurrency := &RuntimeStatsWithConcurrencyInfo{}
+	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("worker", 15))
+	stmtStats.RegisterStats(pid, concurrency)
+	commitDetail := &CommitDetails{
+		GetCommitTsTime:   time.Second,
+		PrewriteTime:      time.Second,
+		CommitTime:        time.Second,
+		WriteKeys:         3,
+		WriteSize:         66,
+		PrewriteRegionNum: 5,
+		TxnRetry:          2,
+	}
+	stmtStats.RegisterStats(pid, &RuntimeStatsWithCommit{
+		Commit: commitDetail,
+	})
+	concurrency = &RuntimeStatsWithConcurrencyInfo{}
+	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("concurrent", 0))
+	stmtStats.RegisterStats(pid, concurrency)
+	stats := stmtStats.GetRootStats(1)
+	expect := "time:3s, loops:2, worker:15, concurrent:OFF, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
+	if stats.String() != expect {
+		t.Fatalf("%v != %v", stats.String(), expect)
+	}
+}
+>>>>>>> bada280... *: fix cop task runtime information is wrong in the concurrent executor (#19849)

@@ -171,6 +171,13 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	e.memTracker = memory.NewTracker(e.id, -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
+<<<<<<< HEAD
+=======
+	if e.runtimeStats != nil {
+		e.stats = &indexLookUpJoinRuntimeStats{}
+		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+	}
+>>>>>>> bada280... *: fix cop task runtime information is wrong in the concurrent executor (#19849)
 	e.startWorkers(ctx)
 	return nil
 }
@@ -693,3 +700,80 @@ func (e *IndexLookUpJoin) Close() error {
 	}
 	return e.baseExecutor.Close()
 }
+<<<<<<< HEAD
+=======
+
+type indexLookUpJoinRuntimeStats struct {
+	concurrency int
+	probe       int64
+	innerWorker innerWorkerRuntimeStats
+}
+
+type innerWorkerRuntimeStats struct {
+	totalTime int64
+	task      int64
+	construct int64
+	fetch     int64
+	build     int64
+	join      int64
+}
+
+func (e *indexLookUpJoinRuntimeStats) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	if e.innerWorker.totalTime > 0 {
+		buf.WriteString("inner:{total:")
+		buf.WriteString(time.Duration(e.innerWorker.totalTime).String())
+		buf.WriteString(", concurrency:")
+		if e.concurrency > 0 {
+			buf.WriteString(strconv.Itoa(e.concurrency))
+		} else {
+			buf.WriteString("OFF")
+		}
+		buf.WriteString(", task:")
+		buf.WriteString(strconv.FormatInt(e.innerWorker.task, 10))
+		buf.WriteString(", construct:")
+		buf.WriteString(time.Duration(e.innerWorker.construct).String())
+		buf.WriteString(", fetch:")
+		buf.WriteString(time.Duration(e.innerWorker.fetch).String())
+		buf.WriteString(", build:")
+		buf.WriteString(time.Duration(e.innerWorker.build).String())
+		if e.innerWorker.join > 0 {
+			buf.WriteString(", join:")
+			buf.WriteString(time.Duration(e.innerWorker.join).String())
+		}
+		buf.WriteString("}")
+	}
+	if e.probe > 0 {
+		buf.WriteString(", probe:")
+		buf.WriteString(time.Duration(e.probe).String())
+	}
+	return buf.String()
+}
+
+func (e *indexLookUpJoinRuntimeStats) Clone() execdetails.RuntimeStats {
+	return &indexLookUpJoinRuntimeStats{
+		concurrency: e.concurrency,
+		probe:       e.probe,
+		innerWorker: e.innerWorker,
+	}
+}
+
+func (e *indexLookUpJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
+	tmp, ok := rs.(*indexLookUpJoinRuntimeStats)
+	if !ok {
+		return
+	}
+	e.probe += tmp.probe
+	e.innerWorker.totalTime += tmp.innerWorker.totalTime
+	e.innerWorker.task += tmp.innerWorker.task
+	e.innerWorker.construct += tmp.innerWorker.construct
+	e.innerWorker.fetch += tmp.innerWorker.fetch
+	e.innerWorker.build += tmp.innerWorker.build
+	e.innerWorker.join += tmp.innerWorker.join
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *indexLookUpJoinRuntimeStats) Tp() int {
+	return execdetails.TpIndexLookUpJoinRuntimeStats
+}
+>>>>>>> bada280... *: fix cop task runtime information is wrong in the concurrent executor (#19849)
