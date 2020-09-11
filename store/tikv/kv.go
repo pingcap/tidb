@@ -259,6 +259,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 			if len(member.ClientUrls) > 0 {
 				u, err := url.Parse(member.ClientUrls[0])
 				if err != nil {
+					logutil.BgLogger().Error("fail to parse url from member.ClientUrl", zap.Error(err))
 					continue
 				}
 				etcdAddrs = append(etcdAddrs, u.Host)

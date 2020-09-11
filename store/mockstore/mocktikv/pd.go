@@ -54,9 +54,6 @@ func NewPDClient(cluster *Cluster) pd.Client {
 func (c *pdClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
 }
-func (c *pdClient) GetMemberInfo(ctx context.Context) ([]*pdpb.Member, error) {
-	return nil, nil
-}
 
 func (c *pdClient) GetTS(context.Context) (int64, int64, error) {
 	tsMu.Lock()
