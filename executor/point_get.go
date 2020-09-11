@@ -467,7 +467,8 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 }
 
 type insertRuntimeStat struct {
-	*runtimeStatsWithSnapshot
+	*execdetails.BasicRuntimeStats
+	*tikv.SnapshotRuntimeStats
 	checkInsertTime time.Duration
 	rpcTime         time.Duration
 }
@@ -477,21 +478,15 @@ type runtimeStatsWithSnapshot struct {
 }
 
 func (e *insertRuntimeStat) String() string {
-	var basic, prepareStr, rpcStatsStr, checkInsertStr string
-	if e.runtimeStatsWithSnapshot.BasicRuntimeStats != nil {
-		basic = e.runtimeStatsWithSnapshot.BasicRuntimeStats.String()
-	}
+	var prepareStr, rpcStatsStr, checkInsertStr string
 	if e.checkInsertTime != 0 && e.rpcTime != 0 {
-		prepareStr = fmt.Sprintf("prepare:%v", time.Duration(e.runtimeStatsWithSnapshot.BasicRuntimeStats.GetTime())-e.checkInsertTime)
+		prepareStr = fmt.Sprintf("prepare:%v", time.Duration(e.BasicRuntimeStats.GetTime())-e.checkInsertTime)
 		checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, rpc:{time:%v}}", e.checkInsertTime, e.checkInsertTime-e.rpcTime, e.rpcTime)
 	}
-	if e.runtimeStatsWithSnapshot.SnapshotRuntimeStats != nil {
+	if e.SnapshotRuntimeStats != nil {
 		rpcStatsStr = e.SnapshotRuntimeStats.String()
 	}
 	var result string
-	if basic != "" {
-		result += basic
-	}
 	if prepareStr != "" {
 		result += prepareStr
 	}
@@ -502,6 +497,37 @@ func (e *insertRuntimeStat) String() string {
 		result += rpcStatsStr
 	}
 	return result
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *insertRuntimeStat) Clone() execdetails.RuntimeStats {
+	newRs := &insertRuntimeStat{}
+	if e.SnapshotRuntimeStats != nil {
+		snapshotStats := e.SnapshotRuntimeStats.Clone()
+		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *insertRuntimeStat) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*insertRuntimeStat)
+	if !ok {
+		return
+	}
+	if tmp.SnapshotRuntimeStats != nil {
+		if e.SnapshotRuntimeStats == nil {
+			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
+			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+			return
+		}
+		e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *insertRuntimeStat) Tp() int {
+	return execdetails.TpInsertRuntimeStat
 }
 
 func (e *runtimeStatsWithSnapshot) String() string {

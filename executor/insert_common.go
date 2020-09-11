@@ -932,23 +932,15 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
 			snapshotStats := &tikv.SnapshotRuntimeStats{}
-			e.stats = &runtimeStatsWithSnapshot{
-				SnapshotRuntimeStats: snapshotStats,
-			}
 			e.stats = &insertRuntimeStat{
-				runtimeStatsWithSnapshot: stats,
-				rpcTime:                  0,
-				checkInsertTime:          0,
+				BasicRuntimeStats:    e.runtimeStats,
+				SnapshotRuntimeStats: snapshotStats,
+				rpcTime:              0,
+				checkInsertTime:      0,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
 		return true
-	}
-	if e.stats == nil {
-		e.stats = &insertRuntimeStat{
-			rpcTime:         0,
-			checkInsertTime: 0,
-		}
 	}
 	return false
 }
@@ -985,7 +977,9 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
-	e.stats.rpcTime += time.Since(rpcStart)
+	if e.stats != nil {
+		e.stats.rpcTime += time.Since(rpcStart)
+	}
 	// append warnings and get no duplicated error rows
 	for i, r := range toBeCheckedRows {
 		skip := false
@@ -1022,7 +1016,9 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 	}
-	e.stats.checkInsertTime += time.Since(start)
+	if e.stats != nil {
+		e.stats.checkInsertTime += time.Since(start)
+	}
 	return nil
 }
 
