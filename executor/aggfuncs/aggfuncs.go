@@ -116,6 +116,8 @@ const (
 	DefRowSize = int64(unsafe.Sizeof(chunk.Row{}))
 	// DefBoolSize is the size of bool
 	DefBoolSize = int64(unsafe.Sizeof(false))
+	// DefInterfaceSize is the size of interface
+	DefInterfaceSize = int64(16)
 )
 
 // PartialResult represents data structure to store the partial result for the

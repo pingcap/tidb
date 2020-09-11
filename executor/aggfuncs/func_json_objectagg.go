@@ -117,29 +117,30 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 }
 
 func getValMemDelta(val interface{}) (memDelta int64) {
+	memDelta = DefInterfaceSize
 	switch v := val.(type) {
 	case nil:
-		return 0
+		return memDelta
 	case bool:
-		memDelta = DefBoolSize
+		memDelta += DefBoolSize
 	case int64:
-		memDelta = DefInt64Size
+		memDelta += DefInt64Size
 	case uint64:
-		memDelta = DefUint64Size
+		memDelta += DefUint64Size
 	case float64:
-		memDelta = DefFloat64Size
+		memDelta += DefFloat64Size
 	case string:
-		memDelta = int64(len(v))
+		memDelta += int64(len(v))
 	case json.BinaryJSON:
-		memDelta = int64(unsafe.Sizeof(v))
+		memDelta += int64(unsafe.Sizeof(v))
 	case *types.MyDecimal:
-		memDelta = int64(unsafe.Sizeof(v))
+		memDelta += int64(unsafe.Sizeof(v))
 	case []uint8:
-		memDelta = int64(unsafe.Sizeof(v))
+		memDelta += int64(unsafe.Sizeof(v))
 	case types.Time:
-		memDelta = int64(unsafe.Sizeof(v))
+		memDelta += int64(unsafe.Sizeof(v))
 	case types.Duration:
-		memDelta = int64(unsafe.Sizeof(v))
+		memDelta += int64(unsafe.Sizeof(v))
 	}
 	return memDelta
 }

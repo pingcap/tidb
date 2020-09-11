@@ -137,7 +137,7 @@ func (p *multiArgsAggTest) genSrcChk() *chunk.Chunk {
 			srcChk.AppendDatum(j, &fdt)
 		}
 	}
-	srcChk.AppendDatum(0, &types.Datum{})
+	//srcChk.AppendDatum(0, &types.Datum{})
 	return srcChk
 }
 
@@ -275,44 +275,35 @@ func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldT
 			continue
 		}
 		memDelta := int64(0)
-		val := ""
-		memValDelta := int64(0)
-		memKeyDelta := int64(0)
-		for j, dataType := range dataTypes {
-			switch dataType.Tp {
-			case mysql.TypeLonglong:
-				val = strconv.FormatInt(row.GetInt64(j), 10)
-				memValDelta = aggfuncs.DefUint64Size
-				memKeyDelta = int64(len(val))
-			case mysql.TypeDouble:
-				val = strconv.FormatFloat(row.GetFloat64(j), 'f', 0, 64)
-				memValDelta = aggfuncs.DefFloat64Size
-				memKeyDelta = int64(len(val))
-			case mysql.TypeString:
-				val = row.GetString(j)
-				memValDelta = int64(len(val))
-				memKeyDelta = int64(len(val))
-			case mysql.TypeJSON:
-				json := row.GetJSON(j)
-				memValDelta = int64(unsafe.Sizeof(json))
-				val = json.String()
-				memKeyDelta = int64(len(val))
-			default:
-				return memDeltas, errors.Errorf("unsupported type - %v", dataType.Tp)
-			}
 
-			if j == 0 {
-				if _, ok := m[val]; ok {
-					memDeltas = append(memDeltas, int64(0))
-					break
-				}
-				m[val] = true
-				memDelta += memKeyDelta
-			} else {
-				memDelta += memValDelta
-				memDeltas = append(memDeltas, memDelta)
-			}
+		datum := row.GetDatum(0, dataTypes[0])
+		key, err := (&datum).ToString()
+		if err != nil {
+			return memDeltas, errors.Errorf("fail to get key - %s", key)
 		}
+		if _, ok := m[key]; ok {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+		m[key] = true
+		memDelta += int64(len(key))
+
+		memDelta += aggfuncs.DefInterfaceSize
+		switch dataTypes[1].Tp {
+		case mysql.TypeLonglong:
+			memDelta += aggfuncs.DefUint64Size
+		case mysql.TypeDouble:
+			memDelta += aggfuncs.DefFloat64Size
+		case mysql.TypeString:
+			val := row.GetString(1)
+			memDelta += int64(len(val))
+		case mysql.TypeJSON:
+			val := row.GetJSON(1)
+			memDelta += int64(unsafe.Sizeof(val))
+		default:
+			return memDeltas, errors.Errorf("unsupported type - %v", dataTypes[1].Tp)
+		}
+		memDeltas = append(memDeltas, memDelta)
 	}
 	return memDeltas, nil
 }
@@ -799,7 +790,8 @@ func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
 	iter := chunk.NewIterator4Chunk(srcChk)
 	i := 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		memDelta, err := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(err, IsNil)
 		c.Assert(memDelta, Equals, updateMemDeltas[i])
 		i++
 	}
@@ -823,7 +815,8 @@ func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
 	iter = chunk.NewIterator4Chunk(srcChk)
 	i = 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		memDelta, err := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
+		c.Assert(err, IsNil)
 		c.Assert(memDelta, Equals, updateMemDeltas[i])
 		i++
 	}
