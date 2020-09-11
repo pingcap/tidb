@@ -19,7 +19,6 @@ package table
 
 import (
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -190,11 +189,6 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 
 	if col.Tp == mysql.TypeString && !types.IsBinaryStr(&col.FieldType) {
 		truncateTrailingSpaces(&casted)
-	}
-
-	if col.Tp == mysql.TypeFloat && casted.GetFloat32() > math.MaxFloat32 {
-		casted = types.NewFloat32Datum(math.MaxFloat32)
-		return casted, types.ErrOverflow
 	}
 
 	if col.Charset == charset.CharsetASCII {

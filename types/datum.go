@@ -880,7 +880,12 @@ func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) 
 		err = err1
 	}
 	if target.Tp == mysql.TypeFloat {
-		ret.SetFloat32(float32(f))
+		if f > math.MaxFloat32 {
+			err = ErrOverflow
+			ret.SetFloat32(math.MaxFloat32)
+		} else {
+			ret.SetFloat32(float32(f))
+		}
 	} else {
 		ret.SetFloat64(f)
 	}
