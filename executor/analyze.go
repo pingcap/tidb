@@ -337,14 +337,10 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(result distsql.SelectResult, nee
 			}
 		}
 	}
-<<<<<<< HEAD
 	err := hist.ExtractTopN(cms, len(e.idxInfo.Columns), defaultNumTopN)
-=======
-	err := hist.ExtractTopN(cms, len(e.idxInfo.Columns), uint32(e.opts[ast.AnalyzeOptNumTopN]))
 	if needCMS && cms != nil {
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
 	}
->>>>>>> 0859e75... statistics: add default value of CMSketch for `Analyze` (#19455)
 	return hist, cms, err
 }
 
