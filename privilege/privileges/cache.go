@@ -897,7 +897,17 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	allRoles := p.FindAllRole(roles)
 	// Show global grants.
 	var currentPriv mysql.PrivilegeType
-	var hasGrantOptionPriv bool = false
+	var hasGrantOptionPriv, userExists = false, false
+	// Check whether user exists.
+	for _, record := range p.User {
+		if host == record.Host {
+			userExists = true
+			break
+		}
+	}
+	if !userExists {
+		return gs
+	}
 	var g string
 	for _, record := range p.User {
 		if record.User == user && record.Host == host {

@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/codec"
@@ -122,12 +123,18 @@ func NewPSTMTPlanCacheKey(sessionVars *variable.SessionVars, pstmtID uint32, sch
 
 // PSTMTPlanCacheValue stores the cached Statement and StmtNode.
 type PSTMTPlanCacheValue struct {
-	Plan Plan
+	Plan              Plan
+	TblInfo2UnionScan map[*model.TableInfo]bool
 }
 
 // NewPSTMTPlanCacheValue creates a SQLCacheValue.
-func NewPSTMTPlanCacheValue(plan Plan) *PSTMTPlanCacheValue {
+func NewPSTMTPlanCacheValue(plan Plan, srcMap map[*model.TableInfo]bool) *PSTMTPlanCacheValue {
+	dstMap := make(map[*model.TableInfo]bool)
+	for k, v := range srcMap {
+		dstMap[k] = v
+	}
 	return &PSTMTPlanCacheValue{
-		Plan: plan,
+		Plan:              plan,
+		TblInfo2UnionScan: dstMap,
 	}
 }

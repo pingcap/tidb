@@ -2295,8 +2295,9 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 
 func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (LogicalPlan, error) {
 	dbName := tn.Schema
+	sessionVars := b.ctx.GetSessionVars()
 	if dbName.L == "" {
-		dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		dbName = model.NewCIStr(sessionVars.CurrentDB)
 	}
 
 	tbl, err := b.is.TableByName(dbName, tn.Name)
@@ -2405,27 +2406,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName) (L
 	}
 
 	var result LogicalPlan = ds
-
-	needUS := false
-	if pi := tableInfo.GetPartitionInfo(); pi == nil {
-		if b.ctx.HasDirtyContent(tableInfo.ID) {
-			needUS = true
-		}
-	} else {
-		// Currently, we'll add a UnionScan on every partition even though only one partition's data is changed.
-		// This is limited by current implementation of Partition Prune. It'll updated once we modify that part.
-		for _, partition := range pi.Definitions {
-			if b.ctx.HasDirtyContent(partition.ID) {
-				needUS = true
-				break
-			}
-		}
-	}
-	if needUS {
+	dirty := tableHasDirtyContent(b.ctx, tableInfo)
+	if dirty {
 		us := LogicalUnionScan{}.Init(b.ctx)
 		us.SetChildren(ds)
 		result = us
 	}
+	if sessionVars.StmtCtx.TblInfo2UnionScan == nil {
+		sessionVars.StmtCtx.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
+	}
+	sessionVars.StmtCtx.TblInfo2UnionScan[tableInfo] = dirty
 
 	// If this table contains any virtual generated columns, we need a
 	// "Projection" to calculate these columns.
@@ -2506,7 +2496,7 @@ func (b *PlanBuilder) buildProjUponView(ctx context.Context, dbName model.CIStr,
 			origColName = tableInfo.View.Cols[i]
 		}
 		projSchema.Append(&expression.Column{
-			UniqueID:    b.ctx.GetSessionVars().AllocPlanColumnID(),
+			UniqueID:    cols[i].UniqueID,
 			TblName:     tableInfo.Name,
 			OrigTblName: col.OrigTblName,
 			ColName:     columnInfo[i].Name,

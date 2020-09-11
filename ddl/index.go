@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/generate_expr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/timeutil"
@@ -1099,10 +1100,24 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, t table.Table, indexInfo *mo
 		indexedCols[i] = cols[v.Offset]
 	}
 
+	mockSchema := expression.TableInfo2Schema(sessCtx, t.Meta())
 	var containsVirtualCol bool
 	decodeColMap, err := decoder.BuildFullDecodeColMap(indexedCols, t, func(genCol *table.Column) (expression.Expression, error) {
 		containsVirtualCol = true
-		return expression.ParseSimpleExprCastWithTableInfo(sessCtx, genCol.GeneratedExprString, t.Meta(), &genCol.FieldType)
+		expr, err := generateExpr.ParseExpression(genCol.GeneratedExprString)
+		if err != nil {
+			return nil, err
+		}
+		expr, err = generateExpr.SimpleResolveName(expr, t.Meta())
+		if err != nil {
+			return nil, err
+		}
+		e, err := expression.RewriteAstExpr(sessCtx, expr, mockSchema)
+		if err != nil {
+			return nil, err
+		}
+		e = expression.BuildCastFunction(sessCtx, e, &genCol.FieldType)
+		return e, nil
 	})
 	if err != nil {
 		return nil, err
@@ -1305,6 +1320,16 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.I
 	job := reorgInfo.Job
 	logutil.Logger(ddlLogCtx).Info("[ddl] start to add table index", zap.String("job", job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	totalAddedCount := job.GetRowCount()
+
+	if err := w.isReorgRunnable(reorgInfo.d); err != nil {
+		return errors.Trace(err)
+	}
+
+	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.New("job.ErrCount:" + strconv.Itoa(int(job.ErrorCount)) + ", mock unknown type: ast.whenClause."))
+		}
+	})
 
 	startHandle, endHandle := reorgInfo.StartHandle, reorgInfo.EndHandle
 	sessCtx := newContext(reorgInfo.d.store)
