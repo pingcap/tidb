@@ -6287,6 +6287,11 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 	tk.MustQuery("select * from t1 for update").Check(testkit.Rows("5 6", "7 7"))
 	c.Assert(getRootStats(), Matches, "time.*lock_keys.*time.* region.* keys.* lock_rpc:.* rpc_count.*")
 	tk.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert ignore into t1 values (9,9)")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, BatchGet:{num_rpc:.*, total_time:.*}, lock_keys: {time:.*, region:.*, keys:.*, lock_rpc:.*, rpc_count:.*}")
+	tk.MustExec("rollback")
 }
 
 func (s *testSuite) TestIssue13758(c *C) {
