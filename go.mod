@@ -67,3 +67,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/ldeng-ustc/parser v0.0.0-20200906082550-3b1f5d9c9adb
