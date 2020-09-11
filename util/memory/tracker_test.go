@@ -21,7 +21,6 @@ import (
 
 	"github.com/cznic/mathutil"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/testleak"
@@ -339,5 +338,5 @@ func BenchmarkConsume(b *testing.B) {
 }
 
 func (s *testSuite) TestErrorCode(c *C) {
-	c.Assert(int(terror.ToSQLError(errMemExceedThreshold).Code), Equals, errno.ErrMemExceedThreshold)
+	c.Assert(int(errMemExceedThreshold.ToSQLError().Code), Equals, errno.ErrMemExceedThreshold)
 }
