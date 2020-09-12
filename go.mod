@@ -30,13 +30,13 @@ require (
 	github.com/pingcap/badger v1.5.1-0.20200810065601-8c92a97807f9
 	github.com/pingcap/br v0.0.0-20200820083933-d9d6207c0aa7
 	github.com/pingcap/check v0.0.0-20200212061837-5e12011dc712
-	github.com/pingcap/errors v0.11.5-0.20200729012136-4e113ddee29e
+	github.com/pingcap/errors v0.11.5-0.20200902104258-eba4f1d8f6de
 	github.com/pingcap/failpoint v0.0.0-20200603062251-b230c36c413c
 	github.com/pingcap/fn v0.0.0-20191016082858-07623b84a47d
 	github.com/pingcap/goleveldb v0.0.0-20191226122134-f82aafb29989
 	github.com/pingcap/kvproto v0.0.0-20200828054126-d677e6fd224a
 	github.com/pingcap/log v0.0.0-20200828042413-fce0951f1463
-	github.com/pingcap/parser v0.0.0-20200902143951-126c14c456eb
+	github.com/pingcap/parser v0.0.0-20200912042013-04bc9d05de56
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
 	github.com/pingcap/tidb-tools v4.0.5-0.20200820082341-afeaaaaaa153+incompatible
 	github.com/pingcap/tipb v0.0.0-20200618092958-4fad48b4c8c3
@@ -67,5 +67,3 @@ require (
 )
 
 go 1.13
-
-replace github.com/pingcap/parser => github.com/ldeng-ustc/parser v0.0.0-20200906082550-3b1f5d9c9adb
