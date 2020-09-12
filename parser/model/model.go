@@ -216,6 +216,9 @@ func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
 // for use of execution phase.
 const ExtraHandleID = -1
 
+// ExtraPartitionID is the column ID of column which store the partitionID decoded in global index values.
+const ExtraPidColID = -2
+
 const (
 	// TableInfoVersion0 means the table info version is 0.
 	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement
@@ -248,6 +251,9 @@ const (
 
 // ExtraHandleName is the name of ExtraHandle Column.
 var ExtraHandleName = NewCIStr("_tidb_rowid")
+
+// ExtraPartitionIdName is the name of ExtraPartitionId Column.
+var ExtraPartitionIdName = NewCIStr("_tidb_pid")
 
 // TableInfo provides meta data describing a DB table.
 type TableInfo struct {
@@ -554,6 +560,17 @@ func NewExtraHandleColInfo() *ColumnInfo {
 		Name: ExtraHandleName,
 	}
 	colInfo.Flag = mysql.PriKeyFlag
+	colInfo.Tp = mysql.TypeLonglong
+	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	return colInfo
+}
+
+// NewExtraPartitionIDColInfo mocks a column info for extra partition id column.
+func NewExtraPartitionIDColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		ID:   ExtraPidColID,
+		Name: ExtraPartitionIdName,
+	}
 	colInfo.Tp = mysql.TypeLonglong
 	colInfo.Flen, colInfo.Decimal = mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	return colInfo
