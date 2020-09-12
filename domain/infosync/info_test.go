@@ -109,6 +109,9 @@ func TestTopology(t *testing.T) {
 	if topo.StartTimestamp != 1282967700000 {
 		t.Fatal("start_timestamp of topology info does not match")
 	}
+	if v, ok := topo.Labels["foo"]; !ok || v != "bar" {
+		t.Fatal("labels of topology info does not match")
+	}
 
 	if !reflect.DeepEqual(*topo, info.getTopologyInfo()) {
 		t.Fatal("the info in etcd is not match with info.")

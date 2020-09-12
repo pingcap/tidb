@@ -16,6 +16,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 
@@ -308,9 +309,7 @@ func (e *ProjectionExec) Close() error {
 		}
 	}
 	if e.baseExecutor.runtimeStats != nil {
-		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{
-			BasicRuntimeStats: e.runtimeStats,
-		}
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		if e.isUnparallelExec() {
 			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
 		} else {
@@ -343,6 +342,7 @@ type projectionInputFetcher struct {
 //   a. There is no more input from child.
 //   b. "ProjectionExec" close the "globalFinishCh"
 func (f *projectionInputFetcher) run(ctx context.Context) {
+	defer trace.StartRegion(ctx, "ProjectionFetcher").End()
 	var output *projectionOutput
 	defer func() {
 		if r := recover(); r != nil {
@@ -408,6 +408,7 @@ type projectionWorker struct {
 // It is finished and exited once:
 //   a. "ProjectionExec" closes the "globalFinishCh".
 func (w *projectionWorker) run(ctx context.Context) {
+	defer trace.StartRegion(ctx, "ProjectionWorker").End()
 	var output *projectionOutput
 	defer func() {
 		if r := recover(); r != nil {

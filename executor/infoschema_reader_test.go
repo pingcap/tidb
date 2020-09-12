@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/pdapi"
+	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testleak"
 	"github.com/pingcap/tidb/util/testutil"
@@ -456,6 +457,10 @@ func (s *testInfoschemaTableSerialSuite) TestPartitionsTable(c *C) {
 		testkit.Rows("<nil> 3 18 54 6"))
 
 	tk.MustExec("DROP TABLE `test_partitions`;")
+
+	tk.MustExec(`CREATE TABLE test_partitions1 (id int, b int, c varchar(5), primary key(id), index idx(c)) PARTITION BY RANGE COLUMNS(id) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
+	tk.MustQuery("select PARTITION_NAME,PARTITION_METHOD,PARTITION_EXPRESSION from information_schema.partitions where table_name = 'test_partitions1';").Check(testkit.Rows("p0 RANGE COLUMNS id", "p1 RANGE COLUMNS id", "p2 RANGE COLUMNS id"))
+	tk.MustExec("DROP TABLE test_partitions1")
 }
 
 func (s *testInfoschemaTableSuite) TestMetricTables(c *C) {
@@ -512,7 +517,7 @@ func (s *testInfoschemaTableSuite) TestForAnalyzeStatus(c *C) {
 	c.Assert(len(resultT1.Rows()), Greater, 0)
 }
 
-func (s *testInfoschemaTableSuite) TestForServersInfo(c *C) {
+func (s *testInfoschemaTableSerialSuite) TestForServersInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	result := tk.MustQuery("select * from information_schema.TIDB_SERVERS_INFO")
 	c.Assert(len(result.Rows()), Equals, 1)
@@ -527,9 +532,11 @@ func (s *testInfoschemaTableSuite) TestForServersInfo(c *C) {
 	c.Assert(result.Rows()[0][4], Equals, info.Lease)
 	c.Assert(result.Rows()[0][5], Equals, info.Version)
 	c.Assert(result.Rows()[0][6], Equals, info.GitHash)
+	c.Assert(result.Rows()[0][7], Equals, info.BinlogStatus)
+	c.Assert(result.Rows()[0][8], Equals, stringutil.BuildStringFromLabels(info.Labels))
 }
 
-func (s *testInfoschemaTableSuite) TestForTableTiFlashReplica(c *C) {
+func (s *testInfoschemaTableSerialSuite) TestForTableTiFlashReplica(c *C) {
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount", `return(true)`), IsNil)
 	defer failpoint.Disable("github.com/pingcap/tidb/infoschema/mockTiFlashStoreCount")
 
@@ -837,4 +844,17 @@ func (s *testInfoschemaTableSuite) TestTiFlashSystemTables(c *C) {
 	c.Assert(err.Error(), Equals, "Etcd addrs not found")
 	err = tk.QueryToErr("select * from information_schema.TIFLASH_SEGMENTS;")
 	c.Assert(err.Error(), Equals, "Etcd addrs not found")
+}
+
+func (s *testInfoschemaTableSuite) TestTablesPKType(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("create table t_int (a int primary key, b int)")
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_int'").Check(testkit.Rows("INT CLUSTERED"))
+	tk.MustExec("set @@tidb_enable_clustered_index = 0")
+	tk.MustExec("create table t_implicit (a varchar(64) primary key, b int)")
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_implicit'").Check(testkit.Rows("NON-CLUSTERED"))
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("create table t_common (a varchar(64) primary key, b int)")
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'test' and table_name = 't_common'").Check(testkit.Rows("COMMON CLUSTERED"))
+	tk.MustQuery("SELECT TIDB_PK_TYPE FROM information_schema.tables where table_schema = 'INFORMATION_SCHEMA' and table_name = 'TABLES'").Check(testkit.Rows("NON-CLUSTERED"))
 }

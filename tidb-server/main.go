@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	parsertypes "github.com/pingcap/parser/types"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
@@ -114,7 +115,7 @@ var (
 	configStrict = flagBoolean(nmConfigStrict, false, "enforce config file validity")
 
 	// Base
-	store            = flag.String(nmStore, "mocktikv", "registered store name, [tikv, mocktikv]")
+	store            = flag.String(nmStore, "unistore", "registered store name, [tikv, mocktikv, unistore]")
 	storePath        = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
 	host             = flag.String(nmHost, "0.0.0.0", "tidb server host")
 	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
@@ -419,6 +420,9 @@ func overrideConfig(cfg *config.Config) {
 		cfg.AdvertiseAddress = *advertiseAddress
 	}
 	if len(cfg.AdvertiseAddress) == 0 {
+		cfg.AdvertiseAddress = util.GetLocalIP()
+	}
+	if len(cfg.AdvertiseAddress) == 0 {
 		cfg.AdvertiseAddress = cfg.Host
 	}
 	var err error
@@ -575,7 +579,7 @@ func setGlobalVars() {
 		}
 	}
 
-	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
+	atomic.StoreUint64(&tikv.CommitMaxBackoff, uint64(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds()*1000))
 	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 	domainutil.RepairInfo.SetRepairMode(cfg.RepairMode)
 	domainutil.RepairInfo.SetRepairTableList(cfg.RepairTableList)
@@ -595,6 +599,7 @@ func setGlobalVars() {
 			zap.String("currentValue", config.GetGlobalConfig().TiKVClient.StoreLivenessTimeout))
 	}
 	tikv.StoreLivenessTimeout = t
+	parsertypes.TiDBStrictIntegerDisplayWidth = config.GetGlobalConfig().DeprecateIntegerDisplayWidth
 }
 
 func setupLog() {

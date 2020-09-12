@@ -78,7 +78,7 @@ func ParseSimpleExprCastWithTableInfo(ctx sessionctx.Context, exprStr string, ta
 // RewriteSimpleExprWithTableInfo rewrites simple ast.ExprNode to expression.Expression.
 func RewriteSimpleExprWithTableInfo(ctx sessionctx.Context, tbl *model.TableInfo, expr ast.ExprNode) (Expression, error) {
 	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns, tbl)
+	columns, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
 	if err != nil {
 		return nil, err
 	}
@@ -571,7 +571,7 @@ func (sr *simpleRewriter) notToExpression(hasNot bool, op string, tp *types.Fiel
 
 func (sr *simpleRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 	arg := sr.pop()
-	op := ast.IsTruth
+	op := ast.IsTruthWithoutNull
 	if v.True == 0 {
 		op = ast.IsFalsity
 	}

@@ -136,6 +136,7 @@ const (
 	boServerBusy
 	boTxnNotFound
 	boStaleCmd
+	boMaxTsNotSynced
 )
 
 func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int {
@@ -160,6 +161,8 @@ func (t backoffType) createFn(vars *kv.Variables) func(context.Context, int) int
 		return NewBackoffFn(2000, 10000, EqualJitter)
 	case boStaleCmd:
 		return NewBackoffFn(2, 1000, NoJitter)
+	case boMaxTsNotSynced:
+		return NewBackoffFn(2, 500, NoJitter)
 	}
 	return nil
 }
@@ -182,6 +185,8 @@ func (t backoffType) String() string {
 		return "staleCommand"
 	case boTxnNotFound:
 		return "txnNotFound"
+	case boMaxTsNotSynced:
+		return "maxTsNotSynced"
 	}
 	return ""
 }
@@ -200,6 +205,8 @@ func (t backoffType) TError() error {
 		return ErrTiKVServerBusy
 	case boStaleCmd:
 		return ErrTiKVStaleCommand
+	case boMaxTsNotSynced:
+		return ErrTiKVMaxTimestampNotSynced
 	}
 	return ErrUnknown
 }
@@ -228,7 +235,7 @@ const (
 
 var (
 	// CommitMaxBackoff is max sleep time of the 'commit' command
-	CommitMaxBackoff = 41000
+	CommitMaxBackoff = uint64(41000)
 
 	// PrewriteMaxBackoff is max sleep time of the `pre-write` command.
 	PrewriteMaxBackoff = 20000

@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
+	"github.com/pingcap/tidb/util/stringutil"
 	"go.etcd.io/etcd/clientv3"
 )
 
@@ -435,7 +436,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
-
+			pkType := "NON-CLUSTERED"
 			if !table.IsView() {
 				if table.GetPartitionInfo() != nil {
 					createOptions = "partitioned"
@@ -465,13 +466,14 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 				if rowCount != 0 {
 					avgRowLength = dataLength / rowCount
 				}
-				var tableType string
-				switch schema.Name.L {
-				case util.InformationSchemaName.L, util.PerformanceSchemaName.L,
-					util.MetricSchemaName.L:
+				tableType := "BASE TABLE"
+				if util.IsSystemView(schema.Name.L) {
 					tableType = "SYSTEM VIEW"
-				default:
-					tableType = "BASE TABLE"
+				}
+				if table.PKIsHandle {
+					pkType = "INT CLUSTERED"
+				} else if table.IsCommonHandle {
+					pkType = "COMMON CLUSTERED"
 				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
 				record := types.MakeDatums(
@@ -498,6 +500,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 					table.Comment,         // TABLE_COMMENT
 					table.ID,              // TIDB_TABLE_ID
 					shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
+					pkType,                // TIDB_PK_TYPE
 				)
 				rows = append(rows, record)
 			} else {
@@ -525,6 +528,7 @@ func (e *memtableRetriever) setDataFromTables(ctx sessionctx.Context, schemas []
 					"VIEW",                // TABLE_COMMENT
 					table.ID,              // TIDB_TABLE_ID
 					nil,                   // TIDB_ROW_ID_SHARDING_INFO
+					pkType,                // TIDB_PK_TYPE
 				)
 				rows = append(rows, record)
 			}
@@ -708,32 +712,39 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 						partitionDesc = pi.LessThan[0]
 					}
 
+					partitionMethod := table.Partition.Type.String()
+					partitionExpr := table.Partition.Expr
+					if table.Partition.Type == model.PartitionTypeRange && len(table.Partition.Columns) > 0 {
+						partitionMethod = "RANGE COLUMNS"
+						partitionExpr = table.Partition.Columns[0].String()
+					}
+
 					record := types.MakeDatums(
-						infoschema.CatalogVal,         // TABLE_CATALOG
-						schema.Name.O,                 // TABLE_SCHEMA
-						table.Name.O,                  // TABLE_NAME
-						pi.Name.O,                     // PARTITION_NAME
-						nil,                           // SUBPARTITION_NAME
-						i+1,                           // PARTITION_ORDINAL_POSITION
-						nil,                           // SUBPARTITION_ORDINAL_POSITION
-						table.Partition.Type.String(), // PARTITION_METHOD
-						nil,                           // SUBPARTITION_METHOD
-						table.Partition.Expr,          // PARTITION_EXPRESSION
-						nil,                           // SUBPARTITION_EXPRESSION
-						partitionDesc,                 // PARTITION_DESCRIPTION
-						rowCount,                      // TABLE_ROWS
-						avgRowLength,                  // AVG_ROW_LENGTH
-						dataLength,                    // DATA_LENGTH
-						uint64(0),                     // MAX_DATA_LENGTH
-						indexLength,                   // INDEX_LENGTH
-						uint64(0),                     // DATA_FREE
-						createTime,                    // CREATE_TIME
-						nil,                           // UPDATE_TIME
-						nil,                           // CHECK_TIME
-						nil,                           // CHECKSUM
-						pi.Comment,                    // PARTITION_COMMENT
-						nil,                           // NODEGROUP
-						nil,                           // TABLESPACE_NAME
+						infoschema.CatalogVal, // TABLE_CATALOG
+						schema.Name.O,         // TABLE_SCHEMA
+						table.Name.O,          // TABLE_NAME
+						pi.Name.O,             // PARTITION_NAME
+						nil,                   // SUBPARTITION_NAME
+						i+1,                   // PARTITION_ORDINAL_POSITION
+						nil,                   // SUBPARTITION_ORDINAL_POSITION
+						partitionMethod,       // PARTITION_METHOD
+						nil,                   // SUBPARTITION_METHOD
+						partitionExpr,         // PARTITION_EXPRESSION
+						nil,                   // SUBPARTITION_EXPRESSION
+						partitionDesc,         // PARTITION_DESCRIPTION
+						rowCount,              // TABLE_ROWS
+						avgRowLength,          // AVG_ROW_LENGTH
+						dataLength,            // DATA_LENGTH
+						uint64(0),             // MAX_DATA_LENGTH
+						indexLength,           // INDEX_LENGTH
+						uint64(0),             // DATA_FREE
+						createTime,            // CREATE_TIME
+						nil,                   // UPDATE_TIME
+						nil,                   // CHECK_TIME
+						nil,                   // CHECKSUM
+						pi.Comment,            // PARTITION_COMMENT
+						nil,                   // NODEGROUP
+						nil,                   // TABLESPACE_NAME
 					)
 					rows = append(rows, record)
 				}
@@ -1661,6 +1672,7 @@ func (e *memtableRetriever) setDataForServersInfo() error {
 			info.Version,         // VERSION
 			info.GitHash,         // GIT_HASH
 			info.BinlogStatus,    // BINLOG_STATUS
+			stringutil.BuildStringFromLabels(info.Labels), // LABELS
 		)
 		rows = append(rows, row)
 	}
@@ -1888,8 +1900,16 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 					if len(tiflashInstances) > 0 && !tiflashInstances.Exist(id) {
 						continue
 					}
-					// TODO: Support https in tiflash
-					url := fmt.Sprintf("http://%s", ev.Value)
+					url := fmt.Sprintf("%s://%s", util.InternalHTTPSchema(), ev.Value)
+					req, err := http.NewRequest(http.MethodGet, url, nil)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					_, err = util.InternalHTTPClient().Do(req)
+					if err != nil {
+						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+						continue
+					}
 					e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
 						id:  id,
 						url: url,
@@ -1929,7 +1949,6 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	}
 	sql = fmt.Sprintf("%s LIMIT %d, %d", sql, e.rowIdx, maxCount)
 	notNumber := "nan"
-	httpClient := http.DefaultClient
 	instanceInfo := e.instanceInfos[e.instanceIdx]
 	url := instanceInfo.url
 	req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -1939,7 +1958,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx sessionctx.
 	q := req.URL.Query()
 	q.Add("query", sql)
 	req.URL.RawQuery = q.Encode()
-	resp, err := httpClient.Do(req)
+	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

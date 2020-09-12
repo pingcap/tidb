@@ -270,7 +270,7 @@ func (s *testIntegrationSuite2) TestIssue6101(c *C) {
 	tk.MustExec("create table t1 (quantity decimal(2) unsigned);")
 	_, err := tk.Exec("insert into t1 values (500), (-500), (~0), (-1);")
 	terr := errors.Cause(err).(*terror.Error)
-	c.Assert(terr.Code(), Equals, terror.ErrCode(errno.ErrWarnDataOutOfRange))
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.ErrWarnDataOutOfRange))
 	tk.MustExec("drop table t1")
 
 	tk.MustExec("set sql_mode=''")
@@ -278,6 +278,28 @@ func (s *testIntegrationSuite2) TestIssue6101(c *C) {
 	tk.MustExec("insert into t1 values (500), (-500), (~0), (-1);")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("99", "0", "99", "0"))
 	tk.MustExec("drop table t1")
+}
+
+func (s *testIntegrationSuite2) TestIssue19229(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE enumt (type enum('a', 'b') );")
+	_, err := tk.Exec("insert into enumt values('xxx');")
+	terr := errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.WarnDataTruncated))
+	_, err = tk.Exec("insert into enumt values(-1);")
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.WarnDataTruncated))
+	tk.MustExec("drop table enumt")
+
+	tk.MustExec("CREATE TABLE sett (type set('a', 'b') );")
+	_, err = tk.Exec("insert into sett values('xxx');")
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.WarnDataTruncated))
+	_, err = tk.Exec("insert into sett values(-1);")
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.WarnDataTruncated))
+	tk.MustExec("drop table sett")
 }
 
 func (s *testIntegrationSuite1) TestIndexLength(c *C) {
@@ -460,6 +482,8 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrDupFieldName)
 	sql = "create table test_error_code1 (c1 int, aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa int)"
 	tk.MustGetErrCode(sql, errno.ErrTooLongIdent)
+	sql = "create table test_error_code1 (c1 int, `_tidb_rowid` int)"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
 	sql = "create table aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(a int)"
 	tk.MustGetErrCode(sql, errno.ErrTooLongIdent)
 	sql = "create table test_error_code1 (c1 int, c2 int, key aa (c1, c2), key aa (c1))"
@@ -533,6 +557,8 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrNoSuchTable)
 	sql = "alter table test_error_code_succ add column `a ` int ;"
 	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
+	sql = "alter table test_error_code_succ add column `_tidb_rowid` int ;"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
 	tk.MustExec("create table test_on_update (c1 int, c2 int);")
 	sql = "alter table test_on_update add column c3 int on update current_timestamp;"
 	tk.MustGetErrCode(sql, errno.ErrInvalidOnUpdate)
@@ -583,6 +609,10 @@ func (s *testIntegrationSuite5) TestErrnoErrorCode(c *C) {
 	tk.MustGetErrCode(sql, errno.ErrWrongDBName)
 	sql = "alter table test_error_code_succ modify t.c1 bigint"
 	tk.MustGetErrCode(sql, errno.ErrWrongTableName)
+	sql = "alter table test_error_code_succ change c1 _tidb_rowid bigint"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
+	sql = "alter table test_error_code_succ rename column c1 to _tidb_rowid"
+	tk.MustGetErrCode(sql, errno.ErrWrongColumnName)
 	// insert value
 	tk.MustExec("create table test_error_code_null(c1 char(100) not null);")
 	sql = "insert into test_error_code_null (c1) values(null);"
@@ -891,7 +921,7 @@ func (s *testIntegrationSuite4) TestChangingTableCharset(c *C) {
 	}
 }
 
-func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
+func (s *testIntegrationSuite5) TestModifyColumnOption(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("use test")
@@ -923,7 +953,7 @@ func (s *testIntegrationSuite5) TestModifyingColumnOption(c *C) {
 	_, err = tk.Exec("alter table t1 change a a datetime")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type datetime not match origin int(11)")
 	_, err = tk.Exec("alter table t1 change a a int(11) unsigned")
-	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change unsigned integer to signed or vice versa")
+	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: can't change unsigned integer to signed or vice versa, and tidb_enable_change_column_type is false")
 	_, err = tk.Exec("alter table t2 change b b int(11) unsigned")
 	c.Assert(err.Error(), Equals, "[ddl:8200]Unsupported modify column: type int(11) not match origin char(1)")
 }
@@ -2072,8 +2102,6 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
 
-	tk.MustGetErrCode("create table t(a int, b int, index((a+b)));", errno.ErrNotSupportedYet)
-
 	tk.MustExec("create table t (a int, b real);")
 	tk.MustExec("insert into t values (1, 2.1);")
 	tk.MustExec("alter table t add index idx((a+b));")
@@ -2118,6 +2146,9 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 	tk.MustExec("alter table t1 add unique index ei_ab ((concat(a, b)));")
 	tk.MustExec("alter table t1 alter index ei_ab invisible;")
 
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, key((a+1)), key((a+2)), key idx((a+3)), key((a+4)));")
+
 	// Test experiment switch.
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = false
@@ -2126,8 +2157,10 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
+	defer config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Experimental.AllowsExpressionIndex = true
+		conf.AlterPrimaryKey = true
 	})
 
 	tk := testkit.NewTestKit(c, s.store)
@@ -2391,16 +2424,26 @@ func (s *testIntegrationSuite5) TestDropColumnsWithMultiIndex(c *C) {
 	tk.MustQuery(query).Check(testkit.Rows())
 }
 
-func (s *testIntegrationSuite7) TestAutoIncrementAllocator(c *C) {
+func (s *testIntegrationSuite7) TestAutoIncrementTableOption(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
+		// Make sure the integer primary key is the handle(PkIsHandle).
 		conf.AlterPrimaryKey = false
 	})
-	tk.MustExec("drop database if exists test_create_table_option_auto_inc;")
-	tk.MustExec("create database test_create_table_option_auto_inc;")
-	tk.MustExec("use test_create_table_option_auto_inc;")
+	tk.MustExec("drop database if exists test_auto_inc_table_opt;")
+	tk.MustExec("create database test_auto_inc_table_opt;")
+	tk.MustExec("use test_auto_inc_table_opt;")
 
+	// Empty auto_inc allocator should not cause error.
 	tk.MustExec("create table t (a bigint primary key) auto_increment = 10;")
 	tk.MustExec("alter table t auto_increment = 10;")
+	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
+
+	// Rebase the auto_inc allocator to a large integer should work.
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a bigint unsigned auto_increment, unique key idx(a));")
+	tk.MustExec("alter table t auto_increment = 12345678901234567890;")
+	tk.MustExec("insert into t values ();")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("12345678901234567890"))
 }
