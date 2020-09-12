@@ -15,8 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -466,75 +464,8 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 	return nil
 }
 
-type insertRuntimeStat struct {
-	*execdetails.BasicRuntimeStats
-	*tikv.SnapshotRuntimeStats
-	checkInsertTime time.Duration
-	rpcTime         time.Duration
-}
-
 type runtimeStatsWithSnapshot struct {
 	*tikv.SnapshotRuntimeStats
-}
-
-func (e *insertRuntimeStat) String() string {
-	var prepareStr, rpcStatsStr, checkInsertStr string
-	if e.checkInsertTime != 0 && e.rpcTime != 0 {
-		prepareStr = fmt.Sprintf("prepare:%v", time.Duration(e.BasicRuntimeStats.GetTime())-e.checkInsertTime)
-		checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, rpc:{time:%v", e.checkInsertTime, e.checkInsertTime-e.rpcTime, e.rpcTime)
-	}
-	if e.SnapshotRuntimeStats != nil {
-		rpcStatsStr = e.SnapshotRuntimeStats.String()
-	}
-	var result string
-	if prepareStr != "" {
-		result += prepareStr
-	}
-	if checkInsertStr != "" {
-		result += ", " + checkInsertStr
-	}
-	if rpcStatsStr != "" {
-		result += ", " + rpcStatsStr + "}}"
-	}
-	return result
-}
-
-// Clone implements the RuntimeStats interface.
-func (e *insertRuntimeStat) Clone() execdetails.RuntimeStats {
-	newRs := &insertRuntimeStat{}
-	if e.SnapshotRuntimeStats != nil {
-		snapshotStats := e.SnapshotRuntimeStats.Clone()
-		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
-	}
-	return newRs
-}
-
-// Merge implements the RuntimeStats interface.
-func (e *insertRuntimeStat) Merge(other execdetails.RuntimeStats) {
-	tmp, ok := other.(*insertRuntimeStat)
-	if !ok {
-		return
-	}
-	if tmp.SnapshotRuntimeStats != nil {
-		if e.SnapshotRuntimeStats == nil {
-			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
-			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
-			return
-		}
-		e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
-	}
-}
-
-// Tp implements the RuntimeStats interface.
-func (e *insertRuntimeStat) Tp() int {
-	return execdetails.TpInsertRuntimeStat
-}
-
-func (e *runtimeStatsWithSnapshot) String() string {
-	if e.SnapshotRuntimeStats != nil {
-		return e.SnapshotRuntimeStats.String()
-	}
-	return ""
 }
 
 // Clone implements the RuntimeStats interface.

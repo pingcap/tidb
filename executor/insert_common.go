@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"time"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -1048,4 +1050,79 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 		vars.SetLastInsertID(e.lastInsertID)
 	}
 	return nil
+}
+
+type insertRuntimeStat struct {
+	*execdetails.BasicRuntimeStats
+	*tikv.SnapshotRuntimeStats
+	checkInsertTime time.Duration
+	rpcTime         time.Duration
+}
+
+func (e *insertRuntimeStat) String() string {
+	var prepareStr, rpcStatsStr, checkInsertStr string
+	if e.checkInsertTime != 0 && e.rpcTime != 0 {
+		prepareStr = fmt.Sprintf("prepare:%v", time.Duration(e.BasicRuntimeStats.GetTime())-e.checkInsertTime)
+		checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, rpc:{time:%v", e.checkInsertTime, e.checkInsertTime-e.rpcTime, e.rpcTime)
+	}
+	if e.SnapshotRuntimeStats != nil {
+		rpcStatsStr = e.SnapshotRuntimeStats.String()
+	}
+	var result string
+	if prepareStr != "" {
+		result += prepareStr
+	}
+	if checkInsertStr != "" {
+		result += ", " + checkInsertStr
+	}
+	if rpcStatsStr != "" {
+		result += ", " + rpcStatsStr + "}}"
+	}
+	return result
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *insertRuntimeStat) Clone() execdetails.RuntimeStats {
+	newRs := &insertRuntimeStat{}
+	if e.SnapshotRuntimeStats != nil {
+		snapshotStats := e.SnapshotRuntimeStats.Clone()
+		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+	}
+	if e.rpcTime != 0 {
+		newRs.rpcTime = e.rpcTime
+	}
+	if e.checkInsertTime != 0 {
+		newRs.checkInsertTime = e.checkInsertTime
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *insertRuntimeStat) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*insertRuntimeStat)
+	if !ok {
+		return
+	}
+	if tmp.SnapshotRuntimeStats != nil {
+		if e.SnapshotRuntimeStats == nil {
+			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
+			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+		} else {
+			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
+		}
+	}
+	e.rpcTime += tmp.rpcTime
+	e.checkInsertTime += tmp.checkInsertTime
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *insertRuntimeStat) Tp() int {
+	return execdetails.TpInsertRuntimeStat
+}
+
+func (e *runtimeStatsWithSnapshot) String() string {
+	if e.SnapshotRuntimeStats != nil {
+		return e.SnapshotRuntimeStats.String()
+	}
+	return ""
 }
