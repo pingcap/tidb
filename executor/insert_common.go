@@ -1060,10 +1060,14 @@ type insertRuntimeStat struct {
 }
 
 func (e *insertRuntimeStat) String() string {
-	var prepareStr, rpcStatsStr, checkInsertStr string
-	if e.checkInsertTime != 0 && e.rpcTime != 0 {
+	var prepareStr, rpcStatsStr, checkInsertStr, insertStr string
+	if e.checkInsertTime != 0 {
 		prepareStr = fmt.Sprintf("prepare:%v", time.Duration(e.BasicRuntimeStats.GetTime())-e.checkInsertTime)
-		checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, rpc:{time:%v", e.checkInsertTime, e.checkInsertTime-e.rpcTime, e.rpcTime)
+		if e.rpcTime == 0 {
+			insertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_insert:%v, ", e.checkInsertTime, e.checkInsertTime)
+		} else {
+			checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, rpc:{time:%v", e.checkInsertTime, e.checkInsertTime-e.rpcTime, e.rpcTime)
+		}
 	}
 	if e.SnapshotRuntimeStats != nil {
 		rpcStatsStr = e.SnapshotRuntimeStats.String()
@@ -1075,10 +1079,16 @@ func (e *insertRuntimeStat) String() string {
 	if checkInsertStr != "" {
 		result += ", " + checkInsertStr
 	}
-	if rpcStatsStr != "" {
-		result += ", " + rpcStatsStr + "}}"
+	if insertStr != "" {
+		result += ", " + insertStr
 	}
-	return result
+	if rpcStatsStr != "" {
+		result += ", " + rpcStatsStr
+	}
+	if checkInsertStr != "" {
+		return result + "}}"
+	}
+	return result + "}"
 }
 
 // Clone implements the RuntimeStats interface.

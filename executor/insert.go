@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -83,6 +84,17 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			return err
 		}
 	} else {
+		if e.stats == nil {
+			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			e.stats = &insertRuntimeStat{
+				BasicRuntimeStats:    e.runtimeStats,
+				SnapshotRuntimeStats: snapshotStats,
+				rpcTime:              0,
+				checkInsertTime:      0,
+			}
+		}
+		// here need to add runtime stats without check
+		start := time.Now()
 		for i, row := range rows {
 			var err error
 			sizeHintStep := int(sessVars.ShardAllocateStep)
@@ -100,6 +112,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 				return err
 			}
 		}
+		e.stats.checkInsertTime = time.Since(start)
 	}
 	e.memTracker.Consume(int64(txn.Size() - txnSize))
 	return nil
