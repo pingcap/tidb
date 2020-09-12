@@ -578,7 +578,7 @@ func (e *closureExecutor) copyError(err error) error {
 	x := errors.Cause(err)
 	switch y := x.(type) {
 	case *terror.Error:
-		ret = y.ToSQLError()
+		ret = terror.ToSQLError(y)
 	default:
 		ret = errors.New(err.Error())
 	}

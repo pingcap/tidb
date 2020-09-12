@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/storeutil"
-	goctx "golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
 
@@ -335,6 +334,9 @@ func (s *mockTikvGrpcServer) KVPessimisticRollback(context.Context, *kvrpcpb.Pes
 func (s *mockTikvGrpcServer) KvCheckTxnStatus(ctx context.Context, in *kvrpcpb.CheckTxnStatusRequest) (*kvrpcpb.CheckTxnStatusResponse, error) {
 	return nil, errors.New("unreachable")
 }
+func (s *mockTikvGrpcServer) KvCheckSecondaryLocks(ctx context.Context, in *kvrpcpb.CheckSecondaryLocksRequest) (*kvrpcpb.CheckSecondaryLocksResponse, error) {
+	return nil, errors.New("unreachable")
+}
 func (s *mockTikvGrpcServer) KvTxnHeartBeat(ctx context.Context, in *kvrpcpb.TxnHeartBeatRequest) (*kvrpcpb.TxnHeartBeatResponse, error) {
 	return nil, errors.New("unreachable")
 }
@@ -444,10 +446,6 @@ func (s *mockTikvGrpcServer) VerScan(context.Context, *kvrpcpb.VerScanRequest) (
 }
 
 func (s *mockTikvGrpcServer) VerDeleteRange(context.Context, *kvrpcpb.VerDeleteRangeRequest) (*kvrpcpb.VerDeleteRangeResponse, error) {
-	return nil, errors.New("unreachable")
-}
-
-func (s *mockTikvGrpcServer) KvCheckSecondaryLocks(c goctx.Context, request *kvrpcpb.CheckSecondaryLocksRequest) (*kvrpcpb.CheckSecondaryLocksResponse, error) {
 	return nil, errors.New("unreachable")
 }
 
