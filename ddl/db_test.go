@@ -3238,9 +3238,7 @@ func (s *testDBSuite1) TestRenameMultiTables(c *C) {
 	// Currently it will fail only.
 	sql := fmt.Sprintf("rename table t1 to t3, t2 to t4")
 	_, err := tk.Exec(sql)
-	c.Assert(err, NotNil)
-	originErr := errors.Cause(err)
-	c.Assert(originErr.Error(), Equals, "can't run multi schema change")
+	c.Assert(err, IsNil)
 
 	tk.MustExec("drop table t1, t2")
 }
