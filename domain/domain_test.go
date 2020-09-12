@@ -482,3 +482,7 @@ func (*testSuite) TestErrorCode(c *C) {
 	c.Assert(int(terror.ToSQLError(ErrInfoSchemaExpired).Code), Equals, errno.ErrInfoSchemaExpired)
 	c.Assert(int(terror.ToSQLError(ErrInfoSchemaChanged).Code), Equals, errno.ErrInfoSchemaChanged)
 }
+
+func (*testSuite) TestServerIDConstant(c *C) {
+	c.Assert(lostConnectionToPDTimeout, Less, serverIDTTL)
+}

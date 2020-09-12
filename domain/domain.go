@@ -1266,8 +1266,10 @@ const (
 	serverIDEtcdPath = "/tidb/server_id"
 	// serverIDTTL should be LONG ENOUGH to avoid barbarically killing an on-going long-run SQL.
 	serverIDTTL = 12 * time.Hour
-	// serverIDTimeToCheckPDConnection is the interval that we check connection to PD periodically.
-	serverIDTimeToCheckPDConnection = 5 * time.Minute
+	// serverIDTimeToKeepAlive is the interval that we keep serverID TTL alive periodically.
+	serverIDTimeToKeepAlive = 5 * time.Minute
+	// serverIDTimeToCheckPDConnectionRestored is the interval that we check connection to PD restored (after broken) periodically.
+	serverIDTimeToCheckPDConnectionRestored = 10 * time.Second
 	// lostConnectionToPDTimeout is the duration that when TiDB cannot connect to PD excceeds this limit,
 	//   we realize the connection to PD is lost utterly, and server ID acquired before should be released.
 	//   Must be SHORTER than `serverIDTTL`.
@@ -1360,10 +1362,17 @@ func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 }
 
 func (do *Domain) serverIDKeeper() {
-	defer util.Recover(metrics.LabelDomain, "serverIDKeeper", nil, false)
-	ticker := time.NewTicker(serverIDTimeToCheckPDConnection)
+	defer util.Recover(metrics.LabelDomain, "serverIDKeeper", func() {
+		logutil.BgLogger().Info("recover serverIDKeeper.")
+		do.wg.Add(1)
+		go do.serverIDKeeper()
+	}, false)
+
+	tickerKeepAlive := time.NewTicker(serverIDTimeToKeepAlive)
+	tickerCheckRestored := time.NewTicker(serverIDTimeToCheckPDConnectionRestored)
 	defer func() {
-		ticker.Stop()
+		tickerKeepAlive.Stop()
+		tickerCheckRestored.Stop()
 		do.wg.Done()
 		logutil.BgLogger().Info("serverIDKeeper exited.")
 	}()
@@ -1400,7 +1409,7 @@ func (do *Domain) serverIDKeeper() {
 
 	for {
 		select {
-		case <-ticker.C:
+		case <-tickerKeepAlive.C:
 			if !do.IsLostConnectionToPD() {
 				if err := do.refreshServerIDTTL(context.Background()); err == nil {
 					lastSucceedTimestamp = time.Now()
@@ -1409,7 +1418,9 @@ func (do *Domain) serverIDKeeper() {
 						onConnectionToPDLost()
 					}
 				}
-			} else {
+			}
+		case <-tickerCheckRestored.C:
+			if do.IsLostConnectionToPD() {
 				if err := do.acquireServerID(context.Background()); err == nil {
 					onConnectionToPDRestored()
 				}

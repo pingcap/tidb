@@ -80,7 +80,7 @@ func TestT(t *testing.T) {
 		conf.AlterPrimaryKey = true
 	})
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", nil, true)
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
