@@ -137,7 +137,7 @@ func (e *TraceExec) executeChild(ctx context.Context, se sqlexec.SQLExecutor) {
 		if err != nil {
 			var errCode uint16
 			if te, ok := err.(*terror.Error); ok {
-				errCode = terror.ToSQLError(te).Code
+				errCode = te.ToSQLError().Code
 			}
 			logutil.Eventf(ctx, "execute with error(%d): %s", errCode, err.Error())
 		} else {
@@ -161,7 +161,7 @@ func drainRecordSet(ctx context.Context, sctx sessionctx.Context, rs sqlexec.Rec
 			if err != nil {
 				var errCode uint16
 				if te, ok := err.(*terror.Error); ok {
-					errCode = terror.ToSQLError(te).Code
+					errCode = te.ToSQLError().Code
 				}
 				logutil.Eventf(ctx, "execute with error(%d): %s", errCode, err.Error())
 			} else {
