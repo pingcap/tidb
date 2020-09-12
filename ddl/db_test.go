@@ -3240,7 +3240,7 @@ func (s *testDBSuite1) TestRenameMultiTables(c *C) {
 	_, err := tk.Exec(sql)
 	c.Assert(err, IsNil)
 
-	tk.MustExec("drop table t1, t2")
+	tk.MustExec("drop table t3, t4")
 }
 
 func (s *testDBSuite2) TestAddNotNullColumn(c *C) {
