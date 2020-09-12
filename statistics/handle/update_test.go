@@ -1764,3 +1764,14 @@ func (s *testStatsSuite) TestDeleteUpdateFeedback(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.GetQueryFeedback().Size, Equals, 0)
 }
+
+func (s *testStatsSuite) BenchmarkHandleAutoAnalyze(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	for i := 0; i < c.N; i++ {
+		h.HandleAutoAnalyze(is)
+	}
+}
