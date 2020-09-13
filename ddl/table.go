@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"fmt"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -75,6 +76,13 @@ func onCreateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+
+		failpoint.Inject("checkOwnerCheckAllVersionsWaitTime", func(val failpoint.Value) {
+			if val.(bool) {
+				failpoint.Return(ver, errors.New("mock create table error"))
+			}
+		})
+
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		asyncNotifyEvent(d, &util.Event{Tp: model.ActionCreateTable, TableInfo: tbInfo})
@@ -955,6 +963,18 @@ func updateVersionAndTableInfoWithCheck(t *meta.Meta, job *model.Job, tblInfo *m
 // updateVersionAndTableInfo updates the schema version and the table information.
 func updateVersionAndTableInfo(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, shouldUpdateVer bool) (
 	ver int64, err error) {
+	failpoint.Inject("mockUpdateVersionAndTableInfoErr", func(val failpoint.Value) {
+		switch val.(int) {
+		case 1:
+			failpoint.Return(ver, errors.New("mock update version and tableInfo error"))
+		case 2:
+			// We change it cancelled directly here, because we want to get the original error with the job id appended.
+			// The job ID will be used to get the job from history queue and we will assert it's args.
+			job.State = model.JobStateCancelled
+			failpoint.Return(ver, errors.New("mock update version and tableInfo error, jobID="+strconv.Itoa(int(job.ID))))
+		default:
+		}
+	})
 	if shouldUpdateVer {
 		ver, err = updateSchemaVersion(t, job)
 		if err != nil {

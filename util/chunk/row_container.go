@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"go.uber.org/zap"
 )
 
@@ -56,7 +55,7 @@ func NewRowContainer(fieldType []*types.FieldType, chunkSize int) *RowContainer 
 	rc := &RowContainer{fieldType: fieldType, chunkSize: chunkSize}
 	rc.m.records = li
 	rc.memTracker = li.memTracker
-	rc.diskTracker = disk.NewTracker(stringutil.StringerStr("RowContainer"), -1)
+	rc.diskTracker = disk.NewTracker(memory.LabelForRowContainer, -1)
 	return rc
 }
 
@@ -69,6 +68,10 @@ func (c *RowContainer) SpillToDisk() {
 	}
 	// c.actionSpill may be nil when testing SpillToDisk directly.
 	if c.actionSpill != nil {
+		if c.actionSpill.getStatus() == spilledYet {
+			// The rowContainer has been closed.
+			return
+		}
 		c.actionSpill.setStatus(spilling)
 		defer c.actionSpill.cond.Broadcast()
 		defer c.actionSpill.setStatus(spilledYet)
@@ -214,6 +217,11 @@ func (c *RowContainer) GetDiskTracker() *disk.Tracker {
 func (c *RowContainer) Close() (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
+	if c.actionSpill != nil {
+		// Set status to spilledYet to avoid spilling.
+		c.actionSpill.setStatus(spilledYet)
+		c.actionSpill.cond.Broadcast()
+	}
 	if c.alreadySpilled() {
 		err = c.m.recordsInDisk.Close()
 		c.m.recordsInDisk = nil

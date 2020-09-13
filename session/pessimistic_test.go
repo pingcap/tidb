@@ -14,6 +14,7 @@
 package session_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1072,6 +1074,8 @@ func (s *testPessimisticSuite) TestNonAutoCommitWithPessimisticMode(c *C) {
 }
 
 func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000)
+	defer atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
 	tk2.MustExec("use test")
@@ -1087,8 +1091,10 @@ func (s *testPessimisticSuite) TestBatchPointGetLockIndex(c *C) {
 	tk2.MustExec("set innodb_lock_wait_timeout = 1")
 	tk2.MustExec("begin pessimistic")
 	err := tk2.ExecToErr("insert into t1 values(2, 2, 2)")
+	c.Assert(err, NotNil)
 	c.Assert(tikv.ErrLockWaitTimeout.Equal(err), IsTrue)
 	err = tk2.ExecToErr("select * from t1 where c2 = 3 for update nowait")
+	c.Assert(err, NotNil)
 	c.Assert(tikv.ErrLockAcquireFailAndNoWaitSet.Equal(err), IsTrue)
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
@@ -1186,6 +1192,8 @@ func (s *testPessimisticSuite) TestRCSubQuery(c *C) {
 }
 
 func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
+	atomic.StoreUint64(&tikv.ManagedLockTTL, 3000)
+	defer atomic.StoreUint64(&tikv.ManagedLockTTL, 300)
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", variable.DefTiDBRowFormatV2))
@@ -1203,10 +1211,12 @@ func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 		tk2 := testkit.NewTestKitWithInit(c, s.store)
 		tk2.MustExec("begin pessimistic")
 		err := tk2.ExecToErr("select * from tu where z = 3 for update nowait")
+		c.Assert(err, NotNil)
 		c.Assert(terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into tu(x, y) values(2, 2);")
 		err = tk2.ExecToErr("select * from tu where z = 4 for update nowait")
+		c.Assert(err, NotNil)
 		c.Assert(terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 
 		// test batch point get lock
@@ -1215,10 +1225,12 @@ func (s *testPessimisticSuite) TestGenerateColPointGet(c *C) {
 		tk.MustQuery("select * from tu where z in (1, 3, 5) for update").Check(testkit.Rows("1 2 3"))
 		tk2.MustExec("begin pessimistic")
 		err = tk2.ExecToErr("select x from tu where z in (3, 7, 9) for update nowait")
+		c.Assert(err, NotNil)
 		c.Assert(terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into tu(x, y) values(5, 6);")
 		err = tk2.ExecToErr("select * from tu where z = 11 for update nowait")
+		c.Assert(err, NotNil)
 		c.Assert(terror.ErrorEqual(err, tikv.ErrLockAcquireFailAndNoWaitSet), IsTrue)
 
 		tk.MustExec("commit")
@@ -1679,4 +1691,136 @@ func (s *testPessimisticSuite) TestInsertDupKeyAfterLockBatchPointGet(c *C) {
 	tk.MustExec("insert into t1 values(10, 10, 10)")
 	err = tk.ExecToErr("commit")
 	c.Assert(terror.ErrorEqual(err, kv.ErrKeyExists), IsTrue)
+}
+
+func (s *testPessimisticSuite) TestAmendTxnVariable(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop database if exists test_db")
+	tk.MustExec("create database test_db")
+	tk.MustExec("use test_db")
+	tk2.MustExec("use test_db")
+	tk2.MustExec("drop table if exists t1")
+	tk2.MustExec("create table t1(c1 int primary key, c2 int, c3 int, unique key uk(c2));")
+	tk2.MustExec("insert into t1 values(1, 1, 1);")
+	tk2.MustExec("insert into t1 values(2, 2, 2);")
+	tk3.MustExec("use test_db")
+
+	// Set off the session variable.
+	tk3.MustExec("set tidb_enable_amend_pessimistic_txn = 0;")
+	tk3.MustExec("begin pessimistic")
+	tk3.MustExec("insert into t1 values(3, 3, 3)")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into t1 values(4, 4, 4)")
+	tk2.MustExec("alter table t1 add column new_col int")
+	err := tk3.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk.MustExec("commit")
+	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 1 1 <nil>", "2 2 2 <nil>", "4 4 4 <nil>"))
+
+	// Set off the global variable.
+	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = 0;")
+	tk4 := testkit.NewTestKitWithInit(c, s.store)
+	tk4.MustQuery(`show variables like "tidb_enable_amend_pessimistic_txn"`).Check(testkit.Rows("tidb_enable_amend_pessimistic_txn 0"))
+	tk4.MustExec("use test_db")
+	tk4.MustExec("begin pessimistic")
+	tk4.MustExec("insert into t1 values(5, 5, 5, 5)")
+	tk2.MustExec("alter table t1 drop column new_col")
+	err = tk4.ExecToErr("commit")
+	c.Assert(err, NotNil)
+	tk4.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	tk4.MustExec("begin pessimistic")
+	tk4.MustExec("insert into t1 values(5, 5, 5)")
+	tk2.MustExec("alter table t1 add column new_col2 int")
+	tk4.MustExec("commit")
+	tk2.MustQuery("select * from t1").Check(testkit.Rows("1 1 1 <nil>", "2 2 2 <nil>", "4 4 4 <nil>", "5 5 5 <nil>"))
+
+	// Restore.
+	tk2.MustExec("set global tidb_enable_amend_pessimistic_txn = 1;")
+}
+
+func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2),(3,3),(4,4),(5,5)")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+	tk4 := testkit.NewTestKitWithInit(c, s.store)
+	tk5 := testkit.NewTestKitWithInit(c, s.store)
+
+	// tk2 lock c1 = 5
+	tk2.MustExec("begin pessimistic")
+	tk3.MustExec("begin pessimistic")
+	tk4.MustExec("begin pessimistic")
+	tk5.MustExec("begin pessimistic")
+	tk2.MustExec("select * from tk where c1 = 5 or c1 = 1 for update")
+	start := time.Now()
+	errCh := make(chan error, 3)
+	go func() {
+		// tk3 try lock c1 = 1 timeout 1sec, the default innodb_lock_wait_timeout value is 50s.
+		err := tk3.ExecToErr("select * from tk where c1 = 1 for update wait 1")
+		errCh <- err
+	}()
+	go func() {
+		// Lock use selectLockExec.
+		err := tk4.ExecToErr("select * from tk where c1 >= 1 for update wait 1")
+		errCh <- err
+	}()
+	go func() {
+		// Lock use batchPointGetExec.
+		err := tk5.ExecToErr("select c2 from tk where c1 in (1, 5) for update wait 1")
+		errCh <- err
+	}()
+	waitErr := <-errCh
+	waitErr2 := <-errCh
+	waitErr3 := <-errCh
+	c.Assert(waitErr, NotNil)
+	c.Check(waitErr.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	c.Assert(waitErr2, NotNil)
+	c.Check(waitErr2.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	c.Assert(waitErr3, NotNil)
+	c.Check(waitErr3.Error(), Equals, tikv.ErrLockWaitTimeout.Error())
+	c.Assert(time.Since(start).Seconds(), Less, 45.0)
+	tk2.MustExec("commit")
+	tk3.MustExec("rollback")
+	tk4.MustExec("rollback")
+	tk5.MustExec("rollback")
+}
+
+func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableAsyncCommit = true
+	})
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2)")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk2.MustExec("begin pessimistic")
+	tk3.MustExec("begin pessimistic")
+	tk2.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
+	tk3.MustExec("update tk set c2 = c2 + 1 where c2 = 2")
+	tsCh := make(chan uint64)
+	go func() {
+		tk3.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
+		lastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
+		c.Assert(err, IsNil)
+		tsCh <- lastTS
+		tk3.MustExec("commit")
+	}()
+	// tk2LastTS should be its forUpdateTS
+	tk2LastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
+	c.Assert(err, IsNil)
+	tk2.MustExec("commit")
+
+	tk3LastTs := <-tsCh
+	// it must get a new ts on pessimistic write conflict so the latest timestamp
+	// should increase
+	c.Assert(tk3LastTs, Greater, tk2LastTS)
 }

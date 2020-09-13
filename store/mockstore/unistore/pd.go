@@ -20,7 +20,7 @@ import (
 
 	us "github.com/ngaut/unistore/tikv"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	pd "github.com/pingcap/pd/v4/client"
+	pd "github.com/tikv/pd/client"
 	"golang.org/x/net/context"
 )
 
@@ -91,4 +91,12 @@ func (c *pdClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID strin
 
 func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
+}
+
+func (c *pdClient) ScatterRegionWithOption(ctx context.Context, regionID uint64, opts ...pd.ScatterRegionOption) error {
+	return nil
+}
+
+func (c *pdClient) GetMemberInfo(ctx context.Context) ([]*pdpb.Member, error) {
+	return nil, nil
 }

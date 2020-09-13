@@ -13,7 +13,11 @@
 
 package placement
 
-// Refer to https://github.com/pingcap/pd/issues/2701 .
+import (
+	"encoding/json"
+)
+
+// Refer to https://github.com/tikv/pd/issues/2701 .
 // IMO, it is indeed not bad to have a copy of definition.
 // After all, placement rules are communicated using an HTTP API. Loose
 //  coupling is a good feature.
@@ -55,7 +59,7 @@ type LabelConstraint struct {
 	Values []string          `json:"values,omitempty"`
 }
 
-// Rule is the placement rule. Check https://github.com/pingcap/pd/blob/master/server/schedule/placement/rule.go.
+// Rule is the placement rule. Check https://github.com/tikv/pd/blob/master/server/schedule/placement/rule.go.
 type Rule struct {
 	GroupID          string            `json:"group_id"`
 	ID               string            `json:"id"`
@@ -96,4 +100,12 @@ func (op *RuleOp) Clone() *RuleOp {
 	newOp.Rule = &Rule{}
 	*newOp.Rule = *op.Rule
 	return newOp
+}
+
+func (op *RuleOp) String() string {
+	b, err := json.Marshal(op)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
