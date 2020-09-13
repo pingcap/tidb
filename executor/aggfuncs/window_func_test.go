@@ -155,6 +155,16 @@ func buildWindowMemTester(funcName string, tp byte, constantArg uint64, numRows 
 	return pt
 }
 
+func buildWindowMemTesterWithArgs(funcName string, tp byte, args []expression.Expression, orderByCols int, numRows int, allocMemDelta int64, updateMemDeltaGens updateMemDeltaGens) windowMemTest {
+	windowTest := buildWindowTesterWithArgs(funcName, tp, args, orderByCols, numRows)
+	pt := windowMemTest{
+		windowTest:         windowTest,
+		allocMemDelta:      allocMemDelta,
+		updateMemDeltaGens: updateMemDeltaGens,
+	}
+	return pt
+}
+
 func (s *testSuite) TestWindowFunctions(c *C) {
 	tests := []windowTest{
 		buildWindowTester(ast.WindowFuncCumeDist, mysql.TypeLonglong, 0, 1, 1, 1),
