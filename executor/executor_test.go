@@ -2919,9 +2919,9 @@ func (s *testSuite) TestEmptyEnum(c *C) {
 	tk.MustExec("create table t (e enum('Y', 'N'))")
 	tk.MustExec("set sql_mode='STRICT_TRANS_TABLES'")
 	_, err := tk.Exec("insert into t values (0)")
-	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue, Commentf("err %v", err))
 	_, err = tk.Exec("insert into t values ('abc')")
-	c.Assert(terror.ErrorEqual(err, table.ErrTruncatedWrongValueForField), IsTrue, Commentf("err %v", err))
+	c.Assert(terror.ErrorEqual(err, types.ErrTruncated), IsTrue, Commentf("err %v", err))
 
 	tk.MustExec("set sql_mode=''")
 	tk.MustExec("insert into t values (0)")
@@ -6286,6 +6286,11 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t1 for update").Check(testkit.Rows("5 6", "7 7"))
 	c.Assert(getRootStats(), Matches, "time.*lock_keys.*time.* region.* keys.* lock_rpc:.* rpc_count.*")
+	tk.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert ignore into t1 values (9,9)")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, BatchGet:{num_rpc:.*, total_time:.*}, lock_keys: {time:.*, region:.*, keys:.*, lock_rpc:.*, rpc_count:.*}")
 	tk.MustExec("rollback")
 }
 
