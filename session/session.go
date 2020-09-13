@@ -1772,6 +1772,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBProjectionConcurrency,
 	variable.TiDBHashAggPartialConcurrency,
 	variable.TiDBHashAggFinalConcurrency,
+	variable.TiDBUnionConcurrency,
 	variable.TiDBBackoffLockFast,
 	variable.TiDBBackOffWeight,
 	variable.TiDBConstraintCheckInPlace,

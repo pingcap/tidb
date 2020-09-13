@@ -1195,10 +1195,7 @@ func (s *testSuite) TestUnion(c *C) {
 	tk.MustQuery("select count(distinct a), sum(distinct a), avg(distinct a) from (select a from t union all select b from t) tmp;").Check(testkit.Rows("1 1.000 1.0000000"))
 }
 
-<<<<<<< HEAD
-func (s *testSuite) TestNeighbouringProj(c *C) {
-=======
-func (s *testSuite2) TestUnionLimit(c *C) {
+func (s *testSuite) TestUnionLimit(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists union_limit")
@@ -1210,8 +1207,7 @@ func (s *testSuite2) TestUnionLimit(c *C) {
 	tk.MustQuery("select * from union_limit limit 10")
 }
 
-func (s *testSuiteP1) TestNeighbouringProj(c *C) {
->>>>>>> 354f399... executor: add concurrency limit on union executor (#19827)
+func (s *testSuite) TestNeighbouringProj(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 

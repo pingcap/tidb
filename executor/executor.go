@@ -1297,17 +1297,10 @@ type UnionExec struct {
 	wg            sync.WaitGroup
 
 	finished      chan struct{}
+	results       []*chunk.Chunk
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
 	initialized   bool
-
-<<<<<<< HEAD
-	childrenResults []*chunk.Chunk
-=======
-	results     []*chunk.Chunk
-	wg          sync.WaitGroup
-	initialized bool
->>>>>>> 354f399... executor: add concurrency limit on union executor (#19827)
 }
 
 // unionWorkerResult stores the result for a union worker.

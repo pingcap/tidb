@@ -522,6 +522,7 @@ func NewSessionVars() *SessionVars {
 		DistSQLScanConcurrency:     DefDistSQLScanConcurrency,
 		HashAggPartialConcurrency:  DefTiDBHashAggPartialConcurrency,
 		HashAggFinalConcurrency:    DefTiDBHashAggFinalConcurrency,
+		UnionConcurrency:           DefTiDBUnionConcurrency,
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:             config.GetGlobalConfig().MemQuotaQuery,
@@ -802,6 +803,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.DistSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 	case TiDBIndexSerialScanConcurrency:
 		s.IndexSerialScanConcurrency = tidbOptPositiveInt32(val, DefIndexSerialScanConcurrency)
+	case TiDBUnionConcurrency:
+		s.UnionConcurrency = tidbOptPositiveInt32(val, DefTiDBUnionConcurrency)
 	case TiDBBackoffLockFast:
 		s.KVVars.BackoffLockFast = tidbOptPositiveInt32(val, kv.DefBackoffLockFast)
 	case TiDBBackOffWeight:
@@ -999,11 +1002,9 @@ type Concurrency struct {
 
 	// IndexSerialScanConcurrency is the number of concurrent index serial scan worker.
 	IndexSerialScanConcurrency int
-}
 
-// UnionConcurrency return the num of concurrent union worker.
-func (c *Concurrency) UnionConcurrency() int {
-	return c.ExecutorConcurrency
+	// UnionConcurrency is the number of concurrent union worker.
+	UnionConcurrency int
 }
 
 // MemQuota defines memory quota values.
