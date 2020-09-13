@@ -6292,7 +6292,7 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 	tk.MustExec("insert ignore into t1 values (9,9)")
 	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert:{total_time:.*, mem_check_insert:.*, rpc:{time:.*, BatchGet:{num_rpc:.*, total_time:.*}}}, lock_keys: {time:.*, region:.*, keys:.*, lock_rpc:.*, rpc_count:.*}")
 	tk.MustExec("rollback")
-	// need to test insert duplicate and just insert into
+
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values (10,10) on duplicate key update a=a+1")
 	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert:{total_time:.*, mem_check_insert:.*, rpc:{time:.*, BatchGet:{num_rpc:.*, total_time:.*}.*")
@@ -6301,6 +6301,7 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values (1,2)")
 	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert:{total_time:.*, mem_insert:.*}.*")
+	tk.MustExec("rollback")
 }
 
 func (s *testSuite) TestIssue13758(c *C) {
