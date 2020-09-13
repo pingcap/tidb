@@ -1064,7 +1064,7 @@ func (e *insertRuntimeStat) String() string {
 	if e.checkInsertTime != 0 {
 		prepareStr = fmt.Sprintf("prepare:%v", time.Duration(e.BasicRuntimeStats.GetTime())-e.checkInsertTime)
 		if e.rpcTime == 0 {
-			insertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_insert:%v, ", e.checkInsertTime, e.checkInsertTime)
+			insertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_insert:%v", e.checkInsertTime, e.checkInsertTime)
 		} else {
 			checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, rpc:{time:%v", e.checkInsertTime, e.checkInsertTime-e.rpcTime, e.rpcTime)
 		}
