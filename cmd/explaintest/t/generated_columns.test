@@ -2,6 +2,7 @@
 -- Most of the cases are ported from other tests to make sure generated columns behaves the same.
 
 -- Stored generated columns as indices
+set @@tidb_partition_prune_mode='dynamic-only';
 
 DROP TABLE IF EXISTS person;
 CREATE TABLE person (
