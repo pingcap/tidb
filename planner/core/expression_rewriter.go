@@ -157,7 +157,6 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	rewriter.ctxStack = rewriter.ctxStack[:0]
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
 	rewriter.ctx = ctx
-	rewriter.allNames = b.allNames
 	return
 }
 
@@ -227,9 +226,6 @@ type expressionRewriter struct {
 	// leaving the scope(enable again), the counter will -1.
 	// NOTE: This value can be changed during expression rewritten.
 	disableFoldCounter int
-
-	// evalDefaultExpr needs this information to find the corresponding column.
-	allNames [][]*types.FieldName
 }
 
 func (er *expressionRewriter) ctxStackLen() int {
@@ -1626,14 +1622,21 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 
 func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	var name *types.FieldName
-	for i := len(er.allNames) - 1; i >= 0; i-- {
-		idx, err := expression.FindFieldName(er.allNames[i], v.Name)
+	// Here we will find the corresponding column for default function. At the same time, we need to consider the issue
+	// of subquery and name sapce.
+	// For example, we have two tables t1(a int default 1, b int) and t2(a int default -1, c int). Consider the following SQL:
+	// 		select a from t1 where a > (select default(a) from t2)
+	// Refer to the behavior of MySQL, we need to find column a in table t2. If table t2 does not have column a, then find it
+	// in table t1. If there are none, return an error message.
+	// Based on the above description, we need to look in er.b.allNames from back to front.
+	for i := len(er.b.allNames) - 1; i >= 0; i-- {
+		idx, err := expression.FindFieldName(er.b.allNames[i], v.Name)
 		if err != nil {
 			er.err = err
 			return
 		}
 		if idx >= 0 {
-			name = er.allNames[i][idx]
+			name = er.b.allNames[i][idx]
 			break
 		}
 	}

@@ -2656,6 +2656,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		return nil, err
 	}
 
+	// b.allNames will be used in evalDefaultExpr(). Default function is special because it needs to find the
+	// corresponding column name, but does not need the value in the column.
+	// For example, select a from t order by default(b), the column b will not be in select fields. Also because
+	// buildSort is after buildProjection, so we need get OutputNames before BuildProjection and store in allNames.
+	// Otherwise, we will get select fields instead of all OutputNames, so that we can't find the column b in the
+	// above example.
 	b.allNames = append(b.allNames, p.OutputNames())
 	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
 
