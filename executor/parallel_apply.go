@@ -167,7 +167,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 	}
 
 	if e.runtimeStats != nil {
-		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
+		runtimeStats := newJoinRuntimeStats()
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.useCache {
 			var hitRatio float64

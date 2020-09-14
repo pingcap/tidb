@@ -1387,6 +1387,8 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 //                              +-------------+
 type UnionExec struct {
 	baseExecutor
+	concurrency int
+	childIDChan chan int
 
 	stopFetchData atomic.Value
 
@@ -1394,9 +1396,9 @@ type UnionExec struct {
 	resourcePools []chan *chunk.Chunk
 	resultPool    chan *unionWorkerResult
 
-	childrenResults []*chunk.Chunk
-	wg              sync.WaitGroup
-	initialized     bool
+	results     []*chunk.Chunk
+	wg          sync.WaitGroup
+	initialized bool
 }
 
 // unionWorkerResult stores the result for a union worker.
@@ -1419,9 +1421,6 @@ func (e *UnionExec) Open(ctx context.Context) error {
 	if err := e.baseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	for _, child := range e.children {
-		e.childrenResults = append(e.childrenResults, newFirstChunk(child))
-	}
 	e.stopFetchData.Store(false)
 	e.initialized = false
 	e.finished = make(chan struct{})
@@ -1429,22 +1428,33 @@ func (e *UnionExec) Open(ctx context.Context) error {
 }
 
 func (e *UnionExec) initialize(ctx context.Context) {
-	e.resultPool = make(chan *unionWorkerResult, len(e.children))
-	e.resourcePools = make([]chan *chunk.Chunk, len(e.children))
-	for i := range e.children {
+	if e.concurrency > len(e.children) {
+		e.concurrency = len(e.children)
+	}
+	for i := 0; i < e.concurrency; i++ {
+		e.results = append(e.results, newFirstChunk(e.children[0]))
+	}
+	e.resultPool = make(chan *unionWorkerResult, e.concurrency)
+	e.resourcePools = make([]chan *chunk.Chunk, e.concurrency)
+	e.childIDChan = make(chan int, len(e.children))
+	for i := 0; i < e.concurrency; i++ {
 		e.resourcePools[i] = make(chan *chunk.Chunk, 1)
-		e.resourcePools[i] <- e.childrenResults[i]
+		e.resourcePools[i] <- e.results[i]
 		e.wg.Add(1)
 		go e.resultPuller(ctx, i)
 	}
+	for i := 0; i < len(e.children); i++ {
+		e.childIDChan <- i
+	}
+	close(e.childIDChan)
 	go e.waitAllFinished()
 }
 
-func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
+func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 	result := &unionWorkerResult{
 		err: nil,
 		chk: nil,
-		src: e.resourcePools[childID],
+		src: e.resourcePools[workerID],
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -1458,23 +1468,26 @@ func (e *UnionExec) resultPuller(ctx context.Context, childID int) {
 		}
 		e.wg.Done()
 	}()
-	for {
-		if e.stopFetchData.Load().(bool) {
-			return
-		}
-		select {
-		case <-e.finished:
-			return
-		case result.chk = <-e.resourcePools[childID]:
-		}
-		result.err = Next(ctx, e.children[childID], result.chk)
-		if result.err == nil && result.chk.NumRows() == 0 {
-			return
-		}
-		e.resultPool <- result
-		if result.err != nil {
-			e.stopFetchData.Store(true)
-			return
+	for childID := range e.childIDChan {
+		for {
+			if e.stopFetchData.Load().(bool) {
+				return
+			}
+			select {
+			case <-e.finished:
+				return
+			case result.chk = <-e.resourcePools[workerID]:
+			}
+			result.err = Next(ctx, e.children[childID], result.chk)
+			if result.err == nil && result.chk.NumRows() == 0 {
+				e.resourcePools[workerID] <- result.chk
+				break
+			}
+			e.resultPool <- result
+			if result.err != nil {
+				e.stopFetchData.Store(true)
+				return
+			}
 		}
 	}
 }
@@ -1504,12 +1517,16 @@ func (e *UnionExec) Close() error {
 	if e.finished != nil {
 		close(e.finished)
 	}
-	e.childrenResults = nil
+	e.results = nil
 	if e.resultPool != nil {
 		for range e.resultPool {
 		}
 	}
 	e.resourcePools = nil
+	if e.childIDChan != nil {
+		for range e.childIDChan {
+		}
+	}
 	return e.baseExecutor.Close()
 }
 
@@ -1517,15 +1534,6 @@ func (e *UnionExec) Close() error {
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars := ctx.GetSessionVars()
-	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
-	if stmtCtx := vars.StmtCtx; stmtCtx != nil {
-		if stmtCtx.DiskTracker != nil {
-			stmtCtx.DiskTracker.DetachFromGlobalTracker()
-		}
-		if stmtCtx.MemTracker != nil {
-			stmtCtx.MemTracker.DetachFromGlobalTracker()
-		}
-	}
 	sc := &stmtctx.StatementContext{
 		TimeZone:    vars.Location(),
 		MemTracker:  memory.NewTracker(memory.LabelForSQLText, vars.MemQuotaQuery),
