@@ -175,13 +175,6 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 	return stmts, nil
 }
 
-// Compile is safe for concurrent use by multiple goroutines.
-func Compile(ctx context.Context, sctx sessionctx.Context, stmtNode ast.StmtNode) (sqlexec.Statement, error) {
-	compiler := executor.Compiler{Ctx: sctx}
-	stmt, err := compiler.Compile(ctx, stmtNode)
-	return stmt, err
-}
-
 func recordAbortTxnDuration(sessVars *variable.SessionVars) {
 	duration := time.Since(sessVars.TxnCtx.CreateTime).Seconds()
 	if sessVars.TxnCtx.IsPessimistic {
