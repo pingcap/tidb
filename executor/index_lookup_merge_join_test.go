@@ -5,6 +5,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -95,8 +96,8 @@ func (s *testSuite9) TestIssue19408(c *C) {
 func (s *testSuiteWithData) TestIndexJoinOnSinglePartitionTable(c *C) {
 	// For issue 19145
 	tk := testkit.NewTestKitWithInit(c, s.store)
-	for _, val := range []string{"1", "null"} {
-		tk.MustExec("set @try_old_partition_implementation = " + val)
+	for _, val := range []string{string(variable.StaticOnly), string(variable.DynamicOnly)} {
+		tk.MustExec("set @@tidb_partition_prune_mode= '" + val + "'")
 		tk.MustExec("drop table if exists t1, t2")
 		tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue )")
 		tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue )")
