@@ -187,5 +187,11 @@
       // Should choose `primary` index instead of index `b`.
       "explain select c, b from t where a = 7639902 order by b asc limit 6"
     ]
+  },
+  {
+    "name": "TestFastAnalyzeEstimate",
+    "cases": [
+      "explain select * from t where a = 38582641 and c >= '2020-08-09' and c <= '2020-09-14' and b = 'ADAUSDT' order by d desc limit 0, 500"
+    ]
   }
 ]

@@ -565,7 +565,7 @@ func (coll *HistColl) getIndexRowCount(sc *stmtctx.StatementContext, idxID int64
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
-			selectivity = selectivity * count / float64(idx.TotalRowCount())
+			selectivity = selectivity * count / float64(coll.Count)
 		}
 		totalCount += selectivity * float64(idx.TotalRowCount())
 	}

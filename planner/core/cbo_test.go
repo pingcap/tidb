@@ -896,3 +896,37 @@ func (s *testAnalyzeSuite) TestIndexEqualUnknown(c *C) {
 		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func (s *testAnalyzeSuite) TestFastAnalyzeEstimate(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	testKit := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a bigint(20) not null, d bigint(20) not null, b varchar(100) not null, c datetime not null, e bigint(20) not null, unique key idx1 (a,b,c,d), key idx2 (c));")
+	// The stats is collected by fast analyze on a table with 2.5 billion rows.
+	err = s.loadTableStats("analyzeSuiteTestFastAnalyzeEstimateT.json", dom)
+	c.Assert(err, IsNil)
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	// The test purposes are:
+	// - TopN is pushed down to TiKV, because it is experimentally proved that this plan is much faster than the plan without TopN push down;
+	// - The TableRowIDScan does not use 'stats:pseudo';
+	// - The row count of IndexRangeScan is at 10^5 ~ 10^6 level, not 2.5 billion;
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
+		})
+		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
+	}
+}

@@ -208,7 +208,9 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		}
 		fmt.Fprintf(buffer, fmtStr, pkCol.ExplainInfo())
 	}
+	hasDecidedBy := false
 	if len(p.rangeDecidedBy) > 0 {
+		hasDecidedBy = true
 		fmt.Fprintf(buffer, "range: decided by %v, ", p.rangeDecidedBy)
 	} else if p.haveCorCol() {
 		if normalized {
@@ -216,6 +218,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 		} else {
 			fmt.Fprintf(buffer, "range: decided by %v, ", p.AccessCondition)
 		}
+		hasDecidedBy = true
 	} else if len(p.Ranges) > 0 {
 		if normalized {
 			fmt.Fprint(buffer, "range:[?,?], ")
@@ -230,7 +233,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	if p.Desc {
 		buffer.WriteString("desc, ")
 	}
-	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized {
+	if p.stats.StatsVersion == statistics.PseudoVersion && !normalized && (p.stats.HistColl != nil || hasDecidedBy) {
 		buffer.WriteString("stats:pseudo, ")
 	}
 	if p.IsGlobalRead {

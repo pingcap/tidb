@@ -128,7 +128,7 @@ Projection_12	10000.00	root		eq(test.t1.c2, test.t2.c2)->Column#8
     └─IndexLookUp_42	1.00	root		limit embedded(offset:0, count:1)
       ├─Limit_41(Build)	1.00	cop[tikv]		offset:0, count:1
       │ └─IndexRangeScan_39	1.00	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(test.t1.c1, test.t2.c1)], keep order:true, stats:pseudo
-      └─TableRowIDScan_40(Probe)	1.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+      └─TableRowIDScan_40(Probe)	1.00	cop[tikv]	table:t2	keep order:false
 explain select * from t1 order by c1 desc limit 1;
 id	estRows	task	access object	operator info
 Limit_10	1.00	root		offset:0, count:1

@@ -8,7 +8,7 @@
           "IndexLookUp_14 1.00 root  limit embedded(offset:2, count:1)",
           "├─Limit_13(Build) 3.00 cop[tikv]  offset:0, count:3",
           "│ └─IndexRangeScan_11 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:false",
-          "└─TableRowIDScan_12(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
+          "└─TableRowIDScan_12(Probe) 1.00 cop[tikv] table:tbl keep order:false"
         ]
       },
       {
@@ -18,7 +18,7 @@
           "└─IndexLookUp_24 1.00 root  limit embedded(offset:2, count:1)",
           "  ├─Limit_23(Build) 3.00 cop[tikv]  offset:0, count:3",
           "  │ └─IndexRangeScan_21 3.00 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:true, desc",
-          "  └─TableRowIDScan_22(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
+          "  └─TableRowIDScan_22(Probe) 1.00 cop[tikv] table:tbl keep order:false"
         ]
       },
       {
@@ -28,7 +28,7 @@
           "├─Limit_14(Build) 3.00 cop[tikv]  offset:0, count:3",
           "│ └─Selection_13 3.00 cop[tikv]  gt(test.tbl.c, 1)",
           "│   └─IndexRangeScan_11 3.75 cop[tikv] table:tbl, index:idx_b_c(b, c) range:(1,+inf], keep order:false",
-          "└─TableRowIDScan_12(Probe) 1.00 cop[tikv] table:tbl keep order:false, stats:pseudo"
+          "└─TableRowIDScan_12(Probe) 1.00 cop[tikv] table:tbl keep order:false"
         ]
       },
       {

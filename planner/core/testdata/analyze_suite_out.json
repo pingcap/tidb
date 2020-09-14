@@ -362,5 +362,20 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestFastAnalyzeEstimate",
+    "Cases": [
+      {
+        "SQL": "explain select * from t where a = 38582641 and c >= '2020-08-09' and c <= '2020-09-14' and b = 'ADAUSDT' order by d desc limit 0, 500",
+        "Plan": [
+          "TopN_9 500.00 root  test.t.d:desc, offset:0, count:500",
+          "└─IndexLookUp_21 500.00 root  ",
+          "  ├─TopN_20(Build) 500.00 cop[tikv]  test.t.d:desc, offset:0, count:500",
+          "  │ └─IndexRangeScan_18 246454.34 cop[tikv] table:t, index:idx1(a, b, c, d) range:[38582641 \"ADAUSDT\" 2020-08-09 00:00:00,38582641 \"ADAUSDT\" 2020-09-14 00:00:00], keep order:false",
+          "  └─TableRowIDScan_19(Probe) 500.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
   }
 ]
