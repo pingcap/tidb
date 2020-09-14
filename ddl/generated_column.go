@@ -228,6 +228,7 @@ func checkModifyGeneratedColumn(tbl table.Table, oldCol, newCol *table.Column, n
 type illegalFunctionChecker struct {
 	hasIllegalFunc bool
 	hasAggFunc     bool
+	hasRowVal      bool // hasRowVal checks whether the functional index refers to a row value
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
@@ -246,6 +247,9 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 	case *ast.AggregateFuncExpr:
 		// Aggregate function is not allowed
 		c.hasAggFunc = true
+		return inNode, true
+	case *ast.RowExpr:
+		c.hasRowVal = true
 		return inNode, true
 	}
 	return inNode, false
@@ -266,6 +270,24 @@ func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
 	}
 	if c.hasAggFunc {
 		return ErrInvalidGroupFuncUse
+	}
+	return nil
+}
+
+func checkIllegalFn4GeneratedIndex(idxName string, expr ast.ExprNode) error {
+	if expr == nil {
+		return nil
+	}
+	var c illegalFunctionChecker
+	expr.Accept(&c)
+	if c.hasIllegalFunc {
+		return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(idxName)
+	}
+	if c.hasAggFunc {
+		return ErrInvalidGroupFuncUse
+	}
+	if c.hasRowVal {
+		return ErrFunctionalIndexRowValueIsNotAllowed.GenWithStackByArgs(idxName)
 	}
 	return nil
 }

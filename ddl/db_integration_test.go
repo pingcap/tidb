@@ -2190,6 +2190,11 @@ func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
 	tk.MustExec("alter table t add index ((a+1));")
 	tk.MustGetErrCode("alter table t drop column _V$_expression_index_0;", errno.ErrCantDropFieldOrKey)
 	tk.MustGetErrCode("alter table t add column e int as (_V$_expression_index_0 + 1);", errno.ErrBadField)
+
+	// NOTE (#18150): In creating expression index, row value is not allowed.
+	tk.MustExec("drop table if exists t;")
+	tk.MustGetErrCode("create table t (j json, key k (((j,j))))", errno.ErrFunctionalIndexRowValueIsNotAllowed)
+	tk.MustExec("create table t (j json, key k ((j+1),(j+1)))")
 }
 
 func (s *testIntegrationSuite7) TestAddExpressionIndexOnPartition(c *C) {

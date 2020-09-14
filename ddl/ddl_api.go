@@ -4468,7 +4468,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			return nil, ErrTooLongIdent.GenWithStackByArgs("hidden column")
 		}
 		// TODO: refine the error message.
-		if err := checkIllegalFn4GeneratedColumn("expression index", idxPart.Expr); err != nil {
+		if err := checkIllegalFn4GeneratedIndex(indexName.L, idxPart.Expr); err != nil {
 			return nil, errors.Trace(err)
 		}
 
