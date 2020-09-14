@@ -17,6 +17,7 @@ import (
 	"context"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/testkit"
 )
 
@@ -151,7 +152,7 @@ func (s *partitionTableSuite) TestPartitionReaderUnderApply(c *C) {
 		"5 naughty swartz 9.524000"))
 
 	// For issue 19450 release-4.0
-	tk.MustExec("set @try_old_partition_implementation = 1")
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 	tk.MustQuery("select * from t1 where c_decimal in (select c_decimal from t2 where t1.c_int = t2.c_int or t1.c_int = t2.c_int and t1.c_str > t2.c_str)").Check(testkit.Rows(
 		"1 romantic robinson 4.436000",
 		"2 stoic chaplygin 9.826000",

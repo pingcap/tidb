@@ -241,6 +241,9 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 	switch v.Tp {
 	case ast.ConstraintPrimaryKey:
 		for _, key := range v.Keys {
+			if key.Expr != nil {
+				continue
+			}
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
 				continue
@@ -251,6 +254,9 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 		}
 	case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 		for i, key := range v.Keys {
+			if key.Expr != nil {
+				continue
+			}
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
 				continue
@@ -269,6 +275,9 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 		}
 	case ast.ConstraintKey, ast.ConstraintIndex:
 		for i, key := range v.Keys {
+			if key.Expr != nil {
+				continue
+			}
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
 				continue
@@ -491,6 +500,30 @@ func isExplicitTimeStamp() bool {
 	return true
 }
 
+// processColumnFlags is used by columnDefToCol and processColumnOptions. It is intended to unify behaviors on `create/add` and `modify/change` statements. Check tidb#issue#19342.
+func processColumnFlags(col *table.Column) {
+	if col.FieldType.EvalType().IsStringKind() && col.Charset == charset.CharsetBin {
+		col.Flag |= mysql.BinaryFlag
+	}
+	if col.Tp == mysql.TypeBit {
+		// For BIT field, it's charset is binary but does not have binary flag.
+		col.Flag &= ^mysql.BinaryFlag
+		col.Flag |= mysql.UnsignedFlag
+	}
+	if col.Tp == mysql.TypeYear {
+		// For Year field, it's charset is binary but does not have binary flag.
+		col.Flag &= ^mysql.BinaryFlag
+		col.Flag |= mysql.ZerofillFlag
+	}
+
+	// If you specify ZEROFILL for a numeric column, MySQL automatically adds the UNSIGNED attribute to the column.
+	// See https://dev.mysql.com/doc/refman/5.7/en/numeric-type-overview.html for more details.
+	// But some types like bit and year, won't show its unsigned flag in `show create table`.
+	if mysql.HasZerofillFlag(col.Flag) {
+		col.Flag |= mysql.UnsignedFlag
+	}
+}
+
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
@@ -598,31 +631,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		}
 	}
 
-	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
+	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 
-	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
-	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
-	setNoDefaultValueFlag(col, hasDefaultValue)
-	if col.FieldType.EvalType().IsStringKind() && col.Charset == charset.CharsetBin {
-		col.Flag |= mysql.BinaryFlag
-	}
-	if col.Tp == mysql.TypeBit {
-		// For BIT field, it's charset is binary but does not have binary flag.
-		col.Flag &= ^mysql.BinaryFlag
-		col.Flag |= mysql.UnsignedFlag
-	}
-	if col.Tp == mysql.TypeYear {
-		// For Year field, it's charset is binary but does not have binary flag.
-		col.Flag &= ^mysql.BinaryFlag
-		col.Flag |= mysql.ZerofillFlag
-	}
+	processColumnFlags(col)
 
-	// If you specify ZEROFILL for a numeric column, MySQL automatically adds the UNSIGNED attribute to the column.
-	// See https://dev.mysql.com/doc/refman/5.7/en/numeric-type-overview.html for more details.
-	// But some types like bit and year, won't show its unsigned flag in `show create table`.
-	if mysql.HasZerofillFlag(col.Flag) {
-		col.Flag |= mysql.UnsignedFlag
-	}
 	err = checkPriKeyConstraint(col, hasDefaultValue, hasNullFlag, outPriKeyConstraint)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -810,6 +822,28 @@ func removeOnUpdateNowFlag(c *table.Column) {
 	}
 }
 
+func processDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdateNow bool) {
+	setTimestampDefaultValue(c, hasDefaultValue, setOnUpdateNow)
+
+	setYearDefaultValue(c, hasDefaultValue)
+
+	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
+	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
+	setNoDefaultValueFlag(c, hasDefaultValue)
+}
+
+func setYearDefaultValue(c *table.Column, hasDefaultValue bool) {
+	if hasDefaultValue {
+		return
+	}
+
+	if c.Tp == mysql.TypeYear && mysql.HasNotNullFlag(c.Flag) {
+		if err := c.SetDefaultValue("0000"); err != nil {
+			logutil.BgLogger().Error("set default value failed", zap.Error(err))
+		}
+	}
+}
+
 func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdateNow bool) {
 	if hasDefaultValue {
 		return
@@ -881,7 +915,7 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 	// Such as: create table t1 (id int , age int, primary key(id))
 	if !mysql.HasPriKeyFlag(col.Flag) && outPriKeyConstraint != nil {
 		for _, key := range outPriKeyConstraint.Keys {
-			if key.Column.Name.L != col.Name.L {
+			if key.Expr == nil && key.Column.Name.L != col.Name.L {
 				continue
 			}
 			col.Flag |= mysql.PriKeyFlag
@@ -1072,7 +1106,15 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 
 func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, foreign bool) {
 	if constr.Name == "" && len(constr.Keys) > 0 {
-		colName := constr.Keys[0].Column.Name.L
+		var colName string
+		for _, keyPart := range constr.Keys {
+			if keyPart.Expr != nil {
+				colName = "expression_index"
+			}
+		}
+		if colName == "" {
+			colName = constr.Keys[0].Column.Name.L
+		}
 		constrName := colName
 		i := 2
 		if strings.EqualFold(constrName, mysql.PrimaryKeyName) {
@@ -1259,11 +1301,25 @@ func buildTableInfo(
 		Charset: charset,
 		Collate: collate,
 	}
+	tblColumns := make([]*table.Column, 0, len(cols))
 	for _, v := range cols {
 		v.ID = allocateColumnID(tbInfo)
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
+		tblColumns = append(tblColumns, table.ToColumn(v.ToInfo()))
 	}
 	for _, constr := range constraints {
+		// Build hidden columns if necessary.
+		hiddenCols, err := buildHiddenColumnInfo(ctx, constr.Keys, model.NewCIStr(constr.Name), tbInfo, tblColumns)
+		if err != nil {
+			return nil, err
+		}
+		for _, hiddenCol := range hiddenCols {
+			hiddenCol.State = model.StatePublic
+			hiddenCol.ID = allocateColumnID(tbInfo)
+			hiddenCol.Offset = len(tbInfo.Columns)
+			tbInfo.Columns = append(tbInfo.Columns, hiddenCol)
+			tblColumns = append(tblColumns, table.ToColumn(hiddenCol))
+		}
 		if constr.Tp == ast.ConstraintForeignKey {
 			for _, fk := range tbInfo.ForeignKeys {
 				if fk.Name.L == strings.ToLower(constr.Name) {
@@ -1313,6 +1369,9 @@ func buildTableInfo(
 		idxInfo, err := buildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if len(hiddenCols) > 0 {
+			addIndexColumnFlag(tbInfo, idxInfo)
 		}
 		// check if the index is primary or unique.
 		switch constr.Tp {
@@ -2385,7 +2444,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
 		// and TiDB-B finds 100 < 30001 but returns without any handling,
 		// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
-		newBase = mathutil.MaxInt64(newBase, autoID)
+		newBase = int64(mathutil.MaxUint64(uint64(newBase), uint64(autoID)))
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -2452,6 +2511,9 @@ func checkUnsupportedColumnConstraint(col *ast.ColumnDef, ti ast.Ident) error {
 			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint PRIMARY KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
 		case ast.ColumnOptionUniqKey:
 			return errUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint UNIQUE KEY when altering '%s.%s'", col.Name, ti.Schema, ti.Name)
+		case ast.ColumnOptionAutoRandom:
+			errMsg := fmt.Sprintf(autoid.AutoRandomAlterAddColumn, col.Name, ti.Schema, ti.Name)
+			return ErrInvalidAutoRandom.GenWithStackByArgs(errMsg)
 		}
 	}
 
@@ -3230,6 +3292,9 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 			}
 		}
 	case mysql.TypeNewDecimal:
+		if origin.Tp != to.Tp {
+			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
+		}
 		// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
 		if to.Flen != origin.Flen || to.Decimal != origin.Decimal {
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")
@@ -3393,15 +3458,9 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		}
 	}
 
-	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
+	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 
-	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
-	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
-	setNoDefaultValueFlag(col, hasDefaultValue)
-
-	if col.Tp == mysql.TypeBit {
-		col.Flag |= mysql.UnsignedFlag
-	}
+	processColumnFlags(col)
 
 	if hasDefaultValue {
 		return errors.Trace(checkDefaultValue(ctx, col, true))
@@ -4389,8 +4448,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	return errors.Trace(err)
 }
 
-func buildHiddenColumnInfo(ctx sessionctx.Context, t table.Table, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr) ([]*model.ColumnInfo, error) {
-	tblInfo := t.Meta()
+func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
 	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
 	for i, idxPart := range indexPartSpecifications {
 		if idxPart.Expr == nil {
@@ -4398,7 +4456,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, t table.Table, indexPartSpeci
 		}
 		idxPart.Column = &ast.ColumnName{Name: model.NewCIStr(fmt.Sprintf("%s_%s_%d", expressionIndexPrefix, indexName, i))}
 		// Check whether the hidden columns have existed.
-		col := table.FindCol(t.Cols(), idxPart.Column.Name.L)
+		col := table.FindCol(existCols, idxPart.Column.Name.L)
 		if col != nil {
 			// TODO: Use expression index related error.
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name.String())
@@ -4446,7 +4504,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, t table.Table, indexPartSpeci
 			colInfo.Dependences[colName.Name.O] = struct{}{}
 			checkDependencies[colName.Name.O] = struct{}{}
 		}
-		if err = checkDependedColExist(checkDependencies, t.Cols()); err != nil {
+		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if err = checkAutoIncrementRef("", colInfo.Dependences, tblInfo); err != nil {
@@ -4502,7 +4560,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	tblInfo := t.Meta()
 
 	// Build hidden columns if necessary.
-	hiddenCols, err := buildHiddenColumnInfo(ctx, t, indexPartSpecifications, indexName)
+	hiddenCols, err := buildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
 	if err != nil {
 		return err
 	}
