@@ -56,6 +56,8 @@ const (
 	SchemaAmender
 	// SampleStep skips 'SampleStep - 1' number of keys after each returned key.
 	SampleStep
+	// CommitHook is a callback function called right after the transaction gets committed
+	CommitHook
 )
 
 // Priority value for transaction priority.
