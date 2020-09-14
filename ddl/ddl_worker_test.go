@@ -1092,7 +1092,7 @@ func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	c.Check(checkErr, IsNil)
 	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
 	c.Assert(baseTable.Meta().Columns[0].FieldType.Tp, Equals, mysql.TypeLong)
-	c.Assert(baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, Equals, uint(0))
+	c.Assert(mysql.HasNotNullFlag(baseTable.Meta().Columns[0].FieldType.Flag), Equals, false)
 
 	updateTest(&tests[50])
 	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs, &cancelState)

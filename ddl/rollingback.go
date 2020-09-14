@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/util/logutil"
@@ -110,15 +111,26 @@ func convertNotStartAddIdxJob2RollbackJob(t *meta.Meta, job *model.Job, occuredE
 // normal-type has only two states:    None -> Public
 // reorg-type has five states:         None -> Delete-only -> Write-only -> Write-org -> Public
 func rollingbackModifyColumn(t *meta.Meta, job *model.Job) (ver int64, err error) {
-	_, _, oldCol, jp, err := getModifyColumnInfo(t, job)
+	_, tblInfo, oldCol, jp, err := getModifyColumnInfo(t, job)
 	if err != nil {
 		return ver, err
 	}
 	if !needChangeColumnData(oldCol, jp.newCol) {
-		// normal-type rolling back
-		// TODO: when change null to not null, although state is unchanged with none, the oldCol flag's has been changed to preNullInsertFlag.
-		// TODO: To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
-		return cancelOnlyNotHandledJob(job)
+		// Normal-type rolling back
+		if job.SchemaState == model.StateNone {
+			// When change null to not null, although state is unchanged with none, the oldCol flag's has been changed to preNullInsertFlag.
+			// To roll back this kind of normal job, it is necessary to mark the state as JobStateRollingback to restore the old col's flag.
+			if jp.modifyColumnTp == mysql.TypeNull && tblInfo.Columns[oldCol.Offset].Flag|mysql.PreventNullInsertFlag != 0 {
+				job.State = model.JobStateRollingback
+				return ver, errCancelledDDLJob
+			}
+			// Normal job with stateNone can be cancelled directly.
+			job.State = model.JobStateCancelled
+			return ver, errCancelledDDLJob
+		}
+		// StatePublic couldn't be cancelled.
+		job.State = model.JobStateRunning
+		return ver, nil
 	}
 	// reorg-type rolling back
 	if jp.changingCol == nil {
@@ -441,8 +453,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 			job.Error = toTError(err)
 		}
 		if !job.Error.Equal(errCancelledDDLJob) {
-			job.Error = job.Error.Class().Synthesize(job.Error.Code(),
-				fmt.Sprintf("DDL job rollback, error msg: %s", job.Error.ToSQLError().Message))
+			job.Error = terror.GetErrClass(job.Error).Synthesize(terror.ErrCode(job.Error.Code()),
+				fmt.Sprintf("DDL job rollback, error msg: %s", terror.ToSQLError(job.Error).Message))
 		}
 		job.ErrorCount++
 

@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/util/testkit"
 )
 
-var _ = Suite(&testColumnTypeChangeSuite{})
+var _ = SerialSuites(&testColumnTypeChangeSuite{})
 
 type testColumnTypeChangeSuite struct {
 	store  kv.Storage
@@ -120,6 +120,8 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeBetweenInteger(c *C) {
 	tk.MustGetErrCode("alter table t modify column a mediumint", mysql.ErrDataOutOfRange)
 	tk.MustGetErrCode("alter table t modify column a smallint", mysql.ErrDataOutOfRange)
 	tk.MustGetErrCode("alter table t modify column a tinyint", mysql.ErrDataOutOfRange)
+	_, err := tk.Exec("admin check table t")
+	c.Assert(err, IsNil)
 }
 
 func (s *testColumnTypeChangeSuite) TestColumnTypeChangeStateBetweenInteger(c *C) {
@@ -149,6 +151,9 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeStateBetweenInteger(c *C
 	hook := &ddl.TestDDLCallback{}
 	var checkErr error
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if checkErr != nil {
+			return
+		}
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
@@ -177,8 +182,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeStateBetweenInteger(c *C
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	// Alter sql will modify column c2 to tinyint not null.
 	SQL := "alter table t modify column c2 tinyint not null"
-	_, err := tk.Exec(SQL)
-	c.Assert(err, IsNil)
+	tk.MustExec(SQL)
 	// Assert the checkErr in the job of every state.
 	c.Assert(checkErr, IsNil)
 
@@ -188,7 +192,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeStateBetweenInteger(c *C
 	c.Assert(len(tbl.Cols()), Equals, 2)
 	col := getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2", false)
 	c.Assert(col, NotNil)
-	c.Assert(col.Flag&parser_mysql.NotNullFlag, Not(Equals), uint(0))
+	c.Assert(parser_mysql.HasNotNullFlag(col.Flag), Equals, true)
 	c.Assert(col.Flag&parser_mysql.NoDefaultValueFlag, Not(Equals), uint(0))
 	c.Assert(col.Tp, Equals, parser_mysql.TypeTiny)
 	c.Assert(col.ChangeStateInfo, IsNil)

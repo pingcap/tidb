@@ -685,7 +685,7 @@ func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.Ta
 		return nil, nil, nil, jp, errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(*(jp.oldColName), tblInfo.Name))
 	}
 
-	return dbInfo, tblInfo, oldCol, jp, err
+	return dbInfo, tblInfo, oldCol, jp, errors.Trace(err)
 }
 
 func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -784,7 +784,7 @@ func rollbackModifyColumnJobWithData(t *meta.Meta, tblInfo *model.TableInfo, job
 	}
 	ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
 	if err != nil {
-		return ver, err
+		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// Refactor the job args to add the abandoned temporary index ids into delete range table.
@@ -816,8 +816,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		}
 		// none -> delete only
-		updateChangingInfo(job, changingCol, changingIdxs, model.StateDeleteOnly)
-		job.Args = append(job.Args, changingCol, changingIdxs)
+		updateChangingInfo(changingCol, changingIdxs, model.StateDeleteOnly)
 		failpoint.Inject("mockInsertValueAfterCheckNull", func(val failpoint.Value) {
 			if valStr, ok := val.(string); ok {
 				var ctx sessionctx.Context
@@ -835,6 +834,13 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		})
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != changingCol.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
+		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
+		job.SchemaState = model.StateDeleteOnly
+		job.Args = append(job.Args, changingCol, changingIdxs)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
 		if !mysql.HasNotNullFlag(oldCol.Flag) && mysql.HasNotNullFlag(changingCol.Flag) {
@@ -848,12 +854,20 @@ func (w *worker) doModifyColumnTypeWithData(
 			}
 		}
 		// delete only -> write only
-		updateChangingInfo(job, changingCol, changingIdxs, model.StateWriteOnly)
+		updateChangingInfo(changingCol, changingIdxs, model.StateWriteOnly)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != changingCol.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		updateChangingInfo(job, changingCol, changingIdxs, model.StateWriteReorganization)
+		updateChangingInfo(changingCol, changingIdxs, model.StateWriteReorganization)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != changingCol.State)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		tbl, err := getTable(d.store, dbInfo.ID, tblInfo)
 		if err != nil {
@@ -913,7 +927,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			// TODO: Do rollback.
 			return ver, errors.Trace(err)
 		}
-		updateChangingInfo(job, changingCol, changingIdxs, model.StatePublic)
+		updateChangingInfo(changingCol, changingIdxs, model.StatePublic)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != changingCol.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -1124,8 +1138,7 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 	return
 }
 
-func updateChangingInfo(job *model.Job, changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo, schemaState model.SchemaState) {
-	job.SchemaState = schemaState
+func updateChangingInfo(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInfo, schemaState model.SchemaState) {
 	changingCol.State = schemaState
 	for _, idx := range changingIdxs {
 		idx.State = schemaState
@@ -1166,8 +1179,7 @@ func (w *worker) doModifyColumn(
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
-	job.Args[0] = []int64{}
-	job.Args[1] = []int64{}
+	job.Args = []interface{}{[]int64{}, []int64{}}
 	return ver, nil
 }
 
@@ -1394,8 +1406,7 @@ func rollbackModifyColumnJob(t *meta.Meta, tblInfo *model.TableInfo, job *model.
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
-	job.Args[0] = []int64{}
-	job.Args[1] = []int64{}
+	job.Args = []interface{}{[]int64{}, []int64{}}
 	return ver, nil
 }
 
@@ -1411,7 +1422,6 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	}
 	defer w.sessPool.put(ctx)
 
-	// If there is a null value inserted, it cannot be modified and needs to be rollback.
 	skipCheck := false
 	failpoint.Inject("skipMockContextDoExec", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1419,6 +1429,7 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 		}
 	})
 	if !skipCheck {
+		// If there is a null value inserted, it cannot be modified and needs to be rollback.
 		err = checkForNullValue(ctx, isModifiedType, dbInfo.Name, tblInfo.Name, newColName, cols...)
 		if err != nil {
 			return errors.Trace(err)
