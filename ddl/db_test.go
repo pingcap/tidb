@@ -2094,6 +2094,7 @@ LOOP:
 
 	// add timestamp type column
 	s.mustExec(tk, c, "create table test_on_update_c (c1 int, c2 timestamp);")
+	defer tk.MustExec("drop table test_on_update_c;")
 	s.mustExec(tk, c, "alter table test_on_update_c add column c3 timestamp null default '2017-02-11' on update current_timestamp;")
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_c"))
@@ -2105,6 +2106,7 @@ LOOP:
 	c.Assert(hasNotNull, IsFalse)
 	// add datetime type column
 	s.mustExec(tk, c, "create table test_on_update_d (c1 int, c2 datetime);")
+	defer tk.MustExec("drop table test_on_update_d;")
 	s.mustExec(tk, c, "alter table test_on_update_d add column c3 datetime on update current_timestamp;")
 	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_d"))
@@ -2115,8 +2117,9 @@ LOOP:
 	hasNotNull = mysql.HasNotNullFlag(colC.Flag)
 	c.Assert(hasNotNull, IsFalse)
 
-	// add datetime type column
+	// add year type column
 	s.mustExec(tk, c, "create table test_on_update_e (c1 int);")
+	defer tk.MustExec("drop table test_on_update_e;")
 	s.mustExec(tk, c, "insert into test_on_update_e (c1) values (0);")
 	s.mustExec(tk, c, "alter table test_on_update_e add column c2 year not null;")
 	tk.MustQuery("select c2 from test_on_update_e").Check(testkit.Rows("0"))
