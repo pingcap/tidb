@@ -86,7 +86,7 @@ type stmtTexter interface {
 	stmtText() string
 }
 
-// New returns a Parser object.
+// New returns a Parser object with default SQL mode.
 func New() *Parser {
 	if ast.NewValueExpr == nil ||
 		ast.NewParamMarkerExpr == nil ||
@@ -99,6 +99,8 @@ func New() *Parser {
 		cache: make([]yySymType, 200),
 	}
 	p.EnableWindowFunc(true)
+	mode, _ := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	p.SetSQLMode(mode)
 	return p
 }
 
