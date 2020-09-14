@@ -425,9 +425,7 @@ func (ds *DataSource) generateIndexMergeOrPaths() {
 				sel = SelectionFactor
 			}
 			possiblePath.CountAfterAccess = sel * ds.tableStats.RowCount
-			if possiblePath != nil {
-				ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
-			}
+			ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
 		}
 	}
 }

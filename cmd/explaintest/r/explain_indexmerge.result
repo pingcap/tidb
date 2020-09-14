@@ -97,6 +97,13 @@ label = "cop"
 }
 
 set session tidb_enable_index_merge = off;
+explain select /*+ use_index_merge(t, primary, tb, tc) */ * from t where a <= 500000 or b <= 1000000 or c <= 3000000;
+id	estRows	task	access object	operator info
+IndexMerge_9	3560000.00	root		
+├─TableRangeScan_5(Build)	500000.00	cop[tikv]	table:t	range:[-inf,500000], keep order:false
+├─IndexRangeScan_6(Build)	1000000.00	cop[tikv]	table:t, index:tb(b)	range:[-inf,1000000], keep order:false
+├─IndexRangeScan_7(Build)	3000000.00	cop[tikv]	table:t, index:tc(c)	range:[-inf,3000000], keep order:false
+└─TableRowIDScan_8(Probe)	3560000.00	cop[tikv]	table:t	keep order:false
 explain select /*+ use_index_merge(t, tb, tc) */ * from t where b < 50 or c < 5000000;
 id	estRows	task	access object	operator info
 IndexMerge_8	4999999.00	root		
