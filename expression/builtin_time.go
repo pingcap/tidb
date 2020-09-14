@@ -2870,7 +2870,7 @@ func (du *baseDateArithmitical) add(ctx sessionctx.Context, date types.Time, int
 	// fix https://github.com/pingcap/tidb/issues/11329
 	if goTime.Year() == 0 {
 		hour, minute, second := goTime.Clock()
-		date.SetCoreTime(types.FromDate(0, 0, 0, hour, minute, second, goTime.Nanosecond()<<3))
+		date.SetCoreTime(types.FromDate(0, 0, 0, hour, minute, second, goTime.Nanosecond()/1000))
 		return date, false, nil
 	}
 
@@ -2938,7 +2938,7 @@ func (du *baseDateArithmitical) sub(ctx sessionctx.Context, date types.Time, int
 	// fix https://github.com/pingcap/tidb/issues/11329
 	if goTime.Year() == 0 {
 		hour, minute, second := goTime.Clock()
-		date.SetCoreTime(types.FromDate(0, 0, 0, hour, minute, second, goTime.Nanosecond()<<3))
+		date.SetCoreTime(types.FromDate(0, 0, 0, hour, minute, second, goTime.Nanosecond()/1000))
 		return date, false, nil
 	}
 

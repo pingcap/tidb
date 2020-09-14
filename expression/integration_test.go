@@ -7323,7 +7323,7 @@ func (s *testIntegrationSuite) TestIssue17476(c *C) {
 	tk.MustQuery(`SELECT * FROM (table_int_float_varchar AS tmp3) WHERE (col_varchar_6 AND NULL) IS NULL AND col_int_6=0;`).Check(testkit.Rows("13 0 -0.1 <nil>"))
 }
 
-func (s *testIntegrationSerialSuite) TestIssue11645(c *C) {
+func (s *testIntegrationSuite) TestIssue11645(c *C) {
 	defer s.cleanEnv(c)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustQuery(`SELECT DATE_ADD('1000-01-01 00:00:00', INTERVAL -2 HOUR);`).Check(testkit.Rows("0999-12-31 22:00:00"))
