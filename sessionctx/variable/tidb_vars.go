@@ -69,6 +69,9 @@ const (
 	// It is read-only.
 	TiDBCurrentTS = "tidb_current_ts"
 
+	// TiDBLastTxnInfo is used to get the last transaction info within the current session.
+	TiDBLastTxnInfo = "tidb_last_txn_info"
+
 	// tidb_config is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
 
