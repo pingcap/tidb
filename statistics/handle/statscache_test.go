@@ -130,7 +130,7 @@ func (s *testStatsSuite) TestLoadHistWithInvalidIndex(c *C) {
 	tableInfo1 := tbl1.Meta()
 
 	//erease old table
-	h.EraseTable(tbl1.Meta().ID)
+	h.EraseTable4Test(tbl1.Meta().ID)
 
 	//add empty table
 	statsTbl1 := h.GetTableStats(tableInfo1)

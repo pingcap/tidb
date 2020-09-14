@@ -680,12 +680,6 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
-// CopyMeta meta data from histogram without bound bucket and scalars.
-func (hg *Histogram) CopyMeta() *Histogram {
-	newHist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, hg.Tp, 0, hg.TotColSize)
-	return newHist
-}
-
 // Copy deep copies the histogram.
 func (hg *Histogram) Copy() *Histogram {
 	newHist := *hg
@@ -768,19 +762,6 @@ func (c *Column) MemoryUsage() (sum int64) {
 		sum += c.CMSketch.MemoryUsage()
 	}
 	return
-}
-
-// CopyMeta Column meta data ,there is not bound bucket and scalarsin histogram.
-func (c *Column) CopyMeta() *Column {
-	newColumn := &Column{
-		Histogram:  *c.Histogram.CopyMeta(),
-		PhysicalID: c.PhysicalID,
-		Info:       c.Info,
-		Count:      c.Count,
-		IsHandle:   c.IsHandle,
-		Flag:       c.Flag,
-	}
-	return newColumn
 }
 
 // HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
@@ -920,19 +901,6 @@ type Index struct {
 
 func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
-}
-
-// CopyMeta meta data from histogram without bound bucket and scalars .
-func (idx *Index) CopyMeta() *Index {
-	newIndex := &Index{
-		Histogram:  *idx.Histogram.CopyMeta(),
-		PhysicalID: idx.PhysicalID,
-		Info:       idx.Info,
-		StatsVer:   idx.StatsVer,
-		Flag:       idx.Flag,
-	}
-
-	return newIndex
 }
 
 // HistogramNeededIndices stores the Index whose Histograms need to be loaded from physical kv layer.

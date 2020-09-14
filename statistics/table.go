@@ -159,8 +159,8 @@ func (t *Table) Copy() *Table {
 	return nt
 }
 
-// CopyMeta copies the current table only with metadata.
-func (t *Table) CopyMeta() *Table {
+// CopyWithoutBucketsAndCMS copies the current table only with metadata.
+func (t *Table) CopyWithoutBucketsAndCMS() *Table {
 	newHistColl := HistColl{
 		PhysicalID:     t.PhysicalID,
 		HavePhysicalID: t.HavePhysicalID,
@@ -171,10 +171,27 @@ func (t *Table) CopyMeta() *Table {
 		ModifyCount:    t.ModifyCount,
 	}
 	for id, col := range t.Columns {
-		newHistColl.Columns[id] = col.CopyMeta()
+		oldHg := &col.Histogram
+		newHg := NewHistogram(oldHg.ID, oldHg.NDV, oldHg.NullCount, oldHg.LastUpdateVersion, oldHg.Tp, 0, oldHg.TotColSize)
+		newHistColl.Columns[id] = &Column{
+			Histogram:  *newHg,
+			PhysicalID: col.PhysicalID,
+			Info:       col.Info,
+			Count:      col.Count,
+			IsHandle:   col.IsHandle,
+			Flag:       col.Flag,
+		}
 	}
 	for id, idx := range t.Indices {
-		newHistColl.Indices[id] = idx.CopyMeta()
+		oldHg := &idx.Histogram
+		newHg := NewHistogram(oldHg.ID, oldHg.NDV, oldHg.NullCount, oldHg.LastUpdateVersion, oldHg.Tp, 0, oldHg.TotColSize)
+		newHistColl.Indices[id] = &Index{
+			Histogram:  *newHg,
+			PhysicalID: idx.PhysicalID,
+			Info:       idx.Info,
+			StatsVer:   idx.StatsVer,
+			Flag:       idx.Flag,
+		}
 	}
 	nt := &Table{
 		HistColl: newHistColl,

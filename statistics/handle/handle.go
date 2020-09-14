@@ -229,10 +229,10 @@ func (h *Handle) GetMemConsumed() (size int64) {
 	return
 }
 
-// EraseTable erease a table by ID and add new empty (with Meta) table, only used in test.
-func (h *Handle) EraseTable(ID int64) {
+// EraseTable4Test erase a table by ID and add new empty (with Meta) table, only used in test.
+func (h *Handle) EraseTable4Test(ID int64) {
 	table, _ := h.statsCache.Lookup(ID)
-	h.statsCache.Insert(table.CopyMeta())
+	h.statsCache.Insert(table.CopyWithoutBucketsAndCMS())
 }
 
 // GetAllTableStatsMemUsage get all the mem usage with true table.

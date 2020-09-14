@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 )
 
-// statsCache caches Regions loaded from PD.
+// statsCache caches table statistics.
 type statsCache struct {
 	mu          sync.Mutex
 	cache       *kvcache.SimpleLRUCache
@@ -112,7 +112,7 @@ func (sc *statsCache) Insert(table *statistics.Table) {
 			return
 		}
 		sc.memTracker.Consume(-evictedValue.(*statistics.Table).MemoryUsage())
-		sc.cache.Put(evictedKey, evictedValue.(*statistics.Table).CopyMeta())
+		sc.cache.Put(evictedKey, evictedValue.(*statistics.Table).CopyWithoutBucketsAndCMS())
 	}
 	sc.Erase(table.PhysicalID)
 	sc.memTracker.Consume(mem)
