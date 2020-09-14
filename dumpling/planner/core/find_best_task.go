@@ -685,7 +685,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				}
 			}
 		}
-		if ds.table.Meta().GetPartitionInfo() != nil && !tryOldPartitionImplementation(ds.ctx) {
+		if ds.table.Meta().GetPartitionInfo() != nil && ds.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 			canConvertPointGet = false
 		}
 		if canConvertPointGet {
