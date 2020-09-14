@@ -548,7 +548,7 @@ func NewSessionVars() *SessionVars {
 		enableStreaming = "0"
 	}
 	terror.Log(vars.SetSystemVar(TiDBEnableStreaming, enableStreaming))
-	terror.Log(vars.SetSystemVar(TIDBMemQuotaQuery, strconv.FormatInt(vars.MemQuota.MemQuotaQuery,10)))
+	terror.Log(vars.SetSystemVar(TIDBMemQuotaQuery, strconv.FormatInt(vars.MemQuota.MemQuotaQuery, 10)))
 	return vars
 }
 
