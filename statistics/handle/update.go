@@ -503,7 +503,7 @@ func (h *Handle) UpdateErrorRate(is infoschema.InfoSchema) {
 
 // HandleUpdateStats update the stats using feedback.
 func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
-	sql := "SELECT distinct table_id from mysql.stats_meta"
+	sql := "SELECT distinct table_id from mysql.stats_feedback"
 	tables, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -516,7 +516,7 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 		// this func lets `defer` works normally, where `Close()` should be called before any return
 		err = func() error {
 			tbl := ptbl.GetInt64(0)
-			sql = fmt.Sprintf("select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%d order by table_id, hist_id, is_index", tbl)
+			sql = fmt.Sprintf("select table_id, hist_id, is_index, feedback from mysql.stats_feedback where table_id=%d order by hist_id, is_index", tbl)
 			rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 			if len(rc) > 0 {
 				defer terror.Call(rc[0].Close)
