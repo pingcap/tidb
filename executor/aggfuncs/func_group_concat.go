@@ -71,29 +71,6 @@ func (e *baseGroupConcat4String) truncatePartialResultIfNeed(sctx sessionctx.Con
 	return nil
 }
 
-func evalStringWithFrac(sctx sessionctx.Context, arg expression.Expression, row chunk.Row) (str string, isNull bool, err error) {
-	if arg.GetType().EvalType() == types.ETDecimal {
-		var dec *types.MyDecimal
-		dec, isNull, err = arg.EvalDecimal(sctx, row)
-		if err != nil {
-			return
-		}
-		if isNull {
-			return
-		}
-		if decimal := arg.GetType().Decimal; decimal >= 0 {
-			err = dec.Round(dec, decimal, types.ModeHalfEven)
-			if err != nil {
-				return
-			}
-		}
-		str = string(hack.String(dec.ToString()))
-		return
-	}
-	str, isNull, err = arg.EvalString(sctx, row)
-	return
-}
-
 type basePartialResult4GroupConcat struct {
 	valsBuf *bytes.Buffer
 	buffer  *bytes.Buffer

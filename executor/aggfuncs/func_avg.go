@@ -96,18 +96,12 @@ type avgOriginal4Decimal struct {
 func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgDecimal)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
+		input, isNull, err := evalDecimalWithFrac(sctx, e.args[0], row)
 		if err != nil {
 			return 0, err
 		}
 		if isNull {
 			continue
-		}
-		if decimal := e.args[0].GetType().Decimal; decimal >= 0 {
-			err = input.Round(input, decimal, types.ModeHalfEven)
-			if err != nil {
-				return 0, err
-			}
 		}
 
 		newSum := new(types.MyDecimal)
@@ -124,7 +118,7 @@ func (e *avgOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsI
 func (e *avgOriginal4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4AvgDecimal)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastEnd+i])
+		input, isNull, err := evalDecimalWithFrac(sctx, e.args[0], rows[lastEnd+i])
 		if err != nil {
 			return err
 		}
@@ -140,7 +134,7 @@ func (e *avgOriginal4Decimal) Slide(sctx sessionctx.Context, rows []chunk.Row, l
 		p.count++
 	}
 	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastStart+i])
+		input, isNull, err := evalDecimalWithFrac(sctx, e.args[0], rows[lastStart+i])
 		if err != nil {
 			return err
 		}
@@ -165,18 +159,12 @@ type avgPartial4Decimal struct {
 func (e *avgPartial4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgDecimal)(pr)
 	for _, row := range rowsInGroup {
-		inputSum, isNull, err := e.args[1].EvalDecimal(sctx, row)
+		inputSum, isNull, err := evalDecimalWithFrac(sctx, e.args[1], row)
 		if err != nil {
 			return 0, err
 		}
 		if isNull {
 			continue
-		}
-		if decimal := e.args[1].GetType().Decimal; decimal >= 0 {
-			err = inputSum.Round(inputSum, decimal, types.ModeHalfEven)
-			if err != nil {
-				return 0, err
-			}
 		}
 
 		inputCount, isNull, err := e.args[0].EvalInt(sctx, row)
@@ -239,18 +227,12 @@ func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 func (e *avgOriginal4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
+		input, isNull, err := evalDecimalWithFrac(sctx, e.args[0], row)
 		if err != nil {
 			return memDelta, err
 		}
 		if isNull {
 			continue
-		}
-		if decimal := e.args[0].GetType().Decimal; decimal >= 0 {
-			err = input.Round(input, decimal, types.ModeHalfEven)
-			if err != nil {
-				return memDelta, err
-			}
 		}
 
 		hash, err := input.ToHashKey()

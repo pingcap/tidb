@@ -456,18 +456,12 @@ func (e *firstRow4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		return memDelta, nil
 	}
 	if len(rowsInGroup) > 0 {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, rowsInGroup[0])
+		input, isNull, err := evalDecimalWithFrac(sctx, e.args[0], rowsInGroup[0])
 		if err != nil {
 			return memDelta, err
 		}
 		p.gotFirstRow, p.isNull = true, isNull
 		if input != nil {
-			if decimal := e.args[0].GetType().Decimal; decimal >= 0 {
-				err = input.Round(input, decimal, types.ModeHalfEven)
-				if err != nil {
-					return memDelta, err
-				}
-			}
 			p.val = *input
 		}
 	}

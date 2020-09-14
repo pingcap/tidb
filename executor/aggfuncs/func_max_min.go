@@ -759,18 +759,12 @@ func (e *maxMin4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 func (e *maxMin4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinDecimal)(pr)
 	for _, row := range rowsInGroup {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
+		input, isNull, err := evalDecimalWithFrac(sctx, e.args[0], row)
 		if err != nil {
 			return 0, err
 		}
 		if isNull {
 			continue
-		}
-		if decimal := e.args[0].GetType().Decimal; decimal >= 0 {
-			err = input.Round(input, decimal, types.ModeHalfEven)
-			if err != nil {
-				return 0, err
-			}
 		}
 
 		if p.isNull {
@@ -832,7 +826,7 @@ func (e *maxMin4DecimalSliding) UpdatePartialResult(sctx sessionctx.Context, row
 func (e *maxMin4DecimalSliding) Slide(sctx sessionctx.Context, rows []chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4MaxMinDecimal)(pr)
 	for i := uint64(0); i < shiftEnd; i++ {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastEnd+i])
+		input, isNull, err := evalDecimalWithFrac(sctx, e.args[0], rows[lastEnd+i])
 		if err != nil {
 			return err
 		}
@@ -844,7 +838,7 @@ func (e *maxMin4DecimalSliding) Slide(sctx sessionctx.Context, rows []chunk.Row,
 		}
 	}
 	for i := uint64(0); i < shiftStart; i++ {
-		input, isNull, err := e.args[0].EvalDecimal(sctx, rows[lastStart+i])
+		input, isNull, err := evalDecimalWithFrac(sctx, e.args[0], rows[lastStart+i])
 		if err != nil {
 			return err
 		}
