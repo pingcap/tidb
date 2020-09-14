@@ -45,8 +45,11 @@ import (
 	"go.uber.org/zap"
 )
 
-var tikvTxnRegionsNumHistogramWithCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
-var tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
+var (
+	tikvTxnRegionsNumHistogramWithCoprocessor      = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("coprocessor")
+	tikvTxnRegionsNumHistogramWithBatchCoprocessor = metrics.TiKVTxnRegionsNumHistogram.WithLabelValues("batch_coprocessor")
+	coprCacheHistogramEvict                        = metrics.DistSqlCoprCacheHistogram.WithLabelValues("evict")
+)
 
 // CopClient is coprocessor client.
 type CopClient struct {
@@ -725,6 +728,9 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 		} else {
 			remainTasks = remainTasks[1:]
 		}
+	}
+	if worker.store.coprCache != nil && worker.store.coprCache.cache.Metrics != nil {
+		coprCacheHistogramEvict.Observe(float64(worker.store.coprCache.cache.Metrics.KeysEvicted()))
 	}
 }
 

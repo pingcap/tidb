@@ -43,6 +43,9 @@ import (
 
 var (
 	errQueryInterrupted = terror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
+
+	coprCacheHistogramHit   = metrics.DistSqlCoprCacheHistogram.WithLabelValues("hit")
+	coprCacheHistogramMiss  = metrics.DistSqlCoprCacheHistogram.WithLabelValues("miss")
 )
 
 var (
@@ -154,6 +157,10 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if len(r.selectResp.Chunks) != 0 {
 			break
 		}
+	}
+	if r.stats != nil {
+		coprCacheHistogramHit.Observe(float64(r.stats.CoprCacheHitNum))
+		coprCacheHistogramMiss.Observe(float64(len(r.stats.copRespTime)-int(r.stats.CoprCacheHitNum)))
 	}
 	return nil
 }

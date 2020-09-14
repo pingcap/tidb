@@ -52,4 +52,12 @@ var (
 			Help:      "number of partial results for each query.",
 		},
 	)
+	DistSqlCoprCacheHistogram = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "distsql",
+			Name:      "copr_cache",
+			Help:      "coprocessor cache hit, evict and miss number",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16),
+		}, []string{LblType})
 )
