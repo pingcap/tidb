@@ -862,7 +862,7 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 		var datums []types.Datum
 		for i, idx := range handleIdx {
 			// If the new collation is enabled and the handle contains non-binary string,
-			// we change the collation to "utf8mb4_bin" to avoid encode sortKey again.
+			// we change the collation to "binary" to avoid encode sortKey again.
 			rtp := e.handleCols[i].RetType
 			if collate.NewCollationEnabled() && rtp.EvalType() == types.ETString &&
 				!mysql.HasBinaryFlag(rtp.Flag) && tp == getHandleFromIndex {
@@ -873,7 +873,9 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			}
 			datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
 		}
-		tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
+		if tp == getHandleFromTable {
+			tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
+		}
 		handleEncoded, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, datums...)
 		if err != nil {
 			return nil, err
