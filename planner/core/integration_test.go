@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -1564,4 +1565,49 @@ func (s *testIntegrationSuite) TestDeleteUsingJoin(c *C) {
 	tk.MustExec("delete t1.* from t1 join t2 using (a)")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("2 2"))
+}
+
+func (s *testIntegrationSerialSuite) Test19942(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("SET @@tidb_enable_clustered_index=1;")
+	tk.MustExec("CREATE TABLE test.`t` (" +
+		"  `a` int(11) NOT NULL," +
+		"  `b` varchar(10) COLLATE utf8_general_ci NOT NULL," +
+		"  `c` varchar(50) COLLATE utf8_general_ci NOT NULL," +
+		"  `d` char(10) NOT NULL," +
+		"  PRIMARY KEY (`c`)," +
+		"  UNIQUE KEY `a_uniq` (`a`)," +
+		"  UNIQUE KEY `b_uniq` (`b`)," +
+		"  UNIQUE KEY `d_uniq` (`d`)," +
+		"  KEY `a_idx` (`a`)," +
+		"  KEY `b_idx` (`b`)," +
+		"  KEY `d_idx` (`d`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
+	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (1, '1', '0', '1');")
+	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (2, ' 2', ' 0', ' 2');")
+	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (3, '  3 ', '  3 ', '  3 ');")
+	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (4, 'a', 'a   ', 'a');")
+	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (5, ' A  ', ' A   ', ' A  ');")
+	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (6, ' E', 'é        ', ' E');")
+
+	mkr := func() [][]interface{} {
+		return testutil.RowsWithSep("|",
+			"3|  3 |  3 |  3",
+			"2| 2  0| 2",
+			"5| A  | A   | A",
+			"1|1|0|1",
+			"4|a|a   |a",
+			"6| E|é        | E")
+	}
+	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`a_uniq`);").Check(mkr())
+	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`b_uniq`);").Check(mkr())
+	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`d_uniq`);").Check(mkr())
+	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`a_idx`);").Check(mkr())
+	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`b_idx`);").Check(mkr())
+	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`d_idx`);").Check(mkr())
+	tk.MustExec("admin check table t")
 }
