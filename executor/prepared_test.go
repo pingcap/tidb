@@ -14,14 +14,19 @@
 package executor_test
 
 import (
+	"context"
+	"crypto/tls"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
+
 	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -104,12 +109,52 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedPlan, Equals, "")
 }
 
+type mockSessionManager2 struct {
+	se session.Session
+}
+
+func (sm *mockSessionManager2) ShowProcessList() map[uint64]*util.ProcessInfo {
+	return make(map[uint64]*util.ProcessInfo)
+}
+
+func (sm *mockSessionManager2) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
+	return sm.se.ShowProcess(), true
+}
+func (sm *mockSessionManager2) Kill(connectionID uint64, query bool) {
+	atomic.StoreUint32(&sm.se.GetSessionVars().Killed, 1)
+}
+func (sm *mockSessionManager2) UpdateTLSConfig(cfg *tls.Config) {}
+
 func (s *testSuite9) TestPreparedStmtWithHint(c *C) {
 	// see https://github.com/pingcap/tidb/issues/18535
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("prepare stmt from \"select /*+ max_execution_time(100) */ sleep(1)\"")
-	tk.MustQuery("execute stmt").Check(testkit.Rows("1")) // hint should work and interrupt the sleep execution
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		store.Close()
+		dom.Close()
+	}()
+
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+
+	sm := &mockSessionManager2{
+		se: se,
+	}
+	_, err = se.Execute(context.Background(), "prepare stmt from \"select /*+ max_execution_time(100) */ sleep(10)\"")
+	c.Assert(err, IsNil)
+	se.SetSessionManager(sm)
+	go func() {
+		for i := 0; i < 100; i++ {
+			pi := se.ShowProcess()
+			if pi != nil && pi.MaxExecutionTime == 100 {
+				se.GetSessionManager().Kill(0, true)
+				break
+			}
+		}
+	}()
+	rs, err := se.Execute(context.Background(), "execute stmt")
+	tk := testkit.NewTestKit(c, store)
+	tk.ResultSetToResult(rs[0], Commentf("%v", rs[0])).Check(testkit.Rows("1"))
 }
 
 func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
