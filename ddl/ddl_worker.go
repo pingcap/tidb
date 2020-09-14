@@ -140,6 +140,8 @@ func (w *worker) start(d *ddlCtx) {
 			case <-w.ddlJobCh:
 			case <-w.ctx.Done():
 				return
+			default:
+				continue
 			}
 		} else {
 			select {
@@ -598,7 +600,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 	if job.IsFinished() {
-		return ver, err
+		return
 	}
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
@@ -701,7 +703,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
 		if job.State == model.JobStateCancelled {
 			logutil.Logger(w.logCtx).Info("[ddl] DDL job is cancelled normally", zap.Error(err))
-			return ver, err
+			return ver, nil
 		}
 		logutil.Logger(w.logCtx).Error("[ddl] run DDL job error", zap.Error(err))
 
@@ -715,7 +717,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 			job.State = model.JobStateCancelling
 		}
 	}
-	return ver, err
+	return
 }
 
 func loadDDLVars(w *worker) error {

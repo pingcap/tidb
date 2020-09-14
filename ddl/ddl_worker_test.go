@@ -596,6 +596,10 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	// set up hook
 	firstJobID := job.ID
 	tests := buildCancelJobTests(firstJobID)
+	// for _, t := range tests {
+	// 	fmt.Println(t)
+	// }
+	// log.Fatalln("die")
 	var checkErr error
 	var mu sync.Mutex
 	var test *testCancelJob
