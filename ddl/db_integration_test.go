@@ -280,6 +280,28 @@ func (s *testIntegrationSuite2) TestIssue6101(c *C) {
 	tk.MustExec("drop table t1")
 }
 
+func (s *testIntegrationSuite2) TestIssue19229(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE enumt (type enum('a', 'b') );")
+	_, err := tk.Exec("insert into enumt values('xxx');")
+	terr := errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.WarnDataTruncated))
+	_, err = tk.Exec("insert into enumt values(-1);")
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.WarnDataTruncated))
+	tk.MustExec("drop table enumt")
+
+	tk.MustExec("CREATE TABLE sett (type set('a', 'b') );")
+	_, err = tk.Exec("insert into sett values('xxx');")
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.WarnDataTruncated))
+	_, err = tk.Exec("insert into sett values(-1);")
+	terr = errors.Cause(err).(*terror.Error)
+	c.Assert(terr.Code(), Equals, errors.ErrCode(errno.WarnDataTruncated))
+	tk.MustExec("drop table sett")
+}
+
 func (s *testIntegrationSuite1) TestIndexLength(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
