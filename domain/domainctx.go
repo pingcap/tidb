@@ -44,10 +44,6 @@ func GetDomain(ctx sessionctx.Context) *Domain {
 
 // CanRuntimePruneTbl indicates whether tbl support runtime prune.
 func CanRuntimePruneTbl(ctx sessionctx.Context, tbl *model.TableInfo) bool {
-	_, ok := ctx.GetSessionVars().Users["try_old_partition_implementation"]
-	if ok {
-		return false
-	}
 	if tbl.Partition == nil {
 		return false
 	}
@@ -56,9 +52,5 @@ func CanRuntimePruneTbl(ctx sessionctx.Context, tbl *model.TableInfo) bool {
 
 // CanRuntimePrune indicates whether tbl support runtime prune for table and first partition id.
 func CanRuntimePrune(ctx sessionctx.Context, tid, p0Id int64) bool {
-	_, ok := ctx.GetSessionVars().Users["try_old_partition_implementation"]
-	if ok {
-		return false
-	}
 	return GetDomain(ctx).StatsHandle().CanRuntimePrune(tid, p0Id)
 }
