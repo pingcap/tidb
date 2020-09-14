@@ -56,6 +56,8 @@ const (
 	SchemaAmender
 	// SampleStep skips 'SampleStep - 1' number of keys after each returned key.
 	SampleStep
+	// CommitHook is a callback function called right after the transaction gets committed
+	CommitHook
 )
 
 // Priority value for transaction priority.
@@ -478,7 +480,7 @@ type Iterator interface {
 
 // SplittableStore is the kv store which supports split regions.
 type SplittableStore interface {
-	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool) (regionID []uint64, err error)
+	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool, tableID *int64) (regionID []uint64, err error)
 	WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }

@@ -285,8 +285,8 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 	} else if types.ErrOverflow.Equal(err) {
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
 	} else if types.ErrTruncated.Equal(err) {
-		err = table.ErrWarnDataTruncated.GenWithStackByArgs(colName, rowIdx+1)
-	} else if types.ErrWrongValue.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
+		err = types.ErrTruncated.GenWithStackByArgs(colName, rowIdx+1)
+	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("truncate value failed", zap.Error(err1))
@@ -934,7 +934,6 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 		if e.stats == nil {
 			snapshotStats := &tikv.SnapshotRuntimeStats{}
 			e.stats = &runtimeStatsWithSnapshot{
-				BasicRuntimeStats:    e.runtimeStats,
 				SnapshotRuntimeStats: snapshotStats,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
