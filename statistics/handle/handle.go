@@ -272,6 +272,26 @@ func (h *Handle) SetBytesLimit(bytesLimit int64) {
 	h.statsCache.mu.Unlock()
 }
 
+// CanRuntimePrune indicates whether tbl support runtime prune for table and first partition id.
+func (h *Handle) CanRuntimePrune(tid, p0Id int64) bool {
+	if h == nil {
+		return false
+	}
+	if tid == p0Id {
+		return false
+	}
+	_, tblExists := h.statsCache.Lookup(tid)
+	if tblExists {
+		return true
+	}
+	_, partExists := h.statsCache.Lookup(p0Id)
+	if !partExists {
+		return true
+	}
+	return false
+
+}
+
 // LoadNeededHistograms will load histograms for those needed columns.
 func (h *Handle) LoadNeededHistograms() (err error) {
 	cols := statistics.HistogramNeededColumns.AllCols()
