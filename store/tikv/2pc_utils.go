@@ -147,7 +147,7 @@ func (c *twoPhaseCommitter) trySplitRegions(splitKeys [][]byte, splitRegions []R
 		regions[i] = splitRegions[i].id
 	}
 	logutil.BgLogger().Info("2PC detect large amount of mutations on some region", zap.Uint64s("regions", regions))
-	newRegions, err := c.store.SplitRegions(ctx, splitKeys, true)
+	newRegions, err := c.store.SplitRegions(ctx, splitKeys, true, nil)
 	if err != nil {
 		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64s("regions", regions), zap.Error(err))
 		return false

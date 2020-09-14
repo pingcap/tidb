@@ -108,7 +108,8 @@ func (c *execController) run(bo *Backoffer) error {
 		c.cancel = cancel
 	}
 
-	if c.containsPrimaryKey() && (actionIsCommit || actionIsCleanup || actionIsPessimisticLock) && !skipPrimary {
+	writePrimaryFirst := (actionIsCommit && !c.committer.isAsyncCommit()) || actionIsCleanup || actionIsPessimisticLock
+	if c.containsPrimaryKey() && writePrimaryFirst && !skipPrimary {
 		c.numRegions++
 		keys, err := c.handlePrimaryMutation(actionIsCommit)
 		if err != nil || keys == c.mutations.Len() {
@@ -120,7 +121,8 @@ func (c *execController) run(bo *Backoffer) error {
 		return nil
 	}
 
-	if actionIsCommit {
+	// Already spawned a goroutine for async commit transaction.
+	if actionIsCommit && !c.committer.isAsyncCommit() {
 		c.bo, cancel = NewBackofferWithVars(context.Background(), int(atomic.LoadUint64(&CommitMaxBackoff)), c.committer.txn.vars).Fork()
 		go func() {
 			err := c.handleMutations()

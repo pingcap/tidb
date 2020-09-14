@@ -14,6 +14,7 @@
 package session_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -1785,4 +1787,40 @@ func (s *testPessimisticSuite) TestSelectForUpdateWaitSeconds(c *C) {
 	tk3.MustExec("rollback")
 	tk4.MustExec("rollback")
 	tk5.MustExec("rollback")
+}
+
+func (s *testPessimisticSuite) TestSelectForUpdateConflictRetry(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableAsyncCommit = true
+	})
+
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists tk")
+	tk.MustExec("create table tk (c1 int primary key, c2 int)")
+	tk.MustExec("insert into tk values(1,1),(2,2)")
+	tk2 := testkit.NewTestKitWithInit(c, s.store)
+	tk3 := testkit.NewTestKitWithInit(c, s.store)
+
+	tk2.MustExec("begin pessimistic")
+	tk3.MustExec("begin pessimistic")
+	tk2.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
+	tk3.MustExec("update tk set c2 = c2 + 1 where c2 = 2")
+	tsCh := make(chan uint64)
+	go func() {
+		tk3.MustExec("update tk set c2 = c2 + 1 where c1 = 1")
+		lastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
+		c.Assert(err, IsNil)
+		tsCh <- lastTS
+		tk3.MustExec("commit")
+	}()
+	// tk2LastTS should be its forUpdateTS
+	tk2LastTS, err := s.store.GetOracle().GetLowResolutionTimestamp(context.Background())
+	c.Assert(err, IsNil)
+	tk2.MustExec("commit")
+
+	tk3LastTs := <-tsCh
+	// it must get a new ts on pessimistic write conflict so the latest timestamp
+	// should increase
+	c.Assert(tk3LastTs, Greater, tk2LastTS)
 }
