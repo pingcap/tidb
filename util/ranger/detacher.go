@@ -16,6 +16,7 @@ package ranger
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -470,6 +471,12 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 		cols := expression.ExtractColumns(dnfItem)
 		// If this condition contains multiple columns, we can't merge it.
 		if len(cols) != 1 {
+			mergedDNFItems = append(mergedDNFItems, dnfItem)
+			continue
+		}
+
+		// If this column is _tidb_rowid, we can't merge it since Selectivity() doesn't handle it, or infinite recursion will happen.
+		if cols[0].ID == model.ExtraHandleID {
 			mergedDNFItems = append(mergedDNFItems, dnfItem)
 			continue
 		}
