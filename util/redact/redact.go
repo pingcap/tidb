@@ -14,20 +14,62 @@
 package redact
 
 import (
+	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
 )
 
-// Error is used to desensitize error message.
-func Error(err error) error {
-	if err == nil {
-		return nil
+type redactError struct {
+	err             *terror.Error
+	redactPositions []int
+}
+
+// GenWithStackByArgs generates a new *Error with the same class and code, and new arguments.
+func (e *redactError) GenWithStackByArgs(args ...interface{}) error {
+	redactErrorArg(args, e.redactPositions)
+	return e.err.GenWithStackByArgs(args...)
+}
+
+// FastGen generates a new *Error with the same class and code, and a new arguments.
+func (e *redactError) FastGenByArgs(args ...interface{}) error {
+	redactErrorArg(args, e.redactPositions)
+	return e.err.GenWithStackByArgs(args...)
+}
+
+// Error implements the error interface.
+func (e *redactError) Error() string {
+	return e.err.Error()
+}
+
+// Equal checks if err is equal to e.
+func (e *redactError) Equal(err error) bool {
+	if redactErr, ok := err.(*redactError); ok {
+		return e.err.Equal(redactErr.err)
 	}
-	if !config.RedactLogEnabled() {
-		return err
+	return e.err.Equal(err)
+}
+
+// Equal returns terror Code.
+func (e *redactError) Code() errors.ErrCode {
+	return e.err.Code()
+}
+
+// Equal returns terror RFCCode.
+func (e *redactError) RFCCode() errors.RFCErrorCode {
+	return e.err.RFCCode()
+}
+
+func redactErrorArg(args []interface{}, position []int) {
+	if config.RedactLogEnabled() {
+		for _, pos := range position {
+			if len(args) > pos {
+				args[pos] = "?"
+			}
+		}
 	}
-	if kv.ErrKeyExists.Equal(err) {
-		return kv.ErrKeyExists.FastGenByArgs("?", "?")
-	}
-	return err
+}
+
+// NewRedactError returns a new redact error.
+func NewRedactError(err *terror.Error, redactPositions ...int) *redactError {
+	return &redactError{err, redactPositions}
 }
