@@ -222,7 +222,6 @@ func (c *anyValueFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if err != nil {
 		return nil, err
 	}
-	args[0].GetType().Flag |= bf.tp.Flag
 	*bf.tp = *args[0].GetType()
 	var sig builtinFunc
 	switch argTp {
