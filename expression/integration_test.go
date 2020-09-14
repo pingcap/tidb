@@ -2721,38 +2721,43 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 
 	// select from_unixtime
+	// NOTE (#17013): make from_unixtime stable in different timezone: the result of from_unixtime
+	// depends on the local time zone of the test environment, thus the result checking must
+	// consider the time zone convert.
+	tz := tk.Se.GetSessionVars().StmtCtx.TimeZone
 	result = tk.MustQuery("select from_unixtime(1451606400)")
-	unixTime := time.Unix(1451606400, 0).String()[:19]
+	unixTime := time.Unix(1451606400, 0).In(tz).String()[:19]
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(14516064000/10)")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.0000"))
+	result.Check(testkit.Rows(fmt.Sprintf("%s.0000", unixTime)))
 	result = tk.MustQuery("select from_unixtime('14516064000'/10)")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.000000"))
+	result.Check(testkit.Rows(fmt.Sprintf("%s.000000", unixTime)))
 	result = tk.MustQuery("select from_unixtime(cast(1451606400 as double))")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.000000"))
+	result.Check(testkit.Rows(fmt.Sprintf("%s.000000", unixTime)))
 	result = tk.MustQuery("select from_unixtime(cast(cast(1451606400 as double) as DECIMAL))")
-	result.Check(testkit.Rows("2016-01-01 08:00:00"))
+	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(cast(cast(1451606400 as double) as DECIMAL(65,1)))")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.0"))
+	result.Check(testkit.Rows(fmt.Sprintf("%s.0", unixTime)))
 	result = tk.MustQuery("select from_unixtime(1451606400.123456)")
-	unixTime = time.Unix(1451606400, 123456000).String()[:26]
+	unixTime = time.Unix(1451606400, 123456000).In(tz).String()[:26]
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1451606400.1234567)")
-	unixTime = time.Unix(1451606400, 123456700).Round(time.Microsecond).Format("2006-01-02 15:04:05.000000")[:26]
+	unixTime = time.Unix(1451606400, 123456700).In(tz).Round(time.Microsecond).Format("2006-01-02 15:04:05.000000")[:26]
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1451606400.999999)")
-	unixTime = time.Unix(1451606400, 999999000).String()[:26]
+	unixTime = time.Unix(1451606400, 999999000).In(tz).String()[:26]
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1511247196661)")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select from_unixtime('1451606400.123');")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.123000"))
+	unixTime = time.Unix(1451606400, 0).In(tz).String()[:19]
+	result.Check(testkit.Rows(fmt.Sprintf("%s.123000", unixTime)))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t value(1451606400);")
 	result = tk.MustQuery("select from_unixtime(a) from t;")
-	result.Check(testkit.Rows("2016-01-01 08:00:00"))
+	result.Check(testkit.Rows(unixTime))
 
 	// test strcmp
 	result = tk.MustQuery("select strcmp('abc', 'def')")
@@ -2806,6 +2811,24 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustQuery("select if(b=0, 1, 1/b) from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select ifnull(b, b/0) from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustQuery("select case when 1 then 1 else 1/0 end")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery(" select if(1,1,1/0)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select ifnull(1, 1/0)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("delete from t")
+	tk.MustExec("insert t values ('str2', 0)")
+	tk.MustQuery("select case when b < 1 then 1 else 1/0 end from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select case when b < 1 then 1 when 1/0 then b else 1/0 end from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select if(b < 1 , 1, 1/0) from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select ifnull(b, 1/0) from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("select case 2.0 when 2.0 then 3.0 when 3.0 then 2.0 end").Check(testkit.Rows("3.0"))
