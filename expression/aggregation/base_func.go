@@ -88,6 +88,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4Count(ctx)
 	case ast.AggFuncApproxCountDistinct:
 		a.typeInfer4ApproxCountDistinct(ctx)
+	case ast.AggFuncApproxPercentile:
+		a.typeInfer4ApproxPercentile(ctx)
 	case ast.AggFuncSum:
 		a.typeInfer4Sum(ctx)
 	case ast.AggFuncAvg:
@@ -132,6 +134,23 @@ func (a *baseFuncDesc) typeInfer4Count(ctx sessionctx.Context) {
 
 func (a *baseFuncDesc) typeInfer4ApproxCountDistinct(ctx sessionctx.Context) {
 	a.typeInfer4Count(ctx)
+}
+
+func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) {
+	switch a.Args[0].GetType().Tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+		a.RetTp = types.NewFieldType(mysql.TypeLonglong)
+	case mysql.TypeDouble, mysql.TypeFloat:
+		a.RetTp = types.NewFieldType(mysql.TypeDouble)
+	case mysql.TypeNewDecimal:
+		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
+		a.RetTp.Flen, a.RetTp.Decimal = mysql.MaxDecimalWidth, a.Args[0].GetType().Decimal
+		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
+			a.RetTp.Decimal = mysql.MaxDecimalScale
+		}
+	default:
+		a.RetTp = a.Args[0].GetType()
+	}
 }
 
 // typeInfer4Sum should returns a "decimal", otherwise it returns a "double".
@@ -277,13 +296,12 @@ func (a *baseFuncDesc) typeInfer4Std(ctx sessionctx.Context) {
 // | t     | a       | int(11) |
 // +-------+---------+---------+
 //
-// Query: `select avg(a), sum(a), count(a), bit_xor(a), bit_or(a), bit_and(a), max(a), min(a), group_concat(a), approx_count_distinct(a) from test.t;`
-//+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+--------------------------+
-//| avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) | approx_count_distinct(a) |
-//+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+--------------------------+
-//|   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |                        0 |
-//+--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+--------------------------+
-
+// Query: `select avg(a), sum(a), count(a), bit_xor(a), bit_or(a), bit_and(a), max(a), min(a), group_concat(a), approx_count_distinct(a), approx_percentile(a, 50) from test.t;`
+// +--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+--------------------------+--------------------------+
+// | avg(a) | sum(a) | count(a) | bit_xor(a) | bit_or(a) | bit_and(a)           | max(a) | min(a) | group_concat(a) | approx_count_distinct(a) | approx_percentile(a, 50) |
+// +--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+--------------------------+--------------------------+
+// |   NULL |   NULL |        0 |          0 |         0 | 18446744073709551615 |   NULL |   NULL | NULL            |                        0 |                     NULL |
+// +--------+--------+----------+------------+-----------+----------------------+--------+--------+-----------------+--------------------------+--------------------------+
 func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 	switch a.Name {
 	case ast.AggFuncCount, ast.AggFuncBitOr, ast.AggFuncBitXor:
@@ -293,7 +311,7 @@ func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 			v = types.NewIntDatum(0)
 		}
 	case ast.AggFuncFirstRow, ast.AggFuncAvg, ast.AggFuncSum, ast.AggFuncMax,
-		ast.AggFuncMin, ast.AggFuncGroupConcat:
+		ast.AggFuncMin, ast.AggFuncGroupConcat, ast.AggFuncApproxPercentile:
 		v = types.Datum{}
 	case ast.AggFuncBitAnd:
 		v = types.NewUintDatum(uint64(math.MaxUint64))
@@ -306,6 +324,7 @@ func (a *baseFuncDesc) GetDefaultValue() (v types.Datum) {
 var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncCount:               {},
 	ast.AggFuncApproxCountDistinct: {},
+	ast.AggFuncApproxPercentile:    {},
 	ast.AggFuncMax:                 {},
 	ast.AggFuncMin:                 {},
 	ast.AggFuncFirstRow:            {},

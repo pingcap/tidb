@@ -489,6 +489,9 @@ func (s *testSuite) testAggFunc(c *C, p aggTest) {
 	if p.funcName == ast.AggFuncGroupConcat {
 		args = append(args, &expression.Constant{Value: types.NewStringDatum(" "), RetType: types.NewFieldType(mysql.TypeString)})
 	}
+	if p.funcName == ast.AggFuncApproxPercentile {
+		args = append(args, &expression.Constant{Value: types.NewIntDatum(50), RetType: types.NewFieldType(mysql.TypeLong)})
+	}
 	desc, err := aggregation.NewAggFuncDesc(s.ctx, p.funcName, args, false)
 	c.Assert(err, IsNil)
 	if p.orderBy {

@@ -987,6 +987,16 @@ func (s *testIntegrationSuite) TestApproxCountDistinctInPartitionTable(c *C) {
 	tk.MustQuery("select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("1 2", "3 1"))
 }
 
+func (s *testIntegrationSuite) TestApproxPercentile(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1), (2), (3), (4), (5)")
+	tk.MustQuery("select approx_percentile(a, 1)").Check(testkit.Rows("1"))
+}
+
 func (s *testIntegrationSuite) TestIssue17813(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 

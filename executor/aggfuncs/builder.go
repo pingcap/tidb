@@ -59,6 +59,8 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildApproxCountDistinct(aggFuncDesc, ordinal)
 	case ast.AggFuncStddevPop:
 		return buildStdDevPop(aggFuncDesc, ordinal)
+	case ast.AggFuncApproxPercentile:
+		return buildApproxPercentile(ctx, aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -120,6 +122,34 @@ func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int)
 			return &approxCountDistinctPartial1{approxCountDistinctOriginal{base}}
 		case aggregation.Partial2Mode, aggregation.FinalMode:
 			return &approxCountDistinctPartial2{approxCountDistinctPartial1{approxCountDistinctOriginal{base}}}
+		}
+	}
+
+	return nil
+}
+
+func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	if aggFuncDesc.Mode == aggregation.DedupMode {
+		return nil
+	}
+
+	// Checked when building descriptor
+	percent, _, _ := expression.GetIntFromConstant(sctx, aggFuncDesc.Args[1])
+	base := basePercentile{percent: percent, baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
+
+	// if aggFuncDesc.HasDistinct {
+	// 	return nil
+	// }
+
+	switch aggFuncDesc.Mode {
+	case aggregation.CompleteMode, aggregation.Partial1Mode, aggregation.FinalMode:
+		switch aggFuncDesc.Args[0].GetType().EvalType() {
+		case types.ETInt:
+			return &percentileOriginal4Int{base}
+		case types.ETReal:
+			return &percentileOriginal4Real{base}
+		case types.ETDecimal:
+			return &percentileOriginal4Decimal{base}
 		}
 	}
 
