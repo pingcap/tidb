@@ -354,6 +354,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 
 		go d.schemaSyncer.StartCleanWork()
 		if config.TableLockEnabled() {
+			d.wg.Add(1)
 			go d.startCleanDeadTableLock()
 		}
 		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
@@ -561,7 +562,10 @@ func (d *ddl) GetHook() Callback {
 }
 
 func (d *ddl) startCleanDeadTableLock() {
-	defer goutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
+	defer func() {
+		goutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
+		d.wg.Done()
+	}()
 
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()
