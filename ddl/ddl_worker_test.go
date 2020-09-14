@@ -408,6 +408,7 @@ func checkCancelState(txn kv.Transaction, job *model.Job, test *testCancelJob) e
 	// If the action is adding index and the state is writing reorganization, it wants to test the case of cancelling the job when backfilling indexes.
 	// When the job satisfies this case of addIndexFirstReorg, the worker hasn't started to backfill indexes.
 	if test.cancelState == job.SchemaState && !addIndexFirstReorg && !job.IsRollingback() {
+		// fixme: deadlock cauz `updateDDLJob` did not trigger queue state change
 		errs, err := admin.CancelJobs(txn, test.jobIDs)
 		if err != nil {
 			checkErr = errors.Trace(err)
