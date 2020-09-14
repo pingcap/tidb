@@ -69,7 +69,7 @@ func (c *conditionChecker) checkScalarFunction(scalar *expression.ScalarFunction
 		}
 	case ast.IsNull:
 		return c.checkColumn(scalar.GetArgs()[0])
-	case ast.IsTruth, ast.IsFalsity:
+	case ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity:
 		if s, ok := scalar.GetArgs()[0].(*expression.Column); ok {
 			if s.RetType.EvalType() == types.ETString {
 				return false

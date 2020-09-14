@@ -1225,7 +1225,7 @@ func (er *expressionRewriter) positionToScalarFunc(v *ast.PositionExpr) {
 
 func (er *expressionRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 	stkLen := len(er.ctxStack)
-	op := ast.IsTruth
+	op := ast.IsTruthWithoutNull
 	if v.True == 0 {
 		op = ast.IsFalsity
 	}
