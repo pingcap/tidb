@@ -156,6 +156,32 @@ func (s *testSuite) TestSelectWithRuntimeStats(c *C) {
 	c.Assert(err, IsNil)
 }
 
+<<<<<<< HEAD
+=======
+func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
+	basic := &execdetails.BasicRuntimeStats{}
+	basic.Record(time.Second, 20)
+	s1 := &selectResultRuntimeStats{
+		copRespTime:      []time.Duration{time.Second, time.Millisecond},
+		procKeys:         []int64{100, 200},
+		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
+		totalProcessTime: time.Second,
+		totalWaitTime:    time.Second,
+		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
+	}
+	s2 := *s1
+	stmtStats := execdetails.NewRuntimeStatsColl()
+	stmtStats.RegisterStats(1, basic)
+	stmtStats.RegisterStats(1, s1)
+	stmtStats.RegisterStats(1, &s2)
+	stats := stmtStats.GetRootStats(1)
+	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 2ms}"
+	c.Assert(stats.String(), Equals, expect)
+	// Test for idempotence.
+	c.Assert(stats.String(), Equals, expect)
+}
+
+>>>>>>> db8df83... executor: add coprocessor cache hit ratio in explain analyze (#19948)
 func (s *testSuite) createSelectStreaming(batch, totalRows int, c *C) (*streamResult, []*types.FieldType) {
 	request, err := (&RequestBuilder{}).SetKeyRanges(nil).
 		SetDAGRequest(&tipb.DAGRequest{}).

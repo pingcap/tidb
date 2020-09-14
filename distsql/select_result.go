@@ -326,6 +326,7 @@ type selectResultRuntimeStats struct {
 	totalProcessTime time.Duration
 	totalWaitTime    time.Duration
 	rpcStat          tikv.RegionRequestRuntimeStats
+	CoprCacheHitNum  int64
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
@@ -338,8 +339,51 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntim
 	s.totalProcessTime += copStats.ProcessTime
 	s.totalWaitTime += copStats.WaitTime
 	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
+	if copStats.CoprCacheHit {
+		s.CoprCacheHitNum++
+	}
 }
 
+<<<<<<< HEAD
+=======
+func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := selectResultRuntimeStats{
+		copRespTime:  make([]time.Duration, 0, len(s.copRespTime)),
+		procKeys:     make([]int64, 0, len(s.procKeys)),
+		backoffSleep: make(map[string]time.Duration, len(s.backoffSleep)),
+		rpcStat:      tikv.NewRegionRequestRuntimeStats(),
+	}
+	newRs.copRespTime = append(newRs.copRespTime, s.copRespTime...)
+	newRs.procKeys = append(newRs.procKeys, s.procKeys...)
+	for k, v := range s.backoffSleep {
+		newRs.backoffSleep[k] += v
+	}
+	newRs.totalProcessTime += s.totalProcessTime
+	newRs.totalWaitTime += s.totalWaitTime
+	for k, v := range s.rpcStat.Stats {
+		newRs.rpcStat.Stats[k] = v
+	}
+	return &newRs
+}
+
+func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
+	other, ok := rs.(*selectResultRuntimeStats)
+	if !ok {
+		return
+	}
+	s.copRespTime = append(s.copRespTime, other.copRespTime...)
+	s.procKeys = append(s.procKeys, other.procKeys...)
+
+	for k, v := range other.backoffSleep {
+		s.backoffSleep[k] += v
+	}
+	s.totalProcessTime += other.totalProcessTime
+	s.totalWaitTime += other.totalWaitTime
+	s.rpcStat.Merge(other.rpcStat)
+	s.CoprCacheHitNum += other.CoprCacheHitNum
+}
+
+>>>>>>> db8df83... executor: add coprocessor cache hit ratio in explain analyze (#19948)
 func (s *selectResultRuntimeStats) String() string {
 	buf := bytes.NewBuffer(nil)
 	if s.RuntimeStats != nil {
@@ -383,6 +427,20 @@ func (s *selectResultRuntimeStats) String() string {
 				}
 			}
 		}
+<<<<<<< HEAD
+=======
+		copRPC := s.rpcStat.Stats[tikvrpc.CmdCop]
+		if copRPC != nil && copRPC.Count > 0 {
+			delete(s.rpcStat.Stats, tikvrpc.CmdCop)
+			buf.WriteString(", rpc_num: ")
+			buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
+			buf.WriteString(", rpc_time: ")
+			buf.WriteString(time.Duration(copRPC.Consume).String())
+		}
+		buf.WriteString(fmt.Sprintf(", copr_cache_hit_ratio: %v",
+			strconv.FormatFloat(float64(s.CoprCacheHitNum)/float64(len(s.copRespTime)), 'f', 2, 64)))
+		buf.WriteString("}")
+>>>>>>> db8df83... executor: add coprocessor cache hit ratio in explain analyze (#19948)
 	}
 	copRPC := s.rpcStat.Stats[tikvrpc.CmdCop]
 	if copRPC != nil && copRPC.Count > 0 {
