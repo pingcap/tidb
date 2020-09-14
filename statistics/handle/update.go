@@ -524,11 +524,11 @@ func (h *Handle) HandleUpdateStats(is infoschema.InfoSchema) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			req := rc[0].NewChunk()
-			iter := chunk.NewIterator4Chunk(req)
 			tableID, histID, isIndex := int64(-1), int64(-1), int64(-1)
 			var rows []chunk.Row
 			for {
+				req := rc[0].NewChunk()
+				iter := chunk.NewIterator4Chunk(req)
 				err := rc[0].Next(context.TODO(), req)
 				if err != nil {
 					return errors.Trace(err)
