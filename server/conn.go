@@ -50,6 +50,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
@@ -928,8 +929,14 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		if len(sqlType) > 0 {
 			var task *trace.Task
 			ctx, task = trace.NewTask(ctx, sqlType)
-			trace.Log(ctx, "sql", lc.String())
 			defer task.End()
+
+			trace.Log(ctx, "sql", lc.String())
+			ctx = logutil.WithTraceLogger(ctx)
+
+			taskId := *(*uint64)(unsafe.Pointer(task))
+			ctx = pprof.WithLabels(ctx, pprof.Labels("trace", strconv.FormatUint(taskId, 10)))
+			pprof.SetGoroutineLabels(ctx)
 		}
 	}
 	token := cc.server.getToken()

@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/trace"
 	"sort"
 	"strings"
 	"time"
@@ -353,6 +354,63 @@ func WithConnID(ctx context.Context, connID uint32) context.Context {
 		logger = zaplog.L()
 	}
 	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint32("conn", connID)))
+}
+
+// WithTrace attaches trace identifier to context
+func WithTraceLogger(ctx context.Context) context.Context {
+	var logger *zap.Logger
+	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
+		logger = ctxLogger
+	} else {
+		logger = zaplog.L()
+	}
+	return context.WithValue(ctx, ctxLogKey, wrapTraceLogger(ctx, logger))
+}
+
+func wrapTraceLogger(ctx context.Context, logger *zap.Logger) *zap.Logger {
+	return logger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+		return &traceLogger{
+			core: core,
+			enc:  zapcore.NewConsoleEncoder(zap.NewProductionEncoderConfig()),
+			ctx:  ctx,
+		}
+	}))
+}
+
+type traceLogger struct {
+	core zapcore.Core
+	enc  zapcore.Encoder
+	ctx  context.Context
+}
+
+func (l *traceLogger) Enabled(_ zapcore.Level) bool {
+	return true
+}
+
+func (l *traceLogger) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	return l.core.Check(entry, ce.AddCore(entry, l))
+}
+
+func (l *traceLogger) Sync() error {
+	return l.core.Sync()
+}
+
+func (l *traceLogger) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	buf, err := l.enc.EncodeEntry(entry, fields)
+	if err != nil {
+		return err
+	}
+	trace.Log(l.ctx, "log", buf.String())
+	buf.Free()
+	return nil
+}
+
+func (l *traceLogger) With(fields []zapcore.Field) zapcore.Core {
+	return &traceLogger{
+		core: l.core.With(fields),
+		enc:  l.enc.Clone(),
+		ctx:  l.ctx,
+	}
 }
 
 // WithKeyValue attaches key/value to context.
