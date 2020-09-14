@@ -862,7 +862,11 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 		var datums []types.Datum
 		for i, idx := range handleIdx {
 			// If the new collation is enabled and the handle contains non-binary string,
-			// we change the collation to "binary" to avoid encode sortKey again.
+			// the handle in the index is encoded as "sortKey". So we cannot restore its
+			// original value(the primary key) here.
+			// We use a trick to avoid encoding the "sortKey" again by changing the charset
+			// collation to `binary`.
+			// TODO: Add the restore value to the secondary index to remove this trick.
 			rtp := e.handleCols[i].RetType
 			if collate.NewCollationEnabled() && rtp.EvalType() == types.ETString &&
 				!mysql.HasBinaryFlag(rtp.Flag) && tp == getHandleFromIndex {
