@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/config"
 )
 
+// TError is a alias, use to avoid `Error` method name in conflict with field name.
 type TError = terror.Error
 
 type redactError struct {
