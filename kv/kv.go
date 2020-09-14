@@ -64,6 +64,13 @@ const (
 	InfoSchema
 	// SchemaAmender is used to amend mutations for pessimistic transactions
 	SchemaAmender
+<<<<<<< HEAD
+=======
+	// SampleStep skips 'SampleStep - 1' number of keys after each returned key.
+	SampleStep
+	// CommitHook is a callback function called right after the transaction gets committed
+	CommitHook
+>>>>>>> 64c2cc5cb... sessionctx,store,kv: add a session variable to export last txn info (#19949)
 )
 
 // Priority value for transaction priority.
