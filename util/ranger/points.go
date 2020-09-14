@@ -26,11 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-<<<<<<< HEAD
-	"github.com/pingcap/tipb/go-tipb"
-=======
-	"github.com/pingcap/tidb/util/collate"
->>>>>>> 0c36203... expression: add new scalar function IsTruthWithNull (#19621)
 )
 
 // Error instances.

@@ -608,45 +608,4 @@ var funcs = map[string]functionClass{
 	ast.TiDBIsDDLOwner: &tidbIsDDLOwnerFunctionClass{baseFunctionClass{ast.TiDBIsDDLOwner, 0, 0}},
 	ast.TiDBParseTso:   &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
 	ast.TiDBDecodePlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodePlan, 1, 1}},
-<<<<<<< HEAD
-=======
-
-	// TiDB Sequence function.
-	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
-	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
-	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
-}
-
-// IsFunctionSupported check if given function name is a builtin sql function.
-func IsFunctionSupported(name string) bool {
-	_, ok := funcs[name]
-	return ok
-}
-
-// GetBuiltinList returns a list of builtin functions
-func GetBuiltinList() []string {
-	res := make([]string, 0, len(funcs))
-	notImplementedFunctions := []string{ast.RowFunc, ast.IsTruthWithNull}
-	for funcName := range funcs {
-		skipFunc := false
-		// Skip not implemented functions
-		for _, notImplFunc := range notImplementedFunctions {
-			if funcName == notImplFunc {
-				skipFunc = true
-			}
-		}
-		// Skip literal functions
-		// (their names are not readable: 'tidb`.(dateliteral, for example)
-		// See: https://github.com/pingcap/parser/pull/591
-		if strings.HasPrefix(funcName, "'tidb`.(") {
-			skipFunc = true
-		}
-		if skipFunc {
-			continue
-		}
-		res = append(res, funcName)
-	}
-	sort.Strings(res)
-	return res
->>>>>>> 0c36203... expression: add new scalar function IsTruthWithNull (#19621)
 }

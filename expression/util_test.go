@@ -131,33 +131,21 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-<<<<<<< HEAD
 	c.Assert(ret.Equal(ctx, col), check.IsFalse)
-=======
-	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)), check.IsTrue)
->>>>>>> 0c36203... expression: add new scalar function IsTruthWithNull (#19621)
 
 	// (not not (a+1)) should not be optimized to (a+1)
 	plusFunc := newFunction(ast.Plus, col, One)
 	notFunc = newFunction(ast.UnaryNot, plusFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-<<<<<<< HEAD
 	c.Assert(ret.Equal(ctx, col), check.IsFalse)
-=======
-	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, plusFunc)), check.IsTrue)
->>>>>>> 0c36203... expression: add new scalar function IsTruthWithNull (#19621)
 
 	// (not not not a) should be optimized to (not a)
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-<<<<<<< HEAD
 	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, col)), check.IsTrue)
-=======
-	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruthWithNull, col))), check.IsTrue)
->>>>>>> 0c36203... expression: add new scalar function IsTruthWithNull (#19621)
 
 	// (not not not not a) should be optimized to (not not a)
 	notFunc = newFunction(ast.UnaryNot, col)
@@ -165,11 +153,7 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-<<<<<<< HEAD
 	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.UnaryNot, col))), check.IsTrue)
-=======
-	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)), check.IsTrue)
->>>>>>> 0c36203... expression: add new scalar function IsTruthWithNull (#19621)
 }
 
 func (s *testUtilSuite) TestFilter(c *check.C) {
