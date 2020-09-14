@@ -16,7 +16,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,7 +35,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/admin"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
@@ -136,13 +134,20 @@ func (w *worker) start(d *ddlCtx) {
 		nil, true,
 	)
 	for {
-		watcher := clientv3.NewWatcher(d.schemaSyncer.GetEtcdClient())
-		watchRespChan := watcher.Watch(w.ctx, "/ddl/job/await")
-		select {
-		case <-watchRespChan:
-		case <-w.ddlJobCh:
-		case <-w.ctx.Done():
-			return
+		if d.ownerManager.IsOwner() {
+			select {
+			case <-d.ddlJobSubscriber.WaitNewDDLJob(w.ctx):
+			case <-w.ddlJobCh:
+			case <-w.ctx.Done():
+				return
+			}
+		} else {
+			select {
+			case <-w.ctx.Done():
+				return
+			default:
+				continue
+			}
 		}
 		err := w.handleDDLJobQueue(d)
 		if err != nil {
@@ -205,6 +210,10 @@ func (d *ddl) limitDDLJobs() {
 			tasks = append(tasks, task)
 			for i := 0; i < jobLen; i++ {
 				tasks = append(tasks, <-d.limitJobCh)
+				// DDL job queue owner use local ddlJobCh
+				if !d.ddlCtx.ownerManager.IsOwner() {
+					d.ddlCtx.ddlJobSubscriber.NotifyNewDDLJob(d.ctx)
+				}
 			}
 			d.addBatchDDLJobs(tasks)
 		case <-d.ctx.Done():
@@ -588,10 +597,15 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 	if job.IsFinished() {
-		return
+		err = d.ddlJobSubscriber.NotifyDDLJobDone(w.ctx, job.ID)
+		return ver, err
 	}
 	// The cause of this job state is that the job is cancelled by client.
 	if job.IsCancelling() {
+		err = d.ddlJobSubscriber.NotifyDDLJobDone(w.ctx, job.ID)
+		if err != nil {
+			return ver, err
+		}
 		return convertJob2RollbackJob(w, d, t, job)
 	}
 
@@ -683,7 +697,6 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		job.State = model.JobStateCancelled
 		err = errInvalidDDLJob.GenWithStack("invalid ddl job type: %v", job.Type)
 	}
-	kv := clientv3.NewKV(d.schemaSyncer.GetEtcdClient())
 	// Save errors in job, so that others can know errors happened.
 	if err != nil {
 		job.Error = toTError(err)
@@ -692,8 +705,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		// If job is cancelled, we shouldn't return an error and shouldn't load DDL variables.
 		if job.State == model.JobStateCancelled {
 			logutil.Logger(w.logCtx).Info("[ddl] DDL job is cancelled normally", zap.Error(err))
-			kv.Put(w.ctx, "/ddl/job/done/"+strconv.FormatInt(job.ID, 10), "1")
-			return ver, nil
+			err = d.ddlJobSubscriber.NotifyDDLJobDone(w.ctx, job.ID)
+			return ver, err
 		}
 		logutil.Logger(w.logCtx).Error("[ddl] run DDL job error", zap.Error(err))
 
@@ -707,8 +720,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 			job.State = model.JobStateCancelling
 		}
 	}
-	kv.Put(w.ctx, "/ddl/job/done/"+strconv.FormatInt(job.ID, 10), "1")
-	return
+	err = d.ddlJobSubscriber.NotifyDDLJobDone(w.ctx, job.ID)
+	return ver, err
 }
 
 func loadDDLVars(w *worker) error {

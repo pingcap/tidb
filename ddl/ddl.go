@@ -20,7 +20,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -43,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
 
@@ -189,15 +187,16 @@ type ddl struct {
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
 type ddlCtx struct {
-	uuid         string
-	store        kv.Storage
-	ownerManager owner.Manager
-	schemaSyncer util.SchemaSyncer
-	ddlJobDoneCh chan struct{}
-	ddlEventCh   chan<- *util.Event
-	lease        time.Duration        // lease is schema lease.
-	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
-	infoHandle   *infoschema.Handle
+	uuid             string
+	store            kv.Storage
+	ownerManager     owner.Manager
+	schemaSyncer     util.SchemaSyncer
+	ddlJobSubscriber util.DDLJobSubscriber
+	ddlJobDoneCh     chan struct{}
+	ddlEventCh       chan<- *util.Event
+	lease            time.Duration        // lease is schema lease.
+	binlogCli        *pumpcli.PumpsClient // binlogCli is used for Binlog.
+	infoHandle       *infoschema.Handle
 
 	// hook may be modified.
 	mu struct {
@@ -261,25 +260,29 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	id := uuid.New().String()
 	var manager owner.Manager
 	var syncer util.SchemaSyncer
+	var subscriber util.DDLJobSubscriber
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
 		manager = owner.NewMockManager(ctx, id)
 		syncer = NewMockSchemaSyncer()
+		subscriber = util.NewMockDDLJobSubscribe(ctx)
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
 		syncer = util.NewSchemaSyncer(ctx, etcdCli, id, manager)
+		subscriber = util.NewDDLJobSubscriber(ctx, etcdCli)
 	}
 
 	ddlCtx := &ddlCtx{
-		uuid:         id,
-		store:        opt.Store,
-		lease:        opt.Lease,
-		ddlJobDoneCh: make(chan struct{}, 1),
-		ownerManager: manager,
-		schemaSyncer: syncer,
-		binlogCli:    binloginfo.GetPumpsClient(),
-		infoHandle:   opt.InfoHandle,
+		uuid:             id,
+		store:            opt.Store,
+		lease:            opt.Lease,
+		ddlJobDoneCh:     make(chan struct{}, 1),
+		ownerManager:     manager,
+		schemaSyncer:     syncer,
+		ddlJobSubscriber: subscriber,
+		binlogCli:        binloginfo.GetPumpsClient(),
+		infoHandle:       opt.InfoHandle,
 	}
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
@@ -495,11 +498,10 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
 			d.cancel()
 		})
-		watcher := clientv3.NewWatcher(d.ddlCtx.schemaSyncer.GetEtcdClient())
-		watchRespChan := watcher.Watch(d.ctx, "/ddl/job/done/"+strconv.FormatInt(jobID, 10))
 		select {
 		case <-d.ddlJobDoneCh:
-		case <-watchRespChan:
+		case <-d.ddlCtx.ddlJobSubscriber.WaitDDLJobDone(d.ctx, jobID):
+			d.ddlCtx.ddlJobSubscriber.ReleaseDonedDDLJob(jobID)
 		case <-d.ctx.Done():
 			logutil.BgLogger().Error("[ddl] doDDLJob will quit because context done", zap.Error(d.ctx.Err()))
 			err := d.ctx.Err()

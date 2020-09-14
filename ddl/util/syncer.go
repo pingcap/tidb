@@ -95,7 +95,6 @@ type SchemaSyncer interface {
 	StartCleanWork()
 	// Close ends SchemaSyncer.
 	Close()
-	GetEtcdClient() *clientv3.Client
 }
 
 type ownerChecker interface {
@@ -153,9 +152,6 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 		time.Sleep(keyOpRetryInterval)
 	}
 	return errors.Trace(err)
-}
-func (s *schemaVersionSyncer) GetEtcdClient() *clientv3.Client {
-	return s.etcdCli
 }
 
 // Init implements SchemaSyncer.Init interface.
