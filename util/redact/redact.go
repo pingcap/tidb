@@ -14,49 +14,40 @@
 package redact
 
 import (
-	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
 )
 
+type TError = terror.Error
+
 type redactError struct {
-	err             *terror.Error
+	*TError
 	redactPositions []int
 }
 
 // GenWithStackByArgs generates a new *Error with the same class and code, and new arguments.
 func (e *redactError) GenWithStackByArgs(args ...interface{}) error {
 	redactErrorArg(args, e.redactPositions)
-	return e.err.GenWithStackByArgs(args...)
+	return e.TError.GenWithStackByArgs(args...)
 }
 
 // FastGen generates a new *Error with the same class and code, and a new arguments.
 func (e *redactError) FastGenByArgs(args ...interface{}) error {
 	redactErrorArg(args, e.redactPositions)
-	return e.err.GenWithStackByArgs(args...)
-}
-
-// Error implements the error interface.
-func (e *redactError) Error() string {
-	return e.err.Error()
+	return e.TError.GenWithStackByArgs(args...)
 }
 
 // Equal checks if err is equal to e.
 func (e *redactError) Equal(err error) bool {
 	if redactErr, ok := err.(*redactError); ok {
-		return e.err.Equal(redactErr.err)
+		return e.TError.Equal(redactErr.TError)
 	}
-	return e.err.Equal(err)
+	return e.TError.Equal(err)
 }
 
-// Equal returns terror Code.
-func (e *redactError) Code() errors.ErrCode {
-	return e.err.Code()
-}
-
-// Equal returns terror RFCCode.
-func (e *redactError) RFCCode() errors.RFCErrorCode {
-	return e.err.RFCCode()
+// Cause implement the Cause interface.
+func (e *redactError) Cause() error {
+	return e.TError
 }
 
 func redactErrorArg(args []interface{}, position []int) {
