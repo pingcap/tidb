@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -57,11 +58,12 @@ type metricNode struct {
 }
 
 type metricValue struct {
-	sum    float64
-	count  int
-	avgP99 float64
-	avgP90 float64
-	avgP80 float64
+	sum     float64
+	count   int
+	avgP99  float64
+	avgP90  float64
+	avgP80  float64
+	comment string
 }
 
 type metricValueType int
@@ -108,7 +110,9 @@ func (m *metricValue) getComment() string {
 	if m.count == 0 {
 		return ""
 	}
-	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	buf := bytes.NewBuffer(make([]byte, 0, 64))
+	buf.WriteString(m.comment)
+	buf.WriteString("\n\n")
 	buf.WriteString("total_time: ")
 	buf.WriteString(time.Duration(int64(m.sum * float64(time.Second))).String())
 	buf.WriteByte('\n')
@@ -276,6 +280,15 @@ func (n *metricNode) initializeMetricValue(pb *profileBuilder) error {
 			return err
 		}
 		setQuantileValue(n.value, quantile, totalValue/float64(cnt))
+	}
+
+	// 4. Add metric comment.
+	def, ok := infoschema.MetricTableMap[n.table+"_total_time"]
+	if ok {
+		n.value.comment = def.Comment
+		for label, value := range n.labelValue {
+			value.comment = fmt.Sprintf("%s, the label of [%v] is [%v]", def.Comment, strings.Join(n.label, ","), label)
+		}
 	}
 	return nil
 }
