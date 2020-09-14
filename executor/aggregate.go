@@ -41,13 +41,41 @@ import (
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
 
+type syncSetMapper struct {
+	*sync.Map
+}
+
+func newSyncSetMapper() syncSetMapper {
+	return syncSetMapper{&sync.Map{}}
+}
+
+func (m *syncSetMapper) isEmpty() bool {
+	return m.Map == nil
+}
+
+func (m *syncSetMapper) getSyncSets(key string, length int) []set.SyncSet {
+	sets, ok := m.Load(key)
+	if ok {
+		return sets.([]set.SyncSet)
+	}
+	syncSets := make([]set.SyncSet, length)
+	for i := range syncSets {
+		syncSets[i] = set.NewSyncSet()
+	}
+	sets, ok = m.LoadOrStore(key, syncSets)
+	if ok {
+		return sets.([]set.SyncSet)
+	}
+	return syncSets
+}
+
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 type baseHashAggWorker struct {
 	ctx          sessionctx.Context
 	finishCh     <-chan struct{}
 	aggFuncs     []aggfuncs.AggFunc
 	maxChunkSize int
-	syncSetMap   *sync.Map
+	syncSetMap   syncSetMapper
 }
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, maxChunkSize int) baseHashAggWorker {
@@ -147,7 +175,7 @@ type HashAggExec struct {
 	PartialAggFuncs  []aggfuncs.AggFunc
 	FinalAggFuncs    []aggfuncs.AggFunc
 	partialResultMap aggPartialResultMapper
-	syncSetMap       *sync.Map
+	syncSetMap       syncSetMapper
 	groupSet         set.StringSet
 	groupKeys        []string
 	cursor4GroupKey  int
@@ -301,7 +329,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 
 	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
 	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
-	e.syncSetMap = new(sync.Map)
+	e.syncSetMap = newSyncSetMapper()
 
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
@@ -490,20 +518,12 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 		}
 		mapper[string(groupKey[i])] = partialResults[i]
 
-		if w.syncSetMap == nil {
+		if w.syncSetMap.isEmpty() {
 			continue
 		}
-		sets, ok := w.syncSetMap.Load(string(groupKey[i]))
-		if !ok {
-			syncSets := make([]set.SyncSet, len(w.aggFuncs))
-			for j := range syncSets {
-				syncSets[j] = set.NewSyncSet()
-			}
-			sets, _ = w.syncSetMap.LoadOrStore(string(groupKey[i]), syncSets)
-		}
-		syncSets := sets.([]set.SyncSet)
+		syncSets := w.syncSetMap.getSyncSets(string(groupKey[i]), len(w.aggFuncs))
 		for j, af := range w.aggFuncs {
-			af.SetSyncSet(syncSets[j], partialResults[i][j])
+			af.SetPartialResultAsNeedSync(syncSets[j], partialResults[i][j])
 		}
 	}
 	return partialResults

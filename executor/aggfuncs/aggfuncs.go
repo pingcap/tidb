@@ -139,16 +139,16 @@ type AggFunc interface {
 	// every field to the proper original state.
 	ResetPartialResult(pr PartialResult)
 
-	// SetSyncSet stores the given synchronized set to the specific partial
-	// result for aggregate functions with distinct. It converts the
-	// PartialResult to the specific data structure which stores the
-	// partial result, then store the SyncSet inside the partial result and
-	// mark it as "need synchronization". SyncSet is used by hash
+	// SetPartialResultAsNeedSync stores the given synchronized set to the
+	// specific partial result for aggregate functions with distinct. It
+	// converts the PartialResult to the specific data structure which stores
+	// the partial result, then store the SyncSet inside the partial result
+	// and mark it as "need synchronization". SyncSet is used by hash
 	// aggregate operator and is for storing distinct values synchronously
 	// across different HashAggWorkers. The same SyncSet should be passed
 	// for all rows belonging to the same group, no matter in which
 	// HashAggWorker they are being processed.
-	SetSyncSet(s set.SyncSet, pr PartialResult)
+	SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult)
 
 	// UpdatePartialResult updates the specific partial result for an aggregate
 	// function using the input rows which all belonging to the same data group.
@@ -184,7 +184,7 @@ type baseAggFunc struct {
 	ordinal int
 }
 
-func (*baseAggFunc) SetSyncSet(s set.SyncSet, pr PartialResult) {
+func (*baseAggFunc) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {
 }
 
 func (*baseAggFunc) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {

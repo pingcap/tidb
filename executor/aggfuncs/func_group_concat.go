@@ -174,7 +174,7 @@ func (e *groupConcatDistinct) ResetPartialResult(pr PartialResult) {
 	p.buffer, p.valSet = nil, set.NewStringSet()
 }
 
-func (e *groupConcatDistinct) SetSyncSet(s set.SyncSet, pr PartialResult) {
+func (e *groupConcatDistinct) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {
 	p := (*partialResult4GroupConcatDistinct)(pr)
 	p.needSync = true
 	p.syncSet = s

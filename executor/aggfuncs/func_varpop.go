@@ -148,7 +148,7 @@ func (e *varPop4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.valSet = set.NewFloat64Set()
 }
 
-func (e *varPop4DistinctFloat64) SetSyncSet(s set.SyncSet, pr PartialResult) {
+func (e *varPop4DistinctFloat64) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
 	p.needSync = true
 	p.syncSet = s

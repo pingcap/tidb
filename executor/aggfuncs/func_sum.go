@@ -275,7 +275,7 @@ func (e *sum4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.valSet = set.NewFloat64Set()
 }
 
-func (e *sum4DistinctFloat64) SetSyncSet(s set.SyncSet, pr PartialResult) {
+func (e *sum4DistinctFloat64) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {
 	p := (*partialResult4SumDistinctFloat64)(pr)
 	p.needSync = true
 	p.syncSet = s
@@ -349,7 +349,7 @@ func (e *sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p.valSet = set.NewStringSet()
 }
 
-func (e *sum4DistinctDecimal) SetSyncSet(s set.SyncSet, pr PartialResult) {
+func (e *sum4DistinctDecimal) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	p.needSync = true
 	p.syncSet = s

@@ -226,7 +226,7 @@ func (e *avgOriginal4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p.valSet = set.NewStringSet()
 }
 
-func (e *avgOriginal4DistinctDecimal) SetSyncSet(s set.SyncSet, pr PartialResult) {
+func (e *avgOriginal4DistinctDecimal) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {
 	p := (*partialResult4AvgDistinctDecimal)(pr)
 	p.needSync = true
 	p.syncSet = s
@@ -493,7 +493,7 @@ func (e *avgOriginal4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p.valSet = set.NewFloat64Set()
 }
 
-func (e *avgOriginal4DistinctFloat64) SetSyncSet(s set.SyncSet, pr PartialResult) {
+func (e *avgOriginal4DistinctFloat64) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {
 	p := (*partialResult4AvgDistinctFloat64)(pr)
 	p.needSync = true
 	p.syncSet = s
