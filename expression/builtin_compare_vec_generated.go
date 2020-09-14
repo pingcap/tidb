@@ -1757,6 +1757,28 @@ func (b *builtinNullEQJSONSig) vectorized() bool {
 	return true
 }
 
+// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen,
+// the vectorization falls back to the scalar execution.
+func (b *builtinCoalesceIntSig) fallbackEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+
+	x := result.Int64s()
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.evalInt(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		result.SetNull(i, isNull)
+		if isNull {
+			continue
+		}
+
+		x[i] = res
+
+	}
+	return nil
+}
+
 func (b *builtinCoalesceIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeInt64(n, true)
@@ -1766,10 +1788,16 @@ func (b *builtinCoalesceIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++ {
-
-		if err := b.args[j].VecEvalInt(b.ctx, input, buf1); err != nil {
-			return err
+		err := b.args[j].VecEvalInt(b.ctx, input, buf1)
+		afterWarns := sc.WarningCount()
+		if err != nil || afterWarns > beforeWarns {
+			if afterWarns > beforeWarns {
+				sc.TruncateWarnings(int(beforeWarns))
+			}
+			return b.fallbackEvalInt(input, result)
 		}
 		args := buf1.Int64s()
 		for i := 0; i < n; i++ {
@@ -1786,6 +1814,28 @@ func (b *builtinCoalesceIntSig) vectorized() bool {
 	return true
 }
 
+// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen,
+// the vectorization falls back to the scalar execution.
+func (b *builtinCoalesceRealSig) fallbackEvalReal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+
+	x := result.Float64s()
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.evalReal(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		result.SetNull(i, isNull)
+		if isNull {
+			continue
+		}
+
+		x[i] = res
+
+	}
+	return nil
+}
+
 func (b *builtinCoalesceRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeFloat64(n, true)
@@ -1795,10 +1845,16 @@ func (b *builtinCoalesceRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.C
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++ {
-
-		if err := b.args[j].VecEvalReal(b.ctx, input, buf1); err != nil {
-			return err
+		err := b.args[j].VecEvalReal(b.ctx, input, buf1)
+		afterWarns := sc.WarningCount()
+		if err != nil || afterWarns > beforeWarns {
+			if afterWarns > beforeWarns {
+				sc.TruncateWarnings(int(beforeWarns))
+			}
+			return b.fallbackEvalReal(input, result)
 		}
 		args := buf1.Float64s()
 		for i := 0; i < n; i++ {
@@ -1815,6 +1871,28 @@ func (b *builtinCoalesceRealSig) vectorized() bool {
 	return true
 }
 
+// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen,
+// the vectorization falls back to the scalar execution.
+func (b *builtinCoalesceDecimalSig) fallbackEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+
+	x := result.Decimals()
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.evalDecimal(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		result.SetNull(i, isNull)
+		if isNull {
+			continue
+		}
+
+		x[i] = *res
+
+	}
+	return nil
+}
+
 func (b *builtinCoalesceDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeDecimal(n, true)
@@ -1824,10 +1902,16 @@ func (b *builtinCoalesceDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++ {
-
-		if err := b.args[j].VecEvalDecimal(b.ctx, input, buf1); err != nil {
-			return err
+		err := b.args[j].VecEvalDecimal(b.ctx, input, buf1)
+		afterWarns := sc.WarningCount()
+		if err != nil || afterWarns > beforeWarns {
+			if afterWarns > beforeWarns {
+				sc.TruncateWarnings(int(beforeWarns))
+			}
+			return b.fallbackEvalDecimal(input, result)
 		}
 		args := buf1.Decimals()
 		for i := 0; i < n; i++ {
@@ -1842,6 +1926,26 @@ func (b *builtinCoalesceDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *c
 
 func (b *builtinCoalesceDecimalSig) vectorized() bool {
 	return true
+}
+
+// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen,
+// the vectorization falls back to the scalar execution.
+func (b *builtinCoalesceStringSig) fallbackEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.evalString(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		result.AppendString(res)
+	}
+	return nil
 }
 
 func (b *builtinCoalesceStringSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
@@ -1882,6 +1986,28 @@ func (b *builtinCoalesceStringSig) vectorized() bool {
 	return true
 }
 
+// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen,
+// the vectorization falls back to the scalar execution.
+func (b *builtinCoalesceTimeSig) fallbackEvalTime(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+
+	x := result.Times()
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.evalTime(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		result.SetNull(i, isNull)
+		if isNull {
+			continue
+		}
+
+		x[i] = res
+
+	}
+	return nil
+}
+
 func (b *builtinCoalesceTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeTime(n, true)
@@ -1891,10 +2017,16 @@ func (b *builtinCoalesceTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk.C
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++ {
-
-		if err := b.args[j].VecEvalTime(b.ctx, input, buf1); err != nil {
-			return err
+		err := b.args[j].VecEvalTime(b.ctx, input, buf1)
+		afterWarns := sc.WarningCount()
+		if err != nil || afterWarns > beforeWarns {
+			if afterWarns > beforeWarns {
+				sc.TruncateWarnings(int(beforeWarns))
+			}
+			return b.fallbackEvalTime(input, result)
 		}
 		args := buf1.Times()
 		for i := 0; i < n; i++ {
@@ -1911,6 +2043,28 @@ func (b *builtinCoalesceTimeSig) vectorized() bool {
 	return true
 }
 
+// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen,
+// the vectorization falls back to the scalar execution.
+func (b *builtinCoalesceDurationSig) fallbackEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+
+	x := result.GoDurations()
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.evalDuration(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		result.SetNull(i, isNull)
+		if isNull {
+			continue
+		}
+
+		x[i] = res.Duration
+
+	}
+	return nil
+}
+
 func (b *builtinCoalesceDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeGoDuration(n, true)
@@ -1920,10 +2074,16 @@ func (b *builtinCoalesceDurationSig) vecEvalDuration(input *chunk.Chunk, result 
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++ {
-
-		if err := b.args[j].VecEvalDuration(b.ctx, input, buf1); err != nil {
-			return err
+		err := b.args[j].VecEvalDuration(b.ctx, input, buf1)
+		afterWarns := sc.WarningCount()
+		if err != nil || afterWarns > beforeWarns {
+			if afterWarns > beforeWarns {
+				sc.TruncateWarnings(int(beforeWarns))
+			}
+			return b.fallbackEvalDuration(input, result)
 		}
 		args := buf1.GoDurations()
 		for i := 0; i < n; i++ {
@@ -1938,6 +2098,26 @@ func (b *builtinCoalesceDurationSig) vecEvalDuration(input *chunk.Chunk, result 
 
 func (b *builtinCoalesceDurationSig) vectorized() bool {
 	return true
+}
+
+// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen,
+// the vectorization falls back to the scalar execution.
+func (b *builtinCoalesceJSONSig) fallbackEvalJSON(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+
+	result.ReserveJSON(n)
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.evalJSON(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		result.AppendJSON(res)
+	}
+	return nil
 }
 
 func (b *builtinCoalesceJSONSig) vecEvalJSON(input *chunk.Chunk, result *chunk.Column) error {

@@ -171,7 +171,47 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vectorized() 
 `))
 
 var builtinCoalesceCompareVecTpl = template.Must(template.New("").Parse(`
+// NOTE: Coalesce just return the first non-null item, but vectorization do each item, which would incur additional errors. If this case happen, 
+// the vectorization falls back to the scalar execution.
+func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) fallbackEval{{ .type.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
 	{{ if .type.Fixed }}
+	x := result.{{ .type.TypeNameInColumn }}s()
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.eval{{ .type.TypeName }}(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		result.SetNull(i, isNull)
+		if isNull {
+			continue
+		}
+		{{ if eq .type.TypeName "Decimal" }}
+			x[i] = *res
+		{{ else if eq .type.TypeName "Duration" }}
+			x[i] = res.Duration
+		{{ else }}
+			x[i] = res
+		{{ end }}
+	}
+	{{ else }}
+	result.Reserve{{ .type.TypeNameInColumn }}(n)
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.eval{{ .type.TypeName }}(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+		result.Append{{ .type.TypeNameInColumn }}(res)
+	}
+	{{ end -}}
+	return nil
+}
+
+{{ if .type.Fixed }}
 func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .type.TypeName }}(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.Resize{{ .type.TypeNameInColumn }}(n, true)
@@ -181,10 +221,16 @@ func (b *builtin{{ .compare.CompareName }}{{ .type.TypeName }}Sig) vecEval{{ .ty
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++{
-
-		if err := b.args[j].VecEval{{ .type.TypeName }}(b.ctx, input, buf1); err != nil {
-			return err
+		err := b.args[j].VecEval{{ .type.TypeName }}(b.ctx, input, buf1)
+		afterWarns := sc.WarningCount()
+		if err != nil || afterWarns > beforeWarns {
+			if afterWarns > beforeWarns {
+				sc.TruncateWarnings(int(beforeWarns))
+			}
+			return b.fallbackEval{{ .type.TypeName }}(input, result)
 		}
 		args := buf1.{{ .type.TypeNameInColumn }}s()
 		for i := 0; i < n; i++ {
