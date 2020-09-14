@@ -30,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -675,7 +677,7 @@ func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 	tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
 	tk.MustExec("insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5)")
 	tk.MustExec("analyze table t")
-	tk.MustExec("set @try_old_partition_implementation = 1")
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 
 	var input []string
 	var output []struct {
@@ -974,7 +976,7 @@ func (s *testIntegrationSuite) TestApproxCountDistinctInPartitionTable(c *C) {
 	tk.MustExec("create table t(a int(11), b int) partition by range (a) (partition p0 values less than (3), partition p1 values less than maxvalue);")
 	tk.MustExec("insert into t values(1, 1), (2, 1), (3, 1), (4, 2), (4, 2)")
 	tk.MustExec("set session tidb_opt_agg_push_down=1")
-	tk.MustExec("set @try_old_partition_implementation = 1")
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 	tk.MustQuery("explain select approx_count_distinct(a), b from t group by b order by b desc").Check(testkit.Rows("Sort_11 16000.00 root  test.t.b:desc",
 		"└─HashAgg_16 16000.00 root  group by:test.t.b, funcs:approx_count_distinct(Column#5)->Column#4, funcs:firstrow(Column#6)->test.t.b",
 		"  └─PartitionUnion_17 16000.00 root  ",
@@ -1247,7 +1249,7 @@ func (s *testIntegrationSuite) TestOptimizeHintOnPartitionTable(c *C) {
 		}
 	}
 
-	tk.MustExec("set @try_old_partition_implementation = 1")
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 
 	var input []string
 	var output []struct {
@@ -1560,4 +1562,62 @@ func (s *testIntegrationSuite) TestIssue19926(c *C) {
 	tk.MustExec("insert into tc values('1','1');")
 	tk.MustExec("create definer='root'@'localhost' view v as\nselect \nconcat(`ta`.`status`,`tb`.`status`) AS `status`, \n`ta`.`id` AS `id`  from (`ta` join `tb`) \nwhere (`ta`.`id` = `tb`.`id`);")
 	tk.MustQuery("SELECT tc.status,v.id FROM tc, v WHERE tc.id = v.id AND v.status = '11';").Check(testkit.Rows("1 1"))
+}
+
+func (s *testIntegrationSuite) TestDeleteUsingJoin(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int primary key, b int)")
+	tk.MustExec("create table t2(a int primary key, b int)")
+	tk.MustExec("insert into t1 values(1,1),(2,2)")
+	tk.MustExec("insert into t2 values(2,2)")
+	tk.MustExec("delete t1.* from t1 join t2 using (a)")
+	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("2 2"))
+}
+
+func (s *testIntegrationSerialSuite) Test19942(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("SET @@tidb_enable_clustered_index=1;")
+	tk.MustExec("CREATE TABLE test.`t` (" +
+		"  `a` int(11) NOT NULL," +
+		"  `b` varchar(10) COLLATE utf8_general_ci NOT NULL," +
+		"  `c` varchar(50) COLLATE utf8_general_ci NOT NULL," +
+		"  `d` char(10) NOT NULL," +
+		"  PRIMARY KEY (`c`)," +
+		"  UNIQUE KEY `a_uniq` (`a`)," +
+		"  UNIQUE KEY `b_uniq` (`b`)," +
+		"  UNIQUE KEY `d_uniq` (`d`)," +
+		"  KEY `a_idx` (`a`)," +
+		"  KEY `b_idx` (`b`)," +
+		"  KEY `d_idx` (`d`)" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
+	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (1, '1', '0', '1');")
+	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (2, ' 2', ' 0', ' 2');")
+	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (3, '  3 ', '  3 ', '  3 ');")
+	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (4, 'a', 'a   ', 'a');")
+	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (5, ' A  ', ' A   ', ' A  ');")
+	tk.MustExec("INSERT INTO test.t (a, b, c, d) VALUES (6, ' E', 'é        ', ' E');")
+
+	mkr := func() [][]interface{} {
+		return testutil.RowsWithSep("|",
+			"3|  3 |  3 |  3",
+			"2| 2  0| 2",
+			"5| A  | A   | A",
+			"1|1|0|1",
+			"4|a|a   |a",
+			"6| E|é        | E")
+	}
+	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`a_uniq`);").Check(mkr())
+	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`b_uniq`);").Check(mkr())
+	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`d_uniq`);").Check(mkr())
+	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`a_idx`);").Check(mkr())
+	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`b_idx`);").Check(mkr())
+	tk.MustQuery("SELECT * FROM `test`.`t` FORCE INDEX(`d_idx`);").Check(mkr())
+	tk.MustExec("admin check table t")
 }

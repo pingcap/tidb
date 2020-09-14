@@ -99,7 +99,7 @@ func parseLengthEncodedInt(b []byte) (num uint64, isNull bool, n int) {
 func dumpLengthEncodedInt(buffer []byte, n uint64) []byte {
 	switch {
 	case n <= 250:
-		return append(buffer, tinyIntCache[n]...)
+		return append(buffer, byte(n))
 
 	case n <= 0xffff:
 		return append(buffer, 0xfc, byte(n), byte(n>>8))
@@ -164,18 +164,9 @@ func dumpUint64(buffer []byte, n uint64) []byte {
 	return buffer
 }
 
-var tinyIntCache [251][]byte
-
-func init() {
-	for i := 0; i < len(tinyIntCache); i++ {
-		tinyIntCache[i] = []byte{byte(i)}
-	}
-}
-
 func dumpBinaryTime(dur time.Duration) (data []byte) {
 	if dur == 0 {
-		data = tinyIntCache[0]
-		return
+		return []byte{0}
 	}
 	data = make([]byte, 13)
 	data[0] = 12
