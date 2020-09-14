@@ -274,7 +274,7 @@ func (p *PhysicalTableReader) ExplainNormalizedInfo() string {
 func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) string {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || tryOldPartitionImplementation(sctx) {
+	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ""
 	}
 
@@ -333,7 +333,7 @@ func (p *PhysicalIndexReader) ExplainNormalizedInfo() string {
 func (p *PhysicalIndexReader) accessObject(sctx sessionctx.Context) string {
 	ts := p.IndexPlans[0].(*PhysicalIndexScan)
 	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || tryOldPartitionImplementation(sctx) {
+	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ""
 	}
 
@@ -361,7 +361,7 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 func (p *PhysicalIndexLookUpReader) accessObject(sctx sessionctx.Context) string {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || tryOldPartitionImplementation(sctx) {
+	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ""
 	}
 
@@ -385,7 +385,7 @@ func (p *PhysicalIndexMergeReader) ExplainInfo() string {
 func (p *PhysicalIndexMergeReader) accessObject(sctx sessionctx.Context) string {
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	pi := ts.Table.GetPartitionInfo()
-	if pi == nil || tryOldPartitionImplementation(sctx) {
+	if pi == nil || !sctx.GetSessionVars().UseDynamicPartitionPrune() {
 		return ""
 	}
 
@@ -950,9 +950,4 @@ func (p *PhysicalMemTable) OperatorInfo(_ bool) string {
 		return p.Extractor.explainInfo(p)
 	}
 	return ""
-}
-
-func tryOldPartitionImplementation(sctx sessionctx.Context) bool {
-	_, ok := sctx.GetSessionVars().Users["try_old_partition_implementation"]
-	return ok
 }
