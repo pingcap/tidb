@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -996,6 +997,9 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		}
 		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
 	}
+	if ctx.GetSessionVars().TxnCtx == nil {
+		return nil
+	}
 	colSize := make(map[int64]int64, len(t.Cols()))
 	sc := ctx.GetSessionVars().StmtCtx
 	for id, col := range t.Cols() {
@@ -1406,7 +1410,12 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 			if info.Columns[idxCol.Offset].ID != col.ID {
 				continue
 			}
-			return idxCol.Length == types.UnspecifiedLength
+			canSkip := idxCol.Length == types.UnspecifiedLength
+			isNewCollation := collate.NewCollationEnabled() &&
+				col.EvalType() == types.ETString &&
+				!mysql.HasBinaryFlag(col.Flag)
+			canSkip = canSkip && !isNewCollation
+			return canSkip
 		}
 	}
 	if col.GetDefaultValue() == nil && value.IsNull() {
