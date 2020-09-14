@@ -44,8 +44,8 @@ import (
 var (
 	errQueryInterrupted = terror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
 
-	coprCacheHistogramHit  = metrics.DistSqlCoprCacheHistogram.WithLabelValues("hit")
-	coprCacheHistogramMiss = metrics.DistSqlCoprCacheHistogram.WithLabelValues("miss")
+	coprCacheHistogramHit  = metrics.DistSQLCoprCacheHistogram.WithLabelValues("hit")
+	coprCacheHistogramMiss = metrics.DistSQLCoprCacheHistogram.WithLabelValues("miss")
 )
 
 var (
