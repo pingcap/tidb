@@ -288,10 +288,6 @@ func (c *execController) handleSingleBatch(job *execJob) {
 	defer c.updateSingleBatchDetail(job.bo, beforeSleep)
 
 	retry, err := c.action.handleSingleBatch(c.committer, job.bo, job.batch)
-	if err == nil && !retry {
-		job.cancel()
-		return
-	}
 	if !retry {
 		c.handleError(err)
 		job.cancel()
@@ -372,6 +368,10 @@ func (c *execController) tryAddWorker() {
 }
 
 func (c *execController) handleError(err error) {
+	if err == nil {
+		return
+	}
+
 	logutil.BgLogger().Debug("2PC doActionOnBatch failed",
 		zap.Uint64("conn", c.committer.connID),
 		zap.Stringer("action type", c.action),

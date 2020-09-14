@@ -265,6 +265,9 @@ func (it *staticMutationsIter) Next() mutation {
 		m := mutation{
 			key: it.mutations.keys[it.idx],
 		}
+		if len(it.end) > 0 && bytes.Compare(m.key, it.end) >= 0 {
+			return mutation{}
+		}
 		if it.idx < len(it.mutations.values) {
 			m.value = it.mutations.values[it.idx]
 			m.op = it.mutations.ops[it.idx]
