@@ -25,6 +25,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -364,6 +366,13 @@ type IndexLookUpExecutor struct {
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
 	PushedLimit *plannercore.PushedDownLimit
 }
+
+type getHandleType int8
+
+const (
+	getHandleFromIndex getHandleType = iota
+	getHandleFromTable
+)
 
 type checkIndexValue struct {
 	idxColTps  []*types.FieldType
@@ -745,7 +754,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 					return handles, nil, scannedKeys, nil
 				}
 			}
-			h, err := w.idxLookup.getHandle(chk.GetRow(i), handleOffset, w.idxLookup.isCommonHandle())
+			h, err := w.idxLookup.getHandle(chk.GetRow(i), handleOffset, w.idxLookup.isCommonHandle(), getHandleFromIndex)
 			if err != nil {
 				return handles, retChk, scannedKeys, err
 			}
@@ -846,14 +855,31 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	}
 }
 
-func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int, isCommonHandle bool) (handle kv.Handle, err error) {
+func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
+	isCommonHandle bool, tp getHandleType) (handle kv.Handle, err error) {
 	if isCommonHandle {
 		var handleEncoded []byte
 		var datums []types.Datum
 		for i, idx := range handleIdx {
+			// If the new collation is enabled and the handle contains non-binary string,
+			// the handle in the index is encoded as "sortKey". So we cannot restore its
+			// original value(the primary key) here.
+			// We use a trick to avoid encoding the "sortKey" again by changing the charset
+			// collation to `binary`.
+			// TODO: Add the restore value to the secondary index to remove this trick.
+			rtp := e.handleCols[i].RetType
+			if collate.NewCollationEnabled() && rtp.EvalType() == types.ETString &&
+				!mysql.HasBinaryFlag(rtp.Flag) && tp == getHandleFromIndex {
+				rtp = rtp.Clone()
+				rtp.Collate = charset.CollationBin
+				datums = append(datums, row.GetDatum(idx, rtp))
+				continue
+			}
 			datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
 		}
-		tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
+		if tp == getHandleFromTable {
+			tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
+		}
 		handleEncoded, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, nil, datums...)
 		if err != nil {
 			return nil, err
@@ -895,7 +921,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle())
+			handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 			if err != nil {
 				return err
 			}
@@ -971,7 +997,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	if w.keepOrder {
 		task.rowIdx = make([]int, 0, len(task.rows))
 		for i := range task.rows {
-			handle, err := w.idxLookup.getHandle(task.rows[i], w.handleIdx, w.idxLookup.isCommonHandle())
+			handle, err := w.idxLookup.getHandle(task.rows[i], w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 			if err != nil {
 				return err
 			}
@@ -988,7 +1014,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		if len(w.idxLookup.tblPlans) == 1 {
 			obtainedHandlesMap := kv.NewHandleMap()
 			for _, row := range task.rows {
-				handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle())
+				handle, err := w.idxLookup.getHandle(row, w.handleIdx, w.idxLookup.isCommonHandle(), getHandleFromTable)
 				if err != nil {
 					return err
 				}
