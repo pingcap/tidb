@@ -135,7 +135,7 @@ func (s *testStatisticsSuite) TestValueToString4InvalidKey(c *C) {
 	// Append invalid flag.
 	bytes = append(bytes, 20)
 	datum := types.NewDatum(bytes)
-	res, err := ValueToString(&datum, 3)
+	res, err := ValueToString(&datum, 3, nil)
 	c.Assert(err, IsNil)
 	c.Assert(res, Equals, "(1, 0.5, \x14)")
 }

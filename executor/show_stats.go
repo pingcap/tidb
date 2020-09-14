@@ -141,7 +141,7 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 	}
 	colNameToType := make(map[string]byte)
 	for _, col := range statsTbl.Columns {
-		err := e.bucketsToRows(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram)
+		err := e.bucketsToRows(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -152,7 +152,7 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 		for i := 0; i < len(idx.Info.Columns); i++ {
 			idxColumnType = append(idxColumnType, colNameToType[idx.Info.Columns[i].Name.O])
 		}
-		err := e.indexBucketsToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram, idxColumnType)
+		err := e.bucketsToRows(dbName, tblName, partitionName, idx.Info.Name.O, len(idx.Info.Columns), idx.Histogram, idxColumnType)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -162,47 +162,17 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 
 // bucketsToRows converts histogram buckets to rows. If the histogram is built from index, then numOfCols equals to number
 // of index columns, else numOfCols is 0.
-func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string, numOfCols int, hist statistics.Histogram) error {
+func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string, numOfCols int, hist statistics.Histogram, idxColumnType []byte) error {
 	isIndex := 0
 	if numOfCols > 0 {
 		isIndex = 1
 	}
 	for i := 0; i < hist.Len(); i++ {
-		lowerBoundStr, err := statistics.ValueToString(hist.GetLower(i), numOfCols)
+		lowerBoundStr, err := statistics.ValueToString(hist.GetLower(i), numOfCols, idxColumnType)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		upperBoundStr, err := statistics.ValueToString(hist.GetUpper(i), numOfCols)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		e.appendRow([]interface{}{
-			dbName,
-			tblName,
-			partitionName,
-			colName,
-			isIndex,
-			i,
-			hist.Buckets[i].Count,
-			hist.Buckets[i].Repeat,
-			lowerBoundStr,
-			upperBoundStr,
-		})
-	}
-	return nil
-}
-
-func (e *ShowExec) indexBucketsToRows(dbName, tblName, partitionName, colName string, numOfCols int, hist statistics.Histogram, idxColumnType []byte) error {
-	isIndex := 0
-	if numOfCols > 0 {
-		isIndex = 1
-	}
-	for i := 0; i < hist.Len(); i++ {
-		lowerBoundStr, err := statistics.IndexValueToString(hist.GetLower(i), numOfCols, idxColumnType)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		upperBoundStr, err := statistics.IndexValueToString(hist.GetUpper(i), numOfCols, idxColumnType)
+		upperBoundStr, err := statistics.ValueToString(hist.GetUpper(i), numOfCols, idxColumnType)
 		if err != nil {
 			return errors.Trace(err)
 		}

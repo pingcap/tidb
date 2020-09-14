@@ -1176,7 +1176,7 @@ type analyzeIndexIncrementalExec struct {
 
 func analyzeIndexIncremental(idxExec *analyzeIndexIncrementalExec) analyzeResult {
 	startPos := idxExec.oldHist.GetUpper(idxExec.oldHist.Len() - 1)
-	values, _, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns))
+	values, _, err := codec.DecodeRange(startPos.GetBytes(), len(idxExec.idxInfo.Columns), nil)
 	if err != nil {
 		return analyzeResult{Err: err, job: idxExec.job}
 	}

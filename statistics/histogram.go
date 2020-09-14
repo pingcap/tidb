@@ -281,29 +281,12 @@ func ResetAnalyzeFlag(flag int64) int64 {
 
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
-func ValueToString(value *types.Datum, idxCols int) (string, error) {
+func ValueToString(value *types.Datum, idxCols int, idxColumnType []byte) (string, error) {
 	if idxCols == 0 {
 		return value.ToString()
 	}
 	// Ignore the error and treat remaining part that cannot decode successfully as bytes.
-	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols)
-	// Ignore err explicit to pass errcheck.
-	_ = err
-	if len(remained) > 0 {
-		decodedVals = append(decodedVals, types.NewBytesDatum(remained))
-	}
-	str, err := types.DatumsToString(decodedVals, true)
-	return str, err
-}
-
-// IndexValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
-// idxCols equals to number of origin values, else idxCols is 0.
-func IndexValueToString(value *types.Datum, idxCols int, idxColumnType []byte) (string, error) {
-	if idxCols == 0 {
-		return value.ToString()
-	}
-	// Ignore the error and treat remaining part that cannot decode successfully as bytes.
-	decodedVals, remained, err := codec.DecodeIndexRange(value.GetBytes(), idxCols, idxColumnType)
+	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols, idxColumnType)
 	// Ignore err explicit to pass errcheck.
 	_ = err
 	if len(remained) > 0 {
@@ -315,9 +298,9 @@ func IndexValueToString(value *types.Datum, idxCols int, idxColumnType []byte) (
 
 // BucketToString change the given bucket to string format.
 func (hg *Histogram) BucketToString(bktID, idxCols int) string {
-	upperVal, err := ValueToString(hg.GetUpper(bktID), idxCols)
+	upperVal, err := ValueToString(hg.GetUpper(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
-	lowerVal, err := ValueToString(hg.GetLower(bktID), idxCols)
+	lowerVal, err := ValueToString(hg.GetLower(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat)
 }
