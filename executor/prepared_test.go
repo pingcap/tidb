@@ -143,6 +143,7 @@ func (s *testSuite9) TestPreparedStmtWithHint(c *C) {
 	_, err = se.Execute(context.Background(), "prepare stmt from \"select /*+ max_execution_time(100) */ sleep(10)\"")
 	c.Assert(err, IsNil)
 	se.SetSessionManager(sm)
+	go dom.ExpensiveQueryHandle().SetSessionManager(sm).Run()
 	go func() {
 		for i := 0; i < 100; i++ {
 			pi := se.ShowProcess()
