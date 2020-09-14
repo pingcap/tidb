@@ -241,6 +241,9 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 	switch v.Tp {
 	case ast.ConstraintPrimaryKey:
 		for _, key := range v.Keys {
+			if key.Expr != nil {
+				continue
+			}
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
 				continue
@@ -251,6 +254,9 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 		}
 	case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 		for i, key := range v.Keys {
+			if key.Expr != nil {
+				continue
+			}
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
 				continue
@@ -269,6 +275,9 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 		}
 	case ast.ConstraintKey, ast.ConstraintIndex:
 		for i, key := range v.Keys {
+			if key.Expr != nil {
+				continue
+			}
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
 				continue
@@ -906,7 +915,7 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 	// Such as: create table t1 (id int , age int, primary key(id))
 	if !mysql.HasPriKeyFlag(col.Flag) && outPriKeyConstraint != nil {
 		for _, key := range outPriKeyConstraint.Keys {
-			if key.Column.Name.L != col.Name.L {
+			if key.Expr == nil && key.Column.Name.L != col.Name.L {
 				continue
 			}
 			col.Flag |= mysql.PriKeyFlag
@@ -1097,7 +1106,15 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 
 func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, foreign bool) {
 	if constr.Name == "" && len(constr.Keys) > 0 {
-		colName := constr.Keys[0].Column.Name.L
+		var colName string
+		for _, keyPart := range constr.Keys {
+			if keyPart.Expr != nil {
+				colName = "expression_index"
+			}
+		}
+		if colName == "" {
+			colName = constr.Keys[0].Column.Name.L
+		}
 		constrName := colName
 		i := 2
 		if strings.EqualFold(constrName, mysql.PrimaryKeyName) {
@@ -1284,11 +1301,25 @@ func buildTableInfo(
 		Charset: charset,
 		Collate: collate,
 	}
+	tblColumns := make([]*table.Column, 0, len(cols))
 	for _, v := range cols {
 		v.ID = allocateColumnID(tbInfo)
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
+		tblColumns = append(tblColumns, table.ToColumn(v.ToInfo()))
 	}
 	for _, constr := range constraints {
+		// Build hidden columns if necessary.
+		hiddenCols, err := buildHiddenColumnInfo(ctx, constr.Keys, model.NewCIStr(constr.Name), tbInfo, tblColumns)
+		if err != nil {
+			return nil, err
+		}
+		for _, hiddenCol := range hiddenCols {
+			hiddenCol.State = model.StatePublic
+			hiddenCol.ID = allocateColumnID(tbInfo)
+			hiddenCol.Offset = len(tbInfo.Columns)
+			tbInfo.Columns = append(tbInfo.Columns, hiddenCol)
+			tblColumns = append(tblColumns, table.ToColumn(hiddenCol))
+		}
 		if constr.Tp == ast.ConstraintForeignKey {
 			for _, fk := range tbInfo.ForeignKeys {
 				if fk.Name.L == strings.ToLower(constr.Name) {
@@ -1338,6 +1369,9 @@ func buildTableInfo(
 		idxInfo, err := buildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if len(hiddenCols) > 0 {
+			addIndexColumnFlag(tbInfo, idxInfo)
 		}
 		// check if the index is primary or unique.
 		switch constr.Tp {
@@ -4414,8 +4448,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	return errors.Trace(err)
 }
 
-func buildHiddenColumnInfo(ctx sessionctx.Context, t table.Table, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr) ([]*model.ColumnInfo, error) {
-	tblInfo := t.Meta()
+func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
 	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
 	for i, idxPart := range indexPartSpecifications {
 		if idxPart.Expr == nil {
@@ -4423,7 +4456,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, t table.Table, indexPartSpeci
 		}
 		idxPart.Column = &ast.ColumnName{Name: model.NewCIStr(fmt.Sprintf("%s_%s_%d", expressionIndexPrefix, indexName, i))}
 		// Check whether the hidden columns have existed.
-		col := table.FindCol(t.Cols(), idxPart.Column.Name.L)
+		col := table.FindCol(existCols, idxPart.Column.Name.L)
 		if col != nil {
 			// TODO: Use expression index related error.
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name.String())
@@ -4471,7 +4504,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, t table.Table, indexPartSpeci
 			colInfo.Dependences[colName.Name.O] = struct{}{}
 			checkDependencies[colName.Name.O] = struct{}{}
 		}
-		if err = checkDependedColExist(checkDependencies, t.Cols()); err != nil {
+		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if err = checkAutoIncrementRef("", colInfo.Dependences, tblInfo); err != nil {
@@ -4527,7 +4560,7 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	tblInfo := t.Meta()
 
 	// Build hidden columns if necessary.
-	hiddenCols, err := buildHiddenColumnInfo(ctx, t, indexPartSpecifications, indexName)
+	hiddenCols, err := buildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
 	if err != nil {
 		return err
 	}
