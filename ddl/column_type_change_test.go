@@ -15,7 +15,6 @@ package ddl_test
 
 import (
 	"errors"
-	"strings"
 	"time"
 
 	. "github.com/pingcap/check"
@@ -142,7 +141,7 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeStateBetweenInteger(c *C
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
 	c.Assert(tbl, NotNil)
 	c.Assert(len(tbl.Cols()), Equals, 2)
-	c.Assert(getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2"), NotNil)
+	c.Assert(getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2", false), NotNil)
 
 	originalHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -158,23 +157,19 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeStateBetweenInteger(c *C
 			tbl = testGetTableByName(c, internalTK.Se, "test", "t")
 			if tbl == nil {
 				checkErr = errors.New("tbl is nil")
-			}
-			if len(tbl.Cols()) != 2 {
+			} else if len(tbl.Cols()) != 2 {
 				checkErr = errors.New("len(cols) is not right")
 			}
 		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
 			tbl = testGetTableByName(c, internalTK.Se, "test", "t")
 			if tbl == nil {
 				checkErr = errors.New("tbl is nil")
-			}
-			// changingCols has been added into meta.
-			if len(tbl.(*tables.TableCommon).Columns) != 3 {
+			} else if len(tbl.(*tables.TableCommon).Columns) != 3 {
+				// changingCols has been added into meta.
 				checkErr = errors.New("len(cols) is not right")
-			}
-			if getModifyColumnInAllCols(c, internalTK.Se.(sessionctx.Context), "test", "t", "c2").Flag&parser_mysql.PreventNullInsertFlag == uint(0) {
+			} else if getModifyColumn(c, internalTK.Se.(sessionctx.Context), "test", "t", "c2", true).Flag&parser_mysql.PreventNullInsertFlag == uint(0) {
 				checkErr = errors.New("old col's flag is not right")
-			}
-			if getModifyColumnInAllCols(c, internalTK.Se.(sessionctx.Context), "test", "t", "_Col$_c2") == nil {
+			} else if getModifyColumn(c, internalTK.Se.(sessionctx.Context), "test", "t", "_Col$_c2", true) == nil {
 				checkErr = errors.New("changingCol is nil")
 			}
 		}
@@ -191,25 +186,13 @@ func (s *testColumnTypeChangeSuite) TestColumnTypeChangeStateBetweenInteger(c *C
 	tbl = testGetTableByName(c, tk.Se, "test", "t")
 	c.Assert(tbl, NotNil)
 	c.Assert(len(tbl.Cols()), Equals, 2)
-	col := getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2")
+	col := getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2", false)
 	c.Assert(col, NotNil)
 	c.Assert(col.Flag&parser_mysql.NotNullFlag, Not(Equals), uint(0))
 	c.Assert(col.Flag&parser_mysql.NoDefaultValueFlag, Not(Equals), uint(0))
 	c.Assert(col.Tp, Equals, parser_mysql.TypeTiny)
 	c.Assert(col.ChangeStateInfo, IsNil)
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
-}
-
-func getModifyColumnInAllCols(c *C, ctx sessionctx.Context, db, tbl, colName string) *table.Column {
-	colLowName := strings.ToLower(colName)
-	t := testGetTableByName(c, ctx, db, tbl)
-	// tableCommon's columns includes all the cols of all states.
-	for _, col := range t.(*tables.TableCommon).Columns {
-		if col.Name.L == colLowName {
-			return col
-		}
-	}
-	return nil
 }
 
 func (s *testColumnTypeChangeSuite) TestRollbackColumnTypeChangeBetweenInteger(c *C) {
@@ -227,7 +210,7 @@ func (s *testColumnTypeChangeSuite) TestRollbackColumnTypeChangeBetweenInteger(c
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
 	c.Assert(tbl, NotNil)
 	c.Assert(len(tbl.Cols()), Equals, 2)
-	c.Assert(getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2"), NotNil)
+	c.Assert(getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2", false), NotNil)
 
 	originalHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -284,7 +267,7 @@ func assertRollBackedColUnchanged(c *C, tk *testkit.TestKit) {
 	tbl := testGetTableByName(c, tk.Se, "test", "t")
 	c.Assert(tbl, NotNil)
 	c.Assert(len(tbl.Cols()), Equals, 2)
-	col := getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2")
+	col := getModifyColumn(c, tk.Se.(sessionctx.Context), "test", "t", "c2", false)
 	c.Assert(col, NotNil)
 	c.Assert(col.Flag, Equals, uint(0))
 	c.Assert(col.Tp, Equals, parser_mysql.TypeLonglong)
