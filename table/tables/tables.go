@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
@@ -416,8 +417,6 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 	memBuffer.Release(sh)
-	sctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
-	sctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, h)
 	if shouldWriteBinlog(sctx) {
 		if !t.meta.PKIsHandle {
 			binlogColIDs = append(binlogColIDs, model.ExtraHandleID)
@@ -763,7 +762,6 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	}
 
 	memBuffer.Release(sh)
-	sctx.StmtAddDirtyTableOP(table.DirtyTableAddRow, t.physicalTableID, recordID)
 
 	if shouldWriteBinlog(sctx) {
 		// For insert, TiDB and Binlog can use same row and schema.
@@ -978,7 +976,6 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		return err
 	}
 
-	ctx.StmtAddDirtyTableOP(table.DirtyTableDeleteRow, t.physicalTableID, h)
 	if shouldWriteBinlog(ctx) {
 		cols := t.Cols()
 		colIDs := make([]int64, 0, len(cols)+1)
@@ -999,6 +996,9 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 			binlogRow = r
 		}
 		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
+	}
+	if ctx.GetSessionVars().TxnCtx == nil {
+		return nil
 	}
 	colSize := make(map[int64]int64, len(t.Cols()))
 	sc := ctx.GetSessionVars().StmtCtx
@@ -1410,7 +1410,12 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 			if info.Columns[idxCol.Offset].ID != col.ID {
 				continue
 			}
-			return idxCol.Length == types.UnspecifiedLength
+			canSkip := idxCol.Length == types.UnspecifiedLength
+			isNewCollation := collate.NewCollationEnabled() &&
+				col.EvalType() == types.ETString &&
+				!mysql.HasBinaryFlag(col.Flag)
+			canSkip = canSkip && !isNewCollation
+			return canSkip
 		}
 	}
 	if col.GetDefaultValue() == nil && value.IsNull() {
