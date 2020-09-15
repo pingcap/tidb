@@ -1577,14 +1577,9 @@ func (b *executorBuilder) buildSort(v *plannercore.PhysicalSort) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	childrenUsed := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())[0]
-	if childrenUsed != nil {
-		sortExec.childrenUsed = make([]int, 0, len(childrenUsed))
-		for i, used := range childrenUsed {
-			if used {
-				sortExec.childrenUsed = append(sortExec.childrenUsed, i)
-			}
-		}
+	childrenUsedColsMark := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())
+	if childrenUsedColsMark != nil {
+		sortExec.columIdxsUsedByChild = extractChildrenUsedColIdxs(childrenUsedColsMark)[0]
 	}
 	executorCounterSortExec.Inc()
 	return &sortExec
@@ -1600,14 +1595,9 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) Executor {
 		ByItems:      v.ByItems,
 		schema:       v.Schema(),
 	}
-	childrenUsed := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())[0]
-	if childrenUsed != nil {
-		sortExec.childrenUsed = make([]int, 0, len(childrenUsed))
-		for i, used := range childrenUsed {
-			if used {
-				sortExec.childrenUsed = append(sortExec.childrenUsed, i)
-			}
-		}
+	childrenUsedColsMark := markChildrenUsedCols(v.Schema(), v.Children()[0].Schema())
+	if childrenUsedColsMark != nil {
+		sortExec.columIdxsUsedByChild = extractChildrenUsedColIdxs(childrenUsedColsMark)[0]
 	}
 	executorCounterTopNExec.Inc()
 	return &TopNExec{
@@ -2193,6 +2183,22 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 		childrenUsed = append(childrenUsed, used)
 	}
 	return
+}
+
+// extractChildrenUsedColIdxs extract column indexes of child executors from children used columns mark
+func extractChildrenUsedColIdxs(childrenUsedColsMark [][]bool) [][]int {
+	childrenUsedColIdxs := make([][]int, len(childrenUsedColsMark), len(childrenUsedColsMark))
+	for childIdx, childUsedColsMark := range childrenUsedColsMark {
+		if childrenUsedColIdxs[childIdx] == nil {
+			childrenUsedColIdxs[childIdx] = make([]int, 0, len(childUsedColsMark))
+		}
+		for colIdx, colUsedMark := range childUsedColsMark {
+			if colUsedMark == true {
+				childrenUsedColIdxs[childIdx] = append(childrenUsedColIdxs[childIdx], colIdx)
+			}
+		}
+	}
+	return childrenUsedColIdxs
 }
 
 func constructDistExecForTiFlash(sctx sessionctx.Context, p plannercore.PhysicalPlan) ([]*tipb.Executor, bool, error) {
