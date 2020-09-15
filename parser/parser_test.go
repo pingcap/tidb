@@ -1194,6 +1194,10 @@ func (s *testParserSuite) TestExpression(c *C) {
 		{`select _binary"string";`, true, "SELECT _BINARY'string'"},
 		{"select N'string'", true, "SELECT _UTF8'string'"},
 		{"select n'string'", true, "SELECT _UTF8'string'"},
+		{"select _utf8 0xD0B1;", true, "SELECT _UTF8 x'd0b1'"},
+		{"select _utf8 X'D0B1';", true, "SELECT _UTF8 x'd0b1'"},
+		{"select _utf8 0b1101000010110001;", true, "SELECT _UTF8 b'1101000010110001'"},
+		{"select _utf8 B'1101000010110001';", true, "SELECT _UTF8 b'1101000010110001'"},
 		// for comparison
 		{"select 1 <=> 0, 1 <=> null, 1 = null", true, "SELECT 1<=>0,1<=>NULL,1=NULL"},
 		// for date literal
