@@ -21,6 +21,7 @@ require (
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
 	github.com/juju/errors v0.0.0-20181118221551-089d3ea4e4d5
 	github.com/klauspost/cpuid v1.2.1
+	github.com/leiysky/selection v0.0.0-20200914165550-e065bad5df5b
 	github.com/mattn/go-colorable v0.1.7 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7

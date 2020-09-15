@@ -138,7 +138,7 @@ func (a *baseFuncDesc) typeInfer4ApproxCountDistinct(ctx sessionctx.Context) {
 
 func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) {
 	switch a.Args[0].GetType().Tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldType(mysql.TypeLonglong)
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
@@ -148,8 +148,10 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) {
 		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
 		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate:
+		a.RetTp = a.Args[0].GetType().Clone()
 	default:
-		a.RetTp = a.Args[0].GetType()
+		a.RetTp = a.Args[0].GetType().Clone()
 	}
 }
 
