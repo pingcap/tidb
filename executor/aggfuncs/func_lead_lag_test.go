@@ -145,7 +145,7 @@ func (s *testSuite) TestMemLeadLag(c *C) {
 		buildWindowMemTesterWithArgs(ast.WindowFuncLag, mysql.TypeLonglong,
 			[]expression.Expression{million}, 0, numRows, aggfuncs.DefPartialResult4LeadLagSize, rowMemDeltaGens),
 
-		// lead(field0,N)
+		// lead(field0, N)
 		buildWindowMemTesterWithArgs(ast.WindowFuncLead, mysql.TypeLonglong,
 			[]expression.Expression{zero}, 0, numRows, aggfuncs.DefPartialResult4LeadLagSize, rowMemDeltaGens),
 		buildWindowMemTesterWithArgs(ast.WindowFuncLead, mysql.TypeLonglong,
