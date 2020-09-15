@@ -81,6 +81,14 @@ func (s *testChunkSuite) TestList(c *check.C) {
 	})
 	c.Assert(err, check.IsNil)
 	c.Assert(results, check.DeepEquals, expected)
+
+	// Test append row by its colIdxs
+	l.Reset()
+	for i := 0; i < 5; i++ {
+		l.AppendRowByColIdxs(srcRow, []int{0})
+	}
+	c.Assert(l.NumChunks(), check.Equals, 1)
+	c.Assert(l.Len(), check.Equals, 5)
 }
 
 func (s *testChunkSuite) TestListMemoryUsage(c *check.C) {
