@@ -168,11 +168,11 @@ func (e *ShowExec) bucketsToRows(dbName, tblName, partitionName, colName string,
 		isIndex = 1
 	}
 	for i := 0; i < hist.Len(); i++ {
-		lowerBoundStr, err := statistics.ValueToString(hist.GetLower(i), numOfCols, idxColumnType)
+		lowerBoundStr, err := statistics.ValueToString(e.ctx.GetSessionVars(), hist.GetLower(i), numOfCols, idxColumnType)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		upperBoundStr, err := statistics.ValueToString(hist.GetUpper(i), numOfCols, idxColumnType)
+		upperBoundStr, err := statistics.ValueToString(e.ctx.GetSessionVars(), hist.GetUpper(i), numOfCols, idxColumnType)
 		if err != nil {
 			return errors.Trace(err)
 		}
