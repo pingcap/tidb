@@ -1609,10 +1609,11 @@ func BenchmarkMergeJoinExec(b *testing.B) {
 }
 
 type sortCase struct {
-	rows       int
-	orderByIdx []int
-	ndvs       []int
-	ctx        sessionctx.Context
+	rows               int
+	orderByIdx         []int
+	ndvs               []int
+	ctx                sessionctx.Context
+	childrenUsedSchema [][]bool
 }
 
 func (tc sortCase) columns() []*expression.Column {
@@ -1650,6 +1651,9 @@ func benchmarkSortExec(b *testing.B, cas *sortCase) {
 	}
 	for _, idx := range cas.orderByIdx {
 		exec.ByItems = append(exec.ByItems, &util.ByItems{Expr: cas.columns()[idx]})
+	}
+	if cas.childrenUsedSchema != nil {
+		exec.columIdxsUsedByChild = extractChildrenUsedColIdxs(cas.childrenUsedSchema)[0]
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1692,18 +1696,27 @@ func BenchmarkSortExec(b *testing.B) {
 	for _, ndv := range ndvs {
 		cas.ndvs = []int{ndv, 0}
 		cas.orderByIdx = []int{0, 1}
+		cas.childrenUsedSchema = [][]bool{
+			{false, false},
+		}
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkSortExec(b, cas)
 		})
 
 		cas.ndvs = []int{ndv, 0}
 		cas.orderByIdx = []int{0}
+		cas.childrenUsedSchema = [][]bool{
+			{false, true},
+		}
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkSortExec(b, cas)
 		})
 
 		cas.ndvs = []int{ndv, 0}
 		cas.orderByIdx = []int{1}
+		cas.childrenUsedSchema = [][]bool{
+			{true, false},
+		}
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkSortExec(b, cas)
 		})
