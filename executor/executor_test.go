@@ -6297,10 +6297,14 @@ func (s *testSerialSuite) TestKillTableReader(c *C) {
 	wg.Wait()
 }
 
-func (s *testSuite) TestPrevStmtDesensitization(c *C) {
+func (s *testSerialSuite) TestPrevStmtDesensitization(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.Se.GetSessionVars().EnableLogDesensitization = true
+	oriCfg := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(oriCfg)
+	newCfg := *oriCfg
+	newCfg.EnableRedactLog = 1
+	config.StoreGlobalConfig(&newCfg)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("begin")
