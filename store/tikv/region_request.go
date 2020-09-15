@@ -135,12 +135,11 @@ func (ss *RegionBatchRequestSender) sendStreamReqToAddr(bo *Backoffer, ctxs []co
 	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
 	}
-	if ss.Stats != nil {
-		defer func(start time.Time) {
-			recordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
-		}(time.Now())
-	}
+	start := time.Now()
 	resp, err = ss.client.SendRequest(ctx, rpcCtx.Addr, req, timout)
+	if ss.Stats != nil {
+		recordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
+	}
 	if err != nil {
 		cancel()
 		ss.rpcError = err
@@ -398,19 +397,17 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 		defer s.releaseStoreToken(rpcCtx.Store)
 	}
 
-	if s.Stats != nil {
-		defer func(start time.Time) {
-			recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
-		}(time.Now())
-	}
-
 	ctx := bo.ctx
 	if rawHook := ctx.Value(RPCCancellerCtxKey{}); rawHook != nil {
 		var cancel context.CancelFunc
 		ctx, cancel = rawHook.(*RPCCanceller).WithCancel(ctx)
 		defer cancel()
 	}
+	start := time.Now()
 	resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
+	if s.Stats != nil {
+		recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
+	}
 	if err != nil {
 		s.rpcError = err
 		if e := s.onSendFail(bo, rpcCtx, err); e != nil {
