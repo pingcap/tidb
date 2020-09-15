@@ -134,7 +134,6 @@ type stmtFuture struct {
 type TransactionContext struct {
 	forUpdateTS   uint64
 	stmtFuture    oracle.Future
-	DirtyDB       interface{}
 	Binlog        interface{}
 	InfoSchema    interface{}
 	History       interface{}
@@ -254,7 +253,6 @@ func (tc *TransactionContext) SetPessimisticLockCache(key kv.Key, val []byte) {
 // Cleanup clears up transaction info that no longer use.
 func (tc *TransactionContext) Cleanup() {
 	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
-	tc.DirtyDB = nil
 	tc.Binlog = nil
 	tc.History = nil
 	tc.TableDeltaMap = nil
@@ -712,6 +710,39 @@ type SessionVars struct {
 
 	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
 	EnableAmendPessimisticTxn bool
+
+	// LastTxnInfo keeps track the info of last committed transaction.
+	LastTxnInfo kv.TxnInfo
+
+	// PartitionPruneMode indicates how and when to prune partitions.
+	PartitionPruneMode PartitionPruneMode
+}
+
+// UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
+func (s *SessionVars) UseDynamicPartitionPrune() bool {
+	return s.PartitionPruneMode == DynamicOnly
+}
+
+// PartitionPruneMode presents the prune mode used.
+type PartitionPruneMode string
+
+const (
+	// StaticOnly indicates only prune at plan phase.
+	StaticOnly PartitionPruneMode = "static-only"
+	// DynamicOnly indicates only prune at execute phase.
+	DynamicOnly PartitionPruneMode = "dynamic-only"
+	// StaticButPrepareDynamic indicates prune at plan phase but collect stats need for dynamic prune.
+	StaticButPrepareDynamic PartitionPruneMode = "static-collect-dynamic"
+)
+
+// Valid indicate PruneMode is validated.
+func (p PartitionPruneMode) Valid() bool {
+	switch p {
+	case StaticOnly, StaticButPrepareDynamic, DynamicOnly:
+		return true
+	default:
+		return false
+	}
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -1262,7 +1293,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.BatchCommit = TiDBOptOn(val)
 	case TiDBDMLBatchSize:
 		s.DMLBatchSize = int(tidbOptInt64(val, DefOptCorrelationExpFactor))
-	case TiDBCurrentTS, TiDBConfig:
+	case TiDBCurrentTS, TiDBLastTxnInfo, TiDBConfig:
 		return ErrReadOnly
 	case TiDBMaxChunkSize:
 		s.MaxChunkSize = tidbOptPositiveInt32(val, DefMaxChunkSize)
@@ -1424,6 +1455,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
 	case TiDBEnableClusteredIndex:
 		s.EnableClusteredIndex = TiDBOptOn(val)
+	case TiDBPartitionPruneMode:
+		s.PartitionPruneMode = PartitionPruneMode(strings.ToLower(strings.TrimSpace(val)))
 	case TiDBEnableParallelApply:
 		s.EnableParallelApply = TiDBOptOn(val)
 	case TiDBSlowLogMasking, TiDBLogDesensitization:
@@ -1681,6 +1714,11 @@ func (c *Concurrency) WindowConcurrency() int {
 // This option is not sync with ExecutorConcurrency since it's used by Analyze table.
 func (c *Concurrency) IndexSerialScanConcurrency() int {
 	return c.indexSerialScanConcurrency
+}
+
+// UnionConcurrency return the num of concurrent union worker.
+func (c *Concurrency) UnionConcurrency() int {
+	return c.ExecutorConcurrency
 }
 
 // MemQuota defines memory quota values.
