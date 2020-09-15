@@ -717,12 +717,12 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindDrop,
-		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
+		NormdOrigSQL: parser.Normalize(v.OriginNode.Text()),
 		IsGlobal:     v.GlobalScope,
-		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
+		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 	}
-	if v.HintedSel != nil {
-		p.BindSQL = v.HintedSel.Text()
+	if v.HintedNode != nil {
+		p.BindSQL = v.HintedNode.Text()
 	}
 	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", nil)
 	return p, nil
