@@ -2148,6 +2148,10 @@ func (s *testIntegrationSuite7) TestAddExpressionIndex(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.AlterPrimaryKey = true
+	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
