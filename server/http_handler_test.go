@@ -434,7 +434,6 @@ func (ts *basicHTTPHandlerTestSuite) startServer(c *C) {
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
-	cfg.PessimisticTxn.Enable = true
 
 	server, err := NewServer(cfg, ts.tidbdrv)
 	c.Assert(err, IsNil)
