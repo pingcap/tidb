@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
@@ -639,7 +640,7 @@ func (cc *clientConn) preparedStmt2String(stmtID uint32) string {
 	if sv == nil {
 		return ""
 	}
-	if sv.EnableLogDesensitization {
+	if config.RedactLogEnabled() {
 		return cc.preparedStmt2StringNoArgs(stmtID)
 	}
 	return cc.preparedStmt2StringNoArgs(stmtID) + sv.PreparedParams.String()
