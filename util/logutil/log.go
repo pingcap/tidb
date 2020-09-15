@@ -371,7 +371,7 @@ func wrapTraceLogger(ctx context.Context, logger *zap.Logger) *zap.Logger {
 	return logger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
 		return &traceLogger{
 			core: core,
-			enc:  zapcore.NewConsoleEncoder(zap.NewProductionEncoderConfig()),
+			enc:  zaplog.NewTextEncoder(&zaplog.Config{}),
 			ctx:  ctx,
 		}
 	}))
