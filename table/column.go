@@ -181,11 +181,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	if types.ErrOverflow.Equal(err) && returnOverflow {
 		return casted, err
 	}
-<<<<<<< HEAD
-	if types.ErrTruncated.Equal(err) {
-=======
 	if err != nil && types.ErrTruncated.Equal(err) && col.Tp != mysql.TypeSet && col.Tp != mysql.TypeEnum {
->>>>>>> 94704d0... expression: incorrect error message of inserting enum & set (#19380)
 		str, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
