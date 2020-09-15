@@ -941,6 +941,7 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 				SnapshotRuntimeStats: snapshotStats,
 				rpcTime:              0,
 				checkInsertTime:      0,
+				prefetchTime:         0,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -1057,16 +1058,19 @@ type insertRuntimeStat struct {
 	*tikv.SnapshotRuntimeStats
 	checkInsertTime time.Duration
 	rpcTime         time.Duration
+	prefetchTime    time.Duration
 }
 
 func (e *insertRuntimeStat) String() string {
 	var prepareStr, rpcStatsStr, checkInsertStr, insertStr string
 	if e.checkInsertTime != 0 {
-		prepareStr = fmt.Sprintf("prepare:%v", time.Duration(e.BasicRuntimeStats.GetTime())-e.checkInsertTime)
-		if e.rpcTime == 0 {
-			insertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_insert:%v", e.checkInsertTime, e.checkInsertTime)
+		prepareStr = fmt.Sprintf("prepare:%v, ", time.Duration(e.BasicRuntimeStats.GetTime())-e.checkInsertTime)
+		if e.rpcTime != 0 {
+			checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, rpc:{time:%v, ", e.checkInsertTime, e.checkInsertTime-e.rpcTime, e.rpcTime)
+		} else if e.prefetchTime == 0 {
+			insertStr = fmt.Sprintf("insert:%v", e.checkInsertTime)
 		} else {
-			checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, rpc:{time:%v", e.checkInsertTime, e.checkInsertTime-e.rpcTime, e.rpcTime)
+			checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, prefetch:%v, rpc:{", e.checkInsertTime, e.checkInsertTime-e.prefetchTime, e.prefetchTime)
 		}
 	}
 	if e.SnapshotRuntimeStats != nil {
@@ -1077,18 +1081,18 @@ func (e *insertRuntimeStat) String() string {
 		result += prepareStr
 	}
 	if checkInsertStr != "" {
-		result += ", " + checkInsertStr
+		result += checkInsertStr
 	}
 	if insertStr != "" {
-		result += ", " + insertStr
+		result += insertStr
 	}
 	if rpcStatsStr != "" {
-		result += ", " + rpcStatsStr
+		result += rpcStatsStr
 	}
 	if checkInsertStr != "" {
 		return result + "}}"
 	}
-	return result + "}"
+	return result
 }
 
 // Clone implements the RuntimeStats interface.
