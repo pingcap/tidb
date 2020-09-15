@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	pumpcli "github.com/pingcap/tidb-tools/tidb-binlog/pump_client"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	goutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -195,6 +197,7 @@ type ddlCtx struct {
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoHandle   *infoschema.Handle
+	tableLockCkr util.DeadTableLockChecker
 
 	// hook may be modified.
 	mu struct {
@@ -258,6 +261,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	id := uuid.New().String()
 	var manager owner.Manager
 	var syncer util.SchemaSyncer
+	var deadLockCkr util.DeadTableLockChecker
 	if etcdCli := opt.EtcdCli; etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
@@ -265,7 +269,12 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		syncer = NewMockSchemaSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
+<<<<<<< HEAD
 		syncer = util.NewSchemaSyncer(etcdCli, id, manager)
+=======
+		syncer = util.NewSchemaSyncer(ctx, etcdCli, id, manager)
+		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
+>>>>>>> 8ae5b1c... ddl: fix panic tidb-server doesn't release table lock (#19586)
 	}
 
 	ddlCtx := &ddlCtx{
@@ -277,6 +286,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpsClient(),
 		infoHandle:   opt.InfoHandle,
+		tableLockCkr: deadLockCkr,
 	}
 	ddlCtx.mu.hook = opt.Hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
@@ -345,6 +355,10 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		}
 
 		go d.schemaSyncer.StartCleanWork()
+		if config.TableLockEnabled() {
+			d.wg.Add(1)
+			go d.startCleanDeadTableLock()
+		}
 		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
 	}
 
@@ -536,6 +550,37 @@ func (d *ddl) GetHook() Callback {
 	defer d.mu.Unlock()
 
 	return d.mu.hook
+}
+
+func (d *ddl) startCleanDeadTableLock() {
+	defer func() {
+		goutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
+		d.wg.Done()
+	}()
+
+	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if !d.ownerManager.IsOwner() {
+				continue
+			}
+			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoHandle.Get().AllSchemas())
+			if err != nil {
+				logutil.BgLogger().Info("[ddl] get dead table lock failed.", zap.Error(err))
+				continue
+			}
+			for se, tables := range deadLockTables {
+				err := d.CleanDeadTableLock(tables, se)
+				if err != nil {
+					logutil.BgLogger().Info("[ddl] clean dead table lock failed.", zap.Error(err))
+				}
+			}
+		case <-d.ctx.Done():
+			return
+		}
+	}
 }
 
 // RecoverInfo contains information needed by DDL.RecoverTable.
