@@ -313,6 +313,28 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncJsonObjectAgg:       {},
 }
 
+var needCastDecimalAggFuncs = map[string]struct{}{
+	ast.AggFuncAvg:         {},
+	ast.AggFuncFirstRow:    {},
+	ast.AggFuncGroupConcat: {},
+	ast.AggFuncMax:         {},
+	ast.AggFuncMin:         {},
+	ast.AggFuncSum:         {},
+}
+
+func (a *baseFuncDesc) WrapCastAsDecimalForAggArgs(ctx sessionctx.Context) {
+	if _, ok := needCastDecimalAggFuncs[a.Name]; ok {
+		for i := range a.Args {
+			if i == 0 && a.Name == ast.AggFuncAvg {
+				continue
+			}
+			if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
+				a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
+			}
+		}
+	}
+}
+
 // WrapCastForAggArgs wraps the args of an aggregate function with a cast function.
 func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 	if len(a.Args) == 0 {
