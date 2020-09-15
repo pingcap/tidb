@@ -10,4 +10,4 @@ status-host = "127.0.0.1"
 stats-lease = "0"
 
 [experimental]
-allow-expression-index = true
+

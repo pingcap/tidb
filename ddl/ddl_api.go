@@ -4550,9 +4550,6 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	if err != nil {
 		return err
 	}
-	if len(hiddenCols) > 0 && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
-		return ErrUnsupportedExpressionIndex
-	}
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(hiddenCols)); err != nil {
 		return errors.Trace(err)
 	}
