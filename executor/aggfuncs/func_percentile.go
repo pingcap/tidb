@@ -1,6 +1,7 @@
 package aggfuncs
 
 import (
+	"math"
 	"sort"
 	"unsafe"
 
@@ -22,7 +23,7 @@ const (
 )
 
 func percentile(data sort.Interface, percent int) int {
-	k := int(float64(data.Len()) * float64(percent) / 100.0)
+	k := int(math.Ceil(float64(data.Len()*percent) / 100.0))
 	return selection.Select(data, k)
 }
 
