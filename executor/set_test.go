@@ -444,8 +444,8 @@ func (s *testSuite5) TestSetVar(c *C) {
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
 	c.Assert(tk.ExecToErr("set @@session.tidb_dml_batch_size = -120"), NotNil)
-	c.Assert(tk.ExecToErr("set @@global.tidb_dml_batch_size = 120"), NotNil)
-	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
+	c.Assert(tk.ExecToErr("set @@global.tidb_dml_batch_size = 200"), IsNil)  // now permitted due to TiDB #19809
+	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120")) // global only applies to new sessions
 
 	_, err = tk.Exec("set tidb_enable_parallel_apply=-1")
 	c.Assert(terror.ErrorEqual(err, variable.ErrWrongValueForVar), IsTrue)
