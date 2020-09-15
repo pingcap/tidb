@@ -1078,6 +1078,9 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	}
 
 	stmtNodes, err := s.Parse(ctx, sql)
+	if err != nil {
+		return nil, err
+	}
 	if len(stmtNodes) != 1 {
 		return nil, errors.New("Execute() API doesn't support multiple statements any more")
 	}
