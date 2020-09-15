@@ -2081,6 +2081,10 @@ func (s *testIntegrationSuite3) TestSqlFunctionsInGeneratedColumns(c *C) {
 	tk.MustGetErrCode("create table t (a int, b int as (updatexml(1, 1, 1)))", errno.ErrGeneratedColumnFunctionIsNotAllowed)
 	tk.MustGetErrCode("create table t (a int, b int as (statement_digest(1)))", errno.ErrGeneratedColumnFunctionIsNotAllowed)
 	tk.MustGetErrCode("create table t (a int, b int as (statement_digest_text(1)))", errno.ErrGeneratedColumnFunctionIsNotAllowed)
+
+	// NOTE (#18150): In creating generated column, row value is not allowed.
+	tk.MustGetErrCode("create table t (a int, b int as ((a, a)))", errno.ErrGeneratedColumnRowValueIsNotAllowed)
+	tk.MustExec("create table t (a int, b int as ((a)))")
 }
 
 func (s *testIntegrationSuite3) TestParserIssue284(c *C) {
@@ -2173,8 +2177,8 @@ func (s *testIntegrationSuite7) TestCreateExpressionIndexError(c *C) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b real);")
 	tk.MustGetErrCode("alter table t add primary key ((a+b));", errno.ErrFunctionalIndexPrimaryKey)
-	tk.MustGetErrCode("alter table t add index ((rand()));", errno.ErrGeneratedColumnFunctionIsNotAllowed)
-	tk.MustGetErrCode("alter table t add index ((now()+1));", errno.ErrGeneratedColumnFunctionIsNotAllowed)
+	tk.MustGetErrCode("alter table t add index ((rand()));", errno.ErrFunctionalIndexFunctionIsNotAllowed)
+	tk.MustGetErrCode("alter table t add index ((now()+1));", errno.ErrFunctionalIndexFunctionIsNotAllowed)
 
 	tk.MustExec("alter table t add column (_V$_idx_0 int);")
 	tk.MustGetErrCode("alter table t add index idx((a+1));", errno.ErrDupFieldName)

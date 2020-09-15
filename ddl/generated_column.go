@@ -271,6 +271,9 @@ func checkIllegalFn4GeneratedColumn(colName string, expr ast.ExprNode) error {
 	if c.hasAggFunc {
 		return ErrInvalidGroupFuncUse
 	}
+	if c.hasRowVal {
+		return ErrGeneratedColumnRowValueIsNotAllowed.GenWithStackByArgs(colName)
+	}
 	return nil
 }
 
@@ -281,7 +284,7 @@ func checkIllegalFn4GeneratedIndex(idxName string, expr ast.ExprNode) error {
 	var c illegalFunctionChecker
 	expr.Accept(&c)
 	if c.hasIllegalFunc {
-		return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(idxName)
+		return ErrFunctionalIndexFunctionIsNotAllowed.GenWithStackByArgs(idxName)
 	}
 	if c.hasAggFunc {
 		return ErrInvalidGroupFuncUse
