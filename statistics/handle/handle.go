@@ -270,6 +270,7 @@ func (h *Handle) SetBytesLimit(bytesLimit int64) {
 	h.statsCache.memTracker.SetBytesLimit(bytesLimit)
 	h.statsCache.memCapacity = bytesLimit
 	h.statsCache.mu.Unlock()
+
 }
 
 // CanRuntimePrune indicates whether tbl support runtime prune for table and first partition id.

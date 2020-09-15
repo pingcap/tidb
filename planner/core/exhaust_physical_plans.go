@@ -766,7 +766,9 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 	// we can't construct index merge join.
 	if us == nil {
 		innerTask2 := p.constructInnerIndexScanTask(ds, helper.chosenPath, helper.chosenRemained, outerJoinKeys, us, rangeInfo, true, !prop.IsEmpty() && prop.Items[0].Desc, avgInnerRowCnt, maxOneRow)
-		joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+		if innerTask2 != nil {
+			joins = append(joins, p.constructIndexMergeJoin(prop, outerIdx, innerTask2, helper.chosenRanges, keyOff2IdxOff, helper.chosenPath, helper.lastColManager)...)
+		}
 	}
 	return joins
 }
@@ -825,6 +827,12 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 	desc bool,
 	rowCount float64,
 ) task {
+	// If `ds.tableInfo.GetPartitionInfo() != nil`,
+	// it means the data source is a partition table reader.
+	// If the inner task need to keep order, the partition table reader can't satisfy it.
+	if keepOrder && ds.tableInfo.GetPartitionInfo() != nil {
+		return nil
+	}
 	var ranges []*ranger.Range
 	// pk is nil means the table uses the common handle.
 	if pk == nil {
@@ -877,6 +885,12 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
 	}
+	copTask.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+	}
 	selStats := ts.stats.Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
 	t := finishCopTask(ds.ctx, copTask).(*rootTask)
@@ -912,6 +926,12 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	rowCount float64,
 	maxOneRow bool,
 ) task {
+	// If `ds.tableInfo.GetPartitionInfo() != nil`,
+	// it means the data source is a partition table reader.
+	// If the inner task need to keep order, the partition table reader can't satisfy it.
+	if keepOrder && ds.tableInfo.GetPartitionInfo() != nil {
+		return nil
+	}
 	is := PhysicalIndexScan{
 		Table:            ds.tableInfo,
 		TableAsName:      ds.TableAsName,
@@ -933,6 +953,12 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
 		keepOrder:   is.KeepOrder,
+	}
+	cop.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
 	}
 	if !ds.isCoveringIndex(ds.schema.Columns, path.FullIdxCols, path.FullIdxColLens, is.Table) {
 		// On this way, it's double read case.
@@ -1576,6 +1602,15 @@ func (p *LogicalJoin) tryToGetBroadCastJoin(prop *property.PhysicalProperty) []P
 		return nil
 	}
 
+	// Disable broadcast join on partition table for TiFlash.
+	for _, child := range p.children {
+		if ds, isDataSource := child.(*DataSource); isDataSource {
+			if ds.tableInfo.GetPartitionInfo() != nil {
+				return nil
+			}
+		}
+	}
+
 	// for left join the global idx must be 1, and for right join the global idx must be 0
 	if (p.JoinType != InnerJoin && p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin) || len(p.LeftConditions) != 0 || len(p.RightConditions) != 0 || len(p.OtherConditions) != 0 || len(p.EqualConditions) == 0 {
 		return nil
@@ -1668,8 +1703,29 @@ func (p *LogicalProjection) exhaustPhysicalPlans(prop *property.PhysicalProperty
 	return []PhysicalPlan{proj}, true
 }
 
+func (lt *LogicalTopN) canPushToCop() bool {
+	// At present, only Aggregation, Limit, TopN can be pushed to cop task, and Projection will be supported in the future.
+	// When we push task to coprocessor, finishCopTask will close the cop task and create a root task in the current implementation.
+	// Thus, we can't push two different tasks to coprocessor now, and can only push task to coprocessor when the child is Datasource.
+
+	// TODO: develop this function after supporting push several tasks to coprecessor and supporting Projection to coprocessor.
+	_, ok := lt.children[0].(*DataSource)
+	return ok
+}
+
 func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
-	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
+	if lt.topnHints.preferTopNToCop {
+		if !lt.canPushToCop() {
+			errMsg := "Optimizer Hint TOPN_TO_COP is inapplicable"
+			warning := ErrInternal.GenWithStack(errMsg)
+			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			lt.topnHints.preferTopNToCop = false
+		}
+	}
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if !lt.topnHints.preferTopNToCop {
+		allTaskTypes = append(allTaskTypes, property.RootTaskType)
+	}
 	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64}
@@ -1688,8 +1744,21 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 	if !canPass {
 		return nil
 	}
-	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
-	ret := make([]PhysicalPlan, 0, 3)
+
+	if lt.topnHints.preferTopNToCop {
+		if !lt.canPushToCop() {
+			errMsg := "Optimizer Hint TOPN_TO_COP is inapplicable"
+			warning := ErrInternal.GenWithStack(errMsg)
+			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+			lt.topnHints.preferTopNToCop = false
+		}
+	}
+
+	allTaskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopDoubleReadTaskType}
+	if !lt.topnHints.preferTopNToCop {
+		allTaskTypes = append(allTaskTypes, property.RootTaskType)
+	}
+	ret := make([]PhysicalPlan, 0, len(allTaskTypes))
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: float64(lt.Count + lt.Offset), Items: p.Items}
 		limit := PhysicalLimit{

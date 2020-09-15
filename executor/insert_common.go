@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
@@ -72,6 +73,8 @@ type InsertValues struct {
 	// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 	lazyFillAutoID bool
 	memTracker     *memory.Tracker
+
+	stats *runtimeStatsWithSnapshot
 }
 
 type defaultVal struct {
@@ -281,7 +284,9 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = resetErrDataTooLong(colName, rowIdx+1, err)
 	} else if types.ErrOverflow.Equal(err) {
 		err = types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName, rowIdx+1)
-	} else if types.ErrTruncated.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
+	} else if types.ErrTruncated.Equal(err) {
+		err = types.ErrTruncated.GenWithStackByArgs(colName, rowIdx+1)
+	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
 			logutil.BgLogger().Warn("truncate value failed", zap.Error(err1))
@@ -526,7 +531,7 @@ func (e *InsertValues) fillColValue(ctx context.Context, datum types.Datum, idx 
 		return d, nil
 	}
 	tblInfo := e.Table.Meta()
-	if tblInfo.PKIsHandle && tblInfo.ContainsAutoRandomBits() && column.ID == tblInfo.GetPkColInfo().ID {
+	if ddl.IsAutoRandomColumnID(tblInfo, column.ID) {
 		d, err := e.adjustAutoRandomDatum(ctx, datum, hasValue, column)
 		if err != nil {
 			return types.Datum{}, err
@@ -924,6 +929,20 @@ func (e *InsertValues) handleWarning(err error) {
 	sc.AppendWarning(err)
 }
 
+func (e *InsertValues) collectRuntimeStatsEnabled() bool {
+	if e.runtimeStats != nil {
+		if e.stats == nil {
+			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			e.stats = &runtimeStatsWithSnapshot{
+				SnapshotRuntimeStats: snapshotStats,
+			}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		}
+		return true
+	}
+	return false
+}
+
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
 func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum, addRecord func(ctx context.Context, row []types.Datum) error) error {
@@ -941,6 +960,13 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		return err
 	}
 
+	if e.collectRuntimeStatsEnabled() {
+		if snapshot := txn.GetSnapshot(); snapshot != nil {
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(kv.CollectRuntimeStats)
+		}
+	}
+
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
@@ -950,7 +976,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	for i, r := range toBeCheckedRows {
 		skip := false
 		if r.handleKey != nil {
-			_, err := txn.Get(ctx, r.handleKey.newKV.key)
+			_, err := txn.Get(ctx, r.handleKey.newKey)
 			if err == nil {
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(r.handleKey.dupErr)
 				continue
@@ -960,7 +986,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			}
 		}
 		for _, uk := range r.uniqueKeys {
-			_, err := txn.Get(ctx, uk.newKV.key)
+			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
 				// If duplicate keys were found in BatchGet, mark row = nil.
 				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
