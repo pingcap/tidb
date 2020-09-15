@@ -324,12 +324,6 @@ var needCastAsDecimalAggFuncs = map[string]struct{}{
 	ast.AggFuncSum:         {},
 }
 
-var needCastAsDecimalScalarFuncs = map[string]struct{}{
-	ast.Case:   {},
-	ast.If:     {},
-	ast.Ifnull: {},
-}
-
 // WrapCastAsDecimalForAggArgs wraps the args of some specific aggregate functions
 // with a cast as decimal function. See issue #19426
 func (a *baseFuncDesc) WrapCastAsDecimalForAggArgs(ctx sessionctx.Context) {
@@ -339,11 +333,7 @@ func (a *baseFuncDesc) WrapCastAsDecimalForAggArgs(ctx sessionctx.Context) {
 				continue
 			}
 			if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
-				if sf, ok := a.Args[i].(*expression.ScalarFunction); ok {
-					if _, ok := needCastAsDecimalScalarFuncs[sf.FuncName.L]; ok {
-						a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
-					}
-				}
+				a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
 			}
 		}
 	}
