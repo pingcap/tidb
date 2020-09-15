@@ -255,7 +255,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	return finalPlan, names, cost, err
 }
 
-func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, string, string) {
+func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (ast.StmtNode, string, string) {
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		switch x.Stmt.(type) {
@@ -265,9 +265,20 @@ func extractSelectAndNormalizeDigest(stmtNode ast.StmtNode) (*ast.SelectStmt, st
 			idx := strings.Index(normalizeExplainSQL, "select")
 			normalizeSQL := normalizeExplainSQL[idx:]
 			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt.(*ast.SelectStmt), normalizeSQL, hash
+			return x.Stmt, normalizeSQL, hash
+		case *ast.SetOprStmt:
+			plannercore.EraseLastSemicolon(x)
+			normalizeExplainSQL := parser.Normalize(x.Text())
+			idx := strings.Index(normalizeExplainSQL, "select")
+			parentheses_idx := strings.Index(normalizeExplainSQL, "(")
+			if parentheses_idx != -1 && parentheses_idx < idx {
+				idx = parentheses_idx
+			}
+			normalizeSQL := normalizeExplainSQL[idx:]
+			hash := parser.DigestNormalized(normalizeSQL)
+			return x.Stmt, normalizeSQL, hash
 		}
-	case *ast.SelectStmt:
+	case *ast.SelectStmt, *ast.SetOprStmt:
 		plannercore.EraseLastSemicolon(x)
 		normalizedSQL, hash := parser.NormalizeDigest(x.Text())
 		return x, normalizedSQL, hash
@@ -280,8 +291,8 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, ""
 	}
-	selectStmt, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt)
-	if selectStmt == nil {
+	stmtNode, normalizedSQL, hash := extractSelectAndNormalizeDigest(stmt)
+	if stmtNode == nil {
 		return nil, ""
 	}
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
