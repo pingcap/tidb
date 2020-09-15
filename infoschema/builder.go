@@ -114,6 +114,10 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
+			if diff.Type == model.ActionTruncateTablePartition {
+				tblIDs = append(tblIDs, opt.OldTableID)
+				continue
+			}
 			var err error
 			affectedDiff := &model.SchemaDiff{
 				Version:     diff.Version,
