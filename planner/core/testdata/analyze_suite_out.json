@@ -291,6 +291,22 @@
     ]
   },
   {
+    "Name": "TestLowSelIndexGreedySearch",
+    "Cases": [
+      {
+        "SQL": "explain select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'",
+        "Plan": [
+          "StreamAgg_14 1.00 root  funcs:max(test.t.e)->Column#7",
+          "└─TopN_17 0.00 root  test.t.e:desc, offset:0, count:1",
+          "  └─IndexLookUp_49 0.00 root  ",
+          "    ├─IndexRangeScan_46(Build) 0.00 cop[tikv] table:t, index:idx2(a, c) range:[\"T3382\" \"TOPIC\",\"T3382\" \"TOPIC\"], keep order:false",
+          "    └─Selection_48(Probe) 0.00 cop[tikv]  eq(test.t.b, \"ECO\"), eq(test.t.d, \"23660fa1ace9455cb7f3ee831e14a342\"), not(isnull(test.t.e))",
+          "      └─TableRowIDScan_47 0.00 cop[tikv] table:t keep order:false"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestEmptyTable",
     "Cases": [
       "TableReader(Table(t)->Sel([le(test.t.c1, 50)]))",
