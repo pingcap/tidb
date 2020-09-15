@@ -489,7 +489,7 @@
           "      └─TableFullScan_13 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": [
-          "3"
+          "2"
         ]
       }
     ]
