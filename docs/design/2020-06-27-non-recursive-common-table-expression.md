@@ -2,7 +2,7 @@
 # Proposal: Non-Recursive Common Table Expression
 
 - Author(s):     [Pingyu](https://github.com/pingyu) (Ping Yu)
-- Last updated:  2020-09-14
+- Last updated:  2020-09-15
 - Discussion at: https://github.com/pingcap/tidb/issues/17472
 
 ## Abstract
@@ -11,7 +11,7 @@ This proposal proposes to support the __Non-recursive Common Table Expression (C
 
 ## Background
 
-A common table expression (CTE) is a named temporary result set that exists within the scope of a single statement and that can be referred to later within that statement, possibly multiple times [6].
+A common table expression (CTE) is a named temporary result set. It is similar to subroutines in programming languages: they can be referenced from multiple places in a query and may refer to themselves, providing recursive queries [5][6].
 
 E.g.
 ```sql
@@ -54,10 +54,12 @@ SELECT v FROM (SELECT i AS k, j AS v FROM t1) WHERE k < 100
 
 We will add some rules to rewrite the plan trees, similar to `subquery optimization` [2].
 
+_(`Inline` is also called `Merge` is other DBMS [1])_
+
 #### Materialization
 A CTE is executed first, and the result is stored temporarily during the statement execution.
 
-And on each point the CTE is referenced, the tuples of CTE is read from the temporary storage.
+Then, on each point the CTE is referenced, the tuples of CTE is read from the temporary storage.
 
 To improve performance, the temporary result is stored in memory first, then spill to disk if out of memory quota, similar to disk-based executors [3].
 
@@ -76,7 +78,7 @@ Finally, the costs should be estimated, to determine which strategy is better fo
 
 Mainstream database systems utilize `Inline` and `Materialization` to implement CTE.
 
-* MySQL using two strategies: 1) Inline the derived table into the outer query block, and 2) Materialize the derived table to an internal temporary table [1].
+* MySQL using these two strategies: 1) Inline the derived table into the outer query block, or 2) Materialize the derived table to an internal temporary table [1]. The optimizer avoids unnecessary materialization whenever possible, which enables pushing down conditions from the outer query to derived tables and produces more efficient execution plans [1].
 
 * MariaDB using `Materialization` as basic algorithm. To optimize performance, MariaDB using `Inline` strategy, and utilizes "Condition Pushdown" [5].
 
@@ -90,9 +92,9 @@ Mainstream database systems utilize `Inline` and `Materialization` to implement 
 
 ## Implementation
 
-1. Stage 1: `Inline` should be not difficult. A rewrite rule is enough, similar to rewriting subquery[2].
+1. Stage 1: `Inline` should be not difficult. A rewrite rule is enough, similar to rewriting subquery [2].
 2. Stage 2: Implement `Materialization`, by storing chunks temporarily in memory or disk.
-3. Stage 3: `Predicate Push-down` for `Materialization`, and cost estimate for both strategies.
+3. Stage 3: `Predicate Push-down` for `Materialization`, and estimate cost for both strategies.
 
 
 ## Open issues
@@ -110,5 +112,5 @@ Mainstream database systems utilize `Inline` and `Materialization` to implement 
 9. [Allow user control of CTE materialization, and change the default behavior.
 ](https://git.postgresql.org/gitweb/?p=postgresql.git;a=commitdiff;h=608b167f9f9c4553c35bb1ec0eab9ddae643989b)
 10. [WITH Queries: Present & Future](https://info.crunchydata.com/blog/with-queries-present-future-common-table-expressions)
-11. [Cockroach codes, with_funcs.go:CanInlineWith](https://github.com/cockroachdb/cockroach/blob/master/pkg/sql/opt/norm/with_funcs.go#L18)
-12. [Cockroachdb: opt: Support AS MATERIALIZED option in CTEs](https://github.com/cockroachdb/cockroach/issues/45863)
+11. [CockroachDB codes, with_funcs.go:CanInlineWith](https://github.com/cockroachdb/cockroach/blob/master/pkg/sql/opt/norm/with_funcs.go#L18)
+12. [CockroachDB: opt: Support AS MATERIALIZED option in CTEs](https://github.com/cockroachdb/cockroach/issues/45863)
