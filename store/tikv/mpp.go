@@ -148,6 +148,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		})
 	}
 
+	// meta for current task.
 	taskMeta := &mpp.TaskMeta{QueryTs: req.StartTs, TaskId: req.ID, Address: originalTask.storeAddr}
 
 	mppReq := &mpp.DispatchTaskRequest{
@@ -188,6 +189,10 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		return
 	}
 
+	m.establishMPPConns(bo, req, taskMeta)
+}
+
+func (m *mppIterator) establishMPPConns(bo *Backoffer, req *kv.MPPDispatchRequest, taskMeta *mpp.TaskMeta) {
 	connReq := &mpp.EstablishMPPConnectionRequest{
 		ServerMeta: taskMeta,
 		ClientMeta: &mpp.TaskMeta{
@@ -196,12 +201,12 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 		},
 	}
 
-	wrappedReq = tikvrpc.NewRequest(tikvrpc.CmdMPPConn, connReq, kvrpcpb.Context{})
+	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPConn, connReq, kvrpcpb.Context{})
 	wrappedReq.StoreTp = kv.TiFlash
 
 	// Drain result from root task.
 	// We don't need to process any special error. When we meet errors, just let it fail.
-	rpcResp, err = m.store.client.SendRequest(bo.ctx, originalTask.storeAddr, wrappedReq, ReadTimeoutUltraLong)
+	rpcResp, err := m.store.client.SendRequest(bo.ctx, req.Task.GetAddress(), wrappedReq, ReadTimeoutUltraLong)
 
 	if err != nil {
 		m.sendError(err)
@@ -237,7 +242,7 @@ func (m *mppIterator) handleDispatchReq(ctx context.Context, bo *Backoffer, req 
 				}
 			}
 			m.sendToRespCh(&mppResponse{
-				err: errors.New(realResp.Error.Error.Msg),
+				err: errors.New(resp.Error.Error.Msg),
 			})
 			return
 		}

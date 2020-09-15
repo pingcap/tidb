@@ -169,7 +169,7 @@ type MPPGather struct {
 	respIter distsql.SelectResult
 }
 
-func (e *MPPGather) schedulePlanFragmentImpl(ctx context.Context, p *planFragment) ([]*mppTask, error) {
+func (e *MPPGather) constructMPPTasksImpl(ctx context.Context, p *planFragment) ([]*mppTask, error) {
 	if p.tableScan.Table.GetPartitionInfo() == nil {
 		return e.scheduleSinglePhysicalTable(ctx, p.tableScan.Table.ID, p.tableScan.Ranges)
 	}
@@ -212,9 +212,11 @@ func (e *MPPGather) getPlanFragments(p plannercore.PhysicalPlan, pf *planFragmen
 	case *plannercore.PhysicalBroadCastJoin:
 		// This is a pipeline breaker. So we replace broadcast side with a exchangerClient
 		bcChild := x.Children()[x.InnerChildIdx]
-		exc := &ExchangeServer{exchangeType: tipb.ExchangeType_Broadcast}
-		exc.InitBasePlan(e.ctx, plancodec.TypeExchangeServer)
-		npf := &planFragment{p: bcChild, exchangeServer: exc}
+		exchangeServer := &ExchangeServer{exchangeType: tipb.ExchangeType_Broadcast}
+		exchangeServer.InitBasePlan(e.ctx, plancodec.TypeExchangeServer)
+		npf := &planFragment{p: bcChild, exchangeServer: exchangeServer}
+		exchangeServer.SetChildren(npf.p)
+
 		exchangeClient := &ExchangeClient{
 			childPf: npf,
 			schema:  bcChild.Schema(),
@@ -234,7 +236,6 @@ func (e *MPPGather) getPlanFragments(p plannercore.PhysicalPlan, pf *planFragmen
 }
 
 func (e *MPPGather) appendMPPDispatchReq(pf *planFragment, tasks []*mppTask, isRoot bool) error {
-	pf.exchangeServer.SetChildren(pf.p)
 	dagReq, _, err := constructDAGReq(e.ctx, []plannercore.PhysicalPlan{pf.exchangeServer}, kv.TiFlash)
 	if err != nil {
 		return errors.Trace(err)
@@ -265,15 +266,15 @@ func (e *MPPGather) appendMPPDispatchReq(pf *planFragment, tasks []*mppTask, isR
 	return nil
 }
 
-func (e *MPPGather) schedulePlanFragment(ctx context.Context, pf *planFragment, isRoot bool) ([]*mppTask, error) {
-	tasks, err := e.schedulePlanFragmentImpl(ctx, pf)
+func (e *MPPGather) constructMPPTasks(ctx context.Context, pf *planFragment, isRoot bool) ([]*mppTask, error) {
+	tasks, err := e.constructMPPTasksImpl(ctx, pf)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	for _, client := range pf.exchangeClients {
 		client.childPf.exchangeServer.tasks = tasks
-		client.tasks, err = e.schedulePlanFragment(ctx, client.childPf, false)
+		client.tasks, err = e.constructMPPTasks(ctx, client.childPf, false)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -297,9 +298,11 @@ func (e *MPPGather) Open(ctx context.Context) error {
 		p:              e.originalPlan,
 		exchangeServer: &ExchangeServer{exchangeType: tipb.ExchangeType_PassThrough, tasks: []*mppTask{tidbTask}},
 	}
+	rootPf.exchangeServer.InitBasePlan(e.ctx, plancodec.TypeExchangeServer)
+	rootPf.exchangeServer.SetChildren(rootPf.p)
 
 	e.getPlanFragments(e.originalPlan, rootPf)
-	_, err := e.schedulePlanFragment(ctx, rootPf, true)
+	_, err := e.constructMPPTasks(ctx, rootPf, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -320,5 +323,8 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // Close and release the used resources.
 func (e *MPPGather) Close() error {
-	return e.respIter.Close()
+	if e.respIter != nil {
+		return e.respIter.Close()
+	}
+	return nil
 }
