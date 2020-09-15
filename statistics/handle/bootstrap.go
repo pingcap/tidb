@@ -33,10 +33,11 @@ import (
 )
 
 const (
-	// max histogram(index/column) number
-	defaultTopNnum      = 20
-	defaultBucketsSize  = 256
-	defaultStatDataSize = 50000
+	// defaultTopNnum ,defaultBucketsSize are defined in planner/core/planbuilder.go analyzeOptionDefault.
+	defaultTopNnum     = 20
+	defaultBucketsSize = 256
+	// defaultStatDataSize is an estimated default statistic data size for one column/index(CMSKetch + Histogram).
+	defaultStatDataSize = 50 * 1024
 )
 
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
