@@ -707,6 +707,9 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 	if e.extractor == nil || !e.extractor.Enable {
 		file, err := os.Open(logFilePath)
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, nil
+			}
 			return nil, err
 		}
 		return []logFile{{file: file}}, nil
