@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -61,6 +62,14 @@ type reorgCtx struct {
 	notifyCancelReorgJob int32
 	// doneHandle is used to simulate the handle that has been processed.
 	doneHandle atomic.Value // nullableHandle
+
+	// warnings is used to store the warnings when doing the reorg job under
+	// a certain SQL Mode.
+	mu struct {
+		sync.Mutex
+		warnings      []*terror.Error
+		warningsCount []int64
+	}
 }
 
 // nullableHandle can store <nil> handle.
@@ -111,6 +120,22 @@ func (rc *reorgCtx) setNextHandle(doneHandle kv.Handle) {
 	rc.doneHandle.Store(nullableHandle{handle: doneHandle})
 }
 
+func (rc *reorgCtx) setWarnings(warnings []*terror.Error, warningsCount []int64) {
+	if len(warnings) == 0 || len(warningsCount) == 0 {
+		return
+	}
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.mu.warnings, rc.mu.warningsCount = mergeWarningsAndWarningsCount(warnings, rc.mu.warnings, warningsCount, rc.mu.warningsCount)
+}
+
+func (rc *reorgCtx) resetWarnings() {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.mu.warnings = nil
+	rc.mu.warningsCount = nil
+}
+
 func (rc *reorgCtx) increaseRowCount(count int64) {
 	atomic.AddInt64(&rc.rowCount, count)
 }
@@ -124,6 +149,7 @@ func (rc *reorgCtx) getRowCountAndHandle() (int64, kv.Handle) {
 func (rc *reorgCtx) clean() {
 	rc.setRowCount(0)
 	rc.setNextHandle(nil)
+	rc.resetWarnings()
 	rc.doneCh = nil
 }
 
@@ -159,6 +185,14 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
+
+		// Update a job's Warnings.
+		partWarnings := w.reorgCtx.mu.warnings
+		partWarningsCount := w.reorgCtx.mu.warningsCount
+		job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.Warnings, partWarningsCount, job.WarningsCount))
+		if err == nil {
+			metrics.AddIndexProgress.Set(100)
+		}
 		w.reorgCtx.clean()
 		if err != nil {
 			return errors.Trace(err)
@@ -173,6 +207,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
 		w.reorgCtx.setNextHandle(nil)
 		w.reorgCtx.setRowCount(0)
+		w.reorgCtx.resetWarnings()
 		// We return errWaitReorgTimeout here too, so that outer loop will break.
 		return errWaitReorgTimeout
 	case <-time.After(waitTimeout):
@@ -180,6 +215,10 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		updateAddIndexProgress(w, tblInfo, rowCount)
+		// Update a job's Warnings.
+		partWarnings := w.reorgCtx.mu.warnings
+		partWarningsCount := w.reorgCtx.mu.warningsCount
+		job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.Warnings, partWarningsCount, job.WarningsCount))
 		// Update a reorgInfo's handle.
 		err := t.UpdateDDLReorgStartHandle(job, reorgInfo.currElement, doneHandle)
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout", zap.Duration("waitTime", waitTimeout),

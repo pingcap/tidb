@@ -3304,9 +3304,12 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		if origin.Tp != to.Tp {
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
-		// The root cause is modifying decimal precision needs to rewrite binary representation of that decimal.
-		if to.Flen != origin.Flen || to.Decimal != origin.Decimal {
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs("can't change decimal column precision")
+		// Floating-point and fixed-point types also can be UNSIGNED. As with integer types, this attribute prevents
+		// negative values from being stored in the column. Unlike the integer types, the upper range of column values
+		// remains the same.
+		if to.Flen != origin.Flen || to.Decimal != origin.Decimal || mysql.HasUnsignedFlag(to.Flag) != mysql.HasUnsignedFlag(origin.Flag) {
+			msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.Flen, origin.Decimal, to.Flen, to.Decimal)
+			return msg, errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 	default:
 		if origin.Tp != to.Tp {
@@ -3338,9 +3341,9 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 	return "", nil
 }
 
-// checkModifyTypes checks if the 'origin' type can be modified to 'to' type with out the need to
+// checkModifyTypes checks if the 'origin' type can be modified to 'to' type without the need to
 // change or check existing data in the table.
-// It returns error if the two types has incompatible Charset and Collation, different sign, different
+// It returns error if the two types has incompatible charset and collation, different sign, different
 // digital/string types, or length of new Flen and Decimal is less than origin.
 func checkModifyTypes(ctx sessionctx.Context, origin *types.FieldType, to *types.FieldType, needRewriteCollationData bool) error {
 	changeColumnValueMsg, err := CheckModifyTypeCompatible(origin, to)
@@ -3641,6 +3644,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
+		SqlMode:    ctx.GetSessionVars().SQLMode,
 		Args:       []interface{}{&newCol, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
 	return job, nil
@@ -3814,6 +3818,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		SchemaName: schema.Name.L,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
+		SqlMode:    ctx.GetSessionVars().SQLMode,
 		Args:       []interface{}{&newCol, oldColName, spec.Position, 0},
 	}
 	err = d.doDDLJob(ctx, job)

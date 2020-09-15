@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/parser/terror"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -642,9 +643,36 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return updateColumnDefaultValue(t, job, newCol, &newCol.Name)
 }
 
+// CheckNeedReorg is used to judge whether it is necessary to reorg the data when we change column from `from` to `to` type.
+func CheckNeedReorg(from, to *model.ColumnInfo) bool {
+	// TODO: fill in more judgement logic into this function based the encode of TiDB and move this into parser as a member function of columnInfo.
+	if from.Tp == to.Tp {
+		// Same type change
+		switch to.Tp {
+		case mysql.TypeNewDecimal:
+			// Since type decimal will encode the precision, frac, negative(signed) and wordBuf into storage together, there is no short
+			// cut to eliminate data reorg change for column type change between decimal.
+			return from.Flen != to.Flen || from.Decimal != from.Flen || mysql.HasUnsignedFlag(from.Flag) != mysql.HasUnsignedFlag(to.Flag)
+		case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny:
+			// Since type integer are all stored as int64(for signed) or uint64(for unsigned), shrinking the flen or changing the signed
+			// attribute need a data reorg change.
+			return from.Flen > to.Flen || mysql.HasUnsignedFlag(from.Flag) != mysql.HasUnsignedFlag(to.Flag)
+		}
+	} else {
+		// Diff type change
+
+	}
+	return true
+}
+
 func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
+	if oldCol.Tp == newCol.Tp && oldCol.Tp == mysql.TypeNewDecimal {
+		// Since type decimal will encode the precision, frac, negative(signed) and wordBuf into storage together, there is no short
+		// cut to eliminate data reorg change for column type change between decimal.
+		return oldCol.Flen != newCol.Flen || oldCol.Decimal != newCol.Decimal || mysql.HasUnsignedFlag(oldCol.Flag) != mysql.HasUnsignedFlag(newCol.Flag)
+	}
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
 	}
@@ -1036,9 +1064,12 @@ type updateColumnWorker struct {
 	rowDecoder *decoder.RowDecoder
 
 	rowMap map[int64]types.Datum
+
+	// For SQL Mode and warnings.
+	sqlMode mysql.SQLMode
 }
 
-func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, oldCol, newCol *model.ColumnInfo, decodeColMap map[int64]decoder.Column) *updateColumnWorker {
+func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t table.PhysicalTable, oldCol, newCol *model.ColumnInfo, decodeColMap map[int64]decoder.Column, sqlMode mysql.SQLMode) *updateColumnWorker {
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &updateColumnWorker{
 		backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
@@ -1047,6 +1078,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, worker *worker, id int, t
 		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("update_col_speed"),
 		rowDecoder:     rowDecoder,
 		rowMap:         make(map[int64]types.Datum, len(decodeColMap)),
+		sqlMode:        sqlMode,
 	}
 }
 
@@ -1055,8 +1087,9 @@ func (w *updateColumnWorker) AddMetricInfo(cnt float64) {
 }
 
 type rowRecord struct {
-	key  []byte // It's used to lock a record. Record it to reduce the encoding time.
-	vals []byte // It's the record.
+	key     []byte        // It's used to lock a record. Record it to reduce the encoding time.
+	vals    []byte        // It's the record.
+	warning *terror.Error // It's used to record the cast warning of a record.
 }
 
 // getNextHandle gets next handle of entry that we are going to process.
@@ -1133,10 +1166,15 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		return nil
 	}
 
+	var recordWarning *terror.Error
 	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
-	// TODO: Consider sql_mode and the error msg(encounter this error check whether to rollback).
 	if err != nil {
-		return errors.Trace(err)
+		if IsNormalWarning(err) || (!w.sqlMode.HasStrictMode() && IsStrictWarning(err)) {
+			// Keep the warnings
+			recordWarning = errors.Cause(err).(*terror.Error)
+		} else {
+			return errors.Trace(err)
+		}
 	}
 	w.rowMap[w.newColInfo.ID] = newColVal
 	newColumnIDs := make([]int64, 0, len(w.rowMap))
@@ -1151,9 +1189,29 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 		return errors.Trace(err)
 	}
 
-	w.rowRecords = append(w.rowRecords, &rowRecord{key: recordKey, vals: newRowVal})
+	w.rowRecords = append(w.rowRecords, &rowRecord{key: recordKey, vals: newRowVal, warning: recordWarning})
 	w.cleanRowMap()
 	return nil
+}
+
+// IsNormalWarning is used to check the normal warnings, for example data-truncated warnings.
+// This kind of warning will be always thrown out regard less of what kind of the sql mode is.
+func IsNormalWarning(err error) bool {
+	// TODO: there are more errors here can be identified as normal warnings.
+	if types.ErrTruncatedWrongVal.Equal(err) {
+		return true
+	}
+	return false
+}
+
+// IsStrictWarning is used to check whether the error can be transferred as a warning under a
+// non-strict SQL Mode.
+func IsStrictWarning(err error) bool {
+	// TODO: there are more errors here can be identified as warnings under non-strict SQL mode.
+	if types.ErrOverflow.Equal(err) {
+		return true
+	}
+	return false
 }
 
 func (w *updateColumnWorker) cleanRowMap() {
@@ -1177,6 +1235,8 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		taskCtx.nextHandle = nextHandle
 		taskCtx.done = taskDone
 
+		warningsMap := make(map[errors.ErrorID]*terror.Error, len(rowRecords))
+		warningsCountMap := make(map[errors.ErrorID]int64, len(rowRecords))
 		for _, rowRecord := range rowRecords {
 			taskCtx.scanCount++
 
@@ -1185,6 +1245,20 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 				return errors.Trace(err)
 			}
 			taskCtx.addedCount++
+			if rowRecord.warning != nil {
+				if _, ok := warningsCountMap[rowRecord.warning.ID()]; ok {
+					warningsCountMap[rowRecord.warning.ID()]++
+				} else {
+					warningsCountMap[rowRecord.warning.ID()] = 1
+					warningsMap[rowRecord.warning.ID()] = rowRecord.warning
+				}
+			}
+		}
+
+		// Collect the warnings.
+		for k, warning := range warningsMap {
+			taskCtx.warnings = append(taskCtx.warnings, warning)
+			taskCtx.warningsCount = append(taskCtx.warningsCount, warningsCountMap[k])
 		}
 
 		return nil

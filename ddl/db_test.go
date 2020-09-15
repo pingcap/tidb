@@ -5767,3 +5767,41 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 
 	tk.MustExec("drop table if exists t")
 }
+
+func (s *testSerialDBSuite) TestModifyColumnTypeWithWarnings(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	// Enable column change variable.
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = false
+	}()
+
+	// Test normal warnings.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a decimal(5,2))")
+	tk.MustExec("insert into t values(111.22),(111.22),(111.22),(111.22),(333.4)")
+	// 111.22 will be truncated the fraction .22 as .2 with truncated warning for each row.
+	tk.MustExec("alter table t modify column a decimal(4,1)")
+	// there should 4 rows of warnings corresponding to the origin rows.
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect DECIMAL value: '111.22'",
+		"Warning 1292 Truncated incorrect DECIMAL value: '111.22'",
+		"Warning 1292 Truncated incorrect DECIMAL value: '111.22'",
+		"Warning 1292 Truncated incorrect DECIMAL value: '111.22'"))
+
+	// Test the strict warnings is treated as errors under the strict mode.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a decimal(5,2))")
+	tk.MustExec("insert into t values(111.22),(111.22),(111.22),(33.4)")
+	// Since modify column a from decimal(5,2) to decimal(3,1), the first three rows with 111.22 will overflows the target types.
+	_, err := tk.Exec("alter table t modify column a decimal(3,1)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[types:1690]DECIMAL value is out of range in '(3, 1)'")
+
+	// Test the strict warnings is treated as warnings under the non-strict mode.
+	tk.MustExec("set @@sql_mode=\"\"")
+	tk.MustExec("alter table t modify column a decimal(3,1)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 DECIMAL value is out of range in '(3, 1)'",
+		"Warning 1690 DECIMAL value is out of range in '(3, 1)'",
+		"Warning 1690 DECIMAL value is out of range in '(3, 1)'"))
+}
