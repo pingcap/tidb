@@ -154,6 +154,7 @@ func (s *testSuite9) TestPreparedStmtWithHint(c *C) {
 		}
 	}()
 	rs, err := se.Execute(context.Background(), "execute stmt")
+	c.Check(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
 	tk.ResultSetToResult(rs[0], Commentf("%v", rs[0])).Check(testkit.Rows("1"))
 }
