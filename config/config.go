@@ -551,7 +551,7 @@ type Plugin struct {
 // PessimisticTxn is the config for pessimistic transaction.
 type PessimisticTxn struct {
 	// Enable must be true for 'begin lock' or session variable to start a pessimistic transaction.
-	Enable bool `toml:"enable" json:"enable"`
+	Enable bool `toml:"-" json:"-"`
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
 }
@@ -762,6 +762,7 @@ func StoreGlobalConfig(config *Config) {
 
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl":            {},
+	"pessimistic-txn.enable":         {},
 	"log.file.log-rotate":            {},
 	"log.log-slow-query":             {},
 	"txn-local-latches":              {},
