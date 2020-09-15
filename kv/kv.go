@@ -164,6 +164,8 @@ type Transaction interface {
 	Valid() bool
 	// GetMemBuffer return the MemBuffer binding to this transaction.
 	GetMemBuffer() MemBuffer
+	// GetMemBufferSnapshot is used to return a snapshot of MemBuffer without any statement modify.
+	GetMemBufferSnapshot() MemBuffer
 	// SetVars sets variables to the transaction.
 	SetVars(vars *Variables)
 	// SetAssertion sets an assertion for an operation on the key.
