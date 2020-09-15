@@ -357,45 +357,45 @@ func WithConnID(ctx context.Context, connID uint32) context.Context {
 }
 
 // WithTrace attaches trace identifier to context
-func WithTraceLogger(ctx context.Context) context.Context {
+func WithTraceLogger(ctx context.Context, connId uint32) context.Context {
 	var logger *zap.Logger
 	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
 		logger = ctxLogger
 	} else {
 		logger = zaplog.L()
 	}
-	return context.WithValue(ctx, ctxLogKey, wrapTraceLogger(ctx, logger))
+	return context.WithValue(ctx, ctxLogKey, wrapTraceLogger(ctx, connId, logger))
 }
 
-func wrapTraceLogger(ctx context.Context, logger *zap.Logger) *zap.Logger {
+func wrapTraceLogger(ctx context.Context, connId uint32, logger *zap.Logger) *zap.Logger {
 	return logger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-		return &traceLogger{
-			core: core,
-			enc:  zaplog.NewTextEncoder(&zaplog.Config{}),
-			ctx:  ctx,
+		traceCore := &traceLogCore{
+			enc: zaplog.NewTextEncoder(&zaplog.Config{}),
+			ctx: ctx,
 		}
+		zap.Uint32("conn", connId).AddTo(traceCore.enc)
+		return zapcore.NewTee(traceCore, core)
 	}))
 }
 
-type traceLogger struct {
-	core zapcore.Core
-	enc  zapcore.Encoder
-	ctx  context.Context
+type traceLogCore struct {
+	enc zapcore.Encoder
+	ctx context.Context
 }
 
-func (l *traceLogger) Enabled(_ zapcore.Level) bool {
+func (l *traceLogCore) Enabled(_ zapcore.Level) bool {
 	return true
 }
 
-func (l *traceLogger) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
-	return l.core.Check(entry, ce.AddCore(entry, l))
+func (l *traceLogCore) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	return ce.AddCore(entry, l)
 }
 
-func (l *traceLogger) Sync() error {
-	return l.core.Sync()
+func (l *traceLogCore) Sync() error {
+	return nil
 }
 
-func (l *traceLogger) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+func (l *traceLogCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	buf, err := l.enc.EncodeEntry(entry, fields)
 	if err != nil {
 		return err
@@ -405,11 +405,14 @@ func (l *traceLogger) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 	return nil
 }
 
-func (l *traceLogger) With(fields []zapcore.Field) zapcore.Core {
-	return &traceLogger{
-		core: l.core.With(fields),
-		enc:  l.enc.Clone(),
-		ctx:  l.ctx,
+func (l *traceLogCore) With(fields []zapcore.Field) zapcore.Core {
+	enc := l.enc.Clone()
+	for _, f := range fields {
+		f.AddTo(enc)
+	}
+	return &traceLogCore{
+		enc: enc,
+		ctx: l.ctx,
 	}
 }
 

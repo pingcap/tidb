@@ -932,7 +932,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			defer task.End()
 
 			trace.Log(ctx, "sql", lc.String())
-			ctx = logutil.WithTraceLogger(ctx)
+			ctx = logutil.WithTraceLogger(ctx, cc.connectionID)
 
 			taskId := *(*uint64)(unsafe.Pointer(task))
 			ctx = pprof.WithLabels(ctx, pprof.Labels("trace", strconv.FormatUint(taskId, 10)))
