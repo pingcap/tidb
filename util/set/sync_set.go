@@ -48,7 +48,7 @@ func (s SyncSet) Exist(val interface{}) bool {
 // It returns true if `val` already exists.
 func (s SyncSet) InsertIfNotExist(val interface{}) bool {
 	_, ok := s.Map.LoadOrStore(val, struct{}{})
-	if ok {
+	if !ok {
 		s.count.Inc()
 	}
 	return ok
