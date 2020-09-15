@@ -15,13 +15,13 @@ package checksum
 
 import (
 	"bytes"
-	encrypt2 "github.com/pingcap/tidb/util/encrypt"
 	"io"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/check"
+	encrypt2 "github.com/pingcap/tidb/util/encrypt"
 )
 
 func TestT(t *testing.T) {
@@ -75,32 +75,34 @@ func (s *testChecksumSuite) TestChecksumReadAt(c *check.C) {
 }
 
 type mockWriter struct {
-	err error
-	w io.WriteCloser
+	err    error
+	w      io.WriteCloser
 	offset int
-	f func(b []byte,offset int) []byte
+	f      func(b []byte, offset int) []byte
 }
 
-func newMockWriter(w io.WriteCloser,f func(b []byte,offset int) []byte) *mockWriter {
+func newMockWriter(w io.WriteCloser, f func(b []byte, offset int) []byte) *mockWriter {
 	return &mockWriter{w: w, f: f}
 }
 
-func (w *mockWriter) Write(p []byte) (n int, err error){
+func (w *mockWriter) Write(p []byte) (n int, err error) {
 	// always write successfully.
 	n = len(p)
 	if w.f != nil {
-		p = w.f(p,w.offset)
+		p = w.f(p, w.offset)
 	}
 	nn, err := w.w.Write(p)
 	if err != nil {
 		return n, err
 	}
 	w.offset += nn
-	return n,err
+	return n, err
 }
 
 func (w *mockWriter) Close() (err error) {
-	if w.err != nil {return w.err}
+	if w.err != nil {
+		return w.err
+	}
 	return w.w.Close()
 }
 
@@ -121,8 +123,8 @@ func (s *testChecksumSuite) testTiCase3644(c *check.C, encrypt bool) {
 	}()
 
 	insertPos := 5000
-	fc := func (b []byte,offset int) []byte {
-		if offset < insertPos && offset + len(b) >= insertPos {
+	fc := func(b []byte, offset int) []byte {
+		if offset < insertPos && offset+len(b) >= insertPos {
 			pos := insertPos - offset
 			b = append(append(b[:pos], 0), b[pos:]...)
 		}
@@ -193,8 +195,8 @@ func (s *testChecksumSuite) testTiCase3645(c *check.C, encrypt bool) {
 	}()
 
 	modifyPos := 5000
-	fc := func (b []byte,offset int) []byte {
-		if offset < modifyPos && offset + len(b) >= modifyPos {
+	fc := func(b []byte, offset int) []byte {
+		if offset < modifyPos && offset+len(b) >= modifyPos {
 			pos := modifyPos - offset
 			b[pos-1] = 255
 		}
@@ -265,8 +267,8 @@ func (s *testChecksumSuite) testTiCase3646(c *check.C, encrypt bool) {
 	}()
 
 	deletePos := 5000
-	fc := func (b []byte,offset int) []byte {
-		if offset < deletePos && offset + len(b) >= deletePos {
+	fc := func(b []byte, offset int) []byte {
+		if offset < deletePos && offset+len(b) >= deletePos {
 			pos := deletePos - offset
 			b = append(b[:pos-1], b[pos:]...)
 		}
@@ -325,7 +327,7 @@ func (s *testChecksumSuite) TestTiCase3647(c *check.C) {
 	s.testTiCase3647(c, true)
 }
 
-func (s *testChecksumSuite) testTiCase3647(c *check.C,encrypt bool) {
+func (s *testChecksumSuite) testTiCase3647(c *check.C, encrypt bool) {
 	path := "TiCase3647"
 	f, err := os.Create(path)
 	c.Assert(err, check.IsNil)
@@ -373,8 +375,8 @@ func (s *testChecksumSuite) testTiCase3648(c *check.C, encrypt bool) {
 	}()
 
 	modifyPos := 5000
-	fc := func (b []byte,offset int) []byte {
-		if offset < modifyPos && offset + len(b) >= modifyPos {
+	fc := func(b []byte, offset int) []byte {
+		if offset < modifyPos && offset+len(b) >= modifyPos {
 			// modify 3 bytes
 			if len(b) == 1024 {
 				b[200] = 255
