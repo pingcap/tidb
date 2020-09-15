@@ -465,9 +465,10 @@ func (do *Domain) infoSyncerKeeper() {
 		case <-do.info.Done():
 			logutil.BgLogger().Info("server info syncer need to restart")
 			if err := do.info.Restart(context.Background()); err != nil {
-				logutil.BgLogger().Error("server restart failed", zap.Error(err))
+				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
+			} else {
+				logutil.BgLogger().Info("server info syncer restarted")
 			}
-			logutil.BgLogger().Info("server info syncer restarted")
 		case <-do.exit:
 			return
 		}
@@ -493,9 +494,10 @@ func (do *Domain) topologySyncerKeeper() {
 		case <-do.info.TopologyDone():
 			logutil.BgLogger().Info("server topology syncer need to restart")
 			if err := do.info.RestartTopology(context.Background()); err != nil {
-				logutil.BgLogger().Error("server restart failed", zap.Error(err))
+				logutil.BgLogger().Error("server topology syncer restart failed", zap.Error(err))
+			} else {
+				logutil.BgLogger().Info("server topology syncer restarted")
 			}
-			logutil.BgLogger().Info("server topology syncer restarted")
 		case <-do.exit:
 			return
 		}
