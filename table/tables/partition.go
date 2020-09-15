@@ -132,6 +132,8 @@ type PartitionExpr struct {
 	*ForRangePruning
 	// Used in the range column pruning process.
 	*ForRangeColumnsPruning
+	// ColOffset is the offsets of partition columns.
+	ColumnOffset []int
 }
 
 func initEvalBufferType(t *partitionedTable) {
@@ -292,12 +294,28 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		UpperBounds: locateExprs,
 	}
 
+	// build column offset.
+	partExp := pi.Expr
+	if len(pi.Columns) == 1 {
+		partExp = pi.Columns[0].L
+	}
+	exprs, err := parseSimpleExprWithNames(p, ctx, partExp, schema, names)
+	if err != nil {
+		return nil, err
+	}
+	partitionCols := expression.ExtractColumns(exprs)
+	offset := make([]int, len(partitionCols))
+	for i, col := range columns {
+		for j, partitionCol := range partitionCols {
+			if partitionCol.UniqueID == col.UniqueID {
+				offset[j] = i
+			}
+		}
+	}
+	ret.ColumnOffset = offset
+
 	switch len(pi.Columns) {
 	case 0:
-		exprs, err := parseSimpleExprWithNames(p, ctx, pi.Expr, schema, names)
-		if err != nil {
-			return nil, err
-		}
 		tmp, err := dataForRangePruning(ctx, pi)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -330,10 +348,21 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
+	// build column offset.
+	partitionCols := expression.ExtractColumns(exprs)
+	offset := make([]int, len(partitionCols))
+	for i, col := range columns {
+		for j, partitionCol := range partitionCols {
+			if partitionCol.UniqueID == col.UniqueID {
+				offset[j] = i
+			}
+		}
+	}
 	exprs.HashCode(ctx.GetSessionVars().StmtCtx)
 	return &PartitionExpr{
 		Expr:     exprs,
 		OrigExpr: origExpr,
+		ColumnOffset: offset,
 	}, nil
 }
 
