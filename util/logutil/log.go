@@ -357,63 +357,40 @@ func WithConnID(ctx context.Context, connID uint32) context.Context {
 }
 
 // WithTrace attaches trace identifier to context
-func WithTraceLogger(ctx context.Context, connId uint32) context.Context {
+func WithTraceLogger(ctx context.Context, connID uint32) context.Context {
 	var logger *zap.Logger
 	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
 		logger = ctxLogger
 	} else {
 		logger = zaplog.L()
 	}
-	return context.WithValue(ctx, ctxLogKey, wrapTraceLogger(ctx, connId, logger))
+	return context.WithValue(ctx, ctxLogKey, wrapTraceLogger(ctx, connID, logger))
 }
 
-func wrapTraceLogger(ctx context.Context, connId uint32, logger *zap.Logger) *zap.Logger {
+func wrapTraceLogger(ctx context.Context, connID uint32, logger *zap.Logger) *zap.Logger {
 	return logger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-		traceCore := &traceLogCore{
-			enc: zaplog.NewTextEncoder(&zaplog.Config{}),
-			ctx: ctx,
-		}
-		zap.Uint32("conn", connId).AddTo(traceCore.enc)
+		tl := &traceLog{ctx: ctx}
+		traceCore := zaplog.NewTextCore(zaplog.NewTextEncoder(&zaplog.Config{}), tl, tl).
+			With([]zapcore.Field{zap.Uint32("conn", connID)})
 		return zapcore.NewTee(traceCore, core)
 	}))
 }
 
-type traceLogCore struct {
-	enc zapcore.Encoder
+type traceLog struct {
 	ctx context.Context
 }
 
-func (l *traceLogCore) Enabled(_ zapcore.Level) bool {
+func (t *traceLog) Enabled(_ zapcore.Level) bool {
 	return true
 }
 
-func (l *traceLogCore) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
-	return ce.AddCore(entry, l)
+func (t *traceLog) Write(p []byte) (n int, err error) {
+	trace.Log(t.ctx, "log", string(p))
+	return len(p), nil
 }
 
-func (l *traceLogCore) Sync() error {
+func (t *traceLog) Sync() error {
 	return nil
-}
-
-func (l *traceLogCore) Write(entry zapcore.Entry, fields []zapcore.Field) error {
-	buf, err := l.enc.EncodeEntry(entry, fields)
-	if err != nil {
-		return err
-	}
-	trace.Log(l.ctx, "log", buf.String())
-	buf.Free()
-	return nil
-}
-
-func (l *traceLogCore) With(fields []zapcore.Field) zapcore.Core {
-	enc := l.enc.Clone()
-	for _, f := range fields {
-		f.AddTo(enc)
-	}
-	return &traceLogCore{
-		enc: enc,
-		ctx: l.ctx,
-	}
 }
 
 // WithKeyValue attaches key/value to context.

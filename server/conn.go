@@ -934,8 +934,8 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			trace.Log(ctx, "sql", lc.String())
 			ctx = logutil.WithTraceLogger(ctx, cc.connectionID)
 
-			taskId := *(*uint64)(unsafe.Pointer(task))
-			ctx = pprof.WithLabels(ctx, pprof.Labels("trace", strconv.FormatUint(taskId, 10)))
+			taskID := *(*uint64)(unsafe.Pointer(task))
+			ctx = pprof.WithLabels(ctx, pprof.Labels("trace", strconv.FormatUint(taskID, 10)))
 			pprof.SetGoroutineLabels(ctx)
 		}
 	}
