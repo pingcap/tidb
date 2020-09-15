@@ -997,7 +997,9 @@ func (s *testIntegrationSuite) TestApproxPercentile(c *C) {
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1), (2), (3), (4), (5)")
 	tk.MustQuery("select approx_percentile(a, 50) from t").Check(testkit.Rows("3"))
-	// tk.MustQuery("explain select approx_percentile(a, 50) from t").Check(testkit.Rows(""))
+	tk.MustQuery("explain select approx_percentile(a, 50) from t").Check(testkit.Rows("HashAgg_5 1.00 root  funcs:approx_percentile(test.t.a, 50)->Column#3",
+		"└─TableReader_11 10000.00 root  data:TableFullScan_10",
+		"  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
 
 func (s *testIntegrationSuite) TestIssue17813(c *C) {
