@@ -11213,6 +11213,10 @@ PrivType:
 	{
 		$$ = mysql.CreateUserPriv
 	}
+|	"CREATE" "TABLESPACE"
+	{
+		$$ = mysql.CreateTablespacePriv
+	}
 |	"TRIGGER"
 	{
 		$$ = mysql.TriggerPriv
