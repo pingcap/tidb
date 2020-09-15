@@ -2187,13 +2187,13 @@ func markChildrenUsedCols(outputSchema *expression.Schema, childSchema ...*expre
 
 // extractChildrenUsedColIdxs extract column indexes of child executors from children used columns mark
 func extractChildrenUsedColIdxs(childrenUsedColsMark [][]bool) [][]int {
-	childrenUsedColIdxs := make([][]int, len(childrenUsedColsMark), len(childrenUsedColsMark))
+	childrenUsedColIdxs := make([][]int, len(childrenUsedColsMark))
 	for childIdx, childUsedColsMark := range childrenUsedColsMark {
 		if childrenUsedColIdxs[childIdx] == nil {
 			childrenUsedColIdxs[childIdx] = make([]int, 0, len(childUsedColsMark))
 		}
 		for colIdx, colUsedMark := range childUsedColsMark {
-			if colUsedMark == true {
+			if colUsedMark {
 				childrenUsedColIdxs[childIdx] = append(childrenUsedColIdxs[childIdx], colIdx)
 			}
 		}
