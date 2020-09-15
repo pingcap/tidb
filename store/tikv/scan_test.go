@@ -107,14 +107,14 @@ func (s *testScanSuite) TestScan(c *C) {
 		}
 		err := txn.Commit(s.ctx)
 		c.Assert(err, IsNil)
-
+		mockTableID := int64(999)
 		if rowNum > 123 {
-			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(123))}, false)
+			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(123))}, false, &mockTableID)
 			c.Assert(err, IsNil)
 		}
 
 		if rowNum > 456 {
-			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(456))}, false)
+			_, err = s.store.SplitRegions(s.ctx, [][]byte{tablecodec.EncodeRecordKey(s.recordPrefix, kv.IntHandle(456))}, false, &mockTableID)
 			c.Assert(err, IsNil)
 		}
 

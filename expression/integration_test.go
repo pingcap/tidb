@@ -2721,38 +2721,43 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 
 	// select from_unixtime
+	// NOTE (#17013): make from_unixtime stable in different timezone: the result of from_unixtime
+	// depends on the local time zone of the test environment, thus the result checking must
+	// consider the time zone convert.
+	tz := tk.Se.GetSessionVars().StmtCtx.TimeZone
 	result = tk.MustQuery("select from_unixtime(1451606400)")
-	unixTime := time.Unix(1451606400, 0).String()[:19]
+	unixTime := time.Unix(1451606400, 0).In(tz).String()[:19]
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(14516064000/10)")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.0000"))
+	result.Check(testkit.Rows(fmt.Sprintf("%s.0000", unixTime)))
 	result = tk.MustQuery("select from_unixtime('14516064000'/10)")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.000000"))
+	result.Check(testkit.Rows(fmt.Sprintf("%s.000000", unixTime)))
 	result = tk.MustQuery("select from_unixtime(cast(1451606400 as double))")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.000000"))
+	result.Check(testkit.Rows(fmt.Sprintf("%s.000000", unixTime)))
 	result = tk.MustQuery("select from_unixtime(cast(cast(1451606400 as double) as DECIMAL))")
-	result.Check(testkit.Rows("2016-01-01 08:00:00"))
+	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(cast(cast(1451606400 as double) as DECIMAL(65,1)))")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.0"))
+	result.Check(testkit.Rows(fmt.Sprintf("%s.0", unixTime)))
 	result = tk.MustQuery("select from_unixtime(1451606400.123456)")
-	unixTime = time.Unix(1451606400, 123456000).String()[:26]
+	unixTime = time.Unix(1451606400, 123456000).In(tz).String()[:26]
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1451606400.1234567)")
-	unixTime = time.Unix(1451606400, 123456700).Round(time.Microsecond).Format("2006-01-02 15:04:05.000000")[:26]
+	unixTime = time.Unix(1451606400, 123456700).In(tz).Round(time.Microsecond).Format("2006-01-02 15:04:05.000000")[:26]
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1451606400.999999)")
-	unixTime = time.Unix(1451606400, 999999000).String()[:26]
+	unixTime = time.Unix(1451606400, 999999000).In(tz).String()[:26]
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1511247196661)")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select from_unixtime('1451606400.123');")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.123000"))
+	unixTime = time.Unix(1451606400, 0).In(tz).String()[:19]
+	result.Check(testkit.Rows(fmt.Sprintf("%s.123000", unixTime)))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t value(1451606400);")
 	result = tk.MustQuery("select from_unixtime(a) from t;")
-	result.Check(testkit.Rows("2016-01-01 08:00:00"))
+	result.Check(testkit.Rows(unixTime))
 
 	// test strcmp
 	result = tk.MustQuery("select strcmp('abc', 'def')")
@@ -2806,6 +2811,24 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustQuery("select if(b=0, 1, 1/b) from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select ifnull(b, b/0) from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustQuery("select case when 1 then 1 else 1/0 end")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery(" select if(1,1,1/0)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select ifnull(1, 1/0)")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
+	tk.MustExec("delete from t")
+	tk.MustExec("insert t values ('str2', 0)")
+	tk.MustQuery("select case when b < 1 then 1 else 1/0 end from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select case when b < 1 then 1 when 1/0 then b else 1/0 end from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select if(b < 1 , 1, 1/0) from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select ifnull(b, 1/0) from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("select case 2.0 when 2.0 then 3.0 when 3.0 then 2.0 end").Check(testkit.Rows("3.0"))
@@ -7278,4 +7301,27 @@ func (s *testIntegrationSuite) TestIssue19596(c *C) {
 	tk.MustQuery("select * from t;")
 	tk.MustExec("drop table if exists t;")
 	tk.MustGetErrMsg("create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (a));", "[expression:1054]Unknown column 'a' in 'expression'")
+}
+
+func (s *testIntegrationSuite) TestIssue17476(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS `table_float`;")
+	tk.MustExec("DROP TABLE IF EXISTS `table_int_float_varchar`;")
+	tk.MustExec("CREATE TABLE `table_float` (`id_1` int(16) NOT NULL AUTO_INCREMENT,`col_float_1` float DEFAULT NULL,PRIMARY KEY (`id_1`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=97635;")
+	tk.MustExec("CREATE TABLE `table_int_float_varchar` " +
+		"(`id_6` int(16) NOT NULL AUTO_INCREMENT," +
+		"`col_int_6` int(16) DEFAULT NULL,`col_float_6` float DEFAULT NULL," +
+		"`col_varchar_6` varchar(511) DEFAULT NULL,PRIMARY KEY (`id_6`)," +
+		"KEY `vhyen` (`id_6`,`col_int_6`,`col_float_6`,`col_varchar_6`(1))," +
+		"KEY `zzylq` (`id_6`,`col_int_6`,`col_float_6`,`col_varchar_6`(1))) " +
+		"ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=90818;")
+
+	tk.MustExec("INSERT INTO `table_float` VALUES (1,NULL),(2,0.1),(3,0),(4,-0.1),(5,-0.1),(6,NULL),(7,0.5),(8,0),(9,0),(10,NULL),(11,1),(12,1.5),(13,NULL),(14,NULL);")
+	tk.MustExec("INSERT INTO `table_int_float_varchar` VALUES (1,0,0.1,'true'),(2,-1,1.5,'2020-02-02 02:02:00'),(3,NULL,1.5,NULL),(4,65535,0.1,'true'),(5,NULL,0.1,'1'),(6,-1,1.5,'2020-02-02 02:02:00'),(7,-1,NULL,''),(8,NULL,-0.1,NULL),(9,NULL,-0.1,'1'),(10,-1,NULL,''),(11,NULL,1.5,'false'),(12,-1,0,NULL),(13,0,-0.1,NULL),(14,-1,NULL,'-0'),(15,65535,-1,'1'),(16,NULL,0.5,NULL),(17,-1,NULL,NULL);")
+	tk.MustQuery(`select count(*) from table_float
+ JOIN table_int_float_varchar AS tmp3 ON (tmp3.col_varchar_6 AND NULL)
+ IS NULL WHERE col_int_6=0;`).Check(testkit.Rows("14"))
+	tk.MustQuery(`SELECT count(*) FROM (table_float JOIN table_int_float_varchar AS tmp3 ON (tmp3.col_varchar_6 AND NULL) IS NULL);`).Check(testkit.Rows("154"))
+	tk.MustQuery(`SELECT * FROM (table_int_float_varchar AS tmp3) WHERE (col_varchar_6 AND NULL) IS NULL AND col_int_6=0;`).Check(testkit.Rows("13 0 -0.1 <nil>"))
 }
