@@ -611,7 +611,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, TiDBBatchInsert, BoolToIntStr(DefBatchInsert)},
 	{ScopeSession, TiDBBatchDelete, BoolToIntStr(DefBatchDelete)},
 	{ScopeSession, TiDBBatchCommit, BoolToIntStr(DefBatchCommit)},
-	{ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
+	{ScopeGlobal | ScopeSession, TiDBDMLBatchSize, strconv.Itoa(DefDMLBatchSize)},
 	{ScopeSession, TiDBCurrentTS, strconv.Itoa(DefCurretTS)},
 	{ScopeSession, TiDBLastTxnInfo, strconv.Itoa(DefCurretTS)},
 	{ScopeGlobal | ScopeSession, TiDBMaxChunkSize, strconv.Itoa(DefMaxChunkSize)},
