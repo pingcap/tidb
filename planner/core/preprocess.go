@@ -154,9 +154,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
-		EraseLastSemicolon(node.OriginSel)
-		EraseLastSemicolon(node.HintedSel)
-		p.checkBindGrammar(node.OriginSel, node.HintedSel)
+		EraseLastSemicolon(node.OriginNode)
+		EraseLastSemicolon(node.HintedNode)
+		p.checkBindGrammar(node.OriginNode, node.HintedNode)
 		return in, true
 	case *ast.DropBindingStmt:
 		EraseLastSemicolon(node.OriginSel)
@@ -204,10 +204,18 @@ func EraseLastSemicolon(stmt ast.StmtNode) {
 	}
 }
 
-func (p *preprocessor) checkBindGrammar(originSel, hintedSel ast.StmtNode) {
-	originSQL := parser.Normalize(originSel.(*ast.SelectStmt).Text())
-	hintedSQL := parser.Normalize(hintedSel.(*ast.SelectStmt).Text())
-
+func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode) {
+	var originSQL, hintedSQL string
+	switch node := originNode.(type) {
+	case *ast.SelectStmt:
+		originSQL = parser.Normalize(node.Text())
+		hintedSQL = parser.Normalize(hintedNode.(*ast.SelectStmt).Text())
+	case *ast.SetOprStmt:
+		originSQL = parser.Normalize(node.Text())
+		hintedSQL = parser.Normalize(hintedNode.(*ast.SetOprStmt).Text())
+	default:
+		p.err = errors.Errorf("create binding doesn't support this type of query")
+	}
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
 	}

@@ -732,11 +732,11 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
-		NormdOrigSQL: parser.Normalize(v.OriginSel.Text()),
-		BindSQL:      v.HintedSel.Text(),
+		NormdOrigSQL: parser.Normalize(v.OriginNode.Text()),
+		BindSQL:      v.HintedNode.Text(),
 		IsGlobal:     v.GlobalScope,
-		BindStmt:     v.HintedSel,
-		Db:           utilparser.GetDefaultDB(v.OriginSel, b.ctx.GetSessionVars().CurrentDB),
+		BindStmt:     v.HintedNode,
+		Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 		Charset:      charSet,
 		Collation:    collation,
 	}
