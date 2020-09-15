@@ -23,6 +23,7 @@ const (
 )
 
 func percentile(data sort.Interface, percent int) int {
+	// Ordinal rank k = Ceil(P / 100 * N)
 	k := int(math.Ceil(float64(data.Len()*percent) / 100.0))
 	return selection.Select(data, k)
 }
