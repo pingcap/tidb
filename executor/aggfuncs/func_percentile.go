@@ -74,11 +74,11 @@ type partialResult4PercentileDuration struct {
 
 // TODO: use []*types.MyDecimal to prevent massive value copy
 // Since we cannot override Equal on *types.MyDecimal, sort will produce wrong result.
-type decimalArray []*types.MyDecimal
+type decimalArray []types.MyDecimal
 
 func (a decimalArray) Len() int           { return len(a) }
 func (a decimalArray) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a decimalArray) Less(i, j int) bool { return a[i].Compare(a[j]) < 0 }
+func (a decimalArray) Less(i, j int) bool { return a[i].Compare(&a[j]) < 0 }
 
 type partialResult4PercentileDecimal struct {
 	data decimalArray
@@ -220,7 +220,7 @@ func (e *percentileOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context
 		if isNull {
 			continue
 		}
-		p.data = append(p.data, v)
+		p.data = append(p.data, *v)
 	}
 	endMem := p.MemSize()
 	return endMem - startMem, nil
@@ -228,7 +228,7 @@ func (e *percentileOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context
 
 func (e *percentileOriginal4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileDecimal)(src), (*partialResult4PercentileDecimal)(dst)
-	mergeBuff := make([]*types.MyDecimal, len(p1.data)+len(p2.data))
+	mergeBuff := make([]types.MyDecimal, len(p1.data)+len(p2.data))
 	copy(mergeBuff, p2.data)
 	copy(mergeBuff[len(p2.data):], p1.data)
 	p1.data = nil
@@ -243,6 +243,6 @@ func (e *percentileOriginal4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Con
 		return nil
 	}
 	index := percentile(p.data, e.percent)
-	chk.AppendMyDecimal(e.ordinal, p.data[index])
+	chk.AppendMyDecimal(e.ordinal, &p.data[index])
 	return nil
 }

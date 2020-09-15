@@ -996,7 +996,8 @@ func (s *testIntegrationSuite) TestApproxPercentile(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1), (2), (3), (4), (5)")
-	tk.MustQuery("select approx_percentile(a, 1)").Check(testkit.Rows("1"))
+	tk.MustQuery("select approx_percentile(a, 50) from t").Check(testkit.Rows("3"))
+	// tk.MustQuery("explain select approx_percentile(a, 50) from t").Check(testkit.Rows(""))
 }
 
 func (s *testIntegrationSuite) TestIssue17813(c *C) {
