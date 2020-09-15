@@ -5963,6 +5963,24 @@ func (s *testSplitTable) TestKillTableReader(c *C) {
 	wg.Wait()
 }
 
+<<<<<<< HEAD
+=======
+func (s *testSerialSuite) TestPrevStmtDesensitization(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	oriCfg := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(oriCfg)
+	newCfg := *oriCfg
+	newCfg.EnableRedactLog = 1
+	config.StoreGlobalConfig(&newCfg)
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (1),(2)")
+	c.Assert(tk.Se.GetSessionVars().PrevStmt.String(), Equals, "insert into t values ( ? ) , ( ? )")
+}
+
+>>>>>>> 70a567e... session: refine error message desensitization (#19409)
 func (s *testSuite) TestIssue19372(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")

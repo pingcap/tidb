@@ -637,8 +637,58 @@ type SessionVars struct {
 	// SelectLimit limits the max counts of select statement's output
 	SelectLimit uint64
 
+<<<<<<< HEAD
 	// EnableLogDesensitization indicates that whether desensitization when log query.
 	EnableLogDesensitization bool
+=======
+	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
+	EnableClusteredIndex bool
+
+	// PresumeKeyNotExists indicates lazy existence checking is enabled.
+	PresumeKeyNotExists bool
+
+	// EnableParallelApply indicates that thether to use parallel apply.
+	EnableParallelApply bool
+
+	// ShardAllocateStep indicates the max size of continuous rowid shard in one transaction.
+	ShardAllocateStep int64
+
+	// EnableAmendPessimisticTxn indicates if schema change amend is enabled for pessimistic transactions.
+	EnableAmendPessimisticTxn bool
+
+	// LastTxnInfo keeps track the info of last committed transaction.
+	LastTxnInfo kv.TxnInfo
+
+	// PartitionPruneMode indicates how and when to prune partitions.
+	PartitionPruneMode PartitionPruneMode
+}
+
+// UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
+func (s *SessionVars) UseDynamicPartitionPrune() bool {
+	return s.PartitionPruneMode == DynamicOnly
+}
+
+// PartitionPruneMode presents the prune mode used.
+type PartitionPruneMode string
+
+const (
+	// StaticOnly indicates only prune at plan phase.
+	StaticOnly PartitionPruneMode = "static-only"
+	// DynamicOnly indicates only prune at execute phase.
+	DynamicOnly PartitionPruneMode = "dynamic-only"
+	// StaticButPrepareDynamic indicates prune at plan phase but collect stats need for dynamic prune.
+	StaticButPrepareDynamic PartitionPruneMode = "static-collect-dynamic"
+)
+
+// Valid indicate PruneMode is validated.
+func (p PartitionPruneMode) Valid() bool {
+	switch p {
+	case StaticOnly, StaticButPrepareDynamic, DynamicOnly:
+		return true
+	default:
+		return false
+	}
+>>>>>>> 70a567e... session: refine error message desensitization (#19409)
 }
 
 // PreparedParams contains the parameters of the current prepared statement when executing it.
@@ -730,7 +780,15 @@ func NewSessionVars() *SessionVars {
 		FoundInPlanCache:            DefTiDBFoundInPlanCache,
 		SelectLimit:                 math.MaxUint64,
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
+<<<<<<< HEAD
 		EnableLogDesensitization:    DefTiDBLogDesensitization,
+=======
+		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
+		EnableParallelApply:         DefTiDBEnableParallelApply,
+		ShardAllocateStep:           DefTiDBShardAllocateStep,
+		EnableChangeColumnType:      DefTiDBChangeColumnType,
+		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
+>>>>>>> 70a567e... session: refine error message desensitization (#19409)
 	}
 	vars.KVVars = kv.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -1340,12 +1398,31 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 			return errors.Trace(err)
 		}
 		s.SelectLimit = result
+<<<<<<< HEAD
 	case TiDBSlowLogMasking, TiDBLogDesensitization:
 		s.EnableLogDesensitization = TiDBOptOn(val)
 	case TiDBEnableCollectExecutionInfo:
 		config.GetGlobalConfig().EnableCollectExecutionInfo = TiDBOptOn(val)
 	case TiDBAllowAutoRandExplicitInsert:
 		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
+=======
+	case TiDBAllowAutoRandExplicitInsert:
+		s.AllowAutoRandExplicitInsert = TiDBOptOn(val)
+	case TiDBEnableClusteredIndex:
+		s.EnableClusteredIndex = TiDBOptOn(val)
+	case TiDBPartitionPruneMode:
+		s.PartitionPruneMode = PartitionPruneMode(strings.ToLower(strings.TrimSpace(val)))
+	case TiDBEnableParallelApply:
+		s.EnableParallelApply = TiDBOptOn(val)
+	case TiDBSlowLogMasking, TiDBRedactLog:
+		config.SetRedactLog(TiDBOptOn(val))
+	case TiDBShardAllocateStep:
+		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
+	case TiDBEnableChangeColumnType:
+		s.EnableChangeColumnType = TiDBOptOn(val)
+	case TiDBEnableAmendPessimisticTxn:
+		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
+>>>>>>> 70a567e... session: refine error message desensitization (#19409)
 	}
 	s.systems[name] = val
 	return nil
