@@ -360,8 +360,8 @@ func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	}
 	exprs.HashCode(ctx.GetSessionVars().StmtCtx)
 	return &PartitionExpr{
-		Expr:     exprs,
-		OrigExpr: origExpr,
+		Expr:         exprs,
+		OrigExpr:     origExpr,
 		ColumnOffset: offset,
 	}, nil
 }
