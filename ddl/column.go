@@ -662,7 +662,16 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
 	}
-	return oldCol.Tp != newCol.Tp
+
+	switch oldCol.Tp {
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
+		switch newCol.Tp {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp, mysql.TypeDuration, mysql.TypeYear:
+			return oldCol.Tp != newCol.Tp
+		}
+	}
+
+	return false
 }
 
 func isElemsChangedToModifyColumn(oldElems, newElems []string) bool {
