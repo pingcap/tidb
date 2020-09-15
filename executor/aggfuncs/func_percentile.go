@@ -73,7 +73,6 @@ type partialResult4PercentileDuration struct {
 }
 
 // TODO: use []*types.MyDecimal to prevent massive value copy
-// Since we cannot override Equal on *types.MyDecimal, sort will produce wrong result.
 type decimalArray []types.MyDecimal
 
 func (a decimalArray) Len() int           { return len(a) }
