@@ -220,7 +220,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		return err
 	}
 	if e.stats != nil {
-		e.stats.prefetchTime += time.Since(rpcStart)
+		e.stats.rpcTime += time.Since(rpcStart)
 	}
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
