@@ -35,9 +35,9 @@ Related issues:
 
 ## Proposal
 
-We design two strategies for CTE: __Inline__ & __Materialization__:
+We design two strategies for CTE: __Merge__ & __Materialization__:
 
-#### Inline
+#### Merge
 The CTE is expanded on where it's referenced:
 ```sql
 WITH cte(k, v) AS (SELECT i, j FROM t1)
@@ -45,7 +45,7 @@ SELECT v FROM cte WHERE k > 10
 UNION DISTINCT
 SELECT v FROM cte WHERE k < 100
 ```
-After "inline":
+After "merged":
 ```sql
 SELECT v FROM (SELECT i AS k, j AS v FROM t1) WHERE k > 10
 UNION DISTINCT
@@ -54,10 +54,10 @@ SELECT v FROM (SELECT i AS k, j AS v FROM t1) WHERE k < 100
 
 We will add some rules to rewrite the plan trees, similar to `subquery optimization` [2].
 
-_(`Inline` is also called `Merge` is other DBMS [1])_
+_(`Merge` is also called `Inline` is some other DBMS [4][11])_
 
 #### Materialization
-A CTE is executed first, and the result is stored temporarily during the statement execution.
+A CTE is first executed and stored result temporarily during the statement execution.
 
 Then, on each point the CTE is referenced, the tuples of CTE is read from the temporary storage.
 
@@ -68,31 +68,57 @@ Besides, [4] introduces a `Producer-Consumer` model. We can utilize this model t
 ![cte01](imgs/cte01.png)
 
 #### Optimization
-For `Inline` strategy, most existed rules for subquery can be reused.
+For `Merge` strategy, most existed rules for subquery can be reused.
 
 For `Materialization` strategy, disjunction of all predicates on top can be push down to CTE [4].
 
-Finally, the costs should be estimated, to determine which strategy is better for each CTE.
+Finally, the costs should be estimated, to select the better strategy for each CTE.
+
+#### Optimizer Hints
+To be compatible to MySQL [1], we propose these hints:
+* __MERGE__: indicates the CTE should be merged.
+* __NO_MERGE__: indicates the CTE should be materialized.
+
+E.g.
+```sql
+WITH
+  cte1 AS (SELECT a, b FROM table1),
+  cte2 AS (SELECT c, d FROM table2)
+SELECT /*+ MERGE(cte1) NO_MERGE(cte2) */ cte1.b, cte2.d
+FROM cte1 JOIN cte2
+WHERE cte1.a = cte2.c;
+```
+_(cte1 should be merged and cte2 should be materialized)_
+
+
 
 ## Rationale
 
-Mainstream database systems utilize `Inline` and `Materialization` to implement CTE.
+Mainstream database systems utilize `Merge` and `Materialization` to implement CTE.
 
-* MySQL using these two strategies: 1) Inline the derived table into the outer query block, or 2) Materialize the derived table to an internal temporary table [1]. The optimizer avoids unnecessary materialization whenever possible, which enables pushing down conditions from the outer query to derived tables and produces more efficient execution plans [1].
+In these DBMS, `Merge` is preferred when the CTE has no side-effect, and is referenced in a very few times. `Materialization` should be avoid if possible.
 
-* MariaDB using `Materialization` as basic algorithm. To optimize performance, MariaDB using `Inline` strategy, and utilizes "Condition Pushdown" [5].
+If `Materialization` is necessary, these optimizations can be applied:
+1. Materialized in memory [13].
+2. Postpones until its contents are needed [1].
+3. Add index(es) according to access method [1].
+4. Pushdown predicates, and pushdown disjunction of all predicates if referenced multiple times [4][5].
 
-* Greenplum also using `Inline` and `Materialization`, and utilize rules and cost-bases algorithm to optimize execution plan. Moreover, Greenplum introduces a producer-consumer model to implement `Materialization` [4].
+* MySQL using these two strategies: 1) Merge the derived table into the outer query block, or 2) Materialize the derived table to an internal temporary table [1]. The optimizer avoids unnecessary materialization whenever possible, which enables pushing down conditions from the outer query to derived tables and produces more efficient execution plans [1].
 
-* Postgresql have always used `Materialization` strategy, and introduced `Inline` in a recent commit [9][10].
+* MariaDB using `Materialization` as basic algorithm. To optimize performance, MariaDB using `Merge` strategy, and utilizes "Condition Pushdown" [5].
 
-* CockroachDB uses `Materialization` strategy by default, but chooses `Inline` strategy when 1) see `NO MATERIALIZED` hint, or 2) the CTE has no side-effect and is referenced only once [11][12].
+* Greenplum also using `Merge` and `Materialization`, and utilize rules and cost-bases algorithm to optimize execution plan. Moreover, Greenplum introduces a producer-consumer model to implement `Materialization` [4].
+
+* Postgresql have always used `Materialization` strategy, and introduced `Merge` in a recent commit [9][10].
+
+* CockroachDB uses `Materialization` strategy by default, but chooses `Merge` strategy when 1) see `NO MATERIALIZED` hint, or 2) the CTE has no side-effect and is referenced only once [11][12].
 
 
 
 ## Implementation
 
-1. Stage 1: `Inline` should be not difficult. A rewrite rule is enough, similar to rewriting subquery [2].
+1. Stage 1: `Merge` should be not difficult. A rewrite rule is enough, similar to rewriting subquery [2].
 2. Stage 2: Implement `Materialization`, by storing chunks temporarily in memory or disk.
 3. Stage 3: `Predicate Push-down` for `Materialization`, and estimate cost for both strategies.
 
@@ -114,3 +140,4 @@ Mainstream database systems utilize `Inline` and `Materialization` to implement 
 10. [WITH Queries: Present & Future](https://info.crunchydata.com/blog/with-queries-present-future-common-table-expressions)
 11. [CockroachDB codes, with_funcs.go:CanInlineWith](https://github.com/cockroachdb/cockroach/blob/master/pkg/sql/opt/norm/with_funcs.go#L18)
 12. [CockroachDB: opt: Support AS MATERIALIZED option in CTEs](https://github.com/cockroachdb/cockroach/issues/45863)
+13. [MySQL 8.0 Reference Manual, 8.2.2.2 Optimizing Subqueries with Materialization](https://dev.mysql.com/doc/refman/8.0/en/subquery-materialization.html)
