@@ -102,7 +102,7 @@ import (
 	hintTimeRange             "TIME_RANGE"
 	hintUseCascades           "USE_CASCADES"
 	hintNthPlan               "NTH_PLAN"
-	hintTopNToCop             "TOPN_TO_COP"
+	hintLimitToCop            "LIMIT_TO_COP"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -568,7 +568,7 @@ NullaryHintName:
 |	"HASH_AGG"
 |	"STREAM_AGG"
 |	"AGG_TO_COP"
-|	"TOPN_TO_COP"
+|	"LIMIT_TO_COP"
 |	"NO_INDEX_MERGE"
 |	"READ_CONSISTENT_REPLICA"
 |	"IGNORE_PLAN_CACHE"
@@ -612,7 +612,7 @@ Identifier:
 |	"QB_NAME"
 /* TiDB hint names */
 |	"AGG_TO_COP"
-|	"TOPN_TO_COP"
+|	"LIMIT_TO_COP"
 |	"IGNORE_PLAN_CACHE"
 |	"HASH_AGG"
 |	"IGNORE_INDEX"
