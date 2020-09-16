@@ -136,7 +136,7 @@ func (sf *ScalarFunction) String() string {
 
 // MarshalJSON implements json.Marshaler interface.
 func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("\"%s\"", sf)), nil
+	return []byte(fmt.Sprintf("%q", sf)), nil
 }
 
 // typeInferForNull infers the NULL constants field type and set the field type
