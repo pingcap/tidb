@@ -83,13 +83,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			return err
 		}
 	} else {
-		if e.collectRuntimeStatsEnabled() {
-			if snapshot := txn.GetSnapshot(); snapshot != nil {
-				snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
-				defer snapshot.DelOption(kv.CollectRuntimeStats)
-			}
-		}
-		// here need to add runtime stats without check
+		e.collectRuntimeStatsEnabled()
 		start := time.Now()
 		for i, row := range rows {
 			var err error
@@ -220,7 +214,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		return err
 	}
 	if e.stats != nil {
-		e.stats.rpcTime += time.Since(rpcStart)
+		e.stats.prefetch += time.Since(rpcStart)
 	}
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {

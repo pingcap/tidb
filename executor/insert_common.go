@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -939,7 +940,7 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 			e.stats = &insertRuntimeStat{
 				BasicRuntimeStats:    e.runtimeStats,
 				SnapshotRuntimeStats: snapshotStats,
-				rpcTime:              0,
+				prefetch:             0,
 				checkInsertTime:      0,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
@@ -982,7 +983,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		return err
 	}
 	if e.stats != nil {
-		e.stats.rpcTime += time.Since(rpcStart)
+		e.stats.prefetch += time.Since(rpcStart)
 	}
 
 	// append warnings and get no duplicated error rows
@@ -1056,53 +1057,40 @@ type insertRuntimeStat struct {
 	*execdetails.BasicRuntimeStats
 	*tikv.SnapshotRuntimeStats
 	checkInsertTime time.Duration
-	rpcTime         time.Duration
+	prefetch        time.Duration
 }
 
 func (e *insertRuntimeStat) String() string {
-	var prepareStr, rpcStatsStr, checkInsertStr, insertStr string
-	if e.checkInsertTime != 0 {
-		prepareStr = fmt.Sprintf("prepare:%v, ", time.Duration(e.BasicRuntimeStats.GetTime())-e.checkInsertTime)
-		if e.rpcTime != 0 {
-			checkInsertStr = fmt.Sprintf("check_insert:{total_time:%v, mem_check_insert:%v, prefetch:%v, rpc:{", e.checkInsertTime, e.checkInsertTime-e.rpcTime, e.rpcTime)
-		} else {
-			insertStr = fmt.Sprintf("insert:%v", e.checkInsertTime)
+	if e.checkInsertTime == 0 {
+		// For replace statement.
+		if e.prefetch > 0 && e.SnapshotRuntimeStats != nil {
+			return fmt.Sprintf("prefetch: %v, rpc:{%v}", e.prefetch, e.SnapshotRuntimeStats.String())
 		}
+		return ""
 	}
-	if e.SnapshotRuntimeStats != nil {
-		rpcStatsStr = e.SnapshotRuntimeStats.String()
+	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	buf.WriteString(fmt.Sprintf("prepare:%v, ", time.Duration(e.BasicRuntimeStats.GetTime())-e.checkInsertTime))
+	if e.prefetch > 0 {
+		buf.WriteString(fmt.Sprintf("check_insert:{total_time:%v, mem_insert_time:%v, prefetch:%v", e.checkInsertTime, e.checkInsertTime-e.prefetch, e.prefetch))
+		if e.SnapshotRuntimeStats != nil {
+			buf.WriteString(fmt.Sprintf(", rpc:{%s}", e.SnapshotRuntimeStats.String()))
+		}
+		buf.WriteString("}")
+	} else {
+		buf.WriteString(fmt.Sprintf("insert:%v", e.checkInsertTime))
 	}
-	var result string
-	if prepareStr != "" {
-		result += prepareStr
-	}
-	if checkInsertStr != "" {
-		result += checkInsertStr
-	}
-	if insertStr != "" {
-		result += insertStr
-	}
-	if rpcStatsStr != "" {
-		result += rpcStatsStr
-	}
-	if checkInsertStr != "" {
-		return result + "}}"
-	}
-	return result
+	return buf.String()
 }
 
 // Clone implements the RuntimeStats interface.
 func (e *insertRuntimeStat) Clone() execdetails.RuntimeStats {
-	newRs := &insertRuntimeStat{}
+	newRs := &insertRuntimeStat{
+		checkInsertTime: e.checkInsertTime,
+		prefetch:        e.prefetch,
+	}
 	if e.SnapshotRuntimeStats != nil {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
 		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
-	}
-	if e.rpcTime != 0 {
-		newRs.rpcTime = e.rpcTime
-	}
-	if e.checkInsertTime != 0 {
-		newRs.checkInsertTime = e.checkInsertTime
 	}
 	return newRs
 }
@@ -1121,18 +1109,11 @@ func (e *insertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
 		}
 	}
-	e.rpcTime += tmp.rpcTime
+	e.prefetch += tmp.prefetch
 	e.checkInsertTime += tmp.checkInsertTime
 }
 
 // Tp implements the RuntimeStats interface.
 func (e *insertRuntimeStat) Tp() int {
 	return execdetails.TpInsertRuntimeStat
-}
-
-func (e *runtimeStatsWithSnapshot) String() string {
-	if e.SnapshotRuntimeStats != nil {
-		return e.SnapshotRuntimeStats.String()
-	}
-	return ""
 }

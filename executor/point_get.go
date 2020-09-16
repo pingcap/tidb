@@ -468,6 +468,13 @@ type runtimeStatsWithSnapshot struct {
 	*tikv.SnapshotRuntimeStats
 }
 
+func (e *runtimeStatsWithSnapshot) String() string {
+	if e.SnapshotRuntimeStats != nil {
+		return e.SnapshotRuntimeStats.String()
+	}
+	return ""
+}
+
 // Clone implements the RuntimeStats interface.
 func (e *runtimeStatsWithSnapshot) Clone() execdetails.RuntimeStats {
 	newRs := &runtimeStatsWithSnapshot{}
