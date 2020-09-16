@@ -5494,10 +5494,8 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 			}
 			if changingCol.Name.L != assertChangingColName {
 				checkErr = errors.New("changing column name is incorrect")
-				fmt.Println(changingCol.Name.L)
 			} else if changingIdxs[0].Name.L != assertChangingIdxName {
 				checkErr = errors.New("changing index name is incorrect")
-				fmt.Println(changingIdxs[0].Name.L)
 			}
 		}
 	}
