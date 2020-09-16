@@ -648,9 +648,9 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		if len(newCol.Elems) < len(oldCol.Elems) {
 			return true
 		}
-		for index, originElem := range oldCol.Elems {
-			toElem := newCol.Elems[index]
-			if originElem != toElem {
+		for index, oldElem := range oldCol.Elems {
+			newElem := newCol.Elems[index]
+			if oldElem != newElem {
 				return true
 			}
 		}
@@ -665,6 +665,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 			for _, newElem := range newCol.Elems {
 				if oldElem == newElem {
 					contain = true
+					break
 				}
 			}
 			if !contain {
