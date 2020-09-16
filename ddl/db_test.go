@@ -5474,8 +5474,8 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 
 	hook := &ddl.TestDDLCallback{}
 	var checkErr error
-	assertChangingColName := "_col$_c2_1"
-	assertChangingIdxName := "_idx$_idx_1"
+	assertChangingColName := "_col$_c2_0"
+	assertChangingIdxName := "_idx$_idx_0"
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
 			var (
@@ -5494,9 +5494,10 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 			}
 			if changingCol.Name.L != assertChangingColName {
 				checkErr = errors.New("changing column name is incorrect")
-			}
-			if changingIdxs[0].Name.L != assertChangingIdxName {
+				fmt.Println(changingCol.Name.L)
+			} else if changingIdxs[0].Name.L != assertChangingIdxName {
 				checkErr = errors.New("changing index name is incorrect")
+				fmt.Println(changingIdxs[0].Name.L)
 			}
 		}
 	}

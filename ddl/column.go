@@ -1446,41 +1446,35 @@ func indexInfosToIDList(idxInfos []*model.IndexInfo) []int64 {
 }
 
 func genChangingColumnUniqueName(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) string {
-	newColumnName := fmt.Sprintf("%s%s", changingColumnPrefix, oldCol.Name.O)
-	newColumnLowerName := strings.ToLower(newColumnName)
+	suffix := 0
+	newColumnNamePrefix := fmt.Sprintf("%s%s", changingColumnPrefix, oldCol.Name.O)
+	newColumnLowerName := fmt.Sprintf("%s_%d", strings.ToLower(newColumnNamePrefix), suffix)
 	// Check whether the new column name is used.
 	columnNameMap := make(map[string]bool, len(tblInfo.Columns))
 	for _, col := range tblInfo.Columns {
 		columnNameMap[col.Name.L] = true
 	}
-	suffix := 0
 	for columnNameMap[newColumnLowerName] {
 		suffix++
-		newColumnLowerName = fmt.Sprintf("%s_%d", strings.ToLower(newColumnName), suffix)
+		newColumnLowerName = fmt.Sprintf("%s_%d", strings.ToLower(newColumnNamePrefix), suffix)
 	}
-	if suffix != 0 {
-		newColumnName = fmt.Sprintf("%s_%d", newColumnName, suffix)
-	}
-	return newColumnName
+	return fmt.Sprintf("%s_%d", newColumnNamePrefix, suffix)
 }
 
 func genChangingIndexUniqueName(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) string {
-	newIndexName := fmt.Sprintf("%s%s", changingIndexPrefix, idxInfo.Name.O)
-	newIndexLowerName := strings.ToLower(newIndexName)
+	suffix := 0
+	newIndexNamePrefix := fmt.Sprintf("%s%s", changingIndexPrefix, idxInfo.Name.O)
+	newIndexLowerName := fmt.Sprintf("%s_%d", strings.ToLower(newIndexNamePrefix), suffix)
 	// Check whether the new index name is used.
 	indexNameMap := make(map[string]bool, len(tblInfo.Indices))
 	for _, idx := range tblInfo.Indices {
 		indexNameMap[idx.Name.L] = true
 	}
-	suffix := 0
 	for indexNameMap[newIndexLowerName] {
 		suffix++
-		newIndexLowerName = fmt.Sprintf("%s_%d", strings.ToLower(newIndexName), suffix)
+		newIndexLowerName = fmt.Sprintf("%s_%d", strings.ToLower(newIndexNamePrefix), suffix)
 	}
-	if suffix != 0 {
-		newIndexName = fmt.Sprintf("%s_%d", newIndexName, suffix)
-	}
-	return newIndexName
+	return fmt.Sprintf("%s_%d", newIndexNamePrefix, suffix)
 }
 
 func getChangingColumnOriginName(changingCol *model.IndexColumn) string {
