@@ -372,8 +372,6 @@ func (s *testSuite1) TestAggregation(c *C) {
 	_, err = tk.Exec("select std_samp(a) from t")
 	// TODO: Fix this error message.
 	c.Assert(errors.Cause(err).Error(), Equals, "[expression:1305]FUNCTION test.std_samp does not exist")
-	_, err = tk.Exec("select var_samp(a) from t")
-	c.Assert(errors.Cause(err).Error(), Equals, "unsupported agg function: var_samp")
 
 	// For issue #14072: wrong result when using generated column with aggregate statement
 	tk.MustExec("drop table if exists t1;")
@@ -427,6 +425,14 @@ func (s *testSuite1) TestAggregation(c *C) {
 	tk.MustQuery("select  stddev_pop(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 	tk.MustQuery("select  std(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
 	tk.MustQuery("select  stddev(b) from t1 group by a order by a;").Check(testkit.Rows("<nil>", "0", "0"))
+
+	//For var_samp()/stddev_samp()
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("CREATE TABLE t1 (id int(11),value1 float(10,2));")
+	tk.MustExec("INSERT INTO t1 VALUES (1,0.00),(1,1.00), (1,2.00), (2,10.00), (2,11.00), (2,12.00), (2,13.00);")
+	result = tk.MustQuery("select id, stddev_pop(value1), var_pop(value1), stddev_samp(value1), var_samp(value1) from t1 group by id order by id;")
+	result.Check(testkit.Rows("1 0.816496580927726 0.6666666666666666 1 1", "2 1.118033988749895 1.25 1.2909944487358056 1.6666666666666667"))
+
 	// For issue #19676 The result of stddev_pop(distinct xxx) is wrong
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("CREATE TABLE t1 (id int);")

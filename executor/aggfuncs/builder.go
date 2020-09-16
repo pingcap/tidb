@@ -55,6 +55,10 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildVarPop(aggFuncDesc, ordinal)
 	case ast.AggFuncStddevPop:
 		return buildStdDevPop(aggFuncDesc, ordinal)
+	case ast.AggFuncVarSamp:
+		return buildVarSamp(aggFuncDesc, ordinal)
+	case ast.AggFuncStddevSamp:
+		return buildStddevSamp(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -404,6 +408,61 @@ func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	}
 }
 
+<<<<<<< HEAD
+=======
+// buildVarSamp builds the AggFunc implementation for function "VAR_SAMP()"
+func buildVarSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &varSamp4DistinctFloat64{varPop4DistinctFloat64{base}}
+		}
+		return &varSamp4Float64{varPop4Float64{base}}
+	}
+}
+
+// buildStddevSamp builds the AggFunc implementation for function "STDDEV_SAMP()"
+func buildStddevSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &stddevSamp4DistinctFloat64{varPop4DistinctFloat64{base}}
+		}
+		return &stddevSamp4Float64{varPop4Float64{base}}
+	}
+}
+
+// buildJSONObjectAgg builds the AggFunc implementation for function "json_objectagg".
+func buildJSONObjectAgg(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseAggFunc{
+		args:    aggFuncDesc.Args,
+		ordinal: ordinal,
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		return &jsonObjectAgg{base}
+	}
+}
+
+>>>>>>> 205c401... *: support aggregate function `stddev_samp()` and `var_samp()` (#19810)
 // buildRowNumber builds the AggFunc implementation for function "ROW_NUMBER".
 func buildRowNumber(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	base := baseAggFunc{
