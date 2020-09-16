@@ -880,9 +880,13 @@ func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) 
 		err = err1
 	}
 	if target.Tp == mysql.TypeFloat {
-		if f > math.MaxFloat32 {
+		if math.Abs(f) > math.MaxFloat32 {
 			err = ErrOverflow
-			ret.SetFloat32(math.MaxFloat32)
+			if f > 0 {
+				ret.SetFloat32(math.MaxFloat32)
+			} else {
+				ret.SetFloat32(-math.MaxFloat32)
+			}
 		} else {
 			ret.SetFloat32(float32(f))
 		}
@@ -1406,9 +1410,10 @@ func (d *Datum) convertToMysqlEnum(sc *stmtctx.StatementContext, target *FieldTy
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
-		if err == nil {
-			e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
+		if err != nil {
+			return ret, errors.Trace(err)
 		}
+		e, err = ParseEnumValue(target.Elems, uintDatum.GetUint64())
 	}
 	if err != nil {
 		err = errors.Wrap(ErrTruncated, "convert to MySQL enum failed: "+err.Error())
@@ -1433,10 +1438,12 @@ func (d *Datum) convertToMysqlSet(sc *stmtctx.StatementContext, target *FieldTyp
 	default:
 		var uintDatum Datum
 		uintDatum, err = d.convertToUint(sc, target)
-		if err == nil {
-			s, err = ParseSetValue(target.Elems, uintDatum.GetUint64())
+		if err != nil {
+			return ret, errors.Trace(err)
 		}
+		s, err = ParseSetValue(target.Elems, uintDatum.GetUint64())
 	}
+
 	if err != nil {
 		err = errors.Wrap(ErrTruncated, "convert to MySQL set failed: "+err.Error())
 	}
