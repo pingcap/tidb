@@ -120,7 +120,10 @@ func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts := etcd.EtcdAddrs()
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
+	}
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
@@ -609,11 +612,13 @@ func (h *Helper) requestPD(method, uri string, body io.Reader, res interface{}) 
 	if !ok {
 		return errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts := etcd.EtcdAddrs()
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return err
+	}
 	if len(pdHosts) == 0 {
 		return errors.New("pd unavailable")
 	}
-
 	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", util.InternalHTTPSchema()+"://"+pdHosts[0]+uri))
 	req, err := http.NewRequest(method, util.InternalHTTPSchema()+"://"+pdHosts[0]+uri, body)
 	if err != nil {
@@ -693,7 +698,10 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	if !ok {
 		return nil, errors.WithStack(errors.New("not implemented"))
 	}
-	pdHosts := etcd.EtcdAddrs()
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
+	}
 	if len(pdHosts) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
@@ -718,3 +726,66 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	}
 	return &storesStat, nil
 }
+<<<<<<< HEAD
+=======
+
+// GetPDAddr return the PD Address.
+func (h *Helper) GetPDAddr() ([]string, error) {
+	etcd, ok := h.Store.(tikv.EtcdBackend)
+	if !ok {
+		return nil, errors.New("not implemented")
+	}
+	pdAddrs, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
+	}
+	if len(pdAddrs) == 0 {
+		return nil, errors.New("pd unavailable")
+	}
+	return pdAddrs, nil
+}
+
+// PDRegionStats is the json response from PD.
+type PDRegionStats struct {
+	Count            int            `json:"count"`
+	EmptyCount       int            `json:"empty_count"`
+	StorageSize      int64          `json:"storage_size"`
+	StorageKeys      int64          `json:"storage_keys"`
+	StoreLeaderCount map[uint64]int `json:"store_leader_count"`
+	StorePeerCount   map[uint64]int `json:"store_peer_count"`
+}
+
+// GetPDRegionStats get the RegionStats by tableID.
+func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return err
+	}
+
+	startKey := tablecodec.EncodeTablePrefix(tableID)
+	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+	startKey = codec.EncodeBytes([]byte{}, startKey)
+	endKey = codec.EncodeBytes([]byte{}, endKey)
+
+	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+		url.QueryEscape(string(startKey)),
+		url.QueryEscape(string(endKey)))
+
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			log.Error(err)
+		}
+	}()
+
+	dec := json.NewDecoder(resp.Body)
+
+	return dec.Decode(stats)
+}
+>>>>>>> c679f84... *: Bug Fix/CLUSTER_INFO system table may not work after PD is scaled-in (#19355)
