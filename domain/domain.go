@@ -1362,8 +1362,13 @@ func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 }
 
 func (do *Domain) serverIDKeeper() {
+	defer func() {
+		do.wg.Done()
+		logutil.BgLogger().Info("serverIDKeeper exited.")
+	}()
 	defer util.Recover(metrics.LabelDomain, "serverIDKeeper", func() {
 		logutil.BgLogger().Info("recover serverIDKeeper.")
+		// should be called before `do.wg.Done()`, to ensure that Domain.Close() waits for the new `serverIDKeeper()` routine.
 		do.wg.Add(1)
 		go do.serverIDKeeper()
 	}, false)
@@ -1373,8 +1378,6 @@ func (do *Domain) serverIDKeeper() {
 	defer func() {
 		tickerKeepAlive.Stop()
 		tickerCheckRestored.Stop()
-		do.wg.Done()
-		logutil.BgLogger().Info("serverIDKeeper exited.")
 	}()
 
 	blocker := make(chan struct{}) // just used for blocking the sessionDone() when session is nil.
