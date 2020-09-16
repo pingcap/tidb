@@ -472,6 +472,17 @@ func (s *testSuite) TestExplain(c *C) {
 	c.Assert(tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"), IsTrue)
 
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
+
+	// Add test for SetOprStmt
+	tk.MustExec("create index index_id on t1(id)")
+	c.Assert(tk.HasPlan("SELECT * from t1 union SELECT * from t1", "IndexReader"), IsFalse)
+	c.Assert(tk.HasPlan("SELECT * from t1 use index(index_id) union SELECT * from t1", "IndexReader"), IsTrue)
+
+	tk.MustExec("create global binding for SELECT * from t1 union SELECT * from t1 using SELECT * from t1 use index(index_id) union SELECT * from t1")
+
+	c.Assert(tk.HasPlan("SELECT * from t1 union SELECT * from t1", "IndexReader"), IsTrue)
+
+	tk.MustExec("drop global binding for SELECT * from t1 union SELECT * from t1")
 }
 
 // TestBindingSymbolList tests sql with "?, ?, ?, ?", fixes #13871
