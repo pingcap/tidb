@@ -303,7 +303,10 @@ func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldT
 			memDelta += int64(len(val))
 		case mysql.TypeJSON:
 			val := row.GetJSON(1)
-			memDelta += int64(unsafe.Sizeof(val))
+			bytes := make([]byte, 0)
+			bytes = append(bytes, val.TypeCode)
+			bytes = append(bytes, val.Value...)
+			memDelta += int64(len(bytes))
 		default:
 			return memDeltas, errors.Errorf("unsupported type - %v", dataTypes[1].Tp)
 		}

@@ -132,15 +132,18 @@ func getValMemDelta(val interface{}) (memDelta int64) {
 	case string:
 		memDelta += int64(len(v))
 	case json.BinaryJSON:
-		memDelta += int64(unsafe.Sizeof(v))
+		bytes := make([]byte, 0)
+		bytes = append(bytes, v.TypeCode)
+		bytes = append(bytes, v.Value...)
+		memDelta += int64(len(bytes))
 	case *types.MyDecimal:
-		memDelta += int64(unsafe.Sizeof(v))
+		memDelta += DefMyDecimalSize
 	case []uint8:
-		memDelta += int64(unsafe.Sizeof(v))
+		memDelta += int64(len(v)) * DefUint8Size
 	case types.Time:
-		memDelta += int64(unsafe.Sizeof(v))
+		memDelta += DefTimeSize
 	case types.Duration:
-		memDelta += int64(unsafe.Sizeof(v))
+		memDelta += DefDurationSize
 	}
 	return memDelta
 }

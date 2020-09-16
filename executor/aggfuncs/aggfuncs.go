@@ -18,6 +18,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -118,6 +119,12 @@ const (
 	DefBoolSize = int64(unsafe.Sizeof(false))
 	// DefInterfaceSize is the size of interface
 	DefInterfaceSize = int64(16)
+	// DefMyDecimalSize is the size of MyDecimal
+	DefMyDecimalSize = int64(unsafe.Sizeof(types.MyDecimal{}))
+	// DefDurationSize is the size of duration
+	DefDurationSize = int64(unsafe.Sizeof(types.Duration{}))
+	// DefUint8Size is the size of uint8
+	DefUint8Size = int64(unsafe.Sizeof(uint8(0)))
 )
 
 // PartialResult represents data structure to store the partial result for the
