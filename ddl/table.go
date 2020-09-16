@@ -712,6 +712,87 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	return ver, nil
 }
 
+func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
+	oldSchemaIDs := []int64{}
+	tableNames := []*model.CIStr{}
+	tableIDs := []int64{}
+	if err := job.DecodeArgs(&oldSchemaIDs, &tableNames, &tableIDs); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	tblInfo := &model.TableInfo{}
+	for i, oldSchemaID := range oldSchemaIDs {
+		job.TableID = tableIDs[i]
+		tableName := tableNames[i]
+		tblInfo, err := getTableInfoAndCancelFaultJob(t, job, oldSchemaIDs[i])
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		newSchemaID := job.SchemaID
+
+		var autoTableID int64
+		var autoRandID int64
+		shouldDelAutoID := false
+		if newSchemaID != oldSchemaID {
+			shouldDelAutoID = true
+			autoTableID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			autoRandID, err = t.GetAutoRandomID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			// It's compatible with old version.
+			// TODO: Remove it.
+			tblInfo.OldSchemaID = 0
+		}
+
+		err = t.DropTableOrView(oldSchemaID, tblInfo.ID, shouldDelAutoID)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+
+		failpoint.Inject("renameTableErr", func(val failpoint.Value) {
+			if val.(bool) {
+				job.State = model.JobStateCancelled
+				failpoint.Return(ver, errors.New("occur an error after renaming table"))
+			}
+		})
+
+		tblInfo.Name = *tableName
+		err = t.CreateTableOrView(newSchemaID, tblInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		// Update the table's auto-increment ID.
+		if newSchemaID != oldSchemaID {
+			_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, autoTableID)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+			_, err = t.GenAutoRandomID(newSchemaID, tblInfo.ID, autoRandID)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
+		ver, err := updateSchemaVersion(t, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	return ver, nil
+}
+
 func onModifyTableComment(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	var comment string
 	if err := job.DecodeArgs(&comment); err != nil {

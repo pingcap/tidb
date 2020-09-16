@@ -4326,7 +4326,7 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 		SchemaName: newSchema.Name.L,
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{oldSchema.ID, newIdent.Name},
+		Args:       []interface{}{[]int64{oldSchema.ID}, newIdent.Name},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -4335,8 +4335,13 @@ func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 }
 
 func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Ident, isAlterTable bool) error {
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	tableNames := make([]*model.CIStr, 0, len(oldIdents))
+	oldSchemaIDs := make([]int64, 0, len(oldIdents))
+	tableIDs := make([]int64, 0, len(oldIdents))
+	var newSchema *model.DBInfo
+	var tableID int64
 	for i := 0; i < len(oldIdents); i++ {
-		is := d.GetInfoSchemaWithInterceptor(ctx)
 		oldSchema, ok := is.SchemaByName(oldIdents[i].Schema)
 		if !ok {
 			if isAlterTable {
@@ -4352,16 +4357,13 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 			if isAlterTable {
 				return infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdents[i].Schema, oldIdents[i].Name)
 			}
-			if is.TableExists(newIdents[i].Schema, newIdents[i].Name) {
-				return infoschema.ErrTableExists.GenWithStackByArgs(newIdents[i])
-			}
 			return errFileNotFound.GenWithStackByArgs(oldIdents[i].Schema, oldIdents[i].Name)
 		}
 		if isAlterTable && newIdents[i].Schema.L == oldIdents[i].Schema.L && newIdents[i].Name.L == oldIdents[i].Name.L {
-			// oldIdent is equal to newIdent, do nothing
+			//oldIdent is equal to newIdent, do nothing
 			return nil
 		}
-		newSchema, ok := is.SchemaByName(newIdents[i].Schema)
+		newSchema, ok = is.SchemaByName(newIdents[i].Schema)
 		if !ok {
 			return ErrErrorOnRename.GenWithStackByArgs(
 				fmt.Sprintf("%s.%s", oldIdents[i].Schema, oldIdents[i].Name),
@@ -4369,29 +4371,24 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 				168,
 				fmt.Sprintf("Database `%s` doesn't exist", newIdents[i].Schema))
 		}
-		if is.TableExists(newIdents[i].Schema, newIdents[i].Name) {
-			return infoschema.ErrTableExists.GenWithStackByArgs(newIdents[i])
-		}
-		if err := checkTooLongTable(newIdents[i].Name); err != nil {
-			return errors.Trace(err)
-		}
-
-		job := &model.Job{
-			SchemaID:   newSchema.ID,
-			TableID:    oldTbl.Meta().ID,
-			SchemaName: newSchema.Name.L,
-			Type:       model.ActionRenameTable,
-			BinlogInfo: &model.HistoryInfo{},
-			Args:       []interface{}{oldSchema.ID, newIdents[i].Name},
-		}
-
-		err = d.doDDLJob(ctx, job)
-		err = d.callHookOnChanged(err)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		tableID = oldTbl.Meta().ID
+		tableIDs = append(tableIDs, tableID)
+		tableNames = append(tableNames, &newIdents[i].Name)
+		oldSchemaIDs = append(oldSchemaIDs, oldSchema.ID)
 	}
-	return nil
+
+	job := &model.Job{
+		SchemaID:   newSchema.ID,
+		TableID:    tableIDs[0],
+		SchemaName: newSchema.Name.L,
+		Type:       model.ActionRenameTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{oldSchemaIDs, tableNames, tableIDs},
+	}
+
+	err := d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
 }
 
 func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {

@@ -658,7 +658,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionRebaseAutoRandomBase:
 		ver, err = onRebaseAutoRandomType(d.store, t, job)
 	case model.ActionRenameTable:
-		ver, err = onRenameTable(d, t, job)
+		ver, err = onRenameTables(d, t, job)
 	case model.ActionShardRowID:
 		ver, err = w.onShardRowID(d, t, job)
 	case model.ActionModifyTableComment:
@@ -843,10 +843,12 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		}
 		diff.TableID = tbInfo.ID
 	case model.ActionRenameTable:
-		err = job.DecodeArgs(&diff.OldSchemaID)
+		oldSchemaIDs := []int64{}
+		err = job.DecodeArgs(&oldSchemaIDs)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+		diff.OldSchemaID = oldSchemaIDs[0]
 		diff.TableID = job.TableID
 	case model.ActionExchangeTablePartition:
 		var (
