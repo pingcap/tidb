@@ -706,10 +706,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 		for _, tbl := range tbls {
 			tblInfo := tbl.Meta()
 			pi := tblInfo.GetPartitionInfo()
-			tblName := "`" + db + "`.`" + tblInfo.Name.O + "`"
 			if pi == nil {
 				statsTbl := h.GetTableStats(tblInfo)
-				sql := fmt.Sprintf("analyze table %s", tblName)
+				sql := "analyze table `" + db + "`.`" + tblInfo.Name.O + "`"
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
 				if analyzed {
 					return
@@ -717,7 +716,7 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) {
 				continue
 			}
 			for _, def := range pi.Definitions {
-				sql := fmt.Sprintf("analyze table %s partition `%s`", tblName, def.Name.O)
+				sql := "analyze table `" + db + "`.`" + tblInfo.Name.O + "`" + " partition `" + def.Name.O + "`"
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, start, end, autoAnalyzeRatio, sql)
 				if analyzed {
