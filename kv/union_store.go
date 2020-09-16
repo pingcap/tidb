@@ -122,6 +122,9 @@ func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
 	if len(v) == 0 {
 		return nil, ErrNotExist
 	}
+	if us.GetKeyExistErrInfo(k) != nil {
+		us.DeleteKeyExistErrInfo(k)
+	}
 	return v, nil
 }
 
