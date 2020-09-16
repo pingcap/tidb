@@ -15,46 +15,52 @@ package set
 
 import (
 	"sync"
-
-	"go.uber.org/atomic"
 )
 
 // SyncSet is a synchronized set
 type SyncSet struct {
-	*sync.Map
-	count *atomic.Int64
+	data map[interface{}]struct{}
+	lock *sync.RWMutex
 }
 
 // NewSyncSet builds a synchronized set.
 func NewSyncSet(vs ...interface{}) SyncSet {
 	set := SyncSet{
-		Map:   new(sync.Map),
-		count: atomic.NewInt64(0),
+		data: map[interface{}]struct{}{},
+		lock: &sync.RWMutex{},
 	}
 	for _, v := range vs {
-		set.Store(v, struct{}{})
+		set.data[v] = struct{}{}
 	}
-	set.count.Add(int64(len(vs)))
 	return set
 }
 
 // Exist checks whether `val` exists in `s`.
 func (s SyncSet) Exist(val interface{}) bool {
-	_, ok := s.Load(val)
+	s.lock.RLock()
+	_, ok := s.data[val]
+	s.lock.RUnlock()
 	return ok
 }
 
 // InsertIfNotExist inserts `val` into `s` if `val` does not exists in `s`.
 // It returns true if `val` already exists.
 func (s SyncSet) InsertIfNotExist(val interface{}) bool {
-	_, ok := s.Map.LoadOrStore(val, struct{}{})
-	if !ok {
-		s.count.Inc()
+	s.lock.Lock()
+	_, ok := s.data[val]
+	if ok {
+		s.lock.Unlock()
+		return true
 	}
-	return ok
+	s.data[val] = struct{}{}
+	s.lock.Unlock()
+	return false
 }
 
 // Count returns the number in Set s.
 func (s SyncSet) Count() int {
-	return int(s.count.Load())
+	s.lock.RLock()
+	count := len(s.data)
+	s.lock.RUnlock()
+	return count
 }
