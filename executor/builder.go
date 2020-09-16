@@ -1230,6 +1230,10 @@ func (b *executorBuilder) buildHashAgg(v *plannercore.PhysicalHashAgg) Executor 
 		e.defaultVal = chunk.NewChunkWithCapacity(retTypes(e), 1)
 	}
 	for _, aggDesc := range v.AggFuncs {
+		e.haveDistinct = append(e.haveDistinct, aggDesc.HasDistinct)
+		if aggDesc.HasDistinct {
+			e.hasDistinct = true
+		}
 		if len(aggDesc.OrderByItems) > 0 {
 			e.isUnparallelExec = true
 		}

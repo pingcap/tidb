@@ -41,41 +41,14 @@ import (
 
 type aggPartialResultMapper map[string][]aggfuncs.PartialResult
 
-type syncSetMapper struct {
-	*sync.Map
-}
-
-func newSyncSetMapper() syncSetMapper {
-	return syncSetMapper{&sync.Map{}}
-}
-
-func (m *syncSetMapper) isEmpty() bool {
-	return m.Map == nil
-}
-
-func (m *syncSetMapper) getSyncSets(key string, length int) []set.SyncSet {
-	sets, ok := m.Load(key)
-	if ok {
-		return sets.([]set.SyncSet)
-	}
-	syncSets := make([]set.SyncSet, length)
-	for i := range syncSets {
-		syncSets[i] = set.NewSyncSet()
-	}
-	sets, ok = m.LoadOrStore(key, syncSets)
-	if ok {
-		return sets.([]set.SyncSet)
-	}
-	return syncSets
-}
-
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 type baseHashAggWorker struct {
 	ctx          sessionctx.Context
 	finishCh     <-chan struct{}
 	aggFuncs     []aggfuncs.AggFunc
 	maxChunkSize int
-	syncSetMap   syncSetMapper
+	syncSetMap   *sync.Map
+	haveDistinct []bool
 }
 
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc, maxChunkSize int) baseHashAggWorker {
@@ -175,12 +148,14 @@ type HashAggExec struct {
 	PartialAggFuncs  []aggfuncs.AggFunc
 	FinalAggFuncs    []aggfuncs.AggFunc
 	partialResultMap aggPartialResultMapper
-	syncSetMap       syncSetMapper
 	groupSet         set.StringSet
 	groupKeys        []string
 	cursor4GroupKey  int
 	GroupByItems     []expression.Expression
 	groupKeyBuffer   [][]byte
+	syncSetMap       *sync.Map
+	hasDistinct      bool
+	haveDistinct     []bool
 
 	finishCh         chan struct{}
 	finalOutputCh    chan *AfFinalResult
@@ -329,7 +304,9 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 
 	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
 	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
-	e.syncSetMap = newSyncSetMapper()
+	if e.hasDistinct {
+		e.syncSetMap = new(sync.Map)
+	}
 
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
@@ -346,6 +323,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 			memTracker:        e.memTracker,
 		}
 		w.syncSetMap = e.syncSetMap
+		w.haveDistinct = e.haveDistinct
 		e.memTracker.Consume(w.chk.MemoryUsage())
 		e.partialWorkers[i] = w
 
@@ -518,10 +496,21 @@ func (w baseHashAggWorker) getPartialResult(sc *stmtctx.StatementContext, groupK
 		}
 		mapper[string(groupKey[i])] = partialResults[i]
 
-		if w.syncSetMap.isEmpty() {
+		if w.syncSetMap == nil {
 			continue
 		}
-		syncSets := w.syncSetMap.getSyncSets(string(groupKey[i]), len(w.aggFuncs))
+		var syncSets []set.SyncSet
+		sets, ok := w.syncSetMap.Load(string(groupKey[i]))
+		if !ok {
+			syncSets = make([]set.SyncSet, len(w.aggFuncs))
+			for i := 0; i < len(w.aggFuncs); i++ {
+				if w.haveDistinct[i] {
+					syncSets[i] = set.NewSyncSet()
+				}
+			}
+			sets, _ = w.syncSetMap.LoadOrStore(string(groupKey[i]), syncSets)
+		}
+		syncSets = sets.([]set.SyncSet)
 		for j, af := range w.aggFuncs {
 			af.SetPartialResultAsNeedSync(syncSets[j], partialResults[i][j])
 		}
