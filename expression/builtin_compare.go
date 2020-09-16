@@ -1295,7 +1295,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
 	// int non-constant [cmp] non-int constant
-	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
+	if mysql.HasNotNullFlag(args[0].GetType().Flag) && arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
 		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
 		finalArg1 = arg1
 		if isExceptional && arg1.GetType().EvalType() == types.ETInt {
@@ -1314,7 +1314,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 		}
 	}
 	// non-int constant [cmp] int non-constant
-	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
+	if mysql.HasNotNullFlag(args[1].GetType().Flag) && arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
 		finalArg0 = arg0
 		if isExceptional && arg0.GetType().EvalType() == types.ETInt {

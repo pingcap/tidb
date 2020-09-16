@@ -27,7 +27,7 @@ import (
 )
 
 func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
-	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong).build()
+	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong, mysql.NotNullFlag).build()
 	tests := []struct {
 		exprStr string
 		result  string
@@ -67,6 +67,25 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"123456789123456789123456789.12345 < a", "0"},
 		{"-123456789123456789123456789.12345 < a", "1"},
 		{"'aaaa'=a", "eq(0, a)"},
+		//{"1.5071004017670217e-01=a", "eq(1.5071004017670217e-01, a)"},
+	}
+	cols, names, err := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
+	c.Assert(err, IsNil)
+	schema := NewSchema(cols...)
+	for _, t := range tests {
+		f, err := ParseSimpleExprsWithNames(s.ctx, t.exprStr, schema, names)
+		c.Assert(err, IsNil)
+		c.Assert(f[0].String(), Equals, t.result)
+	}
+}
+
+func (s *testEvaluatorSuite) TestCompareFunctionWithoutRefine(c *C) {
+	tblInfo := newTestTableBuilder("t0").add("c0", mysql.TypeLong, 0).build()
+	tests := []struct {
+		exprStr string
+		result  string
+	}{
+		{"1.5071004017670217e-01=t0.c0", "eq(0.15071004017670217, cast(t0.c0, double BINARY))"},
 	}
 	cols, names, err := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
 	c.Assert(err, IsNil)

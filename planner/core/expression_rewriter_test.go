@@ -260,3 +260,19 @@ func (s *testExpressionRewriterSuite) TestPatternLikeToExpression(c *C) {
 	tk.MustQuery("select 0 like '0';").Check(testkit.Rows("1"))
 	tk.MustQuery("select 0.00 like '0.00';").Check(testkit.Rows("1"))
 }
+
+func (s *testExpressionRewriterSuite) TestFetchNullData(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t0;`)
+	tk.MustExec(`create table t0(c0 int);`)
+	tk.MustExec(`insert into t0 values(null);`)
+	tk.MustQuery("select * from t0 where ((!(1.5071004017670217e-01=t0.c0))) IS NULL").Check(testkit.Rows("<nil>"))
+}
