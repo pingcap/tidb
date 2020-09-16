@@ -111,21 +111,37 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 
 type mockSessionManager2 struct {
 	se session.Session
+	killed bool
 }
 
 func (sm *mockSessionManager2) ShowProcessList() map[uint64]*util.ProcessInfo {
-	return make(map[uint64]*util.ProcessInfo)
+	pl := make(map[uint64]*util.ProcessInfo)
+	if pi, ok := sm.GetProcessInfo(0); ok {
+		pl[pi.ID] = pi
+	}
+	return pl
 }
 
-func (sm *mockSessionManager2) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
-	return sm.se.ShowProcess(), true
+func (sm *mockSessionManager2) GetProcessInfo(id uint64) (pi *util.ProcessInfo, notNil bool) {
+	pi = sm.se.ShowProcess()
+	if pi != nil {
+		notNil = true
+	}
+	return
 }
 func (sm *mockSessionManager2) Kill(connectionID uint64, query bool) {
+	sm.killed = true
 	atomic.StoreUint32(&sm.se.GetSessionVars().Killed, 1)
 }
 func (sm *mockSessionManager2) UpdateTLSConfig(cfg *tls.Config) {}
 
-func (s *testSuite9) TestPreparedStmtWithHint(c *C) {
+var _ = SerialSuites(&testSuite12{&baseTestSuite{}})
+
+type testSuite12 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite12) TestPreparedStmtWithHint(c *C) {
 	// see https://github.com/pingcap/tidb/issues/18535
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -144,19 +160,23 @@ func (s *testSuite9) TestPreparedStmtWithHint(c *C) {
 	c.Assert(err, IsNil)
 	se.SetSessionManager(sm)
 	go dom.ExpensiveQueryHandle().SetSessionManager(sm).Run()
-	go func() {
-		for i := 0; i < 100; i++ {
-			pi := se.ShowProcess()
-			if pi != nil && pi.MaxExecutionTime == 100 {
-				se.GetSessionManager().Kill(0, true)
-				break
-			}
-		}
-	}()
+	//go func() {
+	//	for i := 0; i < 100; i++ {
+	//		pi := se.ShowProcess()
+	//		fmt.Println(pi.Time, time.Since(pi.Time), pi.MaxExecutionTime)
+	//		if pi != nil && pi.MaxExecutionTime == 100 {
+	//			se.GetSessionManager().Kill(0, true)
+	//			break
+	//		} else {
+	//			time.Sleep(100 * time.Millisecond)
+	//		}
+	//	}
+	//}()
 	rs, err := se.Execute(context.Background(), "execute stmt")
 	c.Check(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
-	tk.ResultSetToResult(rs[0], Commentf("%v", rs[0])).Check(testkit.Rows("1"))
+	tk.ResultSetToResult(rs[0], Commentf("%v", rs)).Check(testkit.Rows("1"))
+	c.Check(sm.killed, Equals, true)
 }
 
 func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
