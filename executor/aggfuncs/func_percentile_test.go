@@ -14,6 +14,8 @@
 package aggfuncs_test
 
 import (
+	"time"
+
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
@@ -27,6 +29,7 @@ func (s *testSuite) TestPercentile(c *C) {
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeDouble, 5, nil, 2.0),
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeNewDecimal, 5, nil, types.NewDecFromFloatForTest(2.0)),
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeDate, 5, nil, types.TimeFromDays(367)),
+		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeDuration, 5, nil, types.Duration{Duration: time.Duration(2)}),
 	}
 	for _, test := range tests {
 		s.testAggFunc(c, test)

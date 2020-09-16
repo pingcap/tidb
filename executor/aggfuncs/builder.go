@@ -163,6 +163,8 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 			return &percentileOriginal4Decimal{base}
 		case types.ETDatetime, types.ETTimestamp:
 			return &percentileOriginal4Time{base}
+		case types.ETDuration:
+			return &percentileOriginal4Duration{base}
 		}
 	}
 

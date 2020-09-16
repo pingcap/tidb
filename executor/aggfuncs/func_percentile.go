@@ -112,6 +112,20 @@ func (p *partialResult4PercentileTime) MemSize() int64 {
 	return DefPartialResult4PercentileRealSize + int64(len(p.data))*DefInt64Size
 }
 
+type durationArray []types.Duration
+
+func (a durationArray) Len() int           { return len(a) }
+func (a durationArray) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a durationArray) Less(i, j int) bool { return a[i].Compare(a[j]) < 0 }
+
+type partialResult4PercentileDuration struct {
+	data durationArray
+}
+
+func (p *partialResult4PercentileDuration) MemSize() int64 {
+	return DefPartialResult4PercentileRealSize + int64(len(p.data))*DefInt64Size
+}
+
 type percentileOriginal4Int struct {
 	basePercentile
 }
@@ -321,5 +335,58 @@ func (e *percentileOriginal4Time) AppendFinalResult2Chunk(sctx sessionctx.Contex
 	}
 	index := percentile(p.data, e.percent)
 	chk.AppendTime(e.ordinal, p.data[index])
+	return nil
+}
+
+type percentileOriginal4Duration struct {
+	basePercentile
+}
+
+func (e *percentileOriginal4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	// TODO: Preserve appropriate capacity for data
+	pr = PartialResult(&partialResult4PercentileTime{})
+	return pr, DefPartialResult4PercentileIntSize
+}
+
+func (e *percentileOriginal4Duration) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4PercentileTime)(pr)
+	p.data = timeArray{}
+}
+
+func (e *percentileOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4PercentileDuration)(pr)
+	startMem := p.MemSize()
+	for _, row := range rowsInGroup {
+		v, isNull, err := e.args[0].EvalDuration(sctx, row)
+		if err != nil {
+			return 0, err
+		}
+		if isNull {
+			continue
+		}
+		p.data = append(p.data, v)
+	}
+	endMem := p.MemSize()
+	return endMem - startMem, nil
+}
+
+func (e *percentileOriginal4Duration) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4PercentileDuration)(src), (*partialResult4PercentileDuration)(dst)
+	mergeBuff := make(durationArray, len(p1.data)+len(p2.data))
+	copy(mergeBuff, p2.data)
+	copy(mergeBuff[len(p2.data):], p1.data)
+	p1.data = nil
+	p2.data = mergeBuff
+	return 0, nil
+}
+func (e *percentileOriginal4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4PercentileDuration)(pr)
+	if len(p.data) == 0 {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	index := percentile(p.data, e.percent)
+
+	chk.AppendDuration(e.ordinal, p.data[index])
 	return nil
 }
