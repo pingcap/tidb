@@ -165,60 +165,60 @@ func (s *testSuite) TestBindParse(c *C) {
 	c.Assert(err, NotNil, Commentf("err %v", err))
 }
 
-var	testSQLs = []struct {
-	createSQL  string
-	overlaySQL string
-	querySQL   string
-	originSQL  string
-	bindSQL    string
-	dropSQL    string
-	guage      float64
+var testSQLs = []struct {
+	createSQL   string
+	overlaySQL  string
+	querySQL    string
+	originSQL   string
+	bindSQL     string
+	dropSQL     string
+	memoryUsage float64
 }{
 	{
-		createSQL:  "create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100",
-		overlaySQL: "create global binding for select * from t where i>99 using select * from t use index(index_t) where i>99",
-		querySQL:   "select * from t where i          >      30.0",
-		originSQL:  "select * from t where i > ?",
-		bindSQL: "select * from t use index(index_t) where i>99",
-		dropSQL: "DROP global binding for select * from t where i>100",
-		guage: float64(97),
+		createSQL:   "binding for select * from t where i>100 using select * from t use index(index_t) where i>100",
+		overlaySQL:  "binding for select * from t where i>99 using select * from t use index(index_t) where i>99",
+		querySQL:    "select * from t where i          >      30.0",
+		originSQL:   "select * from t where i > ?",
+		bindSQL:     "select * from t use index(index_t) where i>99",
+		dropSQL:     "binding for select * from t where i>100",
+		memoryUsage: float64(97),
 	},
-//	{
-//		createSQL:  "create global binding for select * from t union all select * from t using select * from t use index(index_t) union all select * from t use index()",
-//		overlaySQL:  "",
-//		querySQL:   "select * from t union all         select * from t",
-//		originSQL:  "select * from t union all select * from t",
-//		bindSQL: "select * from t use index(index_t) union all select * from t use index()",
-//		dropSQL: "DROP global binding for select * from t union all select * from t",
-//		guage: float64(138),
-//	},
-//	{
-//		createSQL:  "create global binding for (select * from t) union all (select * from t) using (select * from t use index(index_t)) union all (select * from t use index())",
-//		overlaySQL:  "",
-//		querySQL:   "(select * from t) union all         (select * from t)",
-//		originSQL:  "( select * from t ) union all ( select * from t )",
-//		bindSQL: "(select * from t use index(index_t)) union all (select * from t use index())",
-//		dropSQL: "DROP global binding for (select * from t) union all (select * from t)",
-//		guage: float64(150),
-//	},
-//	{
-//		createSQL:  "create global binding for select * from t intersect select * from t using select * from t use index(index_t) intersect select * from t use index()",
-//		overlaySQL:  "",
-//		querySQL:   "select * from t intersect         select * from t",
-//		originSQL:  "select * from t intersect select * from t",
-//		bindSQL: "select * from t use index(index_t) intersect select * from t use index()",
-//		dropSQL: "DROP global binding for select * from t intersect select * from t",
-//		guage: float64(138),
-//	},
-//	{
-//		createSQL:  "create global binding for select * from t except select * from t using select * from t use index(index_t) except select * from t use index()",
-//		overlaySQL:  "",
-//		querySQL:   "select * from t except         select * from t",
-//		originSQL:  "select * from t except select * from t",
-//		bindSQL: "select * from t use index(index_t) except select * from t use index()",
-//		dropSQL: "DROP global binding for select * from t except select * from t",
-//		guage: float64(132),
-//	},
+	{
+		createSQL:   "binding for select * from t union all select * from t using select * from t use index(index_t) union all select * from t use index()",
+		overlaySQL:  "",
+		querySQL:    "select * from t union all         select * from t",
+		originSQL:   "select * from t union all select * from t",
+		bindSQL:     "select * from t use index(index_t) union all select * from t use index()",
+		dropSQL:     "binding for select * from t union all select * from t",
+		memoryUsage: float64(138),
+	},
+	{
+		createSQL:   "binding for (select * from t) union all (select * from t) using (select * from t use index(index_t)) union all (select * from t use index())",
+		overlaySQL:  "",
+		querySQL:    "(select * from t) union all         (select * from t)",
+		originSQL:   "( select * from t ) union all ( select * from t )",
+		bindSQL:     "(select * from t use index(index_t)) union all (select * from t use index())",
+		dropSQL:     "binding for (select * from t) union all (select * from t)",
+		memoryUsage: float64(150),
+	},
+	{
+		createSQL:   "binding for select * from t intersect select * from t using select * from t use index(index_t) intersect select * from t use index()",
+		overlaySQL:  "",
+		querySQL:    "select * from t intersect         select * from t",
+		originSQL:   "select * from t intersect select * from t",
+		bindSQL:     "select * from t use index(index_t) intersect select * from t use index()",
+		dropSQL:     "binding for select * from t intersect select * from t",
+		memoryUsage: float64(138),
+	},
+	{
+		createSQL:   "binding for select * from t except select * from t using select * from t use index(index_t) except select * from t use index()",
+		overlaySQL:  "",
+		querySQL:    "select * from t except         select * from t",
+		originSQL:   "select * from t except select * from t",
+		bindSQL:     "select * from t use index(index_t) except select * from t use index()",
+		dropSQL:     "binding for select * from t except select * from t",
+		memoryUsage: float64(132),
+	},
 }
 
 func (s *testSuite) TestGlobalBinding(c *C) {
@@ -236,11 +236,11 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 		metrics.BindTotalGauge.Reset()
 		metrics.BindMemoryUsage.Reset()
 
-		_, err := tk.Exec(testSQL.createSQL)
+		_, err := tk.Exec("create global " + testSQL.createSQL)
 		c.Assert(err, IsNil, Commentf("err %v", err))
 
 		if testSQL.overlaySQL != "" {
-			_, err = tk.Exec(testSQL.overlaySQL)
+			_, err = tk.Exec("create global " + testSQL.overlaySQL)
 			c.Assert(err, IsNil)
 		}
 
@@ -248,7 +248,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 		c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 		metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
-		c.Assert(pb.GetGauge().GetValue(), Equals, testSQL.guage)
+		c.Assert(pb.GetGauge().GetValue(), Equals, testSQL.memoryUsage)
 
 		sql, hash := parser.NormalizeDigest(testSQL.querySQL)
 
@@ -297,7 +297,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 		c.Check(bind.CreateTime, NotNil)
 		c.Check(bind.UpdateTime, NotNil)
 
-		_, err = tk.Exec(testSQL.dropSQL)
+		_, err = tk.Exec("drop global " + testSQL.dropSQL)
 		c.Check(err, IsNil)
 		bindData = s.domain.BindHandle().GetBindRecord(hash, sql, "test")
 		c.Check(bindData, IsNil)
@@ -306,7 +306,7 @@ func (s *testSuite) TestGlobalBinding(c *C) {
 		c.Assert(pb.GetGauge().GetValue(), Equals, float64(0))
 		metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Using).Write(pb)
 		// From newly created global bind handle.
-		c.Assert(pb.GetGauge().GetValue(), Equals, testSQL.guage)
+		c.Assert(pb.GetGauge().GetValue(), Equals, testSQL.memoryUsage)
 
 		bindHandle = bindinfo.NewBindHandle(tk.Se)
 		err = bindHandle.Update(true)
@@ -343,11 +343,11 @@ func (s *testSuite) TestSessionBinding(c *C) {
 		metrics.BindTotalGauge.Reset()
 		metrics.BindMemoryUsage.Reset()
 
-		_, err := tk.Exec(testSQL.createSQL)
+		_, err := tk.Exec("create session " + testSQL.createSQL)
 		c.Assert(err, IsNil, Commentf("err %v", err))
 
 		if testSQL.overlaySQL != "" {
-			_, err = tk.Exec(testSQL.overlaySQL)
+			_, err = tk.Exec("create session " + testSQL.overlaySQL)
 			c.Assert(err, IsNil)
 		}
 
@@ -355,7 +355,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 		metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
 		c.Assert(pb.GetGauge().GetValue(), Equals, float64(1))
 		metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Using).Write(pb)
-		c.Assert(pb.GetGauge().GetValue(), Equals, testSQL.guage)
+		c.Assert(pb.GetGauge().GetValue(), Equals, testSQL.memoryUsage)
 
 		handle := tk.Se.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
 		bindData := handle.GetBindRecord(testSQL.originSQL, "test")
@@ -393,7 +393,7 @@ func (s *testSuite) TestSessionBinding(c *C) {
 		c.Check(row.GetString(6), NotNil)
 		c.Check(row.GetString(7), NotNil)
 
-		_, err = tk.Exec(testSQL.dropSQL)
+		_, err = tk.Exec("drop session " + testSQL.dropSQL)
 		c.Assert(err, IsNil)
 		bindData = handle.GetBindRecord(testSQL.originSQL, "test")
 		c.Check(bindData, NotNil)
