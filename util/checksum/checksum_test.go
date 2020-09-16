@@ -44,7 +44,6 @@ func (s *testChecksumSuite) TestChecksumReadAt(c *check.C) {
 	}()
 
 	writeString := "0123456789"
-	c.Assert(err, check.IsNil)
 	csw := NewWriter(NewWriter(NewWriter(NewWriter(f))))
 	w := bytes.NewBuffer(nil)
 	for i := 0; i < 510; i++ {
@@ -214,7 +213,6 @@ func (s *testChecksumSuite) testTiCase3645(c *check.C, encrypt bool) {
 	underlying = NewWriter(underlying)
 
 	writeString := "0123456789"
-	c.Assert(err, check.IsNil)
 	w := bytes.NewBuffer(nil)
 	for i := 0; i < 510; i++ {
 		w.WriteString(writeString)
@@ -286,7 +284,6 @@ func (s *testChecksumSuite) testTiCase3646(c *check.C, encrypt bool) {
 	underlying = NewWriter(underlying)
 
 	writeString := "0123456789"
-	c.Assert(err, check.IsNil)
 	w := bytes.NewBuffer(nil)
 	for i := 0; i < 510; i++ {
 		w.WriteString(writeString)
@@ -398,7 +395,6 @@ func (s *testChecksumSuite) testTiCase3648(c *check.C, encrypt bool) {
 	underlying = NewWriter(underlying)
 
 	writeString := "0123456789"
-	c.Assert(err, check.IsNil)
 	w := bytes.NewBuffer(nil)
 	for i := 0; i < 510; i++ {
 		w.WriteString(writeString)
@@ -461,7 +457,6 @@ func (s *testChecksumSuite) testTiCase3649and3650(c *check.C, encrypt bool) {
 	underlying = NewWriter(underlying)
 
 	writeString := "0123456789"
-	c.Assert(err, check.IsNil)
 	w := bytes.NewBuffer(nil)
 	for i := 0; i < 510; i++ {
 		w.WriteString(writeString)
@@ -532,7 +527,6 @@ func (s *testChecksumSuite) testTiCase3651and3652(c *check.C, encrypt bool) {
 	}()
 
 	writeString := "0123456789"
-	c.Assert(err, check.IsNil)
 	w := bytes.NewBuffer(nil)
 	for i := 0; i < 510; i++ {
 		w.WriteString(writeString)
