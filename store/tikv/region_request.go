@@ -29,6 +29,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
@@ -407,6 +408,15 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 	resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
 	if s.Stats != nil {
 		recordRegionRequestRuntimeStats(s.Stats, req.Type, time.Since(start))
+		failpoint.Inject("tikvStoreRespResult", func(val failpoint.Value) {
+			if val.(bool) {
+				if req.Type == tikvrpc.CmdCop && bo.totalSleep == 0 {
+					failpoint.Return(&tikvrpc.Response{
+						Resp: &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}},
+					}, false, nil)
+				}
+			}
+		})
 	}
 	if err != nil {
 		// Because in rpc logic, context.Cancel() will be transferred to rpcContext.Cancel error. For rpcContext cancel,
