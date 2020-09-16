@@ -240,50 +240,6 @@ func (s *tikvStore) scatterRegion(bo *Backoffer, regionID uint64, tableID *int64
 	return nil
 }
 
-<<<<<<< HEAD
-=======
-func (s *tikvStore) preSplitRegion(ctx context.Context, group groupedMutations) bool {
-	splitKeys := make([][]byte, 0, 4)
-
-	preSplitSizeThresholdVal := atomic.LoadUint32(&preSplitSizeThreshold)
-	regionSize := 0
-	keysLength := group.mutations.len()
-	valsLength := len(group.mutations.values)
-	// The value length maybe zero for pessimistic lock keys
-	for i := 0; i < keysLength; i++ {
-		regionSize = regionSize + len(group.mutations.keys[i])
-		if i < valsLength {
-			regionSize = regionSize + len(group.mutations.values[i])
-		}
-		// The second condition is used for testing.
-		if regionSize >= int(preSplitSizeThresholdVal) {
-			regionSize = 0
-			splitKeys = append(splitKeys, group.mutations.keys[i])
-		}
-	}
-	if len(splitKeys) == 0 {
-		return false
-	}
-
-	regionIDs, err := s.SplitRegions(ctx, splitKeys, true, nil)
-	if err != nil {
-		logutil.BgLogger().Warn("2PC split regions failed", zap.Uint64("regionID", group.region.id),
-			zap.Int("keys count", keysLength), zap.Int("values count", valsLength), zap.Error(err))
-		return false
-	}
-
-	for _, regionID := range regionIDs {
-		err := s.WaitScatterRegionFinish(ctx, regionID, 0)
-		if err != nil {
-			logutil.BgLogger().Warn("2PC wait scatter region failed", zap.Uint64("regionID", regionID), zap.Error(err))
-		}
-	}
-	// Invalidate the old region cache information.
-	s.regionCache.InvalidateCachedRegion(group.region)
-	return true
-}
-
->>>>>>> 8446ec9... tikv: support scatter region with option api (#19844)
 // WaitScatterRegionFinish implements SplittableStore interface.
 // backOff is the back off time of the wait scatter region.(Milliseconds)
 // if backOff <= 0, the default wait scatter back off time will be used.
