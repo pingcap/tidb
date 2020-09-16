@@ -16,6 +16,9 @@ package aggfuncs
 import (
 	"unsafe"
 
+	"github.com/cznic/mathutil"
+	"github.com/pingcap/parser/mysql"
+
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
@@ -473,6 +476,14 @@ func (e *firstRow4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr P
 	if p.isNull || !p.gotFirstRow {
 		chk.AppendNull(e.ordinal)
 		return nil
+	}
+	frac := e.args[0].GetType().Decimal
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err := p.val.Round(&p.val, mathutil.Min(frac, mysql.MaxDecimalScale), types.ModeHalfEven)
+	if err != nil {
+		return err
 	}
 	chk.AppendMyDecimal(e.ordinal, &p.val)
 	return nil

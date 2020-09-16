@@ -269,6 +269,9 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(sctx sessionctx.Co
 	}
 	// Make the decimal be the result of type inferring.
 	frac := e.args[0].GetType().Decimal
+	if len(e.args) == 2 {
+		frac = e.args[1].GetType().Decimal
+	}
 	if frac == -1 {
 		frac = mysql.MaxDecimalScale
 	}
