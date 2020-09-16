@@ -20,6 +20,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
@@ -37,7 +38,7 @@ import (
 )
 
 var _ = Suite(&testDDLSuite{})
-var _ = Suite(&testDDLSerialSuite{})
+var _ = SerialSuites(&testDDLSerialSuite{})
 
 type testDDLSuite struct {
 	testutil.CommonHandleSuite
@@ -497,16 +498,23 @@ func buildCancelJobTests(firstID int64) []testCancelJob {
 		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 60}, cancelRetErrs: noErrs, cancelState: model.StateNone},
 		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 61}, cancelRetErrs: noErrs, cancelState: model.StateReplicaOnly},
 		{act: model.ActionAddTablePartition, jobIDs: []int64{firstID + 62}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
+
+		// modify column has two different types, normal-type and reorg-type. The latter has 5 states and it can be cancelled except the public state.
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 65}, cancelRetErrs: noErrs, cancelState: model.StateNone},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 66}, cancelRetErrs: noErrs, cancelState: model.StateDeleteOnly},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 67}, cancelRetErrs: noErrs, cancelState: model.StateWriteOnly},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 68}, cancelRetErrs: noErrs, cancelState: model.StateWriteReorganization},
+		{act: model.ActionModifyColumn, jobIDs: []int64{firstID + 69}, cancelRetErrs: []error{admin.ErrCancelFinishedDDLJob}, cancelState: model.StatePublic},
 	}
 
 	return tests
 }
 
-func (s *testDDLSuite) checkDropIdx(c *C, d *ddl, schemaID int64, tableID int64, idxName string, success bool) {
+func (s *testDDLSerialSuite) checkDropIdx(c *C, d *ddl, schemaID int64, tableID int64, idxName string, success bool) {
 	checkIdxExist(c, d, schemaID, tableID, idxName, !success)
 }
 
-func (s *testDDLSuite) checkAddIdx(c *C, d *ddl, schemaID int64, tableID int64, idxName string, success bool) {
+func (s *testDDLSerialSuite) checkAddIdx(c *C, d *ddl, schemaID int64, tableID int64, idxName string, success bool) {
 	checkIdxExist(c, d, schemaID, tableID, idxName, success)
 }
 
@@ -522,13 +530,13 @@ func checkIdxExist(c *C, d *ddl, schemaID int64, tableID int64, idxName string, 
 	c.Assert(found, Equals, expectedExist)
 }
 
-func (s *testDDLSuite) checkAddColumns(c *C, d *ddl, schemaID int64, tableID int64, colNames []string, success bool) {
+func (s *testDDLSerialSuite) checkAddColumns(c *C, d *ddl, schemaID int64, tableID int64, colNames []string, success bool) {
 	changedTable := testGetTable(c, d, schemaID, tableID)
 	found := !checkColumnsNotFound(changedTable, colNames)
 	c.Assert(found, Equals, success)
 }
 
-func (s *testDDLSuite) checkCancelDropColumns(c *C, d *ddl, schemaID int64, tableID int64, colNames []string, success bool) {
+func (s *testDDLSerialSuite) checkCancelDropColumns(c *C, d *ddl, schemaID int64, tableID int64, colNames []string, success bool) {
 	changedTable := testGetTable(c, d, schemaID, tableID)
 	notFound := checkColumnsNotFound(changedTable, colNames)
 	c.Assert(notFound, Equals, success)
@@ -555,7 +563,7 @@ func checkIdxVisibility(changedTable table.Table, idxName string, expected bool)
 	return false
 }
 
-func (s *testDDLSuite) TestCancelJob(c *C) {
+func (s *testDDLSerialSuite) TestCancelJob(c *C) {
 	store := testCreateStore(c, "test_cancel_job")
 	defer store.Close()
 	d := testNewDDLAndStart(
@@ -1060,6 +1068,60 @@ func (s *testDDLSuite) TestCancelJob(c *C) {
 	c.Assert(len(baseTable.Meta().Partition.Definitions), Equals, 2)
 	c.Assert(baseTable.Meta().Partition.Definitions[1].ID, Equals, addedPartInfo.Definitions[0].ID)
 	c.Assert(baseTable.Meta().Partition.Definitions[1].LessThan[0], Equals, addedPartInfo.Definitions[0].LessThan[0])
+
+	// Cancel modify column which should reorg the data.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/skipMockContextDoExec", `return(true)`), IsNil)
+	baseTableInfo = testTableInfoWith2IndexOnFirstColumn(c, d, "modify-table", 2)
+	// This will cost 2 global id, one for table id, the other for the job id.
+	testCreateTable(c, ctx, d, dbInfo, baseTableInfo)
+
+	cancelState = model.StateNone
+	newCol := baseTableInfo.Columns[0].Clone()
+	// change type from long to tinyint.
+	newCol.FieldType = *types.NewFieldType(mysql.TypeTiny)
+	// change from null to not null
+	newCol.FieldType.Flag |= mysql.NotNullFlag
+	newCol.FieldType.Flen = 2
+
+	originColName := baseTableInfo.Columns[0].Name
+	pos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
+
+	updateTest(&tests[49])
+	modifyColumnArgs = []interface{}{&newCol, originColName, pos, mysql.TypeNull, 0}
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs, &cancelState)
+	c.Check(checkErr, IsNil)
+	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(baseTable.Meta().Columns[0].FieldType.Tp, Equals, mysql.TypeLong)
+	c.Assert(mysql.HasNotNullFlag(baseTable.Meta().Columns[0].FieldType.Flag), Equals, false)
+
+	updateTest(&tests[50])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs, &cancelState)
+	c.Check(checkErr, IsNil)
+	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(baseTable.Meta().Columns[0].FieldType.Tp, Equals, mysql.TypeLong)
+	c.Assert(baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, Equals, uint(0))
+
+	updateTest(&tests[51])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs, &cancelState)
+	c.Check(checkErr, IsNil)
+	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(baseTable.Meta().Columns[0].FieldType.Tp, Equals, mysql.TypeLong)
+	c.Assert(baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, Equals, uint(0))
+
+	updateTest(&tests[52])
+	doDDLJobErrWithSchemaState(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs, &cancelState)
+	c.Check(checkErr, IsNil)
+	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(baseTable.Meta().Columns[0].FieldType.Tp, Equals, mysql.TypeLong)
+	c.Assert(baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, Equals, uint(0))
+
+	updateTest(&tests[53])
+	doDDLJobSuccess(ctx, d, c, dbInfo.ID, baseTableInfo.ID, test.act, modifyColumnArgs)
+	c.Check(checkErr, IsNil)
+	baseTable = testGetTable(c, d, dbInfo.ID, baseTableInfo.ID)
+	c.Assert(baseTable.Meta().Columns[0].FieldType.Tp, Equals, mysql.TypeTiny)
+	c.Assert(baseTable.Meta().Columns[0].FieldType.Flag&mysql.NotNullFlag, Equals, uint(1))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/skipMockContextDoExec"), IsNil)
 }
 
 func (s *testDDLSuite) TestIgnorableSpec(c *C) {

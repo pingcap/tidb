@@ -466,9 +466,10 @@ func (do *Domain) infoSyncerKeeper() {
 		case <-do.info.Done():
 			logutil.BgLogger().Info("server info syncer need to restart")
 			if err := do.info.Restart(context.Background()); err != nil {
-				logutil.BgLogger().Error("server restart failed", zap.Error(err))
+				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
+			} else {
+				logutil.BgLogger().Info("server info syncer restarted")
 			}
-			logutil.BgLogger().Info("server info syncer restarted")
 		case <-do.exit:
 			return
 		}
@@ -494,9 +495,10 @@ func (do *Domain) topologySyncerKeeper() {
 		case <-do.info.TopologyDone():
 			logutil.BgLogger().Info("server topology syncer need to restart")
 			if err := do.info.RestartTopology(context.Background()); err != nil {
-				logutil.BgLogger().Error("server restart failed", zap.Error(err))
+				logutil.BgLogger().Error("server topology syncer restart failed", zap.Error(err))
+			} else {
+				logutil.BgLogger().Info("server topology syncer restarted")
 			}
-			logutil.BgLogger().Info("server topology syncer restarted")
 		case <-do.exit:
 			return
 		}
@@ -677,7 +679,12 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 func (do *Domain) Init(ddlLease time.Duration, sysFactory func(*Domain) (pools.Resource, error)) error {
 	perfschema.Init()
 	if ebd, ok := do.store.(tikv.EtcdBackend); ok {
-		if addrs := ebd.EtcdAddrs(); addrs != nil {
+		var addrs []string
+		var err error
+		if addrs, err = ebd.EtcdAddrs(); err != nil {
+			return err
+		}
+		if addrs != nil {
 			cfg := config.GetGlobalConfig()
 			// silence etcd warn log, when domain closed, it won't randomly print warn log
 			// see details at the issue https://github.com/pingcap/tidb/issues/15479
