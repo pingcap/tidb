@@ -143,7 +143,6 @@ func (s *testChecksumSuite) testTiCase3644(c *check.C, encrypt bool) {
 	underlying = NewWriter(underlying)
 
 	writeString := "0123456789"
-	c.Assert(err, check.IsNil)
 	w := bytes.NewBuffer(nil)
 	for i := 0; i < 510; i++ {
 		w.WriteString(writeString)
@@ -185,78 +184,6 @@ func (s *testChecksumSuite) TestTiCase3645(c *check.C) {
 
 func (s *testChecksumSuite) testTiCase3645(c *check.C, encrypt bool) {
 	path := "TiCase3645"
-	f, err := os.Create(path)
-	c.Assert(err, check.IsNil)
-	defer func() {
-		err = f.Close()
-		c.Assert(err, check.IsNil)
-		err = os.Remove(path)
-		c.Assert(err, check.IsNil)
-	}()
-
-	modifyPos := 5000
-	fc := func(b []byte, offset int) []byte {
-		if offset < modifyPos && offset+len(b) >= modifyPos {
-			pos := modifyPos - offset
-			b[pos-1] = 255
-		}
-		return b
-	}
-
-	var underlying io.WriteCloser = newMockWriter(f, fc)
-	var ctrCipher *encrypt2.CtrCipher
-	if encrypt {
-		ctrCipher, err = encrypt2.NewCtrCipher()
-		if err != nil {
-			return
-		}
-		underlying = encrypt2.NewWriter(underlying, ctrCipher)
-	}
-	underlying = NewWriter(underlying)
-
-	writeString := "0123456789"
-	c.Assert(err, check.IsNil)
-	w := bytes.NewBuffer(nil)
-	for i := 0; i < 510; i++ {
-		w.WriteString(writeString)
-	}
-	_, err = underlying.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
-	_, err = underlying.Write(w.Bytes())
-	c.Assert(err, check.IsNil)
-	err = underlying.Close()
-	c.Assert(err, check.IsNil)
-
-	f, err = os.Open(path)
-	c.Assert(err, check.IsNil)
-
-	for i := 0; ; i++ {
-		var underlying io.ReaderAt = f
-		if encrypt {
-			underlying = encrypt2.NewReader(underlying, ctrCipher)
-		}
-		underlying = NewReader(underlying)
-
-		r := make([]byte, 10)
-		_, err := underlying.ReadAt(r, int64(i*1000))
-		if err == io.EOF {
-			break
-		}
-		if i != 5 {
-			c.Assert(err, check.Equals, nil)
-		} else {
-			c.Assert(err, check.Equals, errChecksumFail)
-		}
-	}
-}
-
-func (s *testChecksumSuite) TestTiCase3646(c *check.C) {
-	s.testTiCase3646(c, false)
-	s.testTiCase3646(c, true)
-}
-
-func (s *testChecksumSuite) testTiCase3646(c *check.C, encrypt bool) {
-	path := "TiCase3646"
 	f, err := os.Create(path)
 	c.Assert(err, check.IsNil)
 	defer func() {
@@ -315,6 +242,78 @@ func (s *testChecksumSuite) testTiCase3646(c *check.C, encrypt bool) {
 			break
 		}
 		if i < 5 {
+			c.Assert(err, check.Equals, nil)
+		} else {
+			c.Assert(err, check.Equals, errChecksumFail)
+		}
+	}
+}
+
+func (s *testChecksumSuite) TestTiCase3646(c *check.C) {
+	s.testTiCase3646(c, false)
+	s.testTiCase3646(c, true)
+}
+
+func (s *testChecksumSuite) testTiCase3646(c *check.C, encrypt bool) {
+	path := "TiCase3646"
+	f, err := os.Create(path)
+	c.Assert(err, check.IsNil)
+	defer func() {
+		err = f.Close()
+		c.Assert(err, check.IsNil)
+		err = os.Remove(path)
+		c.Assert(err, check.IsNil)
+	}()
+
+	modifyPos := 5000
+	fc := func(b []byte, offset int) []byte {
+		if offset < modifyPos && offset+len(b) >= modifyPos {
+			pos := modifyPos - offset
+			b[pos-1] = 255
+		}
+		return b
+	}
+
+	var underlying io.WriteCloser = newMockWriter(f, fc)
+	var ctrCipher *encrypt2.CtrCipher
+	if encrypt {
+		ctrCipher, err = encrypt2.NewCtrCipher()
+		if err != nil {
+			return
+		}
+		underlying = encrypt2.NewWriter(underlying, ctrCipher)
+	}
+	underlying = NewWriter(underlying)
+
+	writeString := "0123456789"
+	c.Assert(err, check.IsNil)
+	w := bytes.NewBuffer(nil)
+	for i := 0; i < 510; i++ {
+		w.WriteString(writeString)
+	}
+	_, err = underlying.Write(w.Bytes())
+	c.Assert(err, check.IsNil)
+	_, err = underlying.Write(w.Bytes())
+	c.Assert(err, check.IsNil)
+	err = underlying.Close()
+	c.Assert(err, check.IsNil)
+
+	f, err = os.Open(path)
+	c.Assert(err, check.IsNil)
+
+	for i := 0; ; i++ {
+		var underlying io.ReaderAt = f
+		if encrypt {
+			underlying = encrypt2.NewReader(underlying, ctrCipher)
+		}
+		underlying = NewReader(underlying)
+
+		r := make([]byte, 10)
+		_, err := underlying.ReadAt(r, int64(i*1000))
+		if err == io.EOF {
+			break
+		}
+		if i != 5 {
 			c.Assert(err, check.Equals, nil)
 		} else {
 			c.Assert(err, check.Equals, errChecksumFail)
@@ -577,7 +576,6 @@ func (s *testChecksumSuite) testTiCase3651and3652(c *check.C, encrypt bool) {
 			break
 		}
 	}
-	c.Assert(err, check.IsNil)
 	err = underlying2.Close()
 	c.Assert(err, check.IsNil)
 	f2, err = os.Open(path2)
