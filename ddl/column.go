@@ -919,19 +919,40 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 		}
 	}
 
+	originalStartHandle := reorgInfo.StartHandle
+	originalEndHandle := reorgInfo.EndHandle
 	startElementOffset := 0
 	// This backfill job starts with backfilling index data, whose index ID is currElement.ID.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
 		for i, idx := range idxes {
 			if reorgInfo.currElement.ID == idx.ID {
 				startElementOffset = i
+
+				// Reset the start handle and end handle.
+				currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				originalStartHandle, originalEndHandle, err = getTableRange(reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 	}
 	for i := startElementOffset; i < len(idxes); i++ {
+		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
+		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
+		if i == startElementOffset+1 {
+			reorgInfo.StartHandle, reorgInfo.EndHandle = originalStartHandle, originalEndHandle
+		}
+
 		reorgInfo.currElement = reorgInfo.elements[i+1]
 		// Write the reorg info to store so the whole reorganize process can recover from panic.
-		err := reorgInfo.UpdateReorgMeta()
+		err := reorgInfo.UpdateReorgMeta(reorgInfo.StartHandle)
+		logutil.BgLogger().Info("[ddl] update column and indexes", zap.Int64("jobID", reorgInfo.Job.ID),
+			zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
+			zap.String("startHandle", toString(reorgInfo.StartHandle)), zap.String("endHandle", toString(reorgInfo.EndHandle)))
 		if err != nil {
 			return errors.Trace(err)
 		}

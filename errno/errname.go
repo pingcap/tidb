@@ -1038,6 +1038,7 @@ var MySQLErrName = map[uint16]string{
 	ErrInvalidKey:                 "invalid key",
 	ErrInvalidIndexKey:            "invalid index key",
 	ErrDataInConsistent:           "data isn't equal",
+	ErrDDLReorgElementNotExist:    "DDL reorg element does not exist",
 	ErrDDLJobNotFound:             "DDL Job:%v not found",
 	ErrCancelFinishedDDLJob:       "This job:%v is finished, so can't be cancelled",
 	ErrCannotCancelDDLJob:         "This job:%v is almost finished, can't be cancelled now",

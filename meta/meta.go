@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/structure"
@@ -78,6 +79,8 @@ var (
 	ErrTableExists = terror.ClassMeta.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
 	// ErrTableNotExists is the error for table not exists.
 	ErrTableNotExists = terror.ClassMeta.New(mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
+	// ErrDDLReorgElementNotFound  is the error for reorg element not exists.
+	ErrDDLReorgElementNotExist = terror.ClassMeta.New(errno.ErrDDLReorgElementNotExist, errno.MySQLErrName[errno.ErrDDLReorgElementNotExist])
 )
 
 // Meta is for handling meta information in a transaction.
@@ -976,13 +979,28 @@ func setReorgJobFieldHandle(t *structure.TxStructure, reorgJobField []byte, hand
 	return t.HSet(mDDLJobReorgKey, reorgJobField, handleEncodedBytes)
 }
 
+// RemoveDDLReorgHandle removes the element of the reorganization information.
+// It's used for testing.
+func (m *Meta) RemoveReorgElement(job *model.Job) error {
+	err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 // RemoveDDLReorgHandle removes the job reorganization related handles.
 func (m *Meta) RemoveDDLReorgHandle(job *model.Job, elements []*Element) error {
+	if len(elements) == 0 {
+		return nil
+	}
+
+	err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	for _, element := range elements {
-		err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))
-		if err != nil {
-			return errors.Trace(err)
-		}
 		err = m.txn.HDel(mDDLJobReorgKey, m.reorgJobStartHandle(job.ID, element))
 		if err != nil {
 			return errors.Trace(err)
@@ -1004,7 +1022,7 @@ func (m *Meta) GetDDLReorgHandle(job *model.Job, isCommonHandle bool) (element *
 		return nil, nil, nil, 0, errors.Trace(err)
 	}
 	if elementBytes == nil {
-		return nil, nil, nil, 0, errors.New("element doesn't exist")
+		return nil, nil, nil, 0, ErrDDLReorgElementNotExist
 	}
 	element, err = DecodeElement(elementBytes)
 	if err != nil {

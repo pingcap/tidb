@@ -356,7 +356,7 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	c.Assert(err, IsNil)
 	m := meta.NewMeta(txn)
 	element, start, end, physicalID, err := m.GetDDLReorgHandle(currJob, false)
-	c.Assert(err.Error(), Equals, "element doesn't exist")
+	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 	c.Assert(element, IsNil)
 	c.Assert(start, IsNil)
 	c.Assert(end, IsNil)
@@ -3710,7 +3710,7 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test_db")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, index idx(c2));")
+	tk.MustExec("create table t1 (c1 int, c2 int, c3 int, index idx(c2), index idx1(c1, c2));")
 
 	sql := "alter table t1 change c2 c2 mediumint;"
 	// defaultBatchSize is equal to ddl.defaultBatchSize
@@ -3739,11 +3739,11 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 	ctx.Store = s.store
 	times := 0
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
-		if tbl.Meta().ID != job.TableID {
+		if tbl.Meta().ID != job.TableID || checkErr != nil || job.SchemaState != model.StateWriteReorganization {
 			return
 		}
-		if checkErr == nil && job.SchemaState == model.StateWriteReorganization {
-			if times%2 == 1 {
+		if job.Type == model.ActionModifyColumn {
+			if times == 0 {
 				times++
 				return
 			}
@@ -3760,8 +3760,17 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 			checkErr = job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
 			elements = ddl.BuildElements(changingCol, changingIdxs)
 		}
+		if job.Type == model.ActionAddIndex {
+			if times == 1 {
+				times++
+				return
+			}
+			tbl := s.testGetTable(c, "t1")
+			indexInfo := tbl.Meta().FindIndexByName("idx2")
+			elements = []*meta.Element{&meta.Element{ID: indexInfo.ID, TypeKey: meta.IndexElementKey}}
+		}
 	}
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockCantDecodeRecordErr", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("cantDecodeRecordErr")`), IsNil)
 	save := variable.GetDDLErrorCountLimit()
 	variable.SetDDLErrorCountLimit(1)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
@@ -3776,7 +3785,7 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 		c.Assert(err, IsNil)
 		m := meta.NewMeta(txn)
 		e, start, end, physicalID, err := m.GetDDLReorgHandle(currJob, false)
-		c.Assert(err.Error(), Equals, "element doesn't exist")
+		c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 		c.Assert(e, IsNil)
 		c.Assert(start, IsNil)
 		c.Assert(end, IsNil)
@@ -3784,15 +3793,26 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 	}
 	checkReorgHandle(elements[0])
 	checkReorgHandle(elements[1])
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockCantDecodeRecordErr"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr"), IsNil)
 	variable.SetDDLErrorCountLimit(save)
 	tk.MustExec("admin check table t1")
 
 	// Check whether the reorge information is cleaned up when executing "modify column" successful.
+	// Test encountered a "notOwnerErr" error, which caused the processing backfill job to exit halfway.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("modifyColumnNotOwnerErr")`), IsNil)
 	tk.MustExec(sql)
 	checkReorgHandle(elements[0])
 	checkReorgHandle(elements[1])
 	tk.MustExec("admin check table t1")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr"), IsNil)
+
+	// Test encountered a "notOwnerErr" error, which caused the processing backfill job to exit halfway.
+	// During the period, the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("addIdxNotOwnerErr")`), IsNil)
+	tk.MustExec("alter table t1 add index idx2(c1)")
+	checkReorgHandle(elements[0])
+	tk.MustExec("admin check table t1")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr"), IsNil)
 }
 
 func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) {

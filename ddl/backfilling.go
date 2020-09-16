@@ -130,7 +130,7 @@ func (r *reorgBackfillTask) String() string {
 	if r.endIncluded {
 		rightParenthesis = "]"
 	}
-	return "physicalTableID" + strconv.FormatInt(r.physicalTableID, 10) + "_" + "[" + r.startHandle.String() + "," + r.endHandle.String() + rightParenthesis
+	return "physicalTableID_" + strconv.FormatInt(r.physicalTableID, 10) + "_" + "[" + r.startHandle.String() + "," + r.endHandle.String() + rightParenthesis
 }
 
 func logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
@@ -303,7 +303,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 
 	if err != nil {
 		// Update the reorg handle that has been processed.
-		err1 := reorgInfo.UpdateReorgMeta()
+		err1 := reorgInfo.UpdateReorgMeta(nextHandle)
 		metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblError).Observe(elapsedTime.Seconds())
 		logutil.BgLogger().Warn("[ddl] backfill worker handle batch tasks failed",
 			zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),

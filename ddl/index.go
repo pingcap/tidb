@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -826,6 +827,9 @@ func (w *addIndexWorker) AddMetricInfo(cnt float64) {
 	w.metricCounter.Add(cnt)
 }
 
+// mockNotOwnerErrOnce uses to make sure `notOwnerErr` only mock error once.
+var mockNotOwnerErrOnce uint32
+
 // getIndexRecord gets index columns values from raw binary value row.
 func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawRecord []byte) (*indexRecord, error) {
 	t := w.table
@@ -836,9 +840,23 @@ func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawR
 	if err != nil {
 		return nil, errors.Trace(errCantDecodeRecord.GenWithStackByArgs("index", err))
 	}
-	failpoint.Inject("MockCantDecodeRecordErr", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(nil, errors.Trace(errCantDecodeRecord.GenWithStackByArgs("index", errors.New("mock can't decode record error"))))
+	failpoint.Inject("MockGetIndexRecordErr", func(val failpoint.Value) {
+		if valStr, ok := val.(string); ok {
+			switch valStr {
+			case "cantDecodeRecordErr":
+				failpoint.Return(nil, errors.Trace(errCantDecodeRecord.GenWithStackByArgs("index",
+					errors.New("mock can't decode record error"))))
+			case "modifyColumnNotOwnerErr":
+				if idxInfo.Name.O == "_Idx$_idx" && handle.IntValue() == 7168 && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 0, 1) {
+					failpoint.Return(nil, errors.Trace(errNotOwner))
+				}
+			case "addIdxNotOwnerErr":
+				// For the case of the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
+				// First step, we need to exit "addPhysicalTableIndex".
+				if idxInfo.Name.O == "idx2" && handle.IntValue() == 6144 && atomic.CompareAndSwapUint32(&mockNotOwnerErrOnce, 1, 2) {
+					failpoint.Return(nil, errors.Trace(errNotOwner))
+				}
+			}
 		}
 	})
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
@@ -1149,7 +1167,7 @@ func (w *worker) updateReorgInfo(t table.PartitionedTable, reorg *reorgInfo) (bo
 	reorg.StartHandle, reorg.EndHandle, reorg.PhysicalTableID = start, end, pid
 
 	// Write the reorg info to store so the whole reorganize process can recover from panic.
-	err = reorg.UpdateReorgMeta()
+	err = reorg.UpdateReorgMeta(start)
 	logutil.BgLogger().Info("[ddl] job update reorgInfo", zap.Int64("jobID", reorg.Job.ID),
 		zap.ByteString("elementType", reorg.currElement.TypeKey), zap.Int64("elementID", reorg.currElement.ID),
 		zap.Int64("partitionTableID", pid), zap.String("startHandle", toString(start)),

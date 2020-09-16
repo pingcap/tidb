@@ -373,18 +373,21 @@ func (s *testSuite) TestDDL(c *C) {
 	element = &meta.Element{ID: 222, TypeKey: meta.ColumnElementKey}
 	err = t.UpdateDDLReorgHandle(job, startHandle, endHandle, 3, element)
 	c.Assert(err, IsNil)
+	element1 := &meta.Element{ID: 223, TypeKey: meta.IndexElementKey}
+	err = t.UpdateDDLReorgHandle(job, startHandle, endHandle, 3, element1)
+	c.Assert(err, IsNil)
 
 	e, i, j, k, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
 	c.Assert(err, IsNil)
-	c.Assert(e, DeepEquals, element)
+	c.Assert(e, DeepEquals, element1)
 	c.Assert(i, HandleEquals, startHandle)
 	c.Assert(j, HandleEquals, endHandle)
 	c.Assert(k, Equals, int64(3))
 
-	err = t.RemoveDDLReorgHandle(job, []*meta.Element{element})
+	err = t.RemoveDDLReorgHandle(job, []*meta.Element{element, element1})
 	c.Assert(err, IsNil)
 	e, i, j, k, err = t.GetDDLReorgHandle(job, false)
-	c.Assert(err.Error(), Equals, "element doesn't exist")
+	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 	c.Assert(e, IsNil)
 	c.Assert(i, IsNil)
 	c.Assert(j, IsNil)
@@ -392,7 +395,7 @@ func (s *testSuite) TestDDL(c *C) {
 
 	// new TiDB binary running on old TiDB DDL reorg data.
 	e, i, j, k, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
-	c.Assert(err.Error(), Equals, "element doesn't exist")
+	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 	c.Assert(e, IsNil)
 	c.Assert(i, IsNil)
 	c.Assert(j, IsNil)
@@ -400,7 +403,7 @@ func (s *testSuite) TestDDL(c *C) {
 
 	// Test GetDDLReorgHandle failed.
 	_, _, _, _, err = t.GetDDLReorgHandle(job, s.IsCommonHandle)
-	c.Assert(err.Error(), Equals, "element doesn't exist")
+	c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err), IsTrue)
 
 	v, err = t.DeQueueDDLJob()
 	c.Assert(err, IsNil)

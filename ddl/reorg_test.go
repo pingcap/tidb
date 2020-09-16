@@ -145,11 +145,13 @@ func (s *testDDLSuite) TestReorg(c *C) {
 		t := meta.NewMeta(txn)
 		var err1 error
 		_, err1 = getReorgInfo(d.ddlCtx, t, job, mockTbl, []*meta.Element{element})
-		c.Assert(err1, NotNil)
+		c.Assert(meta.ErrDDLReorgElementNotExist.Equal(err1), IsTrue)
+		c.Assert(job.SnapshotVer, Equals, uint64(0))
 		return nil
 	})
 	c.Assert(err, IsNil)
-	err = info.UpdateReorgMeta()
+	job.SnapshotVer = uint64(1)
+	err = info.UpdateReorgMeta(info.StartHandle)
 	c.Assert(err, IsNil)
 	err = kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
