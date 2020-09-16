@@ -713,6 +713,9 @@ func (pb *profileBuilder) genTiDBQueryTree() *metricNode {
 					{
 						table: "tidb_owner_handle_syncer",
 					},
+					{
+						table: "tidb_meta_operation",
+					},
 				},
 			},
 		},
