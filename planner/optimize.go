@@ -110,6 +110,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	for _, warn := range warns {
 		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 	}
+	warns = warns[:0]
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
 		return nil, nil, err
