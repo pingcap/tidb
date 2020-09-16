@@ -27,7 +27,7 @@ import (
 )
 
 func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
-	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong).build()
+	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong, mysql.NotNullFlag).build()
 	tests := []struct {
 		exprStr string
 		result  string
@@ -67,6 +67,58 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"123456789123456789123456789.12345 < a", "0"},
 		{"-123456789123456789123456789.12345 < a", "1"},
 		{"'aaaa'=a", "eq(0, a)"},
+	}
+	cols, names, err := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
+	c.Assert(err, IsNil)
+	schema := NewSchema(cols...)
+	for _, t := range tests {
+		f, err := ParseSimpleExprsWithNames(s.ctx, t.exprStr, schema, names)
+		c.Assert(err, IsNil)
+		c.Assert(f[0].String(), Equals, t.result)
+	}
+}
+
+func (s *testEvaluatorSuite) TestCompareFunctionWithoutRefine(c *C) {
+	tblInfo := newTestTableBuilder("").add("a", mysql.TypeLong, 0).build()
+	tests := []struct {
+		exprStr string
+		result  string
+	}{
+		{"a < '1.0'", "lt(cast(a, double BINARY), 1)"},
+		{"a <= '1.0'", "le(cast(a, double BINARY), 1)"},
+		{"a > '1'", "gt(cast(a, double BINARY), 1)"},
+		{"a >= '1'", "ge(cast(a, double BINARY), 1)"},
+		{"a = '1'", "eq(cast(a, double BINARY), 1)"},
+		{"a <=> '1'", "nulleq(cast(a, double BINARY), 1)"},
+		{"a != '1'", "ne(cast(a, double BINARY), 1)"},
+		{"a < '1.1'", "lt(cast(a, double BINARY), 1.1)"},
+		{"a <= '1.1'", "le(cast(a, double BINARY), 1.1)"},
+		{"a > 1.1", "gt(cast(a, decimal(20,0) BINARY), 1.1)"},
+		{"a >= '1.1'", "ge(cast(a, double BINARY), 1.1)"},
+		{"a = '1.1'", "eq(cast(a, double BINARY), 1.1)"},
+		{"a <=> '1.1'", "nulleq(cast(a, double BINARY), 1.1)"},
+		{"a != '1.1'", "ne(cast(a, double BINARY), 1.1)"},
+		{"'1' < a", "lt(1, cast(a, double BINARY))"},
+		{"'1' <= a", "le(1, cast(a, double BINARY))"},
+		{"'1' > a", "gt(1, cast(a, double BINARY))"},
+		{"'1' >= a", "ge(1, cast(a, double BINARY))"},
+		{"'1' = a", "eq(1, cast(a, double BINARY))"},
+		{"'1' <=> a", "nulleq(1, cast(a, double BINARY))"},
+		{"'1' != a", "ne(1, cast(a, double BINARY))"},
+		{"'1.1' < a", "lt(1.1, cast(a, double BINARY))"},
+		{"'1.1' <= a", "le(1.1, cast(a, double BINARY))"},
+		{"'1.1' > a", "gt(1.1, cast(a, double BINARY))"},
+		{"'1.1' >= a", "ge(1.1, cast(a, double BINARY))"},
+		{"'1.1' = a", "eq(1.1, cast(a, double BINARY))"},
+		{"'1.1' <=> a", "nulleq(1.1, cast(a, double BINARY))"},
+		{"'1.1' != a", "ne(1.1, cast(a, double BINARY))"},
+		{"'123456789123456711111189' = a", "eq(1.234567891234567e+23, cast(a, double BINARY))"},
+		{"123456789123456789.12345 = a", "eq(123456789123456789.12345, cast(a, decimal(20,0) BINARY))"},
+		{"123456789123456789123456789.12345 > a", "gt(123456789123456789123456789.12345, cast(a, decimal(20,0) BINARY))"},
+		{"-123456789123456789123456789.12345 > a", "gt(-123456789123456789123456789.12345, cast(a, decimal(20,0) BINARY))"},
+		{"123456789123456789123456789.12345 < a", "lt(123456789123456789123456789.12345, cast(a, decimal(20,0) BINARY))"},
+		{"-123456789123456789123456789.12345 < a", "lt(-123456789123456789123456789.12345, cast(a, decimal(20,0) BINARY))"},
+		{"'aaaa'=a", "eq(0, cast(a, double BINARY))"},
 	}
 	cols, names, err := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
 	c.Assert(err, IsNil)
