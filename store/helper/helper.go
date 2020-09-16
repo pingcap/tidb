@@ -726,8 +726,6 @@ func (h *Helper) GetStoresStat() (*StoresStat, error) {
 	}
 	return &storesStat, nil
 }
-<<<<<<< HEAD
-=======
 
 // GetPDAddr return the PD Address.
 func (h *Helper) GetPDAddr() ([]string, error) {
@@ -788,4 +786,3 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats) error {
 
 	return dec.Decode(stats)
 }
->>>>>>> c679f84... *: Bug Fix/CLUSTER_INFO system table may not work after PD is scaled-in (#19355)
