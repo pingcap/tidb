@@ -137,6 +137,7 @@ func (p *multiArgsAggTest) genSrcChk() *chunk.Chunk {
 			srcChk.AppendDatum(j, &fdt)
 		}
 	}
+	srcChk.AppendDatum(0, &types.Datum{})
 	return srcChk
 }
 
@@ -273,9 +274,13 @@ func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldT
 			memDeltas = append(memDeltas, int64(0))
 			continue
 		}
-		memDelta := int64(0)
-
 		datum := row.GetDatum(0, dataTypes[0])
+		if datum.IsNull() {
+			memDeltas = append(memDeltas, int64(0))
+			continue
+		}
+
+		memDelta := int64(0)
 		key, err := (&datum).ToString()
 		if err != nil {
 			return memDeltas, errors.Errorf("fail to get key - %s", key)
@@ -789,8 +794,7 @@ func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
 	iter := chunk.NewIterator4Chunk(srcChk)
 	i := 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		memDelta, err := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
-		c.Assert(err, IsNil)
+		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 		c.Assert(memDelta, Equals, updateMemDeltas[i])
 		i++
 	}
@@ -814,8 +818,7 @@ func (s *testSuite) testMultiArgsAggMemFunc(c *C, p multiArgsAggMemTest) {
 	iter = chunk.NewIterator4Chunk(srcChk)
 	i = 0
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		memDelta, err := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
-		c.Assert(err, IsNil)
+		memDelta, _ := finalFunc.UpdatePartialResult(s.ctx, []chunk.Row{row}, finalPr)
 		c.Assert(memDelta, Equals, updateMemDeltas[i])
 		i++
 	}
