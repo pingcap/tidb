@@ -6224,6 +6224,20 @@ func (s *testSuite) TestGenerateColumnReplace(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("3 4"))
 }
 
+func (s *testSlowQuery) TestSlowQueryWithoutSlowLog(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Log.SlowQueryFile = "tidb-slow-not-exist.log"
+	newCfg.Log.SlowThreshold = math.MaxUint64
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+	tk.MustQuery("select query from information_schema.slow_query").Check(testkit.Rows())
+	tk.MustQuery("select query from information_schema.slow_query where time > '2020-09-15 12:16:39' and time < now()").Check(testkit.Rows())
+}
+
 func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	originCfg := config.GetGlobalConfig()
@@ -6283,10 +6297,14 @@ func (s *testSerialSuite) TestKillTableReader(c *C) {
 	wg.Wait()
 }
 
-func (s *testSuite) TestPrevStmtDesensitization(c *C) {
+func (s *testSerialSuite) TestPrevStmtDesensitization(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.Se.GetSessionVars().EnableLogDesensitization = true
+	oriCfg := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(oriCfg)
+	newCfg := *oriCfg
+	newCfg.EnableRedactLog = 1
+	config.StoreGlobalConfig(&newCfg)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("begin")
