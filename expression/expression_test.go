@@ -142,7 +142,7 @@ type testTableBuilder struct {
 	tableName   string
 	columnNames []string
 	tps         []byte
-	flags        []uint
+	flags       []uint
 }
 
 func newTestTableBuilder(tableName string) *testTableBuilder {
