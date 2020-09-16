@@ -107,17 +107,8 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 		a.typeInfer4PercentRank()
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		a.typeInfer4LeadLag(ctx)
-<<<<<<< HEAD
-	case ast.AggFuncVarPop:
-		a.typeInfer4VarPop(ctx)
-	case ast.AggFuncStddevPop:
-		a.typeInfer4Std(ctx)
-=======
 	case ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncVarSamp, ast.AggFuncStddevSamp:
 		a.typeInfer4PopOrSamp(ctx)
-	case ast.AggFuncJsonObjectAgg:
-		a.typeInfer4JsonFuncs(ctx)
->>>>>>> 205c401... *: support aggregate function `stddev_samp()` and `var_samp()` (#19810)
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
