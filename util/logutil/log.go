@@ -356,7 +356,7 @@ func WithConnID(ctx context.Context, connID uint32) context.Context {
 	return context.WithValue(ctx, ctxLogKey, logger.With(zap.Uint32("conn", connID)))
 }
 
-// WithTrace attaches trace identifier to context
+// WithTraceLogger attaches trace identifier to context
 func WithTraceLogger(ctx context.Context, connID uint32) context.Context {
 	var logger *zap.Logger
 	if ctxLogger, ok := ctx.Value(ctxLogKey).(*zap.Logger); ok {
