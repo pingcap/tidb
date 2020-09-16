@@ -473,6 +473,32 @@ func (s *testSuiteAgg) TestAggregation(c *C) {
 	tk.MustQuery("select  stddev_pop(distinct id) from t1;").Check(testkit.Rows("0.5"))
 }
 
+func (s *testSuiteAgg) TestAggDistinct(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size=32")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency=4")
+	tk.MustExec("set @@tidb_hashagg_partial_concurrency=4;")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("create table t0(a int, b int)")
+	tk.MustExec("insert into t0 values (1,527),(3,1211),(1,390),(1,684),(0,1956),(2,687),(2,2033),(0,1306),(3,1173),(1,994),(3,218),(0,1682),(3,1323),(3,1272),(2,2039),(1,1912)")
+	tk.MustExec("insert into t0 values (3,783),(1,332),(1,1015),(1,914),(1,658),(2,835),(1,915),(2,740),(3,1113),(1,1609),(1,1175),(0,1553),(0,762),(3,1963),(3,30),(1,412)")
+	tk.MustExec("insert into t0 values (2,1956),(1,130),(3,1314),(3,1768),(2,1782),(3,38),(1,1543),(0,1204),(3,889),(1,1949),(1,1067),(1,1939),(3,1202),(2,88),(2,1523),(0,1287)")
+	tk.MustExec("insert into t0 values (0,163),(1,1406),(1,1319),(3,509),(3,1914),(2,1781),(2,1136),(2,1833),(3,774),(0,513),(3,1017),(3,118),(2,490),(1,1967),(2,1238),(1,718)")
+	tk.MustExec("insert into t0 values (3,1189),(0,1015),(1,398),(3,1973),(0,562),(0,1487),(0,611),(0,1980),(0,975),(0,922),(3,60),(0,1095),(0,988),(1,527),(1,1146),(2,1634)")
+	tk.MustExec("insert into t0 values (3,255),(2,570),(2,711),(2,1296),(3,64),(2,1230),(3,1320),(0,586),(1,1967),(3,1727),(2,1257),(0,1391),(0,1423),(2,1112),(3,1882),(1,1362)")
+	tk.MustExec("insert into t0 values (1,1648),(0,116),(3,1354),(0,704),(1,676),(3,1801),(2,232),(3,634),(3,1108),(0,771),(3,1984),(2,428),(3,1711),(1,1500),(3,1317),(1,1835)")
+	tk.MustExec("insert into t0 values (1,817),(2,308),(2,520),(0,100),(2,501),(1,428),(0,647),(2,1608),(0,687),(1,1645),(0,264),(3,1821),(1,201),(0,1965),(1,1135),(3,86)")
+	tk.MustExec("insert into t0 values (0,582),(0,1344),(0,757),(3,1627),(1,1606),(2,1653),(2,480),(2,1376),(0,2027),(2,229),(0,1229),(2,336),(0,284),(2,995),(1,1543),(1,794)")
+	tk.MustExec("insert into t0 values (3,1424),(1,455),(1,759),(3,1503),(1,2046),(3,507),(0,752),(0,549),(2,76),(3,1634),(2,1993),(2,355),(2,322),(3,890),(3,964),(3,1385)")
+	tk.MustExec("insert into t0 values (2,1543),(3,66),(3,16),(0,94),(1,356),(0,419),(1,450),(1,10),(3,22),(1,1320),(3,461),(2,1258),(1,1471),(1,256),(0,1609),(1,972)")
+	tk.MustExec("insert into t0 values (1,730),(0,367),(0,1154),(1,699),(2,159),(1,1604),(0,1527),(1,1582),(0,1770),(3,1722),(1,1836),(1,598),(3,1856),(0,681),(3,302),(2,92)")
+	tk.MustExec("insert into t0 values (3,1740),(1,1946),(2,1003),(2,1294),(3,1430),(0,429),(1,1134),(0,45)")
+	tk.MustQuery("select avg(distinct b) from t0 group by a order by a").Check(testkit.Rows("943.2766", "1055.3704", "993.7674", "1065.3585"))
+	tk.MustQuery("select count(distinct b) from t0 group by a order by a").Check(testkit.Rows("47", "54", "43", "53"))
+	tk.MustQuery("select sum(distinct b) from t0 group by a order by a").Check(testkit.Rows("44334", "56990", "42732", "56464"))
+}
+
 func (s *testSuiteAgg) TestAggPrune(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

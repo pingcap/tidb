@@ -75,7 +75,7 @@ func (e *countOriginalWithDistinct4Int) ResetPartialResult(pr PartialResult) {
 func (e *countOriginalWithDistinct4Int) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {
 	p := (*partialResult4CountDistinctInt)(pr)
 	p.needSync = true
-	p.syncSet = set.NewSyncSet()
+	p.syncSet = s
 }
 
 func (e *countOriginalWithDistinct4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -138,7 +138,7 @@ func (e *countOriginalWithDistinct4Real) ResetPartialResult(pr PartialResult) {
 func (e *countOriginalWithDistinct4Real) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {
 	p := (*partialResult4CountDistinctReal)(pr)
 	p.needSync = true
-	p.syncSet = set.NewSyncSet()
+	p.syncSet = s
 }
 
 func (e *countOriginalWithDistinct4Real) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -201,7 +201,7 @@ func (e *countOriginalWithDistinct4Decimal) ResetPartialResult(pr PartialResult)
 func (e *countOriginalWithDistinct4Decimal) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {
 	p := (*partialResult4CountDistinctDecimal)(pr)
 	p.needSync = true
-	p.syncSet = set.NewSyncSet()
+	p.syncSet = s
 }
 
 func (e *countOriginalWithDistinct4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -269,7 +269,7 @@ func (e *countOriginalWithDistinct4Duration) ResetPartialResult(pr PartialResult
 func (e *countOriginalWithDistinct4Duration) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {
 	p := (*partialResult4CountDistinctDuration)(pr)
 	p.needSync = true
-	p.syncSet = set.NewSyncSet()
+	p.syncSet = s
 }
 
 func (e *countOriginalWithDistinct4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -333,7 +333,7 @@ func (e *countOriginalWithDistinct4String) ResetPartialResult(pr PartialResult) 
 func (e *countOriginalWithDistinct4String) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {
 	p := (*partialResult4CountDistinctString)(pr)
 	p.needSync = true
-	p.syncSet = set.NewSyncSet()
+	p.syncSet = s
 }
 
 func (e *countOriginalWithDistinct4String) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
@@ -400,7 +400,7 @@ func (e *countOriginalWithDistinct) ResetPartialResult(pr PartialResult) {
 func (e *countOriginalWithDistinct) SetPartialResultAsNeedSync(s set.SyncSet, pr PartialResult) {
 	p := (*partialResult4CountWithDistinct)(pr)
 	p.needSync = true
-	p.syncSet = set.NewSyncSet()
+	p.syncSet = s
 }
 
 func (e *countOriginalWithDistinct) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
