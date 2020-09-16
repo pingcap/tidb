@@ -133,6 +133,10 @@ func (t *mockTxn) GetVars() *Variables {
 	return nil
 }
 
+func (t *mockTxn) CleanupKeyExistErrInfo(keysInput []Key) {
+	return
+}
+
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {
 	return &mockTxn{

@@ -547,3 +547,9 @@ func (txn *tikvTxn) GetMemBufferSnapshot() kv.MemBuffer {
 func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 	return txn.snapshot
 }
+
+func (txn *tikvTxn) CleanupKeyExistErrInfo(keysInput []kv.Key) {
+	for _, key := range keysInput {
+		txn.us.DeleteKeyExistErrInfo(key)
+	}
+}

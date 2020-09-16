@@ -258,6 +258,32 @@ func (s *testPessimisticSuite) TestKeyExistsCheck(c *C) {
 	tk.MustExec("commit")
 }
 
+func (s *testPessimisticSuite) TestTwoUniqueKeyConflict(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	//tk.MustExec("drop table if exists t1")
+	//tk.MustExec("CREATE TABLE `t1` (" +
+	//	"  `c1` int(11) NOT NULL," +
+	//	"  `c2` int(11) DEFAULT NULL," +
+	//	"  `c3` int(11) DEFAULT NULL," +
+	//	"  PRIMARY KEY (`c1`)," +
+	//	"  UNIQUE KEY `k1` (`c2`)" +
+	//	")")
+	//tk.MustExec("insert into t1 values (1, 2, 3), (10, 20, 30)")
+	//tk.MustExec("begin pessimistic")
+	//tk.MustExec("update t1 set c3 = c3 + 1 where c3 > 10;")
+	//tk.MustGetErrCode("insert into t1 values(1, 20, 100);", 1062)
+	//tk.MustExec("delete from t1 where c1 = 1;")
+	//tk.MustExec("rollback")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40), primary key (c_int));")
+	tk.MustExec("insert into t1 values (1, 'Alice');")
+	tk.MustExec("begin pessimistic")
+	tk.MustGetErrCode("insert into t1 values (1, 'Bob'), (1, 'Carol');", 1062)
+	tk.MustExec("replace into t1 values (1, 'Dave');")
+	tk.MustExec("rollback")
+}
+
 func (s *testPessimisticSuite) TestInsertOnDup(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk2 := testkit.NewTestKitWithInit(c, s.store)
