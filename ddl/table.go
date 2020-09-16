@@ -630,15 +630,15 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 }
 
 func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	var oldSchemaID int64
+	oldSchemaIDs := []int64{}
 	var tableName model.CIStr
-	if err := job.DecodeArgs(&oldSchemaID, &tableName); err != nil {
+	if err := job.DecodeArgs(&oldSchemaIDs, &tableName); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, oldSchemaID)
+	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, oldSchemaIDs[0])
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -654,14 +654,14 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 	var autoTableID int64
 	var autoRandID int64
 	shouldDelAutoID := false
-	if newSchemaID != oldSchemaID {
+	if newSchemaID != oldSchemaIDs[0] {
 		shouldDelAutoID = true
-		autoTableID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
+		autoTableID, err = t.GetAutoTableID(tblInfo.GetDBID(oldSchemaIDs[0]), tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		autoRandID, err = t.GetAutoRandomID(tblInfo.GetDBID(oldSchemaID), tblInfo.ID)
+		autoRandID, err = t.GetAutoRandomID(tblInfo.GetDBID(oldSchemaIDs[0]), tblInfo.ID)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -671,7 +671,7 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		tblInfo.OldSchemaID = 0
 	}
 
-	err = t.DropTableOrView(oldSchemaID, tblInfo.ID, shouldDelAutoID)
+	err = t.DropTableOrView(oldSchemaIDs[0], tblInfo.ID, shouldDelAutoID)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -691,7 +691,7 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 	// Update the table's auto-increment ID.
-	if newSchemaID != oldSchemaID {
+	if newSchemaID != oldSchemaIDs[0] {
 		_, err = t.GenAutoTableID(newSchemaID, tblInfo.ID, autoTableID)
 		if err != nil {
 			job.State = model.JobStateCancelled
