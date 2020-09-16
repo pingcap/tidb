@@ -14,7 +14,6 @@
 package executor_test
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"strings"
@@ -152,18 +151,16 @@ func (s *testSuite12) TestPreparedStmtWithHint(c *C) {
 
 	se, err := session.CreateSession4Test(store)
 	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	tk.Se = se
 
 	sm := &mockSessionManager2{
 		se: se,
 	}
-	_, err = se.Execute(context.Background(), "prepare stmt from \"select /*+ max_execution_time(100) */ sleep(10)\"")
-	c.Assert(err, IsNil)
 	se.SetSessionManager(sm)
 	go dom.ExpensiveQueryHandle().SetSessionManager(sm).Run()
-	rs, err := se.Execute(context.Background(), "execute stmt")
-	c.Check(err, IsNil)
-	tk := testkit.NewTestKit(c, store)
-	tk.ResultSetToResult(rs[0], Commentf("%v", rs)).Check(testkit.Rows("1"))
+	tk.MustExec("prepare stmt from \"select /*+ max_execution_time(100) */ sleep(10)\"")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
 	c.Check(sm.killed, Equals, true)
 }
 
