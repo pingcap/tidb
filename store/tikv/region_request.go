@@ -412,6 +412,13 @@ func (s *RegionRequestSender) sendReqToRegion(bo *Backoffer, rpcCtx *RPCContext,
 	}
 	resp, err = s.client.SendRequest(ctx, rpcCtx.Addr, req, timeout)
 	if err != nil {
+		// Because in rpc logic, context.Cancel() will be transferred to rpcContext.Cancel error. For rpcContext cancel,
+		// we need to retry the request. But for context cancel active, for example, limitExec gets the required rows,
+		// we shouldn't retry the request, it will go to backoff and hang in retry logic.
+		if ctx.Err() != nil && errors.Cause(ctx.Err()) == context.Canceled {
+			return nil, false, errors.Trace(ctx.Err())
+		}
+
 		s.rpcError = err
 		if e := s.onSendFail(bo, rpcCtx, err); e != nil {
 			return nil, false, errors.Trace(e)

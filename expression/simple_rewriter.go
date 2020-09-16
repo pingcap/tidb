@@ -571,7 +571,7 @@ func (sr *simpleRewriter) notToExpression(hasNot bool, op string, tp *types.Fiel
 
 func (sr *simpleRewriter) isTrueToScalarFunc(v *ast.IsTruthExpr) {
 	arg := sr.pop()
-	op := ast.IsTruth
+	op := ast.IsTruthWithoutNull
 	if v.True == 0 {
 		op = ast.IsFalsity
 	}

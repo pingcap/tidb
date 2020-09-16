@@ -140,7 +140,6 @@ func (e *PointGetExecutor) Open(context.Context) error {
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
-			BasicRuntimeStats:    e.runtimeStats,
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		e.snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
@@ -466,23 +465,43 @@ func getColInfoByID(tbl *model.TableInfo, colID int64) *model.ColumnInfo {
 }
 
 type runtimeStatsWithSnapshot struct {
-	*execdetails.BasicRuntimeStats
 	*tikv.SnapshotRuntimeStats
 }
 
 func (e *runtimeStatsWithSnapshot) String() string {
-	var basic, rpcStatsStr string
-	if e.BasicRuntimeStats != nil {
-		basic = e.BasicRuntimeStats.String()
-	}
 	if e.SnapshotRuntimeStats != nil {
-		rpcStatsStr = e.SnapshotRuntimeStats.String()
+		return e.SnapshotRuntimeStats.String()
 	}
-	if rpcStatsStr == "" {
-		return basic
+	return ""
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *runtimeStatsWithSnapshot) Clone() execdetails.RuntimeStats {
+	newRs := &runtimeStatsWithSnapshot{}
+	if e.SnapshotRuntimeStats != nil {
+		snapshotStats := e.SnapshotRuntimeStats.Clone()
+		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
 	}
-	if basic == "" {
-		return rpcStatsStr
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *runtimeStatsWithSnapshot) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*runtimeStatsWithSnapshot)
+	if !ok {
+		return
 	}
-	return basic + ", " + rpcStatsStr
+	if tmp.SnapshotRuntimeStats != nil {
+		if e.SnapshotRuntimeStats == nil {
+			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
+			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+			return
+		}
+		e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
+	}
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *runtimeStatsWithSnapshot) Tp() int {
+	return execdetails.TpRuntimeStatsWithSnapshot
 }

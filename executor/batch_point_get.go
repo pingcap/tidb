@@ -105,7 +105,6 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	if e.runtimeStats != nil {
 		snapshotStats := &tikv.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
-			BasicRuntimeStats:    e.runtimeStats,
 			SnapshotRuntimeStats: snapshotStats,
 		}
 		snapshot.SetOption(kv.CollectRuntimeStats, snapshotStats)
