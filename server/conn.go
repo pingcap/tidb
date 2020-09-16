@@ -1936,7 +1936,7 @@ func (cc getLastStmtInConn) String() string {
 		return "ListFields " + string(data)
 	case mysql.ComQuery, mysql.ComStmtPrepare:
 		sql := string(hack.String(data))
-		if cc.ctx.GetSessionVars().EnableLogDesensitization {
+		if config.RedactLogEnabled() {
 			sql, _ = parser.NormalizeDigest(sql)
 		}
 		return queryStrForLog(sql)
