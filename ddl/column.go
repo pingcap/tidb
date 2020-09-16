@@ -853,7 +853,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				// TODO: Do rollback.
 			}
-			if types.ErrOverflow.Equal(err) {
+			if types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) {
 				// TODO: Do rollback.
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
