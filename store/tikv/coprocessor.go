@@ -528,8 +528,8 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		if task.id > worker.actionOnExceed.cond.maxRunningTaskID {
 			worker.actionOnExceed.cond.maxRunningTaskID = task.id
 		}
-		// If actionOnExceed has been triggered and there is no ticket have been spilled before,
-		// spill one ticket.
+		// If actionOnExceed has been triggered and there is no ticket have been teared before,
+		// tear one ticket.
 		if worker.actionOnExceed.cond.exceed && !worker.actionOnExceed.cond.teared {
 			worker.actionOnExceed.cond.tearedTicket = worker.actionOnExceed.cond.tearedTicket + 1
 			worker.actionOnExceed.cond.teared = true
@@ -686,7 +686,8 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		closed bool
 	)
 
-	// broadcast should be called under it.actionOnExceed.cond critical area
+	// broadcast is to recover the copWorkers from suspending and reset the taskRateLimitAction status.
+	// It should be called under it.actionOnExceed.cond critical area
 	broadcast := func() {
 		it.actionOnExceed.cond.exceed = false
 		it.actionOnExceed.cond.Broadcast()
@@ -1271,7 +1272,6 @@ type taskRateLimitAction struct {
 		sync.Mutex
 		running bool
 	}
-	//taskStarted    bool
 	fallbackAction memory.ActionOnExceed
 
 	cond struct {
@@ -1281,8 +1281,9 @@ type taskRateLimitAction struct {
 		exceed bool
 		// tearedTicket indicates the count of tickets which have been teared up.
 		tearedTicket uint
-		teared       bool
-		sendRate     *rateLimit
+		// teared indicates whether there is one ticket has been teared during after Action
+		teared   bool
+		sendRate *rateLimit
 		// maxRunningTaskID indicates the max id of the running copTask
 		maxRunningTaskID int
 	}
@@ -1290,7 +1291,7 @@ type taskRateLimitAction struct {
 
 // Action implements ActionOnExceed.Action
 func (e *taskRateLimitAction) Action(t *memory.Tracker) {
-	if !e.checkRunning(t) {
+	if !e.isRunning(t) {
 		return
 	}
 
@@ -1300,7 +1301,9 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 		if e.cond.tearedTicket >= uint(cap(e.cond.sendRate.token)-1) {
 			logutil.BgLogger().Info("taskRateLimitAction delegate to fallback action",
 				zap.Int("ticketTotal", cap(e.cond.sendRate.token)))
-			e.fallbackAction.Action(t)
+			if e.fallbackAction != nil {
+				e.fallbackAction.Action(t)
+			}
 			return
 		}
 		logutil.BgLogger().Info("taskRateLimitAction exceed signal.",
@@ -1311,11 +1314,13 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 	})
 }
 
-func (e *taskRateLimitAction) checkRunning(t *memory.Tracker) (allowAction bool) {
+func (e *taskRateLimitAction) isRunning(t *memory.Tracker) (allowAction bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if !e.mu.running && e.fallbackAction != nil {
-		e.fallbackAction.Action(t)
+	if !e.mu.running {
+		if e.fallbackAction != nil {
+			e.fallbackAction.Action(t)
+		}
 		return false
 	}
 	return true
