@@ -260,3 +260,30 @@ func (s *testExpressionRewriterSuite) TestPatternLikeToExpression(c *C) {
 	tk.MustQuery("select 0 like '0';").Check(testkit.Rows("1"))
 	tk.MustQuery("select 0.00 like '0.00';").Check(testkit.Rows("1"))
 }
+
+// TestIssue16788 contains tests for https://github.com/pingcap/tidb/issues/16788.
+func (s *testExpressionRewriterSuite) TestIssue16788(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(c int);")
+	tk.MustExec(`insert into t values(1), (NULL);`)
+	tk.MustQuery("select c, c = 0.5 from t;").Check(testkit.Rows(
+		"1 0",
+		"<nil> <nil>",
+	))
+	tk.MustQuery("select c, c = '0.5' from t;").Check(testkit.Rows(
+		"1 0",
+		"<nil> <nil>",
+	))
+	tk.MustQuery("select * from t where c is null;").Check(testkit.Rows(
+		"<nil>",
+	))
+}
