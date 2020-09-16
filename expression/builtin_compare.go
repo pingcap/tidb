@@ -1296,32 +1296,38 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 	isPositiveInfinite, isNegativeInfinite := false, false
 	// int non-constant [cmp] non-int constant
 	if arg0IsInt && !arg0IsCon && !arg1IsInt && arg1IsCon {
-		arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
-		finalArg1 = arg1
-		if isExceptional && arg1.GetType().EvalType() == types.ETInt {
-			// Judge it is inf or -inf
-			// For int:
-			//			inf:  01111111 & 1 == 1
-			//		   -inf:  10000000 & 1 == 0
-			// For uint:
-			//			inf:  11111111 & 1 == 1
-			//		   -inf:  00000000 & 0 == 0
-			if arg1.Value.GetInt64()&1 == 1 {
-				isPositiveInfinite = true
-			} else {
-				isNegativeInfinite = true
+		arg0IsNotNull := mysql.HasNotNullFlag(args[0].GetType().Flag)
+		if arg0IsNotNull {
+			arg1, isExceptional = RefineComparedConstant(ctx, *arg0Type, arg1, c.op)
+			finalArg1 = arg1
+			if isExceptional && arg1.GetType().EvalType() == types.ETInt {
+				// Judge it is inf or -inf
+				// For int:
+				//			inf:  01111111 & 1 == 1
+				//		   -inf:  10000000 & 1 == 0
+				// For uint:
+				//			inf:  11111111 & 1 == 1
+				//		   -inf:  00000000 & 0 == 0
+				if arg1.Value.GetInt64()&1 == 1 {
+					isPositiveInfinite = true
+				} else {
+					isNegativeInfinite = true
+				}
 			}
 		}
 	}
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
-		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
-		finalArg0 = arg0
-		if isExceptional && arg0.GetType().EvalType() == types.ETInt {
-			if arg0.Value.GetInt64()&1 == 1 {
-				isNegativeInfinite = true
-			} else {
-				isPositiveInfinite = true
+		arg1IsNotNull := mysql.HasNotNullFlag(args[1].GetType().Flag)
+		if arg1IsNotNull {
+			arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
+			finalArg0 = arg0
+			if isExceptional && arg0.GetType().EvalType() == types.ETInt {
+				if arg0.Value.GetInt64()&1 == 1 {
+					isNegativeInfinite = true
+				} else {
+					isPositiveInfinite = true
+				}
 			}
 		}
 	}
