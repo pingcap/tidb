@@ -293,7 +293,7 @@ func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, 
 		loc = nil
 	}
 	// Ignore the error and treat remaining part that cannot decode successfully as bytes.
-	decodedVals, remained, err := codec.DecodeRange(loc, value.GetBytes(), idxCols, idxColumnType)
+	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols, idxColumnType, loc)
 	// Ignore err explicit to pass errcheck.
 	_ = err
 	if len(remained) > 0 {
