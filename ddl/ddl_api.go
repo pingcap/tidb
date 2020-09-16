@@ -1895,7 +1895,7 @@ func checkPartitionByHash(ctx sessionctx.Context, tbInfo *model.TableInfo, s *as
 // checkPartitionByRange checks validity of a "BY RANGE" partition.
 func checkPartitionByRange(ctx sessionctx.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) error {
 	failpoint.Inject("CheckPartitionByRangeErr", func() {
-		panic("panic test")
+		panic("Out Of Memory Quota!")
 	})
 	pi := tbInfo.Partition
 	if err := checkPartitionNameUnique(pi); err != nil {

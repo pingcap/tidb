@@ -545,5 +545,9 @@ func (s *testFailDBSuite) TestIssuePanicHand(c *C) {
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a int) partition by range(a) (partition p0 values less than (10));`)
-	c.Assert(func() { _, _ = tk.Exec(`alter table t add partition (partition p1 values less than (20));`) }, PanicMatches, ".*")
+
+	_, err := tk.Exec(`alter table t add partition (partition p1 values less than (20));`)
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[ddl:8214]Cancelled DDL job")
+	//c.Assert(func() { _, _ = tk.Exec(`alter table t add partition (partition p1 values less than (20));`) }, PanicMatches, ".*")
 }
