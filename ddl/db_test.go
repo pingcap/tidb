@@ -2102,6 +2102,7 @@ LOOP:
 
 	// add timestamp type column
 	s.mustExec(tk, c, "create table test_on_update_c (c1 int, c2 timestamp);")
+	defer tk.MustExec("drop table test_on_update_c;")
 	s.mustExec(tk, c, "alter table test_on_update_c add column c3 timestamp null default '2017-02-11' on update current_timestamp;")
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_c"))
@@ -2113,6 +2114,7 @@ LOOP:
 	c.Assert(hasNotNull, IsFalse)
 	// add datetime type column
 	s.mustExec(tk, c, "create table test_on_update_d (c1 int, c2 datetime);")
+	defer tk.MustExec("drop table test_on_update_d;")
 	s.mustExec(tk, c, "alter table test_on_update_d add column c3 datetime on update current_timestamp;")
 	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test_db"), model.NewCIStr("test_on_update_d"))
@@ -2122,6 +2124,13 @@ LOOP:
 	c.Assert(colC.Tp, Equals, mysql.TypeDatetime)
 	hasNotNull = mysql.HasNotNullFlag(colC.Flag)
 	c.Assert(hasNotNull, IsFalse)
+
+	// add year type column
+	s.mustExec(tk, c, "create table test_on_update_e (c1 int);")
+	defer tk.MustExec("drop table test_on_update_e;")
+	s.mustExec(tk, c, "insert into test_on_update_e (c1) values (0);")
+	s.mustExec(tk, c, "alter table test_on_update_e add column c2 year not null;")
+	tk.MustQuery("select c2 from test_on_update_e").Check(testkit.Rows("0"))
 
 	// test add unsupported constraint
 	s.mustExec(tk, c, "create table t_add_unsupported_constraint (a int);")
@@ -3717,13 +3726,20 @@ func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal(c *C) {
 	sql1 := "alter table t1 change c2 c2 tinyint not null;"
 	sql2 := "alter table t1 change c2 c2 tinyint not null;"
 	testModifyColumnNullToNotNull(c, s.testDBSuite, true, sql1, sql2)
-	c2 := getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2")
+	c2 := getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2", false)
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeTiny)
 }
 
-func getModifyColumn(c *C, ctx sessionctx.Context, db, tbl, colName string) *table.Column {
+func getModifyColumn(c *C, ctx sessionctx.Context, db, tbl, colName string, allColumn bool) *table.Column {
 	t := testGetTableByName(c, ctx, db, tbl)
-	for _, col := range t.Cols() {
+	colName = strings.ToLower(colName)
+	var cols []*table.Column
+	if allColumn {
+		cols = t.(*tables.TableCommon).Columns
+	} else {
+		cols = t.Cols()
+	}
+	for _, col := range cols {
 		if col.Name.L == colName {
 			return col
 		}
@@ -3748,7 +3764,7 @@ func testModifyColumnNullToNotNull(c *C, s *testDBSuite, enableChangeColumnType 
 	}
 
 	tbl := s.testGetTable(c, "t1")
-	getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2")
+	getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2", false)
 
 	originalHook := s.dom.DDL().GetHook()
 	defer s.dom.DDL().(ddl.DDLForTest).SetHook(originalHook)
@@ -3794,7 +3810,7 @@ func testModifyColumnNullToNotNull(c *C, s *testDBSuite, enableChangeColumnType 
 	tk.MustExec(sql2)
 	c.Assert(checkErr.Error(), Equals, "[table:1048]Column 'c2' cannot be null")
 
-	c2 := getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2")
+	c2 := getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2", false)
 	c.Assert(mysql.HasNotNullFlag(c2.Flag), IsTrue)
 	c.Assert(mysql.HasPreventNullInsertFlag(c2.Flag), IsFalse)
 	_, err = tk.Exec("insert into t1 values ();")

@@ -20,6 +20,7 @@ package session
 import (
 	"context"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"runtime/debug"
 	"strconv"
@@ -1262,6 +1263,13 @@ func doDMLWorks(s Session) {
 			}
 			if v.Name == variable.TiDBEnableClusteredIndex {
 				vVal = "1"
+			}
+			if v.Name == variable.TiDBPartitionPruneMode {
+				vVal = string(variable.StaticOnly)
+				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
+					// enable Dynamic Prune by default in test case.
+					vVal = string(variable.DynamicOnly)
+				}
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)
