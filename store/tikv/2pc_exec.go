@@ -47,7 +47,7 @@ type execController struct {
 	cancel context.CancelFunc
 
 	errCh       chan error
-	jobCh       chan execJob
+	jobCh       chan *execJob
 	workerLimit int
 	workerCnt   int32
 	stop        int32
@@ -60,7 +60,7 @@ func (c *twoPhaseCommitter) newExecController(mutations mutations, action twoPha
 		mutations: mutations,
 
 		errCh:       make(chan error, 1),
-		jobCh:       make(chan execJob),
+		jobCh:       make(chan *execJob),
 		workerLimit: config.GetGlobalConfig().Performance.CommitterConcurrency,
 	}
 }
@@ -150,7 +150,7 @@ func (c *execController) handlePrimaryMutation(actionIsCommit bool) (int, error)
 	)
 
 	for {
-		collector := c.getCollector(c.committer.primaryKey, nil)
+		collector := c.getCollector(c.bo, c.committer.primaryKey, nil)
 		batch, err = collector.Collect()
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -185,7 +185,7 @@ func (c *execController) handlePrimaryMutation(actionIsCommit bool) (int, error)
 }
 
 func (c *execController) handleMutations() (err error) {
-	collector := c.getCollector(nil, nil)
+	collector := c.getCollector(c.bo, nil, nil)
 	var prev RegionVerID
 	for {
 		var batch *batchMutations
@@ -205,12 +205,11 @@ func (c *execController) handleMutations() (err error) {
 
 		if collector.Finished() {
 			bo, cancel := c.bo.Fork()
-			job := execJob{batch, bo, cancel}
-			c.handleSingleBatch(&job)
+			c.handleSingleBatch(&execJob{batch, bo, cancel})
 			break
 		}
 
-		if err = c.dispatchBatch(batch); err != nil {
+		if err = c.dispatchBatch(c.bo, batch); err != nil {
 			break
 		}
 	}
@@ -232,7 +231,7 @@ func (c *execController) containsPrimaryKey() bool {
 	return bytes.Equal(m.key, c.committer.primaryKey)
 }
 
-func (c *execController) getCollector(start, end []byte) *mutationBatchCollector {
+func (c *execController) getCollector(bo *Backoffer, start, end []byte) *mutationBatchCollector {
 	_, actionIsPrewrite := c.action.(actionPrewrite)
 	it := c.mutations.Iter(start, end)
 	if c.filter != nil {
@@ -240,16 +239,16 @@ func (c *execController) getCollector(start, end []byte) *mutationBatchCollector
 	}
 
 	return &mutationBatchCollector{
-		src:            c.committer.mapWithRegion(c.bo, it),
+		src:            c.committer.mapWithRegion(bo, it),
 		limit:          txnCommitBatchSize,
 		primaryKey:     c.committer.primaryKey,
 		onlyCollectKey: !actionIsPrewrite,
 	}
 }
 
-func (c *execController) dispatchBatch(batch *batchMutations) error {
-	bo, cancel := c.bo.Fork()
-	job := execJob{batch, bo, cancel}
+func (c *execController) dispatchBatch(backoffer *Backoffer, batch *batchMutations) error {
+	bo, cancel := backoffer.Fork()
+	job := &execJob{batch, bo, cancel}
 	c.Add(1)
 
 	select {
@@ -277,16 +276,13 @@ func (c *execController) dispatchBatch(batch *batchMutations) error {
 func (c *execController) workerLoop() {
 	for job := range c.jobCh {
 		if !c.terminated() {
-			c.handleSingleBatch(&job)
+			c.handleSingleBatch(job)
 		}
 		c.Done()
 	}
 }
 
 func (c *execController) handleSingleBatch(job *execJob) {
-	beforeSleep := job.bo.totalSleep
-	defer c.updateSingleBatchDetail(job.bo, beforeSleep)
-
 	retry, err := c.action.handleSingleBatch(c.committer, job.bo, job.batch)
 	if !retry {
 		c.handleError(err)
@@ -297,20 +293,22 @@ func (c *execController) handleSingleBatch(job *execJob) {
 }
 
 func (c *execController) handleRegionError(retryErr error, retryJob *execJob) {
-	keys := retryJob.batch.mutations.keys
-	start := kv.Key(keys[0])
-	end := kv.Key(keys[len(keys)-1]).Next()
-
-	for {
+	c.Add(1)
+	go func() {
+		defer c.Done()
 		if retryErr != nil {
+			beforeSleep := retryJob.bo.totalSleep
 			err := retryJob.bo.Backoff(BoRegionMiss, retryErr)
+			c.updateSingleBatchDetail(retryJob.bo, beforeSleep)
 			if err != nil {
 				c.handleError(err)
 				return
 			}
 		}
 
-		collector := c.getCollector(start, end)
+		keys := retryJob.batch.mutations.keys
+		collector := c.getCollector(retryJob.bo, keys[0], kv.Key(keys[len(keys)-1]).Next())
+
 		for {
 			batch, err := collector.Collect()
 			if err != nil {
@@ -322,35 +320,12 @@ func (c *execController) handleRegionError(retryErr error, retryJob *execJob) {
 				return
 			}
 
-			bo, cancel := retryJob.bo.Fork()
-			job := execJob{batch, bo, cancel}
-
-			c.Add(1)
-			select {
-			case c.jobCh <- job:
-				continue
-			default:
-				c.Done()
-			}
-
-			if c.terminated() {
-				cancel()
+			if err := c.dispatchBatch(retryJob.bo, batch); err != nil {
+				logutil.Logger(c.bo.ctx).Debug("2pc retry on region error failed", zap.Error(err))
 				return
-			}
-
-			retry, err := c.action.handleSingleBatch(c.committer, job.bo, job.batch)
-			cancel()
-			if err != nil && !retry {
-				c.handleError(err)
-				return
-			}
-			if retry {
-				start = job.batch.mutations.keys[0]
-				retryErr = err
-				break
 			}
 		}
-	}
+	}()
 }
 
 func (c *execController) tryAddWorker() {
