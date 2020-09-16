@@ -11,14 +11,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package selection
+package selection_test
 
 import (
 	"math/rand"
 	"sort"
 	"testing"
 	"time"
+
+	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/util/selection"
 )
+
+type testSuite struct{}
+
+var _ = Suite(&testSuite{})
+
+func TestT(t *testing.T) {
+	CustomVerboseFlag = true
+	*CustomParallelSuiteFlag = true
+	TestingT(t)
+}
 
 type testSlice []int
 
@@ -40,46 +53,37 @@ func init() {
 	globalCaseTens = randomTestCase(50)
 }
 
-func TestSelection(t *testing.T) {
-	s := testSlice{1, 2, 3, 4, 5}
-	index := Select(s, 3)
-	if s[index] != 3 {
-		t.Fail()
-	}
-}
-func TestSelectionWithDuplicate(t *testing.T) {
-	s := testSlice{1, 2, 3, 3, 5}
-	index := Select(s, 3)
-	if s[index] != 3 {
-		t.Fail()
-	}
-	index = Select(s, 5)
-	if s[index] != 5 {
-		t.Fail()
-	}
+func (s *testSuite) TestSelection(c *C) {
+	data := testSlice{1, 2, 3, 4, 5}
+	index := selection.Select(data, 3)
+	c.Assert(data[index], Equals, 3)
 }
 
-func TestSelectionWithRandomCase(t *testing.T) {
+func (s *testSuite) TestSelectionWithDuplicate(c *C) {
+	data := testSlice{1, 2, 3, 3, 5}
+	index := selection.Select(data, 3)
+	c.Assert(data[index], Equals, 3)
+	index = selection.Select(data, 5)
+	c.Assert(data[index], Equals, 5)
+}
+
+func (s *testSuite) TestSelectionWithRandomCase(c *C) {
 	data := randomTestCase(1000000)
-	index := Select(data, 500000)
-	value := data[index]
+	index := selection.Select(data, 500000)
+	actual := data[index]
 	sort.Stable(data)
 	expected := data[499999]
-	if value != expected {
-		t.Errorf("Expected: %v, Actual: %v\n%v", expected, value, data)
-	}
+	c.Assert(actual, Equals, expected)
 }
 
-func TestSelectionWithSerialCase(t *testing.T) {
-	data := serialTestCase(100)
+func (s *testSuite) TestSelectionWithSerialCase(c *C) {
+	data := serialTestCase(1000000)
 	sort.Sort(sort.Reverse(data))
-	index := Select(data, 50)
-	value := data[index]
+	index := selection.Select(data, 500000)
+	actual := data[index]
 	sort.Stable(data)
-	expected := data[49]
-	if value != expected {
-		t.Errorf("Expected: %v, Actual: %v\n%v", expected, value, data)
-	}
+	expected := data[499999]
+	c.Assert(actual, Equals, expected)
 }
 
 func randomTestCase(size int) testSlice {
@@ -105,7 +109,7 @@ func BenchmarkSelectionMillion(b *testing.B) {
 		data := make(testSlice, len(globalCaseMillion))
 		copy(data, globalCaseMillion)
 		b.StartTimer()
-		Select(data, len(globalCaseMillion))
+		selection.Select(data, len(globalCaseMillion))
 	}
 }
 
@@ -125,7 +129,7 @@ func BenchmarkSelectionThousand(b *testing.B) {
 		data := make(testSlice, len(globalCaseThousand))
 		copy(data, globalCaseThousand)
 		b.StartTimer()
-		Select(data, len(globalCaseThousand))
+		selection.Select(data, len(globalCaseThousand))
 	}
 }
 
@@ -145,7 +149,7 @@ func BenchmarkSelectionHundred(b *testing.B) {
 		data := make(testSlice, len(globalCaseHundred))
 		copy(data, globalCaseHundred)
 		b.StartTimer()
-		Select(data, len(globalCaseHundred))
+		selection.Select(data, len(globalCaseHundred))
 	}
 }
 
@@ -165,7 +169,7 @@ func BenchmarkSelectionTens(b *testing.B) {
 		data := make(testSlice, len(globalCaseTens))
 		copy(data, globalCaseTens)
 		b.StartTimer()
-		Select(data, len(globalCaseTens))
+		selection.Select(data, len(globalCaseTens))
 	}
 }
 
