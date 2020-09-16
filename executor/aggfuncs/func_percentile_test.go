@@ -26,6 +26,7 @@ func (s *testSuite) TestPercentile(c *C) {
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeFloat, 5, nil, 2.0),
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeDouble, 5, nil, 2.0),
 		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeNewDecimal, 5, nil, types.NewDecFromFloatForTest(2.0)),
+		buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeDate, 5, nil, types.TimeFromDays(367)),
 	}
 	for _, test := range tests {
 		s.testAggFunc(c, test)

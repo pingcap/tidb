@@ -25,14 +25,14 @@ import (
 )
 
 const (
-	// DefPartialResult4PercentileIntSize is the size of partialResult4PercentileReal
+	// DefPartialResult4PercentileIntSize is the size of partialResult4PercentileInt
 	DefPartialResult4PercentileIntSize = int64(unsafe.Sizeof(partialResult4PercentileInt{}))
 	// DefPartialResult4PercentileRealSize is the size of partialResult4PercentileReal
 	DefPartialResult4PercentileRealSize = int64(unsafe.Sizeof(partialResult4PercentileReal{}))
-	// DefPartialResult4PercentileDecimalSize is the size of partialResult4PercentileInt
+	// DefPartialResult4PercentileDecimalSize is the size of partialResult4PercentileDecimal
 	DefPartialResult4PercentileDecimalSize = int64(unsafe.Sizeof(partialResult4PercentileDecimal{}))
-	// DefPartialResult4PercentileDurationSize is the size of partialResult4PercentileInt
-	DefPartialResult4PercentileDurationSize = int64(unsafe.Sizeof(partialResult4PercentileDuration{}))
+	// DefPartialResult4PercentileTimeSize is the size of partialResult4PercentileTime
+	DefPartialResult4PercentileTimeSize = int64(unsafe.Sizeof(partialResult4PercentileTime{}))
 )
 
 func percentile(data sort.Interface, percent int) int {
@@ -83,10 +83,6 @@ func (p *partialResult4PercentileReal) MemSize() int64 {
 	return DefPartialResult4PercentileRealSize + int64(len(p.data))*DefFloat64Size
 }
 
-type partialResult4PercentileDuration struct {
-	data []types.Duration
-}
-
 // TODO: use []*types.MyDecimal to prevent massive value copy
 type decimalArray []types.MyDecimal
 
@@ -100,6 +96,20 @@ type partialResult4PercentileDecimal struct {
 
 func (p *partialResult4PercentileDecimal) MemSize() int64 {
 	return DefPartialResult4PercentileDecimalSize + int64(len(p.data))*int64(types.MyDecimalStructSize+unsafe.Sizeof(unsafe.Pointer(nil)))
+}
+
+type timeArray []types.Time
+
+func (a timeArray) Len() int           { return len(a) }
+func (a timeArray) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a timeArray) Less(i, j int) bool { return a[i].Compare(a[j]) < 0 }
+
+type partialResult4PercentileTime struct {
+	data timeArray
+}
+
+func (p *partialResult4PercentileTime) MemSize() int64 {
+	return DefPartialResult4PercentileRealSize + int64(len(p.data))*DefInt64Size
 }
 
 type percentileOriginal4Int struct {
@@ -258,5 +268,58 @@ func (e *percentileOriginal4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Con
 	}
 	index := percentile(p.data, e.percent)
 	chk.AppendMyDecimal(e.ordinal, &p.data[index])
+	return nil
+}
+
+type percentileOriginal4Time struct {
+	basePercentile
+}
+
+func (e *percentileOriginal4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	// TODO: Preserve appropriate capacity for data
+	pr = PartialResult(&partialResult4PercentileTime{})
+	return pr, DefPartialResult4PercentileIntSize
+}
+
+func (e *percentileOriginal4Time) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4PercentileTime)(pr)
+	p.data = timeArray{}
+}
+
+func (e *percentileOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4PercentileTime)(pr)
+	startMem := p.MemSize()
+	for _, row := range rowsInGroup {
+		v, isNull, err := e.args[0].EvalTime(sctx, row)
+		if err != nil {
+			return 0, err
+		}
+		if isNull {
+			continue
+		}
+		p.data = append(p.data, v)
+	}
+	endMem := p.MemSize()
+	return endMem - startMem, nil
+}
+
+func (e *percentileOriginal4Time) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4PercentileTime)(src), (*partialResult4PercentileTime)(dst)
+	mergeBuff := make(timeArray, len(p1.data)+len(p2.data))
+	copy(mergeBuff, p2.data)
+	copy(mergeBuff[len(p2.data):], p1.data)
+	p1.data = nil
+	p2.data = mergeBuff
+	return 0, nil
+}
+
+func (e *percentileOriginal4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4PercentileTime)(pr)
+	if len(p.data) == 0 {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	index := percentile(p.data, e.percent)
+	chk.AppendTime(e.ordinal, p.data[index])
 	return nil
 }

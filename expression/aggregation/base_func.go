@@ -148,7 +148,7 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) {
 		if a.RetTp.Decimal < 0 || a.RetTp.Decimal > mysql.MaxDecimalScale {
 			a.RetTp.Decimal = mysql.MaxDecimalScale
 		}
-	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate:
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeNewDate, mysql.TypeTimestamp:
 		a.RetTp = a.Args[0].GetType().Clone()
 	default:
 		a.RetTp = a.Args[0].GetType().Clone()
