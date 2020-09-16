@@ -5,6 +5,7 @@
 [![codecov](https://codecov.io/gh/pingcap/dumpling/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/dumpling)
 [![API Docs](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white)](https://pkg.go.dev/github.com/pingcap/dumpling)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/dumpling)](https://goreportcard.com/report/github.com/pingcap/dumpling)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling?ref=badge_shield)
 
 **Dumpling** is a tool and a Go library for creating SQL dump from a MySQL-compatible database.
 It is intended to replace `mysqldump` and `mydumper` when targeting TiDB.
@@ -42,3 +43,7 @@ License
 -------
 
 Dumpling is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
+
+
+## License
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling?ref=badge_large)
