@@ -470,13 +470,8 @@ func MergeDNFItems4Col(ctx sessionctx.Context, dnfItems []expression.Expression)
 	for _, dnfItem := range dnfItems {
 		cols := expression.ExtractColumns(dnfItem)
 		// If this condition contains multiple columns, we can't merge it.
-		if len(cols) != 1 {
-			mergedDNFItems = append(mergedDNFItems, dnfItem)
-			continue
-		}
-
-		// If this column is _tidb_rowid, we can't merge it since Selectivity() doesn't handle it, or infinite recursion will happen.
-		if cols[0].ID == model.ExtraHandleID {
+		// If this column is _tidb_rowid, we also can't merge it since Selectivity() doesn't handle it, or infinite recursion will happen.
+		if len(cols) != 1 || cols[0].ID == model.ExtraHandleID {
 			mergedDNFItems = append(mergedDNFItems, dnfItem)
 			continue
 		}
