@@ -110,7 +110,7 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 }
 
 type mockSessionManager2 struct {
-	se session.Session
+	se     session.Session
 	killed bool
 }
 
@@ -160,18 +160,6 @@ func (s *testSuite12) TestPreparedStmtWithHint(c *C) {
 	c.Assert(err, IsNil)
 	se.SetSessionManager(sm)
 	go dom.ExpensiveQueryHandle().SetSessionManager(sm).Run()
-	//go func() {
-	//	for i := 0; i < 100; i++ {
-	//		pi := se.ShowProcess()
-	//		fmt.Println(pi.Time, time.Since(pi.Time), pi.MaxExecutionTime)
-	//		if pi != nil && pi.MaxExecutionTime == 100 {
-	//			se.GetSessionManager().Kill(0, true)
-	//			break
-	//		} else {
-	//			time.Sleep(100 * time.Millisecond)
-	//		}
-	//	}
-	//}()
 	rs, err := se.Execute(context.Background(), "execute stmt")
 	c.Check(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
