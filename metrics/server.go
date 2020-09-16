@@ -14,6 +14,8 @@
 package metrics
 
 import (
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/terror"
 	"github.com/prometheus/client_golang/prometheus"
@@ -168,7 +170,7 @@ func ExecuteErrorToLabel(err error) string {
 	err = errors.Cause(err)
 	switch x := err.(type) {
 	case *terror.Error:
-		return string(x.RFCCode())
+		return x.Class().String() + ":" + strconv.Itoa(int(x.Code()))
 	default:
 		return "unknown"
 	}

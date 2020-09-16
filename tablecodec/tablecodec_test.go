@@ -528,7 +528,7 @@ func (s *testTableCodecSuite) TestError(c *C) {
 		errInvalidIndexKey,
 	}
 	for _, err := range kvErrs {
-		code := terror.ToSQLError(err).Code
+		code := err.ToSQLError().Code
 		c.Assert(code != mysql.ErrUnknown && code == uint16(err.Code()), IsTrue, Commentf("err: %v", err))
 	}
 }
