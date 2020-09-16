@@ -172,6 +172,7 @@ PRIMARY KEY (pk1,pk2)) partition by hash(pk2) partitions 4;`)
 	tk.MustExec("create table coverage_dt (pk1 varchar(35), pk2 int)")
 	tk.MustExec("insert into coverage_rr values ('ios', 3, 2),('android', 4, 7),('linux',5,1)")
 	tk.MustExec("insert into coverage_dt values ('apple',3),('ios',3),('linux',5)")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic-only'")
 	tk.MustQuery("select /*+ INL_JOIN(dt, rr) */ * from coverage_dt dt join coverage_rr rr on (dt.pk1 = rr.pk1 and dt.pk2 = rr.pk2);").Check(testkit.Rows("ios 3 ios 3 2", "linux 5 linux 5 1"))
 	tk.MustQuery("select /*+ INL_MERGE_JOIN(dt, rr) */ * from coverage_dt dt join coverage_rr rr on (dt.pk1 = rr.pk1 and dt.pk2 = rr.pk2);").Check(testkit.Rows("ios 3 ios 3 2", "linux 5 linux 5 1"))
 }
