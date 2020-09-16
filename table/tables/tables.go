@@ -669,6 +669,7 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID int64, r []ty
 		}
 		if dupHandle, err := v.Create(sctx, rm, indexVals, recordID, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
+				txn.CleanupKeyExistErrInfo([]kv.Key{t.RecordKey(recordID)})
 				return dupHandle, dupErr
 			}
 			return 0, err
