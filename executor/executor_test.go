@@ -2837,6 +2837,60 @@ func (s *testSuite) TestTiDBCurrentTS(c *C) {
 	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
 }
 
+func (s *testSuite) TestTiDBLastTxnInfo(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Check(testkit.Rows("0 0"))
+
+	tk.MustExec("insert into t values (1)")
+	rows1 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
+	c.Assert(rows1[0][0].(string), Greater, "0")
+	c.Assert(rows1[0][0].(string), Less, rows1[0][1].(string))
+
+	tk.MustExec("begin")
+	tk.MustQuery("select a from t where a = 1").Check(testkit.Rows("1"))
+	rows2 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts'), @@tidb_current_ts").Rows()
+	tk.MustExec("commit")
+	rows3 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
+	c.Assert(rows2[0][0], Equals, rows1[0][0])
+	c.Assert(rows2[0][1], Equals, rows1[0][1])
+	c.Assert(rows3[0][0], Equals, rows1[0][0])
+	c.Assert(rows3[0][1], Equals, rows1[0][1])
+	c.Assert(rows2[0][1], Less, rows2[0][2])
+
+	tk.MustExec("begin")
+	tk.MustExec("update t set a = a + 1 where a = 1")
+	rows4 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts'), @@tidb_current_ts").Rows()
+	tk.MustExec("commit")
+	rows5 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
+	c.Assert(rows4[0][0], Equals, rows1[0][0])
+	c.Assert(rows4[0][1], Equals, rows1[0][1])
+	c.Assert(rows4[0][2], Equals, rows5[0][0])
+	c.Assert(rows4[0][1], Less, rows4[0][2])
+	c.Assert(rows4[0][2], Less, rows5[0][1])
+
+	tk.MustExec("begin")
+	tk.MustExec("update t set a = a + 1 where a = 2")
+	tk.MustExec("rollback")
+	rows6 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()
+	c.Assert(rows6[0][0], Equals, rows5[0][0])
+	c.Assert(rows6[0][1], Equals, rows5[0][1])
+
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t values (2)")
+	_, err := tk.Exec("commit")
+	c.Assert(err, NotNil)
+	rows7 := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.start_ts'), json_extract(@@tidb_last_txn_info, '$.commit_ts'), json_extract(@@tidb_last_txn_info, '$.error')").Rows()
+	c.Assert(rows7[0][0], Greater, rows5[0][0])
+	c.Assert(rows7[0][1], Equals, "0")
+	c.Assert(strings.Contains(err.Error(), rows7[0][1].(string)), IsTrue)
+
+	_, err = tk.Exec("set @@tidb_last_txn_info = '{}'")
+	c.Assert(terror.ErrorEqual(err, variable.ErrReadOnly), IsTrue, Commentf("err %v", err))
+}
+
 func (s *testSuite) TestSelectForUpdate(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
