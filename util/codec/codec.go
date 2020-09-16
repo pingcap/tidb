@@ -861,7 +861,7 @@ func DecodeAsDateTime(b []byte, tp byte, loc *time.Location) (remain []byte, d t
 		if err != nil {
 			return b, d, err
 		}
-		t := types.NewTime(types.ZeroCoreTime, mysql.TypeDatetime, 0)
+		t := types.NewTime(types.ZeroCoreTime, tp, 0)
 		err = t.FromPackedUint(v)
 		if err == nil {
 			if tp == mysql.TypeTimestamp && !t.IsZero() && loc != nil {

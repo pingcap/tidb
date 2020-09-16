@@ -148,7 +148,7 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 		colNameToType[col.Info.Name.O] = col.Histogram.Tp.Tp
 	}
 	for _, idx := range statsTbl.Indices {
-		var idxColumnTypes []byte
+		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
 		for i := 0; i < len(idx.Info.Columns); i++ {
 			idxColumnTypes = append(idxColumnTypes, colNameToType[idx.Info.Columns[i].Name.O])
 		}
