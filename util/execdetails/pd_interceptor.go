@@ -98,11 +98,11 @@ func (m InterceptedPDClient) GetRegionByID(ctx context.Context, regionID uint64)
 }
 
 // ScanRegions implements pd.Client#ScanRegions.
-func (m InterceptedPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*metapb.Region, []*metapb.Peer, error) {
+func (m InterceptedPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*pd.Region, error) {
 	start := time.Now()
-	r, p, err := m.Client.ScanRegions(ctx, key, endKey, limit)
+	r, err := m.Client.ScanRegions(ctx, key, endKey, limit)
 	recordPDWaitTime(ctx, start)
-	return r, p, err
+	return r, err
 }
 
 // GetStore implements pd.Client#GetStore.
