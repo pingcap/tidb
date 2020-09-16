@@ -6,6 +6,7 @@
 [![API Docs](https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white)](https://pkg.go.dev/github.com/pingcap/dumpling)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/dumpling)](https://goreportcard.com/report/github.com/pingcap/dumpling)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling?ref=badge_shield)
+[![Discuss in Slack](https://img.shields.io/badge/slack-sig--migrate-4A154B?logo=slack)](https://slack.tidb.io/invite?team=tidb-community&channel=sig-migrate&ref=github_sig)
 
 **Dumpling** is a tool and a Go library for creating SQL dump from a MySQL-compatible database.
 It is intended to replace `mysqldump` and `mydumper` when targeting TiDB.
@@ -22,6 +23,8 @@ Features
 - [x] Multiple output formats: SQL, CSV, ...
 - [ ] Write to cloud storage (S3, GCS) natively
 - [x] Advanced table filtering
+
+Any questions? Let's discuss in [#sig-migrate in Slack](https://slack.tidb.io/invite?team=tidb-community&channel=sig-migrate&ref=github_sig)!
 
 Building
 --------
@@ -45,5 +48,4 @@ License
 Dumpling is under the Apache 2.0 license. See the [LICENSE](./LICENSE) file for details.
 
 
-## License
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2Fpingcap%2Fdumpling?ref=badge_large)
