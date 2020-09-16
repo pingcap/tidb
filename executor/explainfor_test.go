@@ -355,3 +355,34 @@ func (s *testSuite) TestExplainTiFlashSystemTables(c *C) {
 	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", tiflashInstance, database, table)).Check(testkit.Rows(
 		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
 }
+
+func (s *testSuite) TestExplainForConnectionPartitionTable(c *C) {
+	// See https://github.com/pingcap/tidb/issues/20019
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic-only'")
+	tk.MustExec("create table xx (id int) partition by hash(id) partitions 4")
+	tk.MustQuery("select * from xx where id = 1")
+	tk.Se.SetSessionManager(&mockSessionManager1{
+		PS: []*util.ProcessInfo{tk.Se.ShowProcess()},
+	})
+	connID := tk.Se.GetSessionVars().ConnectionID
+	// se1: select * from xx where id = 1
+	// se1: explain for connection 1
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", connID)).Check(
+		testkit.Rows("TableReader_7 10.00 root partition:p1 data:Selection_6",
+			"└─Selection_6 10.00 cop[tikv]  eq(test.xx.id, 1)",
+			"  └─TableFullScan_5 10000.00 cop[tikv] table:xx keep order:false, stats:pseudo"))
+
+	// This bug is not fixed yet, explain for another connection.
+	// se1: select * from xx where id = 1
+	// se2: explain for connection 1;  -- wrong result
+	tk.MustQuery("select * from xx where id = 1")
+	tk1 := testkit.NewTestKitWithInit(c, s.store)
+	tk1.Se.SetSessionManager(&mockSessionManager1{
+		PS: []*util.ProcessInfo{tk.Se.ShowProcess()},
+	})
+	tk1.MustQuery(fmt.Sprintf("explain for connection %d", connID)).Check(
+		testkit.Rows("TableReader_7 10.00 root  data:Selection_6",
+			"└─Selection_6 10.00 cop[tikv]  eq(test.xx.id, 1)",
+			"  └─TableFullScan_5 10000.00 cop[tikv] table:xx keep order:false, stats:pseudo"))
+}

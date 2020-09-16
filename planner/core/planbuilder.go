@@ -3166,7 +3166,20 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, err
 	}
 	var rows [][]string
 	if explainFor.Format == ast.ExplainFormatROW {
-		rows = processInfo.PlanExplainRows
+		if explainFor.ConnectionID != b.ctx.GetSessionVars().ConnectionID {
+			// Run query in one connection and 'explain for' in another connection, there would be a data race.
+			// So 'explain for' uses cached rows in process info to avoid the data race problem.
+			// See https://github.com/pingcap/tidb/issues/16818
+			//
+			// However, the cached rows are not correct for query on partition table, the
+			// access info of partitions is not set.(Because it requires partition pruning
+			// which is not available then or too expensive to calculate for a second time).
+			//
+			// In the same connection, there is no data race issue, so we ignore the cached rows
+			// to get the correct result for query on partition table.
+			// See https://github.com/pingcap/tidb/issues/20019
+			rows = processInfo.PlanExplainRows
+		}
 	}
 	return b.buildExplainPlan(targetPlan, explainFor.Format, rows, false, nil)
 }
