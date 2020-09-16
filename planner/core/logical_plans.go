@@ -988,7 +988,7 @@ type LogicalTopN struct {
 	ByItems   []*util.ByItems
 	Offset    uint64
 	Count     uint64
-	topnHints topnHintInfo
+	limitHints limitHintInfo
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -1011,7 +1011,7 @@ type LogicalLimit struct {
 
 	Offset    uint64
 	Count     uint64
-	topnHints topnHintInfo
+	limitHints limitHintInfo
 }
 
 // LogicalLock represents a select lock plan.
