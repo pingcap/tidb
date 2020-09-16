@@ -647,7 +647,37 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
 	}
-
+	if newCol.Tp == mysql.TypeEnum && oldCol.Tp == mysql.TypeEnum {
+		if len(newCol.Elems) < len(oldCol.Elems) {
+			return true
+		}
+		for index, originElem := range oldCol.Elems {
+			toElem := newCol.Elems[index]
+			if originElem != toElem {
+				return true
+			}
+		}
+	}
+	if newCol.Tp == mysql.TypeSet && oldCol.Tp == mysql.TypeSet {
+		if len(newCol.Elems) < len(oldCol.Elems) {
+			return true
+		}
+		for _, oldElem := range oldCol.Elems {
+			contain := false
+			for _, newElem := range newCol.Elems {
+				if oldElem == newElem {
+					contain = true
+				}
+			}
+			if !contain {
+				return true
+			}
+		}
+	}
+	if (newCol.Tp == mysql.TypeEnum || oldCol.Tp == mysql.TypeEnum ||
+		newCol.Tp == mysql.TypeSet || oldCol.Tp == mysql.TypeSet) && oldCol.Tp != newCol.Tp {
+		return true
+	}
 	return false
 }
 
@@ -853,7 +883,7 @@ func (w *worker) doModifyColumnTypeWithData(
 				logutil.BgLogger().Warn("[ddl] run modify column job failed, convert job to rollback", zap.String("job", job.String()), zap.Error(err))
 				// TODO: Do rollback.
 			}
-			if types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) {
+			if types.ErrOverflow.Equal(err) || types.ErrDataTooLong.Equal(err) || types.ErrTruncated.Equal(err) {
 				// TODO: Do rollback.
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -984,8 +1014,10 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 	taskDone := false
 	var lastAccessedHandle kv.Handle
 	oprStartTime := startTime
+	var rowIdx int
 	err := iterateSnapshotRows(w.sessCtx.GetStore(), w.priority, w.table, txn.StartTS(), taskRange.startHandle, taskRange.endHandle, taskRange.endIncluded,
 		func(handle kv.Handle, recordKey kv.Key, rawRow []byte) (bool, error) {
+			rowIdx++
 			oprEndTime := time.Now()
 			logSlowOperations(oprEndTime.Sub(oprStartTime), "iterateSnapshotRows in updateColumnWorker fetchRowColVals", 0)
 			oprStartTime = oprEndTime
@@ -1001,6 +1033,9 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 			}
 
 			if err1 := w.getRowRecord(handle, recordKey, rawRow); err1 != nil {
+				if types.ErrTruncated.Equal(err1) {
+					err1 = types.ErrTruncated.GenWithStackByArgs(w.oldColInfo.Name, rowIdx)
+				}
 				return false, errors.Trace(err1)
 			}
 			lastAccessedHandle = handle
