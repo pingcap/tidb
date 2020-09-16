@@ -549,6 +549,6 @@ func (s *testFailDBSuite) TestPartitionAddPanic(c *C) {
 	_, err := tk.Exec(`alter table t add partition (partition p1 values less than (20));`)
 	c.Assert(err, NotNil)
 	result := tk.MustQuery("show create table t").Rows()[0][1]
-	c.Assert(result, Matches, `.*PARTITION p0 VALUES LESS THAN (10).*`)
-	c.Assert(result, Not(Matches), `.*PARTITION p0 VALUES LESS THAN (20).*`)
+	c.Assert(result, Matches, "(?s).*PARTITION `p0` VALUES LESS THAN (10).*")
+	c.Assert(result, Not(Matches), "(?s).*PARTITION `p0` VALUES LESS THAN (20).*")
 }
