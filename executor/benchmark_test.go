@@ -396,16 +396,20 @@ func BenchmarkAggGroupByNDV(b *testing.B) {
 
 func BenchmarkAggConcurrency(b *testing.B) {
 	concs := []int{1, 4, 8, 15, 20, 30, 40}
+	distincts := []bool{false, true}
 	for _, con := range concs {
 		for _, exec := range []string{"hash", "stream"} {
 			if exec == "stream" && con > 1 {
 				continue
 			}
-			cas := defaultAggTestCase(exec)
-			cas.concurrency = con
-			b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
-				benchmarkAggExecWithCase(b, cas)
-			})
+			for _, distinct := range distincts {
+				cas := defaultAggTestCase(exec)
+				cas.concurrency = con
+				cas.hasDistinct = distinct
+				b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
+					benchmarkAggExecWithCase(b, cas)
+				})
+			}
 		}
 	}
 }
