@@ -644,9 +644,6 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
-	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
-		return true
-	}
 	if newCol.Tp == mysql.TypeEnum && oldCol.Tp == mysql.TypeEnum {
 		if len(newCol.Elems) < len(oldCol.Elems) {
 			return true
@@ -657,6 +654,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 				return true
 			}
 		}
+		return false
 	}
 	if newCol.Tp == mysql.TypeSet && oldCol.Tp == mysql.TypeSet {
 		if len(newCol.Elems) < len(oldCol.Elems) {
@@ -673,9 +671,13 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 				return true
 			}
 		}
+		return false
 	}
 	if (newCol.Tp == mysql.TypeEnum || oldCol.Tp == mysql.TypeEnum ||
 		newCol.Tp == mysql.TypeSet || oldCol.Tp == mysql.TypeSet) && oldCol.Tp != newCol.Tp {
+		return true
+	}
+	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
 	}
 	return false
