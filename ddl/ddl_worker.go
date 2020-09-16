@@ -871,6 +871,7 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
+		diff.TableID = job.TableID
 		affects := make([]*model.AffectedOption, len(oldIDs))
 		for i := 0; i < len(oldIDs); i++ {
 			affects[i] = &model.AffectedOption{
