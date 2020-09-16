@@ -726,6 +726,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		if v != DefTiDBRowFormatV1 && v != DefTiDBRowFormatV2 {
 			return value, errors.Errorf("Unsupported row format version %d", v)
 		}
+	case TiDBPartitionPruneMode:
+		if !PartitionPruneMode(value).Valid() {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
+		}
 	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines, TiDBEnableParallelApply:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":

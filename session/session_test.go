@@ -719,7 +719,8 @@ func (s *testSessionSuite) TestRetryCleanTxn(c *C) {
 	history := session.GetHistory(tk.Se)
 	stmtNode, err := parser.New().ParseOneStmt("insert retrytxn values (2, 'a')", "", "")
 	c.Assert(err, IsNil)
-	stmt, _ := session.Compile(context.TODO(), tk.Se, stmtNode)
+	compiler := executor.Compiler{Ctx: tk.Se}
+	stmt, _ := compiler.Compile(context.TODO(), stmtNode)
 	executor.ResetContextOfStmt(tk.Se, stmtNode)
 	history.Add(stmt, tk.Se.GetSessionVars().StmtCtx)
 	_, err = tk.Exec("commit")
