@@ -122,7 +122,11 @@ func (p *PointGetPlan) AccessObject() string {
 		fmt.Fprintf(buffer, ", partition:%s", p.PartitionInfo.Name.L)
 	}
 	if p.IndexInfo != nil {
-		buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
+			buffer.WriteString(", clustered index:" + p.IndexInfo.Name.O + "(")
+		} else {
+			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+		}
 		for i, idxCol := range p.IndexInfo.Columns {
 			buffer.WriteString(idxCol.Name.O)
 			if i+1 < len(p.IndexInfo.Columns) {
@@ -137,7 +141,7 @@ func (p *PointGetPlan) AccessObject() string {
 // OperatorInfo implements dataAccesser interface.
 func (p *PointGetPlan) OperatorInfo(normalized bool) string {
 	buffer := bytes.NewBufferString("")
-	if p.IndexInfo == nil {
+	if p.Handle != nil {
 		if normalized {
 			fmt.Fprintf(buffer, "handle:?, ")
 		} else {
@@ -284,7 +288,11 @@ func (p *BatchPointGetPlan) AccessObject() string {
 	tblName := p.TblInfo.Name.O
 	fmt.Fprintf(buffer, "table:%s", tblName)
 	if p.IndexInfo != nil {
-		buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+		if p.IndexInfo.Primary && p.TblInfo.IsCommonHandle {
+			buffer.WriteString(", clustered index:" + p.IndexInfo.Name.O + "(")
+		} else {
+			buffer.WriteString(", index:" + p.IndexInfo.Name.O + "(")
+		}
 		for i, idxCol := range p.IndexInfo.Columns {
 			buffer.WriteString(idxCol.Name.O)
 			if i+1 < len(p.IndexInfo.Columns) {
