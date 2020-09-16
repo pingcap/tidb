@@ -139,7 +139,7 @@ func getValMemDelta(val interface{}) (memDelta int64) {
 	case *types.MyDecimal:
 		memDelta += DefMyDecimalSize
 	case []uint8:
-		memDelta += int64(len(v)) * DefUint8Size
+		memDelta += int64(len(v))
 	case types.Time:
 		memDelta += DefTimeSize
 	case types.Duration:
