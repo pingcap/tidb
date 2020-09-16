@@ -281,7 +281,7 @@ func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldT
 		}
 
 		memDelta := int64(0)
-		key, err := (&datum).ToString()
+		key, err := datum.ToString()
 		if err != nil {
 			return memDeltas, errors.Errorf("fail to get key - %s", key)
 		}
