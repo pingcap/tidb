@@ -174,7 +174,15 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
 
-	prepared.UseCache = plannercore.PreparedPlanCacheEnabled() && plannercore.Cacheable(stmt, e.is)
+	if !plannercore.PreparedPlanCacheEnabled() {
+		prepared.UseCache = false
+	} else {
+		if !e.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+			prepared.UseCache = plannercore.Cacheable(stmt, e.is)
+		} else {
+			prepared.UseCache = plannercore.Cacheable(stmt, nil)
+		}
+	}
 
 	// We try to build the real statement of preparedStmt.
 	for i := range prepared.Params {

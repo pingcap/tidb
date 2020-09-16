@@ -1356,9 +1356,11 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		return nil, errors.Errorf("%T not an etcd backend", store)
 	}
 	var servers []ServerInfo
-	for _, addr := range etcd.EtcdAddrs() {
-		addr = strings.TrimSpace(addr)
-
+	members, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, addr := range members {
 		// Get PD version
 		url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, pdapi.ClusterVersion)
 		req, err := http.NewRequest(http.MethodGet, url, nil)
