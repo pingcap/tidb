@@ -101,12 +101,11 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 			exceed           bool
 			tearedTicket     uint
 			teared           bool
-			sendRate         *rateLimit
 			maxRunningTaskID int
 		}{
-			Cond:     workersCond,
-			sendRate: it.sendRate,
+			Cond: workersCond,
 		},
+		sendRate: it.sendRate,
 	}
 
 	if it.memTracker != nil {
@@ -592,15 +591,12 @@ func (it *copIterator) open(ctx context.Context) {
 	}
 	taskSender.respChan = it.respChan
 	go taskSender.run()
-	it.actionOnExceed.mu.Lock()
-	it.actionOnExceed.mu.running = true
-	it.actionOnExceed.mu.Unlock()
+	it.actionOnExceed.enabled = true
 }
 
 func (sender *copIteratorTaskSender) run() {
 	// Send tasks to feed the worker goroutines.
-	i := 0
-	for _, t := range sender.tasks {
+	for i, t := range sender.tasks {
 		// we control the sending rate to prevent all tasks
 		// being done (aka. all of the responses are buffered) by copIteratorWorker.
 		// We keep the number of inflight tasks within the number of 2 * concurrency when Keep Order is true.
@@ -611,7 +607,6 @@ func (sender *copIteratorTaskSender) run() {
 			break
 		}
 		t.id = i
-		i++
 		exit = sender.sendToTaskCh(t)
 		if exit {
 			break
@@ -1216,13 +1211,12 @@ func (it *copIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 		close(it.finishCh)
 	}
-	it.actionOnExceed.mu.Lock()
-	it.actionOnExceed.mu.running = false
-	it.actionOnExceed.mu.Unlock()
+	it.actionOnExceed.enabled = false
 	it.rpcCancel.CancelAll()
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
 	it.actionOnExceed.cond.L.Lock()
 	it.actionOnExceed.cond.exceed = false
+	it.actionOnExceed.cond.teared = false
 	it.actionOnExceed.cond.Broadcast()
 	it.actionOnExceed.cond.L.Unlock()
 	it.wg.Wait()
@@ -1268,11 +1262,9 @@ func (it copErrorResponse) Close() error {
 }
 
 type taskRateLimitAction struct {
-	mu struct {
-		sync.Mutex
-		running bool
-	}
+	enabled        bool
 	fallbackAction memory.ActionOnExceed
+	sendRate       *rateLimit
 
 	cond struct {
 		*sync.Cond
@@ -1282,8 +1274,7 @@ type taskRateLimitAction struct {
 		// tearedTicket indicates the count of tickets which have been teared up.
 		tearedTicket uint
 		// teared indicates whether there is one ticket has been teared during after Action
-		teared   bool
-		sendRate *rateLimit
+		teared bool
 		// maxRunningTaskID indicates the max id of the running copTask
 		maxRunningTaskID int
 	}
@@ -1298,9 +1289,9 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 	e.cond.L.Lock()
 	defer e.cond.L.Unlock()
 	e.cond.once.Do(func() {
-		if e.cond.tearedTicket >= uint(cap(e.cond.sendRate.token)-1) {
+		if e.cond.tearedTicket >= uint(cap(e.sendRate.token)-1) {
 			logutil.BgLogger().Info("taskRateLimitAction delegate to fallback action",
-				zap.Int("ticketTotal", cap(e.cond.sendRate.token)))
+				zap.Int("ticketTotal", cap(e.sendRate.token)))
 			if e.fallbackAction != nil {
 				e.fallbackAction.Action(t)
 			}
@@ -1315,9 +1306,7 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 }
 
 func (e *taskRateLimitAction) isRunning(t *memory.Tracker) (allowAction bool) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if !e.mu.running {
+	if !e.enabled {
 		if e.fallbackAction != nil {
 			e.fallbackAction.Action(t)
 		}
