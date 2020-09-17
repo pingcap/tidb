@@ -726,15 +726,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, TiDBSlowLogMasking, BoolToIntStr(DefTiDBSlowLogMasking)},
 	{ScopeSession, TiDBEnableCollectExecutionInfo, BoolToIntStr(DefTiDBEnableCollectExecutionInfo)},
 	{ScopeGlobal | ScopeSession, TiDBAllowAutoRandExplicitInsert, boolToOnOff(DefTiDBAllowAutoRandExplicitInsert)},
-<<<<<<< HEAD
 	{ScopeGlobal, TiDBLogDesensitization, BoolToIntStr(DefTiDBLogDesensitization)},
-=======
-	{ScopeGlobal | ScopeSession, TiDBEnableClusteredIndex, BoolToIntStr(DefTiDBEnableClusteredIndex)},
-	{ScopeGlobal | ScopeSession, TiDBPartitionPruneMode, string(StaticOnly)},
-	{ScopeGlobal, TiDBSlowLogMasking, BoolToIntStr(DefTiDBSlowLogMasking)},
-	{ScopeGlobal, TiDBRedactLog, strconv.Itoa(config.DefTiDBRedactLog)},
-	{ScopeGlobal | ScopeSession, TiDBShardAllocateStep, strconv.Itoa(DefTiDBShardAllocateStep)},
->>>>>>> 70a567e... session: refine error message desensitization (#19409)
 	{ScopeGlobal, TiDBEnableTelemetry, BoolToIntStr(DefTiDBEnableTelemetry)},
 }
 

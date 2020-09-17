@@ -796,20 +796,9 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
-<<<<<<< HEAD
 	sessVars := a.Ctx.GetSessionVars()
 	pps := types.CloneRow(sessVars.PreparedParams)
 	sessVars.PrevStmt = FormatSQL(a.OriginText(), pps)
-=======
-	prevStmt := a.GetTextToLog()
-	if config.RedactLogEnabled() {
-		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
-	} else {
-		pps := types.CloneRow(sessVars.PreparedParams)
-		sessVars.PrevStmt = FormatSQL(prevStmt, pps)
-	}
-
->>>>>>> 70a567e... session: refine error message desensitization (#19409)
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
 		sessionExecuteRunDurationInternal.Observe(executeDuration.Seconds())
@@ -832,7 +821,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 	var sql stringutil.StringerFunc
 	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
-	if config.RedactLogEnabled() {
+	if sessVars.EnableLogDesensitization {
 		sql = FormatSQL(normalizedSQL, nil)
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
@@ -1023,8 +1012,9 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 // GetTextToLog return the query text to log.
 func (a *ExecStmt) GetTextToLog() string {
 	var sql string
-	if config.RedactLogEnabled() {
-		sql, _ = a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
+	sessVars := a.Ctx.GetSessionVars()
+	if sessVars.EnableLogDesensitization {
+		sql, _ = sessVars.StmtCtx.SQLDigest()
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {

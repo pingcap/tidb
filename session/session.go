@@ -474,6 +474,7 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 				zap.Int64("tidb_retry_limit", s.sessionVars.RetryLimit),
 				zap.Bool("tidb_disable_txn_auto_retry", s.sessionVars.DisableTxnAutoRetry))
 		}
+
 	}
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
@@ -651,13 +652,6 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
-<<<<<<< HEAD
-=======
-				sql := sqlForLog(st.GetTextToLog())
-				if !config.RedactLogEnabled() {
-					sql += sessVars.PreparedParams.String()
-				}
->>>>>>> 70a567e... session: refine error message desensitization (#19409)
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retryCnt", retryCnt),
@@ -1989,7 +1983,7 @@ var builtinGlobalVariable = []string{
 	variable.TiDBStoreLimit,
 	variable.TiDBAllowAutoRandExplicitInsert,
 	variable.TiDBSlowLogMasking,
-	variable.TiDBRedactLog,
+	variable.TiDBLogDesensitization,
 	variable.TiDBEnableTelemetry,
 }
 
@@ -2169,7 +2163,7 @@ func logStmt(execStmt *executor.ExecStmt, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		if !config.RedactLogEnabled() {
+		if !vars.EnableLogDesensitization {
 			query = query + vars.PreparedParams.String()
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",
