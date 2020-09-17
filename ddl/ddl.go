@@ -706,6 +706,9 @@ func (d *ddl) startCleanDeadTableLock() {
 			if !d.ownerManager.IsOwner() {
 				continue
 			}
+			if !d.infoHandle.IsValid() {
+				continue
+			}
 			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.quitCh, d.infoHandle.Get().AllSchemas())
 			if err != nil {
 				logutil.Logger(ddlLogCtx).Info("[ddl] get dead table lock failed.", zap.Error(err))
