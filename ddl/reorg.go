@@ -159,15 +159,16 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		logutil.BgLogger().Info("[ddl] run reorg job done", zap.Int64("handled rows", rowCount))
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
-		if err == nil {
-			metrics.AddIndexProgress.Set(100)
-			if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
-				logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
-				return errors.Trace(err)
-			}
-		}
 		w.reorgCtx.clean()
-		return errors.Trace(err)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		metrics.AddIndexProgress.Set(100)
+		if err1 := t.RemoveDDLReorgHandle(job, reorgInfo.elements); err1 != nil {
+			logutil.BgLogger().Warn("[ddl] run reorg job done, removeDDLReorgHandle failed", zap.Error(err1))
+			return errors.Trace(err1)
+		}
 	case <-w.ctx.Done():
 		logutil.BgLogger().Info("[ddl] run reorg job quit")
 		w.reorgCtx.setNextHandle(nil)
@@ -187,6 +188,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// If timeout, we will return, check the owner and retry to wait job done again.
 		return errWaitReorgTimeout
 	}
+	return nil
 }
 
 func updateAddIndexProgress(w *worker, tblInfo *model.TableInfo, addedRowCount int64) {

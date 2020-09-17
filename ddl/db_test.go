@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/table"
@@ -3788,8 +3787,6 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 		}
 	}
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("cantDecodeRecordErr")`), IsNil)
-	save := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(1)
 	s.dom.DDL().(ddl.DDLForTest).SetHook(hook)
 	_, err := tk.Exec(sql)
 	c.Assert(err.Error(), Equals, "[ddl:8202]Cannot decode index value, because mock can't decode record error")
@@ -3811,7 +3808,6 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 	checkReorgHandle(elements[0])
 	checkReorgHandle(elements[1])
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr"), IsNil)
-	variable.SetDDLErrorCountLimit(save)
 	tk.MustExec("admin check table t1")
 
 	// Check whether the reorg information is cleaned up when executing "modify column" successfully.
