@@ -160,7 +160,7 @@ test_part_1: checklist explaintest
 
 test_part_2: checkdep gotest gogenerate
 
-explaintest: server
+explaintest: server_check
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 ddltest:
