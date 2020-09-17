@@ -105,6 +105,11 @@ func (w *mockWriter) Close() (err error) {
 	return w.w.Close()
 }
 
+/*
+	CaseID : TICASE-3644
+	Summary : Add a byte randomly
+	Expected outcome: Whether encrypted or not, when reading data, both the current block and the following block have errors.
+*/
 func (s *testChecksumSuite) TestTiCase3644(c *check.C) {
 	s.testTiCase3644(c, false)
 	s.testTiCase3644(c, true)
@@ -176,6 +181,11 @@ func (s *testChecksumSuite) testTiCase3644(c *check.C, encrypt bool) {
 	}
 }
 
+/*
+	CaseID : TICASE-3645
+	Summary : Delete a byte randomly
+	Expected outcome: Whether encrypted or not, when reading data, both the current block and the following block have errors.
+*/
 func (s *testChecksumSuite) TestTiCase3645(c *check.C) {
 	s.testTiCase3645(c, false)
 	s.testTiCase3645(c, true)
@@ -247,6 +257,11 @@ func (s *testChecksumSuite) testTiCase3645(c *check.C, encrypt bool) {
 	}
 }
 
+/*
+	CaseID : TICASE-3646
+	Summary : Modify a byte randomly
+	Expected outcome: Whether encrypted or not, when reading data, only the current block has error.
+*/
 func (s *testChecksumSuite) TestTiCase3646(c *check.C) {
 	s.testTiCase3646(c, false)
 	s.testTiCase3646(c, true)
@@ -318,6 +333,11 @@ func (s *testChecksumSuite) testTiCase3646(c *check.C, encrypt bool) {
 	}
 }
 
+/*
+	CaseID : TICASE-3647
+	Summary : Read an empty file.
+	Expected outcome: Whether encrypted or not, no error will occur.
+*/
 func (s *testChecksumSuite) TestTiCase3647(c *check.C) {
 	s.testTiCase3647(c, false)
 	s.testTiCase3647(c, true)
@@ -354,6 +374,11 @@ func (s *testChecksumSuite) testTiCase3647(c *check.C, encrypt bool) {
 	}
 }
 
+/*
+	CaseID : TICASE-3648
+	Summary : Modify some bytes in one block.
+	Expected outcome: Whether encrypted or not, when reading data, only the current block has error.
+*/
 func (s *testChecksumSuite) TestTiCase3648(c *check.C) {
 	s.testTiCase3648(c, false)
 	s.testTiCase3648(c, true)
@@ -429,6 +454,16 @@ func (s *testChecksumSuite) testTiCase3648(c *check.C, encrypt bool) {
 	}
 }
 
+/*
+	CaseID : TICASE-3649
+	Summary : Read some blocks using offset at once.
+	Expected outcome: Whether encrypted or not, the result is right.
+*/
+/*
+	CaseID : TICASE-3650
+	Summary : Read all data at once.
+	Expected outcome: Whether encrypted or not, the result is right.
+*/
 func (s *testChecksumSuite) TestTiCase3649and3650(c *check.C) {
 	s.testTiCase3649and3650(c, false)
 	s.testTiCase3649and3650(c, true)
@@ -501,6 +536,16 @@ func (s *testChecksumSuite) testTiCase3649and3650(c *check.C, encrypt bool) {
 	assertReadAt(0, make([]byte, 11000), io.EOF, 10200, strings.Join([]string{strings.Repeat("0123456789", 1020), strings.Repeat("\x00", 800)}, ""))
 }
 
+/*
+	CaseID : TICASE-3651
+	Summary : Write some block at once.
+	Expected outcome: Whether encrypted or not, after writing data, it can read data correctly.
+*/
+/*
+	CaseID : TICASE-3652
+	Summary : Write some block and append some block.
+	Expected outcome: Whether encrypted or not, after writing data, it can read data correctly.
+*/
 func (s *testChecksumSuite) TestTiCase3651and3652(c *check.C) {
 	s.testTiCase3651and3652(c, false)
 	s.testTiCase3651and3652(c, true)
