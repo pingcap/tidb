@@ -228,6 +228,21 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	return vars.SetSystemVar(name, sVal)
 }
 
+// SetTmpSessionSystemVar sets system variable and updates SessionVars states.
+func SetTmpSessionSystemVar(vars *SessionVars, name string, value string) error {
+	name = strings.ToLower(name)
+	sysVar := SysVars[name]
+	if sysVar == nil {
+		return ErrUnknownSystemVar
+	}
+	sVal, err := ValidateSetSystemVar(vars, name, value, ScopeSession)
+	if err != nil {
+		return err
+	}
+	CheckDeprecationSetSystemVar(vars, name)
+	return vars.SetTmpSystemVar(name, sVal)
+}
+
 // ValidateGetSystemVar checks if system variable exists and validates its scope when get system variable.
 func ValidateGetSystemVar(name string, isGlobal bool) error {
 	sysVar, exists := SysVars[name]

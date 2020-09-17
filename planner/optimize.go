@@ -116,6 +116,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}()
 	sessVars.StmtCtx.StmtHints = stmtHints
+
+	for name, val := range stmtHints.SetVars {
+		variable.SetTmpSessionSystemVar(sessVars, name, val)
+	}
+
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
 		return nil, nil, err
