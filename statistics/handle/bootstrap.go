@@ -150,7 +150,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables map[
 	}
 }
 
-// load ALL the meta data without cm_sketch
+// initStatsHistograms load ALL the meta data without cm_sketch
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables map[int64]*statistics.Table) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version," +
 		" null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos " +
@@ -210,8 +210,7 @@ func (h *Handle) initCMSketch4Indices4Chunk(is infoschema.InfoSchema, tables map
 }
 
 func (h *Handle) initCMSketch4Indices(is infoschema.InfoSchema, tables map[int64]*statistics.Table) error {
-	// indcies should be load first
-	// is_index = 1 load first
+	// indcies should be loaded first
 	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, cm_sketch " +
 		"from mysql.stats_histograms where is_index = 1 " +
