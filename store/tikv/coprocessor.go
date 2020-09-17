@@ -783,7 +783,9 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	})
 	req.StoreTp = task.storeType
 	startTime := time.Now()
-	worker.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
+	if worker.Stats == nil {
+		worker.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats)
+	}
 	resp, rpcCtx, storeAddr, err := worker.SendReqCtx(bo, req, task.region, ReadTimeoutMedium, task.storeType, task.storeAddr)
 	if err != nil {
 		if task.storeType == kv.TiDB {
@@ -1035,6 +1037,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *RPCCon
 		resp.detail = new(CopRuntimeStats)
 	}
 	resp.detail.Stats = worker.Stats
+	worker.Stats = nil
 	resp.detail.BackoffTime = time.Duration(bo.totalSleep) * time.Millisecond
 	resp.detail.BackoffSleep = make(map[string]time.Duration, len(bo.backoffTimes))
 	resp.detail.BackoffTimes = make(map[string]int, len(bo.backoffTimes))

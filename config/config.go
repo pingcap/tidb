@@ -421,6 +421,7 @@ type Performance struct {
 	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval   string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
+	IndexUsageSyncLease  string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -553,8 +554,6 @@ type Plugin struct {
 
 // PessimisticTxn is the config for pessimistic transaction.
 type PessimisticTxn struct {
-	// Enable must be true for 'begin lock' or session variable to start a pessimistic transaction.
-	Enable bool `toml:"enable" json:"enable"`
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
 }
@@ -664,6 +663,7 @@ var defaultConf = Config{
 		CommitterConcurrency: 16,
 		MaxTxnTTL:            60 * 60 * 1000, // 1hour
 		MemProfileInterval:   "1m",
+		IndexUsageSyncLease:  "60s",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -714,7 +714,6 @@ var defaultConf = Config{
 		Strategy:     "range",
 	},
 	PessimisticTxn: PessimisticTxn{
-		Enable:        true,
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
@@ -766,6 +765,7 @@ func StoreGlobalConfig(config *Config) {
 
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl":            {},
+	"pessimistic-txn.enable":         {},
 	"log.file.log-rotate":            {},
 	"log.log-slow-query":             {},
 	"txn-local-latches":              {},
