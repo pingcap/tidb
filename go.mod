@@ -44,7 +44,7 @@ require (
 	github.com/soheilhy/cmux v0.1.4
 	github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/pd v1.1.0-beta.0.20200916063208-c05ef6f95773
+	github.com/tikv/pd v1.1.0-beta.0.20200916212917-0a15643a05d3
 	github.com/uber-go/atomic v1.3.2
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
