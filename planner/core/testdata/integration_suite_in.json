@@ -133,6 +133,12 @@
     ]
   },
   {
+    "name": "TestPartitionPruningForInExprNullParam",
+    "cases": [
+      "explain select * from t where a in (15, 0.12, 3.47)",
+    ]
+  },
+  {
     "name": "TestStreamAggProp",
     "cases": [
       "select /*+ stream_agg() */ count(*) c from t group by a order by c limit 1",

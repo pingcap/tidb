@@ -67,7 +67,6 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"123456789123456789123456789.12345 < a", "0"},
 		{"-123456789123456789123456789.12345 < a", "1"},
 		{"'aaaa'=a", "eq(0, a)"},
-		//{"1.5071004017670217e-01=a", "eq(1.5071004017670217e-01, a)"},
 	}
 	cols, names, err := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
 	c.Assert(err, IsNil)
