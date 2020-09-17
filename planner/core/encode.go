@@ -102,21 +102,6 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth
 	}
 }
 
-func getTaskType(p Plan, isRoot bool) string {
-	var storeType kv.StoreType = kv.UnSpecified
-	if !isRoot {
-		switch copPlan := p.(type) {
-		case *PhysicalTableReader:
-			storeType = copPlan.StoreType
-		case *PhysicalTableScan:
-			storeType = copPlan.StoreType
-		default:
-			storeType = kv.TiKV
-		}
-	}
-	return plancodec.EncodeTaskType(isRoot, storeType)
-}
-
 var digesterPool = sync.Pool{
 	New: func() interface{} {
 		return &planDigester{
