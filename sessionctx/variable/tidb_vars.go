@@ -401,14 +401,14 @@ const (
 	TiDBMetricSchemaRangeDuration = "tidb_metric_query_range_duration"
 
 	// TiDBSlowLogMasking indicates that whether masking the query data when log slow query.
-	// Deprecated: use TiDBLogDesensitization instead.
+	// Deprecated: use TiDBRedactLog instead.
 	TiDBSlowLogMasking = "tidb_slow_log_masking"
 
 	// TiDBEnableCollectExecutionInfo indicates that whether execution info is collected.
 	TiDBEnableCollectExecutionInfo = "tidb_enable_collect_execution_info"
 
-	// TiDBLogDesensitization indicates that whether desensitization when log query.
-	TiDBLogDesensitization = "tidb_log_desensitization"
+	// TiDBRedactLog indicates that whether redact log.
+	TiDBRedactLog = "tidb_redact_log"
 
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
@@ -511,7 +511,6 @@ const (
 	DefTiDBSlowLogMasking              = false
 	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
-	DefTiDBLogDesensitization          = false
 	DefTiDBEnableTelemetry             = true
 )
 
