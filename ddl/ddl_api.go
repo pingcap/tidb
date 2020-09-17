@@ -2460,32 +2460,18 @@ func modifiable(origin *types.FieldType, to *types.FieldType) error {
 			typeVar = "set"
 		}
 		if origin.Tp != to.Tp {
-<<<<<<< HEAD
-			msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
-			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-		if len(to.Elems) < len(origin.Elems) {
-			msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
-			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-=======
 			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		if len(to.Elems) < len(origin.Elems) {
 			msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
->>>>>>> 73e03c7... ddl: check constraint when alter enum/set type column (#19806)
+			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		for index, originElem := range origin.Elems {
 			toElem := to.Elems[index]
 			if originElem != toElem {
-<<<<<<< HEAD
-				msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
-				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-=======
 				msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
-				return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
->>>>>>> 73e03c7... ddl: check constraint when alter enum/set type column (#19806)
+				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 		}
 	case mysql.TypeNewDecimal:
