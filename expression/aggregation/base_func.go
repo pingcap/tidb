@@ -15,6 +15,7 @@ package aggregation
 
 import (
 	"bytes"
+	"fmt"
 	"math"
 	"strings"
 
@@ -89,7 +90,7 @@ func (a *baseFuncDesc) typeInfer(ctx sessionctx.Context) error {
 	case ast.AggFuncApproxCountDistinct:
 		a.typeInfer4ApproxCountDistinct(ctx)
 	case ast.AggFuncApproxPercentile:
-		a.typeInfer4ApproxPercentile(ctx)
+		return a.typeInfer4ApproxPercentile(ctx)
 	case ast.AggFuncSum:
 		a.typeInfer4Sum(ctx)
 	case ast.AggFuncAvg:
@@ -134,7 +135,22 @@ func (a *baseFuncDesc) typeInfer4ApproxCountDistinct(ctx sessionctx.Context) {
 	a.typeInfer4Count(ctx)
 }
 
-func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) {
+func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error {
+	if len(a.Args) < 2 {
+		return errors.New("APPROX_PERCENTILE takes at least 2 arguments")
+	}
+
+	percent, isNull, err := expression.GetIntFromConstant(ctx, a.Args[1])
+	if err != nil {
+		return err
+	}
+	if percent <= 0 || percent > 100 || isNull {
+		if isNull {
+			return errors.New("APPROX_PERCENTILE: Percentage value cannot be NULL")
+		}
+		return errors.New(fmt.Sprintf("Percentage value %d is out of range [1, 100]", percent))
+	}
+
 	switch a.Args[0].GetType().Tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldType(mysql.TypeLonglong)
@@ -150,7 +166,9 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) {
 		a.RetTp = a.Args[0].GetType().Clone()
 	default:
 		a.RetTp = a.Args[0].GetType().Clone()
+		a.RetTp.Flag &= ^mysql.NotNullFlag
 	}
+	return nil
 }
 
 // typeInfer4Sum should returns a "decimal", otherwise it returns a "double".

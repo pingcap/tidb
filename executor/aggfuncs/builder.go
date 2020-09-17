@@ -142,16 +142,8 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 		return nil
 	}
 
-	percent, isNull, err := expression.GetIntFromConstant(sctx, aggFuncDesc.Args[1])
-	if err != nil {
-		panic(fmt.Sprintf("Error happened when buildApproxPercentile: %v", err.Error()))
-	}
-	if percent <= 0 || percent > 100 || isNull {
-		if isNull {
-			panic("Percentage value cannot be NULL")
-		}
-		panic(fmt.Sprintf("Percentage value %d is out of range [1, 100]", percent))
-	}
+	// Checked while building descriptor
+	percent, _, _ := expression.GetIntFromConstant(sctx, aggFuncDesc.Args[1])
 
 	base := basePercentile{percent: percent, baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
 
