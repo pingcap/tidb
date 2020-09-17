@@ -2698,7 +2698,7 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkColumnValueConstraint(newCol, newCol.Collate); err != nil {
+	if err = checkColumnValueConstraint(newCol); err != nil {
 		return nil, errors.Trace(err)
 	}
 
