@@ -92,8 +92,9 @@ func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 func (s *testPlanNormalize) TestNormalizedPlanForDiffStore(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, b int, c int, primary key(a))")
-	tk.MustExec("insert into t values(1,1,1), (2,2,2), (3,3,3)")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int, c int, primary key(a))")
+	tk.MustExec("insert into t1 values(1,1,1), (2,2,2), (3,3,3)")
 
 	tbl, err := s.dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
 	c.Assert(err, IsNil)
