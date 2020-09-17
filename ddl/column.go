@@ -644,39 +644,45 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
-	if newCol.Tp == mysql.TypeEnum && oldCol.Tp == mysql.TypeEnum {
-		if len(newCol.Elems) < len(oldCol.Elems) {
-			return true
-		}
-		for index, oldElem := range oldCol.Elems {
-			newElem := newCol.Elems[index]
-			if oldElem != newElem {
+	switch oldCol.Tp {
+	case mysql.TypeEnum:
+		switch newCol.Tp {
+		case mysql.TypeEnum:
+			if len(newCol.Elems) < len(oldCol.Elems) {
 				return true
 			}
-		}
-		return false
-	}
-	if newCol.Tp == mysql.TypeSet && oldCol.Tp == mysql.TypeSet {
-		if len(newCol.Elems) < len(oldCol.Elems) {
-			return true
-		}
-		for _, oldElem := range oldCol.Elems {
-			contain := false
-			for _, newElem := range newCol.Elems {
-				if oldElem == newElem {
-					contain = true
-					break
+			for index, oldElem := range oldCol.Elems {
+				newElem := newCol.Elems[index]
+				if oldElem != newElem {
+					return true
 				}
 			}
-			if !contain {
+			return false
+		default:
+			return true
+		}
+	case mysql.TypeSet:
+		switch newCol.Tp {
+		case mysql.TypeSet:
+			if len(newCol.Elems) < len(oldCol.Elems) {
 				return true
 			}
+			for _, oldElem := range oldCol.Elems {
+				contain := false
+				for _, newElem := range newCol.Elems {
+					if oldElem == newElem {
+						contain = true
+						break
+					}
+				}
+				if !contain {
+					return true
+				}
+			}
+			return false
+		default:
+			return true
 		}
-		return false
-	}
-	if (newCol.Tp == mysql.TypeEnum || oldCol.Tp == mysql.TypeEnum ||
-		newCol.Tp == mysql.TypeSet || oldCol.Tp == mysql.TypeSet) && oldCol.Tp != newCol.Tp {
-		return true
 	}
 	if newCol.Flen > 0 && newCol.Flen < oldCol.Flen || toUnsigned != originUnsigned {
 		return true
