@@ -16,6 +16,7 @@ package infoschema_test
 import (
 	"crypto/tls"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -644,4 +646,18 @@ func (s *testTableSuite) TestStmtSummarySensitiveQuery(c *C) {
 			"create user {user_sensitive@% password = ***}",
 			"set password for user user_sensitive@%",
 		))
+}
+
+func (s *testTableSuite) TestSlowQueryWithoutSlowLog(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Log.SlowQueryFile = "tidb-slow-not-exist.log"
+	newCfg.Log.SlowThreshold = math.MaxUint64
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+	tk.MustQuery("select query from information_schema.slow_query").Check(testkit.Rows())
+	tk.MustQuery("select query from information_schema.slow_query where time > '2020-09-15 12:16:39' and time < now()").Check(testkit.Rows())
 }
