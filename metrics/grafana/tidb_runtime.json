@@ -606,7 +606,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "idelta((go_memstats_gc_cpu_fraction{instance=~\"$instance\"} * (go_memstats_last_gc_time_seconds{instance=~\"$instance\"} - process_start_time_seconds{instance=~\"$instance\"}) * tidb_server_maxprocs{instance=~\"$instance\"})[30s:]) / idelta(go_gc_duration_seconds_count{instance=~\"$instance\"}[30s])",
+              "expr": "(idelta((go_memstats_gc_cpu_fraction{instance=~\"$instance\"} * (go_memstats_last_gc_time_seconds{instance=~\"$instance\"} - process_start_time_seconds{instance=~\"$instance\"}) * tidb_server_maxprocs{instance=~\"$instance\"})[30s:]) / idelta(go_gc_duration_seconds_count{instance=~\"$instance\"}[30s])) > 0",
               "format": "time_series",
               "hide": false,
               "intervalFactor": 1,
@@ -1012,7 +1012,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "idelta(go_gc_duration_seconds_count{instance=~\"$instance\"}[30s])",
+              "expr": "idelta(go_gc_duration_seconds_count{instance=~\"$instance\"}[30s]) > 0",
               "format": "time_series",
               "intervalFactor": 1,
               "legendFormat": "count",

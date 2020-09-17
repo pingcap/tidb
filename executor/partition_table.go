@@ -165,7 +165,8 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, tableID, pa
 
 // Open implements the Executor interface.
 func (e *PartitionTableExecutor) Open(ctx context.Context) error {
-	// Open is actually done in the calling of Next()
+	e.cursor = 0
+	e.curr = nil
 	return nil
 }
 

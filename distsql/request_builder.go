@@ -82,6 +82,8 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle) *
 	return builder
 }
 
+const estimatedRegionRowCount = 100000
+
 // SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.
 func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
 	if builder.err == nil {
@@ -89,7 +91,13 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
 	}
-
+	// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
+	if len(dag.Executors) == 2 && dag.Executors[1].GetLimit() != nil {
+		limit := dag.Executors[1].GetLimit()
+		if limit != nil && limit.Limit < estimatedRegionRowCount {
+			builder.Request.Concurrency = 1
+		}
+	}
 	return builder
 }
 
@@ -176,7 +184,10 @@ func (builder *RequestBuilder) getKVPriority(sv *variable.SessionVars) int {
 // SetFromSessionVars sets the following fields for "kv.Request" from session variables:
 // "Concurrency", "IsolationLevel", "NotFillCache", "ReplicaRead", "SchemaVar".
 func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *RequestBuilder {
-	builder.Request.Concurrency = sv.DistSQLScanConcurrency()
+	if builder.Request.Concurrency == 0 {
+		// Concurrency may be set to 1 by SetDAGRequest
+		builder.Request.Concurrency = sv.DistSQLScanConcurrency()
+	}
 	builder.Request.IsolationLevel = builder.getIsolationLevel()
 	builder.Request.NotFillCache = sv.StmtCtx.NotFillCache
 	builder.Request.TaskID = sv.StmtCtx.TaskID

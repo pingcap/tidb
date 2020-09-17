@@ -180,7 +180,7 @@ func (s *testClusteredSuite) TestClusteredPrefixingPrimaryKey(c *C) {
 
 	tk.MustGetErrCode("update t set name = 'aaaaa' where name = 'bbb'", errno.ErrDupEntry)
 	tk.MustExec("update ignore t set name = 'aaaaa' where name = 'bbb'")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '{aa}' for key 'PRIMARY'"))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry 'aa' for key 'PRIMARY'"))
 	tk.MustExec("admin check table t;")
 }
 

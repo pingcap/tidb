@@ -82,6 +82,8 @@ type tikvTxn struct {
 	txnInfoSchema SchemaVer
 	// SchemaAmender is used amend pessimistic txn commit mutations for schema change
 	schemaAmender SchemaAmender
+	// commitCallback is called after current transaction gets committed
+	commitCallback func(info kv.TxnInfo, err error)
 }
 
 func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
@@ -186,6 +188,8 @@ func (txn *tikvTxn) SetOption(opt kv.Option, val interface{}) {
 		txn.txnInfoSchema = val.(SchemaVer)
 	case kv.SchemaAmender:
 		txn.schemaAmender = val.(SchemaAmender)
+	case kv.CommitHook:
+		txn.commitCallback = val.(func(info kv.TxnInfo, err error))
 	}
 }
 
@@ -268,6 +272,9 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 	// pessimistic transaction should also bypass latch.
 	if txn.store.txnLatches == nil || txn.IsPessimistic() {
 		err = committer.execute(ctx)
+		if val == nil || connID > 0 {
+			txn.onCommitted(err)
+		}
 		logutil.Logger(ctx).Debug("[kv] txnLatches disabled, 2pc directly", zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -286,6 +293,9 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		return kv.ErrWriteConflictInTiDB.FastGenByArgs(txn.startTS)
 	}
 	err = committer.execute(ctx)
+	if val == nil || connID > 0 {
+		txn.onCommitted(err)
+	}
 	if err == nil {
 		lock.SetCommitTS(committer.commitTS)
 	}
@@ -338,11 +348,22 @@ func (txn *tikvTxn) collectLockedKeys() [][]byte {
 	return keys
 }
 
+func (txn *tikvTxn) onCommitted(err error) {
+	if txn.commitCallback != nil {
+		info := kv.TxnInfo{StartTS: txn.startTS, CommitTS: txn.commitTS}
+		if err != nil {
+			info.ErrMsg = err.Error()
+		}
+		txn.commitCallback(info, err)
+	}
+}
+
 // lockWaitTime in ms, except that kv.LockAlwaysWait(0) means always wait lock, kv.LockNowait(-1) means nowait lock
 func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput ...kv.Key) error {
 	// Exclude keys that are already locked.
 	var err error
 	keys := make([][]byte, 0, len(keysInput))
+	startTime := time.Now()
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 	defer func() {
@@ -357,6 +378,14 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		}
 		if lockCtx.LockKeysCount != nil {
 			*lockCtx.LockKeysCount += int32(len(keys))
+		}
+		if lockCtx.Stats != nil {
+			lockCtx.Stats.TotalTime = time.Since(startTime)
+			ctxValue := ctx.Value(execdetails.LockKeysDetailCtxKey)
+			if ctxValue != nil {
+				lockKeysDetail := ctxValue.(**execdetails.LockKeysDetails)
+				*lockKeysDetail = lockCtx.Stats
+			}
 		}
 	}()
 	memBuf := txn.us.GetMemBuffer()
@@ -405,12 +434,21 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 			assignedPrimaryKey = true
 		}
 
+		lockCtx.Stats = &execdetails.LockKeysDetails{
+			LockKeys: int32(len(keys)),
+		}
 		bo := NewBackofferWithVars(ctx, pessimisticLockMaxBackoff, txn.vars)
 		txn.committer.forUpdateTS = lockCtx.ForUpdateTS
 		// If the number of keys greater than 1, it can be on different region,
 		// concurrently execute on multiple regions may lead to deadlock.
 		txn.committer.isFirstLock = txn.lockedCnt == 0 && len(keys) == 1
 		err = txn.committer.pessimisticLockMutations(bo, lockCtx, CommitterMutations{keys: keys})
+		if bo.totalSleep > 0 {
+			atomic.AddInt64(&lockCtx.Stats.BackoffTime, int64(bo.totalSleep)*int64(time.Millisecond))
+			lockCtx.Stats.Mu.Lock()
+			lockCtx.Stats.Mu.BackoffTypes = append(lockCtx.Stats.Mu.BackoffTypes, bo.types...)
+			lockCtx.Stats.Mu.Unlock()
+		}
 		if lockCtx.Killed != nil {
 			// If the kill signal is received during waiting for pessimisticLock,
 			// pessimisticLockKeys would handle the error but it doesn't reset the flag.

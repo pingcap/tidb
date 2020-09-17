@@ -2456,8 +2456,8 @@ PARTITION p2 VALUES LESS THAN (100)
 );
 desc select * from t where a = 11 and b = 1 or a = 12 and b = 1;
 id	estRows	task	access object	operator info
-TableReader_7	8000.00	root	partition:p2	data:Selection_6
-└─Selection_6	8000.00	cop[tikv]		or(and(eq(test.t.a, 11), eq(test.t.b, 1)), and(eq(test.t.a, 12), eq(test.t.b, 1)))
+TableReader_7	0.02	root	partition:p2	data:Selection_6
+└─Selection_6	0.02	cop[tikv]		or(and(eq(test.t.a, 11), eq(test.t.b, 1)), and(eq(test.t.a, 12), eq(test.t.b, 1)))
   └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t (ts timestamp(3) not null default current_timestamp(3))

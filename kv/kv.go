@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/tikv/oracle"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
 )
 
@@ -55,6 +56,8 @@ const (
 	SchemaAmender
 	// SampleStep skips 'SampleStep - 1' number of keys after each returned key.
 	SampleStep
+	// CommitHook is a callback function called right after the transaction gets committed
+	CommitHook
 )
 
 // Priority value for transaction priority.
@@ -172,6 +175,14 @@ type MemBufferIterator interface {
 type MemBuffer interface {
 	RetrieverMutator
 
+	// RLock locks the MemBuffer for shared read.
+	// In the most case, MemBuffer will only used by single goroutine,
+	// but it will be read by multiple goroutine when combined with executor.UnionScanExec.
+	// To avoid race introduced by executor.UnionScanExec, MemBuffer expose read lock for it.
+	RLock()
+	// RUnlock unlocks the MemBuffer.
+	RUnlock()
+
 	// GetFlags returns the latest flags associated with key.
 	GetFlags(Key) (KeyFlags, error)
 	// IterWithFlags returns a MemBufferIterator.
@@ -200,6 +211,11 @@ type MemBuffer interface {
 	Cleanup(StagingHandle)
 	// InspectStage used to inspect the value updates in the given stage.
 	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
+
+	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
+	SnapshotGetter() Getter
+	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
+	SnapshotIter(k, upperbound Key) Iterator
 
 	// Size returns sum of keys and values length.
 	Size() int
@@ -269,6 +285,7 @@ type LockCtx struct {
 	Values                map[string]ReturnedValue
 	ValuesLock            sync.Mutex
 	LockExpired           *uint32
+	Stats                 *execdetails.LockKeysDetails
 }
 
 // ReturnedValue pairs the Value and AlreadyLocked flag for PessimisticLock return values result.
@@ -463,7 +480,7 @@ type Iterator interface {
 
 // SplittableStore is the kv store which supports split regions.
 type SplittableStore interface {
-	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool) (regionID []uint64, err error)
+	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool, tableID *int64) (regionID []uint64, err error)
 	WaitScatterRegionFinish(ctx context.Context, regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }

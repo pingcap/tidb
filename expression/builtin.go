@@ -86,11 +86,11 @@ func (b *baseBuiltinFunc) collator() collate.Collator {
 	return b.ctor
 }
 
-func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression) (baseBuiltinFunc, error) {
+func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType) (baseBuiltinFunc, error) {
 	if ctx == nil {
 		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
 	}
-	if err := checkIllegalMixCollation(funcName, args); err != nil {
+	if err := checkIllegalMixCollation(funcName, args, retType); err != nil {
 		return baseBuiltinFunc{}, err
 	}
 	derivedCharset, derivedCollate := DeriveCollationFromExprs(ctx, args...)
@@ -109,18 +109,10 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 }
 
 var (
-	// allowDeriveNoneFunction stores functions which allow two incompatible collations which have the same charset derive to CoercibilityNone
-	allowDeriveNoneFunction = map[string]struct{}{
-		ast.Concat: {}, ast.ConcatWS: {}, ast.Reverse: {}, ast.Replace: {}, ast.InsertFunc: {}, ast.Lower: {},
-		ast.Upper: {}, ast.Left: {}, ast.Right: {}, ast.Substr: {}, ast.SubstringIndex: {}, ast.Trim: {},
-		ast.CurrentUser: {}, ast.Elt: {}, ast.MakeSet: {}, ast.Repeat: {}, ast.Rpad: {}, ast.Lpad: {},
-		ast.ExportSet: {},
-	}
-
 	coerString = []string{"EXPLICIT", "NONE", "IMPLICIT", "SYSCONST", "COERCIBLE", "NUMERIC", "IGNORABLE"}
 )
 
-func checkIllegalMixCollation(funcName string, args []Expression) error {
+func checkIllegalMixCollation(funcName string, args []Expression, evalType types.EvalType) error {
 	if len(args) < 2 {
 		return nil
 	}
@@ -128,10 +120,8 @@ func checkIllegalMixCollation(funcName string, args []Expression) error {
 	if !legal {
 		return illegalMixCollationErr(funcName, args)
 	}
-	if coercibility == CoercibilityNone {
-		if _, ok := allowDeriveNoneFunction[funcName]; !ok {
-			return illegalMixCollationErr(funcName, args)
-		}
+	if coercibility == CoercibilityNone && evalType != types.ETString {
+		return illegalMixCollationErr(funcName, args)
 	}
 	return nil
 }
@@ -179,7 +169,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		}
 	}
 
-	if err = checkIllegalMixCollation(funcName, args); err != nil {
+	if err = checkIllegalMixCollation(funcName, args, retType); err != nil {
 		return
 	}
 
@@ -785,41 +775,42 @@ var funcs = map[string]functionClass{
 	ast.GetLock:     &lockFunctionClass{baseFunctionClass{ast.GetLock, 2, 2}},
 	ast.ReleaseLock: &releaseLockFunctionClass{baseFunctionClass{ast.ReleaseLock, 1, 1}},
 
-	ast.LogicAnd:   &logicAndFunctionClass{baseFunctionClass{ast.LogicAnd, 2, 2}},
-	ast.LogicOr:    &logicOrFunctionClass{baseFunctionClass{ast.LogicOr, 2, 2}},
-	ast.LogicXor:   &logicXorFunctionClass{baseFunctionClass{ast.LogicXor, 2, 2}},
-	ast.GE:         &compareFunctionClass{baseFunctionClass{ast.GE, 2, 2}, opcode.GE},
-	ast.LE:         &compareFunctionClass{baseFunctionClass{ast.LE, 2, 2}, opcode.LE},
-	ast.EQ:         &compareFunctionClass{baseFunctionClass{ast.EQ, 2, 2}, opcode.EQ},
-	ast.NE:         &compareFunctionClass{baseFunctionClass{ast.NE, 2, 2}, opcode.NE},
-	ast.LT:         &compareFunctionClass{baseFunctionClass{ast.LT, 2, 2}, opcode.LT},
-	ast.GT:         &compareFunctionClass{baseFunctionClass{ast.GT, 2, 2}, opcode.GT},
-	ast.NullEQ:     &compareFunctionClass{baseFunctionClass{ast.NullEQ, 2, 2}, opcode.NullEQ},
-	ast.Plus:       &arithmeticPlusFunctionClass{baseFunctionClass{ast.Plus, 2, 2}},
-	ast.Minus:      &arithmeticMinusFunctionClass{baseFunctionClass{ast.Minus, 2, 2}},
-	ast.Mod:        &arithmeticModFunctionClass{baseFunctionClass{ast.Mod, 2, 2}},
-	ast.Div:        &arithmeticDivideFunctionClass{baseFunctionClass{ast.Div, 2, 2}},
-	ast.Mul:        &arithmeticMultiplyFunctionClass{baseFunctionClass{ast.Mul, 2, 2}},
-	ast.IntDiv:     &arithmeticIntDivideFunctionClass{baseFunctionClass{ast.IntDiv, 2, 2}},
-	ast.BitNeg:     &bitNegFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}},
-	ast.And:        &bitAndFunctionClass{baseFunctionClass{ast.And, 2, 2}},
-	ast.LeftShift:  &leftShiftFunctionClass{baseFunctionClass{ast.LeftShift, 2, 2}},
-	ast.RightShift: &rightShiftFunctionClass{baseFunctionClass{ast.RightShift, 2, 2}},
-	ast.UnaryNot:   &unaryNotFunctionClass{baseFunctionClass{ast.UnaryNot, 1, 1}},
-	ast.Or:         &bitOrFunctionClass{baseFunctionClass{ast.Or, 2, 2}},
-	ast.Xor:        &bitXorFunctionClass{baseFunctionClass{ast.Xor, 2, 2}},
-	ast.UnaryMinus: &unaryMinusFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}},
-	ast.In:         &inFunctionClass{baseFunctionClass{ast.In, 2, -1}},
-	ast.IsTruth:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, false},
-	ast.IsFalsity:  &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity, false},
-	ast.Like:       &likeFunctionClass{baseFunctionClass{ast.Like, 3, 3}},
-	ast.Regexp:     &regexpFunctionClass{baseFunctionClass{ast.Regexp, 2, 2}},
-	ast.Case:       &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
-	ast.RowFunc:    &rowFunctionClass{baseFunctionClass{ast.RowFunc, 2, -1}},
-	ast.SetVar:     &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 2}},
-	ast.GetVar:     &getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}},
-	ast.BitCount:   &bitCountFunctionClass{baseFunctionClass{ast.BitCount, 1, 1}},
-	ast.GetParam:   &getParamFunctionClass{baseFunctionClass{ast.GetParam, 1, 1}},
+	ast.LogicAnd:           &logicAndFunctionClass{baseFunctionClass{ast.LogicAnd, 2, 2}},
+	ast.LogicOr:            &logicOrFunctionClass{baseFunctionClass{ast.LogicOr, 2, 2}},
+	ast.LogicXor:           &logicXorFunctionClass{baseFunctionClass{ast.LogicXor, 2, 2}},
+	ast.GE:                 &compareFunctionClass{baseFunctionClass{ast.GE, 2, 2}, opcode.GE},
+	ast.LE:                 &compareFunctionClass{baseFunctionClass{ast.LE, 2, 2}, opcode.LE},
+	ast.EQ:                 &compareFunctionClass{baseFunctionClass{ast.EQ, 2, 2}, opcode.EQ},
+	ast.NE:                 &compareFunctionClass{baseFunctionClass{ast.NE, 2, 2}, opcode.NE},
+	ast.LT:                 &compareFunctionClass{baseFunctionClass{ast.LT, 2, 2}, opcode.LT},
+	ast.GT:                 &compareFunctionClass{baseFunctionClass{ast.GT, 2, 2}, opcode.GT},
+	ast.NullEQ:             &compareFunctionClass{baseFunctionClass{ast.NullEQ, 2, 2}, opcode.NullEQ},
+	ast.Plus:               &arithmeticPlusFunctionClass{baseFunctionClass{ast.Plus, 2, 2}},
+	ast.Minus:              &arithmeticMinusFunctionClass{baseFunctionClass{ast.Minus, 2, 2}},
+	ast.Mod:                &arithmeticModFunctionClass{baseFunctionClass{ast.Mod, 2, 2}},
+	ast.Div:                &arithmeticDivideFunctionClass{baseFunctionClass{ast.Div, 2, 2}},
+	ast.Mul:                &arithmeticMultiplyFunctionClass{baseFunctionClass{ast.Mul, 2, 2}},
+	ast.IntDiv:             &arithmeticIntDivideFunctionClass{baseFunctionClass{ast.IntDiv, 2, 2}},
+	ast.BitNeg:             &bitNegFunctionClass{baseFunctionClass{ast.BitNeg, 1, 1}},
+	ast.And:                &bitAndFunctionClass{baseFunctionClass{ast.And, 2, 2}},
+	ast.LeftShift:          &leftShiftFunctionClass{baseFunctionClass{ast.LeftShift, 2, 2}},
+	ast.RightShift:         &rightShiftFunctionClass{baseFunctionClass{ast.RightShift, 2, 2}},
+	ast.UnaryNot:           &unaryNotFunctionClass{baseFunctionClass{ast.UnaryNot, 1, 1}},
+	ast.Or:                 &bitOrFunctionClass{baseFunctionClass{ast.Or, 2, 2}},
+	ast.Xor:                &bitXorFunctionClass{baseFunctionClass{ast.Xor, 2, 2}},
+	ast.UnaryMinus:         &unaryMinusFunctionClass{baseFunctionClass{ast.UnaryMinus, 1, 1}},
+	ast.In:                 &inFunctionClass{baseFunctionClass{ast.In, 2, -1}},
+	ast.IsTruthWithoutNull: &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithoutNull, 1, 1}, opcode.IsTruth, false},
+	ast.IsTruthWithNull:    &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithNull, 1, 1}, opcode.IsTruth, true},
+	ast.IsFalsity:          &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsFalsity, 1, 1}, opcode.IsFalsity, false},
+	ast.Like:               &likeFunctionClass{baseFunctionClass{ast.Like, 3, 3}},
+	ast.Regexp:             &regexpFunctionClass{baseFunctionClass{ast.Regexp, 2, 2}},
+	ast.Case:               &caseWhenFunctionClass{baseFunctionClass{ast.Case, 1, -1}},
+	ast.RowFunc:            &rowFunctionClass{baseFunctionClass{ast.RowFunc, 2, -1}},
+	ast.SetVar:             &setVarFunctionClass{baseFunctionClass{ast.SetVar, 2, 2}},
+	ast.GetVar:             &getVarFunctionClass{baseFunctionClass{ast.GetVar, 1, 1}},
+	ast.BitCount:           &bitCountFunctionClass{baseFunctionClass{ast.BitCount, 1, 1}},
+	ast.GetParam:           &getParamFunctionClass{baseFunctionClass{ast.GetParam, 1, 1}},
 
 	// encryption and compression functions
 	ast.AesDecrypt:               &aesDecryptFunctionClass{baseFunctionClass{ast.AesDecrypt, 2, 3}},
@@ -890,7 +881,7 @@ func IsFunctionSupported(name string) bool {
 // GetBuiltinList returns a list of builtin functions
 func GetBuiltinList() []string {
 	res := make([]string, 0, len(funcs))
-	notImplementedFunctions := []string{ast.RowFunc}
+	notImplementedFunctions := []string{ast.RowFunc, ast.IsTruthWithNull}
 	for funcName := range funcs {
 		skipFunc := false
 		// Skip not implemented functions

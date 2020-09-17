@@ -520,6 +520,7 @@ func (s *testPointGetSuite) TestReturnValues(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
+	tk.MustExec("set @@tidb_enable_clustered_index=0;")
 	tk.MustExec("create table t (a varchar(64) primary key, b int)")
 	tk.MustExec("insert t values ('a', 1), ('b', 2), ('c', 3)")
 	tk.MustExec("begin pessimistic")
@@ -571,6 +572,8 @@ func (s *testPointGetSuite) TestClusterIndexCBOPointGet(c *C) {
 	tk.MustExec(`create table t2 (a varchar(20), b int, primary key(a), unique key(b))`)
 	tk.MustExec(`insert into t1 values(1,1,1),(2,2,2),(3,3,3)`)
 	tk.MustExec(`insert into t2 values('111',1),('222',2),('333',3)`)
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
 	var input []string
 	var output []struct {
 		SQL  string
