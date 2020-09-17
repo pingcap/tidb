@@ -105,7 +105,7 @@ func (s *testSuite) TestJsonObjectagg(c *C) {
 }
 
 func (s *testSuite) TestMemJsonObjectagg(c *C) {
-	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON}
+	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeString, mysql.TypeJSON, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeDate}
 	var argCombines [][]byte
 	for i := 0; i < len(typeList); i++ {
 		for j := 0; j < len(typeList); j++ {
@@ -129,6 +129,18 @@ func (s *testSuite) TestMemJsonObjectagg(c *C) {
 			secondArg := sGenFunc(m)
 			keyString, _ := firstArg.ToString()
 			entries[keyString] = secondArg.GetValue()
+		}
+
+		// appendBinary does not support some type such as uint8、types.time，so convert is needed here
+		for key, val := range entries {
+			switch x := val.(type) {
+			case *types.MyDecimal:
+				float64Val, _ := x.ToFloat64()
+				entries[key] = float64Val
+			case []uint8, types.Time, types.Duration:
+				strVal, _ := types.ToString(x)
+				entries[key] = strVal
+			}
 		}
 
 		aggTest := buildMultiArgsAggMemTester(ast.AggFuncJsonObjectAgg, argTypes, mysql.TypeJSON, numRows, aggfuncs.DefPartialResult4JsonObjectAgg, defaultMultiArgsMemDeltaGens, nil, json.CreateBinary(entries))

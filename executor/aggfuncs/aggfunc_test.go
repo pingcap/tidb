@@ -307,6 +307,12 @@ func defaultMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldT
 			bytes = append(bytes, val.TypeCode)
 			bytes = append(bytes, val.Value...)
 			memDelta += int64(len(bytes))
+		case mysql.TypeDuration:
+			memDelta += aggfuncs.DefDurationSize
+		case mysql.TypeDate:
+			memDelta += aggfuncs.DefTimeSize
+		case mysql.TypeNewDecimal:
+			memDelta += aggfuncs.DefMyDecimalSize
 		default:
 			return memDeltas, errors.Errorf("unsupported type - %v", dataTypes[1].Tp)
 		}
