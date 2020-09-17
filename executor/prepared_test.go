@@ -108,10 +108,6 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedPlan, Equals, "")
 }
 
-<<<<<<< HEAD
-func (s *testSuite9) TestPlanCacheOnPointGet(c *C) {
-	defer testleak.AfterTest(c)()
-=======
 type mockSessionManager2 struct {
 	se     session.Session
 	killed bool
@@ -168,8 +164,8 @@ func (s *testSuite12) TestPreparedStmtWithHint(c *C) {
 	c.Check(sm.killed, Equals, true)
 }
 
-func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
->>>>>>> 1c84291... executor: fix hint not working in prepared statement (#19935)
+func (s *testSuite9) TestPlanCacheOnPointGet(c *C) {
+	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
