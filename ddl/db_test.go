@@ -349,7 +349,7 @@ func (s *testSerialDBSuite) TestAddExpressionIndexRollback(c *C) {
 	c.Assert(checkErr, IsNil)
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("20 20 20", "80 80 80", "160 160 160"))
 
-	// Check whether the reorge information is cleaned up.
+	// Check whether the reorg information is cleaned up.
 	err := ctx.NewTxn(context.Background())
 	c.Assert(err, IsNil)
 	txn, err := ctx.Txn(true)
@@ -3794,7 +3794,7 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 	_, err := tk.Exec(sql)
 	c.Assert(err.Error(), Equals, "[ddl:8202]Cannot decode index value, because mock can't decode record error")
 	c.Assert(checkErr, IsNil)
-	// Check whether the reorge information is cleaned up when executing "modify column" failed.
+	// Check whether the reorg information is cleaned up when executing "modify column" failed.
 	checkReorgHandle := func(element *meta.Element) {
 		err := ctx.NewTxn(context.Background())
 		c.Assert(err, IsNil)
@@ -3814,7 +3814,7 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 	variable.SetDDLErrorCountLimit(save)
 	tk.MustExec("admin check table t1")
 
-	// Check whether the reorge information is cleaned up when executing "modify column" successful.
+	// Check whether the reorg information is cleaned up when executing "modify column" successfully.
 	// Test encountered a "notOwnerErr" error, which caused the processing backfill job to exit halfway.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("modifyColumnNotOwnerErr")`), IsNil)
 	tk.MustExec(sql)
@@ -3923,7 +3923,7 @@ func testModifyColumnNullToNotNull(c *C, s *testDBSuite, enableChangeColumnType 
 	c.Assert(err, NotNil)
 	if enableChangeColumnType {
 		c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'c2' at row 1")
-		// Check whether the reorge information is cleaned up.
+		// Check whether the reorg information is cleaned up.
 	} else {
 		c.Assert(err.Error(), Equals, "[ddl:1138]Invalid use of NULL value")
 	}

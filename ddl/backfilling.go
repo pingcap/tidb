@@ -317,7 +317,7 @@ func (w *worker) handleReorgTasks(reorgInfo *reorgInfo, totalAddedCount *int64, 
 	// nextHandle will be updated periodically in runReorgJob, so no need to update it here.
 	w.reorgCtx.setNextHandle(nextHandle)
 	metrics.BatchAddIdxHistogram.WithLabelValues(metrics.LblOK).Observe(elapsedTime.Seconds())
-	logutil.BgLogger().Info("[ddl] backfill worker handle batch tasks successful",
+	logutil.BgLogger().Info("[ddl] backfill workers successfully processed batch",
 		zap.ByteString("elementType", reorgInfo.currElement.TypeKey), zap.Int64("elementID", reorgInfo.currElement.ID),
 		zap.Int64("totalAddedCount", *totalAddedCount), zap.String("startHandle", toString(startHandle)),
 		zap.String("nextHandle", toString(nextHandle)), zap.Int64("batchAddedCount", taskAddedCount), zap.String("takeTime", elapsedTime.String()))

@@ -316,10 +316,17 @@ func (s *testSuite) TestElement(c *C) {
 			c.Assert(err.Error(), Equals, resErr.Error())
 		}
 	}
+	key := []byte("_col")
+	checkElement(key, errors.Errorf(`invalid encoded element key prefix "_col\x00"`))
 	checkElement(meta.IndexElementKey, nil)
 	checkElement(meta.ColumnElementKey, nil)
-	key := []byte("inexistent")
-	checkElement(key, errors.Errorf("invalid encoded key prefix %s", key[:5]))
+	key = []byte("inexistent")
+	checkElement(key, errors.Errorf("invalid encoded element key prefix %q", key[:5]))
+
+	_, err := meta.DecodeElement([]byte("_col"))
+	c.Assert(err.Error(), Equals, `invalid encoded element "_col" length 4`)
+	_, err = meta.DecodeElement(meta.ColumnElementKey)
+	c.Assert(err.Error(), Equals, `invalid encoded element "_col_" length 5`)
 }
 
 func (s *testSuite) TestDDL(c *C) {

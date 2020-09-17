@@ -79,7 +79,7 @@ var (
 	ErrTableExists = terror.ClassMeta.New(mysql.ErrTableExists, mysql.MySQLErrName[mysql.ErrTableExists])
 	// ErrTableNotExists is the error for table not exists.
 	ErrTableNotExists = terror.ClassMeta.New(mysql.ErrNoSuchTable, mysql.MySQLErrName[mysql.ErrNoSuchTable])
-	// ErrDDLReorgElementNotFound  is the error for reorg element not exists.
+	// ErrDDLReorgElementNotExist is the error for reorg element not exists.
 	ErrDDLReorgElementNotExist = terror.ClassMeta.New(errno.ErrDDLReorgElementNotExist, errno.MySQLErrName[errno.ErrDDLReorgElementNotExist])
 )
 
@@ -897,6 +897,8 @@ var (
 	IndexElementKey ElementKeyType = []byte("_idx_")
 )
 
+const elementKeyLen = 5
+
 // Element has the information of the backfill job's type and ID.
 type Element struct {
 	ID      int64
@@ -912,27 +914,29 @@ func (e *Element) String() string {
 // EncodeElement encodes an Element into a byte slice.
 // It's exported for testing.
 func (e *Element) EncodeElement() []byte {
-	b := make([]byte, 0, 12)
-	b = append(b, e.TypeKey...)
-	id := make([]byte, 8)
-	binary.BigEndian.PutUint64(id, uint64(e.ID))
-	b = append(b, id...)
+	b := make([]byte, 13)
+	copy(b[:elementKeyLen], e.TypeKey)
+	binary.BigEndian.PutUint64(b[elementKeyLen:], uint64(e.ID))
 	return b
 }
 
 // DecodeElement decodes values from a byte slice generated with an element.
 // It's exported for testing.
 func DecodeElement(b []byte) (*Element, error) {
+	if len(b) < elementKeyLen+8 {
+		return nil, errors.Errorf("invalid encoded element %q length %d", b, len(b))
+	}
+
 	var tp []byte
-	prefix := b[:5]
-	b = b[5:]
+	prefix := b[:elementKeyLen]
+	b = b[elementKeyLen:]
 	switch string(prefix) {
 	case string(IndexElementKey):
 		tp = IndexElementKey
 	case string(ColumnElementKey):
 		tp = ColumnElementKey
 	default:
-		return nil, errors.Errorf("invalid encoded key prefix %s", prefix)
+		return nil, errors.Errorf("invalid encoded element key prefix %q", prefix)
 	}
 
 	id := binary.BigEndian.Uint64(b)
@@ -979,7 +983,7 @@ func setReorgJobFieldHandle(t *structure.TxStructure, reorgJobField []byte, hand
 	return t.HSet(mDDLJobReorgKey, reorgJobField, handleEncodedBytes)
 }
 
-// RemoveDDLReorgHandle removes the element of the reorganization information.
+// RemoveReorgElement removes the element of the reorganization information.
 // It's used for testing.
 func (m *Meta) RemoveReorgElement(job *model.Job) error {
 	err := m.txn.HDel(mDDLJobReorgKey, m.reorgJobCurrentElement(job.ID))

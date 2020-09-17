@@ -969,9 +969,6 @@ func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colIn
 
 // updateColumnAndIndexes handles the modify column reorganization state for a table.
 func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.ColumnInfo, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
-	originalStartHandle := reorgInfo.StartHandle
-	originalEndHandle := reorgInfo.EndHandle
-	startElementOffsetToResetHandle := -1
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
@@ -985,12 +982,13 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 	if err != nil {
 		return errors.Trace(err)
 	}
-	originalStartHandle, originalEndHandle, err = getTableRange(reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
+	originalStartHandle, originalEndHandle, err := getTableRange(reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	startElementOffset := 0
+	startElementOffsetToResetHandle := -1
 	// This backfill job starts with backfilling index data, whose index ID is currElement.ID.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
 		for i, idx := range idxes {
