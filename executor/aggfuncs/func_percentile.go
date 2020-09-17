@@ -160,7 +160,7 @@ func (e *percentileOriginal4Int) MergePartialResult(sctx sessionctx.Context, src
 	mergeBuff := make([]int64, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
 	copy(mergeBuff[len(*p2):], *p1)
-	p1 = nil
+	*p1 = nil
 	*p2 = mergeBuff
 	return 0, nil
 }
@@ -213,7 +213,7 @@ func (e *percentileOriginal4Real) MergePartialResult(sctx sessionctx.Context, sr
 	mergeBuff := make([]float64, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
 	copy(mergeBuff[len(*p2):], *p1)
-	p1 = nil
+	*p1 = nil
 	*p2 = mergeBuff
 	return 0, nil
 }
@@ -266,7 +266,7 @@ func (e *percentileOriginal4Decimal) MergePartialResult(sctx sessionctx.Context,
 	mergeBuff := make([]types.MyDecimal, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
 	copy(mergeBuff[len(*p2):], *p1)
-	p1 = nil
+	*p1 = nil
 	*p2 = mergeBuff
 	return 0, nil
 }
@@ -319,7 +319,7 @@ func (e *percentileOriginal4Time) MergePartialResult(sctx sessionctx.Context, sr
 	mergeBuff := make(partialResult4PercentileTime, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
 	copy(mergeBuff[len(*p2):], *p1)
-	p1 = nil
+	*p1 = nil
 	*p2 = mergeBuff
 	return 0, nil
 }
@@ -372,7 +372,7 @@ func (e *percentileOriginal4Duration) MergePartialResult(sctx sessionctx.Context
 	mergeBuff := make(partialResult4PercentileDuration, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
 	copy(mergeBuff[len(*p2):], *p1)
-	p1 = nil
+	*p1 = nil
 	*p2 = mergeBuff
 	return 0, nil
 }
