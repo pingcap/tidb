@@ -131,7 +131,11 @@ func (sm *mockSessionManager2) Kill(connectionID uint64, query bool) {
 	sm.killed = true
 	atomic.StoreUint32(&sm.se.GetSessionVars().Killed, 1)
 }
+func (sm *mockSessionManager2) KillAllConnections()             {}
 func (sm *mockSessionManager2) UpdateTLSConfig(cfg *tls.Config) {}
+func (sm *mockSessionManager2) ServerID() uint64 {
+	return 1
+}
 
 var _ = SerialSuites(&testSuite12{&baseTestSuite{}})
 
