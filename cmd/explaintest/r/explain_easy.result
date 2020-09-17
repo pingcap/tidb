@@ -392,22 +392,22 @@ drop table if exists t;
 create table t(a int unsigned);
 explain select t.a = '123455' from t;
 id	estRows	task	access object	operator info
-Projection_3	10000.00	root		eq(test.t.a, 123455)->Column#3
+Projection_3	10000.00	root		eq(cast(test.t.a, double UNSIGNED BINARY), 123455)->Column#3
 └─TableReader_5	10000.00	root		data:TableFullScan_4
   └─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select t.a > '123455' from t;
 id	estRows	task	access object	operator info
-Projection_3	10000.00	root		gt(test.t.a, 123455)->Column#3
+Projection_3	10000.00	root		gt(cast(test.t.a, double UNSIGNED BINARY), 123455)->Column#3
 └─TableReader_5	10000.00	root		data:TableFullScan_4
   └─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select t.a != '123455' from t;
 id	estRows	task	access object	operator info
-Projection_3	10000.00	root		ne(test.t.a, 123455)->Column#3
+Projection_3	10000.00	root		ne(cast(test.t.a, double UNSIGNED BINARY), 123455)->Column#3
 └─TableReader_5	10000.00	root		data:TableFullScan_4
   └─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select t.a = 12345678912345678998789678687678.111 from t;
 id	estRows	task	access object	operator info
-Projection_3	10000.00	root		0->Column#3
+Projection_3	10000.00	root		eq(cast(test.t.a, decimal(20,0) UNSIGNED BINARY), 12345678912345678998789678687678.111)->Column#3
 └─TableReader_5	10000.00	root		data:TableFullScan_4
   └─TableFullScan_4	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
@@ -508,7 +508,7 @@ StreamAgg_22	1.00	root		funcs:count(1)->Column#22
       │ │ └─TableDual_39	0.00	root		rows:0
       │ └─Projection_40	0.01	root		test.test01.stat_date, test.test01.show_date, test.test01.region_id
       │   └─TableReader_43	0.01	root		data:Selection_42
-      │     └─Selection_42	0.01	cop[tikv]		eq(test.test01.period, 1), ge(test.test01.stat_date, 20191202), ge(test.test01.stat_date, 20191202), gt(cast(test.test01.registration_num), 0), le(test.test01.stat_date, 20191202), le(test.test01.stat_date, 20191202)
+      │     └─Selection_42	0.01	cop[tikv]		eq(test.test01.period, 1), ge(cast(test.test01.stat_date), 2.0191202e+07), ge(test.test01.stat_date, 20191202), gt(cast(test.test01.registration_num), 0), le(cast(test.test01.stat_date), 2.0191202e+07), le(test.test01.stat_date, 20191202)
       │       └─TableFullScan_41	10000.00	cop[tikv]	table:test01	keep order:false, stats:pseudo
       └─TableReader_29(Probe)	1.00	root		data:TableRangeScan_28
         └─TableRangeScan_28	1.00	cop[tikv]	table:b	range: decided by [Column#16], keep order:true, stats:pseudo

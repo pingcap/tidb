@@ -261,7 +261,8 @@ func (s *testExpressionRewriterSuite) TestPatternLikeToExpression(c *C) {
 	tk.MustQuery("select 0.00 like '0.00';").Check(testkit.Rows("1"))
 }
 
-func (s *testExpressionRewriterSuite) TestFetchNullData(c *C) {
+// TestIssue16679 contains tests for https://github.com/pingcap/tidb/issues/16679
+func (s *testExpressionRewriterSuite) TestIssue16679(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
