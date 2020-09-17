@@ -152,6 +152,7 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 		}
 		panic(fmt.Sprintf("Percentage value %d is out of range [1, 100]", percent))
 	}
+
 	base := basePercentile{percent: percent, baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
 
 	switch aggFuncDesc.Mode {
@@ -167,6 +168,9 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 			return &percentileOriginal4Time{base}
 		case types.ETDuration:
 			return &percentileOriginal4Duration{base}
+		default:
+			// Return NULL in any case
+			return &base
 		}
 	}
 

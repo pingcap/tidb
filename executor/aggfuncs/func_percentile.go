@@ -47,12 +47,21 @@ type basePercentile struct {
 	baseAggFunc
 }
 
-type percentilePartial14Int struct {
-	percentileOriginal4Int
+func (e *basePercentile) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	return
 }
 
-type percentileFinal4Int struct {
-	percentileOriginal4Int
+func (e *basePercentile) ResetPartialResult(pr PartialResult) {
+	return
+}
+
+func (e *basePercentile) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	return
+}
+
+func (e *basePercentile) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	chk.AppendNull(e.ordinal)
+	return nil
 }
 
 type intArray []int64
