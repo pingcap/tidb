@@ -618,7 +618,7 @@
         "SQL": "explain select * from t where a in (15, 0.12, 3.47)",
         "Plan": [
           "TableReader_7 10.00 root partition:p2 data:Selection_6",
-          "└─Selection_6 10.00 cop[tikv]  or(eq(test.t.a, 15), eq(test.t.a, 0.12), eq(test.t.a, 3.47))",
+          "└─Selection_6 10.00 cop[tikv]  or(eq(test.t.a, 15), or(eq(cast(test.t.a), 0.12), eq(cast(test.t.a), 3.47)))",
           "  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
