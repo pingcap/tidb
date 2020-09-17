@@ -119,8 +119,6 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 func getValMemDelta(val interface{}) (memDelta int64) {
 	memDelta = DefInterfaceSize
 	switch v := val.(type) {
-	case nil:
-		return memDelta
 	case bool:
 		memDelta += DefBoolSize
 	case int64:
