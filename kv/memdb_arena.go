@@ -272,7 +272,7 @@ func (l *memdbVlog) getValue(addr memdbArenaAddr) []byte {
 		return tombstone
 	}
 	valueOff := lenOff - valueLen
-	return block[valueOff:lenOff]
+	return block[valueOff:lenOff:lenOff]
 }
 
 func (l *memdbVlog) getSnapshotValue(addr memdbArenaAddr, snap *memdbCheckpoint) ([]byte, bool) {
