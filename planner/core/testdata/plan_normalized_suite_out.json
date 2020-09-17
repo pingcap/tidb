@@ -216,6 +216,24 @@
           " TableReader root      ",
           " └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false"
         ]
+      },
+      {
+        "Digest": "03f12d0f634596922b6ba2edab8d6565a36bc2264cea9613adeb506e32d6b901",
+        "Plan": [
+          " Projection      root         plus(test.t1.a, test.t1.b)",
+          " └─TableReader   root         ",
+          "   └─Selection   cop[tiflash] lt(plus(test.t1.a, test.t1.b), ?)",
+          "     └─TableScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "Digest": "8529fe9d923912153a9247443819846961f053130dcf363f5bc1d0e0063400d3",
+        "Plan": [
+          " Projection      root      plus(test.t1.a, test.t1.b)",
+          " └─TableReader   root      ",
+          "   └─Selection   cop[tikv] lt(plus(test.t1.a, test.t1.b), ?)",
+          "     └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false"
+        ]
       }
     ]
   }
