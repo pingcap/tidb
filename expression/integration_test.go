@@ -5145,6 +5145,24 @@ func (s *testIntegrationSuite) TestIssue18850(c *C) {
 	tk.MustQuery("select /*+ HASH_JOIN(t, t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
 }
 
+func (s *testIntegrationSuite) TestIssue19804(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
+	_, err := tk.Exec("alter table t change a a set('a', 'b', 'c', 'c');")
+	c.Assert(err, NotNil)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a enum('a', 'b', 'c'));`)
+	_, err = tk.Exec("alter table t change a a enum('a', 'b', 'c', 'c');")
+	c.Assert(err, NotNil)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
+	tk.MustExec(`alter table t change a a set('a', 'b', 'c', 'd');`)
+	_, err = tk.Exec("alter table t change a a set('a', 'b', 'c', 'e', 'f');")
+	c.Assert(err, NotNil)
+}
+
 func (s *testIntegrationSuite) TestIssue17476(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
