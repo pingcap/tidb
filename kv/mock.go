@@ -105,6 +105,10 @@ func (t *mockTxn) SetCap(cap int) {
 
 }
 
+func (t *mockTxn) GetMemBufferSnapshot() MemBuffer {
+	return nil
+}
+
 func (t *mockTxn) Reset() {
 	t.valid = false
 }
