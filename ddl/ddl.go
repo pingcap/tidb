@@ -706,7 +706,7 @@ func (d *ddl) startCleanDeadTableLock() {
 			if !d.ownerManager.IsOwner() {
 				continue
 			}
-			if !d.infoHandle.IsValid() {
+			if d.infoHandle == nil || !d.infoHandle.IsValid() {
 				continue
 			}
 			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.quitCh, d.infoHandle.Get().AllSchemas())
