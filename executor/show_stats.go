@@ -139,7 +139,7 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 	if statsTbl.Pseudo {
 		return nil
 	}
-	colNameToType := make(map[string]byte)
+	colNameToType := make(map[string]byte, len(statsTbl.Columns))
 	for _, col := range statsTbl.Columns {
 		err := e.bucketsToRows(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, nil)
 		if err != nil {
