@@ -17,6 +17,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -70,6 +72,7 @@ var _ = Suite(&testSchemaSuite{})
 var _ = Suite(&testIsolationSuite{})
 var _ = SerialSuites(&testSchemaSerialSuite{})
 var _ = SerialSuites(&testSessionSerialSuite{})
+var _ = SerialSuites(&testBackupRestoreSuite{})
 
 type testSessionSuiteBase struct {
 	cluster cluster.Cluster
@@ -91,6 +94,10 @@ type testSessionSuite3 struct {
 }
 
 type testSessionSerialSuite struct {
+	testSessionSuiteBase
+}
+
+type testBackupRestoreSuite struct {
 	testSessionSuiteBase
 }
 
@@ -127,13 +134,15 @@ func clearETCD(ebd tikv.EtcdBackend) error {
 	}
 	defer cli.Close()
 
-	leases, err := cli.Leases(context.Background())
+	resp, err := cli.Get(context.Background(), "/tidb", clientv3.WithPrefix())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, resp := range leases.Leases {
-		if _, err := cli.Revoke(context.Background(), resp.ID); err != nil {
-			return errors.Trace(err)
+	for _, kv := range resp.Kvs {
+		if kv.Lease != 0 {
+			if _, err := cli.Revoke(context.Background(), clientv3.LeaseID(kv.Lease)); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	_, err = cli.Delete(context.Background(), "/tidb", clientv3.WithPrefix())
@@ -535,9 +544,9 @@ func testTxnLazyInitialize(s *testSessionSuite, c *C, isPessimistic bool) {
 	}
 
 	tk.MustExec("set @@autocommit = 0")
-	txn, err := tk.Se.Txn(true)
+	_, err := tk.Se.Txn(true)
 	c.Assert(kv.ErrInvalidTxn.Equal(err), IsTrue)
-	txn, err = tk.Se.Txn(false)
+	txn, err := tk.Se.Txn(false)
 	c.Assert(err, IsNil)
 	c.Assert(txn.Valid(), IsFalse)
 	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
@@ -673,10 +682,9 @@ func (s *testSessionSuite) TestGetSysVariables(c *C) {
 	// Test ScopeNone
 	tk.MustExec("select @@performance_schema_max_mutex_classes")
 	tk.MustExec("select @@global.performance_schema_max_mutex_classes")
-	_, err = tk.Exec("select @@session.performance_schema_max_mutex_classes")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
-	_, err = tk.Exec("select @@local.performance_schema_max_mutex_classes")
-	c.Assert(terror.ErrorEqual(err, variable.ErrIncorrectScope), IsTrue, Commentf("err %v", err))
+	// For issue 19524, test
+	tk.MustExec("select @@session.performance_schema_max_mutex_classes")
+	tk.MustExec("select @@local.performance_schema_max_mutex_classes")
 }
 
 func (s *testSessionSuite) TestRetryResetStmtCtx(c *C) {
@@ -3160,6 +3168,7 @@ func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 		tk1.MustExec("update forupdate_on_partition set first_name='sw' where age=25")
 		ch <- 0
 		tk1.MustExec("commit")
+		ch <- 0
 	}()
 
 	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
@@ -3170,6 +3179,7 @@ func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 	// tk1 should be blocked until tk commit, check the order.
 	c.Assert(<-ch, Equals, int32(1))
 	c.Assert(<-ch, Equals, int32(0))
+	<-ch // wait for goroutine to quit.
 
 	// Once again...
 	// This time, test for the update-update conflict.
@@ -3181,6 +3191,7 @@ func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 		tk1.MustExec("update forupdate_on_partition set first_name = 'xxx' where age=25")
 		ch <- 0
 		tk1.MustExec("commit")
+		ch <- 0
 	}()
 
 	// Leave 50ms for tk1 to run, tk1 should be blocked at the update operation.
@@ -3191,6 +3202,7 @@ func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {
 	// tk1 should be blocked until tk commit, check the order.
 	c.Assert(<-ch, Equals, int32(1))
 	c.Assert(<-ch, Equals, int32(0))
+	<-ch // wait for goroutine to quit.
 }
 
 func (s *testSchemaSuite) TestTxnSize(c *C) {
@@ -3218,4 +3230,63 @@ func (s *testSessionSuite2) TestPerStmtTaskID(c *C) {
 	tk.MustExec("commit")
 
 	c.Assert(taskID1 != taskID2, IsTrue)
+}
+
+func (s *testSessionSerialSuite) TestDoDDLJobQuit(c *C) {
+	// test https://github.com/pingcap/tidb/issues/18714, imitate DM's use environment
+	// use isolated store, because in below failpoint we will cancel its context
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.MockTiKV))
+	c.Assert(err, IsNil)
+	defer store.Close()
+	dom, err := session.BootstrapSession(store)
+	c.Assert(err, IsNil)
+	defer dom.Close()
+	se, err := session.CreateSession(store)
+	c.Assert(err, IsNil)
+	defer se.Close()
+
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/storeCloseInLoop", `return`), IsNil)
+	defer failpoint.Disable("github.com/pingcap/tidb/ddl/storeCloseInLoop")
+
+	// this DDL call will enter deadloop before this fix
+	err = dom.DDL().CreateSchema(se, model.NewCIStr("testschema"), nil)
+	c.Assert(err.Error(), Equals, "context canceled")
+}
+
+func (s *testBackupRestoreSuite) TestBackupAndRestore(c *C) {
+	// only run BR SQL integration test with tikv store.
+	if *withTiKV {
+		cfg := config.GetGlobalConfig()
+		cfg.Store = "tikv"
+		cfg.Path = s.pdAddr
+		config.StoreGlobalConfig(cfg)
+		tk := testkit.NewTestKitWithInit(c, s.store)
+		tk.MustExec("create database if not exists br")
+		tk.MustExec("use br")
+		tk.MustExec("create table t1(v int)")
+		tk.MustExec("insert into t1 values (1)")
+		tk.MustExec("insert into t1 values (2)")
+		tk.MustExec("insert into t1 values (3)")
+		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
+
+		tk.MustExec("create database if not exists br02")
+		tk.MustExec("use br02")
+		tk.MustExec("create table t1(v int)")
+
+		tmpDir := path.Join(os.TempDir(), "bk1")
+		os.RemoveAll(tmpDir)
+		// backup database to tmp dir
+		tk.MustQuery("backup database * to 'local://" + tmpDir + "'")
+
+		// remove database for recovery
+		tk.MustExec("drop database br")
+		tk.MustExec("drop database br02")
+
+		// restore database with backup data
+		tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
+		tk.MustExec("use br")
+		tk.MustQuery("select count(*) from t1").Check(testkit.Rows("3"))
+		tk.MustExec("drop database br")
+		tk.MustExec("drop database br02")
+	}
 }

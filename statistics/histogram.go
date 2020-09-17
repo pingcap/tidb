@@ -680,12 +680,6 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
-// CopyMeta meta data from histogram without bound bucket and scalars.
-func (hg *Histogram) CopyMeta() *Histogram {
-	newHist := NewHistogram(hg.ID, hg.NDV, hg.NullCount, hg.LastUpdateVersion, hg.Tp, 0, hg.TotColSize)
-	return newHist
-}
-
 // Copy deep copies the histogram.
 func (hg *Histogram) Copy() *Histogram {
 	newHist := *hg
@@ -770,19 +764,6 @@ func (c *Column) MemoryUsage() (sum int64) {
 	return
 }
 
-// CopyMeta Column meta data ,there is not bound bucket and scalarsin histogram.
-func (c *Column) CopyMeta() *Column {
-	newColumn := &Column{
-		Histogram:  *c.Histogram.CopyMeta(),
-		PhysicalID: c.PhysicalID,
-		Info:       c.Info,
-		Count:      c.Count,
-		IsHandle:   c.IsHandle,
-		Flag:       c.Flag,
-	}
-	return newColumn
-}
-
 // HistogramNeededColumns stores the columns whose Histograms need to be loaded from physical kv layer.
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededColumns = neededColumnMap{cols: map[tableColumnID]struct{}{}}
@@ -809,7 +790,7 @@ func (c *Column) equalRowCount(sc *stmtctx.StatementContext, val types.Datum, mo
 		return 0.0, nil
 	}
 	if c.NDV > 0 && c.outOfRange(val) {
-		return float64(modifyCount) / float64(c.NDV), nil
+		return outOfRangeEQSelectivity(c.NDV, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 	}
 	if c.CMSketch != nil {
 		count, err := c.CMSketch.queryValue(sc, val)
@@ -874,7 +855,7 @@ func (c *Column) GetColumnRowCount(sc *stmtctx.StatementContext, ranges []*range
 		// The interval case.
 		cnt := c.BetweenRowCount(lowVal, highVal)
 		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			cnt += float64(modifyCount) / outOfRangeBetweenRate
+			cnt += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(c.TotalRowCount())) * c.TotalRowCount()
 		}
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boudaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
@@ -922,19 +903,6 @@ func (idx *Index) String() string {
 	return idx.Histogram.ToString(len(idx.Info.Columns))
 }
 
-// CopyMeta meta data from histogram without bound bucket and scalars .
-func (idx *Index) CopyMeta() *Index {
-	newIndex := &Index{
-		Histogram:  *idx.Histogram.CopyMeta(),
-		PhysicalID: idx.PhysicalID,
-		Info:       idx.Info,
-		StatsVer:   idx.StatsVer,
-		Flag:       idx.Flag,
-	}
-
-	return newIndex
-}
-
 // HistogramNeededIndices stores the Index whose Histograms need to be loaded from physical kv layer.
 // Currently, we only load index/pk's Histogram from kv automatically. Columns' are loaded by needs.
 var HistogramNeededIndices = neededIndexMap{idxs: map[tableIndexID]struct{}{}}
@@ -973,7 +941,7 @@ func (idx *Index) equalRowCount(sc *stmtctx.StatementContext, b []byte, modifyCo
 	}
 	val := types.NewBytesDatum(b)
 	if idx.NDV > 0 && idx.outOfRange(val) {
-		return float64(modifyCount) / (float64(idx.NDV)), nil
+		return outOfRangeEQSelectivity(idx.NDV, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount(), nil
 	}
 	if idx.CMSketch != nil {
 		return float64(idx.CMSketch.QueryBytes(b)), nil
@@ -1025,7 +993,7 @@ func (idx *Index) GetRowCount(sc *stmtctx.StatementContext, indexRanges []*range
 		totalCount += idx.BetweenRowCount(l, r)
 		lowIsNull := bytes.Equal(lb, nullKeyBytes)
 		if (idx.outOfRange(l) && !(isSingleCol && lowIsNull)) || idx.outOfRange(r) {
-			totalCount += float64(modifyCount) / outOfRangeBetweenRate
+			totalCount += outOfRangeEQSelectivity(outOfRangeBetweenRate, modifyCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
 		}
 		if isSingleCol && lowIsNull {
 			totalCount += float64(idx.NullCount)

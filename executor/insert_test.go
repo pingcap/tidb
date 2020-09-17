@@ -202,6 +202,25 @@ func (s *testSuite8) TestInsertOnDuplicateKey(c *C) {
 	tk.MustQuery(`select * from t1 use index(primary)`).Check(testkit.Rows(`1.0000`))
 }
 
+func (s *testSuite8) TestClusterIndexInsertOnDuplicateKey(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists cluster_index_duplicate_entry_error;")
+	tk.MustExec("create database cluster_index_duplicate_entry_error;")
+	tk.MustExec("use cluster_index_duplicate_entry_error;")
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+
+	tk.MustExec("create table t(a char(20), b int, primary key(a));")
+	tk.MustExec("insert into t values('aa', 1), ('bb', 1);")
+	_, err := tk.Exec("insert into t values('aa', 2);")
+	c.Assert(err, ErrorMatches, ".*Duplicate entry 'aa' for.*")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a char(20), b varchar(30), c varchar(10), primary key(a, b, c));")
+	tk.MustExec("insert into t values ('a', 'b', 'c'), ('b', 'a', 'c');")
+	_, err = tk.Exec("insert into t values ('a', 'b', 'c');")
+	c.Assert(err, ErrorMatches, ".*Duplicate entry 'a-b-c' for.*")
+}
+
 func (s *testSuite10) TestPaddingCommonHandle(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

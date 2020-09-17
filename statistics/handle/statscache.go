@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/uber-go/atomic"
 )
 
@@ -37,6 +36,7 @@ type StatsCache interface {
 	GetBytesLimit() int64
 	SetBytesLimit(bytesLimit int64)
 	BytesConsumed() int64
+	GetAll() []*statistics.Table
 	Clear()
 	Close()
 }
@@ -111,7 +111,7 @@ func newRistrettoStatsCache(memoryLimit int64) *ristrettoStatsCache {
 	// the underlying LRUCache to max to close its memory control
 	sc := &ristrettoStatsCache{
 		memCapacity: memoryLimit,
-		memTracker:  memory.NewTracker(stringutil.StringerStr("statsCache"), -1),
+		memTracker:  memory.NewTracker(memory.LabelForStatsCache, -1),
 	}
 	for i := range sc.tablesShards {
 		sc.tablesShards[i].data = make(map[int64]*statistics.Table)
@@ -128,7 +128,7 @@ func newRistrettoStatsCache(memoryLimit int64) *ristrettoStatsCache {
 			if t, ok := sc.Get(int64(key)); ok {
 				if value != nil && t.PhysicalID == int64(key) {
 					sc.memTracker.Consume(-t.MemUsage)
-					sc.Set(int64(key), t.CopyMeta())
+					sc.Set(int64(key), t.CopyWithoutBucketsAndCMS())
 				}
 			}
 		},
@@ -186,8 +186,20 @@ func (sc *ristrettoStatsCache) Clear() {
 		sc.tablesShards[i].data = make(map[int64]*statistics.Table)
 		sc.tablesShards[i].Unlock()
 	}
-	sc.memTracker = memory.NewTracker(stringutil.StringerStr("statsCache"), -1)
+	sc.memTracker = memory.NewTracker(memory.LabelForStatsCache, -1)
 
+}
+
+// GetAll get all the tables point.
+func (sc *ristrettoStatsCache) GetAll() []*statistics.Table {
+	tables := make([]*statistics.Table, 0)
+	for _, shard := range sc.tablesShards {
+		for _, tbl := range shard.data {
+			ntbl, _ := sc.Lookup(tbl.PhysicalID)
+			tables = append(tables, ntbl)
+		}
+	}
+	return tables
 }
 
 // lookupUnsafe get table with id without Lock.
@@ -286,7 +298,7 @@ func newSimpleStatsCache(memoryLimit int64) *simpleStatsCache {
 	c := simpleStatsCache{
 		cache:       cache,
 		memCapacity: memoryLimit,
-		memTracker:  memory.NewTracker(stringutil.StringerStr("statsCache"), memoryLimit),
+		memTracker:  memory.NewTracker(memory.LabelForStatsCache, memoryLimit),
 	}
 	return &c
 }
@@ -326,7 +338,7 @@ func (sc *simpleStatsCache) Close() {
 func (sc *simpleStatsCache) Clear() {
 	sc.mu.Lock()
 	sc.cache.DeleteAll()
-	sc.memTracker = memory.NewTracker(stringutil.StringerStr("statsCache"), maxMemoryLimit)
+	sc.memTracker = memory.NewTracker(memory.LabelForStatsCache, 1024*1024*1024)
 	sc.mu.Unlock()
 }
 
@@ -354,7 +366,7 @@ func (sc *simpleStatsCache) Insert(table *statistics.Table) {
 			return
 		}
 		sc.memTracker.Consume(-evictedValue.(*statistics.Table).MemoryUsage())
-		sc.cache.Put(evictedKey, evictedValue.(*statistics.Table).CopyMeta())
+		sc.cache.Put(evictedKey, evictedValue.(*statistics.Table).CopyWithoutBucketsAndCMS())
 	}
 	sc.Erase(table.PhysicalID)
 	sc.memTracker.Consume(mem)
@@ -373,6 +385,20 @@ func (sc *simpleStatsCache) Erase(deletedID int64) bool {
 	key := statsCacheKey(deletedID)
 	sc.cache.Delete(key)
 	return true
+}
+
+// GetAll get all the tables point.
+func (sc *simpleStatsCache) GetAll() []*statistics.Table {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	values := sc.cache.GetAll()
+	tables := make([]*statistics.Table, 0)
+	for _, v := range values {
+		if t, ok := v.(*statistics.Table); ok && t != nil {
+			tables = append(tables, t)
+		}
+	}
+	return tables
 }
 
 // Update updates the statistics table cache.

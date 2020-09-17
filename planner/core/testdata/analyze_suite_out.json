@@ -245,7 +245,7 @@
       ],
       [
         "IndexLookUp_7 2.00 root  ",
-        "├─IndexFullScan_5(Build) 2.00 cop[tikv] table:t, index:idx(a) keep order:false",
+        "├─IndexRangeScan_5(Build) 2.00 cop[tikv] table:t, index:idx(a) range:[NULL,NULL], keep order:false",
         "└─TableRowIDScan_6(Probe) 2.00 cop[tikv] table:t keep order:false"
       ],
       [
@@ -336,9 +336,9 @@
       "IndexLookUp(Index(t1.a)[[1,1]], Table(t1)->Sel([le(test.t1.b, 2)]))",
       "TableReader(Table(t2)->Sel([le(test.t2.a, 2)]))",
       "Analyze{Index(a),Index(b)}",
-      "PartitionUnionAll{TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))->TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))}",
-      "PartitionUnionAll{IndexReader(Index(t4.b)[[-inf,2)])->IndexReader(Index(t4.b)[[-inf,2)])}",
-      "TableReader(Table(t4)->Sel([eq(test.t4.a, 1) le(test.t4.b, 2)]))"
+      "TableReader(Table(t4)->Sel([le(test.t4.a, 2)]))",
+      "IndexReader(Index(t4.b)[[-inf,2)])",
+      "IndexLookUp(Index(t4.a)[[1,1]], Table(t4)->Sel([le(test.t4.b, 2)]))"
     ]
   },
   {
@@ -347,17 +347,18 @@
       {
         "SQL": "explain select * from t where a = 7639902",
         "Plan": [
-          "IndexReader_6 2.03 root  index:IndexRangeScan_5",
-          "└─IndexRangeScan_5 2.03 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+          "IndexReader_6 6.68 root  index:IndexRangeScan_5",
+          "└─IndexRangeScan_5 6.68 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
         ]
       },
       {
         "SQL": "explain select c, b from t where a = 7639902 order by b asc limit 6",
         "Plan": [
-          "Projection_7 2.03 root  test.t.c, test.t.b",
-          "└─TopN_10 2.03 root  test.t.b, offset:0, count:6",
-          "  └─IndexReader_18 2.03 root  index:IndexRangeScan_17",
-          "    └─IndexRangeScan_17 2.03 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
+          "Projection_7 6.00 root  test.t.c, test.t.b",
+          "└─TopN_8 6.00 root  test.t.b, offset:0, count:6",
+          "  └─IndexReader_16 6.00 root  index:TopN_15",
+          "    └─TopN_15 6.00 cop[tikv]  test.t.b, offset:0, count:6",
+          "      └─IndexRangeScan_14 6.68 cop[tikv] table:t, index:PRIMARY(a, c, b) range:[7639902,7639902], keep order:false"
         ]
       }
     ]

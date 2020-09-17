@@ -249,7 +249,7 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 			op = expr.FuncName.L
 		}
 	}
-	if value.IsNull() {
+	if op != ast.NullEQ && value.IsNull() {
 		return nil
 	}
 
@@ -259,6 +259,11 @@ func (r *builder) buildFormBinOp(expr *expression.ScalarFunction) []point {
 	}
 
 	switch op {
+	case ast.NullEQ:
+		if value.IsNull() {
+			return []point{{start: true}, {}} // [null, null]
+		}
+		fallthrough
 	case ast.EQ:
 		startPoint := point{value: value, start: true}
 		endPoint := point{value: value}
@@ -312,8 +317,16 @@ func handleUnsignedIntCol(ft *types.FieldType, val types.Datum, op string) (type
 	return val, op, false
 }
 
-func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int) []point {
+func (r *builder) buildFromIsTrue(expr *expression.ScalarFunction, isNot int, keepNull bool) []point {
 	if isNot == 1 {
+		if keepNull {
+			// Range is {[0, 0]}
+			startPoint := point{start: true}
+			startPoint.value.SetInt64(0)
+			endPoint := point{}
+			endPoint.value.SetInt64(0)
+			return []point{startPoint, endPoint}
+		}
 		// NOT TRUE range is {[null null] [0, 0]}
 		startPoint1 := point{start: true}
 		endPoint1 := point{}
@@ -489,8 +502,10 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 
 func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	switch n := expr.FuncName.L; n {
-	case ast.IsTruth:
-		return r.buildFromIsTrue(expr, 1)
+	case ast.IsTruthWithoutNull:
+		return r.buildFromIsTrue(expr, 1, false)
+	case ast.IsTruthWithNull:
+		return r.buildFromIsTrue(expr, 1, true)
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
@@ -539,14 +554,16 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 
 func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []point {
 	switch op := expr.FuncName.L; op {
-	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE:
+	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
 		return r.buildFormBinOp(expr)
 	case ast.LogicAnd:
 		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	case ast.LogicOr:
 		return r.union(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
-	case ast.IsTruth:
-		return r.buildFromIsTrue(expr, 0)
+	case ast.IsTruthWithoutNull:
+		return r.buildFromIsTrue(expr, 0, false)
+	case ast.IsTruthWithNull:
+		return r.buildFromIsTrue(expr, 0, true)
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 0)
 	case ast.In:

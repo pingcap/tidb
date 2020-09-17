@@ -75,7 +75,7 @@ func sleepWithCtx(ctx context.Context, d time.Duration) {
 
 func (s *Server) listenStatusHTTPServer() error {
 	s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
-	if s.cfg.Status.StatusPort == 0 {
+	if s.cfg.Status.StatusPort == 0 && !runInGoTest {
 		s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
 	}
 
@@ -96,6 +96,9 @@ func (s *Server) listenStatusHTTPServer() error {
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
 		return errors.Trace(err)
+	} else if runInGoTest && s.cfg.Status.StatusPort == 0 {
+		s.statusAddr = s.statusListener.Addr().String()
+		s.cfg.Status.StatusPort = uint(s.statusListener.Addr().(*net.TCPAddr).Port)
 	}
 	return nil
 }

@@ -109,8 +109,10 @@ func IsJobRollbackable(job *model.Job) bool {
 			job.SchemaState == model.StateDeleteOnly {
 			return false
 		}
+	case model.ActionAddTablePartition:
+		return job.SchemaState == model.StateNone || job.SchemaState == model.StateReplicaOnly
 	case model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn,
-		model.ActionDropTablePartition, model.ActionAddTablePartition,
+		model.ActionDropTablePartition,
 		model.ActionRebaseAutoID, model.ActionShardRowID,
 		model.ActionTruncateTable, model.ActionAddForeignKey,
 		model.ActionDropForeignKey, model.ActionRenameTable,
@@ -340,7 +342,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 		} else if idxCnt > tblCnt {
 			ret = IdxCntGreater
 		}
-		return ret, i, errors.Errorf("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
+		return ret, i, ErrAdminCheckTable.GenWithStack("table count %d != index(%s) count %d", tblCnt, idx, idxCnt)
 	}
 	return 0, 0, nil
 }
@@ -395,14 +397,14 @@ func CheckRecordAndIndex(sessCtx sessionctx.Context, txn kv.Transaction, t table
 
 func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder, error) {
 	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
-	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Columns, t.Meta())
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
 	if err != nil {
 		return nil, err
 	}
 	mockSchema := expression.NewSchema(exprCols...)
-	decodeColsMap := decoder.BuildFullDecodeColMap(t, mockSchema)
+	decodeColsMap := decoder.BuildFullDecodeColMap(t.Cols(), mockSchema)
 
-	return decoder.NewRowDecoder(t, decodeColsMap), nil
+	return decoder.NewRowDecoder(t, t.Cols(), decodeColsMap), nil
 }
 
 func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {
@@ -468,4 +470,6 @@ var (
 	ErrCancelFinishedDDLJob = terror.ClassAdmin.New(errno.ErrCancelFinishedDDLJob, errno.MySQLErrName[errno.ErrCancelFinishedDDLJob])
 	// ErrCannotCancelDDLJob returns when cancel a almost finished ddl job, because cancel in now may cause data inconsistency.
 	ErrCannotCancelDDLJob = terror.ClassAdmin.New(errno.ErrCannotCancelDDLJob, errno.MySQLErrName[errno.ErrCannotCancelDDLJob])
+	// ErrAdminCheckTable returns when the table records is inconsistent with the index values.
+	ErrAdminCheckTable = terror.ClassAdmin.New(errno.ErrAdminCheckTable, errno.MySQLErrName[errno.ErrAdminCheckTable])
 )

@@ -1073,6 +1073,23 @@ func (s *testRangerSuite) TestColumnRange(c *C) {
 			resultStr:   "[[1,1] [2,2] [3,3]]",
 			length:      types.UnspecifiedLength,
 		},
+		// test cases for nulleq
+		{
+			colPos:      0,
+			exprStr:     "a <=> 1",
+			accessConds: "[nulleq(test.t.a, 1)]",
+			filterConds: "",
+			resultStr:   "[[1,1]]",
+			length:      types.UnspecifiedLength,
+		},
+		{
+			colPos:      0,
+			exprStr:     "a <=> null",
+			accessConds: "[nulleq(test.t.a, <nil>)]",
+			filterConds: "",
+			resultStr:   "[[NULL,NULL]]",
+			length:      types.UnspecifiedLength,
+		},
 	}
 
 	ctx := context.Background()
@@ -1116,6 +1133,7 @@ func (s *testRangerSuite) TestIndexRangeElimininatedProjection(c *C) {
 	testKit := testkit.NewTestKit(c, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("set @@tidb_enable_clustered_index=0")
 	testKit.MustExec("create table t(a int not null, b int not null, primary key(a,b))")
 	testKit.MustExec("insert into t values(1,2)")
 	testKit.MustExec("analyze table t")

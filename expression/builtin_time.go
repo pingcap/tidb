@@ -4760,7 +4760,9 @@ func (b *builtinUnixTimestampCurrentSig) evalInt(row chunk.Row) (int64, bool, er
 		return 0, true, err
 	}
 	intVal, err := dec.ToInt()
-	terror.Log(err)
+	if !terror.ErrorEqual(err, types.ErrTruncated) {
+		terror.Log(err)
+	}
 	return intVal, false, nil
 }
 
@@ -4800,7 +4802,9 @@ func (b *builtinUnixTimestampIntSig) evalIntWithCtx(ctx sessionctx.Context, row 
 		return 0, true, err
 	}
 	intVal, err := dec.ToInt()
-	terror.Log(err)
+	if !terror.ErrorEqual(err, types.ErrTruncated) {
+		terror.Log(err)
+	}
 	return intVal, false, nil
 }
 
@@ -4867,7 +4871,7 @@ func (c *timestampFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 	}
 	isFloat := false
 	switch args[0].GetType().Tp {
-	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDecimal:
+	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
 		isFloat = true
 	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, evalTps...)

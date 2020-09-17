@@ -342,8 +342,62 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 			return doInsert(s, job.ID, indexID, startKey, endKey, now)
 		}
+	case model.ActionDropColumn:
+		var colName model.CIStr
+		var indexIDs []int64
+		var partitionIDs []int64
+		if err := job.DecodeArgs(&colName, &indexIDs, &partitionIDs); err != nil {
+			return errors.Trace(err)
+		}
+		if len(indexIDs) > 0 {
+			if len(partitionIDs) > 0 {
+				for _, pid := range partitionIDs {
+					if err := doBatchDeleteIndiceRange(s, job.ID, pid, indexIDs, now); err != nil {
+						return errors.Trace(err)
+					}
+				}
+			} else {
+				return doBatchDeleteIndiceRange(s, job.ID, job.TableID, indexIDs, now)
+			}
+		}
+	case model.ActionDropColumns:
+		var colNames []model.CIStr
+		var ifExists []bool
+		var indexIDs []int64
+		var partitionIDs []int64
+		if err := job.DecodeArgs(&colNames, &ifExists, &indexIDs, &partitionIDs); err != nil {
+			return errors.Trace(err)
+		}
+		if len(indexIDs) > 0 {
+			if len(partitionIDs) > 0 {
+				for _, pid := range partitionIDs {
+					if err := doBatchDeleteIndiceRange(s, job.ID, pid, indexIDs, now); err != nil {
+						return errors.Trace(err)
+					}
+				}
+			} else {
+				return doBatchDeleteIndiceRange(s, job.ID, job.TableID, indexIDs, now)
+			}
+		}
 	}
 	return nil
+}
+
+func doBatchDeleteIndiceRange(s sqlexec.SQLExecutor, jobID, tableID int64, indexIDs []int64, ts uint64) error {
+	logutil.BgLogger().Info("[ddl] batch insert into delete-range indices", zap.Int64("jobID", jobID), zap.Int64s("elementIDs", indexIDs))
+	sql := insertDeleteRangeSQLPrefix
+	for i, indexID := range indexIDs {
+		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+		startKeyEncoded := hex.EncodeToString(startKey)
+		endKeyEncoded := hex.EncodeToString(endKey)
+		sql += fmt.Sprintf(insertDeleteRangeSQLValue, jobID, indexID, startKeyEncoded, endKeyEncoded, ts)
+		if i != len(indexIDs)-1 {
+			sql += ","
+		}
+	}
+	_, err := s.Execute(context.Background(), sql)
+	return errors.Trace(err)
 }
 
 func doInsert(s sqlexec.SQLExecutor, jobID int64, elementID int64, startKey, endKey kv.Key, ts uint64) error {

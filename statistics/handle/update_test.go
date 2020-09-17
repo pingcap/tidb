@@ -706,7 +706,7 @@ func (s *testStatsSuite) TestUpdatePartitionErrorRate(c *C) {
 
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 	testKit.MustExec("create table t (a bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (30))")
 	h.HandleDDLEvent(<-h.DDLEventCh())
 
@@ -932,6 +932,7 @@ func (s *testStatsSuite) TestQueryFeedbackForPartition(c *C) {
 	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 	testKit.MustExec(`create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))
 			    partition by range (a) (
 			    partition p0 values less than (3),
@@ -1069,6 +1070,7 @@ func (s *testStatsSuite) TestUpdateStatsByLocalFeedback(c *C) {
 	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
+	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a), index idx(b))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
 	testKit.MustExec("analyze table t")
@@ -1130,7 +1132,7 @@ func (s *testStatsSuite) TestUpdatePartitionStatsByLocalFeedback(c *C) {
 	defer clearRW.RUnlock()
 	testKit := testkit.NewTestKit(c, s.store)
 	testKit.MustExec("use test")
-	testKit.MustExec("set @@session.tidb_enable_table_partition=1")
+	testKit.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 	testKit.MustExec("create table t (a bigint(64), b bigint(64), primary key(a)) partition by range (a) (partition p0 values less than (6))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(4,5)")
 	testKit.MustExec("analyze table t")
@@ -1626,8 +1628,8 @@ func (s *testStatsSuite) TestAbnormalIndexFeedback(c *C) {
 			sql: "select * from t where a = 2 and b > 10",
 			hist: "column:2 ndv:20 totColSize:20\n" +
 				"num: 5 lower_bound: -9223372036854775808 upper_bound: 7 repeats: 0\n" +
-				"num: 6 lower_bound: 7 upper_bound: 14 repeats: 0\n" +
-				"num: 7 lower_bound: 14 upper_bound: 9223372036854775807 repeats: 0",
+				"num: 4 lower_bound: 7 upper_bound: 14 repeats: 0\n" +
+				"num: 5 lower_bound: 14 upper_bound: 9223372036854775807 repeats: 0",
 			rangeID: tblInfo.Columns[1].ID,
 			idxID:   tblInfo.Indices[0].ID,
 			eqCount: 3,
@@ -1874,4 +1876,15 @@ func (s *testStatsSuite) TestDeleteUpdateFeedback(c *C) {
 	testKit.MustExec("explain analyze delete from t where a = 3")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	c.Assert(h.GetQueryFeedback().Size, Equals, 0)
+}
+
+func (s *testStatsSuite) BenchmarkHandleAutoAnalyze(c *C) {
+	defer cleanEnv(c, s.store, s.do)
+	testKit := testkit.NewTestKit(c, s.store)
+	testKit.MustExec("use test")
+	h := s.do.StatsHandle()
+	is := s.do.InfoSchema()
+	for i := 0; i < c.N; i++ {
+		h.HandleAutoAnalyze(is)
+	}
 }

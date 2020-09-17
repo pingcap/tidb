@@ -58,6 +58,14 @@ func (s *testSetSuite) TestSet(c *C) {
 		c.Assert(e.ToNumber(), Equals, float64(t.ExpectedValue))
 		c.Assert(e.String(), Equals, t.ExpectedName)
 	}
+
+	for _, t := range tbl {
+		e, err := ParseSetName(elems, t.Name, "utf8_unicode_ci")
+		c.Assert(err, IsNil)
+		c.Assert(e.ToNumber(), Equals, float64(t.ExpectedValue))
+		c.Assert(e.String(), Equals, t.ExpectedName)
+	}
+
 	for _, t := range citbl {
 		e, err := ParseSetName(elems, t.Name, "utf8_general_ci")
 		c.Assert(err, IsNil)

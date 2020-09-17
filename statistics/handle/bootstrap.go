@@ -33,10 +33,11 @@ import (
 )
 
 const (
-	//max histogram(index/column) number
-	maxLoadHistogram = maxMemoryLimit / 40960
-	topNnum          = 20
-	bucketsSize      = 256
+	// defaultTopNnum ,defaultBucketsSize are defined in planner/core/planbuilder.go analyzeOptionDefault.
+	defaultTopNnum     = 20
+	defaultBucketsSize = 256
+	// defaultStatDataSize is an estimated default statistic data size for one column/index(CMSKetch + Histogram).
+	defaultStatDataSize = 50 * 1024
 )
 
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
@@ -61,10 +62,8 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables map[int64]
 			Version:  row.GetUint64(0),
 			Name:     getFullTableName(is, tableInfo),
 		}
-
-		//Ignore the memory usage, it will be caculate later
+		//Ignore the memory usage, it will be caculated later
 		tables[tbl.PhysicalID] = tbl
-
 	}
 }
 
@@ -93,7 +92,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (map[int64]*statistics.
 	}
 	return tables, nil
 }
-func (h *Handle) initStatsHistogramssMeta4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := tables[row.GetInt64(0)]
 		if !ok {
@@ -152,7 +151,7 @@ func (h *Handle) initStatsHistogramssMeta4Chunk(is infoschema.InfoSchema, tables
 }
 
 // load ALL the meta data without cm_sketch
-func (h *Handle) initStatsHistogramsMeta(is infoschema.InfoSchema, tables map[int64]*statistics.Table) error {
+func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables map[int64]*statistics.Table) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version," +
 		" null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos " +
 		"from mysql.stats_histograms"
@@ -173,11 +172,11 @@ func (h *Handle) initStatsHistogramsMeta(is infoschema.InfoSchema, tables map[in
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistogramssMeta4Chunk(is, tables, iter)
+		h.initStatsHistograms4Chunk(is, tables, iter)
 	}
 	return nil
 }
-func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
+func (h *Handle) initCMSketch4Indices4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := tables[row.GetInt64(0)]
 		if !ok {
@@ -210,12 +209,13 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables map[
 	}
 }
 
-func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables map[int64]*statistics.Table) error {
+func (h *Handle) initCMSketch4Indices(is infoschema.InfoSchema, tables map[int64]*statistics.Table) error {
 	// indcies should be load first
 	// is_index = 1 load first
+	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, cm_sketch " +
 		"from mysql.stats_histograms where is_index = 1 " +
-		fmt.Sprintf("order by table_id, hist_id limit %d", maxLoadHistogram)
+		fmt.Sprintf("order by table_id, hist_id limit %d", limitSize)
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -233,7 +233,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables map[int64]
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsHistograms4Chunk(is, tables, iter)
+		h.initCMSketch4Indices4Chunk(is, tables, iter)
 	}
 	return nil
 }
@@ -256,11 +256,10 @@ func (h *Handle) initStatsTopN4Chunk(tables map[int64]*statistics.Table, iter *c
 }
 
 func (h *Handle) initStatsTopN(tables map[int64]*statistics.Table) error {
-	// default topN = 20
-	// 54000 = 26215*20
+	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize) * defaultTopNnum
 	sql := "select HIGH_PRIORITY table_id, hist_id, value, count " +
 		"from mysql.stats_top_n " +
-		fmt.Sprintf("where is_index = 1 order by table_id, hist_id limit %d", maxLoadHistogram*topNnum)
+		fmt.Sprintf("where is_index = 1 order by table_id, hist_id limit %d", limitSize)
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -283,10 +282,14 @@ func (h *Handle) initStatsTopN(tables map[int64]*statistics.Table) error {
 	return nil
 }
 
-func initStatsBuckets4MetaChunk(ctx sessionctx.Context, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
+func initColumnCountMeta4Chunk(ctx sessionctx.Context, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) error {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		tableID, histID, Count := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
+		tableID, histID, decimalCount := row.GetInt64(0), row.GetInt64(1), row.GetMyDecimal(2)
 		table, ok := tables[tableID]
+		count, err := decimalCount.ToInt()
+		if err != nil {
+			return err
+		}
 		if !ok {
 			continue
 		}
@@ -294,15 +297,17 @@ func initStatsBuckets4MetaChunk(ctx sessionctx.Context, tables map[int64]*statis
 		if !ok {
 			continue
 		}
-		column.Count += Count
+		column.Count += count
 	}
+	return nil
 }
 
-//initStatsBucketsMeta load columns meta data (column count) only for every column
-func (h *Handle) initStatsBucketsMeta(tables map[int64]*statistics.Table) (err error) {
-
-	sql := "select HIGH_PRIORITY table_id, hist_id, count, bucket_id " +
-		" from mysql.stats_buckets where is_index = 0 order by table_id, hist_id"
+//initColumnCount load columns meta data (column count) only for every column
+func (h *Handle) initColumnCount(tables map[int64]*statistics.Table) (err error) {
+	sql := "select HIGH_PRIORITY table_id, hist_id, sum(count) " +
+		"from mysql.stats_buckets " +
+		"where is_index = 0 " +
+		"group by table_id, hist_id "
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -320,12 +325,14 @@ func (h *Handle) initStatsBucketsMeta(tables map[int64]*statistics.Table) (err e
 		if req.NumRows() == 0 {
 			break
 		}
-		initStatsBuckets4MetaChunk(h.mu.ctx, tables, iter)
+		err = initColumnCountMeta4Chunk(h.mu.ctx, tables, iter)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
-func initStatsBuckets4Chunk(ctx sessionctx.Context, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk, isOverload bool) {
-	var lastHist *statistics.Histogram = nil
+func initStatsBuckets4Chunk(ctx sessionctx.Context, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
 		table, ok := tables[tableID]
@@ -364,21 +371,15 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, tables map[int64]*statistics
 			}
 		}
 		hist.AppendBucket(&lower, &upper, row.GetInt64(3), row.GetInt64(4))
-		lastHist = hist
-	}
-	// if row number is over maxLoadHistogram,
-	// delete the last data of loaded
-	// the data might not cover all the bucket data of lastHist
-	if lastHist != nil && isOverload {
-		*lastHist = *lastHist.CopyMeta()
 	}
 
 }
 
 func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (err error) {
+	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize) * defaultBucketsSize
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound," +
 		"upper_bound from mysql.stats_buckets " +
-		fmt.Sprintf("order by is_index^1, table_id, hist_id, bucket_id limit %d", maxLoadHistogram*bucketsSize)
+		fmt.Sprintf("order by is_index desc, table_id, hist_id, bucket_id limit %d", limitSize)
 	rc, err := h.mu.ctx.(sqlexec.SQLExecutor).Execute(context.TODO(), sql)
 	if len(rc) > 0 {
 		defer terror.Call(rc[0].Close)
@@ -388,20 +389,25 @@ func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (err error
 	}
 	req := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
+	var lastTableID int64 = -1
 	for {
 		err := rc[0].Next(context.TODO(), req)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if req.NumRows() == 0 {
+			if limitSize == int64(req.NumRows()) && lastTableID != -1 {
+				// remove the stats buckets of the last table_id
+				tables[lastTableID] = tables[lastTableID].CopyWithoutBucketsAndCMS()
+			}
 			break
 		}
-		isOverload := maxLoadHistogram*256 == req.NumRows()
-		initStatsBuckets4Chunk(h.mu.ctx, tables, iter, isOverload)
+		lastTableID = req.GetRow(req.NumRows() - 1).GetInt64(0)
+		initStatsBuckets4Chunk(h.mu.ctx, tables, iter)
 	}
 	return nil
 }
-func (h *Handle) initStatsBucketsCalc(tables map[int64]*statistics.Table) (lastVersion uint64, err error) {
+func (h *Handle) preCalcScalar4StatsBuckets(tables map[int64]*statistics.Table) (lastVersion uint64, err error) {
 	lastVersion = uint64(0)
 	for _, table := range tables {
 		//version is loaded by initStatsHistogramsMeta
@@ -440,11 +446,11 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = h.initStatsHistogramsMeta(is, tables)
+	err = h.initStatsHistograms(is, tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = h.initStatsHistograms(is, tables)
+	err = h.initCMSketch4Indices(is, tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -452,7 +458,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return err
 	}
-	err = h.initStatsBucketsMeta(tables)
+	err = h.initColumnCount(tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -460,7 +466,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	version, err := h.initStatsBucketsCalc(tables)
+	version, err := h.preCalcScalar4StatsBuckets(tables)
 	if err != nil {
 		return errors.Trace(err)
 	}

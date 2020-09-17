@@ -147,7 +147,6 @@ func (s *testEvaluatorSuite) TestColumn2Pb(c *C) {
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeEnum, 3))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeGeometry, 4))
 	colExprs = append(colExprs, dg.genColumn(mysql.TypeUnspecified, 5))
-	colExprs = append(colExprs, dg.genColumn(mysql.TypeDecimal, 6))
 
 	pushed, remained := PushDownExprs(sc, colExprs, client, kv.UnSpecified)
 	c.Assert(len(pushed), Equals, 0)

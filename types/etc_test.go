@@ -323,8 +323,8 @@ func (s *testTypeEtcSuite) TestIsTypeNumeric(c *C) {
 	res = IsTypeNumeric(mysql.TypeNewDecimal)
 	c.Assert(res, Equals, true)
 
-	res = IsTypeNumeric(mysql.TypeDecimal)
-	c.Assert(res, Equals, true)
+	res = IsTypeNumeric(mysql.TypeUnspecified)
+	c.Assert(res, Equals, false)
 
 	res = IsTypeNumeric(mysql.TypeFloat)
 	c.Assert(res, Equals, true)

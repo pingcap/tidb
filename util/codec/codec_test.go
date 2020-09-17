@@ -1235,7 +1235,7 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 	// Test hash value of the first 12 `Null` columns
 	for i := 0; i < 12; i++ {
 		c.Assert(chk.GetRow(0).IsNull(i), Equals, true)
-		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel)
+		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
 		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
 		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
 		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)
@@ -1260,7 +1260,7 @@ func (s *testCodecSuite) TestHashChunkColumns(c *C) {
 		rowHash = []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
 		c.Assert(chk.GetRow(0).IsNull(i), Equals, false)
-		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel)
+		err1 := HashChunkSelected(sc, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
 		err2 := HashChunkRow(sc, rowHash[0], chk.GetRow(0), tps, colIdx[i:i+1], buf)
 		err3 := HashChunkRow(sc, rowHash[1], chk.GetRow(1), tps, colIdx[i:i+1], buf)
 		err4 := HashChunkRow(sc, rowHash[2], chk.GetRow(2), tps, colIdx[i:i+1], buf)

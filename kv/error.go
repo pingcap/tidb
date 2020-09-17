@@ -14,6 +14,8 @@
 package kv
 
 import (
+	"strings"
+
 	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
 )
@@ -66,4 +68,25 @@ func IsTxnRetryableError(err error) bool {
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
 	return ErrNotExist.Equal(err)
+}
+
+// GetDuplicateErrorHandleString is used to concat the handle columns data with '-'.
+// This is consistent with MySQL.
+func GetDuplicateErrorHandleString(handle Handle) string {
+	dt, err := handle.Data()
+	if err != nil {
+		return err.Error()
+	}
+	var sb strings.Builder
+	for i, d := range dt {
+		if i != 0 {
+			sb.WriteString("-")
+		}
+		s, err := d.ToString()
+		if err != nil {
+			return err.Error()
+		}
+		sb.WriteString(s)
+	}
+	return sb.String()
 }

@@ -17,7 +17,6 @@ import (
 	"container/heap"
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 
 	"github.com/pingcap/failpoint"
@@ -29,10 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/stringutil"
 )
-
-var rowChunksLabel fmt.Stringer = stringutil.StringerStr("rowChunks")
 
 // SortExec represents sorting executor.
 type SortExec struct {
@@ -216,7 +212,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	}
 	e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	if config.GetGlobalConfig().OOMUseTmpStorage {
 		e.spillAction = e.rowChunks.ActionSpill()
 		failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
@@ -227,7 +223,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		})
 		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 		e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
-		e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
+		e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
 	}
 	for {
 		chk := newFirstChunk(e.children[0])
@@ -244,9 +240,9 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 				e.partitionList = append(e.partitionList, e.rowChunks)
 				e.rowChunks = chunk.NewSortedRowContainer(fields, e.maxChunkSize, byItemsDesc, e.keyColumns, e.keyCmpFuncs)
 				e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-				e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+				e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 				e.rowChunks.GetDiskTracker().AttachTo(e.diskTracker)
-				e.rowChunks.GetDiskTracker().SetLabel(rowChunksLabel)
+				e.rowChunks.GetDiskTracker().SetLabel(memory.LabelForRowChunks)
 				e.spillAction = e.rowChunks.ActionSpill()
 				failpoint.Inject("testSortedRowContainerSpill", func(val failpoint.Value) {
 					if val.(bool) {
@@ -423,7 +419,7 @@ func (e *TopNExec) loadChunksUntilTotalLimit(ctx context.Context) error {
 	e.chkHeap = &topNChunkHeap{e}
 	e.rowChunks = chunk.NewList(retTypes(e), e.initCap, e.maxChunkSize)
 	e.rowChunks.GetMemTracker().AttachTo(e.memTracker)
-	e.rowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+	e.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	for uint64(e.rowChunks.Len()) < e.totalLimit {
 		srcChk := newFirstChunk(e.children[0])
 		// adjust required rows by total limit
@@ -501,7 +497,7 @@ func (e *TopNExec) doCompaction() error {
 		newRowPtr := newRowChunks.AppendRow(e.rowChunks.GetRow(rowPtr))
 		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
-	newRowChunks.GetMemTracker().SetLabel(rowChunksLabel)
+	newRowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	e.memTracker.ReplaceChild(e.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())
 	e.rowChunks = newRowChunks
 
