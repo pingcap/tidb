@@ -870,6 +870,7 @@ const (
 	ErrWindowNoGroupOrderUnused                                     = 3597
 	ErrWindowExplainJSON                                            = 3598
 	ErrWindowFunctionIgnoresFrame                                   = 3599
+	ErrWarnCannotUsingHint                                          = 3637
 	ErrDataTruncatedFunctionalIndex                                 = 3751
 	ErrDataOutOfRangeFunctionalIndex                                = 3752
 	ErrFunctionalIndexOnJSONOrGeometryFunction                      = 3753

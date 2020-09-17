@@ -15,6 +15,7 @@ package planner
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"runtime/trace"
 	"strings"
@@ -23,8 +24,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser"
 	"github.com/pingcap/parser/ast"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
@@ -375,6 +378,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	}
 	var memoryQuotaHint, useToJAHint, useCascadesHint, maxExecutionTime, forceNthPlan *ast.TableOptimizerHint
 	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt int
+	setVars := make(map[string]string)
 	for _, hint := range hints {
 		switch hint.HintName.L {
 		case "memory_quota":
@@ -396,8 +400,39 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		case "nth_plan":
 			forceNthPlanCnt++
 			forceNthPlan = hint
+		case "set_var":
+			setVarHint := hint.HintData.(ast.HintSetVar)
+
+			// Not all session variables are permitted for use with SET_VAR
+			sysVar := variable.GetSysVar(setVarHint.VarName)
+			if sysVar == nil || !sysVar.SetVarHintApply {
+				warn := terror.ClassUtil.New(errno.ErrWarnCannotUsingHint, fmt.Sprintf(errno.MySQLErrName[errno.ErrWarnCannotUsingHint], setVarHint.VarName, hint.HintName.O))
+				warns = append(warns, warn)
+				continue
+			}
+
+			// If several hints with the same variable name appear in the same statement, the first one is applied and the others are ignored with a warning
+			if _, ok := setVars[setVarHint.VarName]; ok {
+				msg := fmt.Sprintf("%s(%s=%s)", hint.HintName.O, setVarHint.VarName, setVarHint.Value)
+				warn := terror.ClassUtil.New(errno.ErrWarnConflictingHint, fmt.Sprintf(errno.MySQLErrName[errno.ErrWarnConflictingHint], msg))
+				warns = append(warns, warn)
+				continue
+			}
+
+			// @todo
+			// Because the SET_VAR hint applies only to session variables, session scope is implicit, and SESSION, @@SESSION., and @@ are neither needed nor permitted. Including explicit session-indicator syntax results in the SET_VAR hint being ignored with a warning.
+
+			// @todo
+			// A SET_VAR hint is ignored with a warning if no system variable has the specified name or the variable value is incorrect:
+
+			// @todo
+			// The SET_VAR hint is permitted only at the statement level. If used in a subquery, the hint is ignored with a warning.
+
+			setVars[setVarHint.VarName] = setVarHint.Value
 		}
 	}
+	stmtHints.SetVars = setVars
+
 	// Handle MEMORY_QUOTA
 	if memoryQuotaHintCnt != 0 {
 		if memoryQuotaHintCnt > 1 {
