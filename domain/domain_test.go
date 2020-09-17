@@ -266,7 +266,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(is, NotNil)
 
 	// for updating the self schema version
-	goCtx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	goCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
 	cancel()
 	c.Assert(err, IsNil)
@@ -274,7 +274,7 @@ func (*testSuite) TestT(c *C) {
 	c.Assert(snapIs, NotNil)
 	c.Assert(err, IsNil)
 	// Make sure that the self schema version doesn't be changed.
-	goCtx, cancel = context.WithTimeout(context.Background(), 10*time.Millisecond)
+	goCtx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
 	err = dd.SchemaSyncer().OwnerCheckAllVersions(goCtx, is.SchemaMetaVersion())
 	cancel()
 	c.Assert(err, IsNil)

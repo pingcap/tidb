@@ -155,6 +155,10 @@ func (s *serialTestStateChangeSuite) TestShowCreateTable(c *C) {
 			if got != expected {
 				checkErr = errors.Errorf("got %s, expected %s", got, expected)
 			}
+			checkErr = result.Close()
+			if checkErr != nil {
+				return
+			}
 		}
 	}
 	d := s.dom.DDL()

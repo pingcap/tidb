@@ -14,13 +14,15 @@ package core
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
@@ -28,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/math"
 	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/util/set"
 )
 
 // partitionProcessor rewrites the ast for table partition.
@@ -694,8 +697,124 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune, unsigned 
 	return start, end
 }
 
+func (s *partitionProcessor) resolveAccessPaths(ds *DataSource) error {
+	possiblePaths, err := getPossibleAccessPaths(
+		ds.ctx, &tableHintInfo{indexMergeHintList: ds.indexMergeHints, indexHintList: ds.IndexHints},
+		ds.astIndexHints, ds.table, ds.DBName, ds.tableInfo.Name)
+	if err != nil {
+		return err
+	}
+	possiblePaths, err = filterPathByIsolationRead(ds.ctx, possiblePaths, ds.DBName)
+	if err != nil {
+		return err
+	}
+	ds.possibleAccessPaths = possiblePaths
+	return nil
+}
+
+func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName model.CIStr) error {
+	// index hint
+	if len(ds.IndexHints) > 0 {
+		newIndexHint := make([]indexHintInfo, 0, len(ds.IndexHints))
+		for _, idxHint := range ds.IndexHints {
+			if len(idxHint.partitions) == 0 {
+				newIndexHint = append(newIndexHint, idxHint)
+			} else {
+				for _, p := range idxHint.partitions {
+					if p.String() == partitionName.String() {
+						newIndexHint = append(newIndexHint, idxHint)
+						break
+					}
+				}
+			}
+		}
+		ds.IndexHints = newIndexHint
+	}
+
+	// index merge hint
+	if len(ds.indexMergeHints) > 0 {
+		newIndexMergeHint := make([]indexHintInfo, 0, len(ds.indexMergeHints))
+		for _, idxHint := range ds.indexMergeHints {
+			if len(idxHint.partitions) == 0 {
+				newIndexMergeHint = append(newIndexMergeHint, idxHint)
+			} else {
+				for _, p := range idxHint.partitions {
+					if p.String() == partitionName.String() {
+						newIndexMergeHint = append(newIndexMergeHint, idxHint)
+						break
+					}
+				}
+			}
+		}
+		ds.indexMergeHints = newIndexMergeHint
+	}
+
+	// read from storage hint
+	if ds.preferStoreType&preferTiKV > 0 {
+		if len(ds.preferPartitions[preferTiKV]) > 0 {
+			ds.preferStoreType ^= preferTiKV
+			for _, p := range ds.preferPartitions[preferTiKV] {
+				if p.String() == partitionName.String() {
+					ds.preferStoreType |= preferTiKV
+				}
+			}
+		}
+	}
+	if ds.preferStoreType&preferTiFlash > 0 {
+		if len(ds.preferPartitions[preferTiFlash]) > 0 {
+			ds.preferStoreType ^= preferTiFlash
+			for _, p := range ds.preferPartitions[preferTiFlash] {
+				if p.String() == partitionName.String() {
+					ds.preferStoreType |= preferTiFlash
+				}
+			}
+		}
+	}
+	if ds.preferStoreType&preferTiFlash != 0 && ds.preferStoreType&preferTiKV != 0 {
+		ds.ctx.GetSessionVars().StmtCtx.AppendWarning(
+			errors.New("hint `read_from_storage` has conflict storage type for the partition " + partitionName.L))
+	}
+
+	return s.resolveAccessPaths(ds)
+}
+
+func checkTableHintsApplicableForPartition(partitions []model.CIStr, partitionSet set.StringSet) []string {
+	var unknownPartitions []string
+	for _, p := range partitions {
+		if !partitionSet.Exist(p.L) {
+			unknownPartitions = append(unknownPartitions, p.L)
+		}
+	}
+	return unknownPartitions
+}
+
+func appendWarnForUnknownPartitions(ctx sessionctx.Context, hintName string, unknownPartitions []string) {
+	if len(unknownPartitions) == 0 {
+		return
+	}
+	ctx.GetSessionVars().StmtCtx.AppendWarning(
+		errors.New(fmt.Sprintf("Unknown partitions (%s) in optimizer hint %s",
+			strings.Join(unknownPartitions, ","), hintName)))
+}
+
+func (s *partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set.StringSet) {
+	for _, idxHint := range ds.IndexHints {
+		unknownPartitions := checkTableHintsApplicableForPartition(idxHint.partitions, partitionSet)
+		appendWarnForUnknownPartitions(ds.ctx, restore2IndexHint(idxHint.hintTypeString(), idxHint), unknownPartitions)
+	}
+	for _, idxMergeHint := range ds.indexMergeHints {
+		unknownPartitions := checkTableHintsApplicableForPartition(idxMergeHint.partitions, partitionSet)
+		appendWarnForUnknownPartitions(ds.ctx, restore2IndexHint(HintIndexMerge, idxMergeHint), unknownPartitions)
+	}
+	unknownPartitions := checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiKV], partitionSet)
+	unknownPartitions = append(unknownPartitions,
+		checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiFlash], partitionSet)...)
+	appendWarnForUnknownPartitions(ds.ctx, HintReadFromStorage, unknownPartitions)
+}
+
 func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.PartitionInfo, or partitionRangeOR) (LogicalPlan, error) {
 	children := make([]LogicalPlan, 0, len(pi.Definitions))
+	partitionNameSet := make(set.StringSet)
 	for _, r := range or {
 		for i := r.start; i < r.end; i++ {
 			// This is for `table partition (p0,p1)` syntax, only union the specified partition if has specified partitions.
@@ -710,19 +829,21 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			newDataSource.schema = ds.schema.Clone()
 			newDataSource.isPartition = true
 			newDataSource.physicalTableID = pi.Definitions[i].ID
-			newDataSource.possibleAccessPaths = make([]*util.AccessPath, len(ds.possibleAccessPaths))
-			for i := range ds.possibleAccessPaths {
-				newPath := *ds.possibleAccessPaths[i]
-				newDataSource.possibleAccessPaths[i] = &newPath
-			}
+
 			// There are many expression nodes in the plan tree use the original datasource
 			// id as FromID. So we set the id of the newDataSource with the original one to
 			// avoid traversing the whole plan tree to update the references.
 			newDataSource.id = ds.id
 			newDataSource.statisticTable = getStatsTable(ds.SCtx(), ds.table.Meta(), pi.Definitions[i].ID)
+			err := s.resolveOptimizeHint(&newDataSource, pi.Definitions[i].Name)
+			partitionNameSet.Insert(pi.Definitions[i].Name.L)
+			if err != nil {
+				return nil, err
+			}
 			children = append(children, &newDataSource)
 		}
 	}
+	s.checkHintsApplicable(ds, partitionNameSet)
 
 	if len(children) == 0 {
 		// No result after table pruning.

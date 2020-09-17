@@ -323,6 +323,13 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 	switch aggFuncDesc.Mode {
 	case aggregation.DedupMode:
 	default:
+		switch fieldType.Tp {
+		case mysql.TypeEnum:
+			return &maxMin4Enum{base}
+		case mysql.TypeSet:
+			return &maxMin4Set{base}
+		}
+
 		switch evalType {
 		case types.ETInt:
 			if mysql.HasUnsignedFlag(fieldType.Flag) {
@@ -446,14 +453,10 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildStdDevPop builds the AggFunc implementation for function "STD()/STDDEV()/STDDEV_POP()"
 func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	base := baseStdDevPopAggFunc{
-		varPop4Float64{
-			baseVarPopAggFunc{
-				baseAggFunc{
-					args:    aggFuncDesc.Args,
-					ordinal: ordinal,
-				},
-			},
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
 		},
 	}
 	switch aggFuncDesc.Mode {
@@ -461,9 +464,9 @@ func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		return nil
 	default:
 		if aggFuncDesc.HasDistinct {
-			return &stdDevPop4DistinctFloat64{base}
+			return &stdDevPop4DistinctFloat64{varPop4DistinctFloat64{base}}
 		}
-		return &stdDevPop4Float64{base}
+		return &stdDevPop4Float64{varPop4Float64{base}}
 	}
 }
 

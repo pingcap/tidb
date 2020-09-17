@@ -780,6 +780,9 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h int64, r []types.Da
 		}
 		err = t.addDeleteBinlog(ctx, binlogRow, colIDs)
 	}
+	if ctx.GetSessionVars().TxnCtx == nil {
+		return nil
+	}
 	colSize := make(map[int64]int64, len(t.Cols()))
 	sc := ctx.GetSessionVars().StmtCtx
 	for id, col := range t.Cols() {
