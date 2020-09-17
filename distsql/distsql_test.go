@@ -312,7 +312,7 @@ func (s *testSuite) TestChecksum(c *C) {
 		Build()
 	c.Assert(err, IsNil)
 
-	response, err := Checksum(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars, s.sctx.GetSessionVars().StmtCtx.MemTracker)
+	response, err := Checksum(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars)
 	c.Assert(err, IsNil)
 
 	result, ok := response.(*selectResult)

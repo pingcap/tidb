@@ -510,24 +510,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
 
-		worker.actionOnExceed.cond.L.Lock()
-		if task.id > worker.actionOnExceed.cond.maxID {
-			worker.actionOnExceed.cond.maxID = task.id
-		}
-		// If actionOnExceed has been triggered and there is no token have been teared before,
-		// tear one token.
-		if worker.actionOnExceed.cond.exceed && !worker.actionOnExceed.cond.isTokenDestroyed {
-			worker.actionOnExceed.cond.existedTokenNum = worker.actionOnExceed.cond.existedTokenNum - 1
-			worker.actionOnExceed.cond.isTokenDestroyed = true
-		} else {
-			worker.sendRate.putToken()
-		}
-
-		// check worker whether need to suspend running.
-		for worker.actionOnExceed.cond.exceed {
-			worker.actionOnExceed.cond.Wait()
-		}
-		worker.actionOnExceed.cond.L.Unlock()
+		worker.actionOnExceed.destroyTokenIfNeeded(task.id, worker.sendRate)
 
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
@@ -676,7 +659,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		if !ok || closed {
 			return nil, nil
 		}
-		it.broadcastWorkersIfNeeded(false)
+		it.actionOnExceed.broadcastWorkersIfNeeded(it.respChan, -1)
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
@@ -695,7 +678,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
-			it.broadcastWorkersIfNeeded(true)
+			it.actionOnExceed.broadcastWorkersIfNeeded(nil, it.tasks[it.curr].id)
 		}
 	}
 
@@ -708,34 +691,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		return nil, errors.Trace(err)
 	}
 	return resp, nil
-}
-
-func (it *copIterator) broadcastWorkersIfNeeded(keepOrder bool) {
-	// broadcast is to recover the copWorkers from suspending and reset the rateLimitAction status.
-	// It should be called under it.actionOnExceed.cond critical area
-	broadcast := func() {
-		it.actionOnExceed.cond.exceed = false
-		it.actionOnExceed.cond.Broadcast()
-		it.actionOnExceed.once = sync.Once{}
-		logutil.BgLogger().Debug("rateLimitAction Broadcast")
-	}
-	if !keepOrder {
-		it.actionOnExceed.cond.L.Lock()
-		// The respCh have been drained out
-		if it.actionOnExceed.cond.exceed && len(it.respChan) < 1 {
-			broadcast()
-		}
-		it.actionOnExceed.cond.L.Unlock()
-	} else {
-		it.actionOnExceed.cond.L.Lock()
-		// The tasks whose id is less than maxID are assumed that being sending to their task channel.
-		// So the response channel would be thought as drained out if the current taskID is greater or equal than
-		// the maxID as all the workers are being suspended at that time.
-		if it.actionOnExceed.cond.exceed && it.tasks[it.curr].id >= it.actionOnExceed.cond.maxID {
-			broadcast()
-		}
-		it.actionOnExceed.cond.L.Unlock()
-	}
 }
 
 // Associate each region with an independent backoffer. In this way, when multiple regions are
@@ -1206,14 +1161,8 @@ func (it *copIterator) Close() error {
 	if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
 		close(it.finishCh)
 	}
-	it.actionOnExceed.enabled = false
 	it.rpcCancel.CancelAll()
-	// broadcast the signal in order not to leak worker goroutine if it is being suspended
-	it.actionOnExceed.cond.L.Lock()
-	it.actionOnExceed.cond.exceed = false
-	it.actionOnExceed.cond.isTokenDestroyed = false
-	it.actionOnExceed.cond.Broadcast()
-	it.actionOnExceed.cond.L.Unlock()
+	it.actionOnExceed.close()
 	it.wg.Wait()
 	return nil
 }
@@ -1329,4 +1278,70 @@ func (e *rateLimitAction) SetLogHook(hook func(uint64)) {
 // SetFallback implements ActionOnExceed.SetFallback
 func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
+}
+
+// broadcastWorkersIfNeeded will check whether the copWorkers is under suspended status.
+// If they are, `broadcastWorkersIfNeeded` would try to recover them if there are no more
+// copResponse remained in the channel.
+func (e *rateLimitAction) broadcastWorkersIfNeeded(respCh chan *copResponse, currTaskID int) {
+	broadcast := func() {
+		e.cond.exceed = false
+		e.cond.Broadcast()
+		e.once = sync.Once{}
+		logutil.BgLogger().Debug("rateLimitAction Broadcast")
+	}
+	e.conditionLock()
+	defer e.conditionUnlock()
+	if e.cond.exceed &&
+		// The respCh have been drained out
+		((respCh != nil && len(respCh) < 1) ||
+			// The tasks whose id is less than maxID are assumed that being sending to their task channel.
+			// So the response channel would be thought as drained out if the current taskID is greater or equal than
+			// the maxID as all the workers are being suspended at that time.
+			(respCh == nil && currTaskID >= e.cond.maxID)) {
+		// notify all workers return to work
+		broadcast()
+	}
+}
+
+// destroyTokenIfNeeded will check the `exceed` flag after copWorker finished to solve one task.
+// If the exceed flag is true and there is no token destroyed before, the token will be destroyed
+// while the token would be returned after each task finishing normally.
+func (e *rateLimitAction) destroyTokenIfNeeded(taskID int, sendRate *rateLimit) {
+	e.conditionLock()
+	defer e.conditionUnlock()
+	if taskID > e.cond.maxID {
+		e.cond.maxID = taskID
+	}
+	// If actionOnExceed has been triggered and there is no token have been teared before,
+	// tear one token.
+	if e.cond.exceed && !e.cond.isTokenDestroyed {
+		e.cond.existedTokenNum = e.cond.existedTokenNum - 1
+		e.cond.isTokenDestroyed = true
+	} else {
+		sendRate.putToken()
+	}
+
+	// check worker whether need to suspend running.
+	for e.cond.exceed {
+		e.cond.Wait()
+	}
+}
+
+func (e *rateLimitAction) conditionLock() {
+	e.cond.L.Lock()
+}
+
+func (e *rateLimitAction) conditionUnlock() {
+	e.cond.L.Unlock()
+}
+
+// broadcast the signal in order not to leak worker goroutine if it is being suspended
+func (e *rateLimitAction) close() {
+	e.enabled = false
+	e.conditionLock()
+	defer e.conditionUnlock()
+	e.cond.exceed = false
+	e.cond.isTokenDestroyed = false
+	e.cond.Broadcast()
 }
