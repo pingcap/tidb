@@ -689,7 +689,7 @@ var defaultConf = Config{
 	},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
-	EnableRedactLog:              DefTiDBRedactLog,
+	EnableRedactLog:            DefTiDBRedactLog,
 }
 
 var (
