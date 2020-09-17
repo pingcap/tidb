@@ -977,13 +977,13 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}
 	}
-	rpcStart := time.Now()
+	prefetchStart := time.Now()
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
 	if e.stats != nil {
-		e.stats.prefetch += time.Since(rpcStart)
+		e.stats.prefetch += time.Since(prefetchStart)
 	}
 
 	// append warnings and get no duplicated error rows

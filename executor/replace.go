@@ -201,14 +201,14 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}
 	}
-	rpcStart := time.Now()
+	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
 	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
 	if e.stats != nil {
-		e.stats.prefetch = time.Since(rpcStart)
+		e.stats.prefetch = time.Since(prefetchStart)
 	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(newRows)))
 	for _, r := range toBeCheckedRows {
