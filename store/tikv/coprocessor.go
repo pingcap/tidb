@@ -94,7 +94,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.sendRate = newRateLimit(it.concurrency)
 	}
 	workersCond := sync.NewCond(&sync.Mutex{})
-	it.actionOnExceed = newTaskRateLimitAction(it.sendRate, workersCond)
+	it.actionOnExceed = newrateLimitAction(it.sendRate, workersCond)
 	if it.memTracker != nil {
 		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
@@ -413,7 +413,7 @@ type copIterator struct {
 
 	minCommitTSPushed
 
-	actionOnExceed *taskRateLimitAction
+	actionOnExceed *rateLimitAction
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -433,7 +433,7 @@ type copIteratorWorker struct {
 
 	sendRate *rateLimit
 
-	actionOnExceed *taskRateLimitAction
+	actionOnExceed *rateLimitAction
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -516,9 +516,9 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		}
 		// If actionOnExceed has been triggered and there is no token have been teared before,
 		// tear one token.
-		if worker.actionOnExceed.cond.exceed && !worker.actionOnExceed.cond.isTokenDiscarded {
+		if worker.actionOnExceed.cond.exceed && !worker.actionOnExceed.cond.isTokenDestroyed {
 			worker.actionOnExceed.cond.existedTokenNum = worker.actionOnExceed.cond.existedTokenNum - 1
-			worker.actionOnExceed.cond.isTokenDiscarded = true
+			worker.actionOnExceed.cond.isTokenDestroyed = true
 		} else {
 			worker.sendRate.putToken()
 		}
@@ -668,14 +668,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		closed bool
 	)
 
-	// broadcast is to recover the copWorkers from suspending and reset the taskRateLimitAction status.
-	// It should be called under it.actionOnExceed.cond critical area
-	broadcast := func() {
-		it.actionOnExceed.cond.exceed = false
-		it.actionOnExceed.cond.Broadcast()
-		it.actionOnExceed.once = sync.Once{}
-		logutil.BgLogger().Debug("taskRateLimitAction Broadcast")
-	}
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 	if it.respChan != nil {
@@ -684,12 +676,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		if !ok || closed {
 			return nil, nil
 		}
-		it.actionOnExceed.cond.L.Lock()
-		// The respCh have been drained out
-		if it.actionOnExceed.cond.exceed && len(it.respChan) < 1 {
-			broadcast()
-		}
-		it.actionOnExceed.cond.L.Unlock()
+		it.broadcastWorkersIfNeeded(false)
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
@@ -708,14 +695,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
-			it.actionOnExceed.cond.L.Lock()
-			// The tasks whose id is less than maxID are assumed that being sending to their task channel.
-			// So the response channel would be thought as drained out if the current taskID is greater or equal than
-			// the maxID as all the workers are being suspended at that time.
-			if it.actionOnExceed.cond.exceed && it.tasks[it.curr].id >= it.actionOnExceed.cond.maxID {
-				broadcast()
-			}
-			it.actionOnExceed.cond.L.Unlock()
+			it.broadcastWorkersIfNeeded(true)
 		}
 	}
 
@@ -728,6 +708,34 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		return nil, errors.Trace(err)
 	}
 	return resp, nil
+}
+
+func (it *copIterator) broadcastWorkersIfNeeded(keepOrder bool) {
+	// broadcast is to recover the copWorkers from suspending and reset the rateLimitAction status.
+	// It should be called under it.actionOnExceed.cond critical area
+	broadcast := func() {
+		it.actionOnExceed.cond.exceed = false
+		it.actionOnExceed.cond.Broadcast()
+		it.actionOnExceed.once = sync.Once{}
+		logutil.BgLogger().Debug("rateLimitAction Broadcast")
+	}
+	if !keepOrder {
+		it.actionOnExceed.cond.L.Lock()
+		// The respCh have been drained out
+		if it.actionOnExceed.cond.exceed && len(it.respChan) < 1 {
+			broadcast()
+		}
+		it.actionOnExceed.cond.L.Unlock()
+	} else {
+		it.actionOnExceed.cond.L.Lock()
+		// The tasks whose id is less than maxID are assumed that being sending to their task channel.
+		// So the response channel would be thought as drained out if the current taskID is greater or equal than
+		// the maxID as all the workers are being suspended at that time.
+		if it.actionOnExceed.cond.exceed && it.tasks[it.curr].id >= it.actionOnExceed.cond.maxID {
+			broadcast()
+		}
+		it.actionOnExceed.cond.L.Unlock()
+	}
 }
 
 // Associate each region with an independent backoffer. In this way, when multiple regions are
@@ -1203,7 +1211,7 @@ func (it *copIterator) Close() error {
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
 	it.actionOnExceed.cond.L.Lock()
 	it.actionOnExceed.cond.exceed = false
-	it.actionOnExceed.cond.isTokenDiscarded = false
+	it.actionOnExceed.cond.isTokenDestroyed = false
 	it.actionOnExceed.cond.Broadcast()
 	it.actionOnExceed.cond.L.Unlock()
 	it.wg.Wait()
@@ -1248,10 +1256,9 @@ func (it copErrorResponse) Close() error {
 	return nil
 }
 
-type taskRateLimitAction struct {
+type rateLimitAction struct {
 	enabled        bool
 	fallbackAction memory.ActionOnExceed
-	sendRate       *rateLimit
 	once           sync.Once
 	// totalTokenNum indicates the total token at initial
 	totalTokenNum uint
@@ -1259,25 +1266,24 @@ type taskRateLimitAction struct {
 		*sync.Cond
 		// exceed indicates whether have encountered OOM situation.
 		exceed bool
-		// validTokenNum indicates the count of tickets which still exists
+		// existedTokenNum indicates the count of tokens which still exists
 		existedTokenNum uint
-		// isTokenDiscarded indicates whether there is one token has been discarded during after Action
-		isTokenDiscarded bool
+		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action
+		isTokenDestroyed bool
 		// maxID indicates the max id of the running copTask
 		maxID int
 	}
 }
 
-func newTaskRateLimitAction(sendRate *rateLimit, cond *sync.Cond) *taskRateLimitAction {
-	return &taskRateLimitAction{
-		sendRate:      sendRate,
+func newrateLimitAction(sendRate *rateLimit, cond *sync.Cond) *rateLimitAction {
+	return &rateLimitAction{
 		once:          sync.Once{},
 		totalTokenNum: uint(cap(sendRate.token)),
 		cond: struct {
 			*sync.Cond
 			exceed           bool
 			existedTokenNum  uint
-			isTokenDiscarded bool
+			isTokenDestroyed bool
 			maxID            int
 		}{
 			Cond:            cond,
@@ -1288,8 +1294,11 @@ func newTaskRateLimitAction(sendRate *rateLimit, cond *sync.Cond) *taskRateLimit
 }
 
 // Action implements ActionOnExceed.Action
-func (e *taskRateLimitAction) Action(t *memory.Tracker) {
-	if !e.isRunning(t) {
+func (e *rateLimitAction) Action(t *memory.Tracker) {
+	if !e.enabled {
+		if e.fallbackAction != nil {
+			e.fallbackAction.Action(t)
+		}
 		return
 	}
 
@@ -1297,37 +1306,27 @@ func (e *taskRateLimitAction) Action(t *memory.Tracker) {
 		e.cond.L.Lock()
 		defer e.cond.L.Unlock()
 		if e.cond.existedTokenNum < 2 {
-			logutil.BgLogger().Info("taskRateLimitAction delegate to fallback action",
-				zap.Int("ticketTotal", cap(e.sendRate.token)))
+			logutil.BgLogger().Debug("rateLimitAction delegate to fallback action",
+				zap.Uint("totalTokenNum", e.totalTokenNum))
 			if e.fallbackAction != nil {
 				e.fallbackAction.Action(t)
 			}
 			return
 		}
-		logutil.BgLogger().Info("taskRateLimitAction exceed signal.",
+		logutil.BgLogger().Info("rateLimitAction exceed signal.",
 			zap.Int64("consumed", t.BytesConsumed()),
-			zap.Uint("discardedToken", e.totalTokenNum-e.cond.existedTokenNum))
-		e.cond.isTokenDiscarded = false
+			zap.Uint("existedToken", e.cond.existedTokenNum))
+		e.cond.isTokenDestroyed = false
 		e.cond.exceed = true
 	})
 }
 
-func (e *taskRateLimitAction) isRunning(t *memory.Tracker) (allowAction bool) {
-	if !e.enabled {
-		if e.fallbackAction != nil {
-			e.fallbackAction.Action(t)
-		}
-		return false
-	}
-	return true
-}
-
 // SetLogHook implements ActionOnExceed.SetLogHook
-func (e *taskRateLimitAction) SetLogHook(hook func(uint64)) {
+func (e *rateLimitAction) SetLogHook(hook func(uint64)) {
 
 }
 
 // SetFallback implements ActionOnExceed.SetFallback
-func (e *taskRateLimitAction) SetFallback(a memory.ActionOnExceed) {
+func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
 }

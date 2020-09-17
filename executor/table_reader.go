@@ -160,7 +160,6 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		e.feedback.Invalidate()
 		return err
 	}
-
 	if len(secondPartRanges) == 0 {
 		e.resultHandler.open(nil, firstResult)
 		return nil
