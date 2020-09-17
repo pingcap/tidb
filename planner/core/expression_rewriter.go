@@ -577,21 +577,11 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		return
 	}
 	plan4Agg := LogicalAggregation{
-<<<<<<< HEAD
-		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
+		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
 	}.Init(er.sctx)
 	plan4Agg.SetChildren(np)
-	firstRowResultCol := &expression.Column{
-		ColName:  model.NewCIStr("col_firstRow"),
-=======
-		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
-	}.Init(er.sctx, er.b.getSelectOffset())
-	if hint := er.b.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.aggHints
-	}
-	plan4Agg.SetChildren(np)
 	maxResultCol := &expression.Column{
->>>>>>> 8f6d120... planner: fix wrong behavior for != any() (#20058)
+		ColName:  model.NewCIStr("col_firstRow"),
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  maxFunc.RetTp,
 	}
@@ -600,16 +590,9 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
-<<<<<<< HEAD
-	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
-	gtFunc := expression.NewFunctionInternal(er.sctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count, expression.One)
-	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol)
-=======
-	plan4Agg.names = append(plan4Agg.names, types.EmptyName, types.EmptyName)
 	plan4Agg.SetSchema(expression.NewSchema(maxResultCol, count))
-	gtFunc := expression.NewFunctionInternal(er.sctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count, expression.NewOne())
+	gtFunc := expression.NewFunctionInternal(er.sctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count, expression.One)
 	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, maxResultCol)
->>>>>>> 8f6d120... planner: fix wrong behavior for != any() (#20058)
 	cond := expression.ComposeDNFCondition(er.sctx, gtFunc, neCond)
 	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, false)
 }
