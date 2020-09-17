@@ -139,7 +139,7 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.MemoryUsage() > 0, IsTrue)
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
 
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 
@@ -170,7 +170,7 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.MemoryUsage() >= 0, IsTrue)
 
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
 	c.Assert(statsTbl.Pseudo, IsFalse)
 
 	// If the new schema add a column, the table stats can still work.
@@ -184,7 +184,7 @@ func (s *testStatsSuite) TestStatsCacheMemTracker(c *C) {
 	time.Sleep(10 * time.Millisecond)
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	c.Assert(statsTbl.Pseudo, IsFalse)
-	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage(), Equals, do.StatsHandle().GetMemConsumed())
+	c.Assert(do.StatsHandle().GetAllTableStatsMemUsage4Test(), Equals, do.StatsHandle().GetMemConsumed())
 }
 
 func assertTableEqual(c *C, a *statistics.Table, b *statistics.Table) {

@@ -230,15 +230,16 @@ func (h *Handle) GetMemConsumed() (size int64) {
 	return h.statsCache.BytesConsumed()
 }
 
-// EraseTable4Test erase a table by ID and add new empty (with Meta) table, only used in test.
+// EraseTable4Test erase a table by ID and add new empty (with Meta) table.
+// ONLY used for test.
 func (h *Handle) EraseTable4Test(ID int64) {
 	table, _ := h.statsCache.Lookup(ID)
 	h.statsCache.Update([]*statistics.Table{table.CopyWithoutBucketsAndCMS()}, nil, h.statsCache.GetVersion())
 }
 
-// GetAllTableStatsMemUsage get all the mem usage with true table.
-// only used by test.
-func (h *Handle) GetAllTableStatsMemUsage() int64 {
+// GetAllTableStatsMemUsage4Test get all the mem usage with true table.
+// ONLY used for test.
+func (h *Handle) GetAllTableStatsMemUsage4Test() int64 {
 	data := h.statsCache.GetAll()
 	allUsage := int64(0)
 	for _, t := range data {
@@ -267,7 +268,6 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 func (h *Handle) SetSimpleCache() {
 	h.sType = SimpleStatsCacheType
 	h.statsCache = newSimpleStatsCache(h.mu.ctx.GetSessionVars().MemQuotaStatistic)
-
 }
 
 // SetBytesLimit sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.

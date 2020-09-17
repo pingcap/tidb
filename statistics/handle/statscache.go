@@ -357,9 +357,9 @@ func (sc *simpleStatsCache) Insert(table *statistics.Table) {
 	}
 	var key = statsCacheKey(table.PhysicalID)
 	mem := table.MemoryUsage()
-	if mem > sc.memCapacity { // ignore this kv pair if its size is too large
-		return
-	}
+	// We do not need to check whether mem > sc.memCapacity, because the lower
+	// bound of statistics is set, it's almost impossible the stats memory usage
+	// of one table exceeds the capacity.
 	for mem+sc.memTracker.BytesConsumed() > sc.memCapacity {
 		evictedKey, evictedValue, evicted := sc.cache.RemoveOldest()
 		if !evicted {
@@ -404,6 +404,7 @@ func (sc *simpleStatsCache) GetAll() []*statistics.Table {
 // Update updates the statistics table cache.
 func (sc *simpleStatsCache) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) {
 	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	if sc.version <= newVersion {
 		sc.version = newVersion
 		for _, id := range deletedIDs {
@@ -413,7 +414,6 @@ func (sc *simpleStatsCache) Update(tables []*statistics.Table, deletedIDs []int6
 			sc.Insert(tbl)
 		}
 	}
-	sc.mu.Unlock()
 }
 
 // GetBytesLimit get the limits of memory.
