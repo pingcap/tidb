@@ -140,7 +140,7 @@ func (d *planDigester) normalizePlanTree(p PhysicalPlan) {
 }
 
 func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, store kv.StoreType, depth int) {
-	taskTypeInfo := plancodec.EncodeTaskType(isRoot, store)
+	taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(isRoot, store)
 	plancodec.NormalizePlanNode(depth, p.TP(), taskTypeInfo, p.ExplainNormalizedInfo(), &d.buf)
 	d.encodedPlans[p.ID()] = true
 

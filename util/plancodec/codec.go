@@ -363,6 +363,16 @@ func EncodeTaskType(isRoot bool, storeType kv.StoreType) string {
 	return copTaskType + idSeparator + strconv.Itoa((int)(storeType))
 }
 
+// EncodeTaskTypeForNormalize is used to encode task type to a string. Only use for normalize plan.
+func EncodeTaskTypeForNormalize(isRoot bool, storeType kv.StoreType) string {
+	if isRoot {
+		return rootTaskType
+	} else if storeType == kv.TiKV {
+		return copTaskType
+	}
+	return copTaskType + idSeparator + strconv.Itoa((int)(storeType))
+}
+
 func decodeTaskType(str string) (string, error) {
 	segs := strings.Split(str, idSeparator)
 	if segs[0] == rootTaskType {

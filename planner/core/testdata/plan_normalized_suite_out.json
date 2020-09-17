@@ -5,22 +5,22 @@
       {
         "SQL": "select * from t1;",
         "Plan": [
-          " TableReader root      ",
-          " └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false"
+          " TableReader root ",
+          " └─TableScan cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "select * from t1 where a<1;",
         "Plan": [
-          " TableReader root      ",
-          " └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false"
+          " TableReader root ",
+          " └─TableScan cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "select * from t1 where a>1",
         "Plan": [
-          " TableReader root      ",
-          " └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false"
+          " TableReader root ",
+          " └─TableScan cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
@@ -38,97 +38,97 @@
       {
         "SQL": "select * from t1 where b=1",
         "Plan": [
-          " IndexLookUp root      ",
-          " ├─IndexScan cop[tikv] table:t1, index:b(b), range:[?,?], keep order:false",
-          " └─TableScan cop[tikv] table:t1, keep order:false"
+          " IndexLookUp root ",
+          " ├─IndexScan cop  table:t1, index:b(b), range:[?,?], keep order:false",
+          " └─TableScan cop  table:t1, keep order:false"
         ]
       },
       {
         "SQL": "select a+1,b+2 from t1 use index(b) where b=3",
         "Plan": [
-          " Projection    root      plus(test.t1.a, ?), plus(test.t1.b, ?)",
-          " └─IndexReader root      index:IndexRangeScan_5",
-          "   └─IndexScan cop[tikv] table:t1, index:b(b), range:[?,?], keep order:false"
+          " Projection    root plus(test.t1.a, ?), plus(test.t1.b, ?)",
+          " └─IndexReader root index:IndexRangeScan_5",
+          "   └─IndexScan cop  table:t1, index:b(b), range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
         "Plan": [
-          " Projection            root      test.t1.a, test.t1.b, test.t1.c",
-          " └─Apply               root      semi join, equal:eq(?, ?)",
-          "   ├─Projection        root      cast(test.t1.a), test.t1.a, test.t1.b, test.t1.c",
-          "   │ └─TableReader     root      ",
-          "   │   └─Selection     cop[tikv] gt(test.t1.b, ?)",
-          "   │     └─TableScan   cop[tikv] table:t1, range:[?,?], keep order:false",
-          "   └─StreamAgg         root      funcs:sum(?)->?",
-          "     └─TableReader     root      ",
-          "       └─StreamAgg     cop[tikv] funcs:sum(test.t2.b)->?",
-          "         └─Selection   cop[tikv] not(isnull(test.t2.b))",
-          "           └─TableScan cop[tikv] table:t2, range: decided by eq(test.t2.a, test.t1.a), keep order:false"
+          " Projection            root test.t1.a, test.t1.b, test.t1.c",
+          " └─Apply               root semi join, equal:eq(?, ?)",
+          "   ├─Projection        root cast(test.t1.a), test.t1.a, test.t1.b, test.t1.c",
+          "   │ └─TableReader     root ",
+          "   │   └─Selection     cop  gt(test.t1.b, ?)",
+          "   │     └─TableScan   cop  table:t1, range:[?,?], keep order:false",
+          "   └─StreamAgg         root funcs:sum(?)->?",
+          "     └─TableReader     root ",
+          "       └─StreamAgg     cop  funcs:sum(test.t2.b)->?",
+          "         └─Selection   cop  not(isnull(test.t2.b))",
+          "           └─TableScan cop  table:t2, range: decided by eq(test.t2.a, test.t1.a), keep order:false"
         ]
       },
       {
         "SQL": "SELECT * from t1 where a!=1 order by c limit 1",
         "Plan": [
-          " TopN            root      test.t1.c",
-          " └─TableReader   root      ",
-          "   └─TopN        cop[tikv] test.t1.c",
-          "     └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false"
+          " TopN            root test.t1.c",
+          " └─TableReader   root ",
+          "   └─TopN        cop  test.t1.c",
+          "     └─TableScan cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " MergeJoin       root      inner join, left key:test.t1.a, right key:test.t2.a",
-          " ├─TableReader   root      ",
-          " │ └─Selection   cop[tikv] gt(test.t1.c, ?)",
-          " │   └─TableScan cop[tikv] table:t1, range:[?,?], keep order:true",
-          " └─TableReader   root      ",
-          "   └─TableScan   cop[tikv] table:t2, range:[?,?], keep order:true"
+          " MergeJoin       root inner join, left key:test.t1.a, right key:test.t2.a",
+          " ├─TableReader   root ",
+          " │ └─Selection   cop  gt(test.t1.c, ?)",
+          " │   └─TableScan cop  table:t1, range:[?,?], keep order:true",
+          " └─TableReader   root ",
+          "   └─TableScan   cop  table:t2, range:[?,?], keep order:true"
         ]
       },
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " IndexJoin       root      inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a",
-          " ├─TableReader   root      ",
-          " │ └─Selection   cop[tikv] gt(test.t1.c, ?)",
-          " │   └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false",
-          " └─TableReader   root      ",
-          "   └─TableScan   cop[tikv] table:t2, range: decided by [test.t1.a], keep order:false"
+          " IndexJoin       root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a",
+          " ├─TableReader   root ",
+          " │ └─Selection   cop  gt(test.t1.c, ?)",
+          " │   └─TableScan cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader   root ",
+          "   └─TableScan   cop  table:t2, range: decided by [test.t1.a], keep order:false"
         ]
       },
       {
         "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " HashJoin        root      inner join, equal:eq(test.t1.a, test.t2.a)",
-          " ├─TableReader   root      ",
-          " │ └─Selection   cop[tikv] gt(test.t1.c, ?)",
-          " │   └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false",
-          " └─TableReader   root      ",
-          "   └─TableScan   cop[tikv] table:t2, range:[?,?], keep order:false"
+          " HashJoin        root inner join, equal:eq(test.t1.a, test.t2.a)",
+          " ├─TableReader   root ",
+          " │ └─Selection   cop  gt(test.t1.c, ?)",
+          " │   └─TableScan cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader   root ",
+          "   └─TableScan   cop  table:t2, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " HashJoin        root      inner join, equal:eq(test.t1.a, test.t2.a)",
-          " ├─TableReader   root      ",
-          " │ └─Selection   cop[tikv] gt(test.t1.c, ?)",
-          " │   └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false",
-          " └─TableReader   root      ",
-          "   └─TableScan   cop[tikv] table:t2, range:[?,?], keep order:false"
+          " HashJoin        root inner join, equal:eq(test.t1.a, test.t2.a)",
+          " ├─TableReader   root ",
+          " │ └─Selection   cop  gt(test.t1.c, ?)",
+          " │   └─TableScan cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader   root ",
+          "   └─TableScan   cop  table:t2, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " IndexJoin       root      inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a",
-          " ├─TableReader   root      ",
-          " │ └─Selection   cop[tikv] gt(test.t1.c, ?)",
-          " │   └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false",
-          " └─TableReader   root      ",
-          "   └─TableScan   cop[tikv] table:t2, range: decided by [test.t1.a], keep order:false"
+          " IndexJoin       root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a",
+          " ├─TableReader   root ",
+          " │ └─Selection   cop  gt(test.t1.c, ?)",
+          " │   └─TableScan cop  table:t1, range:[?,?], keep order:false",
+          " └─TableReader   root ",
+          "   └─TableScan   cop  table:t2, range: decided by [test.t1.a], keep order:false"
         ]
       },
       {
@@ -151,39 +151,39 @@
       {
         "SQL": "insert into t1 select * from t2 where t2.a>0 and t2.b!=0",
         "Plan": [
-          " TableReader   root      ",
-          " └─Selection   cop[tikv] ne(test.t2.b, ?)",
-          "   └─TableScan cop[tikv] table:t2, range:[?,?], keep order:false"
+          " TableReader   root ",
+          " └─Selection   cop  ne(test.t2.b, ?)",
+          "   └─TableScan cop  table:t2, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "update t1 set a=a+1",
         "Plan": [
-          " TableReader root      ",
-          " └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false"
+          " TableReader root ",
+          " └─TableScan cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "update t1 set a=a+1 where a>0",
         "Plan": [
-          " TableReader root      ",
-          " └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false"
+          " TableReader root ",
+          " └─TableScan cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "delete from t1",
         "Plan": [
-          " TableReader root      ",
-          " └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false"
+          " TableReader root ",
+          " └─TableScan cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "delete from t1 where a>0 and b=1 and c!=2",
         "Plan": [
-          " IndexLookUp   root      ",
-          " ├─IndexScan   cop[tikv] table:t1, index:b(b), range:[?,?], keep order:false",
-          " └─Selection   cop[tikv] ne(test.t1.c, ?)",
-          "   └─TableScan cop[tikv] table:t1, keep order:false"
+          " IndexLookUp   root ",
+          " ├─IndexScan   cop  table:t1, index:b(b), range:[?,?], keep order:false",
+          " └─Selection   cop  ne(test.t1.c, ?)",
+          "   └─TableScan cop  table:t1, keep order:false"
         ]
       },
       {
@@ -211,10 +211,10 @@
         ]
       },
       {
-        "Digest": "741a38231cc6b6c0d6893b97b2040a85ae95c31b86ff8e6e17e5e3e40b890d3a",
+        "Digest": "6dc9f1500bbea92b2446d58c1510bca2e78f0e9a6c721c76495b0cf6bfc95faa",
         "Plan": [
-          " TableReader root      ",
-          " └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false"
+          " TableReader root ",
+          " └─TableScan cop  table:t1, range:[?,?], keep order:false"
         ]
       },
       {
@@ -227,12 +227,12 @@
         ]
       },
       {
-        "Digest": "8529fe9d923912153a9247443819846961f053130dcf363f5bc1d0e0063400d3",
+        "Digest": "5f2f4343d1cf9bbd0893f78c01657307fdebadacbd0b9e60e4b5cca27656b739",
         "Plan": [
-          " Projection      root      plus(test.t1.a, test.t1.b)",
-          " └─TableReader   root      ",
-          "   └─Selection   cop[tikv] lt(plus(test.t1.a, test.t1.b), ?)",
-          "     └─TableScan cop[tikv] table:t1, range:[?,?], keep order:false"
+          " Projection      root plus(test.t1.a, test.t1.b)",
+          " └─TableReader   root ",
+          "   └─Selection   cop  lt(plus(test.t1.a, test.t1.b), ?)",
+          "     └─TableScan cop  table:t1, range:[?,?], keep order:false"
         ]
       }
     ]
