@@ -302,7 +302,7 @@ func initColumnCountMeta4Chunk(ctx sessionctx.Context, tables map[int64]*statist
 	return nil
 }
 
-//initColumnCount load columns meta data (column count) only for every column
+//initColumnCount loads each column's meta data i.e. its row count.
 func (h *Handle) initColumnCount(tables map[int64]*statistics.Table) (err error) {
 	sql := "select HIGH_PRIORITY table_id, hist_id, sum(count) " +
 		"from mysql.stats_buckets " +
