@@ -82,6 +82,14 @@ type tableHintInfo struct {
 	aggHints                    aggHintInfo
 	indexMergeHintList          []indexHintInfo
 	timeRangeHint               ast.HintTimeRange
+<<<<<<< HEAD
+=======
+	limitHints                  limitHintInfo
+}
+
+type limitHintInfo struct {
+	preferLimitToCop bool
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 }
 
 type hintTableInfo struct {

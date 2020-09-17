@@ -102,6 +102,11 @@ const (
 	HintTimeRange = "time_range"
 	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
 	HintIgnorePlanCache = "ignore_plan_cache"
+<<<<<<< HEAD
+=======
+	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
+	HintLimitToCop = "limit_to_cop"
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 )
 
 const (
@@ -1393,6 +1398,12 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		Offset: offset,
 		Count:  count,
 	}.Init(b.ctx, b.getSelectOffset())
+<<<<<<< HEAD
+=======
+	if hint := b.TableHints(); hint != nil {
+		li.limitHints = hint.limitHints
+	}
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 	li.SetChildren(src)
 	return li, nil
 }
@@ -2309,6 +2320,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		tiflashTables, tikvTables                                                                             []hintTableInfo
 		aggHints                                                                                              aggHintInfo
 		timeRangeHint                                                                                         ast.HintTimeRange
+<<<<<<< HEAD
+=======
+		limitHints                                                                                            limitHintInfo
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
@@ -2396,6 +2411,11 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 			})
 		case HintTimeRange:
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
+<<<<<<< HEAD
+=======
+		case HintLimitToCop:
+			limitHints.preferLimitToCop = true
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 		default:
 			// ignore hints that not implemented
 		}
@@ -2412,6 +2432,10 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, nodeType u
 		aggHints:                    aggHints,
 		indexMergeHintList:          indexMergeHintList,
 		timeRangeHint:               timeRangeHint,
+<<<<<<< HEAD
+=======
+		limitHints:                  limitHints,
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 	})
 }
 

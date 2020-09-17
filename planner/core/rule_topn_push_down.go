@@ -56,8 +56,14 @@ func (lt *LogicalTopN) setChild(p LogicalPlan) LogicalPlan {
 
 	if lt.isLimit() {
 		limit := LogicalLimit{
+<<<<<<< HEAD
 			Count:  lt.Count,
 			Offset: lt.Offset,
+=======
+			Count:      lt.Count,
+			Offset:     lt.Offset,
+			limitHints: lt.limitHints,
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 		}.Init(lt.ctx, lt.blockOffset)
 		limit.SetChildren(p)
 		return limit
@@ -79,7 +85,11 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 }
 
 func (p *LogicalLimit) convertToTopN() *LogicalTopN {
+<<<<<<< HEAD
 	return LogicalTopN{Offset: p.Offset, Count: p.Count}.Init(p.ctx, p.blockOffset)
+=======
+	return LogicalTopN{Offset: p.Offset, Count: p.Count, limitHints: p.limitHints}.Init(p.ctx, p.blockOffset)
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 }
 
 func (p *LogicalLimit) pushDownTopN(topN *LogicalTopN) LogicalPlan {
@@ -94,7 +104,11 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN) LogicalPlan {
 	for i, child := range p.children {
 		var newTopN *LogicalTopN
 		if topN != nil {
+<<<<<<< HEAD
 			newTopN = LogicalTopN{Count: topN.Count + topN.Offset}.Init(p.ctx, topN.blockOffset)
+=======
+			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, limitHints: topN.limitHints}.Init(p.ctx, topN.blockOffset)
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 			for _, by := range topN.ByItems {
 				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
 			}
@@ -153,8 +167,14 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) LogicalPla
 	}
 
 	newTopN := LogicalTopN{
+<<<<<<< HEAD
 		Count:   topN.Count + topN.Offset,
 		ByItems: make([]*util.ByItems, len(topN.ByItems)),
+=======
+		Count:      topN.Count + topN.Offset,
+		ByItems:    make([]*util.ByItems, len(topN.ByItems)),
+		limitHints: topN.limitHints,
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 	}.Init(topN.ctx, topN.blockOffset)
 	for i := range topN.ByItems {
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()

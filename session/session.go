@@ -1850,7 +1850,11 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
+<<<<<<< HEAD
 	currentBootstrapVersion = version47
+=======
+	currentBootstrapVersion = version51
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {

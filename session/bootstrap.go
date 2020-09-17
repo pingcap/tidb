@@ -78,6 +78,7 @@ const (
 		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_Tablespace_Priv    ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE if not exists mysql.global_priv (" +
@@ -389,6 +390,17 @@ const (
 	version46 = 46
 	// version47 add Source to bindings to indicate the way binding created.
 	version47 = 47
+<<<<<<< HEAD
+=======
+	// version48 reset all deprecated concurrency related system-variables if they were all default value.
+	version48 = 48
+	// version49 introduces mysql.stats_extended table.
+	version49 = 49
+	// version50 add mysql.schema_index_usage table.
+	version50 = 50
+	// version51 introduces CreateTablespacePriv to mysql.user.
+	version51 = 51
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 )
 
 var (
@@ -439,6 +451,13 @@ var (
 		upgradeToVer45,
 		upgradeToVer46,
 		upgradeToVer47,
+<<<<<<< HEAD
+=======
+		upgradeToVer48,
+		upgradeToVer49,
+		upgradeToVer50,
+		upgradeToVer51,
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 	}
 )
 
@@ -1071,6 +1090,79 @@ func upgradeToVer47(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `source` varchar(10) NOT NULL default 'unknown'", infoschema.ErrColumnExists)
 }
 
+<<<<<<< HEAD
+=======
+func upgradeToVer48(s Session, ver int64) {
+	if ver >= version48 {
+		return
+	}
+	defValues := map[string]string{
+		variable.TiDBIndexLookupConcurrency:     "4",
+		variable.TiDBIndexLookupJoinConcurrency: "4",
+		variable.TiDBHashAggFinalConcurrency:    "4",
+		variable.TiDBHashAggPartialConcurrency:  "4",
+		variable.TiDBWindowConcurrency:          "4",
+		variable.TiDBProjectionConcurrency:      "4",
+		variable.TiDBHashJoinConcurrency:        "5",
+	}
+	names := make([]string, 0, len(defValues))
+	for n := range defValues {
+		names = append(names, n)
+	}
+
+	selectSQL := "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(names, quoteCommaQuote) + "')"
+	ctx := context.Background()
+	rs, err := s.Execute(ctx, selectSQL)
+	terror.MustNil(err)
+	r := rs[0]
+	defer terror.Call(r.Close)
+	req := r.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
+	err = r.Next(ctx, req)
+	for err == nil && req.NumRows() != 0 {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			n := strings.ToLower(row.GetString(0))
+			v := row.GetString(1)
+			if defValue, ok := defValues[n]; !ok || defValue != v {
+				return
+			}
+		}
+		err = r.Next(ctx, req)
+	}
+	terror.MustNil(err)
+
+	mustExecute(s, "BEGIN")
+	v := strconv.Itoa(variable.ConcurrencyUnset)
+	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s'", mysql.SystemDB, mysql.GlobalVariablesTable)
+	for _, name := range names {
+		mustExecute(s, fmt.Sprintf(sql, v, name))
+	}
+	mustExecute(s, "COMMIT")
+}
+
+func upgradeToVer49(s Session, ver int64) {
+	if ver >= version49 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
+func upgradeToVer50(s Session, ver int64) {
+	if ver >= version50 {
+		return
+	}
+	doReentrantDDL(s, CreateSchemaIndexUsageTable)
+}
+
+func upgradeToVer51(s Session, ver int64) {
+	if ver >= version51 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+}
+
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -1143,7 +1235,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))

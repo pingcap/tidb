@@ -922,9 +922,16 @@ func (ls *LogicalSort) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 type LogicalTopN struct {
 	baseLogicalPlan
 
+<<<<<<< HEAD
 	ByItems []*util.ByItems
 	Offset  uint64
 	Count   uint64
+=======
+	ByItems    []*util.ByItems
+	Offset     uint64
+	Count      uint64
+	limitHints limitHintInfo
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 }
 
 // ExtractCorrelatedCols implements LogicalPlan interface.
@@ -945,8 +952,14 @@ func (lt *LogicalTopN) isLimit() bool {
 type LogicalLimit struct {
 	baseLogicalPlan
 
+<<<<<<< HEAD
 	Offset uint64
 	Count  uint64
+=======
+	Offset     uint64
+	Count      uint64
+	limitHints limitHintInfo
+>>>>>>> 31bd7d8... planner: rename optimizer hint `TOPN_TO_COP()` to `LIMIT_TO_COP()` (#20022)
 }
 
 // LogicalLock represents a select lock plan.
