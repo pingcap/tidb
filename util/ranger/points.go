@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tipb/go-tipb"
 )
 
 // Error instances.
@@ -475,9 +474,10 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []poi
 
 func (r *builder) buildFromNot(expr *expression.ScalarFunction) []point {
 	switch n := expr.FuncName.L; n {
-	case ast.IsTruth:
-		keepNull := r.isTrueKeepNull(expr)
-		return r.buildFromIsTrue(expr, 1, keepNull)
+	case ast.IsTruthWithoutNull:
+		return r.buildFromIsTrue(expr, 1, false)
+	case ast.IsTruthWithNull:
+		return r.buildFromIsTrue(expr, 1, true)
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 1)
 	case ast.In:
@@ -532,9 +532,10 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction) []point {
 		return r.intersection(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
 	case ast.LogicOr:
 		return r.union(r.build(expr.GetArgs()[0]), r.build(expr.GetArgs()[1]))
-	case ast.IsTruth:
-		keepNull := r.isTrueKeepNull(expr)
-		return r.buildFromIsTrue(expr, 0, keepNull)
+	case ast.IsTruthWithoutNull:
+		return r.buildFromIsTrue(expr, 0, false)
+	case ast.IsTruthWithNull:
+		return r.buildFromIsTrue(expr, 0, true)
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 0)
 	case ast.In:
@@ -594,12 +595,4 @@ func (r *builder) merge(a, b []point, union bool) []point {
 		}
 	}
 	return merged
-}
-
-func (r *builder) isTrueKeepNull(expr *expression.ScalarFunction) bool {
-	switch expr.Function.PbCode() {
-	case tipb.ScalarFuncSig_DecimalIsTrueWithNull, tipb.ScalarFuncSig_RealIsTrueWithNull, tipb.ScalarFuncSig_IntIsTrueWithNull:
-		return true
-	}
-	return false
 }
