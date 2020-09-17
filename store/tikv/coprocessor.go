@@ -675,10 +675,12 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			if ok {
 				break
 			}
+			// record finished taskID
+			finishedTaskID := it.tasks[it.curr].id
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
-			it.actionOnExceed.broadcastWorkersIfNeeded(nil, it.tasks[it.curr].id)
+			it.actionOnExceed.broadcastWorkersIfNeeded(nil, finishedTaskID)
 		}
 	}
 
