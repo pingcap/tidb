@@ -470,9 +470,16 @@ func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 	if !ok {
 		return
 	}
-	e.loop += tmp.loop
-	e.consume += tmp.consume
-	e.rows += tmp.rows
+	e.merge(tmp)
+}
+
+func (e *BasicRuntimeStats) merge(rs *BasicRuntimeStats) {
+	if rs == nil {
+		return
+	}
+	e.loop += rs.loop
+	e.consume += rs.consume
+	e.rows += rs.rows
 }
 
 // Tp implements the RuntimeStats interface.
@@ -484,6 +491,45 @@ func (e *BasicRuntimeStats) Tp() int {
 type RootRuntimeStats struct {
 	basics   []*BasicRuntimeStats
 	groupRss [][]RuntimeStats
+}
+
+func (e *RootRuntimeStats) Merge(rs *RootRuntimeStats) {
+	if rs == nil {
+		return
+	}
+	// Merge basics
+	if len(e.basics) == 0 {
+		e.basics = append(e.basics, &BasicRuntimeStats{})
+	}
+	for _, basic := range rs.basics {
+		e.basics[0].merge(basic)
+	}
+	// Merge groupRss
+	for _, rss := range rs.groupRss {
+		if len(rss) == 0 {
+			continue
+		}
+		tp := rss[0].Tp()
+		idx := -1
+		for i, erss := range e.groupRss {
+			if len(erss) == 0 {
+				continue
+			}
+			if tp == erss[0].Tp() {
+				idx = i
+				break
+			}
+		}
+		start := 0
+		if idx == -1 {
+			start = 1
+			idx = len(e.groupRss)
+			e.groupRss = append(e.groupRss, []RuntimeStats{rss[0].Clone()})
+		}
+		for i := start; i < len(rss); i++ {
+			e.groupRss[idx][0].Merge(rss[i])
+		}
+	}
 }
 
 // GetActRows return total rows of RootRuntimeStats.

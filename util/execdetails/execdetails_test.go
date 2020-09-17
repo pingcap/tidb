@@ -256,4 +256,30 @@ func TestRootRuntimeStats(t *testing.T) {
 	if stats.String() != expect {
 		t.Fatalf("%v != %v", stats.String(), expect)
 	}
+
+	// Test for merge
+	basic3 := &BasicRuntimeStats{}
+	basic3.Record(time.Second*3, 30)
+	pid = 2
+	stmtStats.RegisterStats(pid, basic3)
+	stats2 := stmtStats.GetRootStats(pid)
+	commitDetail2 := *commitDetail
+	stmtStats.RegisterStats(pid, &RuntimeStatsWithCommit{
+		Commit: &commitDetail2,
+		LockKeys: &LockKeysDetails{
+			TotalTime:       time.Second,
+			RegionNum:       3,
+			LockKeys:        100,
+			ResolveLockTime: 0,
+			BackoffTime:     0,
+			LockRPCTime:     int64(time.Millisecond * 100),
+			LockRPCCount:    3,
+			RetryCount:      0,
+		},
+	})
+	stats.Merge(stats2)
+	expect = "time:6s, loops:3, worker:15, concurrent:OFF, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}, lock_keys: {time:1s, region:3, keys:100, lock_rpc:100ms, retry_count:1}"
+	if stats.String() != expect {
+		t.Fatalf("%v != %v", stats.String(), expect)
+	}
 }
