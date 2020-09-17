@@ -69,4 +69,4 @@ require (
 
 go 1.13
 
-replace google.golang.org/grpc => github.com/lysu/grpc-go v1.26.1-0.20200917122200-1289be82a3a5
+replace google.golang.org/grpc => github.com/lysu/grpc-go v1.26.1-0.20200917132614-65db2c138d40
