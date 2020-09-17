@@ -411,8 +411,8 @@ func (s *testPrepareSerialSuite) TestPrepareCacheForPartition(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustExec("use test")
-	for _, val := range []string{"1", "null"} {
-		tk.MustExec("set @try_old_partition_implementation = " + val)
+	for _, val := range []string{string(variable.StaticOnly), string(variable.DynamicOnly)} {
+		tk.MustExec("set @@tidb_partition_prune_mode = '" + val + "'")
 		// Test for PointGet and IndexRead.
 		tk.MustExec("drop table if exists t_index_read")
 		tk.MustExec("create table t_index_read (id int, k int, c varchar(10), primary key (id, k)) partition by hash(id+k) partitions 10")
