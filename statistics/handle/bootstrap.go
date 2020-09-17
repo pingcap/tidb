@@ -287,11 +287,11 @@ func initColumnCountMeta4Chunk(ctx sessionctx.Context, tables map[int64]*statist
 		tableID, histID, decimalCount := row.GetInt64(0), row.GetInt64(1), row.GetMyDecimal(2)
 		table, ok := tables[tableID]
 		count, err := decimalCount.ToInt()
-		if err != nil {
-			return err
-		}
 		if !ok {
 			continue
+		}
+		if err != nil {
+			return err
 		}
 		column, ok := table.Columns[histID]
 		if !ok {

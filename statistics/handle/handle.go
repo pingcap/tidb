@@ -107,7 +107,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
-	handle.statsCache = newstatsCache(ctx.GetSessionVars().MemQuotaStatistic)
+	handle.statsCache = newStatsCache(ctx.GetSessionVars().MemQuotaStatistic)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	return handle
@@ -229,15 +229,16 @@ func (h *Handle) GetMemConsumed() (size int64) {
 	return
 }
 
-// EraseTable4Test erase a table by ID and add new empty (with Meta) table, only used in test.
+// EraseTable4Test erase a table by ID and add new empty (with Meta) table.
+// ONLY used for test.
 func (h *Handle) EraseTable4Test(ID int64) {
 	table, _ := h.statsCache.Lookup(ID)
 	h.statsCache.Insert(table.CopyWithoutBucketsAndCMS())
 }
 
-// GetAllTableStatsMemUsage get all the mem usage with true table.
-// only used by test.
-func (h *Handle) GetAllTableStatsMemUsage() int64 {
+// GetAllTableStatsMemUsage4Test get all the mem usage with true table.
+// ONLY used for test.
+func (h *Handle) GetAllTableStatsMemUsage4Test() int64 {
 	data := h.statsCache.GetAll()
 	allUsage := int64(0)
 	for _, t := range data {

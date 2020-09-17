@@ -38,9 +38,9 @@ func (key statsCacheKey) Hash() []byte {
 	return buf
 }
 
-// newstatsCache returns a new statsCahce with capacity maxMemoryLimit
-func newstatsCache(memoryLimit int64) *statsCache {
-	// since newstatsCache controls the memory usage by itself, set the capacity of
+// newStatsCache returns a new statsCache with capacity maxMemoryLimit.
+func newStatsCache(memoryLimit int64) *statsCache {
+	// Since newStatsCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
 	cache := kvcache.NewSimpleLRUCache(uint(memoryLimit), 0.1, 0)
 	c := statsCache{
@@ -53,14 +53,14 @@ func newstatsCache(memoryLimit int64) *statsCache {
 
 // Clear clears the statsCache.
 func (sc *statsCache) Clear() {
-	// since newstatsCache controls the memory usage by itself, set the capacity of
+	// Since newStatsCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
 	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	cache := kvcache.NewSimpleLRUCache(uint(sc.memCapacity), 0.1, 0)
 	sc.memTracker.ReplaceBytesUsed(0)
 	sc.cache = cache
 	sc.version = 0
-	sc.mu.Unlock()
 }
 
 // GetAll get all the tables point.
@@ -103,9 +103,9 @@ func (sc *statsCache) Insert(table *statistics.Table) {
 	}
 	var key = statsCacheKey(table.PhysicalID)
 	mem := table.MemoryUsage()
-	if mem > sc.memCapacity { // ignore this kv pair if its size is too large
-		return
-	}
+	// We do not need to check whether mem > sc.memCapacity, because the lower
+	// bound of statistics is set, it's almost impossible the stats memory usage
+	// of one table exceeds the capacity.
 	for mem+sc.memTracker.BytesConsumed() > sc.memCapacity {
 		evictedKey, evictedValue, evicted := sc.cache.RemoveOldest()
 		if !evicted {
@@ -136,6 +136,7 @@ func (sc *statsCache) Erase(deletedID int64) bool {
 // Update updates the statistics table cache.
 func (sc *statsCache) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) {
 	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	if sc.version <= newVersion {
 		sc.version = newVersion
 		for _, id := range deletedIDs {
@@ -145,7 +146,6 @@ func (sc *statsCache) Update(tables []*statistics.Table, deletedIDs []int64, new
 			sc.Insert(tbl)
 		}
 	}
-	sc.mu.Unlock()
 }
 
 func (sc *statsCache) GetVersion() uint64 {
@@ -154,7 +154,7 @@ func (sc *statsCache) GetVersion() uint64 {
 	return sc.version
 }
 
-// initStatsCache should be called after the tables and their stats are initilazed
+// initStatsCache should be called after the tables and their stats are initialized
 // using tables map and version to init statscache
 func (sc *statsCache) initStatsCache(tables map[int64]*statistics.Table, version uint64) {
 	sc.mu.Lock()
