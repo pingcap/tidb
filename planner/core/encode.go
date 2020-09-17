@@ -179,6 +179,10 @@ func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, depth int) {
 	}
 }
 
+func GetSelectPlan(p Plan) PhysicalPlan {
+	return getSelectPlan(p)
+}
+
 func getSelectPlan(p Plan) PhysicalPlan {
 	var selectPlan PhysicalPlan
 	if physicalPlan, ok := p.(PhysicalPlan); ok {

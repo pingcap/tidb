@@ -178,6 +178,8 @@ type stmtSummaryByDigestElement struct {
 	// pessimistic execution retry information.
 	execRetryCount uint
 	execRetryTime  time.Duration
+
+	totalExecStats []execdetails.RootRuntimeStats
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -206,6 +208,8 @@ type StmtExecInfo struct {
 	PlanInCache    bool
 	ExecRetryCount uint
 	ExecRetryTime  time.Duration
+	ExecStats      *execdetails.RuntimeStatsColl
+	MergeStats     func(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl) []*execdetails.RootRuntimeStats
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.

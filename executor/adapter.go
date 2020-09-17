@@ -1045,10 +1045,46 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		PlanInCache:    sessVars.FoundInPlanCache,
 		ExecRetryCount: a.retryCount,
 	}
+
+	if sessVars.StmtCtx.RuntimeStatsColl != nil {
+		mergeStats := func(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl) []*execdetails.RootRuntimeStats {
+			depth := 0
+			return mergeRuntimeStats(total, rsColl, a.Plan, &depth, make(map[int]bool))
+		}
+		stmtExecInfo.ExecStats = sessVars.StmtCtx.RuntimeStatsColl
+		stmtExecInfo.MergeStats = mergeStats
+	}
+
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
+}
+
+func mergeRuntimeStats(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl, plan plannercore.Plan, depth *int, added map[int]bool) []*execdetails.RootRuntimeStats {
+	id := plan.ID()
+	if !rsColl.ExistsRootStats(id) {
+		return total
+	}
+	for len(total) <= *depth {
+		total = append(total, &execdetails.RootRuntimeStats{})
+	}
+	stats := rsColl.GetRootStats(id)
+	total[*depth].Merge(stats)
+	added[id] = true
+	*depth++
+
+	selectPlan := plannercore.GetSelectPlan(plan)
+	if selectPlan == nil {
+		return total
+	}
+	if !added[selectPlan.ID()] {
+		total = mergeRuntimeStats(total, rsColl, selectPlan, depth, added)
+	}
+	for _, child := range selectPlan.Children() {
+		total = mergeRuntimeStats(total, rsColl, child, depth, added)
+	}
+	return total
 }
 
 // GetTextToLog return the query text to log.
