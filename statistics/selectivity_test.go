@@ -676,7 +676,7 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int primary key, b int, c int, d int)")
+	testKit.MustExec("create table t(a int, b int, c int, d int)")
 	testKit.MustExec("insert into t value(1,5,4,4),(3,4,1,8),(4,2,6,10),(6,7,2,5),(7,1,4,9),(8,9,8,3),(9,1,9,1),(10,6,6,2)")
 	testKit.MustExec("alter table t add index (b)")
 	testKit.MustExec("alter table t add index (d)")
@@ -723,4 +723,7 @@ func (s *testStatsSuite) TestDNFCondSelectivity(c *C) {
 		c.Assert(math.Abs(ratio-output[i].Selectivity) < eps, IsTrue,
 			Commentf("for %s, needed: %v, got: %v", tt, output[i].Selectivity, ratio))
 	}
+
+	// Test issue 19981
+	testKit.MustExec("select * from t where _tidb_rowid is null or _tidb_rowid > 7")
 }
