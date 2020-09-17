@@ -2694,19 +2694,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-<<<<<<< HEAD
 	if err = modifiable(&col.FieldType, &newCol.FieldType); err != nil {
-=======
-	if err = checkColumnValueConstraint(newCol, newCol.Collate); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(ctx, &col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
-		if strings.Contains(err.Error(), "Unsupported modifying collation") {
-			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
-			err = errUnsupportedModifyCollation.GenWithStack(colErrMsg, col.Name.L, col.Collate, newCol.Collate)
-		}
->>>>>>> 73e03c7... ddl: check constraint when alter enum/set type column (#19806)
+	if err = checkColumnValueConstraint(newCol, newCol.Collate); err != nil {
 		return nil, errors.Trace(err)
 	}
 
