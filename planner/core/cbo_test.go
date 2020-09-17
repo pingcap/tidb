@@ -451,11 +451,11 @@ func (s *testAnalyzeSuite) TestPreparedNullParam(c *C) {
 		testKit := testkit.NewTestKit(c, store)
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
-		testKit.MustExec("create table t (id int, KEY id (id))")
+		testKit.MustExec("create table t (id int not null, KEY id (id))")
 		testKit.MustExec("insert into t values (1), (2), (3)")
 
 		sql := "select * from t where id = ?"
-		best := "TableReader(Table(t)->Sel([eq(cast(test.t.id, double BINARY), <nil>)]))"
+		best := "Dual"
 
 		ctx := testKit.Se.(sessionctx.Context)
 		stmts, err := session.Parse(ctx, sql)
