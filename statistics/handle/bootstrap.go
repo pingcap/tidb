@@ -409,7 +409,7 @@ func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (err error
 func (h *Handle) preCalcScalar4StatsBuckets(tables map[int64]*statistics.Table) (lastVersion uint64, err error) {
 	lastVersion = uint64(0)
 	for _, table := range tables {
-		//version is loaded by initStatsHistogramsMeta
+		// The version is loaded by initStatsHistogramsMeta.
 		lastVersion = mathutil.MaxUint64(lastVersion, table.Version)
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
