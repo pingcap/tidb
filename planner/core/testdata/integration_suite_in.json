@@ -135,7 +135,7 @@
   {
     "name": "TestPartitionPruningForInExprNullParam",
     "cases": [
-      "explain select * from t where a in (15, 0.12, 3.47)",
+      "explain select * from t where a in (15, 0.12, 3.47)"
     ]
   },
   {
