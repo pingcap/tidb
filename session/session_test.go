@@ -120,8 +120,12 @@ func clearStorage(store kv.Storage) error {
 }
 
 func clearETCD(ebd tikv.EtcdBackend) error {
+	endpoints, err := ebd.EtcdAddrs()
+	if err != nil {
+		return err
+	}
 	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:        ebd.EtcdAddrs(),
+		Endpoints:        endpoints,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
