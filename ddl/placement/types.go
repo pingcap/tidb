@@ -65,9 +65,7 @@ type Rule struct {
 	ID               string            `json:"id"`
 	Index            int               `json:"index,omitempty"`
 	Override         bool              `json:"override,omitempty"`
-	StartKey         []byte            `json:"-"`
 	StartKeyHex      string            `json:"start_key"`
-	EndKey           []byte            `json:"-"`
 	EndKeyHex        string            `json:"end_key"`
 	Role             PeerRoleType      `json:"role"`
 	Count            int               `json:"count"`
@@ -76,12 +74,38 @@ type Rule struct {
 	IsolationLevel   string            `json:"isolation_level,omitempty"`
 }
 
+// Clone is used to duplicate a RuleOp for safe modification.
+func (r *Rule) Clone() *Rule {
+	n := &Rule{}
+	*n = *r
+	return n
+}
+
 // Bundle is a group of all rules and configurations. It is used to support rule cache.
 type Bundle struct {
 	ID       string  `json:"group_id"`
 	Index    int     `json:"group_index"`
 	Override bool    `json:"group_override"`
 	Rules    []*Rule `json:"rules"`
+}
+
+func (t *Bundle) String() string {
+	b, err := json.Marshal(t)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// Clone is used to duplicate a bundle.
+func (b *Bundle) Clone() *Bundle {
+	newBundle := &Bundle{}
+	*newBundle = *b
+	newBundle.Rules = make([]*Rule, 0, len(b.Rules))
+	for i := range b.Rules {
+		newBundle.Rules = append(newBundle.Rules, b.Rules[i].Clone())
+	}
+	return newBundle
 }
 
 // RuleOpType indicates the operation type.
