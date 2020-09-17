@@ -54,9 +54,8 @@ require (
 	github.com/uber-go/atomic v1.3.2
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
-	go.uber.org/atomic v1.7.0
+	go.uber.org/atomic v1.6.0
 	go.uber.org/automaxprocs v1.2.0
-	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.16.0
 	golang.org/x/net v0.0.0-20200813134508-3edf25e44fcc
 	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
