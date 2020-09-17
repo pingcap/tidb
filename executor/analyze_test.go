@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
@@ -385,7 +386,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 		"test t2  a 0 0 1 1 0 0",
 		"test t2  a 0 1 2 1 18446744073709551615 18446744073709551615"))
 
-	tk.MustExec(`set @try_old_partition_implementation=1`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
 	tk.MustExec(`create table t3 (id int, v int, primary key(id), index k(v)) partition by hash (id) partitions 4`)
 	tk.MustExec(`insert into t3 values(1, 1), (2, 2), (5, 1), (9, 3), (13, 3), (17, 5), (3, 0)`)
 	tk.MustExec(`analyze table t3`)
@@ -393,7 +394,7 @@ func (s *testFastAnalyze) TestFastAnalyze(c *C) {
 		"IndexReader_7 2.00 root  index:IndexRangeScan_6",
 		"└─IndexRangeScan_6 2.00 cop[tikv] table:t3, partition:p1, index:k(v) range:[3,3], keep order:false",
 	))
-	tk.MustExec(`set @try_old_partition_implementation=0`)
+	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.DynamicOnly) + `'`)
 }
 
 func (s *testSuite1) TestIssue15993(c *C) {
@@ -434,6 +435,14 @@ func (s *testSuite1) TestAnalyzeIndex(c *C) {
 	tk.MustExec("insert into t1(id, v) values(1, 2), (2, 2), (3, 2), (4, 2), (5, 1), (6, 3), (7, 4)")
 	tk.MustExec("analyze table t1 index k")
 	c.Assert(len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 0)
+
+	func() {
+		defer tk.MustExec("set @@session.tidb_enable_fast_analyze=0")
+		tk.MustExec("drop stats t1")
+		tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+		tk.MustExec("analyze table t1 index k")
+		c.Assert(len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), Greater, 1)
+	}()
 }
 
 func (s *testSuite1) TestAnalyzeIncremental(c *C) {
@@ -691,4 +700,36 @@ func (s *testSuite1) TestNormalAnalyzeOnCommonHandle(c *C) {
 		"test t3  c 1 0 1 1 1 1",
 		"test t3  c 1 1 2 1 2 2",
 		"test t3  c 1 2 3 1 3 3"))
+}
+
+func (s *testSuite1) TestDefaultValForAnalyze(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("drop database if exists test_default_val_for_analyze;")
+	tk.MustExec("create database test_default_val_for_analyze;")
+	tk.MustExec("use test_default_val_for_analyze")
+
+	tk.MustExec("create table t (a int, key(a));")
+	for i := 0; i < 2048; i++ {
+		tk.MustExec("insert into t values (0)")
+	}
+	for i := 1; i < 4; i++ {
+		tk.MustExec("insert into t values (?)", i)
+	}
+	tk.MustExec("analyze table t with 0 topn;")
+	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 512.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 512.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
+	tk.MustQuery("explain select * from t where a = 999").Check(testkit.Rows("IndexReader_6 0.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 0.00 cop[tikv] table:t, index:a(a) range:[999,999], keep order:false"))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, key(a));")
+	for i := 0; i < 2048; i++ {
+		tk.MustExec("insert into t values (0)")
+	}
+	for i := 1; i < 2049; i++ {
+		tk.MustExec("insert into t values (?)", i)
+	}
+	tk.MustExec("analyze table t with 0 topn;")
+	tk.MustQuery("explain select * from t where a = 1").Check(testkit.Rows("IndexReader_6 1.00 root  index:IndexRangeScan_5",
+		"└─IndexRangeScan_5 1.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false"))
 }

@@ -302,21 +302,21 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, col)), check.IsTrue)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)), check.IsTrue)
 
 	// (not not (a+1)) should be optimized to (a+1 is true)
 	plusFunc := newFunction(ast.Plus, col, NewOne())
 	notFunc = newFunction(ast.UnaryNot, plusFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, plusFunc)), check.IsTrue)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, plusFunc)), check.IsTrue)
 
 	// (not not not a) should be optimized to (not (a is true))
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruth, col))), check.IsTrue)
+	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruthWithNull, col))), check.IsTrue)
 
 	// (not not not not a) should be optimized to (a is true)
 	notFunc = newFunction(ast.UnaryNot, col)
@@ -324,7 +324,7 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, col)), check.IsTrue)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)), check.IsTrue)
 }
 
 func (s *testUtilSuite) TestFilter(c *check.C) {
