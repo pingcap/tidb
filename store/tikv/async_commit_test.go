@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -98,6 +99,12 @@ func (s *testAsyncCommitSuite) lockKeys(c *C, keys, values [][]byte, primaryKey,
 		c.Assert(err, IsNil)
 	}
 	return txn.startTS, tpc.commitTS
+}
+
+func (s *testAsyncCommitSuite) mustGetFromTxn(c *C, txn kv.Transaction, key, expectedValue []byte) {
+	v, err := txn.Get(context.Background(), key)
+	c.Assert(err, IsNil)
+	c.Assert(v, BytesEquals, expectedValue)
 }
 
 func (s *testAsyncCommitSuite) mustGetLock(c *C, key []byte) *Lock {
@@ -264,6 +271,48 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	c.Assert(gotCheckB, Equals, int64(1))
 	c.Assert(gotResolve, Equals, int64(1))
 	c.Assert(gotOther, Equals, int64(0))
+}
+
+func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableAsyncCommit = true
+	})
+	defer config.RestoreFunc()()
+
+	test := func(isPessimistic bool) {
+		s.putKV(c, []byte("k1"), []byte("v1"))
+
+		ctx := context.Background()
+		txn1, err := s.store.Begin()
+		txn1.SetOption(kv.Pessimistic, isPessimistic)
+		c.Assert(err, IsNil)
+		s.mustGetFromTxn(c, txn1, []byte("k1"), []byte("v1"))
+		txn1.Set([]byte("k1"), []byte("v2"))
+
+		for i := 0; i < 20; i++ {
+			_, err := s.store.GetOracle().GetTimestamp(ctx)
+			c.Assert(err, IsNil)
+		}
+
+		txn2, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		s.mustGetFromTxn(c, txn2, []byte("k1"), []byte("v1"))
+
+		err = txn1.Commit(ctx)
+		c.Assert(err, IsNil)
+		s.mustGetFromTxn(c, txn2, []byte("k1"), []byte("v1"))
+		err = txn2.Rollback()
+		c.Assert(err, IsNil)
+
+		txn3, err := s.store.Begin()
+		c.Assert(err, IsNil)
+		s.mustGetFromTxn(c, txn3, []byte("k1"), []byte("v2"))
+		err = txn3.Rollback()
+		c.Assert(err, IsNil)
+	}
+
+	test(false)
+	test(true)
 }
 
 type mockResolveClient struct {
