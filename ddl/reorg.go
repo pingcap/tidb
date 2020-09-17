@@ -525,6 +525,7 @@ func getReorgInfo(d *ddlCtx, t *meta.Meta, job *model.Job, tbl table.Table, elem
 		if err != nil {
 			// If the reorg element doesn't exist, this reorg info should be saved by the older TiDB versions.
 			// It's compatible with the older TiDB versions.
+			// We'll try to remove it in the next major TiDB version.
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
 				logutil.BgLogger().Warn("[ddl] get reorg info, the element does not exist", zap.String("job", job.String()))
