@@ -177,8 +177,7 @@ func (e *HashJoinExec) Open(ctx context.Context) error {
 	}
 	if e.runtimeStats != nil {
 		e.stats = &hashJoinRuntimeStats{
-			BasicRuntimeStats: e.runtimeStats,
-			concurrent:        cap(e.joiners),
+			concurrent: cap(e.joiners),
 		}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
@@ -805,7 +804,7 @@ func (e *NestedLoopApplyExec) Close() error {
 	e.innerRows = nil
 	e.memTracker = nil
 	if e.runtimeStats != nil {
-		runtimeStats := newJoinRuntimeStats(e.runtimeStats)
+		runtimeStats := newJoinRuntimeStats()
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, runtimeStats)
 		if e.canUseCache {
 			var hitRatio float64
@@ -996,11 +995,9 @@ type joinRuntimeStats struct {
 	hashStat    hashStatistic
 }
 
-func newJoinRuntimeStats(basic *execdetails.BasicRuntimeStats) *joinRuntimeStats {
+func newJoinRuntimeStats() *joinRuntimeStats {
 	stats := &joinRuntimeStats{
-		RuntimeStatsWithConcurrencyInfo: &execdetails.RuntimeStatsWithConcurrencyInfo{
-			BasicRuntimeStats: basic,
-		},
+		RuntimeStatsWithConcurrencyInfo: &execdetails.RuntimeStatsWithConcurrencyInfo{},
 	}
 	return stats
 }
@@ -1037,9 +1034,12 @@ func (e *joinRuntimeStats) String() string {
 	return buf.String()
 }
 
-type hashJoinRuntimeStats struct {
-	*execdetails.BasicRuntimeStats
+// Tp implements the RuntimeStats interface.
+func (e *joinRuntimeStats) Tp() int {
+	return execdetails.TpJoinRuntimeStats
+}
 
+type hashJoinRuntimeStats struct {
 	fetchAndBuildHashTable time.Duration
 	hashStat               hashStatistic
 	fetchAndProbe          int64
@@ -1060,11 +1060,15 @@ func (e *hashJoinRuntimeStats) setMaxFetchAndProbeTime(t int64) {
 	}
 }
 
+// Tp implements the RuntimeStats interface.
+func (e *hashJoinRuntimeStats) Tp() int {
+	return execdetails.TpHashJoinRuntimeStats
+}
+
 func (e *hashJoinRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 128))
-	buf.WriteString(e.BasicRuntimeStats.String())
 	if e.fetchAndBuildHashTable > 0 {
-		buf.WriteString(", build_hash_table:{total:")
+		buf.WriteString("build_hash_table:{total:")
 		buf.WriteString(e.fetchAndBuildHashTable.String())
 		buf.WriteString(", fetch:")
 		buf.WriteString((e.fetchAndBuildHashTable - e.hashStat.buildTableElapse).String())
@@ -1090,4 +1094,30 @@ func (e *hashJoinRuntimeStats) String() string {
 		buf.WriteString("}")
 	}
 	return buf.String()
+}
+
+func (e *hashJoinRuntimeStats) Clone() execdetails.RuntimeStats {
+	return &hashJoinRuntimeStats{
+		fetchAndBuildHashTable: e.fetchAndBuildHashTable,
+		hashStat:               e.hashStat,
+		fetchAndProbe:          e.fetchAndProbe,
+		probe:                  e.probe,
+		concurrent:             e.concurrent,
+		maxFetchAndProbe:       e.maxFetchAndProbe,
+	}
+}
+
+func (e *hashJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
+	tmp, ok := rs.(*hashJoinRuntimeStats)
+	if !ok {
+		return
+	}
+	e.fetchAndBuildHashTable += tmp.fetchAndBuildHashTable
+	e.hashStat.buildTableElapse += tmp.hashStat.buildTableElapse
+	e.hashStat.probeCollision += tmp.hashStat.probeCollision
+	e.fetchAndProbe += tmp.fetchAndProbe
+	e.probe += tmp.probe
+	if e.maxFetchAndProbe < tmp.maxFetchAndProbe {
+		e.maxFetchAndProbe = tmp.maxFetchAndProbe
+	}
 }
