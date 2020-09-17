@@ -658,7 +658,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		plan4Agg.aggHints = hint.aggHints
 	}
 	plan4Agg.SetChildren(np)
-	firstRowResultCol := &expression.Column{
+	maxResultCol := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  maxFunc.RetTp,
 	}
@@ -667,9 +667,9 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		RetType:  countFunc.RetTp,
 	}
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName, types.EmptyName)
-	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
+	plan4Agg.SetSchema(expression.NewSchema(maxResultCol, count))
 	gtFunc := expression.NewFunctionInternal(er.sctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count, expression.NewOne())
-	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol)
+	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, maxResultCol)
 	cond := expression.ComposeDNFCondition(er.sctx, gtFunc, neCond)
 	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, false)
 }
