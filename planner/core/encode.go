@@ -60,18 +60,7 @@ func (pn *planEncoder) encodePlanTree(p Plan) string {
 }
 
 func (pn *planEncoder) encodePlan(p Plan, isRoot bool, depth int) {
-	var storeType kv.StoreType = kv.UnSpecified
-	if !isRoot {
-		switch copPlan := p.(type) {
-		case *PhysicalTableReader:
-			storeType = copPlan.StoreType
-		case *PhysicalTableScan:
-			storeType = copPlan.StoreType
-		default:
-			storeType = kv.TiKV
-		}
-	}
-	taskTypeInfo := plancodec.EncodeTaskType(isRoot, storeType)
+	taskTypeInfo := getTaskType(p, isRoot)
 	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p)
 	rowCount := 0.0
 	if statsInfo := p.statsInfo(); statsInfo != nil {
@@ -113,6 +102,21 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, depth int) {
 	}
 }
 
+func getTaskType(p Plan, isRoot bool) string {
+	var storeType kv.StoreType = kv.UnSpecified
+	if !isRoot {
+		switch copPlan := p.(type) {
+		case *PhysicalTableReader:
+			storeType = copPlan.StoreType
+		case *PhysicalTableScan:
+			storeType = copPlan.StoreType
+		default:
+			storeType = kv.TiKV
+		}
+	}
+	return plancodec.EncodeTaskType(isRoot, storeType)
+}
+
 var digesterPool = sync.Pool{
 	New: func() interface{} {
 		return &planDigester{
@@ -151,7 +155,8 @@ func (d *planDigester) normalizePlanTree(p PhysicalPlan) {
 }
 
 func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, depth int) {
-	plancodec.NormalizePlanNode(depth, p.TP(), isRoot, p.ExplainNormalizedInfo(), &d.buf)
+	taskTypeInfo := getTaskType(p, isRoot)
+	plancodec.NormalizePlanNode(depth, p.TP(), taskTypeInfo, p.ExplainNormalizedInfo(), &d.buf)
 	d.encodedPlans[p.ID()] = true
 
 	depth++
