@@ -305,7 +305,7 @@ const (
 	// initChunkSizeUpperBound indicates upper bound value of tidb_init_chunk_size.
 	initChunkSizeUpperBound = 32
 	// maxChunkSizeLowerBound indicates lower bound value of tidb_max_chunk_size.
-	maxChunkSizeLowerBound = 32
+	maxChunkSizeLowerBound = 1
 )
 
 // CheckDeprecationSetSystemVar checks if the system variable is deprecated.
