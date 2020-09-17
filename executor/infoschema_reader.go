@@ -712,32 +712,39 @@ func (e *memtableRetriever) setDataFromPartitions(ctx sessionctx.Context, schema
 						partitionDesc = pi.LessThan[0]
 					}
 
+					partitionMethod := table.Partition.Type.String()
+					partitionExpr := table.Partition.Expr
+					if table.Partition.Type == model.PartitionTypeRange && len(table.Partition.Columns) > 0 {
+						partitionMethod = "RANGE COLUMNS"
+						partitionExpr = table.Partition.Columns[0].String()
+					}
+
 					record := types.MakeDatums(
-						infoschema.CatalogVal,         // TABLE_CATALOG
-						schema.Name.O,                 // TABLE_SCHEMA
-						table.Name.O,                  // TABLE_NAME
-						pi.Name.O,                     // PARTITION_NAME
-						nil,                           // SUBPARTITION_NAME
-						i+1,                           // PARTITION_ORDINAL_POSITION
-						nil,                           // SUBPARTITION_ORDINAL_POSITION
-						table.Partition.Type.String(), // PARTITION_METHOD
-						nil,                           // SUBPARTITION_METHOD
-						table.Partition.Expr,          // PARTITION_EXPRESSION
-						nil,                           // SUBPARTITION_EXPRESSION
-						partitionDesc,                 // PARTITION_DESCRIPTION
-						rowCount,                      // TABLE_ROWS
-						avgRowLength,                  // AVG_ROW_LENGTH
-						dataLength,                    // DATA_LENGTH
-						uint64(0),                     // MAX_DATA_LENGTH
-						indexLength,                   // INDEX_LENGTH
-						uint64(0),                     // DATA_FREE
-						createTime,                    // CREATE_TIME
-						nil,                           // UPDATE_TIME
-						nil,                           // CHECK_TIME
-						nil,                           // CHECKSUM
-						pi.Comment,                    // PARTITION_COMMENT
-						nil,                           // NODEGROUP
-						nil,                           // TABLESPACE_NAME
+						infoschema.CatalogVal, // TABLE_CATALOG
+						schema.Name.O,         // TABLE_SCHEMA
+						table.Name.O,          // TABLE_NAME
+						pi.Name.O,             // PARTITION_NAME
+						nil,                   // SUBPARTITION_NAME
+						i+1,                   // PARTITION_ORDINAL_POSITION
+						nil,                   // SUBPARTITION_ORDINAL_POSITION
+						partitionMethod,       // PARTITION_METHOD
+						nil,                   // SUBPARTITION_METHOD
+						partitionExpr,         // PARTITION_EXPRESSION
+						nil,                   // SUBPARTITION_EXPRESSION
+						partitionDesc,         // PARTITION_DESCRIPTION
+						rowCount,              // TABLE_ROWS
+						avgRowLength,          // AVG_ROW_LENGTH
+						dataLength,            // DATA_LENGTH
+						uint64(0),             // MAX_DATA_LENGTH
+						indexLength,           // INDEX_LENGTH
+						uint64(0),             // DATA_FREE
+						createTime,            // CREATE_TIME
+						nil,                   // UPDATE_TIME
+						nil,                   // CHECK_TIME
+						nil,                   // CHECKSUM
+						pi.Comment,            // PARTITION_COMMENT
+						nil,                   // NODEGROUP
+						nil,                   // TABLESPACE_NAME
 					)
 					rows = append(rows, record)
 				}
@@ -1875,7 +1882,12 @@ type tiflashInstanceInfo struct {
 func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflashInstances set.StringSet) error {
 	store := sctx.GetStore()
 	if etcd, ok := store.(tikv.EtcdBackend); ok {
-		if addrs := etcd.EtcdAddrs(); addrs != nil {
+		var addrs []string
+		var err error
+		if addrs, err = etcd.EtcdAddrs(); err != nil {
+			return err
+		}
+		if addrs != nil {
 			domainFromCtx := domain.GetDomain(sctx)
 			if domainFromCtx != nil {
 				cli := domainFromCtx.GetEtcdClient()
@@ -1911,7 +1923,6 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 				e.initialized = true
 				return nil
 			}
-			return errors.Errorf("Etcd client not found")
 		}
 		return errors.Errorf("Etcd addrs not found")
 	}

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 )
@@ -120,6 +121,9 @@ var tombstone = []byte{}
 // When discarding a newly added KV in `Cleanup`, the non-persistent flags will be cleared.
 // If there are persistent flags associated with key, we will keep this key in node without value.
 type memdb struct {
+	// This RWMutex only used to ensure memdbSnapGetter.Get will not race with
+	// concurrent memdb.Set, memdb.SetWithFlags, memdb.Delete and memdb.UpdateFlags.
+	sync.RWMutex
 	root      memdbArenaAddr
 	allocator nodeAllocator
 	vlog      memdbVlog
@@ -145,6 +149,9 @@ func newMemDB() *memdb {
 }
 
 func (db *memdb) Staging() StagingHandle {
+	db.Lock()
+	defer db.Unlock()
+
 	db.stages = append(db.stages, db.vlog.checkpoint())
 	return StagingHandle(len(db.stages))
 }
@@ -155,6 +162,9 @@ func (db *memdb) Release(h StagingHandle) {
 		// Use panic to make debug easier.
 		panic("cannot release staging buffer")
 	}
+
+	db.Lock()
+	defer db.Unlock()
 	if int(h) == 1 {
 		tail := db.vlog.checkpoint()
 		if !db.stages[0].isSamePosition(&tail) {
@@ -174,6 +184,8 @@ func (db *memdb) Cleanup(h StagingHandle) {
 		panic("cannot cleanup staging buffer")
 	}
 
+	db.Lock()
+	defer db.Unlock()
 	cp := &db.stages[int(h)-1]
 	if !db.vlogInvalid {
 		db.vlog.revertToCheckpoint(db, cp)
@@ -276,6 +288,10 @@ func (db *memdb) set(key Key, value []byte, ops ...FlagsOp) error {
 			return ErrEntryTooLarge.GenWithStackByArgs(db.entrySizeLimit, size)
 		}
 	}
+
+	db.Lock()
+	defer db.Unlock()
+
 	if len(db.stages) == 0 {
 		db.dirty = true
 	}
