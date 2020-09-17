@@ -3756,6 +3756,33 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	return errors.Trace(err)
 }
 
+// CleanDeadTableLock uses to clean dead table locks.
+func (d *ddl) CleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.SessionInfo) error {
+	if len(unlockTables) == 0 {
+		return nil
+	}
+	arg := &lockTablesArg{
+		UnlockTables: unlockTables,
+		SessionInfo:  se,
+	}
+	job := &model.Job{
+		SchemaID:   unlockTables[0].SchemaID,
+		TableID:    unlockTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+
+	ctx, err := d.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.put(ctx)
+	err = d.doDDLJob(ctx, job)
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
 func throwErrIfInMemOrSysDB(ctx sessionctx.Context, dbLowerName string) error {
 	if util.IsMemOrSysDB(dbLowerName) {
 		if ctx.GetSessionVars().User != nil {
