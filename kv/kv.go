@@ -61,6 +61,8 @@ const (
 	CheckExists
 	// InfoSchema is schema version used by txn startTS.
 	InfoSchema
+	// SchemaAmender is used to amend mutations for pessimistic transactions
+	SchemaAmender
 )
 
 // Priority value for transaction priority.
