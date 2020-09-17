@@ -25,14 +25,16 @@ import (
 )
 
 const (
-	// DefPartialResult4PercentileIntSize is the size of partialResult4PercentileInt
-	DefPartialResult4PercentileIntSize = int64(unsafe.Sizeof(partialResult4PercentileInt{}))
-	// DefPartialResult4PercentileRealSize is the size of partialResult4PercentileReal
-	DefPartialResult4PercentileRealSize = int64(unsafe.Sizeof(partialResult4PercentileReal{}))
-	// DefPartialResult4PercentileDecimalSize is the size of partialResult4PercentileDecimal
-	DefPartialResult4PercentileDecimalSize = int64(unsafe.Sizeof(partialResult4PercentileDecimal{}))
-	// DefPartialResult4PercentileTimeSize is the size of partialResult4PercentileTime
-	DefPartialResult4PercentileTimeSize = int64(unsafe.Sizeof(partialResult4PercentileTime{}))
+	// DefSliceSize represents size of an empty Slice
+	DefSliceSize = int64(unsafe.Sizeof([]interface{}{}))
+)
+
+var (
+	_ partialResult4Percentile = partialResult4PercentileInt{}
+	_ partialResult4Percentile = partialResult4PercentileReal{}
+	_ partialResult4Percentile = partialResult4PercentileDecimal{}
+	_ partialResult4Percentile = partialResult4PercentileTime{}
+	_ partialResult4Percentile = partialResult4PercentileDuration{}
 )
 
 func percentile(data sort.Interface, percent int) int {
@@ -64,75 +66,61 @@ func (e *basePercentile) AppendFinalResult2Chunk(sctx sessionctx.Context, pr Par
 	return nil
 }
 
-type intArray []int64
+type partialResult4Percentile interface {
+	sort.Interface
 
-func (a intArray) Len() int           { return len(a) }
-func (a intArray) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a intArray) Less(i, j int) bool { return a[i] < a[j] }
-
-type partialResult4PercentileInt struct {
-	data intArray
+	MemSize() int64
 }
 
-func (p *partialResult4PercentileInt) MemSize() int64 {
-	return DefPartialResult4PercentileIntSize + int64(len(p.data))*DefInt64Size
+type partialResult4PercentileInt []int64
+
+func (p partialResult4PercentileInt) Len() int           { return len(p) }
+func (p partialResult4PercentileInt) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+func (p partialResult4PercentileInt) Less(i, j int) bool { return p[i] < p[j] }
+
+func (p partialResult4PercentileInt) MemSize() int64 {
+	return DefSliceSize + int64(len(p))*DefInt64Size
 }
 
-type realArray []float64
+type partialResult4PercentileReal []float64
 
-func (a realArray) Len() int           { return len(a) }
-func (a realArray) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a realArray) Less(i, j int) bool { return a[i] < a[j] }
+func (p partialResult4PercentileReal) Len() int           { return len(p) }
+func (p partialResult4PercentileReal) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+func (p partialResult4PercentileReal) Less(i, j int) bool { return p[i] < p[j] }
 
-type partialResult4PercentileReal struct {
-	data realArray
-}
-
-func (p *partialResult4PercentileReal) MemSize() int64 {
-	return DefPartialResult4PercentileRealSize + int64(len(p.data))*DefFloat64Size
+func (p partialResult4PercentileReal) MemSize() int64 {
+	return DefSliceSize + int64(len(p))*DefFloat64Size
 }
 
 // TODO: use []*types.MyDecimal to prevent massive value copy
-type decimalArray []types.MyDecimal
+type partialResult4PercentileDecimal []types.MyDecimal
 
-func (a decimalArray) Len() int           { return len(a) }
-func (a decimalArray) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a decimalArray) Less(i, j int) bool { return a[i].Compare(&a[j]) < 0 }
+func (p partialResult4PercentileDecimal) Len() int           { return len(p) }
+func (p partialResult4PercentileDecimal) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+func (p partialResult4PercentileDecimal) Less(i, j int) bool { return p[i].Compare(&p[j]) < 0 }
 
-type partialResult4PercentileDecimal struct {
-	data decimalArray
+func (p partialResult4PercentileDecimal) MemSize() int64 {
+	return DefSliceSize + int64(len(p))*int64(types.MyDecimalStructSize)
 }
 
-func (p *partialResult4PercentileDecimal) MemSize() int64 {
-	return DefPartialResult4PercentileDecimalSize + int64(len(p.data))*int64(types.MyDecimalStructSize+unsafe.Sizeof(unsafe.Pointer(nil)))
+type partialResult4PercentileTime []types.Time
+
+func (p partialResult4PercentileTime) Len() int           { return len(p) }
+func (p partialResult4PercentileTime) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+func (p partialResult4PercentileTime) Less(i, j int) bool { return p[i].Compare(p[j]) < 0 }
+
+func (p partialResult4PercentileTime) MemSize() int64 {
+	return DefSliceSize + int64(len(p))*DefInt64Size
 }
 
-type timeArray []types.Time
+type partialResult4PercentileDuration []types.Duration
 
-func (a timeArray) Len() int           { return len(a) }
-func (a timeArray) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a timeArray) Less(i, j int) bool { return a[i].Compare(a[j]) < 0 }
+func (p partialResult4PercentileDuration) Len() int           { return len(p) }
+func (p partialResult4PercentileDuration) Swap(i, j int)      { p[i], p[j] = p[j], p[i] }
+func (p partialResult4PercentileDuration) Less(i, j int) bool { return p[i].Compare(p[j]) < 0 }
 
-type partialResult4PercentileTime struct {
-	data timeArray
-}
-
-func (p *partialResult4PercentileTime) MemSize() int64 {
-	return DefPartialResult4PercentileRealSize + int64(len(p.data))*DefInt64Size
-}
-
-type durationArray []types.Duration
-
-func (a durationArray) Len() int           { return len(a) }
-func (a durationArray) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
-func (a durationArray) Less(i, j int) bool { return a[i].Compare(a[j]) < 0 }
-
-type partialResult4PercentileDuration struct {
-	data durationArray
-}
-
-func (p *partialResult4PercentileDuration) MemSize() int64 {
-	return DefPartialResult4PercentileRealSize + int64(len(p.data))*DefInt64Size
+func (p partialResult4PercentileDuration) MemSize() int64 {
+	return DefSliceSize + int64(len(p))*DefInt64Size
 }
 
 type percentileOriginal4Int struct {
@@ -142,12 +130,12 @@ type percentileOriginal4Int struct {
 func (e *percentileOriginal4Int) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	// TODO: Preserve appropriate capacity for data
 	pr = PartialResult(&partialResult4PercentileInt{})
-	return pr, DefPartialResult4PercentileIntSize
+	return pr, DefSliceSize
 }
 
 func (e *percentileOriginal4Int) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4PercentileInt)(pr)
-	p.data = intArray{}
+	*p = partialResult4PercentileInt{}
 }
 
 func (e *percentileOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -161,7 +149,7 @@ func (e *percentileOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, ro
 		if isNull {
 			continue
 		}
-		p.data = append(p.data, v)
+		*p = append(*p, v)
 	}
 	endMem := p.MemSize()
 	return endMem - startMem, nil
@@ -169,22 +157,22 @@ func (e *percentileOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, ro
 
 func (e *percentileOriginal4Int) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileInt)(src), (*partialResult4PercentileInt)(dst)
-	mergeBuff := make([]int64, len(p1.data)+len(p2.data))
-	copy(mergeBuff, p2.data)
-	copy(mergeBuff[len(p2.data):], p1.data)
-	p1.data = nil
-	p2.data = mergeBuff
+	mergeBuff := make([]int64, len(*p1)+len(*p2))
+	copy(mergeBuff, *p2)
+	copy(mergeBuff[len(*p2):], *p1)
+	p1 = nil
+	*p2 = mergeBuff
 	return 0, nil
 }
 
 func (e *percentileOriginal4Int) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileInt)(pr)
-	if len(p.data) == 0 {
+	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	index := percentile(p.data, e.percent)
-	chk.AppendInt64(e.ordinal, p.data[index])
+	index := percentile(p, e.percent)
+	chk.AppendInt64(e.ordinal, (*p)[index])
 	return nil
 }
 
@@ -195,12 +183,12 @@ type percentileOriginal4Real struct {
 func (e *percentileOriginal4Real) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	// TODO: Preserve appropriate capacity for data
 	pr = PartialResult(&partialResult4PercentileReal{})
-	return pr, DefPartialResult4PercentileRealSize
+	return pr, DefSliceSize
 }
 
 func (e *percentileOriginal4Real) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4PercentileReal)(pr)
-	p.data = realArray{}
+	*p = partialResult4PercentileReal{}
 }
 
 func (e *percentileOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -214,7 +202,7 @@ func (e *percentileOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, r
 		if isNull {
 			continue
 		}
-		p.data = append(p.data, v)
+		*p = append(*p, v)
 	}
 	endMem := p.MemSize()
 	return endMem - startMem, nil
@@ -222,22 +210,22 @@ func (e *percentileOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, r
 
 func (e *percentileOriginal4Real) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileReal)(src), (*partialResult4PercentileReal)(dst)
-	mergeBuff := make([]float64, len(p1.data)+len(p2.data))
-	copy(mergeBuff, p2.data)
-	copy(mergeBuff[len(p2.data):], p1.data)
-	p1.data = nil
-	p2.data = mergeBuff
+	mergeBuff := make([]float64, len(*p1)+len(*p2))
+	copy(mergeBuff, *p2)
+	copy(mergeBuff[len(*p2):], *p1)
+	p1 = nil
+	*p2 = mergeBuff
 	return 0, nil
 }
 
 func (e *percentileOriginal4Real) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileReal)(pr)
-	if len(p.data) == 0 {
+	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	index := percentile(p.data, e.percent)
-	chk.AppendFloat64(e.ordinal, p.data[index])
+	index := percentile(*p, e.percent)
+	chk.AppendFloat64(e.ordinal, (*p)[index])
 	return nil
 }
 
@@ -248,12 +236,12 @@ type percentileOriginal4Decimal struct {
 func (e *percentileOriginal4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	// TODO: Preserve appropriate capacity for data
 	pr = PartialResult(&partialResult4PercentileDecimal{})
-	return pr, DefPartialResult4PercentileDecimalSize
+	return pr, DefSliceSize
 }
 
 func (e *percentileOriginal4Decimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4PercentileDecimal)(pr)
-	p.data = decimalArray{}
+	*p = partialResult4PercentileDecimal{}
 }
 
 func (e *percentileOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -267,7 +255,7 @@ func (e *percentileOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context
 		if isNull {
 			continue
 		}
-		p.data = append(p.data, *v)
+		*p = append(*p, *v)
 	}
 	endMem := p.MemSize()
 	return endMem - startMem, nil
@@ -275,22 +263,22 @@ func (e *percentileOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context
 
 func (e *percentileOriginal4Decimal) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileDecimal)(src), (*partialResult4PercentileDecimal)(dst)
-	mergeBuff := make([]types.MyDecimal, len(p1.data)+len(p2.data))
-	copy(mergeBuff, p2.data)
-	copy(mergeBuff[len(p2.data):], p1.data)
-	p1.data = nil
-	p2.data = mergeBuff
+	mergeBuff := make([]types.MyDecimal, len(*p1)+len(*p2))
+	copy(mergeBuff, *p2)
+	copy(mergeBuff[len(*p2):], *p1)
+	p1 = nil
+	*p2 = mergeBuff
 	return 0, nil
 }
 
 func (e *percentileOriginal4Decimal) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileDecimal)(pr)
-	if len(p.data) == 0 {
+	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	index := percentile(p.data, e.percent)
-	chk.AppendMyDecimal(e.ordinal, &p.data[index])
+	index := percentile(*p, e.percent)
+	chk.AppendMyDecimal(e.ordinal, &(*p)[index])
 	return nil
 }
 
@@ -301,12 +289,12 @@ type percentileOriginal4Time struct {
 func (e *percentileOriginal4Time) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	// TODO: Preserve appropriate capacity for data
 	pr = PartialResult(&partialResult4PercentileTime{})
-	return pr, DefPartialResult4PercentileIntSize
+	return pr, DefSliceSize
 }
 
 func (e *percentileOriginal4Time) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4PercentileTime)(pr)
-	p.data = timeArray{}
+	*p = partialResult4PercentileTime{}
 }
 
 func (e *percentileOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -320,7 +308,7 @@ func (e *percentileOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, r
 		if isNull {
 			continue
 		}
-		p.data = append(p.data, v)
+		*p = append(*p, v)
 	}
 	endMem := p.MemSize()
 	return endMem - startMem, nil
@@ -328,22 +316,22 @@ func (e *percentileOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, r
 
 func (e *percentileOriginal4Time) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileTime)(src), (*partialResult4PercentileTime)(dst)
-	mergeBuff := make(timeArray, len(p1.data)+len(p2.data))
-	copy(mergeBuff, p2.data)
-	copy(mergeBuff[len(p2.data):], p1.data)
-	p1.data = nil
-	p2.data = mergeBuff
+	mergeBuff := make(partialResult4PercentileTime, len(*p1)+len(*p2))
+	copy(mergeBuff, *p2)
+	copy(mergeBuff[len(*p2):], *p1)
+	p1 = nil
+	*p2 = mergeBuff
 	return 0, nil
 }
 
 func (e *percentileOriginal4Time) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileTime)(pr)
-	if len(p.data) == 0 {
+	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	index := percentile(p.data, e.percent)
-	chk.AppendTime(e.ordinal, p.data[index])
+	index := percentile(p, e.percent)
+	chk.AppendTime(e.ordinal, (*p)[index])
 	return nil
 }
 
@@ -354,12 +342,12 @@ type percentileOriginal4Duration struct {
 func (e *percentileOriginal4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	// TODO: Preserve appropriate capacity for data
 	pr = PartialResult(&partialResult4PercentileTime{})
-	return pr, DefPartialResult4PercentileIntSize
+	return pr, DefSliceSize
 }
 
 func (e *percentileOriginal4Duration) ResetPartialResult(pr PartialResult) {
-	p := (*partialResult4PercentileTime)(pr)
-	p.data = timeArray{}
+	p := (*partialResult4PercentileDuration)(pr)
+	*p = partialResult4PercentileDuration{}
 }
 
 func (e *percentileOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
@@ -373,7 +361,7 @@ func (e *percentileOriginal4Duration) UpdatePartialResult(sctx sessionctx.Contex
 		if isNull {
 			continue
 		}
-		p.data = append(p.data, v)
+		*p = append(*p, v)
 	}
 	endMem := p.MemSize()
 	return endMem - startMem, nil
@@ -381,21 +369,21 @@ func (e *percentileOriginal4Duration) UpdatePartialResult(sctx sessionctx.Contex
 
 func (e *percentileOriginal4Duration) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileDuration)(src), (*partialResult4PercentileDuration)(dst)
-	mergeBuff := make(durationArray, len(p1.data)+len(p2.data))
-	copy(mergeBuff, p2.data)
-	copy(mergeBuff[len(p2.data):], p1.data)
-	p1.data = nil
-	p2.data = mergeBuff
+	mergeBuff := make(partialResult4PercentileDuration, len(*p1)+len(*p2))
+	copy(mergeBuff, *p2)
+	copy(mergeBuff[len(*p2):], *p1)
+	p1 = nil
+	*p2 = mergeBuff
 	return 0, nil
 }
 func (e *percentileOriginal4Duration) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileDuration)(pr)
-	if len(p.data) == 0 {
+	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	index := percentile(p.data, e.percent)
+	index := percentile(*p, e.percent)
 
-	chk.AppendDuration(e.ordinal, p.data[index])
+	chk.AppendDuration(e.ordinal, (*p)[index])
 	return nil
 }
