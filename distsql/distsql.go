@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -44,13 +45,10 @@ func Select(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request, fie
 	if !sctx.GetSessionVars().EnableStreaming {
 		kvReq.Streaming = false
 	}
-	resp, actionOnExceed := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars)
+	resp := sctx.GetClient().Send(ctx, kvReq, sctx.GetSessionVars().KVVars, sctx.GetSessionVars().StmtCtx.MemTracker)
 	if resp == nil {
 		err := errors.New("client returns nil response")
 		return nil, err
-	}
-	if memTracker := sctx.GetSessionVars().StmtCtx.MemTracker; memTracker != nil && actionOnExceed != nil {
-		memTracker.FallbackOldAndSetNewAction(actionOnExceed)
 	}
 
 	label := metrics.LblGeneral
@@ -107,8 +105,8 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables,
-	isRestrict bool) (SelectResult, error) {
-	resp, _ := client.Send(ctx, kvReq, vars)
+	isRestrict bool, sessionMemTracker *memory.Tracker) (SelectResult, error) {
+	resp := client.Send(ctx, kvReq, vars, sessionMemTracker)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -128,7 +126,9 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.
 
 // Checksum sends a checksum request.
 func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars *kv.Variables) (SelectResult, error) {
-	resp, _ := client.Send(ctx, kvReq, vars)
+	// FIXME: As BR have dependency of `Checksum` and TiDB also introduced BR as dependency, Currently we can't edit
+	// Checksum function signature. The two-way dependence should be removed in future.
+	resp := client.Send(ctx, kvReq, vars, nil)
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}

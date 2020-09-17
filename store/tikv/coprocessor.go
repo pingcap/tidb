@@ -56,16 +56,16 @@ type CopClient struct {
 }
 
 // Send builds the request and gets the coprocessor iterator response.
-func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables) (kv.Response, memory.ActionOnExceed) {
+func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variables, sessionMemTracker *memory.Tracker) kv.Response {
 	if req.StoreType == kv.TiFlash && req.BatchCop {
 		logutil.BgLogger().Debug("send batch requests")
-		return c.sendBatch(ctx, req, vars), nil
+		return c.sendBatch(ctx, req, vars)
 	}
 	ctx = context.WithValue(ctx, txnStartKey, req.StartTs)
 	bo := NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 	tasks, err := buildCopTasks(bo, c.store.regionCache, &copRanges{mid: req.KeyRanges}, req)
 	if err != nil {
-		return copErrorResponse{err}, nil
+		return copErrorResponse{err}
 	}
 	it := &copIterator{
 		store:           c.store,
@@ -95,15 +95,15 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 	workersCond := sync.NewCond(&sync.Mutex{})
 	it.actionOnExceed = newrateLimitAction(it.sendRate, workersCond)
-	if it.memTracker != nil {
-		it.memTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
+	if sessionMemTracker != nil {
+		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
 
 	if !it.req.Streaming {
 		ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, it.rpcCancel)
 	}
 	it.open(ctx)
-	return it, it.actionOnExceed
+	return it
 }
 
 // copTask contains a related Region and KeyRange for a kv.Request.
