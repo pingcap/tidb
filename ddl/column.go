@@ -969,6 +969,9 @@ func (w *worker) updatePhysicalTableRow(t table.PhysicalTable, oldColInfo, colIn
 
 // updateColumnAndIndexes handles the modify column reorganization state for a table.
 func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.ColumnInfo, idxes []*model.IndexInfo, reorgInfo *reorgInfo) error {
+	originalStartHandle := reorgInfo.StartHandle
+	originalEndHandle := reorgInfo.EndHandle
+	startElementOffsetToResetHandle := -1
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), oldCol, col, reorgInfo)
@@ -977,31 +980,32 @@ func (w *worker) updateColumnAndIndexes(t table.Table, oldCol, col *model.Column
 		}
 	}
 
-	originalStartHandle := reorgInfo.StartHandle
-	originalEndHandle := reorgInfo.EndHandle
+	// Get the original start handle and end handle.
+	currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	originalStartHandle, originalEndHandle, err = getTableRange(reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	startElementOffset := 0
 	// This backfill job starts with backfilling index data, whose index ID is currElement.ID.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.IndexElementKey) {
 		for i, idx := range idxes {
 			if reorgInfo.currElement.ID == idx.ID {
 				startElementOffset = i
-
-				// Reset the start handle and end handle.
-				currentVer, err := getValidCurrentVersion(reorgInfo.d.store)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				originalStartHandle, originalEndHandle, err = getTableRange(reorgInfo.d, t.(table.PhysicalTable), currentVer.Ver, reorgInfo.Job.Priority)
-				if err != nil {
-					return errors.Trace(err)
-				}
+				startElementOffsetToResetHandle = i
+				break
 			}
 		}
 	}
+
 	for i := startElementOffset; i < len(idxes); i++ {
 		// This backfill job has been exited during processing. At that time, the element is reorgInfo.elements[i+1] and handle range is [reorgInfo.StartHandle, reorgInfo.EndHandle].
 		// Then the handle range of the rest elements' is [originalStartHandle, originalEndHandle].
-		if i == startElementOffset+1 {
+		if i == startElementOffsetToResetHandle+1 {
 			reorgInfo.StartHandle, reorgInfo.EndHandle = originalStartHandle, originalEndHandle
 		}
 
