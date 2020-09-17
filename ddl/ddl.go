@@ -43,11 +43,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
-<<<<<<< HEAD
-	tidbutil "github.com/pingcap/tidb/util"
-=======
 	goutil "github.com/pingcap/tidb/util"
->>>>>>> 8ae5b1c... ddl: fix panic tidb-server doesn't release table lock (#19586)
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
@@ -381,25 +378,16 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 	ctx, cancelFunc := context.WithCancel(ctx)
 	var manager owner.Manager
 	var syncer util.SchemaSyncer
-<<<<<<< HEAD
-	if etcdCli == nil {
-=======
 	var deadLockCkr util.DeadTableLockChecker
-	if etcdCli := opt.EtcdCli; etcdCli == nil {
->>>>>>> 8ae5b1c... ddl: fix panic tidb-server doesn't release table lock (#19586)
+	if etcdCli == nil {
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and MockSchemaSyncer.
 		manager = owner.NewMockManager(id, cancelFunc)
 		syncer = NewMockSchemaSyncer()
 	} else {
-<<<<<<< HEAD
 		manager = owner.NewOwnerManager(etcdCli, ddlPrompt, id, DDLOwnerKey, cancelFunc)
 		syncer = util.NewSchemaSyncer(etcdCli, id, manager)
-=======
-		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
-		syncer = util.NewSchemaSyncer(ctx, etcdCli, id, manager)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
->>>>>>> 8ae5b1c... ddl: fix panic tidb-server doesn't release table lock (#19586)
 	}
 
 	ddlCtx := &ddlCtx{
@@ -410,12 +398,8 @@ func newDDL(ctx context.Context, etcdCli *clientv3.Client, store kv.Storage,
 		ownerManager: manager,
 		schemaSyncer: syncer,
 		binlogCli:    binloginfo.GetPumpsClient(),
-<<<<<<< HEAD
 		infoHandle:   infoHandle,
-=======
-		infoHandle:   opt.InfoHandle,
 		tableLockCkr: deadLockCkr,
->>>>>>> 8ae5b1c... ddl: fix panic tidb-server doesn't release table lock (#19586)
 	}
 	ddlCtx.mu.hook = hook
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
@@ -503,7 +487,6 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 			asyncNotify(worker.ddlJobCh)
 		}
 
-<<<<<<< HEAD
 		go tidbutil.WithRecovery(
 			func() { d.schemaSyncer.StartCleanWork() },
 			func(r interface{}) {
@@ -514,14 +497,11 @@ func (d *ddl) start(ctx context.Context, ctxPool *pools.ResourcePool) {
 				}
 			})
 		metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s", metrics.StartCleanWork)).Inc()
-=======
-		go d.schemaSyncer.StartCleanWork()
 		if config.TableLockEnabled() {
 			d.wg.Add(1)
 			go d.startCleanDeadTableLock()
 		}
 		metrics.DDLCounter.WithLabelValues(metrics.StartCleanWork).Inc()
->>>>>>> 8ae5b1c... ddl: fix panic tidb-server doesn't release table lock (#19586)
 	}
 }
 
@@ -712,7 +692,37 @@ func (d *ddl) GetHook() Callback {
 	return d.mu.hook
 }
 
-<<<<<<< HEAD
+func (d *ddl) startCleanDeadTableLock() {
+	defer func() {
+		goutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
+		d.wg.Done()
+	}()
+
+	ticker := time.NewTicker(time.Second * 10)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if !d.ownerManager.IsOwner() {
+				continue
+			}
+			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.quitCh, d.infoHandle.Get().AllSchemas())
+			if err != nil {
+				logutil.Logger(ddlLogCtx).Info("[ddl] get dead table lock failed.", zap.Error(err))
+				continue
+			}
+			for se, tables := range deadLockTables {
+				err := d.CleanDeadTableLock(tables, se)
+				if err != nil {
+					logutil.Logger(ddlLogCtx).Info("[ddl] clean dead table lock failed.", zap.Error(err))
+				}
+			}
+		case <-d.quitCh:
+			return
+		}
+	}
+}
+
 // DDL error codes.
 const (
 	codeInvalidWorker         terror.ErrCode = 1
@@ -896,45 +906,4 @@ func init() {
 		mysql.ErrFKIncompatibleColumns:             mysql.ErrFKIncompatibleColumns,
 	}
 	terror.ErrClassToMySQLCodes[terror.ClassDDL] = ddlMySQLErrCodes
-=======
-func (d *ddl) startCleanDeadTableLock() {
-	defer func() {
-		goutil.Recover(metrics.LabelDDL, "startCleanDeadTableLock", nil, false)
-		d.wg.Done()
-	}()
-
-	ticker := time.NewTicker(time.Second * 10)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			if !d.ownerManager.IsOwner() {
-				continue
-			}
-			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoHandle.Get().AllSchemas())
-			if err != nil {
-				logutil.BgLogger().Info("[ddl] get dead table lock failed.", zap.Error(err))
-				continue
-			}
-			for se, tables := range deadLockTables {
-				err := d.CleanDeadTableLock(tables, se)
-				if err != nil {
-					logutil.BgLogger().Info("[ddl] clean dead table lock failed.", zap.Error(err))
-				}
-			}
-		case <-d.ctx.Done():
-			return
-		}
-	}
-}
-
-// RecoverInfo contains information needed by DDL.RecoverTable.
-type RecoverInfo struct {
-	SchemaID      int64
-	TableInfo     *model.TableInfo
-	DropJobID     int64
-	SnapshotTS    uint64
-	CurAutoIncID  int64
-	CurAutoRandID int64
->>>>>>> 8ae5b1c... ddl: fix panic tidb-server doesn't release table lock (#19586)
 }
