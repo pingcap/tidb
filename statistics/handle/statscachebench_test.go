@@ -114,7 +114,7 @@ func defaultstatsCacheTestCase(numClient int, tableSize int, memoryLimit int64, 
 		pesudoTables = append(pesudoTables, table)
 	}
 	cas.tables = pesudoTables
-	for j := 0; j < int(cas.numClient); j++ {
+	for j := 0; j < cas.numClient; j++ {
 		tps := make([]queryType, 0)
 		tbls := make([]int64, 0)
 		for i := 0; i < int(cas.queryPerClient); i++ {
