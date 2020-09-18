@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
@@ -369,6 +370,14 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 }
 
 func (b *Builder) applyPartitionPlacementUpdate(m *meta.Meta, diff *model.SchemaDiff) error {
+	tid := placement.GroupID(diff.TableID)
+
+	bundle, err := infosync.GetRuleBundle(nil, tid)
+	if err != nil {
+		return err
+	}
+
+	b.is.bundles[tid] = bundle
 	return nil
 }
 
@@ -404,13 +413,16 @@ func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles *placement.Bundles, schemaVersion int64) (*Builder, error) {
-	bundles.Sort()
-
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.Bundle, schemaVersion int64) (*Builder, error) {
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
+	info.bundles = make(map[string]*placement.Bundle, len(bundles))
+	for _, bundle := range bundles {
+		info.bundles[bundle.ID] = bundle
+	}
+
 	for _, di := range dbInfos {
-		err := b.createSchemaTablesForDB(di, bundles, tables.TableFromMeta)
+		err := b.createSchemaTablesForDB(di, tables.TableFromMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -418,7 +430,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles *placement.Bu
 
 	// Initialize virtual tables.
 	for _, driver := range drivers {
-		err := b.createSchemaTablesForDB(driver.DBInfo, bundles, driver.TableFromMeta)
+		err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -433,12 +445,10 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles *placement.Bu
 
 type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
 
-func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, ruleBundles *placement.Bundles, tableFromMeta tableFromMetaFunc) error {
+func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc) error {
 	schTbls := &schemaTables{
-		dbInfo:   di,
-		dbBundle: ruleBundles.FindByID(placement.GroupID(di.ID)),
-		bundles:  make(map[string]*placement.Bundle, len(di.Tables)),
-		tables:   make(map[string]table.Table, len(di.Tables)),
+		dbInfo: di,
+		tables: make(map[string]table.Table, len(di.Tables)),
 	}
 	b.is.schemaMap[di.Name.L] = schTbls
 
@@ -450,7 +460,6 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, ruleBundles *placeme
 			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
 		schTbls.tables[t.Name.L] = tbl
-		schTbls.bundles[t.Name.L] = ruleBundles.FindByID(placement.GroupID(t.ID))
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
 		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
 	}
@@ -480,6 +489,7 @@ func NewBuilder(handle *Handle) *Builder {
 	b.handle = handle
 	b.is = &infoSchema{
 		schemaMap:           map[string]*schemaTables{},
+		bundles:             map[string]*placement.Bundle{},
 		sortedTablesBuckets: make([]sortedTables, bucketCount),
 	}
 	return b

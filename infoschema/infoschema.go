@@ -81,15 +81,16 @@ func (s sortedTables) searchTable(id int64) int {
 }
 
 type schemaTables struct {
-	dbInfo   *model.DBInfo
-	dbBundle *placement.Bundle
-	bundles  map[string]*placement.Bundle
-	tables   map[string]table.Table
+	dbInfo *model.DBInfo
+	tables map[string]table.Table
 }
 
 const bucketCount = 512
 
 type infoSchema struct {
+	// bundles stores all rules
+	bundles map[string]*placement.Bundle
+
 	schemaMap map[string]*schemaTables
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).

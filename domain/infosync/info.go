@@ -295,12 +295,12 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 
 		res, err = http.DefaultClient.Do(req)
 		if err == nil {
-			defer terror.Call(res.Body.Close)
-
 			bodyBytes, err := ioutil.ReadAll(res.Body)
+			terror.Log(err)
 			if res.StatusCode != http.StatusOK {
-				err = errors.Wrapf(err, "%s", bodyBytes)
+				err = errors.Errorf("%s", bodyBytes)
 			}
+			terror.Log(res.Body.Close())
 			return bodyBytes, err
 		}
 	}
@@ -365,6 +365,57 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error 
 
 	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
 	return err
+}
+
+// GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
+func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	bundles := []*placement.Bundle{}
+	if is.etcdCli == nil {
+		return bundles, nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return nil, errors.Errorf("pd unavailable")
+	}
+
+	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule"), "GET", nil)
+	if err == nil {
+		err = json.Unmarshal(res, &bundles)
+	}
+	return bundles, err
+}
+
+// GetRuleBundle is used to get one specific rule bundle from PD.
+func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+
+	bundle := &placement.Bundle{ID: name}
+
+	if is.etcdCli == nil {
+		return bundle, nil
+	}
+
+	addrs := is.etcdCli.Endpoints()
+
+	if len(addrs) == 0 {
+		return nil, errors.Errorf("pd unavailable")
+	}
+
+	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
+	if err == nil {
+		err = json.Unmarshal(res, bundle)
+	}
+	return bundle, err
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
