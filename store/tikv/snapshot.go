@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -655,6 +656,60 @@ type SnapshotRuntimeStats struct {
 	rpcStats       RegionRequestRuntimeStats
 	backoffSleepMS map[backoffType]int
 	backoffTimes   map[backoffType]int
+}
+
+// Tp implements the RuntimeStats interface.
+func (rs *SnapshotRuntimeStats) Tp() int {
+	return execdetails.TpSnapshotRuntimeStats
+}
+
+// Clone implements the RuntimeStats interface.
+func (rs *SnapshotRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := SnapshotRuntimeStats{rpcStats: NewRegionRequestRuntimeStats()}
+	if rs.rpcStats.Stats != nil {
+		for k, v := range rs.rpcStats.Stats {
+			newRs.rpcStats.Stats[k] = v
+		}
+	}
+	if len(rs.backoffSleepMS) > 0 {
+		newRs.backoffSleepMS = make(map[backoffType]int)
+		newRs.backoffTimes = make(map[backoffType]int)
+		for k, v := range rs.backoffSleepMS {
+			newRs.backoffSleepMS[k] += v
+		}
+		for k, v := range rs.backoffTimes {
+			newRs.backoffTimes[k] += v
+		}
+	}
+	return &newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (rs *SnapshotRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*SnapshotRuntimeStats)
+	if !ok {
+		return
+	}
+	if tmp.rpcStats.Stats != nil {
+		if rs.rpcStats.Stats == nil {
+			rs.rpcStats.Stats = make(map[tikvrpc.CmdType]*RPCRuntimeStats, len(tmp.rpcStats.Stats))
+		}
+		rs.rpcStats.Merge(tmp.rpcStats)
+	}
+	if len(tmp.backoffSleepMS) > 0 {
+		if rs.backoffSleepMS == nil {
+			rs.backoffSleepMS = make(map[backoffType]int)
+		}
+		if rs.backoffTimes == nil {
+			rs.backoffTimes = make(map[backoffType]int)
+		}
+		for k, v := range tmp.backoffSleepMS {
+			rs.backoffSleepMS[k] += v
+		}
+		for k, v := range tmp.backoffTimes {
+			rs.backoffTimes[k] += v
+		}
+	}
 }
 
 // String implements fmt.Stringer interface.

@@ -116,6 +116,12 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 	switch sysVar.Name {
 	case TiDBCurrentTS:
 		return fmt.Sprintf("%d", s.TxnCtx.StartTS), true, nil
+	case TiDBLastTxnInfo:
+		info, err := json.Marshal(s.LastTxnInfo)
+		if err != nil {
+			return "", true, err
+		}
+		return string(info), true, nil
 	case TiDBGeneralLog:
 		return fmt.Sprintf("%d", atomic.LoadUint32(&ProcessGeneralLog)), true, nil
 	case TiDBPProfSQLCPU:
@@ -229,7 +235,7 @@ func ValidateGetSystemVar(name string, isGlobal bool) error {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	switch sysVar.Scope {
-	case ScopeGlobal, ScopeNone:
+	case ScopeGlobal:
 		if !isGlobal {
 			return ErrIncorrectScope.GenWithStackByArgs(name, "GLOBAL")
 		}
@@ -719,6 +725,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		}
 		if v != DefTiDBRowFormatV1 && v != DefTiDBRowFormatV2 {
 			return value, errors.Errorf("Unsupported row format version %d", v)
+		}
+	case TiDBPartitionPruneMode:
+		if !PartitionPruneMode(value).Valid() {
+			return value, ErrWrongTypeForVar.GenWithStackByArgs(name)
 		}
 	case TiDBAllowRemoveAutoInc, TiDBUsePlanBaselines, TiDBEvolvePlanBaselines, TiDBEnableParallelApply:
 		switch {

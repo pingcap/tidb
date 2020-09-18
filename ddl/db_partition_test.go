@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/domain"
@@ -154,15 +154,15 @@ func (s *testIntegrationSuite3) TestCreateTableWithPartition(c *C) {
 	);`
 	tk.MustGetErrCode(sql7, tmysql.ErrPartitionMaxvalue)
 
-	_, err = tk.Exec(`create table t8 (
+	sql18 := `create table t8 (
 	a int not null,
 	b int not null
 	)
 	partition by range( a ) (
 		partition p1 values less than (19xx91),
 		partition p2 values less than maxvalue
-	);`)
-	c.Assert(ddl.ErrNotAllowedTypeInPartition.Equal(err), IsTrue)
+	);`
+	tk.MustGetErrCode(sql18, mysql.ErrBadField)
 
 	sql9 := `create TABLE t9 (
 	col1 int
@@ -1276,9 +1276,6 @@ func (s *testIntegrationSuite4) TestExchangePartitionTableCompatiable(c *C) {
 }
 
 func (s *testIntegrationSuite7) TestExchangePartitionExpressIndex(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists pt1;")

@@ -496,14 +496,16 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	switch indexInfo.State {
 	case model.StateNone:
 		// none -> delete only
-		job.SchemaState = model.StateDeleteOnly
 		indexInfo.State = model.StateDeleteOnly
 		updateHiddenColumns(tblInfo, indexInfo, model.StateDeleteOnly)
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, err
+		}
+		job.SchemaState = model.StateDeleteOnly
 		metrics.AddIndexProgress.Set(0)
 	case model.StateDeleteOnly:
 		// delete only -> write only
-		job.SchemaState = model.StateWriteOnly
 		indexInfo.State = model.StateWriteOnly
 		updateHiddenColumns(tblInfo, indexInfo, model.StateWriteOnly)
 		_, err = checkPrimaryKeyNotNull(w, sqlMode, t, job, tblInfo, indexInfo)
@@ -511,9 +513,12 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			break
 		}
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, err
+		}
+		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		job.SchemaState = model.StateWriteReorganization
 		indexInfo.State = model.StateWriteReorganization
 		updateHiddenColumns(tblInfo, indexInfo, model.StateWriteReorganization)
 		_, err = checkPrimaryKeyNotNull(w, sqlMode, t, job, tblInfo, indexInfo)
@@ -523,6 +528,10 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		// Initialize SnapshotVer to 0 for later reorganization check.
 		job.SnapshotVer = 0
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != indexInfo.State)
+		if err != nil {
+			return ver, err
+		}
+		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
 		// reorganization -> public
 		updateHiddenColumns(tblInfo, indexInfo, model.StatePublic)

@@ -47,7 +47,7 @@ var _ = SerialSuites(&testCommitterSuite{})
 func (s *testCommitterSuite) SetUpSuite(c *C) {
 	atomic.StoreUint64(&ManagedLockTTL, 3000) // 3s
 	s.OneByOneSuite.SetUpSuite(c)
-	CommitMaxBackoff = 1000
+	atomic.StoreUint64(&CommitMaxBackoff, 1000)
 }
 
 func (s *testCommitterSuite) SetUpTest(c *C) {
@@ -81,7 +81,7 @@ func (s *testCommitterSuite) SetUpTest(c *C) {
 }
 
 func (s *testCommitterSuite) TearDownSuite(c *C) {
-	CommitMaxBackoff = 20000
+	atomic.StoreUint64(&CommitMaxBackoff, 20000)
 	s.store.Close()
 	s.OneByOneSuite.TearDownSuite(c)
 }
@@ -228,7 +228,7 @@ func (s *testCommitterSuite) TestPrewriteRollback(c *C) {
 	}
 	committer.commitTS, err = s.store.oracle.GetTimestamp(ctx)
 	c.Assert(err, IsNil)
-	err = committer.commitMutations(NewBackofferWithVars(ctx, CommitMaxBackoff, nil), CommitterMutations{keys: [][]byte{[]byte("a")}})
+	err = committer.commitMutations(NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), nil), CommitterMutations{keys: [][]byte{[]byte("a")}})
 	c.Assert(err, IsNil)
 
 	txn3 := s.begin(c)
