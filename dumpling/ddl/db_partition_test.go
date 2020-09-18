@@ -1280,7 +1280,7 @@ func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	for i := 1; i <= count; i++ {
 		sql1 += fmt.Sprintf("partition p%d values less than (%d),", i, i)
 	}
-	sql1 += "partition p1025 values less than (1025) );"
+	sql1 += "partition p8193 values less than (8193) );"
 	tk.MustGetErrCode(sql1, tmysql.ErrTooManyPartitions)
 
 	tk.MustExec("drop table if exists p2;")
@@ -1291,11 +1291,11 @@ func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	for i := 1; i < count; i++ {
 		sql2 += fmt.Sprintf("partition p%d values less than (%d),", i, i)
 	}
-	sql2 += "partition p1024 values less than (1024) );"
+	sql2 += "partition p8192 values less than (8192) );"
 
 	tk.MustExec(sql2)
 	sql3 := `alter table p2 add partition (
-	partition p1025 values less than (1025)
+	partition p8193 values less than (8193)
 	);`
 	tk.MustGetErrCode(sql3, tmysql.ErrTooManyPartitions)
 }
