@@ -16,7 +16,6 @@ package handle
 import (
 	"encoding/binary"
 	"errors"
-	"math/rand"
 	"sync"
 	"time"
 
@@ -139,17 +138,13 @@ func newRistrettoStatsCache(memoryLimit int64) *ristrettoStatsCache {
 // BytesConsumed returns the consumed memory usage value in bytes.
 // only used by test.
 func (sc *ristrettoStatsCache) BytesConsumed() int64 {
-	var rndTblID int64
-	for {
-		rndTblID = rand.Int63()
-		if _, ok := sc.Lookup(rndTblID); ok == false {
-			break
-		}
-	}
+	rndTbl := sc.GetAll()[0]
+	sc.Erase(rndTbl.PhysicalID)
 	// insert a table memory = 0 to make cache renew the memory
-	sc.Insert(&statistics.Table{HistColl: statistics.HistColl{PhysicalID: rndTblID}})
-	sc.Erase(rndTblID)
-	time.Sleep(10 * time.Millisecond)
+	for i := 0; i < 10; i++ {
+		sc.Insert(rndTbl)
+		time.Sleep(10 * time.Millisecond)
+	}
 	return sc.memTracker.BytesConsumed()
 }
 
@@ -222,14 +217,13 @@ func (sc *ristrettoStatsCache) Lookup(id int64) (*statistics.Table, bool) {
 // Insert insert a new table to tables and update the cache.
 func (sc *ristrettoStatsCache) Insert(table *statistics.Table) {
 	key := table.PhysicalID
-	mem := table.MemoryUsage()
-	sc.cache.Set(uint64(key), table, mem)
-
 	// Calc memusage only on insert.
-	table.MemUsage = mem
 	if oldTbl, ok := sc.Get(key); ok {
 		sc.memTracker.Consume(-oldTbl.MemUsage)
 	}
+	mem := table.MemoryUsage()
+	table.MemUsage = mem
+	sc.cache.Set(uint64(key), table, mem)
 	sc.memTracker.Consume(mem)
 	sc.Set(key, table)
 	return
@@ -409,15 +403,17 @@ func (sc *simpleStatsCache) GetAll() []*statistics.Table {
 // Update updates the statistics table cache.
 func (sc *simpleStatsCache) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) {
 	sc.mu.Lock()
-	defer sc.mu.Unlock()
 	if sc.version <= newVersion {
 		sc.version = newVersion
+		sc.mu.Unlock()
 		for _, id := range deletedIDs {
 			sc.Erase(id)
 		}
 		for _, tbl := range tables {
 			sc.Insert(tbl)
 		}
+	} else {
+		sc.mu.Unlock()
 	}
 }
 
