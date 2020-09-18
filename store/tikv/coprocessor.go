@@ -76,6 +76,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 		rpcCancel:       NewRPCanceller(),
+		tasksStatus:     &copTaskStatusHandler{},
 	}
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
@@ -93,8 +94,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		it.respChan = make(chan *copResponse, it.concurrency)
 		it.sendRate = newRateLimit(it.concurrency)
 	}
-	workersCond := sync.NewCond(&sync.Mutex{})
-	it.actionOnExceed = newrateLimitAction(it.sendRate, workersCond)
+	it.actionOnExceed = newRateLimitAction(uint(cap(it.sendRate.token)), sync.NewCond(&sync.Mutex{}))
 	if sessionMemTracker != nil {
 		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
@@ -108,7 +108,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
-	id     int
+	id     uint32
 	region RegionVerID
 	ranges *copRanges
 
@@ -389,7 +389,8 @@ type copIterator struct {
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
-	curr  int
+
+	tasksStatus *copTaskStatusHandler
 
 	// sendRate controls the sending rate of copIteratorTaskSender
 	sendRate *rateLimit
@@ -434,6 +435,8 @@ type copIteratorWorker struct {
 	sendRate *rateLimit
 
 	actionOnExceed *rateLimitAction
+
+	tasksStatus *copTaskStatusHandler
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -510,7 +513,13 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
 
-		worker.actionOnExceed.destroyTokenIfNeeded(task.id, worker.sendRate)
+		previousMaxID := atomic.LoadUint32(&worker.tasksStatus.maxID)
+		if task.id > previousMaxID {
+			atomic.CompareAndSwapUint32(&worker.tasksStatus.maxID, previousMaxID, task.id)
+		}
+		worker.actionOnExceed.destroyTokenIfNeeded(func() {
+			worker.sendRate.putToken()
+		})
 
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
@@ -549,6 +558,7 @@ func (it *copIterator) open(ctx context.Context) {
 			replicaReadSeed: it.replicaReadSeed,
 			sendRate:        it.sendRate,
 			actionOnExceed:  it.actionOnExceed,
+			tasksStatus:     it.tasksStatus,
 		}
 		go worker.run(ctx)
 	}
@@ -576,7 +586,7 @@ func (sender *copIteratorTaskSender) run() {
 		if exit {
 			break
 		}
-		t.id = i
+		t.id = uint32(i)
 		exit = sender.sendToTaskCh(t)
 		if exit {
 			break
@@ -659,14 +669,15 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		if !ok || closed {
 			return nil, nil
 		}
-		it.actionOnExceed.broadcastWorkersIfNeeded(it.respChan, -1)
+		// The respCh have been drained out
+		it.actionOnExceed.broadcastWorkersIfNeeded(len(it.respChan) < 1)
 	} else {
 		for {
-			if it.curr >= len(it.tasks) {
+			if it.tasksStatus.curr >= len(it.tasks) {
 				// Resp will be nil if iterator is finishCh.
 				return nil, nil
 			}
-			task := it.tasks[it.curr]
+			task := it.tasks[it.tasksStatus.curr]
 			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
 			if closed {
 				// Close() is already called, so Next() is invalid.
@@ -676,11 +687,15 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				break
 			}
 			// record finished taskID
-			finishedTaskID := it.tasks[it.curr].id
+			finishedTaskID := it.tasks[it.tasksStatus.curr].id
 			// Switch to next task.
-			it.tasks[it.curr] = nil
-			it.curr++
-			it.actionOnExceed.broadcastWorkersIfNeeded(nil, finishedTaskID)
+			it.tasks[it.tasksStatus.curr] = nil
+			it.tasksStatus.curr++
+			maxID := atomic.LoadUint32(&it.tasksStatus.maxID)
+			// The tasks whose id is less than maxID are assumed that being sending to their task channel.
+			// So the response channel would be thought as drained out if the current taskID is greater or equal than
+			// the maxID as all the workers are being suspended at that time.
+			it.actionOnExceed.broadcastWorkersIfNeeded(finishedTaskID >= maxID)
 		}
 	}
 
@@ -1221,25 +1236,22 @@ type rateLimitAction struct {
 		existedTokenNum uint
 		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action
 		isTokenDestroyed bool
-		// maxID indicates the max id of the running copTask
-		maxID int
 	}
 }
 
-func newrateLimitAction(sendRate *rateLimit, cond *sync.Cond) *rateLimitAction {
+func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction {
 	return &rateLimitAction{
 		once:          sync.Once{},
-		totalTokenNum: uint(cap(sendRate.token)),
+		totalTokenNum: totalTokenNumber,
 		cond: struct {
 			*sync.Cond
 			exceed           bool
 			existedTokenNum  uint
 			isTokenDestroyed bool
-			maxID            int
 		}{
 			Cond:            cond,
 			exceed:          false,
-			existedTokenNum: uint(cap(sendRate.token)),
+			existedTokenNum: totalTokenNumber,
 		},
 	}
 }
@@ -1285,43 +1297,30 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 // broadcastWorkersIfNeeded will check whether the copWorkers is under suspended status.
 // If they are, `broadcastWorkersIfNeeded` would try to recover them if there are no more
 // copResponse remained in the channel.
-func (e *rateLimitAction) broadcastWorkersIfNeeded(respCh chan *copResponse, currTaskID int) {
-	broadcast := func() {
+func (e *rateLimitAction) broadcastWorkersIfNeeded(needed bool) {
+	e.conditionLock()
+	defer e.conditionUnlock()
+	if e.cond.exceed && needed {
 		e.cond.exceed = false
 		e.cond.Broadcast()
 		e.once = sync.Once{}
 		logutil.BgLogger().Debug("rateLimitAction Broadcast")
-	}
-	e.conditionLock()
-	defer e.conditionUnlock()
-	if e.cond.exceed &&
-		// The respCh have been drained out
-		((respCh != nil && len(respCh) < 1) ||
-			// The tasks whose id is less than maxID are assumed that being sending to their task channel.
-			// So the response channel would be thought as drained out if the current taskID is greater or equal than
-			// the maxID as all the workers are being suspended at that time.
-			(respCh == nil && currTaskID >= e.cond.maxID)) {
-		// notify all workers return to work
-		broadcast()
 	}
 }
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished to solve one task.
 // If the exceed flag is true and there is no token destroyed before, the token will be destroyed
 // while the token would be returned after each task finishing normally.
-func (e *rateLimitAction) destroyTokenIfNeeded(taskID int, sendRate *rateLimit) {
+func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if taskID > e.cond.maxID {
-		e.cond.maxID = taskID
-	}
 	// If actionOnExceed has been triggered and there is no token have been teared before,
 	// tear one token.
 	if e.cond.exceed && !e.cond.isTokenDestroyed {
 		e.cond.existedTokenNum = e.cond.existedTokenNum - 1
 		e.cond.isTokenDestroyed = true
 	} else {
-		sendRate.putToken()
+		returnToken()
 	}
 
 	// check worker whether need to suspend running.
@@ -1346,4 +1345,11 @@ func (e *rateLimitAction) close() {
 	e.cond.exceed = false
 	e.cond.isTokenDestroyed = false
 	e.cond.Broadcast()
+}
+
+type copTaskStatusHandler struct {
+	// curr indicates the curr id of the finished copTask
+	curr int
+	// maxID indicates the max id of the running copTask
+	maxID uint32
 }
