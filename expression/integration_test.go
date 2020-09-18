@@ -2830,6 +2830,12 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select ifnull(b, 1/0) from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select COALESCE(1, b, b/0) from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select 0 and b/0 from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select 1 or b/0 from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("select case 2.0 when 2.0 then 3.0 when 3.0 then 2.0 end").Check(testkit.Rows("3.0"))
 	tk.MustQuery("select case 2.0 when 3.0 then 2.0 when 4.0 then 3.0 else 5.0 end").Check(testkit.Rows("5.0"))
@@ -7292,6 +7298,24 @@ func (s *testIntegrationSuite) TestIssue19504(c *C) {
 	tk.MustExec("insert into t2 values (1);")
 	tk.MustQuery("select (select count(c_int) from t2 where c_int = t1.c_int) c1, (select count(1) from t2 where c_int = t1.c_int) c2 from t1;").
 		Check(testkit.Rows("1 1", "0 0", "0 0"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue19804(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
+	tk.MustGetErrMsg("alter table t change a a set('a', 'b', 'c', 'c');", "[types:1291]Column 'a' has duplicated value 'c' in SET")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a enum('a', 'b', 'c'));`)
+	tk.MustGetErrMsg("alter table t change a a enum('a', 'b', 'c', 'c');", "[types:1291]Column 'a' has duplicated value 'c' in ENUM")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
+	tk.MustExec(`alter table t change a a set('a', 'b', 'c', 'd');`)
+	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[ddl:8200]Unsupported modify column: cannot modify set column value d to e")
 }
 
 func (s *testIntegrationSerialSuite) TestIssue18949(c *C) {
