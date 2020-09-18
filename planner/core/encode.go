@@ -21,6 +21,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -39,36 +40,62 @@ type planEncoder struct {
 func EncodePlan(p Plan) string {
 	pn := encoderPool.Get().(*planEncoder)
 	defer encoderPool.Put(pn)
-	selectPlan := getSelectPlan(p)
-	if selectPlan == nil {
+	if p == nil || p.SCtx() == nil {
 		return ""
 	}
-	failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
-		selectPlan.statsInfo().RowCount = float64(val.(int))
-	})
-	return pn.encodePlanTree(selectPlan)
+	selectPlan := getSelectPlan(p)
+	if selectPlan != nil {
+		failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
+			selectPlan.statsInfo().RowCount = float64(val.(int))
+		})
+	}
+	return pn.encodePlanTree(p)
 }
 
-func (pn *planEncoder) encodePlanTree(p PhysicalPlan) string {
+func (pn *planEncoder) encodePlanTree(p Plan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
 	pn.encodePlan(p, true, 0)
 	return plancodec.Compress(pn.buf.Bytes())
 }
 
-func (pn *planEncoder) encodePlan(p PhysicalPlan, isRoot bool, depth int) {
+func (pn *planEncoder) encodePlan(p Plan, isRoot bool, depth int) {
+	var storeType kv.StoreType = kv.UnSpecified
+	if !isRoot {
+		switch copPlan := p.(type) {
+		case *PhysicalTableReader:
+			storeType = copPlan.StoreType
+		case *PhysicalTableScan:
+			storeType = copPlan.StoreType
+		default:
+			storeType = kv.TiKV
+		}
+	}
+	taskTypeInfo := plancodec.EncodeTaskType(isRoot, storeType)
 	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p)
-	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), isRoot, p.statsInfo().RowCount, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
+	rowCount := 0.0
+	if statsInfo := p.statsInfo(); statsInfo != nil {
+		rowCount = p.statsInfo().RowCount
+	}
+	plancodec.EncodePlanNode(depth, p.ID(), p.TP(), rowCount, taskTypeInfo, p.ExplainInfo(), actRows, analyzeInfo, memoryInfo, diskInfo, &pn.buf)
 	pn.encodedPlans[p.ID()] = true
-
 	depth++
-	for _, child := range p.Children() {
+
+	selectPlan := getSelectPlan(p)
+	if selectPlan == nil {
+		return
+	}
+	if !pn.encodedPlans[selectPlan.ID()] {
+		pn.encodePlan(selectPlan, isRoot, depth)
+		return
+	}
+	for _, child := range selectPlan.Children() {
 		if pn.encodedPlans[child.ID()] {
 			continue
 		}
 		pn.encodePlan(child.(PhysicalPlan), isRoot, depth)
 	}
-	switch copPlan := p.(type) {
+	switch copPlan := selectPlan.(type) {
 	case *PhysicalTableReader:
 		pn.encodePlan(copPlan.tablePlan, false, depth)
 	case *PhysicalIndexReader:
@@ -124,7 +151,7 @@ func (d *planDigester) normalizePlanTree(p PhysicalPlan) {
 }
 
 func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, depth int) {
-	plancodec.NormalizePlanNode(depth, p.ID(), p.TP(), isRoot, p.ExplainNormalizedInfo(), &d.buf)
+	plancodec.NormalizePlanNode(depth, p.TP(), isRoot, p.ExplainNormalizedInfo(), &d.buf)
 	d.encodedPlans[p.ID()] = true
 
 	depth++

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"runtime/trace"
 	"strings"
 	"sync/atomic"
 
@@ -179,7 +180,7 @@ func (st *TxnState) changeInvalidToPending(future *txnFuture) {
 	st.txnFuture = future
 }
 
-func (st *TxnState) changePendingToValid() error {
+func (st *TxnState) changePendingToValid(ctx context.Context) error {
 	if st.txnFuture == nil {
 		return errors.New("transaction future is not set")
 	}
@@ -187,6 +188,7 @@ func (st *TxnState) changePendingToValid() error {
 	future := st.txnFuture
 	st.txnFuture = nil
 
+	defer trace.StartRegion(ctx, "WaitTsoFuture").End()
 	txn, err := future.wait()
 	if err != nil {
 		st.Transaction = nil
@@ -313,6 +315,11 @@ func (st *TxnState) GetMemBuffer() kv.MemBuffer {
 		return st.Transaction.GetMemBuffer()
 	}
 	return kv.NewBufferStoreFrom(st.Transaction.GetMemBuffer(), st.stmtBuf)
+}
+
+// GetMemBufferSnapshot overrides the Transaction interface.
+func (st *TxnState) GetMemBufferSnapshot() kv.MemBuffer {
+	return st.Transaction.GetMemBuffer()
 }
 
 // BatchGet overrides the Transaction interface.
@@ -540,17 +547,10 @@ func (s *session) HasDirtyContent(tid int64) bool {
 // StmtCommit implements the sessionctx.Context interface.
 func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 	defer func() {
-		// If StmtCommit is called in batch mode, we need to clear the txn size
-		// in memTracker to avoid double-counting. If it's not batch mode, this
-		// work has no effect because that no more data will be appended into
-		// s.txn.
-		if memTracker != nil {
-			memTracker.Consume(int64(-s.txn.Size()))
-		}
 		s.txn.cleanup()
 	}()
+
 	st := &s.txn
-	txnSize := st.Transaction.Size()
 
 	if _, err := st.Flush(); err != nil {
 		return err
@@ -565,9 +565,6 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 	if err != nil {
 		st.doNotCommit = err
 		return err
-	}
-	if memTracker != nil {
-		memTracker.Consume(int64(st.Transaction.Size() - txnSize))
 	}
 
 	// Need to flush binlog.

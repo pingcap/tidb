@@ -1460,10 +1460,11 @@ func (s *seqTestSuite) TestIssue18744(c *C) {
 	tk.MustExec(`insert into t values(0, 2010,  "2010-01-01 01:01:00" , "2010-01-01 01:01:00" , 2010 , 2010 , 2010.000000);`)
 	tk.MustExec(`insert into t values(1 , NULL , NULL                , NULL                , NULL , NULL ,        NULL);`)
 	tk.MustExec(`insert into t values(2 , 2012 , "2012-01-01 01:01:00" , "2012-01-01 01:01:00" , 2012 , 2012 , 2012.000000);`)
-	tk.MustExec(`set tidb_mem_quota_query=400;`)
 	tk.MustExec(`set tidb_index_lookup_join_concurrency=1`)
-	config.GetGlobalConfig().OOMAction = config.OOMActionCancel
-	defer func() { config.GetGlobalConfig().OOMAction = config.OOMActionLog }()
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr", "return"), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testIndexHashJoinOuterWorkerErr"), IsNil)
+	}()
 	err := tk.QueryToErr(`select /*+ inl_hash_join(t2) */ t1.id, t2.id from t1 join t t2 on t1.a = t2.a order by t1.a ASC limit 1;`)
-	c.Assert(strings.Contains(err.Error(), "Out Of Memory Quota!"), IsTrue)
+	c.Assert(err.Error(), Equals, "mockIndexHashJoinOuterWorkerErr")
 }

@@ -804,6 +804,10 @@ func (record *baseRecord) match(user, host string) bool {
 		record.hostMatch(host))
 }
 
+func (record *baseRecord) fullyMatch(user, host string) bool {
+	return record.User == user && record.Host == host
+}
+
 func (record *dbRecord) match(user, host, db string) bool {
 	return record.baseRecord.match(user, host) &&
 		patternMatch(strings.ToUpper(db), record.dbPatChars, record.dbPatTypes)
@@ -1003,10 +1007,22 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	allRoles := p.FindAllRole(roles)
 	// Show global grants.
 	var currentPriv mysql.PrivilegeType
-	var hasGrantOptionPriv bool = false
+	var hasGrantOptionPriv, userExists = false, false
+	// Check whether user exists.
+	if userList, ok := p.UserMap[user]; ok {
+		for _, record := range userList {
+			if record.fullyMatch(user, host) {
+				userExists = true
+				break
+			}
+		}
+		if !userExists {
+			return gs
+		}
+	}
 	var g string
 	for _, record := range p.User {
-		if record.baseRecord.match(user, host) {
+		if record.fullyMatch(user, host) {
 			hasGlobalGrant = true
 			if (record.Privileges & mysql.GrantPriv) > 0 {
 				hasGrantOptionPriv = true
@@ -1055,7 +1071,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	// Show db scope grants.
 	dbPrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.DB {
-		if record.baseRecord.match(user, host) {
+		if record.fullyMatch(user, host) {
 			if _, ok := dbPrivTable[record.DB]; ok {
 				if (record.Privileges & mysql.GrantPriv) > 0 {
 					hasGrantOptionPriv = true
@@ -1112,7 +1128,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	tablePrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.TablesPriv {
 		recordKey := record.DB + "." + record.TableName
-		if record.baseRecord.match(user, host) {
+		if user == record.User && host == record.Host {
 			if _, ok := dbPrivTable[record.DB]; ok {
 				if (record.TablePriv & mysql.GrantPriv) > 0 {
 					hasGrantOptionPriv = true

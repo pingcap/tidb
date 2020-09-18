@@ -29,6 +29,7 @@ type ProcessInfo struct {
 	User            string
 	Host            string
 	DB              string
+	Digest          string
 	Plan            interface{}
 	PlanExplainRows [][]string
 	Time            time.Time
@@ -87,7 +88,7 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 	if pi.StmtCtx != nil && pi.StmtCtx.MemTracker != nil {
 		bytesConsumed = pi.StmtCtx.MemTracker.BytesConsumed()
 	}
-	return append(pi.ToRowForShow(true), bytesConsumed, pi.txnStartTs(tz))
+	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, pi.txnStartTs(tz))
 }
 
 // SessionManager is an interface for session manage. Show processlist and

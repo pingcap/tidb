@@ -1793,7 +1793,12 @@ func (h profileHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	} else {
 		start = end.Add(-time.Minute * 10)
 	}
-	pb := executor.NewProfileBuilder(sctx, start, end)
+	valueTp := req.FormValue("type")
+	pb, err := executor.NewProfileBuilder(sctx, start, end, valueTp)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	err = pb.Collect()
 	if err != nil {
 		writeError(w, err)

@@ -75,7 +75,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "txn_write_kv_num",
 			Help:      "Count of kv pairs to write in a transaction.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 21), // 1 ~ 1048576
+			Buckets:   prometheus.ExponentialBuckets(1, 4, 17), // 1 ~ 4G
 		})
 
 	TiKVTxnWriteSizeHistogram = prometheus.NewHistogram(
@@ -84,7 +84,7 @@ var (
 			Subsystem: "tikvclient",
 			Name:      "txn_write_size_bytes",
 			Help:      "Size of kv pairs to write in a transaction.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1Byte ~ 500MB
+			Buckets:   prometheus.ExponentialBuckets(16, 4, 17), // 16Bytes ~ 64GB
 		})
 
 	TiKVRawkvCmdHistogram = prometheus.NewHistogramVec(

@@ -101,6 +101,10 @@ func (t *mockTxn) GetMemBuffer() MemBuffer {
 	return nil
 }
 
+func (t *mockTxn) GetMemBufferSnapshot() MemBuffer {
+	return nil
+}
+
 func (t *mockTxn) GetSnapshot() Snapshot {
 	return nil
 }
