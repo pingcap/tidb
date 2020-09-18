@@ -113,7 +113,6 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		}
 		if diff.Type == model.ActionTruncateTablePartition {
 			tblIDs = []int64{}
-			tblIDs = append(tblIDs, newTableID)
 		}
 	}
 	if diff.AffectedOpts != nil {
