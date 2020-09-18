@@ -148,7 +148,7 @@ func (sc *ristrettoStatsCache) BytesConsumed() int64 {
 	}
 	// insert a table memory = 0 to make cache renew the memory
 	sc.Insert(&statistics.Table{HistColl: statistics.HistColl{PhysicalID: rndTblID}})
-	sc.Del(rndTblID)
+	sc.Erase(rndTblID)
 	time.Sleep(10 * time.Millisecond)
 	return sc.memTracker.BytesConsumed()
 }

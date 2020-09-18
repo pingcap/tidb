@@ -230,7 +230,6 @@ func (s *testStatsSuite) TestManyTableChange(c *C) {
 			c.Assert(v.IsInvalid(&stmtctx.StatementContext{}, false), IsFalse)
 		}
 		c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
-
 	}
 }
 func (s *testStatsSuite) TestManyTableChangeWithQuery(c *C) {
