@@ -27,7 +27,7 @@ type UnionStore interface {
 	DeleteKeyExistErrInfo(k Key)
 	// ResetStmtKeyExistErrs deletes all the key exist error infos for the current statement.
 	ResetStmtKeyExistErrs()
-	// MergeStmtKeyExistErrs merge all the key exist error infos for the current statement.
+	// MergeStmtKeyExistErrs merges all the key exist error infos for the current statement.
 	MergeStmtKeyExistErrs()
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
