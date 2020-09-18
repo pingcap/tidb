@@ -450,6 +450,8 @@ github.com/pingcap/br v0.0.0-20200803052654-e6f63fc1807a/go.mod h1:8j7vGUfHCETYb
 github.com/pingcap/br v0.0.0-20200805121136-181c081ba6ac/go.mod h1:9P24mNzNmXjggYBm4pnb08slSbua8FA6QIyg68GpuhQ=
 github.com/pingcap/br v0.0.0-20200820083933-d9d6207c0aa7 h1:7YWkuK/QY7/nz819lnxb0qDXqLrApDjZHjYPo+tduGA=
 github.com/pingcap/br v0.0.0-20200820083933-d9d6207c0aa7/go.mod h1:5ri8663t7CtJuG0kiOKKoBmwk9HOCX5MoKpmh1fW4CE=
+github.com/pingcap/br v0.0.0-20200915060630-cc1a3924f33e h1:OwuX87FvesIE0HMz7RznDY++QWBqSUveociglqKenNA=
+github.com/pingcap/br v0.0.0-20200915060630-cc1a3924f33e/go.mod h1:DGsMcZVYt2haeDF/xGerf77c2RpTymgYY5+bMg8uArA=
 github.com/pingcap/check v0.0.0-20190102082844-67f458068fc8/go.mod h1:B1+S9LNcuMyLH/4HMTViQOJevkGiik3wW2AN9zb2fNQ=
 github.com/pingcap/check v0.0.0-20191107115940-caf2b9e6ccf4/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
 github.com/pingcap/check v0.0.0-20191216031241-8a5a85928f12/go.mod h1:PYMCGwN0JHjoqGr3HrZoD+b8Tgx8bKnArhSq8YVzUMc=
@@ -538,6 +540,8 @@ github.com/pingcap/tidb-tools v4.0.0+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnw
 github.com/pingcap/tidb-tools v4.0.1+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tidb-tools v4.0.5-0.20200820082341-afeaaaaaa153+incompatible h1:OozchEPztWQsTdLxPSPs6P+Cowbr35J7uy5oRpjbV9E=
 github.com/pingcap/tidb-tools v4.0.5-0.20200820082341-afeaaaaaa153+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
+github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible h1:qPppnsXVh3KswqRZdSAShGLLPd7dB+5w4lXDnpYn0SQ=
+github.com/pingcap/tidb-tools v4.0.5-0.20200820092506-34ea90c93237+incompatible/go.mod h1:XGdcy9+yqlDSEMTpOXnwf3hiTeqrV6MN/u1se9N8yIM=
 github.com/pingcap/tipb v0.0.0-20190428032612-535e1abaa330/go.mod h1:RtkHW8WbcNxj8lsbzjaILci01CtYnYbIkQhjyZWrWVI=
 github.com/pingcap/tipb v0.0.0-20200417094153-7316d94df1ee/go.mod h1:RtkHW8WbcNxj8lsbzjaILci01CtYnYbIkQhjyZWrWVI=
 github.com/pingcap/tipb v0.0.0-20200604070248-508f03b0b342/go.mod h1:RtkHW8WbcNxj8lsbzjaILci01CtYnYbIkQhjyZWrWVI=
