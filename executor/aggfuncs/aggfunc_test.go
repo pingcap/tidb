@@ -230,7 +230,7 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 			memDelta = int64(len(val))
 		case mysql.TypeDate:
 			val = row.GetTime(0).String()
-			memDelta = aggfuncs.DefTimeSize
+			memDelta = aggfuncs.DefDateSize
 		case mysql.TypeDuration:
 			val = strconv.FormatInt(row.GetInt64(0), 10)
 			memDelta = aggfuncs.DefInt64Size

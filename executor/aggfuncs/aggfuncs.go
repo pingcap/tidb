@@ -112,7 +112,7 @@ const (
 	// DefFloat64Size is the size of float64
 	DefFloat64Size = int64(unsafe.Sizeof(float64(0)))
 	// DefTimeSize is the size of time
-	DefTimeSize = int64(16)
+	DefTimeSize = int64(unsafe.Sizeof(types.Time{}))
 	// DefRowSize is the size of row
 	DefRowSize = int64(unsafe.Sizeof(chunk.Row{}))
 	// DefBoolSize is the size of bool
@@ -123,6 +123,8 @@ const (
 	DefMyDecimalSize = int64(unsafe.Sizeof(types.MyDecimal{}))
 	// DefDurationSize is the size of duration
 	DefDurationSize = int64(unsafe.Sizeof(types.Duration{}))
+	// DefDateSize is the size of date
+	DefDateSize = int64(16)
 )
 
 // PartialResult represents data structure to store the partial result for the
