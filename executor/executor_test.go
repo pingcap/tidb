@@ -6374,6 +6374,16 @@ func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
 	tk.MustExec("insert into t1 values (1,2)")
 	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, insert:.*")
 	tk.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert ignore into t1 values(11,11) on duplicate key update `a`=`a`+1")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prepare:.*, check_insert:{total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:.*}")
+	tk.MustExec("rollback")
+
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("replace into t1 values (1,4)")
+	c.Assert(getRootStats(), Matches, "time:.*, loops:.*, prefetch:.*, rpc:.*")
+	tk.MustExec("rollback")
 }
 
 func (s *testSuite) TestIssue13758(c *C) {
