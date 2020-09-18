@@ -142,14 +142,15 @@ func BenchmarkStatisticCache(b *testing.B) {
 	}
 
 }
+
 func getType() queryType {
 	rnd := rand.Int() % 100
 	if rnd < 10 {
 		return typeInsert
-	} else {
-		return typeLookUp
 	}
+	return typeLookUp
 }
+
 func benchmarkStatisticCacheExc(b *testing.B, data *statsCacheTestCase, statsCache handle.StatsCache) {
 	b.StartTimer()
 	var wg sync.WaitGroup

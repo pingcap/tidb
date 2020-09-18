@@ -269,6 +269,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	return tbl
 }
 
+// SetSimpleCache change cache type to simplecache.
 func (h *Handle) SetSimpleCache() {
 	h.sType = SimpleStatsCacheType
 	h.statsCache = newSimpleStatsCache(h.mu.ctx.GetSessionVars().MemQuotaStatistic)
