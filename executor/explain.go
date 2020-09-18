@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
@@ -28,6 +29,7 @@ type ExplainExec struct {
 
 	explain     *core.Explain
 	analyzeExec Executor
+	executed    bool
 	rows        [][]string
 	cursor      int
 }
@@ -79,7 +81,8 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 			closed = true
 		}
 	}()
-	if e.analyzeExec != nil {
+	if e.analyzeExec != nil && !e.executed {
+		e.executed = true
 		chk := newFirstChunk(e.analyzeExec)
 		var nextErr, closeErr error
 		for {
@@ -110,4 +113,13 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	}
 	return e.explain.Rows, nil
+}
+
+func (e *ExplainExec) getAnalyzeExecToExecuted() Executor {
+	if e.analyzeExec != nil && !e.executed {
+		fmt.Printf("get exec---\n\n")
+		e.executed = true
+		return e.analyzeExec
+	}
+	return nil
 }
