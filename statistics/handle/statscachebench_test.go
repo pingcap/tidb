@@ -72,8 +72,8 @@ func defaultstatsCacheTestCase(numClient int, tableSize int, memoryLimit int64, 
 		newHistColl := statistics.HistColl{
 			PhysicalID:     int64(i + 1),
 			HavePhysicalID: true,
-			Columns:        make(map[int64]*statistics.Column, 0),
-			Indices:        make(map[int64]*statistics.Index, 0),
+			Columns:        make(map[int64]*statistics.Column),
+			Indices:        make(map[int64]*statistics.Index),
 		}
 		table := &statistics.Table{
 			HistColl: newHistColl,
