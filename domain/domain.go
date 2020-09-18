@@ -1021,9 +1021,8 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) error {
+func (do *Domain) CreateStatsHandle(ctx sessionctx.Context) {
 	atomic.StorePointer(&do.statsHandle, unsafe.Pointer(handle.NewHandle(ctx, do.statsLease)))
-	return nil
 }
 
 // StatsUpdating checks if the stats worker is updating.
