@@ -222,6 +222,25 @@ func (ih IntHandle) String() string {
 	return strconv.FormatInt(int64(ih), 10)
 }
 
+// UintHandleComparator helps compare two intHandle with unsigned int value.
+type UintHandleComparator IntHandle
+
+// Compare returns the comparison result of the two uint handles, it panics if the types are different.
+func (uh UintHandleComparator) Compare(h Handle) int {
+	if !h.IsInt() {
+		panic("IntHandle compares to CommonHandle")
+	}
+	ihVal := uint64(IntHandle(uh).IntValue())
+	hVal := uint64(h.IntValue())
+	if ihVal > hVal {
+		return 1
+	}
+	if ihVal < hVal {
+		return -1
+	}
+	return 0
+}
+
 // CommonHandle implements the Handle interface for non-int64 type handle.
 type CommonHandle struct {
 	encoded       []byte

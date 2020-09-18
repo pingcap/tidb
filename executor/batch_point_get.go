@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -251,11 +252,16 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step2", nil)
 		})
 	} else if e.keepOrder {
+		unsignedPK := e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().Flag)
 		sort.Slice(e.handles, func(i int, j int) bool {
-			if e.desc {
-				return e.handles[i].Compare(e.handles[j]) > 0
+			compare := e.handles[i].Compare
+			if unsignedPK {
+				compare = kv.UintHandleComparator(e.handles[i].(kv.IntHandle)).Compare
 			}
-			return e.handles[i].Compare(e.handles[j]) < 0
+			if e.desc {
+				return compare(e.handles[j]) > 0
+			}
+			return compare(e.handles[j]) < 0
 		})
 	}
 
