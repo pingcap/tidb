@@ -133,8 +133,12 @@ func (t *mockTxn) GetVars() *Variables {
 	return nil
 }
 
-func (t *mockTxn) CleanupKeyExistErrInfo(keysInput []Key) {
-	return
+func (t *mockTxn) ResetStmtKeyExistErrs() {
+
+}
+
+func (t *mockTxn) MergeStmtKeyExistErrs() {
+
 }
 
 // NewMockTxn new a mockTxn.

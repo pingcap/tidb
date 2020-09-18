@@ -548,8 +548,10 @@ func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 	return txn.snapshot
 }
 
-func (txn *tikvTxn) CleanupKeyExistErrInfo(keysInput []kv.Key) {
-	for _, key := range keysInput {
-		txn.us.DeleteKeyExistErrInfo(key)
-	}
+func (txn *tikvTxn) ResetStmtKeyExistErrs() {
+	txn.us.ResetStmtKeyExistErrs()
+}
+
+func (txn *tikvTxn) MergeStmtKeyExistErrs() {
+	txn.us.MergeStmtKeyExistErrs()
 }

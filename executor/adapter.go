@@ -534,10 +534,6 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 		if !txn.Valid() {
 			return err
 		}
-		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
-		if err1 != nil {
-			return err1
-		}
 		if err != nil {
 			// It is possible the DML has point get plan that locks the key.
 			e, err = a.handlePessimisticLockError(ctx, err)
@@ -545,10 +541,13 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e Executor) error {
 				if ErrDeadlock.Equal(err) {
 					metrics.StatementDeadlockDetectDuration.Observe(time.Since(startPointGetLocking).Seconds())
 				}
-				txn.CleanupKeyExistErrInfo(keys)
 				return err
 			}
 			continue
+		}
+		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
+		if err1 != nil {
+			return err1
 		}
 		keys = txnCtx.CollectUnchangedRowKeys(keys)
 		if len(keys) == 0 {
