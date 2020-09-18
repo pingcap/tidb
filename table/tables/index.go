@@ -87,14 +87,20 @@ type index struct {
 	phyTblID               int64
 }
 
-func (c *index) checkContainNonBinaryString() bool {
-	for _, idxCol := range c.idxInfo.Columns {
-		col := c.tblInfo.Columns[idxCol.Offset]
+// ContainsNonBinaryString checks whether the index columns contains non binary string column, the input
+// colInfos should be column info correspond to the table contains the index.
+func ContainsNonBinaryString(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+	for _, idxCol := range idxCols {
+		col := colInfos[idxCol.Offset]
 		if col.EvalType() == types.ETString && !mysql.HasBinaryFlag(col.Flag) {
 			return true
 		}
 	}
 	return false
+}
+
+func (c *index) checkContainNonBinaryString() bool {
+	return ContainsNonBinaryString(c.idxInfo.Columns, c.tblInfo.Columns)
 }
 
 // NewIndex builds a new Index object.
