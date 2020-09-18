@@ -416,7 +416,9 @@ func (st *TxnState) cleanup() {
 			st.dirtyTableOP = st.dirtyTableOP[:0]
 		}
 	}
-	st.ResetStmtKeyExistErrs()
+	if st.Transaction != nil {
+		st.Transaction.ResetStmtKeyExistErrs()
+	}
 }
 
 // KeysNeedToLock returns the keys need to be locked.
