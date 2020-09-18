@@ -1266,8 +1266,8 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	}
 
 	e.once.Do(func() {
-		e.cond.L.Lock()
-		defer e.cond.L.Unlock()
+		e.conditionLock()
+		defer e.conditionUnlock()
 		if e.cond.existedTokenNum < 2 {
 			logutil.BgLogger().Debug("rateLimitAction delegate to fallback action",
 				zap.Uint("totalTokenNum", e.totalTokenNum))
