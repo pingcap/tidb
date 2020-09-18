@@ -15,6 +15,7 @@ package domain
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -141,7 +142,8 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 	}
 
 	bundles, err := infosync.GetAllRuleBundles(nil)
-	if err != nil {
+	// ignore if placement rules feature is not enabled
+	if err != nil && !strings.HasPrefix(err.Error(), `"placement rules feature is disabled"`) {
 		return 0, nil, fullLoad, err
 	}
 
