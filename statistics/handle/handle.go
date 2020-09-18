@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -97,7 +98,7 @@ func (h *Handle) Clear() {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx sessionctx.Context, lease time.Duration) (*Handle, error) {
+func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	handle := &Handle{
 		ddlEventCh: make(chan *util.Event, 100),
 		listHead:   &SessionStatsCollector{mapper: make(tableDeltaMap), rateMap: make(errorRateDeltaMap)},
@@ -113,11 +114,11 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) (*Handle, error) {
 	var err error
 	handle.statsCache, err = NewStatsCache(ctx.GetSessionVars().MemQuotaStatistic, handle.sType)
 	if err != nil {
-		return nil, err
+		log.Fatal(err.Error())
 	}
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
-	return handle, nil
+	return handle
 }
 
 // Lease returns the stats lease.
