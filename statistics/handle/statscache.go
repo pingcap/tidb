@@ -190,7 +190,8 @@ func (sc *ristrettoStatsCache) Clear() {
 // GetAll get all the tables.
 func (sc *ristrettoStatsCache) GetAll() []*statistics.Table {
 	tables := make([]*statistics.Table, 0)
-	for _, shard := range sc.tablesShards {
+	for i := range sc.tablesShards {
+		shard := &sc.tablesShards[i]
 		for _, tbl := range shard.data {
 			ntbl, _ := sc.Lookup(tbl.PhysicalID)
 			tables = append(tables, ntbl)
