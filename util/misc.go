@@ -544,10 +544,30 @@ func GetLocalIP() string {
 	if err == nil {
 		for _, address := range addrs {
 			ipnet, ok := address.(*net.IPNet)
-			if ok && ipnet.IP.IsGlobalUnicast() {
+			if ok && IsPublicIP(ipnet.IP) {
 				return ipnet.IP.String()
 			}
 		}
 	}
 	return ""
+}
+
+// IsPublicIP will judge the ip is public network ip or not
+func IsPublicIP(IP net.IP) bool {
+	if IP.IsLoopback() || IP.IsLinkLocalMulticast() || IP.IsLinkLocalUnicast() || !IP.IsGlobalUnicast() {
+		return false
+	}
+	if ip4 := IP.To4(); ip4 != nil {
+		switch true {
+		case ip4[0] == 10:
+			return false
+		case ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31:
+			return false
+		case ip4[0] == 192 && ip4[1] == 168:
+			return false
+		default:
+			return true
+		}
+	}
+	return false
 }
