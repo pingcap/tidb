@@ -844,12 +844,20 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		diff.TableID = tbInfo.ID
 	case model.ActionRenameTable:
 		oldSchemaIDs := []int64{}
-		err = job.DecodeArgs(&oldSchemaIDs)
+		newSchemaIDs := []int64{}
+		tableNames := []*model.CIStr{}
+		tableIDs := []int64{}
+		err = job.DecodeArgs(&oldSchemaIDs, &newSchemaIDs, &tableNames, &tableIDs)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		diff.OldSchemaID = oldSchemaIDs[0]
-		diff.TableID = job.TableID
+		affects := make([]*model.AffectedOption, 1)
+		affects[0] = &model.AffectedOption{
+			SchemaID: newSchemaIDs[0],
+			TableID:tableIDs[0],
+			OldTableID:tableIDs[0],
+		}
+		diff.AffectedOpts = affects
 	case model.ActionExchangeTablePartition:
 		var (
 			ptSchemaID int64
