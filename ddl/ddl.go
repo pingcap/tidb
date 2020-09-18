@@ -269,12 +269,8 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		syncer = NewMockSchemaSyncer()
 	} else {
 		manager = owner.NewOwnerManager(ctx, etcdCli, ddlPrompt, id, DDLOwnerKey)
-<<<<<<< HEAD
 		syncer = util.NewSchemaSyncer(etcdCli, id, manager)
-=======
-		syncer = util.NewSchemaSyncer(ctx, etcdCli, id, manager)
 		deadLockCkr = util.NewDeadTableLockChecker(etcdCli)
->>>>>>> 8ae5b1c... ddl: fix panic tidb-server doesn't release table lock (#19586)
 	}
 
 	ddlCtx := &ddlCtx{
@@ -566,7 +562,10 @@ func (d *ddl) startCleanDeadTableLock() {
 			if !d.ownerManager.IsOwner() {
 				continue
 			}
-			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoHandle.Get().AllSchemas())
+			if d.infoHandle == nil || !d.infoHandle.IsValid() {
+				continue
+			}
+			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.quitCh, d.infoHandle.Get().AllSchemas())
 			if err != nil {
 				logutil.BgLogger().Info("[ddl] get dead table lock failed.", zap.Error(err))
 				continue
@@ -577,7 +576,7 @@ func (d *ddl) startCleanDeadTableLock() {
 					logutil.BgLogger().Info("[ddl] clean dead table lock failed.", zap.Error(err))
 				}
 			}
-		case <-d.ctx.Done():
+		case <-d.quitCh:
 			return
 		}
 	}
