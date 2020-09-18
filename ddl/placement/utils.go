@@ -71,6 +71,7 @@ func CheckLabelConstraints(labels []string) ([]LabelConstraint, error) {
 	return constraints, nil
 }
 
+// GroupID accepts a tableID or whatever integer, and encode the integer into a valid GroupID for PD.
 func GroupID(id int64) string {
 	return fmt.Sprintf("TIDB_DDL_%d", id)
 }

@@ -76,6 +76,7 @@ type Rule struct {
 	IsolationLevel   string            `json:"isolation_level,omitempty"`
 }
 
+// Bundle is a group of all rules and configurations. It is used to support rule cache.
 type Bundle struct {
 	ID       string  `json:"group_id"`
 	Index    int     `json:"group_index"`
