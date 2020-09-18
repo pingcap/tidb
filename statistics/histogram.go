@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -281,12 +282,16 @@ func ResetAnalyzeFlag(flag int64) int64 {
 
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
-func ValueToString(value *types.Datum, idxCols int) (string, error) {
+func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, idxColumnTypes []byte) (string, error) {
 	if idxCols == 0 {
 		return value.ToString()
 	}
+	var loc *time.Location
+	if vars != nil {
+		loc = vars.Location()
+	}
 	// Ignore the error and treat remaining part that cannot decode successfully as bytes.
-	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols)
+	decodedVals, remained, err := codec.DecodeRange(value.GetBytes(), idxCols, idxColumnTypes, loc)
 	// Ignore err explicit to pass errcheck.
 	_ = err
 	if len(remained) > 0 {
@@ -298,9 +303,9 @@ func ValueToString(value *types.Datum, idxCols int) (string, error) {
 
 // BucketToString change the given bucket to string format.
 func (hg *Histogram) BucketToString(bktID, idxCols int) string {
-	upperVal, err := ValueToString(hg.GetUpper(bktID), idxCols)
+	upperVal, err := ValueToString(nil, hg.GetUpper(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
-	lowerVal, err := ValueToString(hg.GetLower(bktID), idxCols)
+	lowerVal, err := ValueToString(nil, hg.GetLower(bktID), idxCols, nil)
 	terror.Log(errors.Trace(err))
 	return fmt.Sprintf("num: %d lower_bound: %s upper_bound: %s repeats: %d", hg.bucketCount(bktID), lowerVal, upperVal, hg.Buckets[bktID].Repeat)
 }
