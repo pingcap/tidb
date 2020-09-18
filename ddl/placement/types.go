@@ -15,6 +15,7 @@ package placement
 
 import (
 	"encoding/json"
+	"sort"
 )
 
 // Refer to https://github.com/tikv/pd/issues/2701 .
@@ -74,6 +75,39 @@ type Rule struct {
 	LabelConstraints []LabelConstraint `json:"label_constraints,omitempty"`
 	LocationLabels   []string          `json:"location_labels,omitempty"`
 	IsolationLevel   string            `json:"isolation_level,omitempty"`
+}
+
+type Bundle struct {
+	ID       string  `json:"group_id"`
+	Index    int     `json:"group_index"`
+	Override bool    `json:"group_override"`
+	Rules    []*Rule `json:"rules"`
+}
+
+type Bundles []*Bundle
+
+func (b *Bundles) Sort() {
+	sort.Slice(*b, func(i, j int) bool {
+		return (*b)[i].ID < (*b)[j].ID
+	})
+}
+
+func (b *Bundles) FindByID(s string) *Bundle {
+	i := sort.Search(len(*b), func(i int) bool {
+		return (*b)[i].ID >= s
+	})
+	if i < len(*b) && (*b)[i].ID == s {
+		return (*b)[i]
+	}
+	return nil
+}
+
+func (t *Bundles) String() string {
+	b, err := json.Marshal(t)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // RuleOpType indicates the operation type.

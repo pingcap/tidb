@@ -23,6 +23,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl/placement"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -212,6 +213,9 @@ type Table interface {
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
 
+	// Rules returns Placement Rule.
+	Rules() *placement.Bundle
+
 	// Seek returns the handle greater or equal to h.
 	Seek(ctx sessionctx.Context, h kv.Handle) (handle kv.Handle, found bool, err error)
 
@@ -271,7 +275,7 @@ type PartitionedTable interface {
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
 // Currently, it is assigned to tables.TableFromMeta in tidb package's init function.
-var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo) (Table, error)
+var TableFromMeta func(allocators autoid.Allocators, tblInfo *model.TableInfo, rules *placement.Bundle) (Table, error)
 
 // MockTableFromMeta only serves for test.
 var MockTableFromMeta func(tableInfo *model.TableInfo) Table

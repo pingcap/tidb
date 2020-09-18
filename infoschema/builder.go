@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
@@ -285,7 +286,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			allocs = append(allocs, newAlloc)
 		}
 	}
-	tbl, err := tables.TableFromMeta(allocs, tblInfo)
+	tbl, err := tables.TableFromMeta(allocs, tblInfo, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -395,12 +396,14 @@ func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 	return newSchemaTables.dbInfo
 }
 
-// InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) (*Builder, error) {
+// InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles *placement.Bundles, schemaVersion int64) (*Builder, error) {
+	bundles.Sort()
+
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
 	for _, di := range dbInfos {
-		err := b.createSchemaTablesForDB(di, tables.TableFromMeta)
+		err := b.createSchemaTablesForDB(di, bundles, tables.TableFromMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -408,7 +411,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 
 	// Initialize virtual tables.
 	for _, driver := range drivers {
-		err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta)
+		err := b.createSchemaTablesForDB(driver.DBInfo, bundles, driver.TableFromMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -421,18 +424,26 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, schemaVersion int64) 
 	return b, nil
 }
 
-type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
+type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo, ruleBundle *placement.Bundle) (table.Table, error)
 
-func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc) error {
+func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, ruleBundles *placement.Bundles, tableFromMeta tableFromMetaFunc) error {
 	schTbls := &schemaTables{
 		dbInfo: di,
 		tables: make(map[string]table.Table, len(di.Tables)),
 	}
 	b.is.schemaMap[di.Name.L] = schTbls
+
 	for _, t := range di.Tables {
 		allocs := autoid.NewAllocatorsFromTblInfo(b.handle.store, di.ID, t)
+
+		tid := placement.GroupID(t.ID)
+		bundle := ruleBundles.FindByID(tid)
+		if bundle == nil {
+			return errors.Wrap(errors.New("fail to get placement rule"), fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
+		}
+
 		var tbl table.Table
-		tbl, err := tableFromMeta(allocs, t)
+		tbl, err := tableFromMeta(allocs, t, bundle)
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
@@ -445,7 +456,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 
 type virtualTableDriver struct {
 	*model.DBInfo
-	TableFromMeta func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
+	TableFromMeta tableFromMetaFunc
 }
 
 var drivers []*virtualTableDriver

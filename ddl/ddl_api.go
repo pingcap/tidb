@@ -1488,7 +1488,7 @@ func checkTableInfoValidWithStmt(ctx sessionctx.Context, tbInfo *model.TableInfo
 
 // checkTableInfoValid uses to check table info valid. This is used to validate table info.
 func checkTableInfoValid(tblInfo *model.TableInfo) error {
-	_, err := tables.TableFromMeta(nil, tblInfo)
+	_, err := tables.TableFromMeta(nil, tblInfo, nil)
 	if err != nil {
 		return err
 	}

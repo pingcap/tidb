@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -1552,7 +1553,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiFlashSegments:                    tableTableTiFlashSegmentsCols,
 }
 
-func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
+func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo, rules *placement.Bundle) (table.Table, error) {
 	columns := make([]*table.Column, len(meta.Columns))
 	for i, col := range meta.Columns {
 		columns[i] = table.ToColumn(col)
@@ -1561,13 +1562,14 @@ func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Ta
 	if isClusterTableByName(util.InformationSchemaName.O, meta.Name.O) {
 		tp = table.ClusterTable
 	}
-	return &infoschemaTable{meta: meta, cols: columns, tp: tp}, nil
+	return &infoschemaTable{meta: meta, rules: rules, cols: columns, tp: tp}, nil
 }
 
 type infoschemaTable struct {
-	meta *model.TableInfo
-	cols []*table.Column
-	tp   table.Type
+	meta  *model.TableInfo
+	cols  []*table.Column
+	rules *placement.Bundle
+	tp    table.Type
 }
 
 // SchemasSorter implements the sort.Interface interface, sorts DBInfo by name.
@@ -1743,6 +1745,11 @@ func (it *infoschemaTable) RebaseAutoID(ctx sessionctx.Context, newBase int64, i
 // Meta implements table.Table Meta interface.
 func (it *infoschemaTable) Meta() *model.TableInfo {
 	return it.meta
+}
+
+// Rules implements table.Table Rules interface.
+func (it *infoschemaTable) Rules() *placement.Bundle {
+	return it.rules
 }
 
 // GetPhysicalID implements table.Table GetPhysicalID interface.

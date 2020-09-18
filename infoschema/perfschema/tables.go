@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/terror"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -104,9 +105,10 @@ var tableIDMap = map[string]int64{
 // perfSchemaTable stands for the fake table all its data is in the memory.
 type perfSchemaTable struct {
 	infoschema.VirtualTable
-	meta *model.TableInfo
-	cols []*table.Column
-	tp   table.Type
+	meta  *model.TableInfo
+	rules *placement.Bundle
+	cols  []*table.Column
+	tp    table.Type
 }
 
 var pluginTable = make(map[string]func(autoid.Allocators, *model.TableInfo) (table.Table, error))
@@ -124,16 +126,16 @@ func RegisterTable(tableName, sql string,
 	pluginTable[tableName] = tableFromMeta
 }
 
-func tableFromMeta(allocs autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
+func tableFromMeta(allocs autoid.Allocators, meta *model.TableInfo, rules *placement.Bundle) (table.Table, error) {
 	if f, ok := pluginTable[meta.Name.L]; ok {
 		ret, err := f(allocs, meta)
 		return ret, err
 	}
-	return createPerfSchemaTable(meta), nil
+	return createPerfSchemaTable(meta, rules), nil
 }
 
 // createPerfSchemaTable creates all perfSchemaTables
-func createPerfSchemaTable(meta *model.TableInfo) *perfSchemaTable {
+func createPerfSchemaTable(meta *model.TableInfo, rules *placement.Bundle) *perfSchemaTable {
 	columns := make([]*table.Column, 0, len(meta.Columns))
 	for _, colInfo := range meta.Columns {
 		col := table.ToColumn(colInfo)
@@ -141,9 +143,10 @@ func createPerfSchemaTable(meta *model.TableInfo) *perfSchemaTable {
 	}
 	tp := table.VirtualTable
 	t := &perfSchemaTable{
-		meta: meta,
-		cols: columns,
-		tp:   tp,
+		meta:  meta,
+		rules: rules,
+		cols:  columns,
+		tp:    tp,
 	}
 	return t
 }
@@ -181,6 +184,11 @@ func (vt *perfSchemaTable) GetPhysicalID() int64 {
 // Meta implements table.Table Type interface.
 func (vt *perfSchemaTable) Meta() *model.TableInfo {
 	return vt.meta
+}
+
+// Rules implements table.Table Rules interface.
+func (vt *perfSchemaTable) Rules() *placement.Bundle {
+	return vt.rules
 }
 
 // Type implements table.Table Type interface.
