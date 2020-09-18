@@ -209,7 +209,6 @@ max-sql-length=1024
 refresh-interval=100
 history-size=100
 [experimental]
-allow-expression-index = true
 [isolation-read]
 engines = ["tiflash"]
 [labels]
@@ -255,7 +254,6 @@ spilled-file-encryption-method = "plaintext"
 	c.Assert(conf.MaxServerConnections, Equals, uint32(200))
 	c.Assert(conf.MemQuotaQuery, Equals, int64(10000))
 	c.Assert(conf.NestedLoopJoinCacheCapacity, Equals, int64(100))
-	c.Assert(conf.Experimental.AllowsExpressionIndex, IsTrue)
 	c.Assert(conf.IsolationRead.Engines, DeepEquals, []string{"tiflash"})
 	c.Assert(conf.MaxIndexLength, Equals, 3080)
 	c.Assert(conf.SkipRegisterToDashboard, Equals, true)
