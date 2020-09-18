@@ -358,6 +358,9 @@ commit-timeout = "41s"
 
 # Enable async commit for all transactions.
 enable-async-commit = false
+# The maximum allowed keys in a async commit transaction. Transactions with more keys than the limit
+# will be committed with normal 2PC way.
+async-commit-keys-limit = 256
 
 # Max batch size in gRPC.
 max-batch-size = 128
@@ -445,8 +448,6 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
-# enable creating expression index.
-allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]
