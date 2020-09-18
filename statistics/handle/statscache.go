@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/uber-go/atomic"
 )
 
 // StatsCache a interface can LookUp Update
@@ -49,7 +48,7 @@ type ristrettoStatsCache struct {
 	mu           sync.Mutex
 	cache        *cache.Cache
 	memCapacity  int64
-	version      atomic.Value
+	version      uint64
 	memTracker   *memory.Tracker // track memory usage.
 	tablesShards [numShards]tableShard
 }
@@ -116,8 +115,8 @@ func newRistrettoStatsCache(memoryLimit int64) *ristrettoStatsCache {
 	for i := range sc.tablesShards {
 		sc.tablesShards[i].data = make(map[int64]*statistics.Table)
 	}
-	sc.version.Store(uint64(0))
-	cache, err := cache.NewCache(&cache.Config{
+	sc.version = 0
+	cache, _ := cache.NewCache(&cache.Config{
 		NumCounters: 1e7,         // number of keys to track frequency of (10M).
 		MaxCost:     memoryLimit, // maximum cost of cache (1GB).
 		BufferItems: 64,          // number of keys per Get buffer.
@@ -133,9 +132,6 @@ func newRistrettoStatsCache(memoryLimit int64) *ristrettoStatsCache {
 			}
 		},
 	})
-	if err != nil {
-
-	}
 	sc.cache = cache
 	return sc
 }
@@ -162,7 +158,7 @@ func (sc *ristrettoStatsCache) GetBytesLimit() int64 {
 	return sc.memTracker.GetBytesLimit()
 }
 
-// GetMutex return the Muetex point
+// GetMutex return the Muetex
 func (sc *ristrettoStatsCache) GetMutex() *sync.Mutex {
 	return &sc.mu
 }
@@ -177,10 +173,12 @@ func (sc *ristrettoStatsCache) Close() {
 	sc.cache.Close()
 }
 
-// Clear clears the cache
+// Clear clears the cache data.
 func (sc *ristrettoStatsCache) Clear() {
 	sc.cache.Clear()
-	sc.version.Store(uint64(0))
+	sc.mu.Lock()
+	sc.version = 0
+	sc.mu.Unlock()
 	for i := range sc.tablesShards {
 		sc.tablesShards[i].Lock()
 		sc.tablesShards[i].data = make(map[int64]*statistics.Table)
@@ -190,7 +188,7 @@ func (sc *ristrettoStatsCache) Clear() {
 
 }
 
-// GetAll get all the tables point.
+// GetAll get all the tables.
 func (sc *ristrettoStatsCache) GetAll() []*statistics.Table {
 	tables := make([]*statistics.Table, 0)
 	for _, shard := range sc.tablesShards {
@@ -227,6 +225,7 @@ func (sc *ristrettoStatsCache) Insert(table *statistics.Table) {
 	mem := table.MemoryUsage()
 	sc.cache.Set(uint64(key), table, mem)
 
+	// Calc memusage only on insert.
 	table.MemUsage = mem
 	if oldTbl, ok := sc.Get(key); ok {
 		sc.memTracker.Consume(-oldTbl.MemUsage)
@@ -249,8 +248,9 @@ func (sc *ristrettoStatsCache) Erase(deletedID int64) bool {
 
 // Update updates the statistics table cache.
 func (sc *ristrettoStatsCache) Update(tables []*statistics.Table, deletedIDs []int64, newVersion uint64) {
-	if sc.version.Load().(uint64) <= newVersion {
-		sc.version.Store(newVersion)
+	sc.mu.Lock()
+	if sc.version <= newVersion {
+		sc.version = newVersion
 		for _, id := range deletedIDs {
 			sc.Erase(id)
 		}
@@ -258,19 +258,24 @@ func (sc *ristrettoStatsCache) Update(tables []*statistics.Table, deletedIDs []i
 			sc.Insert(tbl)
 		}
 	}
+	sc.mu.Unlock()
 }
 
 func (sc *ristrettoStatsCache) GetVersion() uint64 {
-	return sc.version.Load().(uint64)
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.version
 }
 
 // InitStatsCache should be called after the tables and their stats are initilazed
 // using tables map and version to init statscache
 func (sc *ristrettoStatsCache) InitStatsCache(tables map[int64]*statistics.Table, version uint64) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
 	for _, tbl := range tables {
 		sc.Insert(tbl)
 	}
-	sc.version.Store(version)
+	sc.version = version
 	return
 }
 
