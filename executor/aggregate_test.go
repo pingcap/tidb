@@ -1165,4 +1165,6 @@ func (s *testSuiteAgg) TestIssue19426(c *C) {
 		Check(testkit.Rows("44.0"))
 	tk.MustQuery("select min(case when a <= 0 or a > 1000 then 0.0 else b end) from t").
 		Check(testkit.Rows("11.0"))
+	tk.MustQuery("select a, b, sum(case when a < 1000 then b else 0.0 end) over (order by a) from t").
+		Check(testkit.Rows("1 11 11.0", "2 22 33.0", "3 33 66.0", "4 44 110.0"))
 }
