@@ -5466,3 +5466,55 @@ func (s *testSerialDBSuite) TestCreateTableWithIntegerLengthWaring(c *C) {
 
 	tk.MustExec("drop table if exists t")
 }
+
+func createTableWithGlobalIndex(c *C, tk *testkit.TestKit) (table.Table, table.Index) {
+	tk.MustExec("use test_db")
+	tk.MustExec("drop table if exists test_global_index")
+	tk.MustExec(`create table test_global_index (a int, b int, c int) partition by range (b)
+	(partition p0 values less than (10),
+	partition p1 values less than (maxvalue));
+	alter table test_global_index add unique index idx_c (c);`)
+
+	num := 100
+	//  add some rows
+	for i := 0; i < num; i++ {
+		tk.MustExec("insert into test_global_index values (?, ?, ?)", i, i, i)
+	}
+
+	ctx := tk.Se.(sessionctx.Context)
+	t := testGetTableByName(c, ctx, "test_db", "test_global_index")
+	tblInfo := t.Meta()
+	idxInfo := tblInfo.FindIndexByName("idx_c")
+	c.Assert(idxInfo, NotNil)
+	c.Assert(idxInfo.Global, IsTrue)
+	idx := tables.NewIndex(0, tblInfo, idxInfo)
+	return t, idx
+}
+
+func (s *testSerialDBSuite) TestDelRangeInGlobalIndex(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	tk := testkit.NewTestKit(c, s.store)
+	ctx := s.s.(sessionctx.Context)
+
+	// test drop index
+	_, index := createTableWithGlobalIndex(c, tk)
+	tk.MustExec("alter table test_global_index drop index idx_c")
+	checkDelRangeDone(c, ctx, index)
+
+	// test drop table
+	_, index = createTableWithGlobalIndex(c, tk)
+	tk.MustExec("drop table test_global_index")
+	checkDelRangeDone(c, ctx, index)
+
+	// test drop column
+	_, index = createTableWithGlobalIndex(c, tk)
+	tk.MustExec("alter table test_global_index drop column c")
+	checkDelRangeDone(c, ctx, index)
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = false
+	})
+}

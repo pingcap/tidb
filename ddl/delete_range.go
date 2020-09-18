@@ -283,11 +283,11 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 					return errors.Trace(err)
 				}
 			}
-			// Do not return, because global indexes entries begin with talbeID.
+		} else {
+			startKey = tablecodec.EncodeTablePrefix(tableID)
+			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+			return doInsert(s, job.ID, tableID, startKey, endKey, now)
 		}
-		startKey = tablecodec.EncodeTablePrefix(tableID)
-		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-		return doInsert(s, job.ID, tableID, startKey, endKey, now)
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition:
 		var physicalTableIDs []int64
 		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
@@ -316,10 +316,12 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 					return errors.Trace(err)
 				}
 			}
+
+		} else {
+			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+			return doInsert(s, job.ID, indexID, startKey, endKey, now)
 		}
-		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-		return doInsert(s, job.ID, indexID, startKey, endKey, now)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
 		var indexName interface{}
@@ -336,16 +338,21 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 					return errors.Trace(err)
 				}
 			}
+		} else {
+			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+			return doInsert(s, job.ID, indexID, startKey, endKey, now)
 		}
-		startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-		endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-		return doInsert(s, job.ID, indexID, startKey, endKey, now)
 	case model.ActionDropColumn:
 		var colName model.CIStr
 		var indexIDs []int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&colName, &indexIDs, &partitionIDs); err != nil {
+		var globalIndexIDs []int64
+		if err := job.DecodeArgs(&colName, &indexIDs, &partitionIDs, &globalIndexIDs); err != nil {
 			return errors.Trace(err)
+		}
+		if len(globalIndexIDs) > 0 {
+			doBatchDeleteIndiceRange(s, job.ID, job.TableID, globalIndexIDs, now)
 		}
 		if len(indexIDs) > 0 {
 			if len(partitionIDs) > 0 {
@@ -363,8 +370,12 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 		var ifExists []bool
 		var indexIDs []int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&colNames, &ifExists, &indexIDs, &partitionIDs); err != nil {
+		var globalIndexIDs []int64
+		if err := job.DecodeArgs(&colNames, &ifExists, &indexIDs, &partitionIDs, &globalIndexIDs); err != nil {
 			return errors.Trace(err)
+		}
+		if len(globalIndexIDs) > 0 {
+			doBatchDeleteIndiceRange(s, job.ID, job.TableID, globalIndexIDs, now)
 		}
 		if len(indexIDs) > 0 {
 			if len(partitionIDs) > 0 {

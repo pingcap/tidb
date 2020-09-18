@@ -394,6 +394,20 @@ func onAddColumns(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error
 	return ver, errors.Trace(err)
 }
 
+// splitIndexListByGlobal splits index by `Global` flag, and returns two ID slices.
+func splitIndexListByGlobal(idxInfos []*model.IndexInfo) ([]int64, []int64) {
+	ids := make([]int64, 0, len(idxInfos))
+	globals := make([]int64, 0, len(idxInfos))
+	for _, idxInfo := range idxInfos {
+		if idxInfo.Global {
+			globals = append(globals, idxInfo.ID)
+		} else {
+			ids = append(ids, idxInfo.ID)
+		}
+	}
+	return ids, globals
+}
+
 func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	tblInfo, colInfos, delCount, idxInfos, err := checkDropColumns(t, job)
 	if err != nil {
@@ -443,7 +457,7 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			tblInfo.Indices = newIndices
 		}
 
-		indexIDs := indexInfosToIDList(idxInfos)
+		indexIDs, globalIndexIDs := splitIndexListByGlobal(idxInfos)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-delCount]
 		setColumnsState(colInfos, model.StateNone)
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfos[0].State)
@@ -456,7 +470,8 @@ func onDropColumns(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 		} else {
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
+			// Append global flags to the end to correctly delete index
+			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo), globalIndexIDs)
 		}
 	default:
 		err = errInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)
@@ -572,7 +587,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			tblInfo.Indices = newIndices
 		}
 
-		indexIDs := indexInfosToIDList(idxInfos)
+		indexIDs, globalIndexIDs := splitIndexListByGlobal(idxInfos)
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		colInfo.State = model.StateNone
 		ver, err = updateVersionAndTableInfo(t, job, tblInfo, originalState != colInfo.State)
@@ -586,7 +601,7 @@ func onDropColumn(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		} else {
 			// We should set related index IDs for job
 			job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo))
+			job.Args = append(job.Args, indexIDs, getPartitionIDs(tblInfo), globalIndexIDs)
 		}
 	default:
 		err = errInvalidDDLJob.GenWithStackByArgs("table", tblInfo.State)

@@ -867,6 +867,15 @@ func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def 
 	return index, nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
 }
 
+func hasGlobalIndex(tblInfo *model.TableInfo) bool {
+	for _, idxInfo := range tblInfo.Indices {
+		if idxInfo.Global {
+			return true
+		}
+	}
+	return false
+}
+
 func buildPlacementDropRules(schemaID, tableID int64, partitionIDs []int64) []*placement.RuleOp {
 	rules := make([]*placement.RuleOp, 0, len(partitionIDs))
 	for _, partitionID := range partitionIDs {

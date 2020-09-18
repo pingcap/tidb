@@ -199,7 +199,11 @@ func onDropTableOrView(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
-		job.Args = append(job.Args, startKey, getPartitionIDs(tblInfo))
+		cleaningPartitionIDs := getPartitionIDs(tblInfo)
+		if hasGlobalIndex(tblInfo) {
+			cleaningPartitionIDs = append(cleaningPartitionIDs, tblInfo.ID)
+		}
+		job.Args = append(job.Args, startKey, cleaningPartitionIDs)
 	default:
 		err = ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
