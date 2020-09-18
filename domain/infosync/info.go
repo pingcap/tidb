@@ -300,7 +300,9 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		res, err = http.DefaultClient.Do(req)
 		if err == nil {
 			bodyBytes, err := ioutil.ReadAll(res.Body)
-			terror.Log(err)
+			if err != nil {
+				return nil, err
+			}
 			if res.StatusCode != http.StatusOK {
 				err = errors.Errorf("%s", bodyBytes)
 			}
