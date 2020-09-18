@@ -82,11 +82,11 @@ type tableHintInfo struct {
 	aggHints                    aggHintInfo
 	indexMergeHintList          []indexHintInfo
 	timeRangeHint               ast.HintTimeRange
-	topnHints                   topnHintInfo
+	limitHints                  limitHintInfo
 }
 
-type topnHintInfo struct {
-	preferTopNToCop bool
+type limitHintInfo struct {
+	preferLimitToCop bool
 }
 
 type hintTableInfo struct {

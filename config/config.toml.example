@@ -420,9 +420,6 @@ binlog-socket = ""
 strategy = "range"
 
 [pessimistic-txn]
-# enable pessimistic transaction.
-enable = true
-
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
 
@@ -448,8 +445,6 @@ history-size = 24
 # experimental section controls the features that are still experimental: their semantics,
 # interfaces are subject to change, using these features in the production environment is not recommended.
 [experimental]
-# enable creating expression index.
-allow-expression-index = false
 
 # server level isolation read by engines and labels
 [isolation-read]
