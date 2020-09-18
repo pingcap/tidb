@@ -154,10 +154,11 @@ func (s *testBatchPointGetSuite) TestIssue18843(c *C) {
 func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (id bigint(20) unsigned, primary key(id))")
-	tk.MustExec("insert into t values (8738875760185212610)")
-	tk.MustExec("insert into t values (9814441339970117597)")
-	tk.MustExec("insert into t values (1)")
-	tk.MustQuery("select id from t where id in (8738875760185212610, 1, 9814441339970117597) order by id").Check(testkit.Rows("1", "8738875760185212610", "9814441339970117597"))
-	tk.MustQuery("select id from t where id in (8738875760185212610, 1, 9814441339970117597) order by id desc").Check(testkit.Rows("9814441339970117597", "8738875760185212610", "1"))
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2 (id bigint(20) unsigned, primary key(id))")
+	tk.MustExec("insert into t2 values (8738875760185212610)")
+	tk.MustExec("insert into t2 values (9814441339970117597)")
+	tk.MustExec("insert into t2 values (1)")
+	tk.MustQuery("select id from t2 where id in (8738875760185212610, 1, 9814441339970117597) order by id").Check(testkit.Rows("1", "8738875760185212610", "9814441339970117597"))
+	tk.MustQuery("select id from t2 where id in (8738875760185212610, 1, 9814441339970117597) order by id desc").Check(testkit.Rows("9814441339970117597", "8738875760185212610", "1"))
 }
