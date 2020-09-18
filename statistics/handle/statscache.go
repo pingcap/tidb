@@ -57,7 +57,7 @@ type ristrettoStatsCache struct {
 // tableShard is a shard of table
 type tableShard struct {
 	data map[int64]*statistics.Table
-	sync.Mutex
+	sync.RWMutex
 }
 
 // Set set key with value
@@ -71,8 +71,8 @@ func (sc *ristrettoStatsCache) Set(key int64, value *statistics.Table) {
 // Get get key with value table
 func (sc *ristrettoStatsCache) Get(key int64) (*statistics.Table, bool) {
 	shard := &sc.tablesShards[key&(numShards-1)]
-	shard.Lock()
-	defer shard.Unlock()
+	shard.RLock()
+	defer shard.RUnlock()
 	data, ok := shard.data[key>>byteShards]
 	return data, ok
 }
