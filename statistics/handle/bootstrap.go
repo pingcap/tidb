@@ -150,7 +150,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables map[
 	}
 }
 
-// load ALL the meta data without cm_sketch
+// initStatsHistograms loads ALL the meta data without cm_sketch
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables map[int64]*statistics.Table) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version," +
 		" null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos " +
@@ -210,8 +210,7 @@ func (h *Handle) initCMSketch4Indices4Chunk(is infoschema.InfoSchema, tables map
 }
 
 func (h *Handle) initCMSketch4Indices(is infoschema.InfoSchema, tables map[int64]*statistics.Table) error {
-	// indcies should be load first
-	// is_index = 1 load first
+	// indcies should be loaded first
 	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, cm_sketch " +
 		"from mysql.stats_histograms where is_index = 1 " +
@@ -245,7 +244,7 @@ func (h *Handle) initStatsTopN4Chunk(tables map[int64]*statistics.Table, iter *c
 			continue
 		}
 		idx, ok := table.Indices[row.GetInt64(1)]
-		// if idx.CMSketch == nil, the index is not loaded.
+		// If idx.CMSketch == nil, the index is not loaded.
 		if !ok || idx.CMSketch == nil {
 			continue
 		}
@@ -302,7 +301,7 @@ func initColumnCountMeta4Chunk(ctx sessionctx.Context, tables map[int64]*statist
 	return nil
 }
 
-//initColumnCount load columns meta data (column count) only for every column
+//initColumnCount loads each column's meta data i.e. its row count.
 func (h *Handle) initColumnCount(tables map[int64]*statistics.Table) (err error) {
 	sql := "select HIGH_PRIORITY table_id, hist_id, sum(count) " +
 		"from mysql.stats_buckets " +
@@ -410,7 +409,7 @@ func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (err error
 func (h *Handle) preCalcScalar4StatsBuckets(tables map[int64]*statistics.Table) (lastVersion uint64, err error) {
 	lastVersion = uint64(0)
 	for _, table := range tables {
-		//version is loaded by initStatsHistogramsMeta
+		// The version is loaded by initStatsHistogramsMeta.
 		lastVersion = mathutil.MaxUint64(lastVersion, table.Version)
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
