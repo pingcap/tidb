@@ -386,6 +386,7 @@ func (b *Builder) InitWithOldInfoSchema() *Builder {
 	oldIS := b.handle.Get().(*infoSchema)
 	b.is.schemaMetaVersion = oldIS.schemaMetaVersion
 	b.copySchemasMap(oldIS)
+	b.copyBundlesMap(oldIS)
 	copy(b.is.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return b
 }
@@ -393,6 +394,12 @@ func (b *Builder) InitWithOldInfoSchema() *Builder {
 func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 	for k, v := range oldIS.schemaMap {
 		b.is.schemaMap[k] = v
+	}
+}
+
+func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
+	for k, v := range oldIS.bundles {
+		b.is.bundles[k] = v
 	}
 }
 
