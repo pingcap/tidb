@@ -60,7 +60,7 @@ type testGCWorkerSuite struct {
 	pdClient pd.Client
 }
 
-var _ = Suite(&testGCWorkerSuite{})
+var _ = SerialSuites(&testGCWorkerSuite{})
 
 func (s *testGCWorkerSuite) SetUpTest(c *C) {
 	tikv.NewGCHandlerFunc = NewGCWorker

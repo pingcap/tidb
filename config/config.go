@@ -61,6 +61,8 @@ const (
 	DefStatusHost = "0.0.0.0"
 	// DefStoreLivenessTimeout is the default value for store liveness timeout.
 	DefStoreLivenessTimeout = "5s"
+	// DefTiDBRedactLog is the default value for redact log.
+	DefTiDBRedactLog = 0
 )
 
 // Valid config maps
@@ -158,6 +160,8 @@ type Config struct {
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
+	// EnableRedactLog indicates that whether redact log, 0 is disable. 1 is enable.
+	EnableRedactLog int32 `toml:"enable-redact-log" json:"enable-redact-log"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
@@ -418,6 +422,7 @@ type Performance struct {
 	CommitterConcurrency int     `toml:"committer-concurrency" json:"committer-concurrency"`
 	MaxTxnTTL            uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	MemProfileInterval   string  `toml:"mem-profile-interval" json:"mem-profile-interval"`
+	IndexUsageSyncLease  string  `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -550,8 +555,6 @@ type Plugin struct {
 
 // PessimisticTxn is the config for pessimistic transaction.
 type PessimisticTxn struct {
-	// Enable must be true for 'begin lock' or session variable to start a pessimistic transaction.
-	Enable bool `toml:"enable" json:"enable"`
 	// The max count of retry for a single statement in a pessimistic transaction.
 	MaxRetryCount uint `toml:"max-retry-count" json:"max-retry-count"`
 }
@@ -659,8 +662,9 @@ var defaultConf = Config{
 		TxnTotalSizeLimit:    DefTxnTotalSizeLimit,
 		DistinctAggPushDown:  false,
 		CommitterConcurrency: 16,
-		MaxTxnTTL:            10 * 60 * 1000, // 10min
+		MaxTxnTTL:            60 * 60 * 1000, // 1hour
 		MemProfileInterval:   "1m",
+		IndexUsageSyncLease:  "60s",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
@@ -711,7 +715,6 @@ var defaultConf = Config{
 		Strategy:     "range",
 	},
 	PessimisticTxn: PessimisticTxn{
-		Enable:        true,
 		MaxRetryCount: 256,
 	},
 	StmtSummary: StmtSummary{
@@ -736,6 +739,7 @@ var defaultConf = Config{
 		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
 	},
 	DeprecateIntegerDisplayWidth: false,
+	EnableRedactLog:              DefTiDBRedactLog,
 }
 
 var (
@@ -762,6 +766,7 @@ func StoreGlobalConfig(config *Config) {
 
 var deprecatedConfig = map[string]struct{}{
 	"pessimistic-txn.ttl":            {},
+	"pessimistic-txn.enable":         {},
 	"log.file.log-rotate":            {},
 	"log.log-slow-query":             {},
 	"txn-local-latches":              {},
@@ -976,6 +981,23 @@ func TableLockEnabled() bool {
 // TableLockDelayClean uses to get the time of delay clean table lock.
 var TableLockDelayClean = func() uint64 {
 	return GetGlobalConfig().DelayCleanTableLock
+}
+
+// RedactLogEnabled uses to check whether enabled the log redact.
+func RedactLogEnabled() bool {
+	return atomic.LoadInt32(&GetGlobalConfig().EnableRedactLog) == 1
+}
+
+// SetRedactLog uses to set log redact status.
+func SetRedactLog(enable bool) {
+	value := int32(0)
+	if enable {
+		value = 1
+	}
+	g := GetGlobalConfig()
+	newConf := *g
+	newConf.EnableRedactLog = value
+	StoreGlobalConfig(&newConf)
 }
 
 // ToLogConfig converts *Log to *logutil.LogConfig.
