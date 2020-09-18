@@ -1655,7 +1655,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	var name *types.FieldName
 	// Here we will find the corresponding column for default function. At the same time, we need to consider the issue
-	// of subquery and name sapce.
+	// of subquery and name space.
 	// For example, we have two tables t1(a int default 1, b int) and t2(a int default -1, c int). Consider the following SQL:
 	// 		select a from t1 where a > (select default(a) from t2)
 	// Refer to the behavior of MySQL, we need to find column a in table t2. If table t2 does not have column a, then find it
