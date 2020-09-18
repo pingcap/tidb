@@ -305,20 +305,12 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncJsonObjectAgg:       {},
 }
 
-// We need to wrap cast as decimal upon these functions,
-// since we need to keep the fraction part of their decimal results
-var needCastAsDecimalAggFuncs = map[string]struct{}{
-	ast.AggFuncGroupConcat: {},
-}
-
 // WrapCastAsDecimalForAggArgs wraps the args of some specific aggregate functions
 // with a cast as decimal function. See issue #19426
 func (a *baseFuncDesc) WrapCastAsDecimalForAggArgs(ctx sessionctx.Context) {
-	if _, ok := needCastAsDecimalAggFuncs[a.Name]; ok {
-		for i := range a.Args {
-			if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
-				a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
-			}
+	if a.Name == ast.AggFuncGroupConcat {
+		if tp := a.Args[0].GetType(); tp.Tp == mysql.TypeNewDecimal {
+			a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp)
 		}
 	}
 }
