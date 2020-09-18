@@ -95,7 +95,7 @@ const (
 // NewStatsCache returns a new statsCahce with capacity memoryLimit(initial 1G)
 func NewStatsCache(memoryLimit int64, tp statsCacheType) (StatsCache, error) {
 	if tp == RistrettoStatsCacheType {
-		return newRistrettoStatsCache(memoryLimit), nil
+		return newRistrettoStatsCache(memoryLimit)
 	}
 	if tp == SimpleStatsCacheType {
 		return newSimpleStatsCache(memoryLimit), nil
@@ -104,7 +104,7 @@ func NewStatsCache(memoryLimit int64, tp statsCacheType) (StatsCache, error) {
 }
 
 // newRistrettoStatsCache returns a new statsCahce with capacity memoryLimit(initial 1G)
-func newRistrettoStatsCache(memoryLimit int64) *ristrettoStatsCache {
+func newRistrettoStatsCache(memoryLimit int64) (*ristrettoStatsCache, error) {
 	// since newRistrettoStatsCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
 	sc := &ristrettoStatsCache{
@@ -115,7 +115,7 @@ func newRistrettoStatsCache(memoryLimit int64) *ristrettoStatsCache {
 		sc.tablesShards[i].data = make(map[int64]*statistics.Table)
 	}
 	sc.version = 0
-	cache, _ := cache.NewCache(&cache.Config{
+	cache, err := cache.NewCache(&cache.Config{
 		NumCounters: 1e7,         // number of keys to track frequency of (10M).
 		MaxCost:     memoryLimit, // maximum cost of cache (1GB).
 		BufferItems: 64,          // number of keys per Get buffer.
@@ -131,8 +131,12 @@ func newRistrettoStatsCache(memoryLimit int64) *ristrettoStatsCache {
 			}
 		},
 	})
+	if err != nil {
+		return nil, err
+	}
+
 	sc.cache = cache
-	return sc
+	return sc, nil
 }
 
 // BytesConsumed returns the consumed memory usage value in bytes.
