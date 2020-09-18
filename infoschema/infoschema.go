@@ -54,6 +54,8 @@ type InfoSchema interface {
 	// TableIsSequence indicates whether the schema.table is a sequence.
 	TableIsSequence(schema, table model.CIStr) bool
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo)
+	// BundleByName is used to get a rule bundle
+	BundleByName(name string) (*placement.Bundle, bool)
 }
 
 type sortedTables []table.Table
@@ -393,4 +395,9 @@ func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 		is = sessVar.TxnCtx.InfoSchema.(InfoSchema)
 	}
 	return is
+}
+
+func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
+	t, r := is.bundles[name]
+	return t, r
 }
