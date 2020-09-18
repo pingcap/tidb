@@ -42,8 +42,8 @@ type nextPartition interface {
 }
 
 type innerPartitionInfo struct {
-	isFullPartition  bool
-	nextRange        map[int64][]*ranger.Range
+	isFullPartition bool
+	nextRange       map[int64][]*ranger.Range
 }
 
 type innerNextPartition interface {
