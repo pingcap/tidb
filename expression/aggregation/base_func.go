@@ -309,8 +309,10 @@ var noNeedCastAggFuncs = map[string]struct{}{
 // with a cast as decimal function. See issue #19426
 func (a *baseFuncDesc) WrapCastAsDecimalForAggArgs(ctx sessionctx.Context) {
 	if a.Name == ast.AggFuncGroupConcat {
-		if tp := a.Args[0].GetType(); tp.Tp == mysql.TypeNewDecimal {
-			a.Args[0] = expression.BuildCastFunction(ctx, a.Args[0], tp)
+		for i := 0; i < len(a.Args)-1; i++ {
+			if tp := a.Args[i].GetType(); tp.Tp == mysql.TypeNewDecimal {
+				a.Args[i] = expression.BuildCastFunction(ctx, a.Args[i], tp)
+			}
 		}
 	}
 }

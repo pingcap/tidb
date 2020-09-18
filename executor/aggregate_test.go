@@ -1157,6 +1157,8 @@ func (s *testSuiteAgg) TestIssue19426(c *C) {
 		Check(testkit.Rows("11.0", "22.0", "33.0", "44.0"))
 	tk.MustQuery("select group_concat(case when a <= 0 or a > 1000 then 0.0 else b end order by -a) from t").
 		Check(testkit.Rows("44.0,33.0,22.0,11.0"))
+	tk.MustQuery("select group_concat(a, b, case when a <= 0 or a > 1000 then 0.0 else b end order by -a) from t").
+		Check(testkit.Rows("44444.0,33333.0,22222.0,11111.0"))
 	tk.MustQuery("select group_concat(distinct case when a <= 0 or a > 1000 then 0.0 else b end order by -a) from t").
 		Check(testkit.Rows("44.0,33.0,22.0,11.0"))
 	tk.MustQuery("select max(case when a <= 0 or a > 1000 then 0.0 else b end) from t").
