@@ -435,13 +435,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, ruleBundles *placeme
 
 	for _, t := range di.Tables {
 		allocs := autoid.NewAllocatorsFromTblInfo(b.handle.store, di.ID, t)
-
-		tid := placement.GroupID(t.ID)
-		bundle := ruleBundles.FindByID(tid)
-		if bundle == nil {
-			return errors.Wrap(errors.New("fail to get placement rule"), fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
-		}
-
+		bundle := ruleBundles.FindByID(placement.GroupID(t.ID))
 		var tbl table.Table
 		tbl, err := tableFromMeta(allocs, t, bundle)
 		if err != nil {

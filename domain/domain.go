@@ -141,7 +141,12 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 		return 0, nil, fullLoad, err
 	}
 
-	bundles, err := placement.GetAllBundles(context.Background(), do.etcdClient.Endpoints())
+	var addrs []string
+	if do.etcdClient != nil {
+		addrs = do.etcdClient.Endpoints()
+	}
+
+	bundles, err := placement.GetAllBundles(context.Background(), addrs)
 	if err != nil {
 		return 0, nil, fullLoad, err
 	}
