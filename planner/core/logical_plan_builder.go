@@ -2503,8 +2503,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
 	}()
-
+	enableNoopFuncs := b.ctx.GetSessionVars().EnableNoopFuncs
 	if sel.SelectStmtOpts != nil {
+		if sel.SelectStmtOpts.CalcFoundRows && !enableNoopFuncs {
+			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+			return nil, err
+		}
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
 		defer func() { b.inStraightJoin = origin }()
@@ -2570,9 +2574,18 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			return nil, err
 		}
 	}
+<<<<<<< HEAD
 
 	if sel.LockTp != ast.SelectLockNone {
 		p = b.buildSelectLock(p, sel.LockTp)
+=======
+	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
+		if sel.LockInfo.LockType == ast.SelectLockInShareMode && !enableNoopFuncs {
+			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
+			return nil, err
+		}
+		p = b.buildSelectLock(p, sel.LockInfo)
+>>>>>>> 9876de896... planner: disable SQL_CALC_FOUND_ROWS/LOCK IN SHARE MODE by default (#19506)
 	}
 	b.handleHelper.popMap()
 	b.handleHelper.pushMap(nil)

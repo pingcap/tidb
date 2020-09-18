@@ -6971,6 +6971,43 @@ func (s *testIntegrationSerialSuite) TestIssue19045(c *C) {
 	tk.MustQuery(`select  ( SELECT t1.a FROM  t1,  t2 WHERE t1.b = t2.a AND  t2.b = '03' AND t1.c = a.a) invode from t a ;`).Check(testkit.Rows("a011", "a011"))
 }
 
+<<<<<<< HEAD
+=======
+func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set names utf8mb4 collate utf8mb4_general_ci;")
+	tk.MustQuery("select collation(concat(1 collate `binary`));").Check(testkit.Rows("binary"))
+	tk.MustQuery("select coercibility(concat(1 collate `binary`));").Check(testkit.Rows("0"))
+	tk.MustQuery("select collation(concat(NULL,NULL));").Check(testkit.Rows("binary"))
+	tk.MustQuery("select coercibility(concat(NULL,NULL));").Check(testkit.Rows("6"))
+	tk.MustQuery("select collation(concat(1,1));").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select coercibility(concat(1,1));").Check(testkit.Rows("4"))
+	tk.MustQuery("select collation(1);").Check(testkit.Rows("binary"))
+	tk.MustQuery("select coercibility(1);").Check(testkit.Rows("5"))
+	tk.MustQuery("select coercibility(1=1);").Check(testkit.Rows("5"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue14448and19383(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1 (a INT NOT NULL PRIMARY KEY)")
+	tk.MustExec("INSERT INTO t1 VALUES (1),(2),(3)")
+	_, err := tk.Exec("SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1")
+	message := `function SQL_CALC_FOUND_ROWS has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
+	_, err = tk.Exec("SELECT * FROM t1 LOCK IN SHARE MODE")
+	message = `function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
+	tk.MustExec("SET tidb_enable_noop_functions=1")
+	tk.MustExec("SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1")
+	tk.MustExec("SELECT * FROM t1 LOCK IN SHARE MODE")
+}
+
+>>>>>>> 9876de896... planner: disable SQL_CALC_FOUND_ROWS/LOCK IN SHARE MODE by default (#19506)
 func (s *testIntegrationSerialSuite) TestIssue19315(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
