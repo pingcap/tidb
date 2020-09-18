@@ -118,7 +118,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	sessVars.StmtCtx.StmtHints = stmtHints
 
 	for name, val := range stmtHints.SetVars {
-		variable.SetTmpSessionSystemVar(sessVars, name, val)
+		err := variable.SetTmpSessionSystemVar(sessVars, name, val)
+		if err != nil {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
 	}
 
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
@@ -410,8 +413,13 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 
 			// Not all session variables are permitted for use with SET_VAR
 			sysVar := variable.GetSysVar(setVarHint.VarName)
-			if sysVar == nil || !sysVar.SetVarHintApply {
-				warn := terror.ClassUtil.New(errno.ErrWarnCannotUsingHint, fmt.Sprintf(errno.MySQLErrName[errno.ErrWarnCannotUsingHint], setVarHint.VarName, hint.HintName.O))
+			if sysVar == nil {
+				warn := terror.ClassUtil.New(errno.ErrUnresolvedHintName, fmt.Sprintf(errno.MySQLErrName[errno.ErrUnresolvedHintName], setVarHint.VarName, hint.HintName.O))
+				warns = append(warns, warn)
+				continue
+			}
+			if !sysVar.SetVarHintApply {
+				warn := terror.ClassUtil.New(errno.ErrNotHintUpdatableVariable, fmt.Sprintf(errno.MySQLErrName[errno.ErrNotHintUpdatableVariable], setVarHint.VarName, hint.HintName.O))
 				warns = append(warns, warn)
 				continue
 			}
