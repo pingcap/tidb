@@ -858,7 +858,7 @@ func (s *testPlanSuite) TestAggToCopHint(c *C) {
 	}
 }
 
-func (s *testPlanSuite) TestTopNToCopHint(c *C) {
+func (s *testPlanSuite) TestLimitToCopHint(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
