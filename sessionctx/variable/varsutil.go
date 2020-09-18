@@ -16,6 +16,8 @@ package variable
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"strconv"
 	"strings"
@@ -204,7 +206,8 @@ func SetSessionSystemVar(vars *SessionVars, name string, value types.Datum) erro
 	name = strings.ToLower(name)
 	sysVar := SysVars[name]
 	if sysVar == nil {
-		return ErrUnknownSystemVar
+		logutil.BgLogger().Warn("non-exist system variable", zap.String("var", name))
+		return nil
 	}
 	sVal := ""
 	var err error
