@@ -309,9 +309,7 @@ func (e *ProjectionExec) Close() error {
 		}
 	}
 	if e.baseExecutor.runtimeStats != nil {
-		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{
-			BasicRuntimeStats: e.runtimeStats,
-		}
+		runtimeStats := &execdetails.RuntimeStatsWithConcurrencyInfo{}
 		if e.isUnparallelExec() {
 			runtimeStats.SetConcurrencyInfo(execdetails.NewConcurrencyInfo("Concurrency", 0))
 		} else {

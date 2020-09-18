@@ -328,6 +328,9 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 
 func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) bool {
 	for _, c := range constraints {
+		if c.Keys[0].Expr != nil {
+			continue
+		}
 		// If the constraint as follows: primary key(c1, c2)
 		// we only support c1 column can be auto_increment.
 		if colDef.Name.Name.L != c.Keys[0].Column.Name.L {
@@ -463,12 +466,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	for _, constraint := range stmt.Constraints {
-		for _, spec := range constraint.Keys {
-			if spec.Expr != nil {
-				p.err = ErrNotSupportedYet.GenWithStackByArgs("create table with expression index")
-				return
-			}
-		}
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
@@ -521,8 +518,8 @@ func (p *preprocessor) checkCreateViewWithSelect(stmt *ast.SelectStmt) {
 		p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
 		return
 	}
-	if stmt.LockTp != ast.SelectLockNone {
-		stmt.LockTp = ast.SelectLockNone
+	if stmt.LockInfo != nil && stmt.LockInfo.LockType != ast.SelectLockNone {
+		stmt.LockInfo.LockType = ast.SelectLockNone
 		return
 	}
 }
