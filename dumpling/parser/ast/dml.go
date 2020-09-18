@@ -1038,31 +1038,36 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 type SetOprSelectList struct {
 	node
 
-	Selects []*SelectStmt
+	AfterSetOperator *SetOprType
+	Selects          []Node
 }
 
 // Restore implements Node interface.
 func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
-	for i, selectStmt := range n.Selects {
-		if i != 0 {
-			switch *selectStmt.AfterSetOperator {
-			case Union:
-				ctx.WriteKeyWord(" UNION ")
-			case UnionAll:
-				ctx.WriteKeyWord(" UNION ALL ")
-			case Except:
-				ctx.WriteKeyWord(" EXCEPT ")
-			case Intersect:
-				ctx.WriteKeyWord(" INTERSECT ")
+	for i, stmt := range n.Selects {
+		switch selectStmt := stmt.(type) {
+		case *SelectStmt:
+			if i != 0 {
+				ctx.WriteKeyWord(" " + selectStmt.AfterSetOperator.String() + " ")
 			}
-		}
-		if selectStmt.IsInBraces {
+			if selectStmt.IsInBraces {
+				ctx.WritePlain("(")
+			}
+			if err := selectStmt.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SetOprSelectList.SelectStmt")
+			}
+			if selectStmt.IsInBraces {
+				ctx.WritePlain(")")
+			}
+		case *SetOprSelectList:
+			if i != 0 {
+				ctx.WriteKeyWord(" " + selectStmt.AfterSetOperator.String() + " ")
+			}
 			ctx.WritePlain("(")
-		}
-		if err := selectStmt.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.SelectStmt")
-		}
-		if selectStmt.IsInBraces {
+			err := selectStmt.Restore(ctx)
+			if err != nil {
+				return err
+			}
 			ctx.WritePlain(")")
 		}
 	}
@@ -1081,7 +1086,7 @@ func (n *SetOprSelectList) Accept(v Visitor) (Node, bool) {
 		if !ok {
 			return n, false
 		}
-		n.Selects[i] = node.(*SelectStmt)
+		n.Selects[i] = node
 	}
 	return v.Leave(n)
 }
@@ -1092,8 +1097,28 @@ const (
 	Union SetOprType = iota
 	UnionAll
 	Except
+	ExceptAll
 	Intersect
+	IntersectAll
 )
+
+func (s *SetOprType) String() string {
+	switch *s {
+	case Union:
+		return "UNION"
+	case UnionAll:
+		return "UNION ALL"
+	case Except:
+		return "EXCEPT"
+	case ExceptAll:
+		return "EXCEPT ALL"
+	case Intersect:
+		return "INTERSECT"
+	case IntersectAll:
+		return "INTERSECT ALL"
+	}
+	return ""
+}
 
 // SetOprStmt represents "union/except/intersect statement"
 // See https://dev.mysql.com/doc/refman/5.7/en/union.html
