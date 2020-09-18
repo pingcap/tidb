@@ -188,14 +188,10 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 }
 
 func (e *IndexLookUpJoin) startWorkers(ctx context.Context) {
-<<<<<<< HEAD
 	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency
-=======
-	concurrency := e.ctx.GetSessionVars().IndexLookupJoinConcurrency()
 	if e.stats != nil {
 		e.stats.concurrency = concurrency
 	}
->>>>>>> 221223b... executor: add more runtime information for join executor  (#19721)
 	resultCh := make(chan *lookUpJoinTask, concurrency)
 	e.resultCh = resultCh
 	workerCtx, cancelFunc := context.WithCancel(ctx)
