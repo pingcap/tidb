@@ -352,7 +352,10 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 			return errors.Trace(err)
 		}
 		if len(globalIndexIDs) > 0 {
-			doBatchDeleteIndiceRange(s, job.ID, job.TableID, globalIndexIDs, now)
+			err := doBatchDeleteIndiceRange(s, job.ID, job.TableID, globalIndexIDs, now)
+			if err != nil {
+				return errDependentByGeneratedColumn
+			}
 		}
 		if len(indexIDs) > 0 {
 			if len(partitionIDs) > 0 {
@@ -375,7 +378,10 @@ func insertJobIntoDeleteRangeTable(ctx sessionctx.Context, job *model.Job) error
 			return errors.Trace(err)
 		}
 		if len(globalIndexIDs) > 0 {
-			doBatchDeleteIndiceRange(s, job.ID, job.TableID, globalIndexIDs, now)
+			err := doBatchDeleteIndiceRange(s, job.ID, job.TableID, globalIndexIDs, now)
+			if err != nil {
+				return errDependentByGeneratedColumn
+			}
 		}
 		if len(indexIDs) > 0 {
 			if len(partitionIDs) > 0 {
