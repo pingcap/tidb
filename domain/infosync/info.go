@@ -277,6 +277,10 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		var url string
 		if strings.HasPrefix(addr, "http://") {
 			url = fmt.Sprintf("%s%s", addr, route)
+		} else if len(addr) > 0 && (addr[0] < '0' || addr[0] > '9') {
+			// expect an HTTP addr or an IP addr
+			err = errors.New(`"placement rules feature is disabled"`)
+			continue
 		} else {
 			url = fmt.Sprintf("http://%s%s", addr, route)
 		}
