@@ -3494,7 +3494,7 @@ func (s *testSuite) TestCheckIndex(c *C) {
 	tbInfo := tbl.Meta()
 
 	alloc := autoid.NewAllocator(s.store, dbInfo.ID, false, autoid.RowIDAllocType)
-	tb, err := tables.TableFromMeta(autoid.NewAllocators(alloc), tbInfo, nil)
+	tb, err := tables.TableFromMeta(autoid.NewAllocators(alloc), tbInfo)
 	c.Assert(err, IsNil)
 
 	_, err = se.Execute(context.Background(), "admin check index t c")

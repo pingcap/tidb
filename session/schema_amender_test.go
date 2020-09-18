@@ -248,7 +248,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			initTblColIdxID(oldTblMeta)
 			// Indices[0] does not exist at the start.
 			oldTblMeta.Indices = oldTblMeta.Indices[1:]
-			oldTbInfo, err := table.TableFromMeta(nil, oldTblMeta, nil)
+			oldTbInfo, err := table.TableFromMeta(nil, oldTblMeta)
 			c.Assert(err, IsNil)
 			oldTblMeta.Indices[0].State = startState
 			oldTblMeta.Indices[2].State = endState
@@ -267,7 +267,7 @@ func (s *testSchemaAmenderSuite) TestAmendCollectAndGenMutations(c *C) {
 			// The last index "c_d_e_str_prefix is dropped.
 			newTblMeta.Indices = newTblMeta.Indices[:len(newTblMeta.Indices)-1]
 			newTblMeta.Indices[0].Unique = false
-			newTblInfo, err := table.TableFromMeta(nil, newTblMeta, nil)
+			newTblInfo, err := table.TableFromMeta(nil, newTblMeta)
 			c.Assert(err, IsNil)
 			newTblMeta.Indices[0].State = endState
 			// Indices[1] is newly created.

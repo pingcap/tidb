@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
@@ -80,8 +81,10 @@ func (s sortedTables) searchTable(id int64) int {
 }
 
 type schemaTables struct {
-	dbInfo *model.DBInfo
-	tables map[string]table.Table
+	dbInfo   *model.DBInfo
+	dbBundle *placement.Bundle
+	bundles  map[string]*placement.Bundle
+	tables   map[string]table.Table
 }
 
 const bucketCount = 512

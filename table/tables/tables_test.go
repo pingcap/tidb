@@ -360,16 +360,16 @@ func (ts *testSuite) TestTableFromMeta(c *C) {
 
 	// For test coverage
 	tbInfo.Columns[0].GeneratedExprString = "a"
-	tables.TableFromMeta(nil, tbInfo, nil)
+	tables.TableFromMeta(nil, tbInfo)
 
 	tbInfo.Columns[0].GeneratedExprString = "test"
-	tables.TableFromMeta(nil, tbInfo, nil)
+	tables.TableFromMeta(nil, tbInfo)
 	tbInfo.Columns[0].State = model.StateNone
-	tb, err = tables.TableFromMeta(nil, tbInfo, nil)
+	tb, err = tables.TableFromMeta(nil, tbInfo)
 	c.Assert(tb, IsNil)
 	c.Assert(err, NotNil)
 	tbInfo.State = model.StateNone
-	tb, err = tables.TableFromMeta(nil, tbInfo, nil)
+	tb, err = tables.TableFromMeta(nil, tbInfo)
 	c.Assert(tb, IsNil)
 	c.Assert(err, NotNil)
 

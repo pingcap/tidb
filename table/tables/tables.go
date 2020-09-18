@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
-	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -64,7 +63,6 @@ type TableCommon struct {
 	writableIndices                 []table.Index
 	indices                         []table.Index
 	meta                            *model.TableInfo
-	rules                           *placement.Bundle
 	allocs                          autoid.Allocators
 	sequence                        *sequenceCommon
 
@@ -82,7 +80,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	}
 
 	var t TableCommon
-	initTableCommon(&t, nil, tblInfo, tblInfo.ID, columns, nil)
+	initTableCommon(&t, tblInfo, tblInfo.ID, columns, nil)
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t); err != nil {
 			return nil
@@ -98,7 +96,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 }
 
 // TableFromMeta creates a Table instance from model.TableInfo.
-func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, rules *placement.Bundle) (table.Table, error) {
+func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}
@@ -139,7 +137,7 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, rules *pl
 	}
 
 	var t TableCommon
-	initTableCommon(&t, rules, tblInfo, tblInfo.ID, columns, allocs)
+	initTableCommon(&t, tblInfo, tblInfo.ID, columns, allocs)
 	if tblInfo.GetPartitionInfo() == nil {
 		if err := initTableIndices(&t); err != nil {
 			return nil, err
@@ -151,12 +149,11 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo, rules *pl
 }
 
 // initTableCommon initializes a TableCommon struct.
-func initTableCommon(t *TableCommon, rules *placement.Bundle, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators) {
+func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators) {
 	t.tableID = tblInfo.ID
 	t.physicalTableID = physicalTableID
 	t.allocs = allocs
 	t.meta = tblInfo
-	t.rules = rules
 	t.Columns = cols
 	t.PublicColumns = t.Cols()
 	t.VisibleColumns = t.VisibleCols()
@@ -188,7 +185,7 @@ func initTableIndices(t *TableCommon) error {
 }
 
 func initTableCommonWithIndices(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators) error {
-	initTableCommon(t, nil, tblInfo, physicalTableID, cols, allocs)
+	initTableCommon(t, tblInfo, physicalTableID, cols, allocs)
 	return initTableIndices(t)
 }
 
@@ -232,11 +229,6 @@ func (t *TableCommon) DeletableIndices() []table.Index {
 // Meta implements table.Table Meta interface.
 func (t *TableCommon) Meta() *model.TableInfo {
 	return t.meta
-}
-
-// Rules implements table.Table Rules interface.
-func (t *TableCommon) Rules() *placement.Bundle {
-	return t.rules
 }
 
 // GetPhysicalID implements table.Table GetPhysicalID interface.

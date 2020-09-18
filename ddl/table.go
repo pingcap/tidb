@@ -380,7 +380,7 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 
 func getTable(store kv.Storage, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
 	allocs := autoid.NewAllocatorsFromTblInfo(store, schemaID, tblInfo)
-	tbl, err := table.TableFromMeta(allocs, tblInfo, nil)
+	tbl, err := table.TableFromMeta(allocs, tblInfo)
 	return tbl, errors.Trace(err)
 }
 

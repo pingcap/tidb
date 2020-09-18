@@ -41,13 +41,16 @@ type Builder struct {
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
 func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	b.is.schemaMetaVersion = diff.Version
-	if diff.Type == model.ActionCreateSchema {
+	switch diff.Type {
+	case model.ActionCreateSchema:
 		return nil, b.applyCreateSchema(m, diff)
-	} else if diff.Type == model.ActionDropSchema {
+	case model.ActionDropSchema:
 		tblIDs := b.applyDropSchema(diff.SchemaID)
 		return tblIDs, nil
-	} else if diff.Type == model.ActionModifySchemaCharsetAndCollate {
+	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
+	case model.ActionAlterTableAlterPartition:
+		return nil, b.applyPartitionPlacementUpdate(m, diff)
 	}
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
@@ -286,7 +289,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 			allocs = append(allocs, newAlloc)
 		}
 	}
-	tbl, err := tables.TableFromMeta(allocs, tblInfo, nil)
+	tbl, err := tables.TableFromMeta(allocs, tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -365,6 +368,10 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 	return affected
 }
 
+func (b *Builder) applyPartitionPlacementUpdate(m *meta.Meta, diff *model.SchemaDiff) error {
+	return nil
+}
+
 // InitWithOldInfoSchema initializes an empty new InfoSchema by copies all the data from old InfoSchema.
 func (b *Builder) InitWithOldInfoSchema() *Builder {
 	oldIS := b.handle.Get().(*infoSchema)
@@ -424,24 +431,26 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles *placement.Bu
 	return b, nil
 }
 
-type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo, ruleBundle *placement.Bundle) (table.Table, error)
+type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
 
 func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, ruleBundles *placement.Bundles, tableFromMeta tableFromMetaFunc) error {
 	schTbls := &schemaTables{
-		dbInfo: di,
-		tables: make(map[string]table.Table, len(di.Tables)),
+		dbInfo:   di,
+		dbBundle: ruleBundles.FindByID(placement.GroupID(di.ID)),
+		bundles:  make(map[string]*placement.Bundle, len(di.Tables)),
+		tables:   make(map[string]table.Table, len(di.Tables)),
 	}
 	b.is.schemaMap[di.Name.L] = schTbls
 
 	for _, t := range di.Tables {
 		allocs := autoid.NewAllocatorsFromTblInfo(b.handle.store, di.ID, t)
-		bundle := ruleBundles.FindByID(placement.GroupID(t.ID))
 		var tbl table.Table
-		tbl, err := tableFromMeta(allocs, t, bundle)
+		tbl, err := tableFromMeta(allocs, t)
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
 		schTbls.tables[t.Name.L] = tbl
+		schTbls.bundles[t.Name.L] = ruleBundles.FindByID(placement.GroupID(t.ID))
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
 		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
 	}
