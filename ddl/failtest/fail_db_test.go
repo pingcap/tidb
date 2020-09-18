@@ -537,14 +537,14 @@ func (s *testFailDBSuite) TestModifyColumn(c *C) {
 }
 
 func (s *testFailDBSuite) TestPartitionAddPanic(c *C) {
-	defer func() {
-		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr"), IsNil)
-	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test;`)
 	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a int) partition by range(a) (partition p0 values less than (10));`)
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/CheckPartitionByRangeErr"), IsNil)
+	}()
 
 	_, err := tk.Exec(`alter table t add partition (partition p1 values less than (20));`)
 	c.Assert(err, NotNil)
