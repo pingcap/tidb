@@ -2645,8 +2645,12 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// table hints are only visible in the current SELECT statement.
 		b.popTableHints()
 	}()
-
+	enableNoopFuncs := b.ctx.GetSessionVars().EnableNoopFuncs
 	if sel.SelectStmtOpts != nil {
+		if sel.SelectStmtOpts.CalcFoundRows && !enableNoopFuncs {
+			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
+			return nil, err
+		}
 		origin := b.inStraightJoin
 		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
 		defer func() { b.inStraightJoin = origin }()
@@ -2706,14 +2710,26 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		return nil, err
 	}
 
+	// b.allNames will be used in evalDefaultExpr(). Default function is special because it needs to find the
+	// corresponding column name, but does not need the value in the column.
+	// For example, select a from t order by default(b), the column b will not be in select fields. Also because
+	// buildSort is after buildProjection, so we need get OutputNames before BuildProjection and store in allNames.
+	// Otherwise, we will get select fields instead of all OutputNames, so that we can't find the column b in the
+	// above example.
+	b.allNames = append(b.allNames, p.OutputNames())
+	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
+
 	if sel.Where != nil {
 		p, err = b.buildSelection(ctx, p, sel.Where, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
-
 	if sel.LockInfo != nil && sel.LockInfo.LockType != ast.SelectLockNone {
+		if sel.LockInfo.LockType == ast.SelectLockInShareMode && !enableNoopFuncs {
+			err = expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
+			return nil, err
+		}
 		p = b.buildSelectLock(p, sel.LockInfo)
 	}
 	b.handleHelper.popMap()
