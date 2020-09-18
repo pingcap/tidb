@@ -114,7 +114,6 @@ func (s *testStatsSuite) TestLoadHistWithLimit(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t2")
 	c.Assert(BytesLimit >= h.GetMemConsumed(), IsTrue)
-
 }
 
 func (s *testStatsSuite) TestLoadHistWithInvalidIndex(c *C) {
