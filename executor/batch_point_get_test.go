@@ -150,3 +150,14 @@ func (s *testBatchPointGetSuite) TestIssue18843(c *C) {
 	tk.MustQuery("select * from t18843 where f in (null)").Check(testkit.Rows())
 	tk.MustQuery("select * from t18843 where f is null").Check(testkit.Rows("2 <nil>"))
 }
+
+func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id bigint(20) unsigned, primary key(id))")
+	tk.MustExec("insert into t values (8738875760185212610)")
+	tk.MustExec("insert into t values (9814441339970117597)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustQuery("select id from t where id in (8738875760185212610, 1, 9814441339970117597) order by id").Check(testkit.Rows("1", "8738875760185212610", "9814441339970117597"))
+	tk.MustQuery("select id from t where id in (8738875760185212610, 1, 9814441339970117597) order by id desc").Check(testkit.Rows("9814441339970117597", "8738875760185212610", "1"))
+}
