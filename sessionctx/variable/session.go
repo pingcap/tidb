@@ -696,9 +696,6 @@ type SessionVars struct {
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex bool
 
-	// EnableLogDesensitization indicates that whether desensitization when log query.
-	EnableLogDesensitization bool
-
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
 
@@ -836,7 +833,6 @@ func NewSessionVars() *SessionVars {
 		AllowAutoRandExplicitInsert: DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:        DefTiDBEnableClusteredIndex,
 		EnableParallelApply:         DefTiDBEnableParallelApply,
-		EnableLogDesensitization:    DefTiDBLogDesensitization,
 		ShardAllocateStep:           DefTiDBShardAllocateStep,
 		EnableChangeColumnType:      DefTiDBChangeColumnType,
 		EnableAmendPessimisticTxn:   DefTiDBEnableAmendPessimisticTxn,
@@ -1462,8 +1458,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.PartitionPruneMode = PartitionPruneMode(strings.ToLower(strings.TrimSpace(val)))
 	case TiDBEnableParallelApply:
 		s.EnableParallelApply = TiDBOptOn(val)
-	case TiDBSlowLogMasking, TiDBLogDesensitization:
-		s.EnableLogDesensitization = TiDBOptOn(val)
+	case TiDBSlowLogMasking, TiDBRedactLog:
+		config.SetRedactLog(TiDBOptOn(val))
 	case TiDBShardAllocateStep:
 		s.ShardAllocateStep = tidbOptInt64(val, DefTiDBShardAllocateStep)
 	case TiDBEnableChangeColumnType:

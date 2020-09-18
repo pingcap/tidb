@@ -6224,6 +6224,20 @@ func (s *testSuite) TestGenerateColumnReplace(c *C) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("3 4"))
 }
 
+func (s *testSlowQuery) TestSlowQueryWithoutSlowLog(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.Log.SlowQueryFile = "tidb-slow-not-exist.log"
+	newCfg.Log.SlowThreshold = math.MaxUint64
+	config.StoreGlobalConfig(&newCfg)
+	defer func() {
+		config.StoreGlobalConfig(originCfg)
+	}()
+	tk.MustQuery("select query from information_schema.slow_query").Check(testkit.Rows())
+	tk.MustQuery("select query from information_schema.slow_query where time > '2020-09-15 12:16:39' and time < now()").Check(testkit.Rows())
+}
+
 func (s *testSlowQuery) TestSlowQuerySensitiveQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	originCfg := config.GetGlobalConfig()
@@ -6283,10 +6297,14 @@ func (s *testSerialSuite) TestKillTableReader(c *C) {
 	wg.Wait()
 }
 
-func (s *testSuite) TestPrevStmtDesensitization(c *C) {
+func (s *testSerialSuite) TestPrevStmtDesensitization(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
-	tk.Se.GetSessionVars().EnableLogDesensitization = true
+	oriCfg := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(oriCfg)
+	newCfg := *oriCfg
+	newCfg.EnableRedactLog = 1
+	config.StoreGlobalConfig(&newCfg)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("begin")
@@ -6303,6 +6321,20 @@ func (s *testSuite) TestIssue19372(c *C) {
 	tk.MustExec("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c');")
 	tk.MustExec("insert into t2 select * from t1;")
 	tk.MustQuery("select (select t2.c_str from t2 where t2.c_str <= t1.c_str and t2.c_int in (1, 2) order by t2.c_str limit 1) x from t1 order by c_int;").Check(testkit.Rows("a", "a", "a"))
+}
+
+func (s *testSerialSuite1) TestCollectCopRuntimeStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("set tidb_enable_collect_execution_info=1;")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult", `return(true)`), IsNil)
+	rows := tk.MustQuery("explain analyze select * from t1").Rows()
+	c.Assert(len(rows), Equals, 2)
+	explain := fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*rpc_num: 2, .*regionMiss:.*")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult"), IsNil)
 }
 
 func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {

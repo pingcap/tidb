@@ -1421,6 +1421,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		return invalidTask
 	}
 
+	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
 	pointGetPlan := PointGetPlan{
 		ctx:              ds.ctx,
 		AccessConditions: candidate.path.AccessConds,
@@ -1430,7 +1431,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		outputNames:      ds.OutputNames(),
 		LockWaitTime:     ds.ctx.GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
-	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(1.0), ds.blockOffset)
+	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {
 		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
@@ -1498,13 +1499,14 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		return invalidTask
 	}
 
+	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
 	batchPointGetPlan := BatchPointGetPlan{
 		ctx:              ds.ctx,
 		AccessConditions: candidate.path.AccessConds,
 		TblInfo:          ds.TableInfo(),
 		KeepOrder:        !prop.IsEmpty(),
 		Columns:          ds.Columns,
-	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(float64(len(candidate.path.Ranges))), ds.schema.Clone(), ds.names, ds.blockOffset)
+	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.Items[0].Desc
 	}
