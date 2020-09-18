@@ -178,9 +178,7 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	if e.runtimeStats != nil {
-		e.stats = &indexLookUpJoinRuntimeStats{
-			BasicRuntimeStats: e.runtimeStats,
-		}
+		e.stats = &indexLookUpJoinRuntimeStats{}
 		e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 	}
 	e.startWorkers(ctx)
@@ -738,7 +736,6 @@ func (e *IndexLookUpJoin) Close() error {
 }
 
 type indexLookUpJoinRuntimeStats struct {
-	*execdetails.BasicRuntimeStats
 	concurrency int
 	probe       int64
 	innerWorker innerWorkerRuntimeStats
@@ -755,11 +752,8 @@ type innerWorkerRuntimeStats struct {
 
 func (e *indexLookUpJoinRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
-	if e.BasicRuntimeStats != nil {
-		buf.WriteString(e.BasicRuntimeStats.String())
-	}
 	if e.innerWorker.totalTime > 0 {
-		buf.WriteString(", inner:{total:")
+		buf.WriteString("inner:{total:")
 		buf.WriteString(time.Duration(e.innerWorker.totalTime).String())
 		buf.WriteString(", concurrency:")
 		if e.concurrency > 0 {
@@ -786,4 +780,31 @@ func (e *indexLookUpJoinRuntimeStats) String() string {
 		buf.WriteString(time.Duration(e.probe).String())
 	}
 	return buf.String()
+}
+
+func (e *indexLookUpJoinRuntimeStats) Clone() execdetails.RuntimeStats {
+	return &indexLookUpJoinRuntimeStats{
+		concurrency: e.concurrency,
+		probe:       e.probe,
+		innerWorker: e.innerWorker,
+	}
+}
+
+func (e *indexLookUpJoinRuntimeStats) Merge(rs execdetails.RuntimeStats) {
+	tmp, ok := rs.(*indexLookUpJoinRuntimeStats)
+	if !ok {
+		return
+	}
+	e.probe += tmp.probe
+	e.innerWorker.totalTime += tmp.innerWorker.totalTime
+	e.innerWorker.task += tmp.innerWorker.task
+	e.innerWorker.construct += tmp.innerWorker.construct
+	e.innerWorker.fetch += tmp.innerWorker.fetch
+	e.innerWorker.build += tmp.innerWorker.build
+	e.innerWorker.join += tmp.innerWorker.join
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *indexLookUpJoinRuntimeStats) Tp() int {
+	return execdetails.TpIndexLookUpJoinRuntimeStats
 }

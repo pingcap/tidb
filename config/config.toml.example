@@ -272,7 +272,7 @@ txn-entry-size-limit = 6291456
 committer-concurrency = 16
 
 # max lifetime of transaction ttl manager.
-max-txn-ttl = 600000
+max-txn-ttl = 3600000
 
 # the interval duration between two memory profile into global tracker
 mem-profile-interval = "1m"
@@ -420,9 +420,6 @@ binlog-socket = ""
 strategy = "range"
 
 [pessimistic-txn]
-# enable pessimistic transaction.
-enable = true
-
 # max retry count for a statement in a pessimistic transaction.
 max-retry-count = 256
 
