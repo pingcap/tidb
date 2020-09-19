@@ -250,7 +250,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "innodb_undo_tablespaces", "0", false},
 	{ScopeGlobal, InnodbStatusOutputLocks, "0", false},
 	{ScopeNone, "performance_schema_accounts_size", "100", false},
-	{ScopeGlobal | ScopeSession, "max_error_count", "64", true},
+	{ScopeGlobal | ScopeSession, MaxErrorCount, "64", true},
 	{ScopeGlobal, "max_write_lock_count", "18446744073709551615", false},
 	{ScopeNone, "performance_schema_max_socket_instances", "322", false},
 	{ScopeNone, "performance_schema_max_table_instances", "12500", false},
@@ -268,13 +268,13 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, LogQueriesNotUsingIndexes, "0", false},
 	{ScopeSession, "timestamp", "", true},
 	{ScopeGlobal | ScopeSession, QueryCacheWlockInvalidate, "0", false},
-	{ScopeGlobal | ScopeSession, "sql_buffer_result", "OFF", true},
+	{ScopeGlobal | ScopeSession, SQLBufferResult, "0", true},
 	{ScopeGlobal | ScopeSession, "character_set_filesystem", "binary", false},
 	{ScopeGlobal | ScopeSession, "collation_database", mysql.DefaultCollationName, false},
 	{ScopeGlobal | ScopeSession, AutoIncrementIncrement, strconv.FormatInt(DefAutoIncrementIncrement, 10), false},
 	{ScopeGlobal | ScopeSession, AutoIncrementOffset, strconv.FormatInt(DefAutoIncrementOffset, 10), false},
 	{ScopeGlobal | ScopeSession, "max_heap_table_size", "16777216", true},
-	{ScopeGlobal | ScopeSession, "div_precision_increment", "4", true},
+	{ScopeGlobal | ScopeSession, DivPrecisionIncrement, "4", true},
 	{ScopeGlobal, "innodb_lru_scan_depth", "1024", false},
 	{ScopeGlobal, "innodb_purge_rseg_truncate_frequency", "", false},
 	{ScopeGlobal | ScopeSession, SQLAutoIsNull, "0", true},
@@ -359,7 +359,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, "debug_sync", "", false},
 	{ScopeGlobal, InnodbStatsAutoRecalc, "1", false},
 	{ScopeGlobal | ScopeSession, "lc_messages", "en_US", false},
-	{ScopeGlobal | ScopeSession, "bulk_insert_buffer_size", "8388608", true},
+	{ScopeGlobal | ScopeSession, BulkInsertBufferSize, "8388608", true},
 	{ScopeGlobal | ScopeSession, BinlogDirectNonTransactionalUpdates, "0", false},
 	{ScopeGlobal, "innodb_change_buffering", "all", false},
 	{ScopeGlobal | ScopeSession, SQLBigSelects, "1", true},
@@ -435,7 +435,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "ndb_recv_thread_cpu_mask", "", false},
 	{ScopeGlobal, "gtid_purged", "", false},
 	{ScopeGlobal, "max_binlog_stmt_cache_size", "18446744073709547520", false},
-	{ScopeGlobal | ScopeSession, "lock_wait_timeout", "31536000", true},
+	{ScopeGlobal | ScopeSession, LockWaitTimeout, "31536000", true},
 	{ScopeGlobal | ScopeSession, "read_buffer_size", "131072", true},
 	{ScopeNone, "innodb_read_io_threads", "4", false},
 	{ScopeGlobal | ScopeSession, MaxSpRecursionDepth, "0", false},
@@ -488,7 +488,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_flush_log_at_trx_commit", "1", false},
 	{ScopeGlobal, "rewriter_enabled", "", false},
 	{ScopeGlobal, "query_cache_min_res_unit", "4096", false},
-	{ScopeGlobal | ScopeSession, "updatable_views_with_limit", "YES", true},
+	{ScopeGlobal | ScopeSession, UpdatableViewsWithLimit, "YES", true},
 	{ScopeGlobal | ScopeSession, "optimizer_prune_level", "1", true},
 	{ScopeGlobal | ScopeSession, "completion_type", "NO_CHAIN", false},
 	{ScopeGlobal, "binlog_checksum", "CRC32", false},
@@ -537,7 +537,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "performance_schema_max_cond_instances", "3504", false},
 	{ScopeGlobal, "delayed_insert_limit", "100", false},
 	{ScopeGlobal, Flush, "0", false},
-	{ScopeGlobal | ScopeSession, "eq_range_index_dive_limit", "10", true},
+	{ScopeGlobal | ScopeSession, EqRangeIndexDiveLimit, "200", true},
 	{ScopeNone, "performance_schema_events_stages_history_size", "10", false},
 	{ScopeGlobal | ScopeSession, "character_set_connection", mysql.DefaultCharset, false},
 	{ScopeGlobal, MyISAMUseMmap, "0", false},
@@ -577,7 +577,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeSession, ErrorCount, "0", false},
 	{ScopeGlobal | ScopeSession, "information_schema_stats_expiry", "86400", false},
 	{ScopeGlobal, "thread_pool_size", "16", false},
-	{ScopeGlobal | ScopeSession, WindowingUseHighPrecision, "ON", true},
+	{ScopeGlobal | ScopeSession, WindowingUseHighPrecision, "1", true},
 	/* TiDB specific variables */
 	{ScopeSession, TiDBSnapshot, "", false},
 	{ScopeSession, TiDBOptAggPushDown, BoolToIntStr(DefOptAggPushDown), false},
@@ -773,6 +773,8 @@ var SetCharsetVariables = []string{
 }
 
 const (
+	// BulkInsertBufferSize is the name for bulk_insert_buffer_size system variable.
+	BulkInsertBufferSize = "bulk_insert_buffer_size"
 	// CharacterSetConnection is the name for character_set_connection system variable.
 	CharacterSetConnection = "character_set_connection"
 	// CollationConnection is the name for collation_connection system variable.
@@ -795,6 +797,10 @@ const (
 	CoreFile = "core_file"
 	// DefaultWeekFormat is the name for 'default_week_format' system variable.
 	DefaultWeekFormat = "default_week_format"
+	// DivPrecisionIncrement is the name for 'div_precision_increment' system variable.
+	DivPrecisionIncrement = "div_precision_increment"
+	// EqRangeIndexDiveLimit is the name for 'eq_range_index_dive_limit' system variable.
+	EqRangeIndexDiveLimit = "eq_range_index_dive_limit"
 	// GroupConcatMaxLen is the name for 'group_concat_max_len' system variable.
 	GroupConcatMaxLen = "group_concat_max_len"
 	// DelayKeyWrite is the name for 'delay_key_write' system variable.
@@ -847,6 +853,8 @@ const (
 	SQLSelectLimit = "sql_select_limit"
 	// MaxConnectErrors is the name for 'max_connect_errors' system variable.
 	MaxConnectErrors = "max_connect_errors"
+	// MaxErrorCount is the name for 'max_error_count' system variable.
+	MaxErrorCount = "max_error_count"
 	// TableDefinitionCache is the name for 'table_definition_cache' system variable.
 	TableDefinitionCache = "table_definition_cache"
 	// TmpTableSize is the name for 'tmp_table_size' system variable.
@@ -891,6 +899,8 @@ const (
 	SlaveCompressedProtocol = "slave_compressed_protocol"
 	// BinlogRowQueryLogEvents is the name for 'binlog_rows_query_log_events' system variable.
 	BinlogRowQueryLogEvents = "binlog_rows_query_log_events"
+	// LockWaitTimeout is the name for 'lock_wait_timeout' system variable.
+	LockWaitTimeout = "lock_wait_timeout"
 	// LogSlowSlaveStatements is the name for 'log_slow_slave_statements' system variable.
 	LogSlowSlaveStatements = "log_slow_slave_statements"
 	// LogSlowAdminStatements is the name for 'log_slow_admin_statements' system variable.
@@ -913,6 +923,8 @@ const (
 	BinlogDirectNonTransactionalUpdates = "binlog_direct_non_transactional_updates"
 	// SQLBigSelects is the name for 'sql_big_selects' system variable.
 	SQLBigSelects = "sql_big_selects"
+	// SQLBufferResult is the name for 'sql_buffer_result' system variable.
+	SQLBufferResult = "sql_buffer_result"
 	// LogBinTrustFunctionCreators is the name for 'log_bin_trust_function_creators' system variable.
 	LogBinTrustFunctionCreators = "log_bin_trust_function_creators"
 	// OldAlterTable is the name for 'old_alter_table' system variable.
@@ -923,6 +935,8 @@ const (
 	SecureAuth = "secure_auth"
 	// UniqueChecks is the name for 'unique_checks' system variable.
 	UniqueChecks = "unique_checks"
+	// UpdatableViewsWithLimit is the name for 'updatable_views_with_limit' system variable.
+	UpdatableViewsWithLimit = "updatable_views_with_limit"
 	// SQLWarnings is the name for 'sql_warnings' system variable.
 	SQLWarnings = "sql_warnings"
 	// AutoCommit is the name for 'autocommit' system variable.

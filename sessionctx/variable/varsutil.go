@@ -426,10 +426,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		return checkUInt64SystemVar(name, value, 400, 524288, vars)
 	case TmpTableSize:
 		return checkUInt64SystemVar(name, value, 1024, math.MaxUint64, vars)
-	case WaitTimeout:
-		return checkUInt64SystemVar(name, value, 0, 31536000, vars)
+	case WaitTimeout, LockWaitTimeout:
+		return checkUInt64SystemVar(name, value, 1, 31536000, vars)
 	case MaxPreparedStmtCount:
 		return checkInt64SystemVar(name, value, -1, 1048576, vars)
+	case MaxErrorCount:
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint16, vars)
 	case AutoIncrementIncrement, AutoIncrementOffset:
 		return checkUInt64SystemVar(name, value, 1, math.MaxUint16, vars)
 	case TimeZone:
@@ -440,6 +442,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		return value, err
 	case ValidatePasswordLength, ValidatePasswordNumberCount:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case EqRangeIndexDiveLimit:
+		return checkUInt64SystemVar(name, value, 0, math.MaxUint32, vars)
+	case DivPrecisionIncrement:
+		return checkUInt64SystemVar(name, value, 0, 30, vars)
 	case WarningCount, ErrorCount:
 		return value, ErrReadOnly.GenWithStackByArgs(name)
 	case EnforceGtidConsistency:
@@ -465,13 +471,6 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			return "1", nil
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
-	case WindowingUseHighPrecision:
-		if strings.EqualFold(value, "OFF") || value == "0" {
-			return "OFF", nil
-		} else if strings.EqualFold(value, "ON") || value == "1" {
-			return "ON", nil
-		}
-		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case TiDBOptBCJ:
 		if (strings.EqualFold(value, "ON") || value == "1") && vars.AllowBatchCop == 0 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set Broadcast Join to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")
@@ -492,10 +491,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		SkipNameResolve, SQLSafeUpdates, serverReadOnly, SlaveAllowBatching,
 		Flush, PerformanceSchema, LocalInFile, ShowOldTemporals, KeepFilesOnCreate, AutoCommit,
 		SQLWarnings, UniqueChecks, OldAlterTable, LogBinTrustFunctionCreators, SQLBigSelects,
-		BinlogDirectNonTransactionalUpdates, SQLQuoteShowCreate, AutomaticSpPrivileges,
+		SQLBufferResult, BinlogDirectNonTransactionalUpdates, SQLQuoteShowCreate, AutomaticSpPrivileges,
 		RelayLogPurge, SQLAutoIsNull, QueryCacheWlockInvalidate, ValidatePasswordCheckUserName,
 		SuperReadOnly, BinlogOrderCommits, MasterVerifyChecksum, BinlogRowQueryLogEvents, LogSlowSlaveStatements,
-		LogSlowAdminStatements, LogQueriesNotUsingIndexes, Profiling:
+		LogSlowAdminStatements, LogQueriesNotUsingIndexes, Profiling, WindowingUseHighPrecision:
 		if strings.EqualFold(value, "ON") {
 			return "1", nil
 		} else if strings.EqualFold(value, "OFF") {
@@ -528,6 +527,31 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			}
 		}
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case UpdatableViewsWithLimit:
+		if strings.EqualFold(value, "YES") {
+			return "YES", nil
+		} else if strings.EqualFold(value, "NO") {
+			return "NO", nil
+		}
+		val, err := strconv.ParseInt(value, 10, 64)
+		if err == nil {
+			if val == 1 {
+				return "YES", nil
+			} else if val == 0 {
+				return "NO", nil
+			}
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case BulkInsertBufferSize:
+		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_bulk_insert_buffer_size
+		// Minimum Value 0
+		// Maximum Value (64-bit platforms) 18446744073709551615
+		// Maximum Value (32-bit platforms) 4294967295
+		maxLen := uint64(math.MaxUint64)
+		if mathutil.IntBits == 32 {
+			maxLen = uint64(math.MaxUint32)
+		}
+		return checkUInt64SystemVar(name, value, 0, maxLen, vars)
 	case MaxExecutionTime:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case ThreadPoolSize:
