@@ -230,7 +230,8 @@ func distinctUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) 
 			memDelta = int64(len(val))
 		case mysql.TypeDate:
 			val = row.GetTime(0).String()
-			memDelta = aggfuncs.DefDateSize
+			// the distinct count aggFunc need 16 bytes to encode the Datetime type.
+			memDelta = 16
 		case mysql.TypeDuration:
 			val = strconv.FormatInt(row.GetInt64(0), 10)
 			memDelta = aggfuncs.DefInt64Size

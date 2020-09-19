@@ -123,8 +123,6 @@ const (
 	DefMyDecimalSize = int64(unsafe.Sizeof(types.MyDecimal{}))
 	// DefDurationSize is the size of duration
 	DefDurationSize = int64(unsafe.Sizeof(types.Duration{}))
-	// DefDateSize is the size of date
-	DefDateSize = int64(16)
 )
 
 // PartialResult represents data structure to store the partial result for the
