@@ -422,10 +422,9 @@ func overrideConfig(cfg *config.Config) {
 	if len(cfg.AdvertiseAddress) == 0 {
 		if cfg.Host == "0.0.0.0" {
 			cfg.AdvertiseAddress = util.GetLocalIP()
+		} else {
+			cfg.AdvertiseAddress = cfg.Host
 		}
-	}
-	if len(cfg.AdvertiseAddress) == 0 {
-		cfg.AdvertiseAddress = cfg.Host
 	}
 	var err error
 	if actualFlags[nmPort] {
