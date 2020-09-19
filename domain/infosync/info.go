@@ -109,7 +109,7 @@ type ServerInfo struct {
 	Labels         map[string]string `json:"labels"`
 	// ServerID is a function, to always retrieve latest serverID from `Domain`,
 	//   which will be changed on occasions such as connection to PD is restored after broken.
-	ServerID func() uint64 `json:"-"`
+	ServerIDGetter func() uint64 `json:"-"`
 
 	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
 	JSONServerID uint64 `json:"server_id"`
@@ -117,7 +117,7 @@ type ServerInfo struct {
 
 // Marshal `ServerInfo` into bytes.
 func (info *ServerInfo) Marshal() ([]byte, error) {
-	info.JSONServerID = info.ServerID()
+	info.JSONServerID = info.ServerIDGetter()
 	infoBuf, err := json.Marshal(info)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -130,7 +130,7 @@ func (info *ServerInfo) Unmarshal(v []byte) error {
 	if err := json.Unmarshal(v, info); err != nil {
 		return err
 	}
-	info.ServerID = func() uint64 {
+	info.ServerIDGetter = func() uint64 {
 		return info.JSONServerID
 	}
 	return nil
@@ -402,7 +402,7 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
-		allInfo[is.info.ID] = getServerInfo(is.info.ID, is.info.ServerID)
+		allInfo[is.info.ID] = getServerInfo(is.info.ID, is.info.ServerIDGetter)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
@@ -749,7 +749,7 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 		BinlogStatus:   binloginfo.GetStatus().String(),
 		StartTimestamp: time.Now().Unix(),
 		Labels:         cfg.Labels,
-		ServerID:       serverIDGetter,
+		ServerIDGetter: serverIDGetter,
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash

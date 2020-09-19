@@ -291,7 +291,7 @@ func buildTiDBMemCopTasks(ranges *copRanges, req *kv.Request) ([]*copTask, error
 	}
 	tasks := make([]*copTask, 0, len(servers))
 	for _, ser := range servers {
-		if req.TiDBServerID > 0 && req.TiDBServerID != ser.ServerID() {
+		if req.TiDBServerID > 0 && req.TiDBServerID != ser.ServerIDGetter() {
 			continue
 		}
 

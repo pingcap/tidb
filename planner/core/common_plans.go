@@ -649,10 +649,10 @@ type Simple struct {
 
 	Statement ast.StmtNode
 
-	// InCoprocessor indicates whether the statement is sent from another TiDB instance in cluster,
+	// IsFromRemote indicates whether the statement IS FROM REMOTE TiDB instance in cluster,
 	//   and executing in co-processor.
 	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
-	InCoprocessor bool
+	IsFromRemote bool
 }
 
 // PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.

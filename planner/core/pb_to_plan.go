@@ -238,7 +238,7 @@ func (b *PBPlanBuilder) pbToKill(e *tipb.Executor) (PhysicalPlan, error) {
 		ConnectionID: e.Kill.ConnID,
 		Query:        e.Kill.Query,
 	}
-	simple := Simple{Statement: node, InCoprocessor: true}
+	simple := Simple{Statement: node, IsFromRemote: true}
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 

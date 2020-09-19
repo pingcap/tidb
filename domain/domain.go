@@ -1340,7 +1340,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 			return err
 		}
 		if !resp.Succeeded {
-			logutil.BgLogger().Info("random serverID exists, try again", zap.Int64("randServerID", randServerID))
+			logutil.BgLogger().Info("proposed random serverID exists, will randomize again", zap.Int64("randServerID", randServerID))
 			time.Sleep(acquireServerIDRetryInterval)
 			continue
 		}

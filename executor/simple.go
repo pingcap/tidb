@@ -63,12 +63,12 @@ type SimpleExec struct {
 	baseExecutor
 
 	Statement ast.StmtNode
-	// InCoprocessor indicates whether the statement is sent from another TiDB instance in cluster,
+	// IsFromRemote indicates whether the statement IS FROM REMOTE TiDB instance in cluster,
 	//   and executing in coprocessor.
 	//   Used for `global kill`. See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md.
-	InCoprocessor bool
-	done          bool
-	is            infoschema.InfoSchema
+	IsFromRemote bool
+	done         bool
+	is           infoschema.InfoSchema
 }
 
 func (e *baseExecutor) getSysSession() (sessionctx.Context, error) {
@@ -1086,8 +1086,8 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		return nil
 	}
 
-	if e.InCoprocessor {
-		logutil.BgLogger().Info("KILL in coprocessor", zap.Uint64("connID", s.ConnectionID), zap.Bool("query", s.Query),
+	if e.IsFromRemote {
+		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("connID", s.ConnectionID), zap.Bool("query", s.Query),
 			zap.String("sourceAddr", e.ctx.GetSessionVars().SourceAddr.IP.String()))
 		sm.Kill(s.ConnectionID, s.Query)
 		return nil
@@ -1095,10 +1095,11 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 
 	connID, isTruncated := util.ParseGlobalConnID(s.ConnectionID)
 	if isTruncated {
-		logutil.BgLogger().Warn("Invalid KILL operation. ConnectionID is truncated to 32 bits", zap.Uint64("connID", s.ConnectionID))
+		message := "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."
+		logutil.BgLogger().Warn(message, zap.Uint64("connID", s.ConnectionID))
 		// Notice that this warning cannot be seen if KILL is triggered by "CTRL-C" of mysql client,
 		//   as the KILL is sent by a new connection.
-		err := errors.New("Invalid KILL operation. ConnectionID is truncated to 32 bits. Please use 'KILL [CONNECTION | QUERY] connectionID' instead")
+		err := errors.New(message)
 		e.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
 	}
@@ -1117,7 +1118,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 
 func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.GlobalConnID, query bool) error {
 	if connID.ServerID == 0 {
-		return errors.New("ServerID is ZERO")
+		return errors.New("Unexpected ZERO ServerID. Please file a bug to the TiDB Team")
 	}
 
 	killExec := &tipb.Executor{
@@ -1152,7 +1153,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, connID *util.G
 		return err
 	}
 
-	logutil.BgLogger().Info("Kill remote connection", zap.Uint64("serverID", connID.ServerID),
+	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", connID.ServerID),
 		zap.Uint64("connID", connID.ID()), zap.Bool("query", query))
 	return err
 }

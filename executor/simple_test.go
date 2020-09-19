@@ -512,13 +512,13 @@ func (s *testSuite3) TestKillStmt(c *C) {
 	// ZERO serverID, treated as truncated.
 	tk.MustExec("kill 1")
 	result := tk.MustQuery("show warnings")
-	result.Check(testkit.Rows("Warning 1105 Invalid KILL operation. ConnectionID is truncated to 32 bits. Please use 'KILL [CONNECTION | QUERY] connectionID' instead"))
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
 
 	// truncated
 	sm.SetServerID(1)
 	tk.MustExec("kill 101")
 	result = tk.MustQuery("show warnings")
-	result.Check(testkit.Rows("Warning 1105 Invalid KILL operation. ConnectionID is truncated to 32 bits. Please use 'KILL [CONNECTION | QUERY] connectionID' instead"))
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
 
 	// local kill
 	connID := util.GlobalConnID{Is64bits: true, ServerID: 1, LocalConnID: 101}

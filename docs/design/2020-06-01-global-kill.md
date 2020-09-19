@@ -1,7 +1,7 @@
 # Global Kill
 
 - Author(s):     [pingyu](https://github.com/pingyu) (Ping Yu)
-- Last updated:  2020-08-12
+- Last updated:  2020-09-19
 - Discussion at: https://github.com/pingcap/tidb/issues/8854
 
 ## Abstract
@@ -17,7 +17,7 @@ Currently connection ids are local to TiDB instances, which means that a `KILL x
 To support "Global Kill", we need:
 1. Global connection ids, which are unique among all TiDB instances.
 2. Redirect `KILL x` to target TiDB instance, on which the connection `x` is running.
-3. Support both 32 & 64 bits `connId`, to be compatible with legacy 32 bits clients. In this stage, we only design the 64 bits `connId`, and left a `markup` to distinguish between this two kinds.
+3. Support both 32 & 64 bits `connId`, to be compatible with legacy 32 bits clients. In this stage, we only design the 64 bits `connId`, and left a `markup` to distinguish between these two kinds.
 
 ## Rationale
 
@@ -47,11 +47,11 @@ To support "Global Kill", we need:
 
 
 #### 3. serverId
-`serverId` is selected RANDOMLY by each TiDB instance on startup, and the uniqueness is guaranteed by PD(etcd). `serverId` should be larger or equal to 1, to insure that high 32 bits of `connId` should always be non-zero, and make it possible to detect truncation.
+`serverId` is selected RANDOMLY by each TiDB instance on startup, and the uniqueness is guaranteed by PD(etcd). `serverId` should be larger or equal to 1, to ensure that high 32 bits of `connId` is always non-zero, and make it possible to detect truncation.
 
-On failure (e.g. fail to connect to PD, or all `serverId` are unavailable), we set `serverId` to `0`. And when `serverId == 0`, we deal with `KILL x` as in [early versions](https://pingcap.com/docs/stable/sql-statements/sql-statement-kill/).
+On failure (e.g. fail connecting to PD, or all `serverId` are unavailable), we block any new connection.
 
-`serverId` is kept by PD with a lease default to 1 hour. If TiDB is disconnected to PD longer than half of the lease, all connections are killed. On connection to PD restored, a new `serverId` is acquired.
+`serverId` is kept by PD with a lease (defaults to 12 hours, long enough to avoid brutally killing any long-run SQL). If TiDB is disconnected to PD longer than half of the lease (defaults to 6 hours), all connections are killed, and no new connection is accepted, to avoid running with stale/incorrect `serverId`. On connection to PD restored, a new `serverId` is acquired before accepting new connection.
 
 On single TiDB instance without PD, a `serverId` of `1` is assigned.
 
@@ -61,8 +61,10 @@ On single TiDB instance without PD, a `serverId` of `1` is assigned.
 Integer overflow is ignored at this stage, as `local connId` should be long enough.
 
 #### 5. global kill
-On processing `KILL x` command, first extract `serverId` from `x`. Then if `serverId` aims to a remote TiDB instance, get the address from cluster info, and redirect the command to it by "Coprocessor API" provided by the remote TiDB, along with the original user authentication.
+On processing `KILL x` command, first extract `serverId` from `x`. Then if `serverId` aims to a remote TiDB instance, get the address from cluster info (see also [`CLUSTER_INFO`](https://docs.pingcap.com/tidb/stable/information-schema-cluster-info#cluster_info)), and redirect the command to it by "Coprocessor API" provided by the remote TiDB, along with the original user authentication.
 
 ## Compatibility
 
 - Incompatible with legacy 32 bits clients. (According to some quick tests by now, MySQL client v8.0.19 supports `KILL` a connection with 64 bits `connId`, while `CTRL-C` does not, because it truncates the `connId` to 32 bits). A warning is set prompting that truncation happened, but user cannot see it, because `CTRL-C` is sent by a new connection in an instant.
+
+- [`KILL TIDB`](https://docs.pingcap.com/tidb/v4.0/sql-statement-kill) syntax and [`compatible-kill-query`](https://docs.pingcap.com/tidb/v4.0/tidb-configuration-file#compatible-kill-query) configuration item are deprecated.
