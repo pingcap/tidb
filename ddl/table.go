@@ -654,6 +654,10 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
@@ -679,6 +683,10 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		}
 	}
 
+	ver, err = updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	return ver, nil
 }
@@ -742,10 +750,6 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, schemaIDs []int64, table
 		}
 	}
 
-	ver, err = updateSchemaVersion(t, job)
-	if err != nil {
-		return ver, tblInfo, errors.Trace(err)
-	}
 	return ver, tblInfo, nil
 }
 
