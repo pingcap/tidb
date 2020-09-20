@@ -982,7 +982,7 @@ func checkGeneratedColumn(colDefs []*ast.ColumnDef) error {
 	for i, colDef := range colDefs {
 		for _, option := range colDef.Options {
 			if option.Tp == ast.ColumnOptionGenerated {
-				if err := checkIllegalFn4GeneratedColumn(colDef.Name.Name.L, option.Expr); err != nil {
+				if err := checkIllegalFn4Generated(colDef.Name.Name.L, typeColumn, option.Expr); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -2549,7 +2549,7 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	// columns occurring later in a table, but we don't handle the col offset.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
-			if err := checkIllegalFn4GeneratedColumn(specNewColumn.Name.Name.L, option.Expr); err != nil {
+			if err := checkIllegalFn4Generated(specNewColumn.Name.Name.L, typeColumn, option.Expr); err != nil {
 				return nil, errors.Trace(err)
 			}
 
@@ -4468,7 +4468,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			return nil, ErrTooLongIdent.GenWithStackByArgs("hidden column")
 		}
 		// TODO: refine the error message.
-		if err := checkIllegalFn4GeneratedIndex(indexName.L, idxPart.Expr); err != nil {
+		if err := checkIllegalFn4Generated(indexName.L, typeIndex, idxPart.Expr); err != nil {
 			return nil, errors.Trace(err)
 		}
 
