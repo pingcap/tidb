@@ -199,5 +199,42 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestNormalizedPlanForDiffStore",
+    "Cases": [
+      {
+        "Digest": "63eab1c93f586cf9fbe71cbfa4ad212aadb019e3e477f2f6257d00d35e045980",
+        "Plan": [
+          " TableReader root         ",
+          " └─TableScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "Digest": "6dc9f1500bbea92b2446d58c1510bca2e78f0e9a6c721c76495b0cf6bfc95faa",
+        "Plan": [
+          " TableReader root ",
+          " └─TableScan cop  table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "Digest": "03f12d0f634596922b6ba2edab8d6565a36bc2264cea9613adeb506e32d6b901",
+        "Plan": [
+          " Projection      root         plus(test.t1.a, test.t1.b)",
+          " └─TableReader   root         ",
+          "   └─Selection   cop[tiflash] lt(plus(test.t1.a, test.t1.b), ?)",
+          "     └─TableScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+        ]
+      },
+      {
+        "Digest": "5f2f4343d1cf9bbd0893f78c01657307fdebadacbd0b9e60e4b5cca27656b739",
+        "Plan": [
+          " Projection      root plus(test.t1.a, test.t1.b)",
+          " └─TableReader   root ",
+          "   └─Selection   cop  lt(plus(test.t1.a, test.t1.b), ?)",
+          "     └─TableScan cop  table:t1, range:[?,?], keep order:false"
+        ]
+      }
+    ]
   }
 ]
