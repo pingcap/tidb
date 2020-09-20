@@ -103,7 +103,19 @@ func serialTestCase(size int) testSlice {
 	return data
 }
 
-func BenchmarkSelectionMillion(b *testing.B) {
+func BenchmarkSelection(b *testing.B) {
+	b.ReportAllocs()
+	b.Run("BenchmarkSelection1000000", benchmarkSelectionMillion)
+	b.Run("BenchmarkSort1000000", benchmarkSortMillion)
+	b.Run("BenchmarkSelection1000", benchmarkSelectionThousand)
+	b.Run("BenchmarkSort1000", benchmarkSortThousand)
+	b.Run("BenchmarkSelection100", benchmarkSelectionHundred)
+	b.Run("BenchmarkSort100", benchmarkSortHundred)
+	b.Run("BenchmarkSelection50", benchmarkSelectionTens)
+	b.Run("BenchmarkSort50", benchmarkSortTens)
+}
+
+func benchmarkSelectionMillion(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		data := make(testSlice, len(globalCaseMillion))
@@ -113,7 +125,7 @@ func BenchmarkSelectionMillion(b *testing.B) {
 	}
 }
 
-func BenchmarkSortMillion(b *testing.B) {
+func benchmarkSortMillion(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		data := make(testSlice, len(globalCaseMillion))
@@ -123,7 +135,7 @@ func BenchmarkSortMillion(b *testing.B) {
 	}
 }
 
-func BenchmarkSelectionThousand(b *testing.B) {
+func benchmarkSelectionThousand(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		data := make(testSlice, len(globalCaseThousand))
@@ -133,7 +145,7 @@ func BenchmarkSelectionThousand(b *testing.B) {
 	}
 }
 
-func BenchmarkSortThousand(b *testing.B) {
+func benchmarkSortThousand(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		data := make(testSlice, len(globalCaseThousand))
@@ -143,7 +155,7 @@ func BenchmarkSortThousand(b *testing.B) {
 	}
 }
 
-func BenchmarkSelectionHundred(b *testing.B) {
+func benchmarkSelectionHundred(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		data := make(testSlice, len(globalCaseHundred))
@@ -153,7 +165,7 @@ func BenchmarkSelectionHundred(b *testing.B) {
 	}
 }
 
-func BenchmarkSortHundred(b *testing.B) {
+func benchmarkSortHundred(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		data := make(testSlice, len(globalCaseHundred))
@@ -163,7 +175,7 @@ func BenchmarkSortHundred(b *testing.B) {
 	}
 }
 
-func BenchmarkSelectionTens(b *testing.B) {
+func benchmarkSelectionTens(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		data := make(testSlice, len(globalCaseTens))
@@ -173,7 +185,7 @@ func BenchmarkSelectionTens(b *testing.B) {
 	}
 }
 
-func BenchmarkSortTens(b *testing.B) {
+func benchmarkSortTens(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		data := make(testSlice, len(globalCaseTens))
