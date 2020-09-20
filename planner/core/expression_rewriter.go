@@ -639,7 +639,9 @@ func (er *expressionRewriter) buildQuantifierPlan(plan4Agg *LogicalAggregation, 
 // t.id != s.id or count(distinct s.id) > 1 or [any checker]. If there are two different values in s.id ,
 // there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np LogicalPlan) {
-	firstRowFunc, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	// If there is NULL in s.id column, s.id should be the value that isn't null in condition t.id != s.id.
+	// So use function max to filter NULL.
+	maxFunc, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncMax, []expression.Expression{rexpr}, false)
 	if err != nil {
 		er.err = err
 		return
@@ -650,24 +652,24 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		return
 	}
 	plan4Agg := LogicalAggregation{
-		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
+		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
 	}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.aggHints
 	}
 	plan4Agg.SetChildren(np)
-	firstRowResultCol := &expression.Column{
+	maxResultCol := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  firstRowFunc.RetTp,
+		RetType:  maxFunc.RetTp,
 	}
 	count := &expression.Column{
 		UniqueID: er.sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  countFunc.RetTp,
 	}
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName, types.EmptyName)
-	plan4Agg.SetSchema(expression.NewSchema(firstRowResultCol, count))
+	plan4Agg.SetSchema(expression.NewSchema(maxResultCol, count))
 	gtFunc := expression.NewFunctionInternal(er.sctx, ast.GT, types.NewFieldType(mysql.TypeTiny), count, expression.NewOne())
-	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, firstRowResultCol)
+	neCond := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), lexpr, maxResultCol)
 	cond := expression.ComposeDNFCondition(er.sctx, gtFunc, neCond)
 	er.buildQuantifierPlan(plan4Agg, cond, lexpr, rexpr, false)
 }
@@ -728,7 +730,11 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 		}
 		er.ctxStackAppend(er.p.Schema().Columns[er.p.Schema().Len()-1], er.p.OutputNames()[er.p.Schema().Len()-1])
 	} else {
+		// We don't want nth_plan hint to affect separately executed subqueries here, so disable nth_plan temporarily.
+		NthPlanBackup := er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
+		er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
 		physicalPlan, _, err := DoOptimize(ctx, er.sctx, er.b.optFlag, np)
+		er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = NthPlanBackup
 		if err != nil {
 			er.err = err
 			return v, true
@@ -898,7 +904,11 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 		}
 		return v, true
 	}
+	// We don't want nth_plan hint to affect separately executed subqueries here, so disable nth_plan temporarily.
+	NthPlanBackup := er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
+	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
 	physicalPlan, _, err := DoOptimize(ctx, er.sctx, er.b.optFlag, np)
+	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = NthPlanBackup
 	if err != nil {
 		er.err = err
 		return v, true
@@ -1645,25 +1655,38 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 }
 
 func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
-	stkLen := len(er.ctxStack)
-	name := er.ctxNameStk[stkLen-1]
-	switch er.ctxStack[stkLen-1].(type) {
-	case *expression.Column:
-	case *expression.CorrelatedColumn:
-	default:
+	var name *types.FieldName
+	// Here we will find the corresponding column for default function. At the same time, we need to consider the issue
+	// of subquery and name space.
+	// For example, we have two tables t1(a int default 1, b int) and t2(a int default -1, c int). Consider the following SQL:
+	// 		select a from t1 where a > (select default(a) from t2)
+	// Refer to the behavior of MySQL, we need to find column a in table t2. If table t2 does not have column a, then find it
+	// in table t1. If there are none, return an error message.
+	// Based on the above description, we need to look in er.b.allNames from back to front.
+	for i := len(er.b.allNames) - 1; i >= 0; i-- {
+		idx, err := expression.FindFieldName(er.b.allNames[i], v.Name)
+		if err != nil {
+			er.err = err
+			return
+		}
+		if idx >= 0 {
+			name = er.b.allNames[i][idx]
+			break
+		}
+	}
+	if name == nil {
 		idx, err := expression.FindFieldName(er.names, v.Name)
 		if err != nil {
 			er.err = err
 			return
 		}
-		if er.err != nil {
-			return
-		}
 		if idx < 0 {
-			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), "field_list")
+			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), "field list")
 			return
 		}
+		name = er.names[idx]
 	}
+
 	dbName := name.DBName
 	if dbName.O == "" {
 		// if database name is not specified, use current database name
@@ -1711,7 +1734,6 @@ func (er *expressionRewriter) evalDefaultExpr(v *ast.DefaultExpr) {
 	if er.err != nil {
 		return
 	}
-	er.ctxStackPop(1)
 	er.ctxStackAppend(val, types.EmptyName)
 }
 

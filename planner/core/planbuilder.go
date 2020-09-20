@@ -82,6 +82,11 @@ type tableHintInfo struct {
 	aggHints                    aggHintInfo
 	indexMergeHintList          []indexHintInfo
 	timeRangeHint               ast.HintTimeRange
+	limitHints                  limitHintInfo
+}
+
+type limitHintInfo struct {
+	preferLimitToCop bool
 }
 
 type hintTableInfo struct {
@@ -440,6 +445,10 @@ type PlanBuilder struct {
 	partitionedTable []table.PartitionedTable
 	// CreateView needs this information to check whether exists nested view.
 	underlyingViewNames set.StringSet
+
+	// evalDefaultExpr needs this information to find the corresponding column.
+	// It stores the OutputNames before buildProjection.
+	allNames [][]*types.FieldName
 }
 
 type handleColHelper struct {
