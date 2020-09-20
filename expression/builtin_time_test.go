@@ -538,7 +538,6 @@ func (s *testEvaluatorSuite) TestDayOfMonth(c *C) {
 		{"2018-00-00", 0, false, false},
 		{"2017-00-00 12:12:12", 0, false, false},
 		{"0000-00-00 12:12:12", 0, false, false},
-		{120.0, 20, false, false},
 		{0, 0, false, false},
 		{0.00, 0, false, false},
 	}
