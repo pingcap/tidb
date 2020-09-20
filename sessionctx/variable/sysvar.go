@@ -114,7 +114,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, ValidatePasswordCheckUserName, "0", false},
 	{ScopeGlobal, "validate_password_number_count", "1", false},
 	{ScopeSession, "gtid_next", "", false},
-	{ScopeGlobal | ScopeSession, SQLSelectLimit, "18446744073709551615", true},
+	{ScopeGlobal | ScopeSession, SQLSelectLimit, "18446744073709551615", false},
 	{ScopeGlobal, "ndb_show_foreign_key_mock_tables", "", false},
 	{ScopeNone, "multi_range_count", "256", false},
 	{ScopeGlobal | ScopeSession, DefaultWeekFormat, "0", false},
@@ -146,7 +146,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "have_query_cache", "YES", false},
 	{ScopeGlobal, "innodb_flush_log_at_timeout", "1", false},
 	{ScopeGlobal, "innodb_max_undo_log_size", "", false},
-	{ScopeGlobal | ScopeSession, "range_alloc_block_size", "4096", true},
+	{ScopeGlobal | ScopeSession, RangeAllocBlockSize, "4096", true},
 	{ScopeGlobal, ConnectTimeout, "10", false},
 	{ScopeGlobal | ScopeSession, MaxExecutionTime, "0", true},
 	{ScopeGlobal | ScopeSession, CollationServer, mysql.DefaultCollationName, false},
@@ -212,7 +212,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, OfflineMode, "0", false},
 	{ScopeGlobal | ScopeSession, InnodbStrictMode, "1", false},
 	{ScopeGlobal, "innodb_rollback_segments", "128", false},
-	{ScopeGlobal | ScopeSession, "join_buffer_size", "262144", true},
+	{ScopeGlobal | ScopeSession, JoinBufferSize, "262144", true},
 	{ScopeNone, "innodb_mirrored_log_groups", "1", false},
 	{ScopeGlobal, "max_binlog_size", "1073741824", false},
 	{ScopeGlobal, "concurrent_insert", "AUTO", false},
@@ -225,7 +225,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "myisam_mmap_size", "18446744073709551615", false},
 	{ScopeNone, "innodb_buffer_pool_instances", "8", false},
 	{ScopeGlobal | ScopeSession, BlockEncryptionMode, "aes-128-ecb", false},
-	{ScopeGlobal | ScopeSession, "max_length_for_sort_data", "1024", true},
+	{ScopeGlobal | ScopeSession, MaxLengthForSortData, "1024", true},
 	{ScopeNone, "character_set_system", "utf8", false},
 	{ScopeGlobal | ScopeSession, InteractiveTimeout, "28800", false},
 	{ScopeGlobal, InnodbOptimizeFullTextOnly, "0", false},
@@ -266,14 +266,14 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "ft_stopword_file", "(built-in)", false},
 	{ScopeGlobal, "innodb_max_dirty_pages_pct_lwm", "0", false},
 	{ScopeGlobal, LogQueriesNotUsingIndexes, "0", false},
-	{ScopeSession, "timestamp", "", true},
+	{ScopeSession, "timestamp", "", false},
 	{ScopeGlobal | ScopeSession, QueryCacheWlockInvalidate, "0", false},
 	{ScopeGlobal | ScopeSession, SQLBufferResult, "0", true},
 	{ScopeGlobal | ScopeSession, "character_set_filesystem", "binary", false},
 	{ScopeGlobal | ScopeSession, "collation_database", mysql.DefaultCollationName, false},
 	{ScopeGlobal | ScopeSession, AutoIncrementIncrement, strconv.FormatInt(DefAutoIncrementIncrement, 10), false},
 	{ScopeGlobal | ScopeSession, AutoIncrementOffset, strconv.FormatInt(DefAutoIncrementOffset, 10), false},
-	{ScopeGlobal | ScopeSession, "max_heap_table_size", "16777216", true},
+	{ScopeGlobal | ScopeSession, MaxHeapTableSize, "16777216", true},
 	{ScopeGlobal | ScopeSession, DivPrecisionIncrement, "4", true},
 	{ScopeGlobal, "innodb_lru_scan_depth", "1024", false},
 	{ScopeGlobal, "innodb_purge_rseg_truncate_frequency", "", false},
@@ -283,7 +283,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "server_id_bits", "32", false},
 	{ScopeGlobal, "innodb_log_checksum_algorithm", "", false},
 	{ScopeNone, "innodb_buffer_pool_load_at_startup", "1", false},
-	{ScopeGlobal | ScopeSession, "sort_buffer_size", "262144", true},
+	{ScopeGlobal | ScopeSession, SortBufferSize, "262144", true},
 	{ScopeGlobal, "innodb_flush_neighbors", "1", false},
 	{ScopeNone, "innodb_use_sys_malloc", "1", false},
 	{ScopeSession, PluginLoad, "", false},
@@ -301,7 +301,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_ft_num_word_optimize", "2000", false},
 	{ScopeGlobal | ScopeSession, "max_join_size", "18446744073709551615", true},
 	{ScopeNone, CoreFile, "0", false},
-	{ScopeGlobal | ScopeSession, "max_seeks_for_key", "18446744073709551615", true},
+	{ScopeGlobal | ScopeSession, MaxSeeksForKey, "18446744073709551615", true},
 	{ScopeNone, "innodb_log_buffer_size", "8388608", false},
 	{ScopeGlobal, "delayed_insert_timeout", "300", false},
 	{ScopeGlobal, "max_relay_log_size", "0", false},
@@ -370,7 +370,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "innodb_autoextend_increment", "64", false},
 	{ScopeGlobal | ScopeSession, "binlog_format", "STATEMENT", false},
 	{ScopeGlobal | ScopeSession, "optimizer_trace", "enabled=off,one_line=off", false},
-	{ScopeGlobal | ScopeSession, "read_rnd_buffer_size", "262144", true},
+	{ScopeGlobal | ScopeSession, ReadRndBufferSize, "262144", true},
 	{ScopeNone, "version_comment", "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 5.7 compatible", false},
 	{ScopeGlobal | ScopeSession, NetWriteTimeout, "60", false},
 	{ScopeGlobal, InnodbBufferPoolLoadAbort, "0", false},
@@ -436,7 +436,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "gtid_purged", "", false},
 	{ScopeGlobal, "max_binlog_stmt_cache_size", "18446744073709547520", false},
 	{ScopeGlobal | ScopeSession, LockWaitTimeout, "31536000", true},
-	{ScopeGlobal | ScopeSession, "read_buffer_size", "131072", true},
+	{ScopeGlobal | ScopeSession, ReadBufferSize, "131072", true},
 	{ScopeNone, "innodb_read_io_threads", "4", false},
 	{ScopeGlobal | ScopeSession, MaxSpRecursionDepth, "0", false},
 	{ScopeNone, "ignore_builtin_innodb", "0", false},
@@ -459,8 +459,8 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, AutoCommit, "1", false},
 	{ScopeSession, "insert_id", "", false},
 	{ScopeGlobal | ScopeSession, "default_tmp_storage_engine", "InnoDB", true},
-	{ScopeGlobal | ScopeSession, "optimizer_search_depth", "62", true},
-	{ScopeGlobal | ScopeSession, "max_points_in_geometry", "", true},
+	{ScopeGlobal | ScopeSession, OptimizerSearchDepth, "62", true},
+	{ScopeGlobal | ScopeSession, MaxPointsInGeometry, "4096", true},
 	{ScopeGlobal, "innodb_stats_sample_pages", "8", false},
 	{ScopeGlobal | ScopeSession, "profiling_history_size", "15", false},
 	{ScopeGlobal | ScopeSession, "character_set_database", mysql.DefaultCharset, false},
@@ -481,7 +481,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "ndb_log_empty_epochs", "", false},
 	{ScopeGlobal, MaxPreparedStmtCount, strconv.FormatInt(DefMaxPreparedStmtCount, 10), false},
 	{ScopeNone, "have_geometry", "YES", false},
-	{ScopeGlobal | ScopeSession, "optimizer_trace_max_mem_size", "16384", true},
+	{ScopeGlobal | ScopeSession, "optimizer_trace_max_mem_size", "1048576", false},
 	{ScopeGlobal | ScopeSession, "net_retry_count", "10", false},
 	{ScopeSession, "ndb_table_no_logging", "", false},
 	{ScopeGlobal | ScopeSession, "optimizer_trace_features", "greedy_search=on,range_optimizer=on,dynamic_range=on,repeated_subselect=on", false},
@@ -489,7 +489,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal, "rewriter_enabled", "", false},
 	{ScopeGlobal, "query_cache_min_res_unit", "4096", false},
 	{ScopeGlobal | ScopeSession, UpdatableViewsWithLimit, "YES", true},
-	{ScopeGlobal | ScopeSession, "optimizer_prune_level", "1", true},
+	{ScopeGlobal | ScopeSession, OptimizerPruneLevel, "1", true},
 	{ScopeGlobal | ScopeSession, "completion_type", "NO_CHAIN", false},
 	{ScopeGlobal, "binlog_checksum", "CRC32", false},
 	{ScopeNone, "report_port", "3306", false},
@@ -797,6 +797,8 @@ const (
 	CoreFile = "core_file"
 	// DefaultWeekFormat is the name for 'default_week_format' system variable.
 	DefaultWeekFormat = "default_week_format"
+	// DefaultTmpStorageEngine is the name for 'default_tmp_storage_engine' system variable.
+	DefaultTmpStorageEngine = "default_tmp_storage_engine"
 	// DivPrecisionIncrement is the name for 'div_precision_increment' system variable.
 	DivPrecisionIncrement = "div_precision_increment"
 	// EqRangeIndexDiveLimit is the name for 'eq_range_index_dive_limit' system variable.
@@ -825,8 +827,14 @@ const (
 	MaxUserConnections = "max_user_connections"
 	// OfflineMode is the name for 'offline_mode' system variable.
 	OfflineMode = "offline_mode"
+	// OptimizerPruneLevel is the name for 'optimizer_prune_level' system variable.
+	OptimizerPruneLevel = "optimizer_prune_level"
+	// OptimizerSearchDepth is the name for 'optimizer_search_depth' system variable.
+	OptimizerSearchDepth = "optimizer_search_depth"
 	// InteractiveTimeout is the name for 'interactive_timeout' system variable.
 	InteractiveTimeout = "interactive_timeout"
+	// JoinBufferSize is the name for 'join_buffer_size' system variable.
+	JoinBufferSize = "join_buffer_size"
 	// FlushTime is the name for 'flush_time' system variable.
 	FlushTime = "flush_time"
 	// PseudoSlaveMode is the name for 'pseudo_slave_mode' system variable.
@@ -855,6 +863,24 @@ const (
 	MaxConnectErrors = "max_connect_errors"
 	// MaxErrorCount is the name for 'max_error_count' system variable.
 	MaxErrorCount = "max_error_count"
+	// MaxHeapTableSize is the name for 'max_heap_table_size' system variable.
+	MaxHeapTableSize = "max_heap_table_size"
+	// MaxJoinSize is the name for 'max_join_size' system variable.
+	MaxJoinSize = "max_join_size"
+	// MaxLengthForSortData is the name for 'max_length_for_sort_data' system variable.
+	MaxLengthForSortData = "max_length_for_sort_data"
+	// MaxPointsInGeometry is the name for 'max_points_in_geometry' system variable.
+	MaxPointsInGeometry = "max_points_in_geometry"
+	// MaxSeeksForKey is the name for 'max_seeks_for_key' system variable.
+	MaxSeeksForKey = "max_seeks_for_key"
+	// RangeAllocBlockSize is the name for 'range_alloc_block_size' system variable.
+	RangeAllocBlockSize = "range_alloc_block_size"
+	// ReadBufferSize is the name for 'read_buffer_size' system variable.
+	ReadBufferSize = "read_buffer_size"
+	// ReadRndBufferSize is the name for 'read_rnd_buffer_size' system variable.
+	ReadRndBufferSize = "read_rnd_buffer_size"
+	// SortBufferSize is the name for 'sort_buffer_size' system variable.
+	SortBufferSize = "sort_buffer_size"
 	// TableDefinitionCache is the name for 'table_definition_cache' system variable.
 	TableDefinitionCache = "table_definition_cache"
 	// TmpTableSize is the name for 'tmp_table_size' system variable.

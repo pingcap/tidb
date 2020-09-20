@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -351,6 +352,12 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		return checkUInt64SystemVar(name, value, 2, secondsPerYear, vars)
 	case DefaultWeekFormat:
 		return checkUInt64SystemVar(name, value, 0, 7, vars)
+	case DefaultTmpStorageEngine:
+		// TiDB storage engine will always be 'InnoDB'
+		if strings.EqualFold(value, "InnoDB") {
+			return "InnoDB", nil
+		}
+		return value, ErrUnknownStorageEngine.GenWithStackByArgs(value)
 	case DelayKeyWrite:
 		if strings.EqualFold(value, "ON") || value == "1" {
 			return "ON", nil
@@ -391,13 +398,17 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 	case InnodbLockWaitTimeout:
 		return checkUInt64SystemVar(name, value, 1, 1073741824, vars)
 	// See "https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_allowed_packet"
+	case OptimizerPruneLevel:
+		return checkUInt64SystemVar(name, value, 0, 1, vars)
+	case OptimizerSearchDepth:
+		return checkUInt64SystemVar(name, value, 0, 62, vars)
 	case MaxAllowedPacket:
 		return checkUInt64SystemVar(name, value, 1024, MaxOfMaxAllowedPacket, vars)
 	case MaxConnections:
 		return checkUInt64SystemVar(name, value, 1, 100000, vars)
-	case MaxConnectErrors:
+	case MaxConnectErrors, MaxJoinSize:
 		return checkUInt64SystemVar(name, value, 1, math.MaxUint64, vars)
-	case MaxSortLength:
+	case MaxSortLength, MaxLengthForSortData, MaxPointsInGeometry:
 		return checkUInt64SystemVar(name, value, 4, 8388608, vars)
 	case MaxSpRecursionDepth:
 		return checkUInt64SystemVar(name, value, 0, 255, vars)
@@ -434,6 +445,10 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint16, vars)
 	case AutoIncrementIncrement, AutoIncrementOffset:
 		return checkUInt64SystemVar(name, value, 1, math.MaxUint16, vars)
+	case ReadBufferSize:
+		return checkUInt64SystemVar(name, value, 8192, 2147479552, vars)
+	case ReadRndBufferSize:
+		return checkUInt64SystemVar(name, value, 1, 2147479552, vars)
 	case TimeZone:
 		if strings.EqualFold(value, "SYSTEM") {
 			return "SYSTEM", nil
@@ -552,6 +567,58 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			maxLen = uint64(math.MaxUint32)
 		}
 		return checkUInt64SystemVar(name, value, 0, maxLen, vars)
+	case MaxSeeksForKey:
+		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_max_seeks_for_key
+		// Minimum Value 1
+		// Maximum Value (64-bit platforms) 18446744073709551615
+		// Maximum Value (32-bit platforms) 4294967295
+		maxLen := uint64(math.MaxUint64)
+		if mathutil.IntBits == 32 {
+			maxLen = uint64(math.MaxUint32)
+		}
+		return checkUInt64SystemVar(name, value, 1, maxLen, vars)
+	case MaxHeapTableSize:
+		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_max_heap_table_size
+		// Minimum Value 16384
+		// Maximum Value (64-bit platforms) 18446744073709551615
+		// Maximum Value (32-bit platforms) 4294967295
+		maxLen := uint64(math.MaxUint64)
+		if mathutil.IntBits == 32 {
+			maxLen = uint64(math.MaxUint32)
+		}
+		return checkUInt64SystemVar(name, value, 16384, maxLen, vars)
+	case JoinBufferSize:
+		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_join_buffer_size
+		// Minimum Value 128
+		// Maximum Value (64-bit platforms) 18446744073709551615
+		// Maximum Value (32-bit platforms) 4294967295
+		// Maximum Value (Windows) 4294967295
+		maxLen := uint64(math.MaxUint64)
+		if mathutil.IntBits == 32 || runtime.GOOS == "windows" {
+			maxLen = uint64(math.MaxUint32)
+		}
+		return checkUInt64SystemVar(name, value, 128, maxLen, vars)
+	case SortBufferSize:
+		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_sort_buffer_size
+		// Minimum Value 32768
+		// Maximum Value (64-bit platforms) 18446744073709551615
+		// Maximum Value (32-bit platforms) 4294967295
+		// Maximum Value (Windows) 4294967295
+		maxLen := uint64(math.MaxUint64)
+		if mathutil.IntBits == 32 || runtime.GOOS == "windows" {
+			maxLen = uint64(math.MaxUint32)
+		}
+		return checkUInt64SystemVar(name, value, 32768, maxLen, vars)
+	case RangeAllocBlockSize:
+		// https://dev.mysql.com/doc/refman/8.0/en/server-system-variables.html#sysvar_range_alloc_block_size
+		// Minimum Value 4096
+		// Maximum Value (64-bit platforms) 18446744073709551615
+		// Maximum Value (32-bit platforms) 4294967295
+		maxLen := uint64(math.MaxUint64)
+		if mathutil.IntBits == 32 {
+			maxLen = uint64(math.MaxUint32)
+		}
+		return checkUInt64SystemVar(name, value, 4096, maxLen, vars)
 	case MaxExecutionTime:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
 	case ThreadPoolSize:
