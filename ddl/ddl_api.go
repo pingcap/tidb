@@ -4305,9 +4305,13 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
-	schemas, tableID, err := extractTblInfos(is, oldIdent, newIdent, isAlterTable)
 	if is.TableExists(newIdent.Schema, newIdent.Name) {
 		return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+	}
+
+	schemas, tableID, err := extractTblInfos(is, oldIdent, newIdent, isAlterTable)
+	if err != nil {
+		return err
 	}
 
 	job := &model.Job{

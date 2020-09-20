@@ -3262,7 +3262,7 @@ func (s *testDBSuite1) TestRenameMultiTables(c *C) {
 	tk.MustExec("create table rename1.t1 (a int primary key auto_increment)")
 	tk.MustExec("create table rename3.t3 (a int primary key auto_increment)")
 	tk.MustExec("rename table rename1.t1 to rename2.t2, rename3.t3 to rename4.t4")
-	// Make sure the drop old database doesn't affect the rename3.t's operations.
+	// Make sure the drop old database doesn't affect the rename2.t2, rename4.t4's operations.
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename3")
 	tk.MustExec("insert rename2.t2 values ()")
@@ -3283,19 +3283,19 @@ func (s *testDBSuite1) TestRenameMultiTables(c *C) {
 	tk.MustExec("insert rename4.t4 values ()")
 	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1"))
-	// Make sure the drop old database doesn't affect the t1's operations.
+	// Make sure the drop old database doesn't affect t2,t4's operations.
 	tk.MustExec("drop database rename1")
 	tk.MustExec("insert rename2.t2 values ()")
-	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1", "3"))
 	tk.MustExec("drop database rename3")
 	tk.MustExec("insert rename4.t4 values ()")
-	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1", "3"))
 	// Rename a table to another table in the same database.
 	tk.MustExec("rename table rename2.t2 to rename2.t1, rename4.t4 to rename4.t3")
 	tk.MustExec("insert rename2.t1 values ()")
-	tk.MustQuery("select * from rename2.t1").Check(testkit.Rows("1", "2", "5001"))
+	tk.MustQuery("select * from rename2.t1").Check(testkit.Rows("1", "3", "2000001"))
 	tk.MustExec("insert rename4.t3 values ()")
-	tk.MustQuery("select * from rename4.t3").Check(testkit.Rows("1", "2", "5001"))
+	tk.MustQuery("select * from rename4.t3").Check(testkit.Rows("1", "3", "2000001"))
 }
 
 func (s *testDBSuite2) TestAddNotNullColumn(c *C) {

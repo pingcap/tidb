@@ -647,9 +647,8 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	tblInfo := &model.TableInfo{}
 	schemaIDs := []int64{oldSchemaIDs[0], job.SchemaID}
-	ver, tblInfo, err = checkAndRenameTables(t, job, schemaIDs, &tableName)
+	ver, tblInfo, err := checkAndRenameTables(t, job, schemaIDs, &tableName)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
