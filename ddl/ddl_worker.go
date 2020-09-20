@@ -853,9 +853,9 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		}
 		affects := make([]*model.AffectedOption, 1)
 		affects[0] = &model.AffectedOption{
-			SchemaID: newSchemaIDs[0],
-			TableID:tableIDs[0],
-			OldTableID:tableIDs[0],
+			SchemaID:   newSchemaIDs[0],
+			TableID:    tableIDs[0],
+			OldTableID: tableIDs[0],
 		}
 		diff.AffectedOpts = affects
 	case model.ActionExchangeTablePartition:

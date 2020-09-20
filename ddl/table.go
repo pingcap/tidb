@@ -691,7 +691,7 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 	return ver, nil
 }
 
-func checkAndRenameTables(t *meta.Meta, job *model.Job, schemaIDs []int64, tableName *model.CIStr) (ver int64, tblInfo *model.TableInfo, _ error){
+func checkAndRenameTables(t *meta.Meta, job *model.Job, schemaIDs []int64, tableName *model.CIStr) (ver int64, tblInfo *model.TableInfo, _ error) {
 	tblInfo, err := getTableInfoAndCancelFaultJob(t, job, schemaIDs[0])
 	if err != nil {
 		return ver, tblInfo, errors.Trace(err)
@@ -726,7 +726,7 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, schemaIDs []int64, table
 	failpoint.Inject("renameTableErr", func(val failpoint.Value) {
 		if val.(bool) {
 			job.State = model.JobStateCancelled
-			failpoint.Return(ver, errors.New("occur an error after renaming table"))
+			failpoint.Return(ver, tblInfo, errors.New("occur an error after renaming table"))
 		}
 	})
 
