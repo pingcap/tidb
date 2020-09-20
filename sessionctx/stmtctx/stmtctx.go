@@ -391,22 +391,27 @@ func (sc *StatementContext) SetWarnings(warns []SQLWarn) {
 	sc.mu.Unlock()
 }
 
-// AppendWarning appends a warning with level 'Warning'.
-func (sc *StatementContext) AppendWarning(warn error) {
-	sc.mu.Lock()
-	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, SQLWarn{WarnLevelWarning, warn})
+// AppendWarning appends variadic warnings with level 'Warning'.
+func (sc *StatementContext) AppendWarning(warns ...error) {
+	if len(warns) == 0 {
+		return
 	}
-	sc.mu.Unlock()
+	ws := make([]SQLWarn, 0, len(warns))
+	for _, w := range warns {
+		ws = append(ws, SQLWarn{WarnLevelWarning, w})
+	}
+	sc.AppendWarnings(ws)
 }
 
 // AppendWarnings appends some warnings.
 func (sc *StatementContext) AppendWarnings(warns []SQLWarn) {
 	sc.mu.Lock()
-	if len(sc.mu.warnings) < math.MaxUint16 {
-		sc.mu.warnings = append(sc.mu.warnings, warns...)
+	defer sc.mu.Unlock()
+	remainingLen := math.MaxUint16 - len(sc.mu.warnings)
+	if remainingLen < len(warns) {
+		warns = warns[:remainingLen]
 	}
-	sc.mu.Unlock()
+	sc.mu.warnings = append(sc.mu.warnings, warns...)
 }
 
 // AppendNote appends a warning with level 'Note'.
