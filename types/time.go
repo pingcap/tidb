@@ -844,6 +844,12 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int8, isFloat b
 			// YYMMDD && YYMMD
 			_, err = fmt.Sscanf(seps[0], "%2d%2d%2d", &year, &month, &day)
 			year = adjustYear(year)
+		case 4:
+			// MMDD
+			_, err = fmt.Sscanf(seps[0], "%2d%2d", &month, &day)
+		case 3:
+			// MDD
+			_, err = fmt.Sscanf(seps[0], "%1d%2d", &month, &day)
 		default:
 			return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, str))
 		}
