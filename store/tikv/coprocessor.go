@@ -1317,7 +1317,6 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 		e.cond.exceed = false
 		e.cond.Broadcast()
 		e.cond.once = sync.Once{}
-		logutil.BgLogger().Debug("rateLimitAction Broadcast")
 	}
 }
 
