@@ -1049,7 +1049,6 @@ func (do *Domain) SetIndexUsageSyncing(val bool) {
 	}
 }
 
-
 // RunAutoAnalyze indicates if this TiDB server starts auto analyze worker and can run auto analyze job.
 var RunAutoAnalyze = true
 

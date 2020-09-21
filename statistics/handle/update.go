@@ -210,9 +210,9 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 
 // IndexUsageInformation is the data struct to store index usage information.
 type IndexUsageInformation struct {
-	QueryCount		int64
-	RowsSelected	int64
-	LastUsedAt		string
+	QueryCount   int64
+	RowsSelected int64
+	LastUsedAt   string
 }
 
 type indexUsageMap map[string]IndexUsageInformation
@@ -221,8 +221,8 @@ type indexUsageMap map[string]IndexUsageInformation
 type SessionIndexUsageCollector struct {
 	sync.Mutex
 
-	mapper indexUsageMap
-	next *SessionIndexUsageCollector
+	mapper  indexUsageMap
+	next    *SessionIndexUsageCollector
 	deleted bool
 }
 
@@ -252,7 +252,7 @@ func (m indexUsageMap) query(tableSchema string, tableName string, indexName str
 }
 
 // Update updates the mapper in SessionIndexUsageCollector.
-func (s *SessionIndexUsageCollector) Uptate(id string, value *IndexUsageInformation) {
+func (s *SessionIndexUsageCollector) Update(id string, value *IndexUsageInformation) {
 	value.LastUsedAt = time.Now().Format("2006-01-02 15:04:05")
 	s.Lock()
 	defer s.Unlock()
@@ -273,8 +273,8 @@ func (h *Handle) NewSessionIndexUsageCollector() *SessionIndexUsageCollector {
 	h.idxUsageListHead.Lock()
 	defer h.idxUsageListHead.Unlock()
 	newCollector := &SessionIndexUsageCollector{
-		mapper:	make(indexUsageMap),
-		next: h.idxUsageListHead.next,
+		mapper: make(indexUsageMap),
+		next:   h.idxUsageListHead.next,
 	}
 	h.idxUsageListHead.next = newCollector
 	return newCollector

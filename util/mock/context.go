@@ -206,7 +206,7 @@ func (c *Context) GoCtx() context.Context {
 // StoreQueryFeedback stores the query feedback.
 func (c *Context) StoreQueryFeedback(_ interface{}) {}
 
-// SStoreIndexUsage strores the index usage information.
+// StoreIndexUsage strores the index usage information.
 func (c *Context) StoreIndexUsage(_ string, _ string, _ string, _ int64) {}
 
 // StmtCommit implements the sessionctx.Context interface.
