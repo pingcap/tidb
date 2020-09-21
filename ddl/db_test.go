@@ -2235,7 +2235,7 @@ func (s *testDBSuite6) TestDropColumn(c *C) {
 	_, err := tk.Exec("alter table t1 drop column a")
 	c.Assert(err, NotNil)
 	// TODO: refine the error message to compatible with MySQL
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in ''")
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'expression'")
 
 	tk.MustExec("drop database drop_col_db")
 }
@@ -5072,7 +5072,7 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	_, err = tk.Exec("alter table t drop column a;")
 	c.Assert(err, NotNil)
 	// TODO: refine the error message to compatible with MySQL
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in ''")
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'expression'")
 	// Test modify column with invalid expression.
 	_, err = tk.Exec("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
 	c.Assert(err, NotNil)
