@@ -6314,9 +6314,7 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		tk.Se.SetSessionManager(sm)
 		s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
 		quota := count * 15
-		if testcase.useIndex {
-			tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", 999999))
-		} else {
+		if !testcase.useIndex {
 			tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
 			tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		}
@@ -6325,8 +6323,11 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 			expect = append(expect, fmt.Sprintf("%v", i))
 		}
 		tk.MustQuery(testcase.sql).Sort().Check(testkit.Rows(expect...))
-		// assert oom action worked by max consumed > memory quota
-		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
+		if !testcase.useIndex {
+			// assert oom action worked by max consumed > memory quota
+			c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
+		}
+
 		// assert delegate to fallback action
 		if testcase.useIndex {
 			failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockTokenCount", "return(true)")
