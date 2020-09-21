@@ -90,7 +90,13 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 
 	if it.req.KeepOrder {
-		it.sendRate = newRateLimit(2 * it.concurrency)
+		tokenCount := 2 * it.concurrency
+		failpoint.Inject("mockTokenCount", func(val failpoint.Value) {
+			if val.(bool) {
+				tokenCount = 1
+			}
+		})
+		it.sendRate = newRateLimit(tokenCount)
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
 		it.sendRate = newRateLimit(it.concurrency)
@@ -1277,8 +1283,9 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	defer e.conditionUnlock()
 	e.cond.once.Do(func() {
 		if e.cond.remainingTokenNum < 2 {
-			logutil.BgLogger().Debug("rateLimitAction delegate to fallback action",
-				zap.Uint("totalTokenNum", e.totalTokenNum))
+			logutil.BgLogger().Info("rateLimitAction delegate to fallback action",
+				zap.Uint("totalTokenNum", e.totalTokenNum),
+				zap.Int64("limit", t.GetBytesLimit()))
 			if e.fallbackAction != nil {
 				e.fallbackAction.Action(t)
 			}
