@@ -3796,7 +3796,10 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 	c.Assert(err.Error(), Equals, "[ddl:8202]Cannot decode index value, because mock can't decode record error")
 	c.Assert(checkErr, IsNil)
 	// Check whether the reorg information is cleaned up when executing "modify column" failed.
-	checkReorgHandle := func(element *meta.Element) {
+	checkReorgHandle := func(gotElements, expectedElements []*meta.Element) {
+		for i, e := range gotElements {
+			c.Assert(e, DeepEquals, expectedElements[i])
+		}
 		err := ctx.NewTxn(context.Background())
 		c.Assert(err, IsNil)
 		txn, err := ctx.Txn(true)
@@ -3809,25 +3812,33 @@ func (s *testSerialDBSuite) TestModifyColumnnReorgInfo(c *C) {
 		c.Assert(end, IsNil)
 		c.Assert(physicalID, Equals, int64(0))
 	}
-	checkReorgHandle(elements[0])
-	checkReorgHandle(elements[1])
+	expectedEles := []*meta.Element{
+		{ID: 4, TypeKey: meta.ColumnElementKey},
+		{ID: 3, TypeKey: meta.IndexElementKey},
+		{ID: 4, TypeKey: meta.IndexElementKey}}
+	checkReorgHandle(elements, expectedEles)
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr"), IsNil)
 	tk.MustExec("admin check table t1")
 
 	// Check whether the reorg information is cleaned up when executing "modify column" successfully.
-	// Test encountered a "notOwnerErr" error, which caused the processing backfill job to exit halfway.
+	// Test encountering a "notOwnerErr" error which caused the processing backfill job to exit halfway.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("modifyColumnNotOwnerErr")`), IsNil)
 	tk.MustExec(sql)
-	checkReorgHandle(elements[0])
-	checkReorgHandle(elements[1])
+	expectedEles = []*meta.Element{
+		{ID: 5, TypeKey: meta.ColumnElementKey},
+		{ID: 5, TypeKey: meta.IndexElementKey},
+		{ID: 6, TypeKey: meta.IndexElementKey}}
+	checkReorgHandle(elements, expectedEles)
 	tk.MustExec("admin check table t1")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr"), IsNil)
 
-	// Test encountered a "notOwnerErr" error, which caused the processing backfill job to exit halfway.
+	// Test encountering a "notOwnerErr" error which caused the processing backfill job to exit halfway.
 	// During the period, the old TiDB version(do not exist the element information) is upgraded to the new TiDB version.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr", `return("addIdxNotOwnerErr")`), IsNil)
 	tk.MustExec("alter table t1 add index idx2(c1)")
-	checkReorgHandle(elements[0])
+	expectedEles = []*meta.Element{
+		{ID: 7, TypeKey: meta.IndexElementKey}}
+	checkReorgHandle(elements, expectedEles)
 	tk.MustExec("admin check table t1")
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/ddl/MockGetIndexRecordErr"), IsNil)
 }
