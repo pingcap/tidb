@@ -597,7 +597,7 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		authUsers:     make(map[string]struct{}),
 		planInCache:   false,
 		planCacheHits: 0,
-		renderPlan: sei.RenderPlan,
+		renderPlan:    sei.RenderPlan,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -737,7 +737,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 			ssElement.maxTxnRetry = commitDetails.TxnRetry
 		}
 		commitDetails.Mu.Lock()
-		for tp,cnt := range commitDetails.Mu.BackoffTypes {
+		for tp, cnt := range commitDetails.Mu.BackoffTypes {
 			ssElement.sumBackoffTimes += int64(cnt)
 			ssElement.backoffTypes[tp] += 1
 		}
@@ -774,7 +774,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	}
 
 	if sei.MergeStats != nil && sei.ExecStats != nil {
-		ssElement.totalExecStats = sei.MergeStats(ssElement.totalExecStats,sei.ExecStats)
+		ssElement.totalExecStats = sei.MergeStats(ssElement.totalExecStats, sei.ExecStats)
 	}
 }
 

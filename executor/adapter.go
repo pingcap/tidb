@@ -1057,8 +1057,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		stmtExecInfo.RenderPlan = func(total []*execdetails.RootRuntimeStats) string {
 			statsColl := execdetails.NewRuntimeStatsColl()
 			depth := 0
-			buildRuntimeStats(total,statsColl,a.Plan,&depth,make(map[int]bool))
-			return plannercore.RenderPlanTree(a.Plan,statsColl)
+			buildRuntimeStats(total, statsColl, a.Plan, &depth, make(map[int]bool))
+			return plannercore.RenderPlanTree(a.Plan, statsColl)
 		}
 	}
 
@@ -1068,13 +1068,13 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
 }
 
-func buildRuntimeStats(total []*execdetails.RootRuntimeStats,rsColl *execdetails.RuntimeStatsColl, plan plannercore.Plan, id *int, added map[int]bool) {
+func buildRuntimeStats(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl, plan plannercore.Plan, id *int, added map[int]bool) {
 	pid := plan.ID()
-	if len(total) <=  *id {
+	if len(total) <= *id {
 		return
 	}
-	rsColl.RegisterRootStats(pid,total[*id])
-	added[pid]=true
+	rsColl.RegisterRootStats(pid, total[*id])
+	added[pid] = true
 	*id++
 
 	selectPlan := plannercore.GetSelectPlan(plan)
@@ -1089,7 +1089,6 @@ func buildRuntimeStats(total []*execdetails.RootRuntimeStats,rsColl *execdetails
 	}
 	return
 }
-
 
 func mergeRuntimeStats(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl, plan plannercore.Plan, id *int, added map[int]bool) []*execdetails.RootRuntimeStats {
 	pid := plan.ID()
