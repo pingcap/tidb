@@ -95,6 +95,12 @@ func (action actionPessimisticLock) handleSingleBatch(c *twoPhaseCommitter, bo *
 			time.Sleep(300 * time.Millisecond)
 			return kv.ErrWriteConflict
 		})
+		failpoint.Inject("PessimisticLockErrWriteConflictInstant", func(val failpoint.Value) {
+			if val.(bool) && needMockPessimisticLockErrWriteConflict() {
+				decreaseMockPessimisticLockErrWriteConflict()
+				failpoint.Return(kv.ErrWriteConflict)
+			}
+		})
 		startTime := time.Now()
 		resp, err := c.store.SendReq(bo, req, batch.region, readTimeoutShort)
 		if action.LockCtx.Stats != nil {
@@ -223,4 +229,20 @@ func (c *twoPhaseCommitter) pessimisticLockMutations(bo *Backoffer, lockCtx *kv.
 
 func (c *twoPhaseCommitter) pessimisticRollbackMutations(bo *Backoffer, mutations CommitterMutations) error {
 	return c.doActionOnMutations(bo, actionPessimisticRollback{}, mutations)
+}
+
+var mockPessimisticLockErrWriteConflict = int64(0)
+
+func needMockPessimisticLockErrWriteConflict() bool {
+	return atomic.LoadInt64(&mockPessimisticLockErrWriteConflict) > 0
+}
+
+func decreaseMockPessimisticLockErrWriteConflict() {
+	atomic.AddInt64(&mockPessimisticLockErrWriteConflict, -1)
+}
+
+// ResetMockPessimisticLockErrWriteConflict set the number of occurrences of
+// `kv.ErrWriteConflict` when calling handleSingleBatch().
+func ResetMockPessimisticLockErrWriteConflict(failTimes int64) {
+	atomic.StoreInt64(&mockPessimisticLockErrWriteConflict, failTimes)
 }

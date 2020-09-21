@@ -1280,6 +1280,22 @@ func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
 
+func (s *seqTestSuite) TestPessimisticConflictRetryAutoID(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int not null auto_increment primary key);")
+	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+	tk.MustExec("set autocommit = 1")
+
+	tikv.ResetMockPessimisticLockErrWriteConflict(3)
+	session.ResetMockAutoRandIDRetryCount(5)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflictInstant", "return(true)"), IsNil)
+	tk.MustExec("insert into t values (), (), ();")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflictInstant"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"), IsNil)
+}
+
 func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 
