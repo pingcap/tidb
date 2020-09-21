@@ -182,7 +182,7 @@ const (
 		tot_col_size bigint(64) NOT NULL DEFAULT 0,
 		modify_count bigint(64) NOT NULL DEFAULT 0,
 		version bigint(64) unsigned NOT NULL DEFAULT 0,
-		cm_sketch blob,
+		cm_sketch blob(6291456),
 		stats_ver bigint(64) NOT NULL DEFAULT 0,
 		flag bigint(64) NOT NULL DEFAULT 0,
 		correlation double NOT NULL DEFAULT 0,
@@ -427,6 +427,8 @@ const (
 	version50 = 50
 	// version51 introduces CreateTablespacePriv to mysql.user.
 	version51 = 51
+	// version52 change mysql.stats_histograms cm_sketch column from blob to blob(6291456)
+	version52 = 52
 )
 
 var (
@@ -481,6 +483,7 @@ var (
 		upgradeToVer49,
 		upgradeToVer50,
 		upgradeToVer51,
+		upgradeToVer52,
 	}
 )
 
@@ -1181,6 +1184,13 @@ func upgradeToVer51(s Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer52(s Session, ver int64) {
+	if ver >= version52 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_histograms MODIFY cm_sketch BLOB(6291456)")
 }
 
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
