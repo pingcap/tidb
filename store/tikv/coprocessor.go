@@ -76,9 +76,9 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		memTracker:      req.MemTracker,
 		replicaReadSeed: c.replicaReadSeed,
 		rpcCancel:       NewRPCanceller(),
-		tasksStatus:     &copTaskStatusHandler{},
+		maxID:           &maxIDHandler{},
 	}
-	it.tasksStatus.mu.maxID = 0
+	it.maxID.mu.maxID = 0
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -390,8 +390,10 @@ type copIterator struct {
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
+	// curr indicates the curr id of the finished copTask
+	curr int
 
-	tasksStatus *copTaskStatusHandler
+	maxID *maxIDHandler
 
 	// sendRate controls the sending rate of copIteratorTaskSender
 	sendRate *rateLimit
@@ -437,7 +439,7 @@ type copIteratorWorker struct {
 
 	actionOnExceed *rateLimitAction
 
-	tasksStatus *copTaskStatusHandler
+	maxID *maxIDHandler
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -514,11 +516,13 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
 		// set max ID
-		worker.tasksStatus.setMaxIDIfLarger(task.id)
+		worker.maxID.setMaxIDIfLarger(task.id)
 
 		worker.actionOnExceed.destroyTokenIfNeeded(func() {
 			worker.sendRate.putToken()
 		})
+
+		worker.actionOnExceed.checkConditionIfNeedToWait()
 
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
@@ -557,7 +561,7 @@ func (it *copIterator) open(ctx context.Context) {
 			replicaReadSeed: it.replicaReadSeed,
 			sendRate:        it.sendRate,
 			actionOnExceed:  it.actionOnExceed,
-			tasksStatus:     it.tasksStatus,
+			maxID:           it.maxID,
 		}
 		go worker.run(ctx)
 	}
@@ -672,11 +676,11 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		it.actionOnExceed.broadcastIfNeeded(len(it.respChan) < 1)
 	} else {
 		for {
-			if it.tasksStatus.curr >= len(it.tasks) {
+			if it.curr >= len(it.tasks) {
 				// Resp will be nil if iterator is finishCh.
 				return nil, nil
 			}
-			task := it.tasks[it.tasksStatus.curr]
+			task := it.tasks[it.curr]
 			resp, ok, closed = it.recvFromRespCh(ctx, task.respChan)
 			if closed {
 				// Close() is already called, so Next() is invalid.
@@ -686,11 +690,11 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 				break
 			}
 			// record finished taskID
-			finishedTaskID := it.tasks[it.tasksStatus.curr].id
+			finishedTaskID := it.tasks[it.curr].id
 			// Switch to next task.
-			it.tasks[it.tasksStatus.curr] = nil
-			it.tasksStatus.curr++
-			maxID := it.tasksStatus.getMaxID()
+			it.tasks[it.curr] = nil
+			it.curr++
+			maxID := it.maxID.getMaxID()
 			// The tasks whose id is less than maxID are assumed that being sending to their task channel.
 			// So the response channel would be thought as drained out if the current taskID is greater or equal than
 			// the maxID as all the workers are being suspended at that time.
@@ -1321,7 +1325,11 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	} else {
 		returnToken()
 	}
+}
 
+func (e *rateLimitAction) checkConditionIfNeedToWait() {
+	e.conditionLock()
+	defer e.conditionUnlock()
 	// check worker whether need to suspend running.
 	for e.cond.exceed {
 		e.cond.Wait()
@@ -1346,9 +1354,7 @@ func (e *rateLimitAction) close() {
 	e.cond.Broadcast()
 }
 
-type copTaskStatusHandler struct {
-	// curr indicates the curr id of the finished copTask
-	curr int
+type maxIDHandler struct {
 	// maxID indicates the max id of the running copTask
 	mu struct {
 		sync.Mutex
@@ -1356,13 +1362,13 @@ type copTaskStatusHandler struct {
 	}
 }
 
-func (handler *copTaskStatusHandler) getMaxID() uint32 {
+func (handler *maxIDHandler) getMaxID() uint32 {
 	handler.mu.Lock()
 	defer handler.mu.Unlock()
 	return handler.mu.maxID
 }
 
-func (handler *copTaskStatusHandler) setMaxIDIfLarger(newID uint32) {
+func (handler *maxIDHandler) setMaxIDIfLarger(newID uint32) {
 	handler.mu.Lock()
 	defer handler.mu.Unlock()
 	if newID > handler.mu.maxID {
