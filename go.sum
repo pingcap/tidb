@@ -600,6 +600,8 @@ github.com/tikv/pd v1.1.0-beta.0.20200916063208-c05ef6f95773 h1:76C9hdPAzq2H3sfx
 github.com/tikv/pd v1.1.0-beta.0.20200916063208-c05ef6f95773/go.mod h1:PgeSC16xBiz1pB4MEEAmZl4jATBu9hypAsF/ZJho8XY=
 github.com/tikv/pd v1.1.0-beta.0.20200916212917-0a15643a05d3 h1:sGrDpBwQF3GbJFv9YxV/haVydFYJtxZ2PGl8XiS+jMQ=
 github.com/tikv/pd v1.1.0-beta.0.20200916212917-0a15643a05d3/go.mod h1:/pWBWbmbxXKuX92FYvVBhP8i6Id1jBbnGeyfXsGJ9LA=
+github.com/tikv/pd v1.1.0-beta.0.20200921100508-9ee41c4144f3 h1:T2ecr5rhDLSL1Qz1ji4znQ/XyZLPM728lCLm7plx8Kg=
+github.com/tikv/pd v1.1.0-beta.0.20200921100508-9ee41c4144f3/go.mod h1:Yj52KUebQf2r3JG6pSRZ22E+lSrZZPNFbs4zjZEkEvY=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20170815181823-89b8d40f7ca8/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20171017195756-830351dc03c6/go.mod h1:ncp9v5uamzpCO7NfCPTXjqaC+bZgJeR0sMTm6dMHP7U=
 github.com/tmc/grpc-websocket-proxy v0.0.0-20190109142713-0ad062ec5ee5 h1:LnC5Kc/wtumK+WB441p7ynQJzVuNRJiqddSIE3IlSEQ=
