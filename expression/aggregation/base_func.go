@@ -137,13 +137,16 @@ func (a *baseFuncDesc) typeInfer4ApproxCountDistinct(ctx sessionctx.Context) {
 }
 
 func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error {
-	if len(a.Args) < 2 {
-		return errors.New("APPROX_PERCENTILE takes at least 2 arguments")
+	if len(a.Args) != 2 {
+		return errors.New("APPROX_PERCENTILE should take 2 arguments")
 	}
 
+	if !a.Args[1].ConstItem(ctx.GetSessionVars().StmtCtx) {
+		return errors.New(fmt.Sprintf("APPROX_PERCENTILE should take a constant expression as percentage argument."))
+	}
 	percent, isNull, err := a.Args[1].EvalInt(ctx, chunk.Row{})
 	if err != nil {
-		return err
+		return errors.New(fmt.Sprintf("APPROX_PERCENTILE: Invalid argument %s", a.Args[1].String()))
 	}
 	if percent <= 0 || percent > 100 || isNull {
 		if isNull {
