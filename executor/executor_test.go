@@ -6339,7 +6339,7 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		tk.Se = se
 		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
-		tk.MustExec("set @@tidb_mem_quota_query=1;")
+		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		err = tk.QueryToErr(testcase.sql)
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
