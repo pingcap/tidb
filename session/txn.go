@@ -416,6 +416,9 @@ func (st *TxnState) cleanup() {
 			st.dirtyTableOP = st.dirtyTableOP[:0]
 		}
 	}
+	if st.Transaction != nil {
+		st.Transaction.ResetStmtKeyExistErrs()
+	}
 }
 
 // KeysNeedToLock returns the keys need to be locked.
@@ -579,6 +582,7 @@ func (s *session) StmtCommit(memTracker *memory.Tracker) error {
 			mergeToDirtyDB(dirtyDB, op)
 		}
 	}
+	st.MergeStmtKeyExistErrs()
 	return nil
 }
 
