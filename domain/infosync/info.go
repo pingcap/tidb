@@ -81,6 +81,9 @@ const (
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
 var ErrPrometheusAddrIsNotSet = terror.ClassDomain.New(errno.ErrPrometheusAddrIsNotSet, errno.MySQLErrName[errno.ErrPrometheusAddrIsNotSet])
 
+// errPlacementRulesDisabled is exported for internal usage, indicating PD rejected the request due to disabled placement feature.
+var errPlacementRulesDisabled = errors.New("placement rules feature is disabled")
+
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
 	etcdCli         *clientv3.Client
@@ -303,7 +306,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 				err = errors.Errorf("%s", bodyBytes)
 				// ignore if placement rules feature is not enabled
 				if strings.HasPrefix(err.Error(), `"placement rules feature is disabled"`) {
-					err = nil
+					err = errPlacementRulesDisabled
 				}
 			}
 			terror.Log(res.Body.Close())
@@ -330,15 +333,13 @@ func GetPlacementRules(ctx context.Context) ([]*placement.RuleOp, error) {
 		return nil, errors.Errorf("pd unavailable")
 	}
 
-	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "rules"), http.MethodGet, nil)
-	if err != nil {
-		return nil, err
-	}
-
 	rules := []*placement.RuleOp{}
-	err = json.Unmarshal(res, &rules)
-	if err != nil {
-		return nil, err
+	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "rules"), http.MethodGet, nil)
+	if err == nil {
+		err = json.Unmarshal(res, &rules)
+	}
+	if err == errPlacementRulesDisabled {
+		err = nil
 	}
 	return rules, nil
 }
@@ -370,6 +371,9 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error 
 	}
 
 	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
+	if err == errPlacementRulesDisabled {
+		err = nil
+	}
 	return err
 }
 
@@ -394,6 +398,9 @@ func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule"), "GET", nil)
 	if err == nil {
 		err = json.Unmarshal(res, &bundles)
+	}
+	if err == errPlacementRulesDisabled {
+		err = nil
 	}
 	return bundles, err
 }
@@ -420,6 +427,9 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
 	if err == nil {
 		err = json.Unmarshal(res, bundle)
+	}
+	if err == errPlacementRulesDisabled {
+		err = nil
 	}
 	return bundle, err
 }
