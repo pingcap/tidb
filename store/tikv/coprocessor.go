@@ -516,14 +516,14 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		}
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
-		// set max ID
+
 		worker.maxID.setMaxIDIfLarger(task.id)
 
 		worker.actionOnExceed.destroyTokenIfNeeded(func() {
 			worker.sendRate.putToken()
 		})
 
-		worker.actionOnExceed.checkConditionIfNeedToWait()
+		worker.actionOnExceed.waitIfNeeded()
 
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
@@ -690,7 +690,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			if ok {
 				break
 			}
-			// record finished taskID
 			finishedTaskID := it.tasks[it.curr].id
 			// Switch to next task.
 			it.tasks[it.curr] = nil
@@ -1226,36 +1225,41 @@ func (it copErrorResponse) Close() error {
 	return nil
 }
 
+// rateLimitAction an OOM Action which is used to control the ticket if OOM triggered. The ticket number should be
+// set on initial. Each time the Action is triggered, one ticket would be destroyed. If the count of the ticket is less
+// than 2, the action would be delegated to the fallback action.
 type rateLimitAction struct {
+	// enabled indicates whether the coprocessor is running. rateLimitAction only Action when enabled is true.
 	enabled        bool
 	fallbackAction memory.ActionOnExceed
-	once           sync.Once
 	// totalTokenNum indicates the total token at initial
 	totalTokenNum uint
 	cond          struct {
 		*sync.Cond
 		// exceed indicates whether have encountered OOM situation.
 		exceed bool
-		// existedTokenNum indicates the count of tokens which still exists
-		existedTokenNum uint
-		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action
+		// remainingTokenNum indicates the count of tokens which still exists
+		remainingTokenNum uint
+		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
 		isTokenDestroyed bool
+		once             sync.Once
 	}
 }
 
 func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction {
 	return &rateLimitAction{
-		once:          sync.Once{},
 		totalTokenNum: totalTokenNumber,
 		cond: struct {
 			*sync.Cond
-			exceed           bool
-			existedTokenNum  uint
-			isTokenDestroyed bool
+			exceed            bool
+			remainingTokenNum uint
+			isTokenDestroyed  bool
+			once              sync.Once
 		}{
-			Cond:            cond,
-			exceed:          false,
-			existedTokenNum: totalTokenNumber,
+			Cond:              cond,
+			exceed:            false,
+			remainingTokenNum: totalTokenNumber,
+			once:              sync.Once{},
 		},
 	}
 }
@@ -1269,10 +1273,10 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 		return
 	}
 
-	e.once.Do(func() {
-		e.conditionLock()
-		defer e.conditionUnlock()
-		if e.cond.existedTokenNum < 2 {
+	e.conditionLock()
+	defer e.conditionUnlock()
+	e.cond.once.Do(func() {
+		if e.cond.remainingTokenNum < 2 {
 			logutil.BgLogger().Debug("rateLimitAction delegate to fallback action",
 				zap.Uint("totalTokenNum", e.totalTokenNum))
 			if e.fallbackAction != nil {
@@ -1282,7 +1286,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 		}
 		logutil.BgLogger().Info("rateLimitAction exceed signal.",
 			zap.Int64("consumed", t.BytesConsumed()),
-			zap.Uint("existedToken", e.cond.existedTokenNum))
+			zap.Uint("existedToken", e.cond.remainingTokenNum))
 		e.cond.isTokenDestroyed = false
 		e.cond.exceed = true
 	})
@@ -1307,31 +1311,30 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	if e.cond.exceed && needed {
 		e.cond.exceed = false
 		e.cond.Broadcast()
-		e.once = sync.Once{}
+		e.cond.once = sync.Once{}
 		logutil.BgLogger().Debug("rateLimitAction Broadcast")
 	}
 }
 
-// destroyTokenIfNeeded will check the `exceed` flag after copWorker finished to solve one task.
-// If the exceed flag is true and there is no token destroyed before, the token will be destroyed
-// while the token would be returned after each task finishing normally.
+// destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
+// If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
+// or the token would be return back.
 func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	// If actionOnExceed has been triggered and there is no token have been teared before,
+	// If actionOnExceed has been triggered and there is no token have been destroyed before,
 	// tear one token.
 	if e.cond.exceed && !e.cond.isTokenDestroyed {
-		e.cond.existedTokenNum = e.cond.existedTokenNum - 1
+		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
 	} else {
 		returnToken()
 	}
 }
 
-func (e *rateLimitAction) checkConditionIfNeedToWait() {
+func (e *rateLimitAction) waitIfNeeded() {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	// check worker whether need to suspend running.
 	for e.cond.exceed {
 		e.cond.Wait()
 	}
@@ -1345,13 +1348,13 @@ func (e *rateLimitAction) conditionUnlock() {
 	e.cond.L.Unlock()
 }
 
-// broadcast the signal in order not to leak worker goroutine if it is being suspended
 func (e *rateLimitAction) close() {
 	e.enabled = false
 	e.conditionLock()
 	defer e.conditionUnlock()
 	e.cond.exceed = false
 	e.cond.isTokenDestroyed = false
+	// broadcast the signal in order not to leak worker goroutine if it is being suspended
 	e.cond.Broadcast()
 }
 
