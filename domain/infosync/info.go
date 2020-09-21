@@ -338,8 +338,8 @@ func GetPlacementRules(ctx context.Context) ([]*placement.RuleOp, error) {
 	if err == nil {
 		err = json.Unmarshal(res, &rules)
 	}
-	if err == errPlacementRulesDisabled {
-		err = nil
+	if err != errPlacementRulesDisabled {
+		return rules, err
 	}
 	return rules, nil
 }
@@ -371,10 +371,10 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error 
 	}
 
 	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
-	if err == errPlacementRulesDisabled {
-		err = nil
+	if err != errPlacementRulesDisabled {
+		return err
 	}
-	return err
+	return nil
 }
 
 // GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
@@ -399,10 +399,10 @@ func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 	if err == nil {
 		err = json.Unmarshal(res, &bundles)
 	}
-	if err == errPlacementRulesDisabled {
-		err = nil
+	if err != errPlacementRulesDisabled {
+		return bundles, err
 	}
-	return bundles, err
+	return bundles, nil
 }
 
 // GetRuleBundle is used to get one specific rule bundle from PD.
@@ -428,10 +428,10 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 	if err == nil {
 		err = json.Unmarshal(res, bundle)
 	}
-	if err == errPlacementRulesDisabled {
-		err = nil
+	if err != errPlacementRulesDisabled {
+		return bundle, err
 	}
-	return bundle, err
+	return bundle, nil
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
