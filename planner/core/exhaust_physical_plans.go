@@ -1597,7 +1597,7 @@ func (lt *LogicalTopN) canPushToCop() bool {
 func (lt *LogicalTopN) getPhysTopN(prop *property.PhysicalProperty) []PhysicalPlan {
 	if lt.limitHints.preferLimitToCop {
 		if !lt.canPushToCop() {
-			errMsg := "Optimizer Hint TOPN_TO_COP is inapplicable"
+			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
 			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 			lt.limitHints.preferLimitToCop = false
@@ -1628,7 +1628,7 @@ func (lt *LogicalTopN) getPhysLimits(prop *property.PhysicalProperty) []Physical
 
 	if lt.limitHints.preferLimitToCop {
 		if !lt.canPushToCop() {
-			errMsg := "Optimizer Hint TOPN_TO_COP is inapplicable"
+			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
 			warning := ErrInternal.GenWithStack(errMsg)
 			lt.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 			lt.limitHints.preferLimitToCop = false
