@@ -2721,38 +2721,43 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	result.Check(testkit.Rows("<nil>"))
 
 	// select from_unixtime
+	// NOTE (#17013): make from_unixtime stable in different timezone: the result of from_unixtime
+	// depends on the local time zone of the test environment, thus the result checking must
+	// consider the time zone convert.
+	tz := tk.Se.GetSessionVars().StmtCtx.TimeZone
 	result = tk.MustQuery("select from_unixtime(1451606400)")
-	unixTime := time.Unix(1451606400, 0).String()[:19]
+	unixTime := time.Unix(1451606400, 0).In(tz).String()[:19]
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(14516064000/10)")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.0000"))
+	result.Check(testkit.Rows(fmt.Sprintf("%s.0000", unixTime)))
 	result = tk.MustQuery("select from_unixtime('14516064000'/10)")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.000000"))
+	result.Check(testkit.Rows(fmt.Sprintf("%s.000000", unixTime)))
 	result = tk.MustQuery("select from_unixtime(cast(1451606400 as double))")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.000000"))
+	result.Check(testkit.Rows(fmt.Sprintf("%s.000000", unixTime)))
 	result = tk.MustQuery("select from_unixtime(cast(cast(1451606400 as double) as DECIMAL))")
-	result.Check(testkit.Rows("2016-01-01 08:00:00"))
+	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(cast(cast(1451606400 as double) as DECIMAL(65,1)))")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.0"))
+	result.Check(testkit.Rows(fmt.Sprintf("%s.0", unixTime)))
 	result = tk.MustQuery("select from_unixtime(1451606400.123456)")
-	unixTime = time.Unix(1451606400, 123456000).String()[:26]
+	unixTime = time.Unix(1451606400, 123456000).In(tz).String()[:26]
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1451606400.1234567)")
-	unixTime = time.Unix(1451606400, 123456700).Round(time.Microsecond).Format("2006-01-02 15:04:05.000000")[:26]
+	unixTime = time.Unix(1451606400, 123456700).In(tz).Round(time.Microsecond).Format("2006-01-02 15:04:05.000000")[:26]
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1451606400.999999)")
-	unixTime = time.Unix(1451606400, 999999000).String()[:26]
+	unixTime = time.Unix(1451606400, 999999000).In(tz).String()[:26]
 	result.Check(testkit.Rows(unixTime))
 	result = tk.MustQuery("select from_unixtime(1511247196661)")
 	result.Check(testkit.Rows("<nil>"))
 	result = tk.MustQuery("select from_unixtime('1451606400.123');")
-	result.Check(testkit.Rows("2016-01-01 08:00:00.123000"))
+	unixTime = time.Unix(1451606400, 0).In(tz).String()[:19]
+	result.Check(testkit.Rows(fmt.Sprintf("%s.123000", unixTime)))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t value(1451606400);")
 	result = tk.MustQuery("select from_unixtime(a) from t;")
-	result.Check(testkit.Rows("2016-01-01 08:00:00"))
+	result.Check(testkit.Rows(unixTime))
 
 	// test strcmp
 	result = tk.MustQuery("select strcmp('abc', 'def')")
@@ -2824,6 +2829,12 @@ func (s *testIntegrationSuite2) TestBuiltin(c *C) {
 	tk.MustQuery("select if(b < 1 , 1, 1/0) from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select ifnull(b, 1/0) from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select COALESCE(1, b, b/0) from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select 0 and b/0 from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select 1 or b/0 from t")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustQuery("select case 2.0 when 2.0 then 3.0 when 3.0 then 2.0 end").Check(testkit.Rows("3.0"))
@@ -7215,6 +7226,23 @@ func (s *testIntegrationSerialSuite) TestIssue19116(c *C) {
 	tk.MustQuery("select coercibility(1=1);").Check(testkit.Rows("5"))
 }
 
+func (s *testIntegrationSerialSuite) TestIssue14448and19383(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1")
+	tk.MustExec("CREATE TABLE t1 (a INT NOT NULL PRIMARY KEY)")
+	tk.MustExec("INSERT INTO t1 VALUES (1),(2),(3)")
+	_, err := tk.Exec("SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1")
+	message := `function SQL_CALC_FOUND_ROWS has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
+	_, err = tk.Exec("SELECT * FROM t1 LOCK IN SHARE MODE")
+	message = `function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions`
+	c.Assert(strings.Contains(err.Error(), message), IsTrue)
+	tk.MustExec("SET tidb_enable_noop_functions=1")
+	tk.MustExec("SELECT SQL_CALC_FOUND_ROWS * FROM t1 LIMIT 1")
+	tk.MustExec("SELECT * FROM t1 LOCK IN SHARE MODE")
+}
+
 func (s *testIntegrationSerialSuite) TestIssue19315(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -7270,6 +7298,24 @@ func (s *testIntegrationSuite) TestIssue19504(c *C) {
 	tk.MustExec("insert into t2 values (1);")
 	tk.MustQuery("select (select count(c_int) from t2 where c_int = t1.c_int) c1, (select count(1) from t2 where c_int = t1.c_int) c2 from t1;").
 		Check(testkit.Rows("1 1", "0 0", "0 0"))
+}
+
+func (s *testIntegrationSerialSuite) TestIssue19804(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test;`)
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
+	tk.MustGetErrMsg("alter table t change a a set('a', 'b', 'c', 'c');", "[types:1291]Column 'a' has duplicated value 'c' in SET")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a enum('a', 'b', 'c'));`)
+	tk.MustGetErrMsg("alter table t change a a enum('a', 'b', 'c', 'c');", "[types:1291]Column 'a' has duplicated value 'c' in ENUM")
+	tk.MustExec(`drop table if exists t;`)
+	tk.MustExec(`create table t(a set('a', 'b', 'c'));`)
+	tk.MustExec(`alter table t change a a set('a', 'b', 'c', 'd');`)
+	tk.MustGetErrMsg(`alter table t change a a set('a', 'b', 'c', 'e', 'f');`, "[ddl:8200]Unsupported modify column: cannot modify set column value d to e")
 }
 
 func (s *testIntegrationSerialSuite) TestIssue18949(c *C) {
