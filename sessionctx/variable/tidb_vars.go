@@ -412,6 +412,9 @@ const (
 
 	// TiDBEnableTelemetry indicates that whether usage data report to PingCAP is enabled.
 	TiDBEnableTelemetry = "tidb_enable_telemetry"
+
+	// TiDBEnableAmendPessimisticTxn indicates if amend pessimistic transactions is enabled.
+	TiDBEnableAmendPessimisticTxn = "tidb_enable_amend_pessimistic_txn"
 )
 
 // Default TiDB system variable values.
@@ -512,6 +515,7 @@ const (
 	DefTiDBEnableCollectExecutionInfo  = true
 	DefTiDBAllowAutoRandExplicitInsert = false
 	DefTiDBEnableTelemetry             = true
+	DefTiDBEnableAmendPessimisticTxn   = false
 )
 
 // Process global variables.
