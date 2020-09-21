@@ -419,7 +419,7 @@ func overrideConfig(cfg *config.Config) {
 	if actualFlags[nmAdvertiseAddress] {
 		cfg.AdvertiseAddress = *advertiseAddress
 	}
-	if len(cfg.AdvertiseAddress) == 0 {
+	if len(cfg.AdvertiseAddress) == 0 && cfg.Host == "0.0.0.0" {
 		cfg.AdvertiseAddress = util.GetLocalIP()
 	}
 	if len(cfg.AdvertiseAddress) == 0 {
