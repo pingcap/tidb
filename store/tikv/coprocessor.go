@@ -670,7 +670,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			it.actionOnExceed.close()
 			return nil, nil
 		}
-		// The respCh have been drained out
+		// The respCh has been drained out
 		it.actionOnExceed.broadcastIfNeeded(len(it.respChan) < 1)
 	} else {
 		for {
@@ -1275,7 +1275,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	e.cond.once.Do(func() {
 		if e.cond.remainingTokenNum < 2 {
 			logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
-				zap.Uint("total token num", e.totalTokenNum))
+				zap.Uint("total token count", e.totalTokenNum))
 			if e.fallbackAction != nil {
 				e.fallbackAction.Action(t)
 			}
@@ -1321,7 +1321,7 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	e.conditionLock()
 	defer e.conditionUnlock()
 	// If actionOnExceed has been triggered and there is no token have been destroyed before,
-	// tear one token.
+	// destroy one token.
 	if e.cond.exceed && !e.cond.isTokenDestroyed {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
