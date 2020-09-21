@@ -5530,14 +5530,12 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 	d := s.dom.DDL()
 	originHook := d.GetHook()
 	d.(ddl.DDLForTest).SetHook(hook)
-	defer d.(ddl.DDLForTest).SetHook(originHook)
 
 	tk.MustExec("create table if not exists t(c1 varchar(256), c2 bigint, `_col$_c2` varchar(10), unique _idx$_idx(c1), unique idx(c2));")
 	tk.MustExec("alter table test.t change column c2 cC2 tinyint after `_col$_c2`")
 	c.Assert(checkErr, IsNil)
 
 	t := testGetTableByName(c, tk.Se, "test", "t")
-	fmt.Println(t.Meta())
 	c.Assert(len(t.Meta().Columns), Equals, 3)
 	c.Assert(t.Meta().Columns[0].Name.O, Equals, "c1")
 	c.Assert(t.Meta().Columns[0].Offset, Equals, 0)
@@ -5557,6 +5555,30 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 	c.Assert(len(t.Meta().Indices[1].Columns), Equals, 1)
 	c.Assert(t.Meta().Indices[1].Columns[0].Name.O, Equals, "cC2")
 	c.Assert(t.Meta().Indices[1].Columns[0].Offset, Equals, 2)
+
+	d.(ddl.DDLForTest).SetHook(originHook)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table if not exists t(c1 bigint, _col$_c1 bigint, _col$__col$_c1_0 bigint, _col$__col$__col$_c1_0_0 bigint)")
+	tk.MustExec("alter table t modify column c1 tinyint")
+	tk.MustExec("alter table t modify column _col$_c1 tinyint")
+	tk.MustExec("alter table t modify column _col$__col$_c1_0 tinyint")
+	tk.MustExec("alter table t change column _col$__col$__col$_c1_0_0  _col$__col$__col$_c1_0_0 tinyint")
+
+	t = testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(len(t.Meta().Columns), Equals, 4)
+	c.Assert(t.Meta().Columns[0].Name.O, Equals, "c1")
+	c.Assert(t.Meta().Columns[0].Tp, Equals, mysql.TypeTiny)
+	c.Assert(t.Meta().Columns[0].Offset, Equals, 0)
+	c.Assert(t.Meta().Columns[1].Name.O, Equals, "_col$_c1")
+	c.Assert(t.Meta().Columns[1].Tp, Equals, mysql.TypeTiny)
+	c.Assert(t.Meta().Columns[1].Offset, Equals, 1)
+	c.Assert(t.Meta().Columns[2].Name.O, Equals, "_col$__col$_c1_0")
+	c.Assert(t.Meta().Columns[2].Tp, Equals, mysql.TypeTiny)
+	c.Assert(t.Meta().Columns[2].Offset, Equals, 2)
+	c.Assert(t.Meta().Columns[3].Name.O, Equals, "_col$__col$__col$_c1_0_0")
+	c.Assert(t.Meta().Columns[3].Tp, Equals, mysql.TypeTiny)
+	c.Assert(t.Meta().Columns[3].Offset, Equals, 3)
 
 	tk.MustExec("drop table if exists t")
 }
