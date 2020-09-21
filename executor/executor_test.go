@@ -6280,6 +6280,7 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 	tk.MustExec("drop table if exists t6")
 	tk.MustExec("create table t6(id int, index(id))")
 	tk.MustQuery(`split table t6 between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
+	tk.MustQuery("split table t6 INDEX id between (0) and (10000) regions 10;").Check(testkit.Rows("10 1"))
 	count := 10
 	for i := 0; i < count; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t5 (id) values (%v)", i))
@@ -6314,10 +6315,8 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		tk.Se.SetSessionManager(sm)
 		s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
 		quota := count * 15
-		if !testcase.useIndex {
-			tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
-			tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
-		}
+		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
+		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
 		for i := 0; i < count; i++ {
 			expect = append(expect, fmt.Sprintf("%v", i))
