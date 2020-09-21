@@ -277,21 +277,19 @@ func (s *RegionRequestSender) onRegionError(bo *Backoffer, ctx *RPCContext, regi
 		logutil.Logger(context.Background()).Debug("tikv reports `NotLeader` retry later",
 			zap.String("notLeader", notLeader.String()),
 			zap.String("ctx", ctx.String()))
-		s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId(), ctx.PeerIdx)
 
-		var boType backoffType
-		if notLeader.GetLeader() != nil {
-			boType = BoUpdateLeader
-		} else {
+		if notLeader.GetLeader() == nil {
 			// The peer doesn't know who is the current leader. Generally it's because
 			// the Raft group is in an election, but it's possible that the peer is
 			// isolated and removed from the Raft group. So it's necessary to reload
 			// the region from PD.
 			s.regionCache.InvalidateCachedRegion(ctx.Region)
-			boType = BoRegionMiss
-		}
-		if err = bo.Backoff(boType, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
-			return false, errors.Trace(err)
+			if err = bo.Backoff(BoRegionMiss, errors.Errorf("not leader: %v, ctx: %v", notLeader, ctx)); err != nil {
+				return false, errors.Trace(err)
+			}
+		} else {
+			// don't backoff if a new leader is returned.
+			s.regionCache.UpdateLeader(ctx.Region, notLeader.GetLeader().GetStoreId(), ctx.PeerIdx)
 		}
 
 		return true, nil
