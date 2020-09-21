@@ -2747,7 +2747,7 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 		}
 		if len(to.Elems) < len(origin.Elems) {
 			msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		for index, originElem := range origin.Elems {
 			toElem := to.Elems[index]
