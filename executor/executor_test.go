@@ -6337,7 +6337,7 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		err := tk.QueryToErr(testcase.sql)
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
-		if testcase.useIndex{
+		if testcase.useIndex {
 			failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockTokenCount")
 		}
 	}
