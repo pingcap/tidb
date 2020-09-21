@@ -425,6 +425,9 @@ func (s *session) doCommit(ctx context.Context) error {
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
+	if s.GetSessionVars().EnableAmendPessimisticTxn {
+		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+	}
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -475,7 +478,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 				zap.Int64("tidb_retry_limit", s.sessionVars.RetryLimit),
 				zap.Bool("tidb_disable_txn_auto_retry", s.sessionVars.DisableTxnAutoRetry))
 		}
-
 	}
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
@@ -653,11 +655,15 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
+				sql := sqlForLog(st.GetTextToLog())
+				if !config.RedactLogEnabled() {
+					sql += sessVars.PreparedParams.String()
+				}
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i),
-					zap.String("sql", sqlForLog(st.OriginText())+sessVars.PreparedParams.String()))
+					zap.String("sql", sql))
 			} else {
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -1984,8 +1990,9 @@ var builtinGlobalVariable = []string{
 	variable.TiDBStoreLimit,
 	variable.TiDBAllowAutoRandExplicitInsert,
 	variable.TiDBSlowLogMasking,
-	variable.TiDBLogDesensitization,
+	variable.TiDBRedactLog,
 	variable.TiDBEnableTelemetry,
+	variable.TiDBEnableAmendPessimisticTxn,
 }
 
 var (
@@ -2164,7 +2171,7 @@ func logStmt(execStmt *executor.ExecStmt, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		if !vars.EnableLogDesensitization {
+		if !config.RedactLogEnabled() {
 			query = query + vars.PreparedParams.String()
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/terror"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -458,6 +459,6 @@ func (*testSuite) TestSessionPool(c *C) {
 }
 
 func (*testSuite) TestErrorCode(c *C) {
-	c.Assert(int(ErrInfoSchemaExpired.ToSQLError().Code), Equals, errno.ErrInfoSchemaExpired)
-	c.Assert(int(ErrInfoSchemaChanged.ToSQLError().Code), Equals, errno.ErrInfoSchemaChanged)
+	c.Assert(int(terror.ToSQLError(ErrInfoSchemaExpired).Code), Equals, errno.ErrInfoSchemaExpired)
+	c.Assert(int(terror.ToSQLError(ErrInfoSchemaChanged).Code), Equals, errno.ErrInfoSchemaChanged)
 }
