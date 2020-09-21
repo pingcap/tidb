@@ -347,6 +347,8 @@ github.com/lzmhhh123/parser v0.0.0-20200921033042-51bdac769fc3 h1:5V4rLAPpfECeOV
 github.com/lzmhhh123/parser v0.0.0-20200921033042-51bdac769fc3/go.mod h1:RlLfMRJwFBSiXd2lUaWdV5pSXtrpyvZM8k5bbZWsheU=
 github.com/lzmhhh123/parser v0.0.0-20200921033652-0fa40b62708d h1:EOSR1qg7XguwP1wIxsp1KkCQrcceLtrDCCw8TuiRfuo=
 github.com/lzmhhh123/parser v0.0.0-20200921033652-0fa40b62708d/go.mod h1:RlLfMRJwFBSiXd2lUaWdV5pSXtrpyvZM8k5bbZWsheU=
+github.com/lzmhhh123/parser v0.0.0-20200921035328-1f44489f0faf h1:lDVFUkZ54YqgBRWWWz9UsamObNs/feGM8P0RURqvsws=
+github.com/lzmhhh123/parser v0.0.0-20200921035328-1f44489f0faf/go.mod h1:RlLfMRJwFBSiXd2lUaWdV5pSXtrpyvZM8k5bbZWsheU=
 github.com/magiconair/properties v1.8.0/go.mod h1:PppfXfuXeibc/6YijjN8zIbojt8czPbwD3XqdrwzmxQ=
 github.com/mailru/easyjson v0.0.0-20180823135443-60711f1a8329/go.mod h1:C1wdFJiN94OJF2b5HbByQZoLdCWB1Yqtg26g4irojpc=
 github.com/mailru/easyjson v0.0.0-20190614124828-94de47d64c63/go.mod h1:C1wdFJiN94OJF2b5HbByQZoLdCWB1Yqtg26g4irojpc=
