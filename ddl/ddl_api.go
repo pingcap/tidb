@@ -2742,32 +2742,18 @@ func checkModifyTypes(origin *types.FieldType, to *types.FieldType, needRewriteC
 			typeVar = "set"
 		}
 		if origin.Tp != to.Tp {
-<<<<<<< HEAD
-			msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
-			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-		if len(to.Elems) < len(origin.Elems) {
-			msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
-			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-=======
 			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
-			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
+			return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		if len(to.Elems) < len(origin.Elems) {
 			msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
->>>>>>> 73e03c7... ddl: check constraint when alter enum/set type column (#19806)
 		}
 		for index, originElem := range origin.Elems {
 			toElem := to.Elems[index]
 			if originElem != toElem {
-<<<<<<< HEAD
-				msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
-				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
-=======
 				msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
-				return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
->>>>>>> 73e03c7... ddl: check constraint when alter enum/set type column (#19806)
+				return errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 		}
 	case mysql.TypeNewDecimal:
@@ -3008,15 +2994,11 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 		return nil, errors.Trace(err)
 	}
 
-<<<<<<< HEAD
-	if err = checkModifyTypes(&col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
-=======
 	if err = checkColumnValueConstraint(newCol, newCol.Collate); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	if err = checkModifyTypes(ctx, &col.FieldType, &newCol.FieldType, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
->>>>>>> 73e03c7... ddl: check constraint when alter enum/set type column (#19806)
 		if strings.Contains(err.Error(), "Unsupported modifying collation") {
 			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
 			err = errUnsupportedModifyCollation.GenWithStack(colErrMsg, col.Name.L, col.Collate, newCol.Collate)
