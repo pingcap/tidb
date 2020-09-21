@@ -571,7 +571,7 @@ func (it *copIterator) open(ctx context.Context) {
 	}
 	taskSender.respChan = it.respChan
 	go taskSender.run()
-	it.actionOnExceed.enabled = true
+	it.actionOnExceed.setEnabled(true)
 }
 
 func (sender *copIteratorTaskSender) run() {
@@ -1233,8 +1233,11 @@ func (it copErrorResponse) Close() error {
 // set on initial. Each time the Action is triggered, one token would be destroyed. If the count of the token is less
 // than 2, the action would be delegated to the fallback action.
 type rateLimitAction struct {
-	// enabled indicates whether the coprocessor is running. rateLimitAction only Action when enabled is true.
-	enabled        bool
+	enabledMu struct {
+		sync.RWMutex
+		// enabled indicates whether the coprocessor is running. rateLimitAction only Action when enabled is true.
+		enabled bool
+	}
 	fallbackAction memory.ActionOnExceed
 	// totalTokenNum indicates the total token at initial
 	totalTokenNum uint
@@ -1272,11 +1275,11 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 func (e *rateLimitAction) Action(t *memory.Tracker) {
 	failpoint.Inject("testRateLimitActionDisable", func(val failpoint.Value) {
 		if val.(bool) {
-			e.enabled = false
+			e.setEnabled(false)
 		}
 	})
 
-	if !e.enabled {
+	if !e.isEnabled() {
 		if e.fallbackAction != nil {
 			e.fallbackAction.Action(t)
 		}
@@ -1359,13 +1362,25 @@ func (e *rateLimitAction) conditionUnlock() {
 }
 
 func (e *rateLimitAction) close() {
-	e.enabled = false
+	e.setEnabled(false)
 	e.conditionLock()
 	defer e.conditionUnlock()
 	e.cond.exceed = false
 	e.cond.isTokenDestroyed = false
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
 	e.cond.Broadcast()
+}
+
+func (e *rateLimitAction) setEnabled(enabled bool) {
+	e.enabledMu.Lock()
+	defer e.enabledMu.Unlock()
+	e.enabledMu.enabled = enabled
+}
+
+func (e *rateLimitAction) isEnabled() bool {
+	e.enabledMu.RLock()
+	defer e.enabledMu.RUnlock()
+	return e.enabledMu.enabled
 }
 
 type maxIDHandler struct {
