@@ -773,9 +773,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 	commitDetail.PrewriteTime = time.Since(start)
 	if prewriteBo.totalSleep > 0 {
 		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(prewriteBo.totalSleep)*int64(time.Millisecond))
-		commitDetail.Mu.Lock()
-		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, prewriteBo.types...)
-		commitDetail.Mu.Unlock()
+		commitDetail.RecordBackoff(prewriteBo.types)
 	}
 	if binlogChan != nil {
 		startWaitBinlog := time.Now()
@@ -890,9 +888,7 @@ func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *execdet
 	commitDetail.CommitTime = time.Since(start)
 	if commitBo.totalSleep > 0 {
 		atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(commitBo.totalSleep)*int64(time.Millisecond))
-		commitDetail.Mu.Lock()
-		commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, commitBo.types...)
-		commitDetail.Mu.Unlock()
+		commitDetail.RecordBackoff(commitBo.types)
 	}
 	if err != nil {
 		if undeterminedErr := c.getUndeterminedErr(); undeterminedErr != nil {
@@ -1233,9 +1229,7 @@ func (batchExe *batchExecutor) startWorker(exitCh chan struct{}, ch chan error, 
 				if commitDetail != nil { // lock operations of pessimistic-txn will let commitDetail be nil
 					if delta := singleBatchBackoffer.totalSleep - beforeSleep; delta > 0 {
 						atomic.AddInt64(&commitDetail.CommitBackoffTime, int64(singleBatchBackoffer.totalSleep-beforeSleep)*int64(time.Millisecond))
-						commitDetail.Mu.Lock()
-						commitDetail.Mu.BackoffTypes = append(commitDetail.Mu.BackoffTypes, singleBatchBackoffer.types...)
-						commitDetail.Mu.Unlock()
+						commitDetail.RecordBackoff(singleBatchBackoffer.types)
 					}
 				}
 			}()

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/util/execdetails"
 	"strconv"
 	"strings"
 
@@ -1051,10 +1052,13 @@ func (e *Explain) explainPlanInRowFormat(p Plan, taskType, driverSide, indent st
 	return
 }
 
-func getRuntimeInfo(ctx sessionctx.Context, p Plan) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
-	runtimeStatsColl := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+func getRuntimeInfo(ctx sessionctx.Context, p Plan, otherRuntimeStatsColl *execdetails.RuntimeStatsColl) (actRows, analyzeInfo, memoryInfo, diskInfo string) {
+	runtimeStatsColl := otherRuntimeStatsColl
 	if runtimeStatsColl == nil {
-		return
+		runtimeStatsColl = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+		if runtimeStatsColl == nil {
+			return
+		}
 	}
 	explainID := p.ID()
 
@@ -1114,7 +1118,7 @@ func (e *Explain) prepareOperatorInfo(p Plan, taskType, driverSide, indent strin
 
 	var row []string
 	if e.Analyze {
-		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p)
+		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(e.ctx, p,nil)
 		row = []string{id, estRows, actRows, taskType, accessObject, analyzeInfo, operatorInfo, memoryInfo, diskInfo}
 	} else {
 		row = []string{id, estRows, taskType, accessObject, operatorInfo}

@@ -160,7 +160,7 @@ type stmtSummaryByDigestElement struct {
 	sumExecRetryCount    int64
 	sumExecRetryTime     time.Duration
 	sumBackoffTimes      int64
-	backoffTypes         map[fmt.Stringer]int
+	backoffTypes         map[string]int
 	authUsers            map[string]struct{}
 	// other
 	sumMem          int64
@@ -179,7 +179,8 @@ type stmtSummaryByDigestElement struct {
 	execRetryCount uint
 	execRetryTime  time.Duration
 
-	totalExecStats []execdetails.RootRuntimeStats
+	totalExecStats []*execdetails.RootRuntimeStats
+	renderPlan     func(total []*execdetails.RootRuntimeStats) string
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -210,6 +211,7 @@ type StmtExecInfo struct {
 	ExecRetryTime  time.Duration
 	ExecStats      *execdetails.RuntimeStatsColl
 	MergeStats     func(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl) []*execdetails.RootRuntimeStats
+	RenderPlan     func(total []*execdetails.RootRuntimeStats) string
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -591,10 +593,11 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		minLatency:    sei.TotalLatency,
 		firstSeen:     sei.StartTime,
 		lastSeen:      sei.StartTime,
-		backoffTypes:  make(map[fmt.Stringer]int),
+		backoffTypes:  make(map[string]int),
 		authUsers:     make(map[string]struct{}),
 		planInCache:   false,
 		planCacheHits: 0,
+		renderPlan: sei.RenderPlan,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -734,9 +737,9 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 			ssElement.maxTxnRetry = commitDetails.TxnRetry
 		}
 		commitDetails.Mu.Lock()
-		ssElement.sumBackoffTimes += int64(len(commitDetails.Mu.BackoffTypes))
-		for _, backoffType := range commitDetails.Mu.BackoffTypes {
-			ssElement.backoffTypes[backoffType] += 1
+		for tp,cnt := range commitDetails.Mu.BackoffTypes {
+			ssElement.sumBackoffTimes += int64(cnt)
+			ssElement.backoffTypes[tp] += 1
 		}
 		commitDetails.Mu.Unlock()
 	}
@@ -769,6 +772,10 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		ssElement.execRetryCount += sei.ExecRetryCount
 		ssElement.execRetryTime += sei.ExecRetryTime
 	}
+
+	if sei.MergeStats != nil && sei.ExecStats != nil {
+		ssElement.totalExecStats = sei.MergeStats(ssElement.totalExecStats,sei.ExecStats)
+	}
 }
 
 func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
@@ -779,6 +786,10 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 	if err != nil {
 		logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssElement.samplePlan), zap.Error(err))
 		plan = ""
+	}
+	var totalPlanTree string
+	if ssElement.renderPlan != nil {
+		totalPlanTree = ssElement.renderPlan(ssElement.totalExecStats)
 	}
 
 	sampleUser := ""
@@ -861,6 +872,7 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		ssElement.prevSQL,
 		ssbd.planDigest,
 		plan,
+		totalPlanTree,
 	)
 }
 
@@ -875,9 +887,9 @@ func formatSQL(sql string) string {
 }
 
 // Format the backoffType map to a string or nil.
-func formatBackoffTypes(backoffMap map[fmt.Stringer]int) interface{} {
+func formatBackoffTypes(backoffMap map[string]int) interface{} {
 	type backoffStat struct {
-		backoffType fmt.Stringer
+		backoffType string
 		count       int
 	}
 

@@ -1048,11 +1048,18 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 
 	if sessVars.StmtCtx.RuntimeStatsColl != nil {
 		mergeStats := func(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl) []*execdetails.RootRuntimeStats {
+			//fmt.Printf("\ndepth start------\n")
 			depth := 0
 			return mergeRuntimeStats(total, rsColl, a.Plan, &depth, make(map[int]bool))
 		}
 		stmtExecInfo.ExecStats = sessVars.StmtCtx.RuntimeStatsColl
 		stmtExecInfo.MergeStats = mergeStats
+		stmtExecInfo.RenderPlan = func(total []*execdetails.RootRuntimeStats) string {
+			statsColl := execdetails.NewRuntimeStatsColl()
+			depth := 0
+			buildRuntimeStats(total,statsColl,a.Plan,&depth,make(map[int]bool))
+			return plannercore.RenderPlanTree(a.Plan,statsColl)
+		}
 	}
 
 	if a.retryCount > 0 {
@@ -1061,28 +1068,52 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
 }
 
-func mergeRuntimeStats(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl, plan plannercore.Plan, depth *int, added map[int]bool) []*execdetails.RootRuntimeStats {
-	id := plan.ID()
-	if !rsColl.ExistsRootStats(id) {
+func buildRuntimeStats(total []*execdetails.RootRuntimeStats,rsColl *execdetails.RuntimeStatsColl, plan plannercore.Plan, id *int, added map[int]bool) {
+	pid := plan.ID()
+	if len(total) <=  *id {
+		return
+	}
+	rsColl.RegisterRootStats(pid,total[*id])
+	added[pid]=true
+	*id++
+
+	selectPlan := plannercore.GetSelectPlan(plan)
+	if selectPlan == nil {
+		return
+	}
+	if !added[selectPlan.ID()] {
+		buildRuntimeStats(total, rsColl, selectPlan, id, added)
+	}
+	for _, child := range selectPlan.Children() {
+		buildRuntimeStats(total, rsColl, child, id, added)
+	}
+	return
+}
+
+
+func mergeRuntimeStats(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl, plan plannercore.Plan, id *int, added map[int]bool) []*execdetails.RootRuntimeStats {
+	pid := plan.ID()
+	if !rsColl.ExistsRootStats(pid) {
 		return total
 	}
-	for len(total) <= *depth {
+	//fmt.Printf("id: %v ------\n", *id)
+	for len(total) <= *id {
 		total = append(total, &execdetails.RootRuntimeStats{})
 	}
-	stats := rsColl.GetRootStats(id)
-	total[*depth].Merge(stats)
-	added[id] = true
-	*depth++
+	stats := rsColl.GetRootStats(pid)
+	total[*id].Merge(stats)
+	added[pid] = true
+	*id++
 
 	selectPlan := plannercore.GetSelectPlan(plan)
 	if selectPlan == nil {
 		return total
 	}
 	if !added[selectPlan.ID()] {
-		total = mergeRuntimeStats(total, rsColl, selectPlan, depth, added)
+		total = mergeRuntimeStats(total, rsColl, selectPlan, id, added)
 	}
 	for _, child := range selectPlan.Children() {
-		total = mergeRuntimeStats(total, rsColl, child, depth, added)
+		total = mergeRuntimeStats(total, rsColl, child, id, added)
 	}
 	return total
 }

@@ -57,6 +57,17 @@ func DecodePlan(planString string) (string, error) {
 	return pd.decode(planString)
 }
 
+func RenderPlanTree(planString string) (string, error) {
+	if len(planString) == 0 {
+		return "", nil
+	}
+	pd := decoderPool.Get().(*planDecoder)
+	defer decoderPool.Put(pd)
+	pd.buf.Reset()
+	pd.addHeader = true
+	return pd.buildPlanTree(planString)
+}
+
 // DecodeNormalizedPlan decodes the string to plan tree.
 func DecodeNormalizedPlan(planString string) (string, error) {
 	if len(planString) == 0 {

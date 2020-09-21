@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"github.com/pingcap/tidb/util/execdetails"
 	"hash"
 	"sync"
 
@@ -52,14 +53,33 @@ func EncodePlan(p Plan) string {
 	return pn.encodePlanTree(p)
 }
 
+func RenderPlanTree(p Plan, statsColl *execdetails.RuntimeStatsColl) string {
+	pn := encoderPool.Get().(*planEncoder)
+	defer encoderPool.Put(pn)
+	if p == nil || p.SCtx() == nil {
+		return ""
+	}
+	selectPlan := getSelectPlan(p)
+	if selectPlan != nil {
+		failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
+			selectPlan.statsInfo().RowCount = float64(val.(int))
+		})
+	}
+	pn.encodedPlans = make(map[int]bool)
+	pn.buf.Reset()
+	pn.encodePlan(p, true, 0,statsColl)
+	result, _ := plancodec.RenderPlanTree(pn.buf.String())
+	return result
+}
+
 func (pn *planEncoder) encodePlanTree(p Plan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
-	pn.encodePlan(p, true, 0)
+	pn.encodePlan(p, true, 0,nil)
 	return plancodec.Compress(pn.buf.Bytes())
 }
 
-func (pn *planEncoder) encodePlan(p Plan, isRoot bool, depth int) {
+func (pn *planEncoder) encodePlan(p Plan, isRoot bool, depth int,otherRuntimeStatsColl *execdetails.RuntimeStatsColl) {
 	var storeType kv.StoreType = kv.UnSpecified
 	if !isRoot {
 		switch copPlan := p.(type) {
@@ -72,7 +92,7 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, depth int) {
 		}
 	}
 	taskTypeInfo := plancodec.EncodeTaskType(isRoot, storeType)
-	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p)
+	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p,otherRuntimeStatsColl)
 	rowCount := 0.0
 	if statsInfo := p.statsInfo(); statsInfo != nil {
 		rowCount = p.statsInfo().RowCount
@@ -86,29 +106,29 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, depth int) {
 		return
 	}
 	if !pn.encodedPlans[selectPlan.ID()] {
-		pn.encodePlan(selectPlan, isRoot, depth)
+		pn.encodePlan(selectPlan, isRoot, depth,otherRuntimeStatsColl)
 		return
 	}
 	for _, child := range selectPlan.Children() {
 		if pn.encodedPlans[child.ID()] {
 			continue
 		}
-		pn.encodePlan(child.(PhysicalPlan), isRoot, depth)
+		pn.encodePlan(child.(PhysicalPlan), isRoot, depth,otherRuntimeStatsColl)
 	}
 	switch copPlan := selectPlan.(type) {
 	case *PhysicalTableReader:
-		pn.encodePlan(copPlan.tablePlan, false, depth)
+		pn.encodePlan(copPlan.tablePlan, false, depth,otherRuntimeStatsColl)
 	case *PhysicalIndexReader:
-		pn.encodePlan(copPlan.indexPlan, false, depth)
+		pn.encodePlan(copPlan.indexPlan, false, depth,otherRuntimeStatsColl)
 	case *PhysicalIndexLookUpReader:
-		pn.encodePlan(copPlan.indexPlan, false, depth)
-		pn.encodePlan(copPlan.tablePlan, false, depth)
+		pn.encodePlan(copPlan.indexPlan, false, depth,otherRuntimeStatsColl)
+		pn.encodePlan(copPlan.tablePlan, false, depth,otherRuntimeStatsColl)
 	case *PhysicalIndexMergeReader:
 		for _, p := range copPlan.partialPlans {
-			pn.encodePlan(p, false, depth)
+			pn.encodePlan(p, false, depth,otherRuntimeStatsColl)
 		}
 		if copPlan.tablePlan != nil {
-			pn.encodePlan(copPlan.tablePlan, false, depth)
+			pn.encodePlan(copPlan.tablePlan, false, depth,otherRuntimeStatsColl)
 		}
 	}
 }

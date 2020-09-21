@@ -79,13 +79,21 @@ type CommitDetails struct {
 	CommitBackoffTime      int64
 	Mu                     struct {
 		sync.Mutex
-		BackoffTypes []fmt.Stringer
+		BackoffTypes map[string]int
 	}
 	ResolveLockTime   int64
 	WriteKeys         int
 	WriteSize         int
 	PrewriteRegionNum int32
 	TxnRetry          int
+}
+
+func (cd *CommitDetails) RecordBackoff(backoffs []fmt.Stringer) {
+	cd.Mu.Lock()
+	for _,backoff := range backoffs {
+		cd.Mu.BackoffTypes[backoff.String()]++
+	}
+	cd.Mu.Unlock()
 }
 
 // Merge merges commit details into itself.
@@ -101,7 +109,12 @@ func (cd *CommitDetails) Merge(other *CommitDetails) {
 	cd.WriteSize += other.WriteSize
 	cd.PrewriteRegionNum += other.PrewriteRegionNum
 	cd.TxnRetry += other.TxnRetry
-	cd.Mu.BackoffTypes = append(cd.Mu.BackoffTypes, other.Mu.BackoffTypes...)
+	if cd.Mu.BackoffTypes == nil {
+		cd.Mu.BackoffTypes = make(map[string]int, len(other.Mu.BackoffTypes))
+	}
+	for k,v := range other.Mu.BackoffTypes {
+		cd.Mu.BackoffTypes[k]+=v
+	}
 }
 
 // Clone returns a deep copy of itself.
@@ -119,7 +132,12 @@ func (cd *CommitDetails) Clone() *CommitDetails {
 		PrewriteRegionNum:      cd.PrewriteRegionNum,
 		TxnRetry:               cd.TxnRetry,
 	}
-	commit.Mu.BackoffTypes = append([]fmt.Stringer{}, cd.Mu.BackoffTypes...)
+	if cd.Mu.BackoffTypes != nil {
+		commit.Mu.BackoffTypes = make(map[string]int, len(cd.Mu.BackoffTypes))
+		for k,v := range cd.Mu.BackoffTypes {
+			commit.Mu.BackoffTypes[k]=v
+		}
+	}
 	return commit
 }
 
@@ -258,7 +276,7 @@ func (d ExecDetails) String() string {
 		}
 		commitDetails.Mu.Lock()
 		if len(commitDetails.Mu.BackoffTypes) > 0 {
-			parts = append(parts, BackoffTypesStr+": "+fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes))
+			parts = append(parts, BackoffTypesStr+": "+ formatBackoff(commitDetails.Mu.BackoffTypes))
 		}
 		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
@@ -326,7 +344,7 @@ func (d ExecDetails) ToZapFields() (fields []zap.Field) {
 		}
 		commitDetails.Mu.Lock()
 		if len(commitDetails.Mu.BackoffTypes) > 0 {
-			fields = append(fields, zap.String("backoff_types", fmt.Sprintf("%v", commitDetails.Mu.BackoffTypes)))
+			fields = append(fields, zap.String("backoff_types", formatBackoff(commitDetails.Mu.BackoffTypes)))
 		}
 		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
@@ -607,6 +625,12 @@ func NewRuntimeStatsColl() *RuntimeStatsColl {
 		copStats: make(map[int]*CopRuntimeStats)}
 }
 
+func (e *RuntimeStatsColl) RegisterRootStats(planID int, stats *RootRuntimeStats) {
+	e.mu.Lock()
+	e.rootStats[planID] = stats
+	e.mu.Unlock()
+}
+
 // RegisterStats register execStat for a executor.
 func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 	e.mu.Lock()
@@ -767,7 +791,19 @@ func (e *RuntimeStatsWithConcurrencyInfo) Merge(rs RuntimeStats) {
 	if !ok {
 		return
 	}
-	e.concurrency = append(e.concurrency, tmp.concurrency...)
+	for _,i := range tmp.concurrency {
+		found := false
+		for _,j := range e.concurrency {
+			if i.concurrencyName == j.concurrencyName {
+				j.concurrencyNum+=i.concurrencyNum
+				found=true
+				break
+			}
+		}
+		if !found {
+			e.concurrency = append(e.concurrency, i)
+		}
+	}
 }
 
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.
@@ -842,7 +878,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 			e.Commit.Mu.Lock()
 			if len(e.Commit.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
-				buf.WriteString(e.formatBackoff(e.Commit.Mu.BackoffTypes))
+				buf.WriteString(formatBackoff(e.Commit.Mu.BackoffTypes))
 			}
 			e.Commit.Mu.Unlock()
 			buf.WriteString("}")
@@ -898,7 +934,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 			e.LockKeys.Mu.Lock()
 			if len(e.LockKeys.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
-				buf.WriteString(e.formatBackoff(e.LockKeys.Mu.BackoffTypes))
+				buf.WriteString(formatBackoff(e.LockKeys.Mu.BackoffTypes))
 			}
 			e.LockKeys.Mu.Unlock()
 			buf.WriteString("}")
@@ -920,20 +956,13 @@ func (e *RuntimeStatsWithCommit) String() string {
 	return buf.String()
 }
 
-func (e *RuntimeStatsWithCommit) formatBackoff(backoffTypes []fmt.Stringer) string {
+func formatBackoff(backoffTypes map[string]int) string {
 	if len(backoffTypes) == 0 {
 		return ""
 	}
-	tpMap := make(map[string]struct{})
 	tpArray := []string{}
-	for _, tp := range backoffTypes {
-		tpStr := tp.String()
-		_, ok := tpMap[tpStr]
-		if ok {
-			continue
-		}
-		tpMap[tpStr] = struct{}{}
-		tpArray = append(tpArray, tpStr)
+	for tp := range backoffTypes {
+		tpArray = append(tpArray, tp)
 	}
 	sort.Strings(tpArray)
 	return fmt.Sprintf("%v", tpArray)
