@@ -482,8 +482,9 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		}
 	})
 
-	if firstIsPrimary && (actionIsCommit || actionIsCleanup || actionIsPessimiticLock) {
-		// primary should be committed/cleanup/pessimistically locked first
+	if firstIsPrimary &&
+		((actionIsCommit && !c.isAsyncCommit()) || actionIsCleanup || actionIsPessimiticLock) {
+		// primary should be committed(not async commit)/cleanup/pessimistically locked first
 		err = c.doActionOnBatches(bo, action, batchBuilder.primaryBatch())
 		if err != nil {
 			return errors.Trace(err)
@@ -494,12 +495,9 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		}
 		batchBuilder.forgetPrimary()
 	}
-	if actionIsCommit && !actionCommit.retry {
-		// Commit secondary batches in background goroutine to reduce latency.
-		// The backoffer instance is created outside of the goroutine to avoid
-		// potential data race in unit test since `CommitMaxBackoff` will be updated
-		// by test suites.
-		secondaryBo := NewBackofferWithVars(context.Background(), CommitMaxBackoff, c.txn.vars)
+	// Already spawned a goroutine for async commit transaction.
+	if actionIsCommit && !actionCommit.retry && !c.isAsyncCommit() {
+		secondaryBo := NewBackofferWithVars(context.Background(), int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
 		go func() {
 			e := c.doActionOnBatches(secondaryBo, action, batchBuilder.allBatches())
 			if e != nil {
@@ -692,10 +690,10 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 // checkAsyncCommit checks if async commit protocol is available for current transaction commit, true is returned if possible.
 func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 	// TODO the keys limit need more tests, this value makes the unit test pass by now.
-	const asyncCommitKeysLimit = 256
 	// Async commit is not compatible with Binlog because of the non unique timestamp issue.
 	if c.connID > 0 && config.GetGlobalConfig().TiKVClient.EnableAsyncCommit &&
-		len(c.mutations.keys) <= asyncCommitKeysLimit && !c.shouldWriteBinlog() {
+		uint(len(c.mutations.keys)) <= config.GetGlobalConfig().TiKVClient.AsyncCommitKeysLimit &&
+		!c.shouldWriteBinlog() {
 		return true
 	}
 	return false
@@ -870,7 +868,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 				failpoint.Return()
 			})
 			defer c.ttlManager.close()
-			commitBo := NewBackofferWithVars(ctx, CommitMaxBackoff, c.txn.vars)
+			commitBo := NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
 			err := c.commitMutations(commitBo, c.mutations)
 			if err != nil {
 				logutil.Logger(ctx).Warn("2PC async commit failed", zap.Uint64("connID", c.connID),
@@ -887,7 +885,7 @@ func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *execdet
 	c.txn.GetMemBuffer().DiscardValues()
 	start := time.Now()
 
-	commitBo := NewBackofferWithVars(ctx, CommitMaxBackoff, c.txn.vars)
+	commitBo := NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
 	err := c.commitMutations(commitBo, c.mutations)
 	commitDetail.CommitTime = time.Since(start)
 	if commitBo.totalSleep > 0 {

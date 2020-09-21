@@ -44,7 +44,7 @@ ARCH      := "`uname -s`"
 LINUX     := "Linux"
 MAC       := "Darwin"
 PACKAGE_LIST  := go list ./...| grep -vE "cmd"
-PACKAGES  := $$($(PACKAGE_LIST))
+PACKAGES  ?= $$($(PACKAGE_LIST))
 PACKAGE_DIRECTORIES := $(PACKAGE_LIST) | sed 's|github.com/pingcap/$(PROJECT)/||'
 FILES     := $$(find $$($(PACKAGE_DIRECTORIES)) -name "*.go")
 
@@ -160,7 +160,7 @@ test_part_1: checklist explaintest
 
 test_part_2: checkdep gotest gogenerate
 
-explaintest: server
+explaintest: server_check
 	@cd cmd/explaintest && ./run-tests.sh -s ../../bin/tidb-server
 
 ddltest:
