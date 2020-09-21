@@ -817,6 +817,12 @@ type SelectStmt struct {
 
 // Restore implements Node interface.
 func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
+	if n.IsInBraces {
+		ctx.WritePlain("(")
+		defer func() {
+			ctx.WritePlain(")")
+		}()
+	}
 	ctx.WriteKeyWord("SELECT ")
 
 	if n.SelectStmtOpts.Priority > 0 {
@@ -1050,14 +1056,8 @@ func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WriteKeyWord(" " + selectStmt.AfterSetOperator.String() + " ")
 			}
-			if selectStmt.IsInBraces {
-				ctx.WritePlain("(")
-			}
 			if err := selectStmt.Restore(ctx); err != nil {
 				return errors.Annotate(err, "An error occurred while restore SetOprSelectList.SelectStmt")
-			}
-			if selectStmt.IsInBraces {
-				ctx.WritePlain(")")
 			}
 		case *SetOprSelectList:
 			if i != 0 {
