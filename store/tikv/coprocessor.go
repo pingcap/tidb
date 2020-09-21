@@ -68,18 +68,17 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		return copErrorResponse{err}
 	}
 	it := &copIterator{
-		store:             c.store,
-		req:               req,
-		concurrency:       req.Concurrency,
-		finishCh:          make(chan struct{}),
-		vars:              vars,
-		memTracker:        req.MemTracker,
-		replicaReadSeed:   c.replicaReadSeed,
-		rpcCancel:         NewRPCanceller(),
-		taskFinishHandler: &taskFinishHandler{},
+		store:           c.store,
+		req:             req,
+		concurrency:     req.Concurrency,
+		finishCh:        make(chan struct{}),
+		vars:            vars,
+		memTracker:      req.MemTracker,
+		replicaReadSeed: c.replicaReadSeed,
+		rpcCancel:       NewRPCanceller(),
+		maxID:           &maxIDHandler{},
 	}
-	it.taskFinishHandler.maxID = 0
-	it.taskFinishHandler.finishedTaskCount = 0
+	it.maxID.maxID = 0
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -400,8 +399,8 @@ type copIterator struct {
 	// curr indicates the curr id of the finished copTask
 	curr int
 
-	// taskFinishHandler handle the task finish status
-	taskFinishHandler *taskFinishHandler
+	// maxID indicates the max id of the running copTask
+	maxID *maxIDHandler
 
 	// sendRate controls the sending rate of copIteratorTaskSender
 	sendRate *rateLimit
@@ -447,7 +446,7 @@ type copIteratorWorker struct {
 
 	actionOnExceed *rateLimitAction
 
-	taskFinishHandler *taskFinishHandler
+	maxID *maxIDHandler
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -524,7 +523,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
 
-		worker.taskFinishHandler.finishOneTask(task.id)
+		worker.maxID.setMaxIDIfLarger(task.id)
 
 		worker.actionOnExceed.destroyTokenIfNeeded(func() {
 			worker.sendRate.putToken()
@@ -566,10 +565,10 @@ func (it *copIterator) open(ctx context.Context) {
 
 			memTracker: it.memTracker,
 
-			replicaReadSeed:   it.replicaReadSeed,
-			sendRate:          it.sendRate,
-			actionOnExceed:    it.actionOnExceed,
-			taskFinishHandler: it.taskFinishHandler,
+			replicaReadSeed: it.replicaReadSeed,
+			sendRate:        it.sendRate,
+			actionOnExceed:  it.actionOnExceed,
+			maxID:           it.maxID,
 		}
 		go worker.run(ctx)
 	}
@@ -701,17 +700,12 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// Switch to next task.
 			it.tasks[it.curr] = nil
 			it.curr++
-			maxID := it.taskFinishHandler.getMaxID()
+			maxID := it.maxID.getMaxID()
 			// The tasks whose id is less than maxID are assumed that being sending to their task channel.
 			// So the response channel would be thought as drained out if the current taskID is greater or equal than
 			// the maxID as all the workers are being suspended at that time.
 			it.actionOnExceed.broadcastIfNeeded(finishedTaskID >= maxID)
 		}
-	}
-
-	// If all tasks have been read, close actionOnExceed directly
-	if it.taskFinishHandler.getFinishedTaskCount() >= uint(len(it.tasks)) {
-		it.actionOnExceed.close()
 	}
 
 	if resp.err != nil {
@@ -1371,29 +1365,21 @@ func (e *rateLimitAction) close() {
 	e.cond.Broadcast()
 }
 
-type taskFinishHandler struct {
-	sync.RWMutex
-	maxID             uint32
-	finishedTaskCount uint
+type maxIDHandler struct {
+	sync.Mutex
+	maxID uint32
 }
 
-func (handler *taskFinishHandler) getMaxID() uint32 {
-	handler.RLock()
-	defer handler.RUnlock()
+func (handler *maxIDHandler) getMaxID() uint32 {
+	handler.Lock()
+	defer handler.Unlock()
 	return handler.maxID
 }
 
-func (handler *taskFinishHandler) getFinishedTaskCount() uint {
-	handler.RLock()
-	defer handler.RUnlock()
-	return handler.finishedTaskCount
-}
-
-func (handler *taskFinishHandler) finishOneTask(taskID uint32) {
+func (handler *maxIDHandler) setMaxIDIfLarger(newID uint32) {
 	handler.Lock()
 	defer handler.Unlock()
-	if taskID > handler.maxID {
-		handler.maxID = taskID
+	if newID > handler.maxID {
+		handler.maxID = newID
 	}
-	handler.finishedTaskCount++
 }
