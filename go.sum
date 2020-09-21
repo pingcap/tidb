@@ -469,6 +469,7 @@ github.com/pingcap/parser v0.0.0-20200603032439-c4ecb4508d2f/go.mod h1:9v0Edh8Ib
 github.com/pingcap/parser v0.0.0-20200623164729-3a18f1e5dceb/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/pingcap/parser v0.0.0-20200803072748-fdf66528323d/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/pingcap/parser v0.0.0-20200901062802-475ea5e2e0a7/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
+github.com/pingcap/parser v0.0.0-20200902091735-5e6adfc24e11/go.mod h1:vQdbJqobJAgFyiRNNtXahpMoGWwPEuWciVEK5A20NS0=
 github.com/pingcap/parser v0.0.0-20200921032640-d08ba79f0941 h1:aowdu3A4D1AyoA+UcgZbxeFaU0XvnhcET9Iirxd4yHs=
 github.com/pingcap/parser v0.0.0-20200921032640-d08ba79f0941/go.mod h1:dMMvhqeowLnAsDWspyalgxXoRUnP09cZ7wAnpt2e/S8=
 github.com/pingcap/pd/v4 v4.0.0-rc.1.0.20200422143320-428acd53eba2/go.mod h1:s+utZtXDznOiL24VK0qGmtoHjjXNsscJx3m1n8cC56s=
