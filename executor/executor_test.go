@@ -6267,7 +6267,7 @@ func (s *testSuite) TestIssue13758(c *C) {
 	))
 }
 
-func (s *testSuite) TestCoprocessorOOMAction(c *C) {
+func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	// Assert Coprocessor OOMAction
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
