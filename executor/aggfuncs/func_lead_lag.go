@@ -14,9 +14,16 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+)
+
+const (
+	// DefPartialResult4LeadLagSize is the size of partialResult4LeadLag
+	DefPartialResult4LeadLagSize = int64(unsafe.Sizeof(partialResult4LeadLag{}))
 )
 
 type baseLeadLag struct {
@@ -33,7 +40,7 @@ type partialResult4LeadLag struct {
 }
 
 func (v *baseLeadLag) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(&partialResult4LeadLag{}), 0
+	return PartialResult(&partialResult4LeadLag{}), DefPartialResult4LeadLagSize
 }
 
 func (v *baseLeadLag) ResetPartialResult(pr PartialResult) {
@@ -45,7 +52,8 @@ func (v *baseLeadLag) ResetPartialResult(pr PartialResult) {
 func (v *baseLeadLag) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4LeadLag)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
-	return 0, nil
+	memDelta += int64(len(rowsInGroup)) * DefRowSize
+	return memDelta, nil
 }
 
 type lead struct {
@@ -56,9 +64,9 @@ func (v *lead) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult
 	p := (*partialResult4LeadLag)(pr)
 	var err error
 	if p.curIdx+v.offset < uint64(len(p.rows)) {
-		err = v.evaluateRow(sctx, v.args[0], p.rows[p.curIdx+v.offset])
+		_, err = v.evaluateRow(sctx, v.args[0], p.rows[p.curIdx+v.offset])
 	} else {
-		err = v.evaluateRow(sctx, v.defaultExpr, p.rows[p.curIdx])
+		_, err = v.evaluateRow(sctx, v.defaultExpr, p.rows[p.curIdx])
 	}
 	if err != nil {
 		return err
@@ -76,9 +84,9 @@ func (v *lag) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult,
 	p := (*partialResult4LeadLag)(pr)
 	var err error
 	if p.curIdx >= v.offset {
-		err = v.evaluateRow(sctx, v.args[0], p.rows[p.curIdx-v.offset])
+		_, err = v.evaluateRow(sctx, v.args[0], p.rows[p.curIdx-v.offset])
 	} else {
-		err = v.evaluateRow(sctx, v.defaultExpr, p.rows[p.curIdx])
+		_, err = v.evaluateRow(sctx, v.defaultExpr, p.rows[p.curIdx])
 	}
 	if err != nil {
 		return err
