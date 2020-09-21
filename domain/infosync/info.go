@@ -81,9 +81,6 @@ const (
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
 var ErrPrometheusAddrIsNotSet = terror.ClassDomain.New(errno.ErrPrometheusAddrIsNotSet, errno.MySQLErrName[errno.ErrPrometheusAddrIsNotSet])
 
-// ErrPlacementRulesDisabled is exported for internal usage, indicating PD rejected the request due to disabled placement feature.
-var ErrPlacementRulesDisabled = errors.New("placement rules feature is disabled")
-
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
 	etcdCli         *clientv3.Client
@@ -304,8 +301,9 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			}
 			if res.StatusCode != http.StatusOK {
 				err = errors.Errorf("%s", bodyBytes)
+				// ignore if placement rules feature is not enabled
 				if strings.HasPrefix(err.Error(), `"placement rules feature is disabled"`) {
-					err = ErrPlacementRulesDisabled
+					err = nil
 				}
 			}
 			terror.Log(res.Body.Close())
