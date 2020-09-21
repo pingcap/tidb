@@ -262,6 +262,6 @@ var (
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "async_commit_txn_counter",
-			Help:      "Counter of async commit transactions .",
+			Help:      "Counter of async commit transactions.",
 		}, []string{LblType})
 )
