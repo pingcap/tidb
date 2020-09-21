@@ -143,7 +143,7 @@ func (do *Domain) loadInfoSchema(handle *infoschema.Handle, usedSchemaVersion in
 
 	bundles, err := infosync.GetAllRuleBundles(nil)
 	// ignore if placement rules feature is not enabled
-	if err != nil && !strings.HasPrefix(err.Error(), `"placement rules feature is disabled"`) {
+	if err != nil && err != infosync.ErrPlacementRulesDisabled {
 		return 0, nil, fullLoad, err
 	}
 
