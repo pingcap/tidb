@@ -6320,7 +6320,16 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		tk.MustQuery(testcase.sql).Sort().Check(testkit.Rows(expect...))
 		// assert oom action worked by max consumed > memory quota
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
+		se.Close()
+	}
 
+	// assert oom fallback
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		se, err := session.CreateSession4Test(s.store)
+		c.Check(err, IsNil)
+		tk.Se = se
+		tk.MustExec("use test")
 		// assert delegate to fallback action
 		tk.MustExec("set tidb_distsql_scan_concurrency = 2")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
@@ -6329,6 +6338,7 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
 		se.Close()
 	}
+
 	// assert disable
 	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable")
