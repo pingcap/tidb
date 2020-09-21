@@ -1066,3 +1066,36 @@ func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
 		}
 	}
 }
+
+func (s *testSuite5) TestVariableRollbackIssue20124(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+
+	cases := []struct {
+		name         string
+		defaultValue int
+	}{
+		{variable.TiDBIndexLookupConcurrency, variable.DefIndexLookupConcurrency},
+		{variable.TiDBIndexLookupJoinConcurrency, variable.DefIndexLookupJoinConcurrency},
+		{variable.TiDBHashJoinConcurrency, variable.DefTiDBHashJoinConcurrency},
+		{variable.TiDBHashAggPartialConcurrency, variable.DefTiDBHashAggPartialConcurrency},
+		{variable.TiDBHashAggFinalConcurrency, variable.DefTiDBHashAggFinalConcurrency},
+		{variable.TiDBProjectionConcurrency, variable.DefTiDBProjectionConcurrency},
+		{variable.TiDBWindowConcurrency, variable.DefTiDBWindowConcurrency},
+	}
+
+	for _, cs := range cases {
+		tk.MustExec(fmt.Sprintf("set @@global.%v=-1", cs.name))
+	}
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	for _, cs := range cases {
+		tk2.MustQuery(fmt.Sprintf("select @@%v", cs.name)).Check(testkit.Rows(fmt.Sprint(cs.defaultValue)))
+		tk2.MustExec(fmt.Sprintf("set @@%v=1", cs.name))
+		tk2.MustQuery(fmt.Sprintf("select @@%v", cs.name)).Check(testkit.Rows("1"))
+		tk2.MustExec(fmt.Sprintf("set @@%v=-1", cs.name))
+		tk2.MustQuery(fmt.Sprintf("select @@%v", cs.name)).Check(testkit.Rows(fmt.Sprint(cs.defaultValue)))
+	}
+
+}
