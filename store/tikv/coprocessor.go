@@ -677,6 +677,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		// Get next fetched resp from chan
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
 		if !ok || closed {
+			it.actionOnExceed.close()
 			return nil, nil
 		}
 		// The respCh have been drained out
@@ -685,6 +686,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		for {
 			if it.curr >= len(it.tasks) {
 				// Resp will be nil if iterator is finishCh.
+				it.actionOnExceed.close()
 				return nil, nil
 			}
 			task := it.tasks[it.curr]
