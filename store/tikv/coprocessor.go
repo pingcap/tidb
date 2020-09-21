@@ -1356,22 +1356,20 @@ func (e *rateLimitAction) close() {
 
 type maxIDHandler struct {
 	// maxID indicates the max id of the running copTask
-	mu struct {
-		sync.Mutex
-		maxID uint32
-	}
+	sync.Mutex
+	maxID uint32
 }
 
 func (handler *maxIDHandler) getMaxID() uint32 {
-	handler.mu.Lock()
-	defer handler.mu.Unlock()
-	return handler.mu.maxID
+	handler.Lock()
+	defer handler.Unlock()
+	return handler.maxID
 }
 
 func (handler *maxIDHandler) setMaxIDIfLarger(newID uint32) {
-	handler.mu.Lock()
-	defer handler.mu.Unlock()
-	if newID > handler.mu.maxID {
-		handler.mu.maxID = newID
+	handler.Lock()
+	defer handler.Unlock()
+	if newID > handler.maxID {
+		handler.maxID = newID
 	}
 }
