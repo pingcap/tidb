@@ -1283,17 +1283,33 @@ func (s *seqTestSuite) TestAutoIncIDInRetry(c *C) {
 func (s *seqTestSuite) TestPessimisticConflictRetryAutoID(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (id int not null auto_increment primary key);")
-	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
-	tk.MustExec("set autocommit = 1")
-
-	tikv.ResetMockPessimisticLockErrWriteConflict(3)
-	session.ResetMockAutoRandIDRetryCount(5)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID", `return(true)`), IsNil)
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflictInstant", "return(true)"), IsNil)
-	tk.MustExec("insert into t values (), (), ();")
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/PessimisticLockErrWriteConflictInstant"), IsNil)
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockCommitRetryForAutoRandID"), IsNil)
+	tk.MustExec("create table t (id int not null auto_increment unique key, idx int unique key, c int);")
+	concurrency := 2
+	var wg sync.WaitGroup
+	var err []error
+	wg.Add(concurrency)
+	err = make([]error, concurrency)
+	for i := 0; i < concurrency; i++ {
+		tk := testkit.NewTestKitWithInit(c, s.store)
+		tk.MustExec("set tidb_txn_mode = 'pessimistic'")
+		tk.MustExec("set autocommit = 1")
+		go func(idx int) {
+			for i := 0; i < 10; i++ {
+				sql := fmt.Sprintf("insert into t(idx, c) values (1, %[1]d) on duplicate key update c = %[1]d", i)
+				_, e := tk.Exec(sql)
+				if e != nil {
+					err[idx] = e
+					wg.Done()
+					return
+				}
+			}
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
+	for _, e := range err {
+		c.Assert(e, IsNil)
+	}
 }
 
 func (s *seqTestSuite) TestAutoRandIDRetry(c *C) {
