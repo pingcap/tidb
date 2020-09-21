@@ -14,38 +14,36 @@
 package aggfuncs
 
 import (
-	"math"
-
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-type stdDevPop4Float64 struct {
+type varSamp4Float64 struct {
 	varPop4Float64
 }
 
-func (e *stdDevPop4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *varSamp4Float64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4VarPopFloat64)(pr)
-	if p.count == 0 {
+	if p.count <= 1 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	variance := p.variance / float64(p.count)
-	chk.AppendFloat64(e.ordinal, math.Sqrt(variance))
+	variance := p.variance / float64(p.count-1)
+	chk.AppendFloat64(e.ordinal, variance)
 	return nil
 }
 
-type stdDevPop4DistinctFloat64 struct {
+type varSamp4DistinctFloat64 struct {
 	varPop4DistinctFloat64
 }
 
-func (e *stdDevPop4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (e *varSamp4DistinctFloat64) AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
-	if p.count == 0 {
+	if p.count <= 1 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	variance := p.variance / float64(p.count)
-	chk.AppendFloat64(e.ordinal, math.Sqrt(variance))
+	variance := p.variance / float64(p.count-1)
+	chk.AppendFloat64(e.ordinal, variance)
 	return nil
 }

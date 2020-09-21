@@ -56,6 +56,15 @@ var DisableFoldFunctions = map[string]struct{}{
 	ast.Benchmark: {},
 }
 
+// TryFoldFunctions stores functions which try to fold constant in child scope functions if without errors/warnings,
+// otherwise, the child functions do not fold constant.
+// Note: the function itself should fold constant.
+var TryFoldFunctions = map[string]struct{}{
+	ast.If:     {},
+	ast.Ifnull: {},
+	ast.Case:   {},
+}
+
 // IllegalFunctions4GeneratedColumns stores functions that is illegal for generated columns.
 // See https://github.com/mysql/mysql-server/blob/5.7/mysql-test/suite/gcol/inc/gcol_blocked_sql_funcs_main.inc for details
 var IllegalFunctions4GeneratedColumns = map[string]struct{}{
