@@ -22,6 +22,7 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -124,6 +125,14 @@ func (s *testAsyncCommitSuite) mustGetLock(c *C, key []byte) *Lock {
 	lock, err := extractLockFromKeyErr(keyErr)
 	c.Assert(err, IsNil)
 	return lock
+}
+
+func (s *testAsyncCommitSuite) mustPointGet(c *C, key, expectedValue []byte) {
+	snap, err := s.store.GetSnapshot(kv.MaxVersion)
+	c.Assert(err, IsNil)
+	value, err := snap.Get(context.Background(), key)
+	c.Assert(err, IsNil)
+	c.Assert(value, BytesEquals, expectedValue)
 }
 
 func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
@@ -313,6 +322,37 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 
 	test(false)
 	test(true)
+}
+
+func (s *testAsyncCommitSuite) TestPointGetWithAsyncCommit(c *C) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.EnableAsyncCommit = true
+	})
+	defer config.RestoreFunc()()
+
+	s.putAlphabets(c)
+
+	txn, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	txn.Set([]byte("a"), []byte("v1"))
+	txn.Set([]byte("b"), []byte("v2"))
+	s.mustPointGet(c, []byte("a"), []byte("a"))
+	s.mustPointGet(c, []byte("b"), []byte("b"))
+
+	// PointGet cannot ignore async commit transactions' locks.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
+	err = txn.Commit(context.Background())
+	c.Assert(err, IsNil)
+	s.mustPointGet(c, []byte("a"), []byte("v1"))
+	s.mustPointGet(c, []byte("b"), []byte("v2"))
+
+	// PointGet will not push the `max_ts` to its ts which is MaxUint64.
+	txn2, err := s.store.Begin()
+	c.Assert(err, IsNil)
+	s.mustGetFromTxn(c, txn2, []byte("a"), []byte("v1"))
+	s.mustGetFromTxn(c, txn2, []byte("b"), []byte("v2"))
+	err = txn2.Rollback()
+	c.Assert(err, IsNil)
 }
 
 type mockResolveClient struct {
