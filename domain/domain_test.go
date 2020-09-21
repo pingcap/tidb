@@ -89,6 +89,11 @@ func unixSocketAvailable() bool {
 }
 
 func TestInfo(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/domain/FailPlacement", `return(true)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if runtime.GOOS == "windows" {
 		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
 	}
@@ -132,15 +137,7 @@ func TestInfo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = failpoint.Enable("github.com/pingcap/tidb/domain/FailPlacement", `return(true)`)
-	if err != nil {
-		t.Fatal(err)
-	}
 	err = dom.Init(ddlLease, sysMockFactory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = failpoint.Disable("github.com/pingcap/tidb/domain/FailPlacement")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,6 +218,11 @@ func TestInfo(t *testing.T) {
 	infos, err = infosync.GetAllServerInfo(goCtx)
 	if err != nil || len(infos) != 0 {
 		t.Fatalf("err %v, infos %v", err, infos)
+	}
+
+	err = failpoint.Disable("github.com/pingcap/tidb/domain/FailPlacement")
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

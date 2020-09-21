@@ -338,11 +338,9 @@ func GetPlacementRules(ctx context.Context) ([]*placement.RuleOp, error) {
 	}
 
 	rules := []*placement.RuleOp{}
-	if res != nil {
-		err = json.Unmarshal(res, &rules)
-		if err != nil {
-			return nil, err
-		}
+	err = json.Unmarshal(res, &rules)
+	if err != nil {
+		return nil, err
 	}
 	return rules, nil
 }
@@ -396,7 +394,7 @@ func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 	}
 
 	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule"), "GET", nil)
-	if err == nil && res != nil {
+	if err == nil {
 		err = json.Unmarshal(res, &bundles)
 	}
 	return bundles, err
@@ -422,7 +420,7 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 	}
 
 	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
-	if err == nil && res != nil {
+	if err == nil {
 		err = json.Unmarshal(res, bundle)
 	}
 	return bundle, err
