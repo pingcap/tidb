@@ -59,6 +59,10 @@ const (
 	CollectRuntimeStats
 	// CheckExist map for key existence check.
 	CheckExists
+	// InfoSchema is schema version used by txn startTS.
+	InfoSchema
+	// SchemaAmender is used to amend mutations for pessimistic transactions
+	SchemaAmender
 )
 
 // Priority value for transaction priority.
@@ -214,6 +218,8 @@ type Transaction interface {
 	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(ctx context.Context, keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
+	ResetStmtKeyExistErrs()
+	MergeStmtKeyExistErrs()
 }
 
 // LockCtx contains information for LockKeys method.

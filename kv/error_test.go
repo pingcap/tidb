@@ -31,7 +31,6 @@ func (s testErrorSuite) TestError(c *C) {
 		ErrInvalidTxn,
 		ErrTxnTooLarge,
 		ErrEntryTooLarge,
-		ErrKeyExists,
 		ErrNotImplemented,
 		ErrWriteConflict,
 		ErrWriteConflictInTiDB,
