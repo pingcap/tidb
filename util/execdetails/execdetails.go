@@ -90,7 +90,10 @@ type CommitDetails struct {
 
 func (cd *CommitDetails) RecordBackoff(backoffs []fmt.Stringer) {
 	cd.Mu.Lock()
-	for _,backoff := range backoffs {
+	if cd.Mu.BackoffTypes == nil {
+		cd.Mu.BackoffTypes = make(map[string]int, len(backoffs))
+	}
+	for _, backoff := range backoffs {
 		cd.Mu.BackoffTypes[backoff.String()]++
 	}
 	cd.Mu.Unlock()
@@ -109,11 +112,13 @@ func (cd *CommitDetails) Merge(other *CommitDetails) {
 	cd.WriteSize += other.WriteSize
 	cd.PrewriteRegionNum += other.PrewriteRegionNum
 	cd.TxnRetry += other.TxnRetry
-	if cd.Mu.BackoffTypes == nil {
-		cd.Mu.BackoffTypes = make(map[string]int, len(other.Mu.BackoffTypes))
-	}
-	for k,v := range other.Mu.BackoffTypes {
-		cd.Mu.BackoffTypes[k]+=v
+	if other.Mu.BackoffTypes != nil {
+		if cd.Mu.BackoffTypes == nil {
+			cd.Mu.BackoffTypes = make(map[string]int, len(other.Mu.BackoffTypes))
+		}
+		for k, v := range other.Mu.BackoffTypes {
+			cd.Mu.BackoffTypes[k] += v
+		}
 	}
 }
 
@@ -134,8 +139,8 @@ func (cd *CommitDetails) Clone() *CommitDetails {
 	}
 	if cd.Mu.BackoffTypes != nil {
 		commit.Mu.BackoffTypes = make(map[string]int, len(cd.Mu.BackoffTypes))
-		for k,v := range cd.Mu.BackoffTypes {
-			commit.Mu.BackoffTypes[k]=v
+		for k, v := range cd.Mu.BackoffTypes {
+			commit.Mu.BackoffTypes[k] = v
 		}
 	}
 	return commit
@@ -150,11 +155,22 @@ type LockKeysDetails struct {
 	BackoffTime     int64
 	Mu              struct {
 		sync.Mutex
-		BackoffTypes []fmt.Stringer
+		BackoffTypes map[string]int
 	}
 	LockRPCTime  int64
 	LockRPCCount int64
 	RetryCount   int
+}
+
+func (ld *LockKeysDetails) RecordBackoff(backoffs []fmt.Stringer) {
+	ld.Mu.Lock()
+	if ld.Mu.BackoffTypes == nil {
+		ld.Mu.BackoffTypes = make(map[string]int, len(backoffs))
+	}
+	for _, backoff := range backoffs {
+		ld.Mu.BackoffTypes[backoff.String()]++
+	}
+	ld.Mu.Unlock()
 }
 
 // Merge merges lock keys execution details into self.
@@ -166,7 +182,14 @@ func (ld *LockKeysDetails) Merge(lockKey *LockKeysDetails) {
 	ld.BackoffTime += lockKey.BackoffTime
 	ld.LockRPCTime += lockKey.LockRPCTime
 	ld.LockRPCCount += ld.LockRPCCount
-	ld.Mu.BackoffTypes = append(ld.Mu.BackoffTypes, lockKey.Mu.BackoffTypes...)
+	if lockKey.Mu.BackoffTypes != nil {
+		if ld.Mu.BackoffTypes == nil {
+			ld.Mu.BackoffTypes = make(map[string]int, len(lockKey.Mu.BackoffTypes))
+		}
+		for k, v := range lockKey.Mu.BackoffTypes {
+			ld.Mu.BackoffTypes[k] += v
+		}
+	}
 	ld.RetryCount++
 }
 
@@ -182,7 +205,12 @@ func (ld *LockKeysDetails) Clone() *LockKeysDetails {
 		LockRPCCount:    ld.LockRPCCount,
 		RetryCount:      ld.RetryCount,
 	}
-	lock.Mu.BackoffTypes = append([]fmt.Stringer{}, ld.Mu.BackoffTypes...)
+	if ld.Mu.BackoffTypes != nil {
+		lock.Mu.BackoffTypes = make(map[string]int, len(ld.Mu.BackoffTypes))
+		for k, v := range ld.Mu.BackoffTypes {
+			lock.Mu.BackoffTypes[k] = v
+		}
+	}
 	return lock
 }
 
@@ -276,7 +304,7 @@ func (d ExecDetails) String() string {
 		}
 		commitDetails.Mu.Lock()
 		if len(commitDetails.Mu.BackoffTypes) > 0 {
-			parts = append(parts, BackoffTypesStr+": "+ formatBackoff(commitDetails.Mu.BackoffTypes))
+			parts = append(parts, BackoffTypesStr+": "+formatBackoff(commitDetails.Mu.BackoffTypes))
 		}
 		commitDetails.Mu.Unlock()
 		resolveLockTime := atomic.LoadInt64(&commitDetails.ResolveLockTime)
@@ -791,12 +819,12 @@ func (e *RuntimeStatsWithConcurrencyInfo) Merge(rs RuntimeStats) {
 	if !ok {
 		return
 	}
-	for _,i := range tmp.concurrency {
+	for _, i := range tmp.concurrency {
 		found := false
-		for _,j := range e.concurrency {
+		for _, j := range e.concurrency {
 			if i.concurrencyName == j.concurrencyName {
-				j.concurrencyNum+=i.concurrencyNum
-				found=true
+				j.concurrencyNum += i.concurrencyNum
+				found = true
 				break
 			}
 		}

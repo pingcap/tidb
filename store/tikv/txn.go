@@ -445,9 +445,7 @@ func (txn *tikvTxn) LockKeys(ctx context.Context, lockCtx *kv.LockCtx, keysInput
 		err = txn.committer.pessimisticLockMutations(bo, lockCtx, CommitterMutations{keys: keys})
 		if bo.totalSleep > 0 {
 			atomic.AddInt64(&lockCtx.Stats.BackoffTime, int64(bo.totalSleep)*int64(time.Millisecond))
-			lockCtx.Stats.Mu.Lock()
-			lockCtx.Stats.Mu.BackoffTypes = append(lockCtx.Stats.Mu.BackoffTypes, bo.types...)
-			lockCtx.Stats.Mu.Unlock()
+			lockCtx.Stats.RecordBackoff(bo.types)
 		}
 		if lockCtx.Killed != nil {
 			// If the kill signal is received during waiting for pessimisticLock,

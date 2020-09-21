@@ -319,8 +319,11 @@ type CopRuntimeStats interface {
 }
 
 type selectResultRuntimeStats struct {
-	copRespTime      []time.Duration
-	procKeys         []int64
+	copRespTime []time.Duration
+	procKeys    []int64
+
+	totalCopRespCnt  int
+	totalCopRespTime time.Duration
 	backoffSleep     map[string]time.Duration
 	totalProcessTime time.Duration
 	totalWaitTime    time.Duration
@@ -331,6 +334,8 @@ type selectResultRuntimeStats struct {
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime = append(s.copRespTime, respTime)
 	s.procKeys = append(s.procKeys, copStats.ProcessedKeys)
+	s.totalCopRespCnt++
+	s.totalCopRespTime += respTime
 
 	for k, v := range copStats.BackoffSleep {
 		s.backoffSleep[k] += v
@@ -345,18 +350,20 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *tikv.CopRuntim
 
 func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	newRs := selectResultRuntimeStats{
-		copRespTime:  make([]time.Duration, 0, len(s.copRespTime)),
-		procKeys:     make([]int64, 0, len(s.procKeys)),
-		backoffSleep: make(map[string]time.Duration, len(s.backoffSleep)),
-		rpcStat:      tikv.NewRegionRequestRuntimeStats(),
+		copRespTime:      make([]time.Duration, 0, len(s.copRespTime)),
+		procKeys:         make([]int64, 0, len(s.procKeys)),
+		backoffSleep:     make(map[string]time.Duration, len(s.backoffSleep)),
+		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
+		totalCopRespCnt:  s.totalCopRespCnt,
+		totalCopRespTime: s.totalCopRespTime,
+		totalProcessTime: s.totalProcessTime,
+		totalWaitTime:    s.totalWaitTime,
 	}
 	newRs.copRespTime = append(newRs.copRespTime, s.copRespTime...)
 	newRs.procKeys = append(newRs.procKeys, s.procKeys...)
 	for k, v := range s.backoffSleep {
 		newRs.backoffSleep[k] += v
 	}
-	newRs.totalProcessTime += s.totalProcessTime
-	newRs.totalWaitTime += s.totalWaitTime
 	for k, v := range s.rpcStat.Stats {
 		newRs.rpcStat.Stats[k] = v
 	}
@@ -368,8 +375,13 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	if !ok {
 		return
 	}
-	s.copRespTime = append(s.copRespTime, other.copRespTime...)
-	s.procKeys = append(s.procKeys, other.procKeys...)
+	// TODO: find a better way to calculate the P99 time to avoid store all data in array.
+	if len(s.copRespTime) < 2 || len(s.copRespTime)+len(other.copRespTime) < 64 {
+		s.copRespTime = append(s.copRespTime, other.copRespTime...)
+		s.procKeys = append(s.procKeys, other.procKeys...)
+	}
+	s.totalCopRespCnt += other.totalCopRespCnt
+	s.totalCopRespTime += other.totalCopRespTime
 
 	for k, v := range other.backoffSleep {
 		s.backoffSleep[k] += v
@@ -392,18 +404,14 @@ func (s *selectResultRuntimeStats) String() string {
 			})
 			vMax, vMin := s.copRespTime[size-1], s.copRespTime[0]
 			vP95 := s.copRespTime[size*19/20]
-			sum := 0.0
-			for _, t := range s.copRespTime {
-				sum += float64(t)
-			}
-			vAvg := time.Duration(sum / float64(size))
+			vAvg := time.Duration(float64(s.totalCopRespTime) / float64(s.totalCopRespCnt))
 
 			sort.Slice(s.procKeys, func(i, j int) bool {
 				return s.procKeys[i] < s.procKeys[j]
 			})
 			keyMax := s.procKeys[size-1]
 			keyP95 := s.procKeys[size*19/20]
-			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", size, vMax, vMin, vAvg, vP95))
+			buf.WriteString(fmt.Sprintf("cop_task: {num: %v, max: %v, min: %v, avg: %v, p95: %v", s.totalCopRespCnt, vMax, vMin, vAvg, vP95))
 			if keyMax > 0 {
 				buf.WriteString(", max_proc_keys: ")
 				buf.WriteString(strconv.FormatInt(keyMax, 10))

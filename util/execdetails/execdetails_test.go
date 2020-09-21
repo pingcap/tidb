@@ -46,14 +46,10 @@ func TestString(t *testing.T) {
 			CommitBackoffTime: int64(time.Second),
 			Mu: struct {
 				sync.Mutex
-				BackoffTypes []fmt.Stringer
-			}{BackoffTypes: []fmt.Stringer{
-				stringutil.MemoizeStr(func() string {
-					return "backoff1"
-				}),
-				stringutil.MemoizeStr(func() string {
-					return "backoff2"
-				}),
+				BackoffTypes map[string]int
+			}{BackoffTypes: map[string]int{
+				"backoff1":1,
+				"backoff2":1,
 			}},
 			ResolveLockTime:   1000000000, // 10^9 ns = 1s
 			WriteKeys:         1,
@@ -166,17 +162,10 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		CommitBackoffTime: int64(time.Second),
 		Mu: struct {
 			sync.Mutex
-			BackoffTypes []fmt.Stringer
-		}{BackoffTypes: []fmt.Stringer{
-			stringutil.MemoizeStr(func() string {
-				return "backoff1"
-			}),
-			stringutil.MemoizeStr(func() string {
-				return "backoff2"
-			}),
-			stringutil.MemoizeStr(func() string {
-				return "backoff1"
-			}),
+			BackoffTypes map[string]int
+		}{BackoffTypes: map[string]int{
+			"backoff1":1,
+			"backoff2":1,
 		}},
 		ResolveLockTime:   int64(time.Second),
 		WriteKeys:         3,
