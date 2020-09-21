@@ -1067,7 +1067,7 @@ func (s *testSuite5) TestSetClusterConfigJSONData(c *C) {
 	}
 }
 
-func (s *testSuite5) TestVariableRollbackIssue20124(c *C) {
+func (s *testSerialSuite1) TestVariableRollbackIssue20124(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 
