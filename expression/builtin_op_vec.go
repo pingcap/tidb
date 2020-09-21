@@ -54,6 +54,24 @@ func (b *builtinLogicOrSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinLogicOrSig) fallbackEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	x := result.Int64s()
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.evalInt(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		result.SetNull(i, isNull)
+		if isNull {
+			continue
+		}
+		x[i] = res
+	}
+	return nil
+}
+
 func (b *builtinLogicOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
@@ -65,8 +83,16 @@ func (b *builtinLogicOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column)
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
-		return err
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
+	err = b.args[1].VecEvalInt(b.ctx, input, buf)
+	afterWarns := sc.WarningCount()
+	if err != nil || afterWarns > beforeWarns {
+		if afterWarns > beforeWarns {
+			sc.TruncateWarnings(int(beforeWarns))
+		}
+		return b.fallbackEvalInt(input, result)
 	}
 
 	i64s := result.Int64s()
@@ -322,6 +348,24 @@ func (b *builtinLogicAndSig) vectorized() bool {
 	return true
 }
 
+func (b *builtinLogicAndSig) fallbackEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	result.ResizeInt64(n, false)
+	x := result.Int64s()
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.evalInt(input.GetRow(i))
+		if err != nil {
+			return err
+		}
+		result.SetNull(i, isNull)
+		if isNull {
+			continue
+		}
+		x[i] = res
+	}
+	return nil
+}
+
 func (b *builtinLogicAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
@@ -334,8 +378,16 @@ func (b *builtinLogicAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	if err := b.args[1].VecEvalInt(b.ctx, input, buf1); err != nil {
-		return err
+
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
+	err = b.args[1].VecEvalInt(b.ctx, input, buf1)
+	afterWarns := sc.WarningCount()
+	if err != nil || afterWarns > beforeWarns {
+		if afterWarns > beforeWarns {
+			sc.TruncateWarnings(int(beforeWarns))
+		}
+		return b.fallbackEvalInt(input, result)
 	}
 
 	i64s := result.Int64s()
