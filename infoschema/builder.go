@@ -377,7 +377,7 @@ func (b *Builder) applyPartitionPlacementUpdate(m *meta.Meta, diff *model.Schema
 		return err
 	}
 
-	b.is.bundles[tid] = bundle
+	b.is.ruleBundles[tid] = bundle
 	return nil
 }
 
@@ -398,8 +398,8 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 }
 
 func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
-	for k, v := range oldIS.bundles {
-		b.is.bundles[k] = v
+	for k, v := range oldIS.ruleBundles {
+		b.is.ruleBundles[k] = v
 	}
 }
 
@@ -423,9 +423,9 @@ func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.Bundle, schemaVersion int64) (*Builder, error) {
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
-	info.bundles = make(map[string]*placement.Bundle, len(bundles))
+	info.ruleBundles = make(map[string]*placement.Bundle, len(bundles))
 	for _, bundle := range bundles {
-		info.bundles[bundle.ID] = bundle
+		info.ruleBundles[bundle.ID] = bundle
 	}
 
 	for _, di := range dbInfos {
@@ -496,7 +496,7 @@ func NewBuilder(handle *Handle) *Builder {
 	b.handle = handle
 	b.is = &infoSchema{
 		schemaMap:           map[string]*schemaTables{},
-		bundles:             map[string]*placement.Bundle{},
+		ruleBundles:         map[string]*placement.Bundle{},
 		sortedTablesBuckets: make([]sortedTables, bucketCount),
 	}
 	return b

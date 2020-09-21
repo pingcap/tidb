@@ -90,8 +90,8 @@ type schemaTables struct {
 const bucketCount = 512
 
 type infoSchema struct {
-	// bundles stores all rules
-	bundles map[string]*placement.Bundle
+	// ruleBundles stores all placement rules
+	ruleBundles map[string]*placement.Bundle
 
 	schemaMap map[string]*schemaTables
 
@@ -398,6 +398,6 @@ func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 }
 
 func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
-	t, r := is.bundles[name]
+	t, r := is.ruleBundles[name]
 	return t, r
 }
