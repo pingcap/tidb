@@ -6322,10 +6322,8 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 			expect = append(expect, fmt.Sprintf("%v", i))
 		}
 		tk.MustQuery(testcase.sql).Sort().Check(testkit.Rows(expect...))
-		if !testcase.useIndex {
-			// assert oom action worked by max consumed > memory quota
-			c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
-		}
+		// assert oom action worked by max consumed > memory quota
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
 
 		// assert delegate to fallback action
 		if testcase.useIndex {
