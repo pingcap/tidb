@@ -78,7 +78,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		rpcCancel:       NewRPCanceller(),
 		maxID:           &maxIDHandler{},
 	}
-	it.maxID.mu.maxID = 0
+	it.maxID.maxID = 0
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -393,6 +393,7 @@ type copIterator struct {
 	// curr indicates the curr id of the finished copTask
 	curr int
 
+	// maxID indicates the max id of the running copTask
 	maxID *maxIDHandler
 
 	// sendRate controls the sending rate of copIteratorTaskSender
@@ -1355,7 +1356,6 @@ func (e *rateLimitAction) close() {
 }
 
 type maxIDHandler struct {
-	// maxID indicates the max id of the running copTask
 	sync.Mutex
 	maxID uint32
 }
