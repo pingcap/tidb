@@ -132,7 +132,15 @@ func TestInfo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	err = failpoint.Enable("github.com/pingcap/tidb/domain/FailPlacement", `return(true)`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	err = dom.Init(ddlLease, sysMockFactory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = failpoint.Disable("github.com/pingcap/tidb/domain/FailPlacement")
 	if err != nil {
 		t.Fatal(err)
 	}
