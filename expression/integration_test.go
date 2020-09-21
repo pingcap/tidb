@@ -7366,3 +7366,19 @@ func (s *testIntegrationSuite) TestIssue17476(c *C) {
 	tk.MustQuery(`SELECT count(*) FROM (table_float JOIN table_int_float_varchar AS tmp3 ON (tmp3.col_varchar_6 AND NULL) IS NULL);`).Check(testkit.Rows("154"))
 	tk.MustQuery(`SELECT * FROM (table_int_float_varchar AS tmp3) WHERE (col_varchar_6 AND NULL) IS NULL AND col_int_6=0;`).Check(testkit.Rows("13 0 -0.1 <nil>"))
 }
+
+func (s *testIntegrationSuite) TestIssue17856(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t0(c0 INT);")
+	tk.MustExec("create table t1(c0 INT);")
+	tk.MustExec("insert into t0 values(1);")
+	tk.MustExec("insert into t0 values(0);")
+	tk.MustExec("insert into t1 values(0);")
+	tk.MustExec("insert into t1 values(1);")
+	tk.MustQuery("select * from t0 natural join t1;").Check(testkit.Rows("1", "0"))
+	tk.MustExec("drop table t0;")
+	tk.MustExec("drop table t1;")
+}
