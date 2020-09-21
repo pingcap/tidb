@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
 )
 
 // baseFuncDesc describes an function signature, only used in planner.
@@ -140,7 +141,7 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 		return errors.New("APPROX_PERCENTILE takes at least 2 arguments")
 	}
 
-	percent, isNull, err := expression.GetIntFromConstant(ctx, a.Args[1])
+	percent, isNull, err := a.Args[1].EvalInt(ctx, chunk.Row{})
 	if err != nil {
 		return err
 	}
