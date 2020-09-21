@@ -87,7 +87,6 @@ func TestT(t *testing.T) {
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowThreshold = 30000 // 30s
-		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tmpDir := config.GetGlobalConfig().TempStoragePath
 	_ = os.RemoveAll(tmpDir) // clean the uncleared temp file during the last run.
@@ -3748,14 +3747,13 @@ func (s *testSuite3) TestForSelectScopeInUnion(c *C) {
 	c.Assert(err, NotNil)
 
 	tk1.MustExec("begin")
-	// 'For update' would be ignored if 'order by' or 'limit' exists.
 	tk1.MustQuery("select 1 as a union select a from t limit 5 for update")
 	tk1.MustQuery("select 1 as a union select a from t order by a for update")
 
 	tk2.MustExec("update t set a = a + 1")
 
 	_, err = tk1.Exec("commit")
-	c.Assert(err, IsNil)
+	c.Assert(err, NotNil)
 }
 
 func (s *testSuite3) TestUnsignedDecimalOverflow(c *C) {
@@ -6321,6 +6319,20 @@ func (s *testSuite) TestIssue19372(c *C) {
 	tk.MustExec("insert into t1 values (1, 'a'), (2, 'b'), (3, 'c');")
 	tk.MustExec("insert into t2 select * from t1;")
 	tk.MustQuery("select (select t2.c_str from t2 where t2.c_str <= t1.c_str and t2.c_int in (1, 2) order by t2.c_str limit 1) x from t1 order by c_int;").Check(testkit.Rows("a", "a", "a"))
+}
+
+func (s *testSerialSuite1) TestCollectCopRuntimeStats(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int)")
+	tk.MustExec("set tidb_enable_collect_execution_info=1;")
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult", `return(true)`), IsNil)
+	rows := tk.MustQuery("explain analyze select * from t1").Rows()
+	c.Assert(len(rows), Equals, 2)
+	explain := fmt.Sprintf("%v", rows[0])
+	c.Assert(explain, Matches, ".*rpc_num: 2, .*regionMiss:.*")
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/tikvStoreRespResult"), IsNil)
 }
 
 func (s *testSuite) TestCollectDMLRuntimeStats(c *C) {
