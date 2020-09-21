@@ -100,6 +100,8 @@ type Context interface {
 	HasLockedTables() bool
 	// PrepareTSFuture uses to prepare timestamp by future.
 	PrepareTSFuture(ctx context.Context)
+	// StoreIndexUsage stores the index usage information.
+	StoreIndexUsage(dbName string, tblName string, idxName string, rowsSelected int64)
 }
 
 type basicCtxType int

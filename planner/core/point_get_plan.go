@@ -74,6 +74,10 @@ type nameValuePair struct {
 	param   *driver.ParamMarkerExpr
 }
 
+func (p *PointGetPlan) DBName() string {
+	return p.dbName
+}
+
 // Schema implements the Plan interface.
 func (p *PointGetPlan) Schema() *expression.Schema {
 	return p.schema

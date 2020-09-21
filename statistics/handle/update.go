@@ -208,6 +208,126 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	return newCollector
 }
 
+// IndexUsageInformation is the data struct to store index usage information.
+type IndexUsageInformation struct {
+	QueryCount		int64
+	RowsSelected	int64
+	LastUsedAt		string
+}
+
+type indexUsageMap map[string]IndexUsageInformation
+
+// SessionIndexUsageCollector is a list item that holds the index usage mapper. If you want to write or read mapper, you must lock it.
+type SessionIndexUsageCollector struct {
+	sync.Mutex
+
+	mapper indexUsageMap
+	next *SessionIndexUsageCollector
+	deleted bool
+}
+
+func (m indexUsageMap) update(id string, value *IndexUsageInformation) {
+	item := m[id]
+	item.QueryCount += value.QueryCount
+	item.RowsSelected += value.RowsSelected
+	if item.LastUsedAt < value.LastUsedAt {
+		item.LastUsedAt = value.LastUsedAt
+	}
+	m[id] = item
+}
+
+func (m indexUsageMap) merge(destMap indexUsageMap) {
+	for id, item := range destMap {
+		m.update(id, &item)
+	}
+}
+
+func (m indexUsageMap) query(tableSchema string, tableName string, indexName string) IndexUsageInformation {
+	id := fmt.Sprintf("%s.%s.%s", tableSchema, tableName, indexName)
+	res := m[id]
+	if res.LastUsedAt == "" {
+		res.LastUsedAt = "0000-00-00 00:00:00"
+	}
+	return res
+}
+
+// Update updates the mapper in SessionIndexUsageCollector.
+func (s *SessionIndexUsageCollector) Uptate(id string, value *IndexUsageInformation) {
+	value.LastUsedAt = time.Now().Format("2006-01-02 15:04:05")
+	s.Lock()
+	defer s.Unlock()
+	s.mapper.update(id, value)
+}
+
+// Delete will set s.deleted to true which means it can be deleted from linked list.
+func (s *SessionIndexUsageCollector) Delete() {
+	s.Lock()
+	defer s.Unlock()
+	s.deleted = true
+}
+
+// NewSessionIndexUsageCollector will add a new SessionIndexUsageCollector into linked list headed by idxUsageListHead.
+// idxUsageListHead always points to an empty SessionIndexUsageCollector as a sentinel node. So we let idxUsageListHead.next
+// points to new item. It's helpful to sweepIdxUsageList.
+func (h *Handle) NewSessionIndexUsageCollector() *SessionIndexUsageCollector {
+	h.idxUsageListHead.Lock()
+	defer h.idxUsageListHead.Unlock()
+	newCollector := &SessionIndexUsageCollector{
+		mapper:	make(indexUsageMap),
+		next: h.idxUsageListHead.next,
+	}
+	h.idxUsageListHead.next = newCollector
+	return newCollector
+}
+
+// sweepIdxUsageList will loop over the list, merge each session's local index usage information into handle
+// and remove closed session's collector.
+// For convenience, we keep idxUsageListHead always points to sentinel node. So that we don't need to consider corner case.
+func (h *Handle) sweepIdxUsageList() indexUsageMap {
+	prev := h.idxUsageListHead
+	prev.Lock()
+	mapper := make(indexUsageMap)
+	for curr := prev.next; curr != nil; curr = curr.next {
+		curr.Lock()
+		mapper.merge(curr.mapper)
+		if curr.deleted {
+			prev.next = curr.next
+			curr.Unlock()
+		} else {
+			prev.Unlock()
+			curr.mapper = make(indexUsageMap)
+			prev = curr
+		}
+	}
+	prev.Unlock()
+	return mapper
+}
+
+// DumpIndexUsageToKV will dump in-memory index usage information to KV.
+// For performance considerations, we use `insert` instead of `update`.
+func (h *Handle) DumpIndexUsageToKV() error {
+	mapper := h.sweepIdxUsageList()
+	rows, _, err := h.restrictedExec.ExecRestrictedSQL("SELECT TABLE_SCHEMA, TABLE_NAME, KEY_NAME from information_schema.tidb_indexes")
+	if err != nil {
+		return err
+	}
+	lastUpdatedAt := time.Now().Format("2006-01-02 15:04:05")
+	for _, row := range rows {
+		tableSchema := row.GetString(0)
+		tableName := row.GetString(1)
+		indexName := row.GetString(2)
+		value := mapper.query(tableSchema, tableName, indexName)
+		sql := fmt.Sprintf(
+			`insert into mysql.SCHEMA_INDEX_USAGE values ("%s", "%s", "%s", %d, %d, "%s", "%s") `,
+			tableSchema, tableName, indexName, value.QueryCount, value.RowsSelected, value.LastUsedAt, lastUpdatedAt)
+		_, _, err := h.restrictedExec.ExecRestrictedSQL(sql)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
