@@ -664,7 +664,7 @@ var defaultConf = Config{
 		MaxTxnTTL:            60 * 60 * 1000, // 1hour
 		MemProfileInterval:   "1m",
 		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease:  "0s",
+		IndexUsageSyncLease: "0s",
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
