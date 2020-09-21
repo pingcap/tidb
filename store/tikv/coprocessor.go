@@ -522,15 +522,11 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		}
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
-
 		worker.maxID.setMaxIDIfLarger(task.id)
-
 		worker.actionOnExceed.destroyTokenIfNeeded(func() {
 			worker.sendRate.putToken()
 		})
-
 		worker.actionOnExceed.waitIfNeeded()
-
 		if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
 			return
 		}
