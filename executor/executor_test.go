@@ -6333,6 +6333,12 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable")
 	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		sm := &mockSessionManager1{
+			PS: make([]*util.ProcessInfo, 0),
+		}
+		tk.Se.SetSessionManager(sm)
+		s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
 		err := tk.QueryToErr(testcase.sql)
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
