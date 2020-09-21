@@ -554,7 +554,6 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				func() {
 					addIndexErr = errCancelledDDLJob.GenWithStack("add table `%v` index `%v` panic", tblInfo.Name, indexInfo.Name)
 				}, false)
-			reorgInfo.currElement = reorgInfo.elements[0]
 			return w.addTableIndex(tbl, indexInfo, reorgInfo)
 		})
 		if err != nil {
