@@ -54,7 +54,8 @@ func (s *testPointGetSuite) SetUpSuite(c *C) {
 	c.Assert(err, IsNil)
 	s.dom, err = session.BootstrapSession(s.store)
 	c.Assert(err, IsNil)
-	s.dom.SetStatsUpdating(true)
+	h := s.dom.StatsHandle()
+	h.SetLease(0)
 	s.testData, err = testutil.LoadTestSuiteData("testdata", "point_get_suite")
 	c.Assert(err, IsNil)
 }
