@@ -130,10 +130,8 @@ func getValMemDelta(val interface{}) (memDelta int64) {
 	case string:
 		memDelta += int64(len(v))
 	case json.BinaryJSON:
-		bytes := make([]byte, 0)
-		bytes = append(bytes, v.TypeCode)
-		bytes = append(bytes, v.Value...)
-		memDelta += int64(len(bytes))
+		// +1 for the memory usage of the TypeCode of json
+		memDelta += int64(len(v.Value) + 1)
 	case *types.MyDecimal:
 		memDelta += DefMyDecimalSize
 	case []uint8:
