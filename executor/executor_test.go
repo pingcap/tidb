@@ -6329,4 +6329,12 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
 	}
+	// assert disable
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable")
+	for _, testcase := range testcases {
+		err := tk.QueryToErr(testcase.sql)
+		c.Assert(err, NotNil)
+		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
+	}
 }
