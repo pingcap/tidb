@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -362,6 +363,8 @@ type IndexLookUpExecutor struct {
 	colLens         []int
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
 	PushedLimit *plannercore.PushedDownLimit
+
+	stats *indexLookUpRunTimeStats
 }
 
 type checkIndexValue struct {
@@ -495,6 +498,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 	}
 	e.idxWorkerWg.Add(1)
 	go func() {
+		startTime := time.Now()
 		ctx1, cancel := context.WithCancel(ctx)
 		_, err := worker.fetchHandles(ctx1, result)
 		if err != nil {
@@ -508,6 +512,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
+		e.stats.indexScan += time.Since(startTime)
 	}()
 	return nil
 }
@@ -516,6 +521,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency()
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
+	start := time.Now()
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		workerID := i
 		worker := &tableWorker{
@@ -534,6 +540,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			worker.pickAndExecTask(ctx1)
 			cancel()
 			e.tblWorkerWg.Done()
+			e.stats.tableRowIDScan += time.Since(start)
 		}()
 	}
 }
@@ -859,6 +866,11 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int, isCommon
 		}
 	}
 	return
+}
+
+type indexLookUpRunTimeStats struct {
+	indexScan      time.Duration
+	tableRowIDScan time.Duration
 }
 
 func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, tableReader Executor) error {
