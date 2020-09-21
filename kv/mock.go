@@ -133,6 +133,14 @@ func (t *mockTxn) GetVars() *Variables {
 	return nil
 }
 
+func (t *mockTxn) ResetStmtKeyExistErrs() {
+
+}
+
+func (t *mockTxn) MergeStmtKeyExistErrs() {
+
+}
+
 // NewMockTxn new a mockTxn.
 func NewMockTxn() Transaction {
 	return &mockTxn{

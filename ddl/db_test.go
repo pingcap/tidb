@@ -4697,6 +4697,9 @@ func (s *testSerialDBSuite) TestAddIndexFailOnCaseWhenCanExit(c *C) {
 func (s *testSerialDBSuite) TestCommitTxnWithIndexChange(c *C) {
 	// Prepare work.
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("set global tidb_enable_amend_pessimistic_txn = 1;")
+	tk.MustExec("set tidb_enable_amend_pessimistic_txn = 1;")
+	defer tk.MustExec("set global tidb_enable_amend_pessimistic_txn = 0;")
 	tk.MustExec("drop database if exists test_db")
 	tk.MustExec("create database test_db")
 	tk.MustExec("use test_db")
