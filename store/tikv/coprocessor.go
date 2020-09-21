@@ -78,6 +78,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 		rpcCancel:       NewRPCanceller(),
 		tasksStatus:     &copTaskStatusHandler{},
 	}
+	it.tasksStatus.mu.maxID = 0
 	it.minCommitTSPushed.data = make(map[uint64]struct{}, 5)
 	it.tasks = tasks
 	if it.concurrency > len(tasks) {
@@ -512,11 +513,9 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		}
 		worker.handleTask(ctx, task, respCh)
 		close(task.respChan)
+		// set max ID
+		worker.tasksStatus.setMaxIDIfLarger(task.id)
 
-		previousMaxID := atomic.LoadUint32(&worker.tasksStatus.maxID)
-		if task.id > previousMaxID {
-			atomic.CompareAndSwapUint32(&worker.tasksStatus.maxID, previousMaxID, task.id)
-		}
 		worker.actionOnExceed.destroyTokenIfNeeded(func() {
 			worker.sendRate.putToken()
 		})
@@ -670,7 +669,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return nil, nil
 		}
 		// The respCh have been drained out
-		it.actionOnExceed.broadcastWorkersIfNeeded(len(it.respChan) < 1)
+		it.actionOnExceed.broadcastIfNeeded(len(it.respChan) < 1)
 	} else {
 		for {
 			if it.tasksStatus.curr >= len(it.tasks) {
@@ -691,11 +690,11 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// Switch to next task.
 			it.tasks[it.tasksStatus.curr] = nil
 			it.tasksStatus.curr++
-			maxID := atomic.LoadUint32(&it.tasksStatus.maxID)
+			maxID := it.tasksStatus.getMaxID()
 			// The tasks whose id is less than maxID are assumed that being sending to their task channel.
 			// So the response channel would be thought as drained out if the current taskID is greater or equal than
 			// the maxID as all the workers are being suspended at that time.
-			it.actionOnExceed.broadcastWorkersIfNeeded(finishedTaskID >= maxID)
+			it.actionOnExceed.broadcastIfNeeded(finishedTaskID >= maxID)
 		}
 	}
 
@@ -1294,10 +1293,10 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
 }
 
-// broadcastWorkersIfNeeded will check whether the copWorkers is under suspended status.
-// If they are, `broadcastWorkersIfNeeded` would try to recover them if there are no more
+// broadcastIfNeeded will check whether the copWorkers is under suspended status.
+// If they are, `broadcastIfNeeded` would try to recover them if there are no more
 // copResponse remained in the channel.
-func (e *rateLimitAction) broadcastWorkersIfNeeded(needed bool) {
+func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	e.conditionLock()
 	defer e.conditionUnlock()
 	if e.cond.exceed && needed {
@@ -1351,5 +1350,22 @@ type copTaskStatusHandler struct {
 	// curr indicates the curr id of the finished copTask
 	curr int
 	// maxID indicates the max id of the running copTask
-	maxID uint32
+	mu struct {
+		sync.Mutex
+		maxID uint32
+	}
+}
+
+func (handler *copTaskStatusHandler) getMaxID() uint32 {
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	return handler.mu.maxID
+}
+
+func (handler *copTaskStatusHandler) setMaxIDIfLarger(newID uint32) {
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	if newID > handler.mu.maxID {
+		handler.mu.maxID = newID
+	}
 }
