@@ -18,7 +18,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/mpp"
-	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -26,7 +25,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -100,13 +98,13 @@ func (e *ExchangeClient) ToPB(ctx sessionctx.Context, storeType kv.StoreType) (*
 		encodedTask = append(encodedTask, encodedStr)
 	}
 
-	columnInfos := make([]*model.ColumnInfo, 0, len(e.schema.Columns))
+	fieldTypes := make([]*tipb.FieldType, 0, len(e.schema.Columns))
 	for _, column := range e.schema.Columns {
-		columnInfos = append(columnInfos, column.ToInfo())
+		fieldTypes = append(fieldTypes, expression.ToPBFieldType(column.RetType))
 	}
 	ecExec := &tipb.ExchangeClient{
 		EncodedTaskMeta: encodedTask,
-		Columns:         util.ColumnsToProto(columnInfos, false),
+		FieldTypes:      fieldTypes,
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{

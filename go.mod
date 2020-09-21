@@ -2,7 +2,7 @@ module github.com/pingcap/tidb
 
 replace github.com/pingcap/kvproto => github.com/hanfei1991/kvproto v0.0.0-20200910071523-7782b86f085c
 
-replace github.com/pingcap/tipb => github.com/hanfei1991/tipb v0.0.0-20200911095318-f78c6c244146
+replace github.com/pingcap/tipb => github.com/hanfei1991/tipb v0.0.0-20200918085831-d50c88a23a9d
 
 replace github.com/ngaut/unistore => github.com/hanfei1991/unistore v0.0.0-20200902025450-39fe3975bab3
 

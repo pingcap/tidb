@@ -265,6 +265,10 @@ github.com/hanfei1991/kvproto v0.0.0-20200910071523-7782b86f085c h1:bWn+qzVgy/af
 github.com/hanfei1991/kvproto v0.0.0-20200910071523-7782b86f085c/go.mod h1:IOdRDPLyda8GX2hE/jO7gqaCV/PNFh8BZQCQZXfIOqI=
 github.com/hanfei1991/tipb v0.0.0-20200911095318-f78c6c244146 h1:GBLib2/D85Ey++EKHVefizkJG9A47dkfmxsIbp5oOiE=
 github.com/hanfei1991/tipb v0.0.0-20200911095318-f78c6c244146/go.mod h1:nPMpOLbGpW71jAalpqgYYjMAZfCGk+DdSPhoIVVizkU=
+github.com/hanfei1991/tipb v0.0.0-20200918085831-d50c88a23a9d h1:MM3kaQocH/Eo1oNNVTi3coGERRFViBt4hIby8mXVc3Q=
+github.com/hanfei1991/tipb v0.0.0-20200918085831-d50c88a23a9d/go.mod h1:nPMpOLbGpW71jAalpqgYYjMAZfCGk+DdSPhoIVVizkU=
+github.com/hanfei1991/tipb v0.0.0-20200921041728-937b1f0ade79 h1:q7+Il7yWK0f9fRU4Gl9IEf/QiQ8AHwYS+dAU9gz41LA=
+github.com/hanfei1991/tipb v0.0.0-20200921041728-937b1f0ade79/go.mod h1:nPMpOLbGpW71jAalpqgYYjMAZfCGk+DdSPhoIVVizkU=
 github.com/hanfei1991/unistore v0.0.0-20200902025450-39fe3975bab3 h1:rz+Ds3z+yoQLQ2uvP4ASe+3egqzz6wqSBKN8SqPKqjw=
 github.com/hanfei1991/unistore v0.0.0-20200902025450-39fe3975bab3/go.mod h1:WGW+D29mwI9OWmM3e7fv2H/yn/u7g9xKhXv6NLlwXEQ=
 github.com/hashicorp/golang-lru v0.5.0/go.mod h1:/m3WP610KZHVQ1SGc6re/UDhFvYD7pJ4Ao+sR/qLZy8=
