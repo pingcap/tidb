@@ -6304,14 +6304,12 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
+	quota := count * 15
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		sm := &mockSessionManager1{
-			PS: make([]*util.ProcessInfo, 0),
-		}
-		tk.Se.SetSessionManager(sm)
-		s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
-		quota := count * 15
+		se, err := session.CreateSession4Test(s.store)
+		c.Check(err, IsNil)
+		tk.Se = se
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
@@ -6325,22 +6323,24 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		// assert delegate to fallback action
 		tk.MustExec("set tidb_distsql_scan_concurrency = 2")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
-		err := tk.QueryToErr(testcase.sql)
+		err = tk.QueryToErr(testcase.sql)
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
+		se.Close()
 	}
 	// assert disable
 	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable")
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		sm := &mockSessionManager1{
-			PS: make([]*util.ProcessInfo, 0),
-		}
-		tk.Se.SetSessionManager(sm)
-		s.domain.ExpensiveQueryHandle().SetSessionManager(sm)
-		err := tk.QueryToErr(testcase.sql)
+		se, err := session.CreateSession4Test(s.store)
+		c.Check(err, IsNil)
+		tk.Se = se
+		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
+		tk.MustExec("set @@tidb_mem_quota_query=1;")
+		err = tk.QueryToErr(testcase.sql)
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
+		se.Close()
 	}
 }
