@@ -15,8 +15,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
-
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/planner/core"
@@ -117,7 +115,6 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 
 func (e *ExplainExec) getAnalyzeExecToExecuted() Executor {
 	if e.analyzeExec != nil && !e.executed {
-		fmt.Printf("get exec---\n\n")
 		e.executed = true
 		return e.analyzeExec
 	}

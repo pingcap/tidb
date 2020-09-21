@@ -1219,9 +1219,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 				se.StmtCommit()
 			}
 		}
-		if !sessVars.InRestrictedSQL {
-			fmt.Printf("------------commit--------\n")
-		}
 		err = finishStmt(ctx, se, err, s)
 	}
 	if rs != nil {
