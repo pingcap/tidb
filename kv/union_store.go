@@ -25,6 +25,10 @@ type UnionStore interface {
 	GetKeyExistErrInfo(k Key) *existErrInfo
 	// DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
 	DeleteKeyExistErrInfo(k Key)
+	// ResetStmtKeyExistErrs deletes all the key exist error infos for the current statement.
+	ResetStmtKeyExistErrs()
+	// MergeStmtKeyExistErrs merges all the key exist error infos for the current statement.
+	MergeStmtKeyExistErrs()
 	// WalkBuffer iterates all buffered kv pairs.
 	WalkBuffer(f func(k Key, v []byte) error) error
 	// SetOption sets an option with a value, when val is nil, uses the default
@@ -86,16 +90,18 @@ func (e *existErrInfo) Err() error {
 // snapshot for read.
 type unionStore struct {
 	*BufferStore
-	keyExistErrs map[string]*existErrInfo // for the lazy check
-	opts         options
+	keyExistErrs     map[string]*existErrInfo // for the lazy check
+	stmtKeyExistErrs map[string]*existErrInfo
+	opts             options
 }
 
 // NewUnionStore builds a new UnionStore.
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
-		BufferStore:  NewBufferStore(snapshot),
-		keyExistErrs: make(map[string]*existErrInfo),
-		opts:         make(map[Option]interface{}),
+		BufferStore:      NewBufferStore(snapshot),
+		keyExistErrs:     make(map[string]*existErrInfo),
+		stmtKeyExistErrs: make(map[string]*existErrInfo),
+		opts:             make(map[Option]interface{}),
 	}
 }
 
@@ -106,7 +112,7 @@ func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
 		if _, ok := us.opts.Get(PresumeKeyNotExists); ok {
 			e, ok := us.opts.Get(PresumeKeyNotExistsError)
 			if ok {
-				us.keyExistErrs[string(k)] = e.(*existErrInfo)
+				us.stmtKeyExistErrs[string(k)] = e.(*existErrInfo)
 				if val, ok := us.opts.Get(CheckExists); ok {
 					checkExistMap := val.(map[string]struct{})
 					checkExistMap[string(k)] = struct{}{}
@@ -126,6 +132,9 @@ func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
 }
 
 func (us *unionStore) GetKeyExistErrInfo(k Key) *existErrInfo {
+	if c, ok := us.stmtKeyExistErrs[string(k)]; ok {
+		return c
+	}
 	if c, ok := us.keyExistErrs[string(k)]; ok {
 		return c
 	}
@@ -133,6 +142,7 @@ func (us *unionStore) GetKeyExistErrInfo(k Key) *existErrInfo {
 }
 
 func (us *unionStore) DeleteKeyExistErrInfo(k Key) {
+	delete(us.stmtKeyExistErrs, string(k))
 	delete(us.keyExistErrs, string(k))
 }
 
@@ -166,6 +176,17 @@ func (us *unionStore) Flush() (int, error) {
 
 func (us *unionStore) Discard() {
 	us.BufferStore.Discard()
+}
+
+func (us *unionStore) ResetStmtKeyExistErrs() {
+	us.stmtKeyExistErrs = make(map[string]*existErrInfo)
+}
+
+func (us *unionStore) MergeStmtKeyExistErrs() {
+	for k, v := range us.stmtKeyExistErrs {
+		us.keyExistErrs[k] = v
+	}
+	us.stmtKeyExistErrs = make(map[string]*existErrInfo)
 }
 
 type options map[Option]interface{}
