@@ -6931,9 +6931,6 @@ func (s *testIntegrationSuite) TestIssue19504(c *C) {
 		Check(testkit.Rows("1 1", "0 0", "0 0"))
 }
 
-<<<<<<< HEAD
-func (s *testIntegrationSerialSuite) TestIssue17891(c *C) {
-=======
 func (s *testIntegrationSerialSuite) TestIssue19804(c *C) {
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
@@ -6953,7 +6950,6 @@ func (s *testIntegrationSerialSuite) TestIssue19804(c *C) {
 }
 
 func (s *testIntegrationSerialSuite) TestIssue18949(c *C) {
->>>>>>> 73e03c7... ddl: check constraint when alter enum/set type column (#19806)
 	collate.SetNewCollationEnabledForTest(true)
 	defer collate.SetNewCollationEnabledForTest(false)
 
