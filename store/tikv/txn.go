@@ -563,3 +563,11 @@ func (txn *tikvTxn) GetMemBufferSnapshot() kv.MemBuffer {
 func (txn *tikvTxn) GetSnapshot() kv.Snapshot {
 	return txn.snapshot
 }
+
+func (txn *tikvTxn) ResetStmtKeyExistErrs() {
+	txn.us.ResetStmtKeyExistErrs()
+}
+
+func (txn *tikvTxn) MergeStmtKeyExistErrs() {
+	txn.us.MergeStmtKeyExistErrs()
+}
