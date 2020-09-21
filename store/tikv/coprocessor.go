@@ -1278,22 +1278,22 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 		}
 		return
 	}
-
 	e.conditionLock()
 	defer e.conditionUnlock()
 	e.cond.once.Do(func() {
 		if e.cond.remainingTokenNum < 2 {
-			logutil.BgLogger().Info("rateLimitAction delegate to fallback action",
-				zap.Uint("totalTokenNum", e.totalTokenNum),
-				zap.Int64("limit", t.GetBytesLimit()))
+			logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
+				zap.Uint("totalTokenNum", e.totalTokenNum))
 			if e.fallbackAction != nil {
 				e.fallbackAction.Action(t)
 			}
 			return
 		}
-		logutil.BgLogger().Info("rateLimitAction exceed signal.",
+		logutil.BgLogger().Info("memory exceeds quota, destroy one token now.",
 			zap.Int64("consumed", t.BytesConsumed()),
-			zap.Uint("existedToken", e.cond.remainingTokenNum))
+			zap.Int64("quota", t.GetBytesLimit()),
+			zap.Uint("totalTokenCount", e.totalTokenNum),
+			zap.Uint("remainingTokenCount", e.cond.remainingTokenNum))
 		e.cond.isTokenDestroyed = false
 		e.cond.exceed = true
 	})
