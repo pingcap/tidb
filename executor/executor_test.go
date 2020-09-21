@@ -6310,6 +6310,7 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
+		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
 		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 		var expect []string
@@ -6336,6 +6337,7 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
+		tk.MustExec("use test")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 30")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
 		err = tk.QueryToErr(testcase.sql)
