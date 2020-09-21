@@ -356,21 +356,21 @@ func timeZone2Duration(tz string) time.Duration {
 }
 
 var logicalOps = map[string]struct{}{
-	ast.LT:        {},
-	ast.GE:        {},
-	ast.GT:        {},
-	ast.LE:        {},
-	ast.EQ:        {},
-	ast.NE:        {},
-	ast.UnaryNot:  {},
-	ast.LogicAnd:  {},
-	ast.LogicOr:   {},
-	ast.LogicXor:  {},
-	ast.In:        {},
-	ast.IsNull:    {},
-	ast.IsTruth:   {},
-	ast.IsFalsity: {},
-	ast.Like:      {},
+	ast.LT:                 {},
+	ast.GE:                 {},
+	ast.GT:                 {},
+	ast.LE:                 {},
+	ast.EQ:                 {},
+	ast.NE:                 {},
+	ast.UnaryNot:           {},
+	ast.LogicAnd:           {},
+	ast.LogicOr:            {},
+	ast.LogicXor:           {},
+	ast.In:                 {},
+	ast.IsNull:             {},
+	ast.IsTruthWithoutNull: {},
+	ast.IsFalsity:          {},
+	ast.Like:               {},
 }
 
 var oppositeOp = map[string]string{
