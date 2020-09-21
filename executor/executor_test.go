@@ -6305,6 +6305,7 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		conf.OOMAction = config.OOMActionCancel
 	})
 	quota := count * 15
+	// assert oom action
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
 		se, err := session.CreateSession4Test(s.store)
@@ -6330,7 +6331,6 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		c.Check(err, IsNil)
 		tk.Se = se
 		tk.MustExec("use test")
-		// assert delegate to fallback action
 		tk.MustExec("set tidb_distsql_scan_concurrency = 2")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
 		err = tk.QueryToErr(testcase.sql)
