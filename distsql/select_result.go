@@ -394,6 +394,7 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 
 func (s *selectResultRuntimeStats) String() string {
 	buf := bytes.NewBuffer(nil)
+	copRPCStats := s.rpcStat.Clone()
 	if len(s.copRespTime) > 0 {
 		size := len(s.copRespTime)
 		if size == 1 {
@@ -427,9 +428,9 @@ func (s *selectResultRuntimeStats) String() string {
 				}
 			}
 		}
-		copRPC := s.rpcStat.Stats[tikvrpc.CmdCop]
+		copRPC := copRPCStats.Stats[tikvrpc.CmdCop]
 		if copRPC != nil && copRPC.Count > 0 {
-			delete(s.rpcStat.Stats, tikvrpc.CmdCop)
+			delete(copRPCStats.Stats, tikvrpc.CmdCop)
 			buf.WriteString(", rpc_num: ")
 			buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
 			buf.WriteString(", rpc_time: ")
@@ -440,7 +441,7 @@ func (s *selectResultRuntimeStats) String() string {
 		buf.WriteString("}")
 	}
 
-	rpcStatsStr := s.rpcStat.String()
+	rpcStatsStr := copRPCStats.String()
 	if len(rpcStatsStr) > 0 {
 		buf.WriteString(", ")
 		buf.WriteString(rpcStatsStr)

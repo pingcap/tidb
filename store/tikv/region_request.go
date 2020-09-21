@@ -115,6 +115,15 @@ func (r *RegionRequestRuntimeStats) Merge(rs RegionRequestRuntimeStats) {
 	}
 }
 
+// Clone implements RuntimeStats interface.
+func (r *RegionRequestRuntimeStats) Clone() RegionRequestRuntimeStats {
+	newRs := RegionRequestRuntimeStats{Stats: make(map[tikvrpc.CmdType]*RPCRuntimeStats, len(r.Stats))}
+	for cmd, v := range r.Stats {
+		newRs.Stats[cmd] = v
+	}
+	return newRs
+}
+
 // RegionBatchRequestSender sends BatchCop requests to TiFlash server by stream way.
 type RegionBatchRequestSender struct {
 	RegionRequestSender
