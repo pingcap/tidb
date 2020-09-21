@@ -388,7 +388,7 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	toCheck := e
 	isExplain := false
 	if explain, ok := e.(*ExplainExec); ok {
-		if analyze := explain.getAnalyzeExecToExecuted(); analyze != nil {
+		if analyze := explain.getAnalyzeExecToExecutedNoDelay(); analyze != nil {
 			toCheck = analyze
 			isExplain = true
 		}

@@ -113,8 +113,8 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 	return e.explain.Rows, nil
 }
 
-func (e *ExplainExec) getAnalyzeExecToExecuted() Executor {
-	if e.analyzeExec != nil && !e.executed {
+func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() Executor {
+	if e.analyzeExec != nil && !e.executed && e.analyzeExec.Schema().Len() == 0 {
 		e.executed = true
 		return e.analyzeExec
 	}
