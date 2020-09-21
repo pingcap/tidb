@@ -6288,19 +6288,16 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 	}
 
 	testcases := []struct {
-		name     string
-		sql      string
-		useIndex bool
+		name string
+		sql  string
 	}{
 		{
-			name:     "keep Order",
-			sql:      "select * from t6 order by id",
-			useIndex: true,
+			name: "keep Order",
+			sql:  "select * from t6 order by id",
 		},
 		{
-			name:     "non keep Order",
-			sql:      "select * from t5",
-			useIndex: false,
+			name: "non keep Order",
+			sql:  "select * from t5",
 		},
 	}
 	defer config.RestoreFunc()()
@@ -6326,17 +6323,10 @@ func (s *testSuite) TestCoprocessorOOMAction(c *C) {
 		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
 
 		// assert delegate to fallback action
-		if testcase.useIndex {
-			failpoint.Enable("github.com/pingcap/tidb/store/tikv/mockTokenCount", "return(true)")
-		} else {
-			tk.MustExec("set tidb_distsql_scan_concurrency = 2")
-		}
+		tk.MustExec("set tidb_distsql_scan_concurrency = 2")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
 		err := tk.QueryToErr(testcase.sql)
 		c.Assert(err, NotNil)
 		c.Assert(err.Error(), Matches, "Out Of Memory Quota.*")
-		if testcase.useIndex {
-			failpoint.Disable("github.com/pingcap/tidb/store/tikv/mockTokenCount")
-		}
 	}
 }

@@ -90,13 +90,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 
 	if it.req.KeepOrder {
-		tokenCount := 2 * it.concurrency
-		failpoint.Inject("mockTokenCount", func(val failpoint.Value) {
-			if val.(bool) {
-				tokenCount = 1
-			}
-		})
-		it.sendRate = newRateLimit(tokenCount)
+		it.sendRate = newRateLimit(2 * it.concurrency)
 	} else {
 		it.respChan = make(chan *copResponse, it.concurrency)
 		it.sendRate = newRateLimit(it.concurrency)
@@ -1229,8 +1223,8 @@ func (it copErrorResponse) Close() error {
 	return nil
 }
 
-// rateLimitAction an OOM Action which is used to control the ticket if OOM triggered. The ticket number should be
-// set on initial. Each time the Action is triggered, one ticket would be destroyed. If the count of the ticket is less
+// rateLimitAction an OOM Action which is used to control the token if OOM triggered. The token number should be
+// set on initial. Each time the Action is triggered, one token would be destroyed. If the count of the token is less
 // than 2, the action would be delegated to the fallback action.
 type rateLimitAction struct {
 	// enabled indicates whether the coprocessor is running. rateLimitAction only Action when enabled is true.
