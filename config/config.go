@@ -496,7 +496,8 @@ type TiKVClient struct {
 	// CommitTimeout is the max time which command 'commit' will wait.
 	CommitTimeout string `toml:"commit-timeout" json:"commit-timeout"`
 	// EnableAsyncCommit enables async commit for all transactions.
-	EnableAsyncCommit bool `toml:"enable-async-commit" json:"enable-async-commit"`
+	EnableAsyncCommit    bool `toml:"enable-async-commit" json:"enable-async-commit"`
+	AsyncCommitKeysLimit uint `toml:"async-commit-keys-limit" json:"async-commit-keys-limit"`
 
 	// MaxBatchSize is the max batch size when calling batch commands API.
 	MaxBatchSize uint `toml:"max-batch-size" json:"max-batch-size"`
@@ -584,8 +585,6 @@ type IsolationRead struct {
 // Experimental controls the features that are still experimental: their semantics, interfaces are subject to change.
 // Using these features in the production environment is not recommended.
 type Experimental struct {
-	// Whether enable creating expression index.
-	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
 }
 
 var defaultConf = Config{
@@ -689,6 +688,7 @@ var defaultConf = Config{
 		GrpcKeepAliveTimeout: 3,
 		CommitTimeout:        "41s",
 		EnableAsyncCommit:    false,
+		AsyncCommitKeysLimit: 256,
 
 		MaxBatchSize:      128,
 		OverloadThreshold: 200,
@@ -728,9 +728,7 @@ var defaultConf = Config{
 	IsolationRead: IsolationRead{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
-	Experimental: Experimental{
-		AllowsExpressionIndex: false,
-	},
+	Experimental:               Experimental{},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            true,
 	Labels:                     make(map[string]string),
