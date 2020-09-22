@@ -319,7 +319,7 @@ func (s *testSuite) TestAnalyze(c *C) {
 		Build()
 	c.Assert(err, IsNil)
 
-	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars, true)
+	response, err := Analyze(context.TODO(), s.sctx.GetClient(), request, kv.DefaultVars, true, s.sctx.GetSessionVars().StmtCtx.MemTracker)
 	c.Assert(err, IsNil)
 
 	result, ok := response.(*selectResult)

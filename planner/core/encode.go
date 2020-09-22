@@ -62,30 +62,19 @@ func RenderPlanTree(p Plan, statsColl *execdetails.RuntimeStatsColl) (string, er
 	}
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
-	pn.encodePlan(p, true, 0, statsColl)
+	pn.encodePlan(p, true, kv.TiKV, 0, statsColl)
 	return plancodec.RenderPlanTree(pn.buf.String())
 }
 
 func (pn *planEncoder) encodePlanTree(p Plan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
-	pn.encodePlan(p, true, 0, nil)
+	pn.encodePlan(p, true, kv.TiKV, 0, nil)
 	return plancodec.Compress(pn.buf.Bytes())
 }
 
-func (pn *planEncoder) encodePlan(p Plan, isRoot bool, depth int, otherRuntimeStatsColl *execdetails.RuntimeStatsColl) {
-	var storeType kv.StoreType = kv.UnSpecified
-	if !isRoot {
-		switch copPlan := p.(type) {
-		case *PhysicalTableReader:
-			storeType = copPlan.StoreType
-		case *PhysicalTableScan:
-			storeType = copPlan.StoreType
-		default:
-			storeType = kv.TiKV
-		}
-	}
-	taskTypeInfo := plancodec.EncodeTaskType(isRoot, storeType)
+func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth int, otherRuntimeStatsColl *execdetails.RuntimeStatsColl) {
+	taskTypeInfo := plancodec.EncodeTaskType(isRoot, store)
 	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfo(p.SCtx(), p, otherRuntimeStatsColl)
 	rowCount := 0.0
 	if statsInfo := p.statsInfo(); statsInfo != nil {
@@ -100,29 +89,29 @@ func (pn *planEncoder) encodePlan(p Plan, isRoot bool, depth int, otherRuntimeSt
 		return
 	}
 	if !pn.encodedPlans[selectPlan.ID()] {
-		pn.encodePlan(selectPlan, isRoot, depth, otherRuntimeStatsColl)
+		pn.encodePlan(selectPlan, isRoot, store, depth, otherRuntimeStatsColl)
 		return
 	}
 	for _, child := range selectPlan.Children() {
 		if pn.encodedPlans[child.ID()] {
 			continue
 		}
-		pn.encodePlan(child.(PhysicalPlan), isRoot, depth, otherRuntimeStatsColl)
+		pn.encodePlan(child.(PhysicalPlan), isRoot, store, depth, otherRuntimeStatsColl)
 	}
 	switch copPlan := selectPlan.(type) {
 	case *PhysicalTableReader:
-		pn.encodePlan(copPlan.tablePlan, false, depth, otherRuntimeStatsColl)
+		pn.encodePlan(copPlan.tablePlan, false, store, depth, otherRuntimeStatsColl)
 	case *PhysicalIndexReader:
-		pn.encodePlan(copPlan.indexPlan, false, depth, otherRuntimeStatsColl)
+		pn.encodePlan(copPlan.indexPlan, false, store, depth, otherRuntimeStatsColl)
 	case *PhysicalIndexLookUpReader:
-		pn.encodePlan(copPlan.indexPlan, false, depth, otherRuntimeStatsColl)
-		pn.encodePlan(copPlan.tablePlan, false, depth, otherRuntimeStatsColl)
+		pn.encodePlan(copPlan.indexPlan, false, store, depth, otherRuntimeStatsColl)
+		pn.encodePlan(copPlan.tablePlan, false, store, depth, otherRuntimeStatsColl)
 	case *PhysicalIndexMergeReader:
 		for _, p := range copPlan.partialPlans {
-			pn.encodePlan(p, false, depth, otherRuntimeStatsColl)
+			pn.encodePlan(p, false, store, depth, otherRuntimeStatsColl)
 		}
 		if copPlan.tablePlan != nil {
-			pn.encodePlan(copPlan.tablePlan, false, depth, otherRuntimeStatsColl)
+			pn.encodePlan(copPlan.tablePlan, false, store, depth, otherRuntimeStatsColl)
 		}
 	}
 }
@@ -161,11 +150,12 @@ func NormalizePlan(p Plan) (normalized, digest string) {
 func (d *planDigester) normalizePlanTree(p PhysicalPlan) {
 	d.encodedPlans = make(map[int]bool)
 	d.buf.Reset()
-	d.normalizePlan(p, true, 0)
+	d.normalizePlan(p, true, kv.TiKV, 0)
 }
 
-func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, depth int) {
-	plancodec.NormalizePlanNode(depth, p.TP(), isRoot, p.ExplainNormalizedInfo(), &d.buf)
+func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, store kv.StoreType, depth int) {
+	taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(isRoot, store)
+	plancodec.NormalizePlanNode(depth, p.TP(), taskTypeInfo, p.ExplainNormalizedInfo(), &d.buf)
 	d.encodedPlans[p.ID()] = true
 
 	depth++
@@ -173,22 +163,22 @@ func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, depth int) {
 		if d.encodedPlans[child.ID()] {
 			continue
 		}
-		d.normalizePlan(child.(PhysicalPlan), isRoot, depth)
+		d.normalizePlan(child.(PhysicalPlan), isRoot, store, depth)
 	}
 	switch x := p.(type) {
 	case *PhysicalTableReader:
-		d.normalizePlan(x.tablePlan, false, depth)
+		d.normalizePlan(x.tablePlan, false, x.StoreType, depth)
 	case *PhysicalIndexReader:
-		d.normalizePlan(x.indexPlan, false, depth)
+		d.normalizePlan(x.indexPlan, false, store, depth)
 	case *PhysicalIndexLookUpReader:
-		d.normalizePlan(x.indexPlan, false, depth)
-		d.normalizePlan(x.tablePlan, false, depth)
+		d.normalizePlan(x.indexPlan, false, store, depth)
+		d.normalizePlan(x.tablePlan, false, store, depth)
 	case *PhysicalIndexMergeReader:
 		for _, p := range x.partialPlans {
-			d.normalizePlan(p, false, depth)
+			d.normalizePlan(p, false, store, depth)
 		}
 		if x.tablePlan != nil {
-			d.normalizePlan(x.tablePlan, false, depth)
+			d.normalizePlan(x.tablePlan, false, store, depth)
 		}
 	}
 }
