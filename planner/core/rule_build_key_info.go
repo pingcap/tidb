@@ -244,7 +244,7 @@ func checkIndexCanBeKey(idx *model.IndexInfo, columns []*model.ColumnInfo, schem
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
 	selfSchema.Keys = nil
 	for _, path := range ds.possibleAccessPaths {
-		if path.IsTablePath() {
+		if path.IsIntHandlePath {
 			continue
 		}
 		if newKey := checkIndexCanBeKey(path.Index, ds.Columns, selfSchema); newKey != nil {

@@ -35,6 +35,7 @@ func (b *builtinLog1ArgSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column
 			continue
 		}
 		if f64s[i] <= 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log(f64s[i])
@@ -57,6 +58,7 @@ func (b *builtinLog2Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) e
 			continue
 		}
 		if f64s[i] <= 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log2(f64s[i])
@@ -79,6 +81,7 @@ func (b *builtinLog10Sig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) 
 			continue
 		}
 		if f64s[i] <= 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log10(f64s[i])
@@ -474,6 +477,7 @@ func (b *builtinLog2ArgsSig) vecEvalReal(input *chunk.Chunk, result *chunk.Colum
 			continue
 		}
 		if d[i] <= 0 || d[i] == 1 || x[i] <= 0 {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		}
 		d[i] = math.Log(x[i]) / math.Log(d[i])
@@ -799,13 +803,22 @@ func (b *builtinTruncateIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return nil
+	}
+
 	for i := 0; i < len(i64s); i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		if buf64s[i] < 0 {
-			shift := int64(math.Pow10(int(-buf64s[i])))
-			i64s[i] = i64s[i] / shift * shift
+			// -MinInt = MinInt, special case
+			if buf64s[i] == mathutil.MinInt {
+				i64s[i] = 0
+			} else {
+				shift := int64(math.Pow10(int(-buf64s[i])))
+				i64s[i] = i64s[i] / shift * shift
+			}
 		}
 	}
 	return nil
@@ -834,13 +847,23 @@ func (b *builtinTruncateUintSig) vecEvalInt(input *chunk.Chunk, result *chunk.Co
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
+	if mysql.HasUnsignedFlag(b.args[1].GetType().Flag) {
+		return nil
+	}
+
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
+
 		if buf64s[i] < 0 {
-			shift := uint64(math.Pow10(int(-buf64s[i])))
-			i64s[i] = int64(uint64(i64s[i]) / shift * shift)
+			// -MinInt = MinInt, special case
+			if buf64s[i] == mathutil.MinInt {
+				i64s[i] = 0
+			} else {
+				shift := uint64(math.Pow10(int(-buf64s[i])))
+				i64s[i] = int64(uint64(i64s[i]) / shift * shift)
+			}
 		}
 	}
 	return nil

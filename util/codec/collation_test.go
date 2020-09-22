@@ -68,6 +68,20 @@ func (s *testCollationSuite) TestHashGroupKeyCollation(c *C) {
 			c.Assert(buf1[i][j], Equals, buf2[i][j])
 		}
 	}
+
+	tp.Collate = "utf8_unicode_ci"
+	buf1 = make([][]byte, n)
+	buf2 = make([][]byte, n)
+	buf1, err = HashGroupKey(sc, n, chk1.Column(0), buf1, tp)
+	c.Assert(err, IsNil)
+	buf2, err = HashGroupKey(sc, n, chk2.Column(0), buf2, tp)
+	c.Assert(err, IsNil)
+	for i := 0; i < n; i++ {
+		c.Assert(len(buf1[i]), Equals, len(buf2[i]))
+		for j := range buf1 {
+			c.Assert(buf1[i][j], Equals, buf2[i][j])
+		}
+	}
 }
 
 func (s *testCollationSuite) TestHashChunkRowCollation(c *C) {
@@ -101,6 +115,17 @@ func (s *testCollationSuite) TestHashChunkRowCollation(c *C) {
 		h1.Reset()
 		h2.Reset()
 	}
+
+	tp.Collate = "utf8_unicode_ci"
+	for i := 0; i < n; i++ {
+		h1 := crc32.NewIEEE()
+		h2 := crc32.NewIEEE()
+		c.Assert(HashChunkRow(sc, h1, chk1.GetRow(i), tps, cols, buf), IsNil)
+		c.Assert(HashChunkRow(sc, h2, chk2.GetRow(i), tps, cols, buf), IsNil)
+		c.Assert(h1.Sum32(), Equals, h2.Sum32())
+		h1.Reset()
+		h2.Reset()
+	}
 }
 
 func (s *testCollationSuite) TestHashChunkColumnsCollation(c *C) {
@@ -124,6 +149,13 @@ func (s *testCollationSuite) TestHashChunkColumnsCollation(c *C) {
 	}
 
 	tp.Collate = "utf8_general_ci"
+	c.Assert(HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull), IsNil)
+	c.Assert(HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull), IsNil)
+	for i := 0; i < n; i++ {
+		c.Assert(h1s[i].Sum64(), Equals, h2s[i].Sum64())
+	}
+
+	tp.Collate = "utf8_unicode_ci"
 	c.Assert(HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull), IsNil)
 	c.Assert(HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull), IsNil)
 	for i := 0; i < n; i++ {

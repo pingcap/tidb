@@ -1173,10 +1173,16 @@
       {
         "SQL": "select * from pt1",
         "Plan": [
-          "TableReader_5 10000.00 root  data:TableFullScan_6",
+          "TableReader_5 10000.00 root partition:all data:TableFullScan_6",
           "└─TableFullScan_6 10000.00 cop[tikv] table:pt1 keep order:false, stats:pseudo"
         ],
-        "Result": null
+        "Result": [
+          "4 40",
+          "1 10",
+          "5 50",
+          "2 20",
+          "3 30"
+        ]
       }
     ]
   },

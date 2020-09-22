@@ -68,7 +68,7 @@ func (s *testEvaluatorSuite) TestCompareFunctionWithRefine(c *C) {
 		{"-123456789123456789123456789.12345 < a", "1"},
 		{"'aaaa'=a", "eq(0, a)"},
 	}
-	cols, names, err := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Columns, tblInfo)
+	cols, names, err := ColumnInfos2ColumnsAndNames(s.ctx, model.NewCIStr(""), tblInfo.Name, tblInfo.Cols(), tblInfo)
 	c.Assert(err, IsNil)
 	schema := NewSchema(cols...)
 	for _, t := range tests {
@@ -233,6 +233,10 @@ func (s *testEvaluatorSuite) TestIntervalFunc(c *C) {
 		{types.MakeDatums(uint64(9223372036854775806), -9223372036854775807), 1, false},
 		{types.MakeDatums("9007199254740991", "9007199254740992"), 0, false},
 		{types.MakeDatums(1, uint32(1), uint32(1)), 0, true},
+		{types.MakeDatums(-1, 2333, nil), 0, false},
+		{types.MakeDatums(1, nil, nil, nil), 3, false},
+		{types.MakeDatums(1, nil, nil, nil, 2), 3, false},
+		{types.MakeDatums(uint64(9223372036854775808), nil, nil, nil, 4), 4, false},
 
 		// tests for appropriate precision loss
 		{types.MakeDatums(9007199254740992, "9007199254740993"), 1, false},
