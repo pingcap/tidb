@@ -215,7 +215,7 @@
       "select approx_percentile(a, 10) from t",
       "select approx_percentile(a, 10+70) from t",
       "select approx_percentile(a, 10*10) from t",
-      "select approx_percentile(a, 50) from t group by b"
+      "select approx_percentile(a, 50) from t group by b order by b"
     ]
   }
 ]

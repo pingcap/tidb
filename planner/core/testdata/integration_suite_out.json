@@ -1228,11 +1228,13 @@
         ]
       },
       {
-        "SQL": "select approx_percentile(a, 50) from t group by b",
+        "SQL": "select approx_percentile(a, 50) from t group by b order by b",
         "Plan": [
-          "HashAgg_5 8000.00 root  group by:test.t.b, funcs:approx_percentile(test.t.a, 50)->Column#4",
-          "└─TableReader_9 10000.00 root  data:TableFullScan_8",
-          "  └─TableFullScan_8 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "Projection_6 8000.00 root  Column#4",
+          "└─Sort_7 8000.00 root  test.t.b",
+          "  └─HashAgg_9 8000.00 root  group by:test.t.b, funcs:approx_percentile(test.t.a, 50)->Column#4, funcs:firstrow(test.t.b)->test.t.b",
+          "    └─TableReader_13 10000.00 root  data:TableFullScan_12",
+          "      └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Res": [
           "1",
