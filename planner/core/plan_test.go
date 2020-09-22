@@ -20,6 +20,7 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/planner/core"
@@ -85,6 +86,46 @@ func (s *testPlanNormalize) TestNormalizedPlan(c *C) {
 			output[i].Plan = normalizedPlanRows
 		})
 		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
+	}
+}
+
+func (s *testPlanNormalize) TestNormalizedPlanForDiffStore(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (a int, b int, c int, primary key(a))")
+	tk.MustExec("insert into t1 values(1,1,1), (2,2,2), (3,3,3)")
+
+	tbl, err := s.dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	c.Assert(err, IsNil)
+	// Set the hacked TiFlash replica for explain tests.
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
+
+	var input []string
+	var output []struct {
+		Digest string
+		Plan   []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	lastDigest := ""
+	for i, tt := range input {
+		tk.Se.GetSessionVars().PlanID = 0
+		tk.MustExec(tt)
+		info := tk.Se.ShowProcess()
+		c.Assert(info, NotNil)
+		ep, ok := info.Plan.(*core.Explain)
+		c.Assert(ok, IsTrue)
+		normalized, digest := core.NormalizePlan(ep.TargetPlan)
+		normalizedPlan, err := plancodec.DecodeNormalizedPlan(normalized)
+		normalizedPlanRows := getPlanRows(normalizedPlan)
+		c.Assert(err, IsNil)
+		s.testData.OnRecord(func() {
+			output[i].Digest = digest
+			output[i].Plan = normalizedPlanRows
+		})
+		compareStringSlice(c, normalizedPlanRows, output[i].Plan)
+		c.Assert(digest != lastDigest, IsTrue)
+		lastDigest = digest
 	}
 }
 
@@ -367,6 +408,14 @@ func (s *testPlanNormalize) TestNthPlanHint(c *C) {
 		"1 1"))
 	tk.MustQuery("select  /*+ nth_plan(3) */ * from tt where a=1 and b=1;").Check(testkit.Rows(
 		"1 1"))
+
+	// Make sure nth_plan() doesn't affect separately executed subqueries by asserting there's only one warning.
+	tk.MustExec("select /*+ nth_plan(1000) */ count(1) from t where (select count(1) from t, tt) > 1;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
+	tk.MustExec("select /*+ nth_plan(1000) */ count(1) from t where exists (select count(1) from t, tt);")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The parameter of nth_plan() is out of range."))
 }
 
 func (s *testPlanNormalize) TestDecodePlanPerformance(c *C) {

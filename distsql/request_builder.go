@@ -283,7 +283,7 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) []kv.KeyRange {
 		if commonHandle, ok := handles[i].(*kv.CommonHandle); ok {
 			ran := kv.KeyRange{
 				StartKey: tablecodec.EncodeRowKey(tid, commonHandle.Encoded()),
-				EndKey:   tablecodec.EncodeRowKey(tid, append(commonHandle.Encoded(), 0)),
+				EndKey:   tablecodec.EncodeRowKey(tid, kv.Key(commonHandle.Encoded()).Next()),
 			}
 			krs = append(krs, ran)
 			i++
