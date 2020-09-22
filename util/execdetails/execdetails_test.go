@@ -243,9 +243,8 @@ func TestRootRuntimeStats(t *testing.T) {
 	pid = 2
 	stmtStats.RegisterStats(pid, basic3)
 	stats2 := stmtStats.GetRootStats(pid)
-	commitDetail2 := *commitDetail
 	stmtStats.RegisterStats(pid, &RuntimeStatsWithCommit{
-		Commit: &commitDetail2,
+		Commit: commitDetail,
 		LockKeys: &LockKeysDetails{
 			TotalTime:       time.Second,
 			RegionNum:       3,
