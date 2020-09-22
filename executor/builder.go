@@ -2638,21 +2638,25 @@ type mockPhysicalIndexReader struct {
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoin(ctx context.Context, lookUpContents []*indexJoinLookUpContent,
-	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
-	return builder.buildExecutorForIndexJoinInternal(ctx, builder.Plan, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool) (Executor, error) {
+	return builder.buildExecutorForIndexJoinInternal(ctx, builder.Plan, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
 }
 
 func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.Context, plan plannercore.Plan, lookUpContents []*indexJoinLookUpContent,
-	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
+	IndexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool) (Executor, error) {
 	switch v := plan.(type) {
 	case *plannercore.PhysicalTableReader:
+<<<<<<< HEAD
 		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents)
+=======
+		return builder.buildTableReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
+>>>>>>> 640cb42... executor: do not reorder handles when building requests for `IndexMergeJoin` (#20138)
 	case *plannercore.PhysicalIndexReader:
 		return builder.buildIndexReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *plannercore.PhysicalIndexLookUpReader:
 		return builder.buildIndexLookUpReaderForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
 	case *plannercore.PhysicalUnionScan:
-		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+		return builder.buildUnionScanForIndexJoin(ctx, v, lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
 	// The inner child of IndexJoin might be Projection when a combination of the following conditions is true:
 	// 	1. The inner child fetch data using indexLookupReader
 	// 	2. PK is not handle
@@ -2664,7 +2668,7 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 	// Need to support physical selection because after PR 16389, TiDB will push down all the expr supported by TiKV or TiFlash
 	// in predicate push down stage, so if there is an expr which only supported by TiFlash, a physical selection will be added after index read
 	case *plannercore.PhysicalSelection:
-		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, IndexRanges, keyOff2IdxOff, cwc)
+		childExec, err := builder.buildExecutorForIndexJoinInternal(ctx, v.Children()[0], lookUpContents, IndexRanges, keyOff2IdxOff, cwc, canReorderHandles)
 		if err != nil {
 			return nil, err
 		}
@@ -2681,9 +2685,10 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 }
 
 func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context, v *plannercore.PhysicalUnionScan,
-	values []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
+	values []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
+	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool) (Executor, error) {
 	childBuilder := &dataReaderBuilder{Plan: v.Children()[0], executorBuilder: builder.executorBuilder}
-	reader, err := childBuilder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff, cwc)
+	reader, err := childBuilder.buildExecutorForIndexJoin(ctx, values, indexRanges, keyOff2IdxOff, cwc, canReorderHandles)
 	if err != nil {
 		return nil, err
 	}
@@ -2692,7 +2697,13 @@ func (builder *dataReaderBuilder) buildUnionScanForIndexJoin(ctx context.Context
 	return us, err
 }
 
+<<<<<<< HEAD
 func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader, lookUpContents []*indexJoinLookUpContent) (Executor, error) {
+=======
+func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalTableReader,
+	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int,
+	cwc *plannercore.ColWithCmpFuncManager, canReorderHandles bool) (Executor, error) {
+>>>>>>> 640cb42... executor: do not reorder handles when building requests for `IndexMergeJoin` (#20138)
 	e, err := buildNoRangeTableReader(builder.executorBuilder, v)
 	if err != nil {
 		return nil, err
@@ -2712,7 +2723,27 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 			handles = append(handles, handle)
 		}
 	}
+<<<<<<< HEAD
 	return builder.buildTableReaderFromHandles(ctx, e, handles)
+=======
+
+	if tbInfo.GetPartitionInfo() == nil {
+		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
+	}
+	if !builder.ctx.GetSessionVars().UseDynamicPartitionPrune() {
+		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
+	}
+
+	e.kvRangeBuilder = kvRangeBuilderFromHandles(handles)
+	nextPartition := nextPartitionForTableReader{e}
+	return buildPartitionTable(builder.executorBuilder, tbInfo, &v.PartitionInfo, e, nextPartition)
+}
+
+type kvRangeBuilderFromFunc func(pid int64) ([]kv.KeyRange, error)
+
+func (h kvRangeBuilderFromFunc) buildKeyRange(pid int64) ([]kv.KeyRange, error) {
+	return h(pid)
+>>>>>>> 640cb42... executor: do not reorder handles when building requests for `IndexMergeJoin` (#20138)
 }
 
 func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
@@ -2745,6 +2776,26 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	return e, nil
 }
 
+<<<<<<< HEAD
+=======
+func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []kv.Handle, canReorderHandles bool) (*TableReaderExecutor, error) {
+	if canReorderHandles {
+		sort.Slice(handles, func(i, j int) bool {
+			return handles[i].Compare(handles[j]) < 0
+		})
+	}
+	var b distsql.RequestBuilder
+	b.SetTableHandles(getPhysicalTableID(e.table), handles)
+	return builder.buildTableReaderBase(ctx, e, b)
+}
+
+func (builder *dataReaderBuilder) buildTableReaderFromKvRanges(ctx context.Context, e *TableReaderExecutor, ranges []kv.KeyRange) (Executor, error) {
+	var b distsql.RequestBuilder
+	b.SetKeyRanges(ranges)
+	return builder.buildTableReaderBase(ctx, e, b)
+}
+
+>>>>>>> 640cb42... executor: do not reorder handles when building requests for `IndexMergeJoin` (#20138)
 func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexReader,
 	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (Executor, error) {
 	e, err := buildNoRangeIndexReader(builder.executorBuilder, v)

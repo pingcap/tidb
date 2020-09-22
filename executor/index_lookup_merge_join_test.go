@@ -65,7 +65,51 @@ func (s *testSuite9) TestIssue18631(c *C) {
 		"1 1 1 1 1 1 1 1"))
 }
 
+<<<<<<< HEAD
 func (s *testSuiteAgg) TestIndexJoinOnSinglePartitionTable(c *C) {
+=======
+func (s *testSuite9) TestIssue19408(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1  (c_int int, primary key(c_int))")
+	tk.MustExec("create table t2  (c_int int, unique key (c_int)) partition by hash (c_int) partitions 4")
+	tk.MustExec("insert into t1 values (1), (2), (3), (4), (5)")
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustExec("begin")
+	tk.MustExec("delete from t1 where c_int = 1")
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1, t2 where t1.c_int = t2.c_int").Sort().Check(testkit.Rows(
+		"2 2",
+		"3 3",
+		"4 4",
+		"5 5"))
+	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */ * from t1, t2 where t1.c_int = t2.c_int").Sort().Check(testkit.Rows(
+		"2 2",
+		"3 3",
+		"4 4",
+		"5 5"))
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1,t2) */ * from t1, t2 where t1.c_int = t2.c_int").Sort().Check(testkit.Rows(
+		"2 2",
+		"3 3",
+		"4 4",
+		"5 5"))
+	tk.MustExec("commit")
+}
+
+func (s *testSuite9) TestIssue20137(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (id bigint(20) unsigned, primary key(id))")
+	tk.MustExec("create table t2 (id bigint(20) unsigned)")
+	tk.MustExec("insert into t1 values (8738875760185212610)")
+	tk.MustExec("insert into t1 values (9814441339970117597)")
+	tk.MustExec("insert into t2 values (8738875760185212610)")
+	tk.MustExec("insert into t2 values (9814441339970117597)")
+	tk.MustQuery("select /*+ INL_MERGE_JOIN(t1, t2) */ * from t2 left join t1 on t1.id = t2.id order by t1.id").Check(
+		testkit.Rows("8738875760185212610 8738875760185212610", "9814441339970117597 9814441339970117597"))
+}
+
+func (s *testSuiteWithData) TestIndexJoinOnSinglePartitionTable(c *C) {
+>>>>>>> 640cb42... executor: do not reorder handles when building requests for `IndexMergeJoin` (#20138)
 	// For issue 19145
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.MustExec("drop table if exists t1, t2")
