@@ -418,7 +418,7 @@ func (s *testEvaluatorSuite) TestUUIDToBin(c *C) {
 			if test.isNil {
 				c.Assert(result.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
+				c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 			}
 		}
 	}
@@ -456,7 +456,7 @@ func (s *testEvaluatorSuite) TestBinToUUID(c *C) {
 			if test.isNil {
 				c.Assert(result.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
+				c.Assert(result.GetString(), Equals, test.expect)
 			}
 		}
 	}

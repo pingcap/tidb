@@ -575,9 +575,6 @@ func (b *builtinInet6AtonSig) evalString(row chunk.Row) (string, bool, error) {
 	} else {
 		copy(result, ip.To4())
 	}
-	fmt.Println("len==", len(result))
-	fmt.Println("res==", result)
-
 
 	return string(result[:]), false, nil
 }
@@ -1189,4 +1186,3 @@ func (b *builtinBinToUUIDSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	return res, false, nil
 }
-
