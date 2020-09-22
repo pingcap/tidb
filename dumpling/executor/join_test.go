@@ -2094,8 +2094,14 @@ func (s *testSuiteJoinSerial) TestInlineProjection4HashJoinIssue15316(c *C) {
 }
 
 func (s *testSuiteJoinSerial) TestIssue18070(c *C) {
-	config.GetGlobalConfig().OOMAction = config.OOMActionCancel
-	defer func() { config.GetGlobalConfig().OOMAction = config.OOMActionLog }()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMAction = config.OOMActionCancel
+	})
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.OOMAction = config.OOMActionLog
+		})
+	}()
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1, t2")
