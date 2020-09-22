@@ -36,6 +36,7 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/store/tikv"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -441,6 +442,17 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+
+	if e.collectRuntimeStatsEnabled() {
+		if snapshot := txn.GetSnapshot(); snapshot != nil {
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(kv.CollectRuntimeStats)
+		}
+	}
 	if err := e.startIndexWorker(ctx, e.kvRanges, workCh, initBatchSize); err != nil {
 		return err
 	}
@@ -529,7 +541,9 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		close(workCh)
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
-		e.stats.indexScan += time.Since(startTime)
+		if e.stats != nil {
+			e.stats.indexScan += time.Since(startTime)
+		}
 	}()
 	return nil
 }
@@ -558,7 +572,9 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			worker.pickAndExecTask(ctx1)
 			cancel()
 			e.tblWorkerWg.Done()
-			e.stats.tableRowIDScan += time.Since(start)
+			if e.stats != nil {
+				e.stats.tableRowIDScan = time.Since(start)
+			}
 		}()
 	}
 }
@@ -648,6 +664,22 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 	}
 	e.resultCurr = task
 	return e.resultCurr, nil
+}
+
+func (e *IndexLookUpExecutor) collectRuntimeStatsEnabled() bool {
+	if e.runtimeStats != nil {
+		if e.stats == nil {
+			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			e.stats = &indexLookUpRunTimeStats{
+				SnapshotRuntimeStats: snapshotStats,
+				indexScan:            0,
+				tableRowIDScan:       0,
+			}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		}
+		return true
+	}
+	return false
 }
 
 // indexWorker is used by IndexLookUpExecutor to maintain index lookup background goroutines.
@@ -906,8 +938,20 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 }
 
 type indexLookUpRunTimeStats struct {
+	*tikv.SnapshotRuntimeStats
 	indexScan      time.Duration
 	tableRowIDScan time.Duration
+}
+
+func (e *indexLookUpRunTimeStats) String() string {
+	var indexScanStr, tableScanStr string
+	if e.indexScan != 0 {
+		indexScanStr = fmt.Sprintf("index_task:{time:%v}", e.indexScan)
+	}
+	if e.tableRowIDScan != 0 {
+		tableScanStr = fmt.Sprintf("table_task:{time:%v}", e.tableRowIDScan)
+	}
+	return indexScanStr + ", " + tableScanStr
 }
 
 func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, tableReader Executor) error {
