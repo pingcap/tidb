@@ -143,7 +143,7 @@ func (t *Tracker) RegisterAction(a ActionOnExceed) {
 		return
 	}
 	for i, action := range t.actionMu.backlog {
-		if action.GetPriority() < a.GetPriority() {
+		if action.GetPriority() <= a.GetPriority() {
 			t.actionMu.backlog = append(t.actionMu.backlog[:i], append([]ActionOnExceed{a}, t.actionMu.backlog[i:]...)...)
 			return
 		}
