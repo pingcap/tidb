@@ -114,6 +114,11 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 	return e.explain.Rows, nil
 }
 
+// getAnalyzeExecToExecutedNoDelay gets the analyze DML executor to execute in handleNoDelay function.
+// For explain analyze insert/update/delete statement, the analyze executor should be executed in handleNoDelay
+// function and then commit transaction if needed.
+// Otherwise, in autocommit transaction, the table record change of analyze executor(insert/update/delete...)
+// will not be committed.
 func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() Executor {
 	if e.analyzeExec != nil && !e.executed && e.analyzeExec.Schema().Len() == 0 {
 		e.executed = true

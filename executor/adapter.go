@@ -386,17 +386,17 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 	}()
 
 	toCheck := e
-	isExplain := false
+	isExplainAnalyze := false
 	if explain, ok := e.(*ExplainExec); ok {
 		if analyze := explain.getAnalyzeExecToExecutedNoDelay(); analyze != nil {
 			toCheck = analyze
-			isExplain = true
+			isExplainAnalyze = true
 		}
 	}
 
 	// If the executor doesn't return any result to the client, we execute it without delay.
 	if toCheck.Schema().Len() == 0 {
-		handled = !isExplain
+		handled = !isExplainAnalyze
 		if isPessimistic {
 			return handled, nil, a.handlePessimisticDML(ctx, toCheck)
 		}
