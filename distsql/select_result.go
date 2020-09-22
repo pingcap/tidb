@@ -353,7 +353,6 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		copRespTime:      make([]time.Duration, 0, len(s.copRespTime)),
 		procKeys:         make([]int64, 0, len(s.procKeys)),
 		backoffSleep:     make(map[string]time.Duration, len(s.backoffSleep)),
-		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
 		totalCopRespCnt:  s.totalCopRespCnt,
 		totalCopRespTime: s.totalCopRespTime,
 		totalProcessTime: s.totalProcessTime,
@@ -364,9 +363,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	for k, v := range s.backoffSleep {
 		newRs.backoffSleep[k] += v
 	}
-	for k, v := range s.rpcStat.Stats {
-		newRs.rpcStat.Stats[k] = v
-	}
+	newRs.rpcStat = s.rpcStat.Clone()
 	return &newRs
 }
 

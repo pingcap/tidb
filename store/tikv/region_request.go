@@ -119,7 +119,8 @@ func (r *RegionRequestRuntimeStats) Merge(rs RegionRequestRuntimeStats) {
 func (r *RegionRequestRuntimeStats) Clone() RegionRequestRuntimeStats {
 	newRs := RegionRequestRuntimeStats{Stats: make(map[tikvrpc.CmdType]*RPCRuntimeStats, len(r.Stats))}
 	for cmd, v := range r.Stats {
-		newRs.Stats[cmd] = v
+		newV := *v
+		newRs.Stats[cmd] = &newV
 	}
 	return newRs
 }

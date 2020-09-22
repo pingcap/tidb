@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/store/tikv"
+	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -164,18 +165,29 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 	s1 := &selectResultRuntimeStats{
 		copRespTime:      []time.Duration{time.Second, time.Millisecond},
 		procKeys:         []int64{100, 200},
+		totalCopRespCnt:  2,
+		totalCopRespTime: time.Second + time.Millisecond,
 		backoffSleep:     map[string]time.Duration{"RegionMiss": time.Millisecond},
 		totalProcessTime: time.Second,
 		totalWaitTime:    time.Second,
 		rpcStat:          tikv.NewRegionRequestRuntimeStats(),
 	}
+	s1.rpcStat.Stats[tikvrpc.CmdCop] = &tikv.RPCRuntimeStats{
+		Count:   3,
+		Consume: int64(time.Second),
+	}
 	s2 := *s1
+	s2.rpcStat = tikv.NewRegionRequestRuntimeStats()
+	s2.rpcStat.Stats[tikvrpc.CmdCop] = &tikv.RPCRuntimeStats{
+		Count:   3,
+		Consume: int64(time.Second),
+	}
 	stmtStats := execdetails.NewRuntimeStatsColl()
 	stmtStats.RegisterStats(1, basic)
 	stmtStats.RegisterStats(1, s1)
 	stmtStats.RegisterStats(1, &s2)
 	stats := stmtStats.GetRootStats(1)
-	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 2ms}"
+	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, rpc_num: 6, rpc_time: 2s, copr_cache_hit_ratio: 0.00}, backoff{RegionMiss: 2ms}"
 	c.Assert(stats.String(), Equals, expect)
 	// Test for idempotence.
 	c.Assert(stats.String(), Equals, expect)
