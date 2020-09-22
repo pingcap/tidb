@@ -3715,6 +3715,7 @@ func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal2(c *C) 
 		failpoint.Disable("github.com/pingcap/tidb/ddl/mockInsertValueAfterCheckNull")
 	}()
 
+	tk.MustExec("drop table if exists tt;")
 	tk.MustExec(`create table tt (a bigint, b int, unique index idx(a));`)
 	tk.MustExec("insert into tt values (1,1),(2,2),(3,3);")
 	_, err := tk.Exec("alter table tt modify a int not null;")
@@ -3734,6 +3735,27 @@ func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal(c *C) {
 	testModifyColumnNullToNotNull(c, s.testDBSuite, true, sql1, sql2)
 	c2 := getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "t1", "c2", false)
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeTiny)
+}
+
+func (s *testSerialDBSuite) TestModifyColumnBetweenChar(c *C) {
+	tk := testkit.NewTestKitWithInit(c, s.store)
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	tk.MustExec("drop table if exists tt;")
+	tk.MustExec("create table tt (a varchar(10));")
+	tk.MustExec("insert into tt values ('111', '10000');")
+	tk.MustExec("alert table tt change a a varchar(5);")
+	c2 := getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "tt", "a", false)
+	c.Assert(c2.FieldType.Flen, Equals, 5)
+	tk.MustQuery("select * from t1").Check(testkit.Rows("'111' '10000'"))
+	_, err := tk.Exec("alert table tt change a a varchar(4);")
+	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 2")
+	tk.MustExec("alert table tt change a a varchar(100);")
+	tk.MustExec("alert table tt change a a char(10);")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeString)
+	c.Assert(c2.FieldType.Flen, Equals, 10)
+	tk.MustQuery("select * from t1").Check(testkit.Rows("'111' '10000'"))
+	tk.MustExec("drop table tt;")
 }
 
 func getModifyColumn(c *C, ctx sessionctx.Context, db, tbl, colName string, allColumn bool) *table.Column {
