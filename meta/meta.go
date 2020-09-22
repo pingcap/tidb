@@ -17,6 +17,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/ddl"
 	"math"
 	"sort"
 	"strconv"
@@ -553,17 +554,38 @@ var (
 	mDDLJobAddIdxList = []byte("DDLJobAddIdxList")
 	mDDLJobHistoryKey = []byte("DDLJobHistory")
 	mDDLJobReorgKey   = []byte("DDLJobReorg")
+	mDDLSubTaskKey    = []byte("DDLSubTask")
 )
 
 // JobListKeyType is a key type of the DDL job queue.
 type JobListKeyType []byte
+
+type TaskListKeyType []byte
 
 var (
 	// DefaultJobListKey keeps all actions of DDL jobs except "add index".
 	DefaultJobListKey JobListKeyType = mDDLJobListKey
 	// AddIndexJobListKey only keeps the action of adding index.
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
+
+	SubTaskListKey TaskListKeyType = mDDLSubTaskKey
 )
+
+func (m *Meta) enQueueDDLSubTask(key []byte, task *ddl.SubTask) error {
+	b, err := task.Encode()
+	if err == nil {
+		err = m.txn.RPush(key, b)
+	}
+	return errors.Trace(err)
+}
+
+func (m *Meta) EnQueueDDLSubTask(task *ddl.SubTask, jobListKeys ...JobListKeyType) error {
+	listKey := m.jobListKey
+	if len(jobListKeys) != 0 {
+		listKey = jobListKeys[0]
+	}
+	return m.enQueueDDLSubTask(listKey, task)
+}
 
 func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
 	b, err := job.Encode(true)

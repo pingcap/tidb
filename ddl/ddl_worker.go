@@ -15,6 +15,7 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -64,6 +65,8 @@ const (
 	generalWorker workerType = 0
 	// addIdxWorker is the worker who handles the operation of adding indexes.
 	addIdxWorker workerType = 1
+	// subTaskWork is the worker who handles all subTasks of all DDL statements
+	subTaskWorker workerType = 2
 	// waitDependencyJobInterval is the interval when the dependency job doesn't be done.
 	waitDependencyJobInterval = 200 * time.Millisecond
 	// noneDependencyJob means a job has no dependency-job.
@@ -71,7 +74,8 @@ const (
 )
 
 // worker is used for handling DDL jobs.
-// Now we have two kinds of workers.
+// Now we have two kinds of worker.
+// 1. generalWorker 2. addIdxWorker
 type worker struct {
 	id       int32
 	tp       workerType
@@ -107,6 +111,8 @@ func (w *worker) typeStr() string {
 		str = "general"
 	case addIdxWorker:
 		str = model.AddIndexStr
+	case subTas:
+
 	default:
 		str = "unknown"
 	}
@@ -415,6 +421,54 @@ func newMetaWithQueueTp(txn kv.Transaction, tp string) *meta.Meta {
 	return meta.NewMeta(txn)
 }
 
+type SubTaskType byte
+
+const (
+	addIndexSubTask = 1
+)
+
+type SubTask struct {
+	TaskType SubTaskType `json:"taskType"`
+	runner   string      `json:"runner"`
+	Mu       sync.Mutex  `json:"mu"`
+	status   string      `json:"status"`
+}
+
+// Encode encodes task with json format.
+func (t *SubTask) Encode() ([]byte, error) {
+	var err error
+	var b []byte
+	t.Mu.Lock()
+	defer t.Mu.Unlock()
+	b, err = json.Marshal(t)
+	return b, errors.Trace(err)
+}
+
+// handle DDL subTasks in subTask queue.
+//func (w *worker) handleDDLSubTask (d *ddlCtx) error{
+//	for {
+//		if isChanClosed(w.ctx.Done()) {
+//			return nil
+//		}
+//		var (
+//			subTask *SubTask
+//			runTaskErr error
+//		)
+//		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+//
+//			meta := newMetaWithQueueTp(txn, w.typeStr())
+//			task, err = w.getFirstDDLJob(meta)
+//
+//			if job == nil || err != nil {
+//				return errors.Trace(err)
+//			}
+//		}
+//
+//	}
+//
+//
+//}
+
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
 func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 	once := true
@@ -604,6 +658,14 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 
 	if !job.IsRollingback() && !job.IsCancelling() {
 		job.State = model.JobStateRunning
+	}
+
+	var subTask = subTask{}
+	job.DecodeArgs(&subTask.TaskType)
+
+	switch subTask.TaskType {
+	case addIndexSubTask:
+
 	}
 
 	switch job.Type {
