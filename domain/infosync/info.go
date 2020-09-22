@@ -306,7 +306,8 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 				err = errors.Errorf("%s", bodyBytes)
 				// ignore if placement rules feature is not enabled
 				if strings.HasPrefix(err.Error(), `"placement rules feature is disabled"`) {
-					err = errPlacementRulesDisabled
+					err = nil
+					bodyBytes = nil
 				}
 			}
 			terror.Log(res.Body.Close())
@@ -335,13 +336,10 @@ func GetPlacementRules(ctx context.Context) ([]*placement.RuleOp, error) {
 
 	rules := []*placement.RuleOp{}
 	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "rules"), http.MethodGet, nil)
-	if err == nil {
+	if err == nil && res != nil {
 		err = json.Unmarshal(res, &rules)
 	}
-	if err != errPlacementRulesDisabled {
-		return rules, err
-	}
-	return rules, nil
+	return rules, err
 }
 
 // UpdatePlacementRules is used to notify PD changes of placement rules.
@@ -371,10 +369,7 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error 
 	}
 
 	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
-	if err != errPlacementRulesDisabled {
-		return err
-	}
-	return nil
+	return err
 }
 
 // GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
@@ -396,13 +391,10 @@ func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 	}
 
 	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule"), "GET", nil)
-	if err == nil {
+	if err == nil && res != nil {
 		err = json.Unmarshal(res, &bundles)
 	}
-	if err != errPlacementRulesDisabled {
-		return bundles, err
-	}
-	return bundles, nil
+	return bundles, err
 }
 
 // GetRuleBundle is used to get one specific rule bundle from PD.
@@ -425,13 +417,10 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 	}
 
 	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
-	if err == nil {
+	if err == nil && res != nil {
 		err = json.Unmarshal(res, bundle)
 	}
-	if err != errPlacementRulesDisabled {
-		return bundle, err
-	}
-	return bundle, nil
+	return bundle, err
 }
 
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
