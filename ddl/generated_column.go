@@ -260,18 +260,18 @@ func (c *illegalFunctionChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 }
 
 const (
-	typeColumn = "column"
-	typeIndex  = "index"
+	typeColumn = iota
+	typeIndex
 )
 
-func checkIllegalFn4Generated(name, _type string, expr ast.ExprNode) error {
+func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error {
 	if expr == nil {
 		return nil
 	}
 	var c illegalFunctionChecker
 	expr.Accept(&c)
 	if c.hasIllegalFunc {
-		switch _type {
+		switch genType {
 		case typeColumn:
 			return ErrGeneratedColumnFunctionIsNotAllowed.GenWithStackByArgs(name)
 		case typeIndex:
@@ -282,7 +282,7 @@ func checkIllegalFn4Generated(name, _type string, expr ast.ExprNode) error {
 		return ErrInvalidGroupFuncUse
 	}
 	if c.hasRowVal {
-		switch _type {
+		switch genType {
 		case typeColumn:
 			return ErrGeneratedColumnRowValueIsNotAllowed.GenWithStackByArgs(name)
 		case typeIndex:
