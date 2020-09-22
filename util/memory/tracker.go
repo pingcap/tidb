@@ -44,11 +44,8 @@ type Tracker struct {
 		// we wouldn't maintain its children in order to avoiding mutex contention.
 		children []*Tracker
 	}
-	actionMu struct {
-		sync.Mutex
-		actionOnExceed ActionOnExceed
-	}
-	parMu struct {
+	actionMu actionManager
+	parMu    struct {
 		sync.Mutex
 		parent *Tracker // The parent memory tracker.
 	}
@@ -60,6 +57,31 @@ type Tracker struct {
 	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
 }
 
+type actionManager struct {
+	sync.Mutex
+	doing   ActionOnExceed
+	backlog []ActionOnExceed
+}
+
+func (m *actionManager) Action(t *Tracker) {
+	m.Lock()
+	defer m.Unlock()
+	for {
+		if m.doing == nil {
+			if len(m.backlog) == 0 {
+				return
+			}
+			m.doing = m.backlog[0]
+			m.backlog = m.backlog[1:]
+		}
+		if fallback := m.doing.Action(t); fallback {
+			m.doing = nil
+		} else {
+			return
+		}
+	}
+}
+
 // NewTracker creates a memory tracker.
 //	1. "label" is the label used in the usage string.
 //	2. "bytesLimit <= 0" means no limit.
@@ -69,7 +91,7 @@ func NewTracker(label int, bytesLimit int64) *Tracker {
 		label:      label,
 		bytesLimit: bytesLimit,
 	}
-	t.actionMu.actionOnExceed = &LogOnExceed{}
+	t.RegisterAction(&LogOnExceed{})
 	t.isGlobal = false
 	return t
 }
@@ -80,7 +102,7 @@ func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 		label:      label,
 		bytesLimit: bytesLimit,
 	}
-	t.actionMu.actionOnExceed = &LogOnExceed{}
+	t.RegisterAction(&LogOnExceed{})
 	t.isGlobal = true
 	return t
 }
@@ -111,17 +133,27 @@ func (t *Tracker) CheckExceed() bool {
 // SetActionOnExceed sets the action when memory usage exceeds bytesLimit.
 func (t *Tracker) SetActionOnExceed(a ActionOnExceed) {
 	t.actionMu.Lock()
-	t.actionMu.actionOnExceed = a
+	t.actionMu.backlog = nil
+	t.actionMu.doing = nil
 	t.actionMu.Unlock()
+	t.RegisterAction(a)
 }
 
-// FallbackOldAndSetNewAction sets the action when memory usage exceeds bytesLimit
+// RegisterAction sets the action when memory usage exceeds bytesLimit
 // and set the original action as its fallback.
-func (t *Tracker) FallbackOldAndSetNewAction(a ActionOnExceed) {
+func (t *Tracker) RegisterAction(a ActionOnExceed) {
 	t.actionMu.Lock()
 	defer t.actionMu.Unlock()
-	a.SetFallback(t.actionMu.actionOnExceed)
-	t.actionMu.actionOnExceed = a
+	if a == nil {
+		return
+	}
+	for i, action := range t.actionMu.backlog {
+		if action.GetPriority() < a.GetPriority() {
+			t.actionMu.backlog = append(t.actionMu.backlog[:i], append([]ActionOnExceed{a}, t.actionMu.backlog[i:]...)...)
+			return
+		}
+	}
+	t.actionMu.backlog = append(t.actionMu.backlog, a)
 }
 
 // SetLabel sets the label of a Tracker.
@@ -230,11 +262,7 @@ func (t *Tracker) Consume(bytes int64) {
 		}
 	}
 	if bytes > 0 && rootExceed != nil {
-		rootExceed.actionMu.Lock()
-		defer rootExceed.actionMu.Unlock()
-		if rootExceed.actionMu.actionOnExceed != nil {
-			rootExceed.actionMu.actionOnExceed.Action(rootExceed)
-		}
+		rootExceed.actionMu.Action(rootExceed)
 	}
 }
 

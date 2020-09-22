@@ -97,7 +97,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, vars *kv.Variable
 	}
 	it.actionOnExceed = newRateLimitAction(uint(cap(it.sendRate.token)), sync.NewCond(&sync.Mutex{}))
 	if sessionMemTracker != nil {
-		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
+		sessionMemTracker.RegisterAction(it.actionOnExceed)
 	}
 
 	if !it.req.Streaming {
@@ -1234,8 +1234,7 @@ func (it copErrorResponse) Close() error {
 // than 2, the action would be delegated to the fallback action.
 type rateLimitAction struct {
 	// enabled indicates whether the rateLimitAction is permitted to Action. 1 means permitted, 0 denied.
-	enabled        uint32
-	fallbackAction memory.ActionOnExceed
+	enabled uint32
 	// totalTokenNum indicates the total token at initial
 	totalTokenNum uint
 	cond          struct {
@@ -1269,7 +1268,7 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 }
 
 // Action implements ActionOnExceed.Action
-func (e *rateLimitAction) Action(t *memory.Tracker) {
+func (e *rateLimitAction) Action(t *memory.Tracker) (fallback bool) {
 	failpoint.Inject("testRateLimitActionDisable", func(val failpoint.Value) {
 		if val.(bool) {
 			e.setEnabled(false)
@@ -1277,10 +1276,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	})
 
 	if !e.isEnabled() {
-		if e.fallbackAction != nil {
-			e.fallbackAction.Action(t)
-		}
-		return
+		return true
 	}
 	e.conditionLock()
 	defer e.conditionUnlock()
@@ -1289,9 +1285,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			e.setEnabled(false)
 			logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
 				zap.Uint("total token count", e.totalTokenNum))
-			if e.fallbackAction != nil {
-				e.fallbackAction.Action(t)
-			}
+			fallback = true
 			return
 		}
 		logutil.BgLogger().Info("memory exceeds quota, destroy one token now.",
@@ -1302,16 +1296,11 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
 	})
+	return fallback
 }
 
-// SetLogHook implements ActionOnExceed.SetLogHook
-func (e *rateLimitAction) SetLogHook(hook func(uint64)) {
-
-}
-
-// SetFallback implements ActionOnExceed.SetFallback
-func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
-	e.fallbackAction = a
+func (e *rateLimitAction) GetPriority() int64 {
+	return 2
 }
 
 // broadcastIfNeeded will check whether the copWorkers is under suspended status.

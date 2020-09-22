@@ -733,7 +733,7 @@ func (e *HashJoinExec) buildHashTableForList(buildSideResultCh <-chan *chunk.Chu
 				defer actionSpill.(*chunk.SpillDiskAction).WaitForTest()
 			}
 		})
-		e.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
+		e.ctx.GetSessionVars().StmtCtx.MemTracker.RegisterAction(actionSpill)
 	}
 	for chk := range buildSideResultCh {
 		if e.finished.Load().(bool) {

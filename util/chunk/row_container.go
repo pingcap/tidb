@@ -259,11 +259,10 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 // the memory quota of a query is exceeded, SpillDiskAction.Action is
 // triggered.
 type SpillDiskAction struct {
-	c              *RowContainer
-	fallbackAction memory.ActionOnExceed
-	m              sync.Mutex
-	once           sync.Once
-	cond           spillStatusCond
+	c    *RowContainer
+	m    sync.Mutex
+	once sync.Once
+	cond spillStatusCond
 
 	// test function only used for test sync.
 	testSyncInputFunc  func()
@@ -302,7 +301,7 @@ func (a *SpillDiskAction) getStatus() spillStatus {
 
 // Action sends a signal to trigger spillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
-func (a *SpillDiskAction) Action(t *memory.Tracker) {
+func (a *SpillDiskAction) Action(t *memory.Tracker) (fallback bool) {
 	a.m.Lock()
 	defer a.m.Unlock()
 
@@ -331,11 +330,9 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	a.cond.L.Unlock()
 
 	if !t.CheckExceed() {
-		return
+		return false
 	}
-	if a.fallbackAction != nil {
-		a.fallbackAction.Action(t)
-	}
+	return true
 }
 
 // Reset resets the status for SpillDiskAction.
@@ -346,13 +343,9 @@ func (a *SpillDiskAction) Reset() {
 	a.once = sync.Once{}
 }
 
-// SetFallback sets the fallback action.
-func (a *SpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
-	a.fallbackAction = fallback
+func (a *SpillDiskAction) GetPriority() int64 {
+	return 1
 }
-
-// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (a *SpillDiskAction) SetLogHook(hook func(uint64)) {}
 
 // WaitForTest waits all goroutine have gone.
 func (a *SpillDiskAction) WaitForTest() {
@@ -497,7 +490,7 @@ type SortAndSpillDiskAction struct {
 
 // Action sends a signal to trigger sortAndSpillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
-func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
+func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) (fallback bool) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
@@ -526,20 +519,10 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	a.cond.L.Unlock()
 
 	if !t.CheckExceed() {
-		return
+		return false
 	}
-	if a.fallbackAction != nil {
-		a.fallbackAction.Action(t)
-	}
+	return true
 }
-
-// SetFallback sets the fallback action.
-func (a *SortAndSpillDiskAction) SetFallback(fallback memory.ActionOnExceed) {
-	a.fallbackAction = fallback
-}
-
-// SetLogHook sets the hook, it does nothing just to form the memory.ActionOnExceed interface.
-func (a *SortAndSpillDiskAction) SetLogHook(hook func(uint64)) {}
 
 // WaitForTest waits all goroutine have gone.
 func (a *SortAndSpillDiskAction) WaitForTest() {

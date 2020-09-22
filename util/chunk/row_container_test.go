@@ -100,7 +100,7 @@ func (r *rowContainerTestSuite) TestSpillAction(c *check.C) {
 	var err error
 	tracker = rc.GetMemTracker()
 	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
-	tracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
+	tracker.RegisterAction(rc.ActionSpillForTest())
 	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
 	err = rc.Add(chk)
 	rc.actionSpill.WaitForTest()
@@ -141,7 +141,7 @@ func (r *rowContainerTestSerialSuite) TestSpillActionDeadLock(c *check.C) {
 	tracker = rc.GetMemTracker()
 	tracker.SetBytesLimit(1)
 	ac := rc.ActionSpillForTest()
-	tracker.FallbackOldAndSetNewAction(ac)
+	tracker.RegisterAction(ac)
 	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
 	go func() {
 		time.Sleep(200 * time.Millisecond)
@@ -176,7 +176,7 @@ func (r *rowContainerTestSuite) TestSortedRowContainerSortSpillAction(c *check.C
 	var err error
 	tracker = rc.GetMemTracker()
 	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
-	tracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
+	tracker.RegisterAction(rc.ActionSpillForTest())
 	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
 	err = rc.Add(chk)
 	rc.actionSpill.WaitForTest()
@@ -220,7 +220,7 @@ func (r *rowContainerTestSerialSuite) TestActionBlocked(c *check.C) {
 	tracker = rc.GetMemTracker()
 	tracker.SetBytesLimit(1450)
 	ac := rc.ActionSpill()
-	tracker.FallbackOldAndSetNewAction(ac)
+	tracker.RegisterAction(ac)
 	for i := 0; i < 10; i++ {
 		err = rc.Add(chk)
 		c.Assert(err, check.IsNil)
@@ -267,7 +267,7 @@ func (r *rowContainerTestSuite) TestRowContainerResetAndAction(c *check.C) {
 	var err error
 	tracker = rc.GetMemTracker()
 	tracker.SetBytesLimit(chk.MemoryUsage() + 1)
-	tracker.FallbackOldAndSetNewAction(rc.ActionSpillForTest())
+	tracker.RegisterAction(rc.ActionSpillForTest())
 	c.Assert(rc.AlreadySpilledSafeForTest(), check.Equals, false)
 	err = rc.Add(chk)
 	c.Assert(err, check.IsNil)

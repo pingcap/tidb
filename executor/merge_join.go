@@ -105,7 +105,7 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 					actionSpill = t.rowContainer.ActionSpillForTest()
 				}
 			})
-			exec.ctx.GetSessionVars().StmtCtx.MemTracker.FallbackOldAndSetNewAction(actionSpill)
+			exec.ctx.GetSessionVars().StmtCtx.MemTracker.RegisterAction(actionSpill)
 		}
 		t.memTracker = memory.NewTracker(memory.LabelForInnerTable, -1)
 	} else {

@@ -28,13 +28,9 @@ import (
 type ActionOnExceed interface {
 	// Action will be called when memory usage exceeds memory quota by the
 	// corresponding Tracker.
-	Action(t *Tracker)
-	// SetLogHook binds a log hook which will be triggered and log an detailed
-	// message for the out-of-memory sql.
-	SetLogHook(hook func(uint64))
-	// SetFallback sets a fallback action which will be triggered if itself has
-	// already been triggered.
-	SetFallback(a ActionOnExceed)
+	Action(t *Tracker) (fallback bool)
+	// GetPriority will get the priority of the Action.
+	GetPriority() int64
 }
 
 // LogOnExceed logs a warning only once when memory usage exceeds memory quota.
@@ -50,8 +46,12 @@ func (a *LogOnExceed) SetLogHook(hook func(uint64)) {
 	a.logHook = hook
 }
 
+func (a *LogOnExceed) GetPriority() int64 {
+	return 0
+}
+
 // Action logs a warning only once when memory usage exceeds memory quota.
-func (a *LogOnExceed) Action(t *Tracker) {
+func (a *LogOnExceed) Action(t *Tracker) (fallback bool) {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 	if !a.acted {
@@ -59,14 +59,12 @@ func (a *LogOnExceed) Action(t *Tracker) {
 		if a.logHook == nil {
 			logutil.BgLogger().Warn("memory exceeds quota",
 				zap.Error(errMemExceedThreshold.GenWithStackByArgs(t.label, t.BytesConsumed(), t.bytesLimit, t.String())))
-			return
+			return false
 		}
 		a.logHook(a.ConnID)
 	}
+	return false
 }
-
-// SetFallback sets a fallback action.
-func (a *LogOnExceed) SetFallback(ActionOnExceed) {}
 
 // PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
@@ -82,11 +80,11 @@ func (a *PanicOnExceed) SetLogHook(hook func(uint64)) {
 }
 
 // Action panics when memory usage exceeds memory quota.
-func (a *PanicOnExceed) Action(t *Tracker) {
+func (a *PanicOnExceed) Action(t *Tracker) bool {
 	a.mutex.Lock()
 	if a.acted {
 		a.mutex.Unlock()
-		return
+		return false
 	}
 	a.acted = true
 	a.mutex.Unlock()
@@ -96,8 +94,9 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
 }
 
-// SetFallback sets a fallback action.
-func (a *PanicOnExceed) SetFallback(ActionOnExceed) {}
+func (a *PanicOnExceed) GetPriority() int64 {
+	return 0
+}
 
 var (
 	errMemExceedThreshold = terror.ClassUtil.New(errno.ErrMemExceedThreshold, errno.MySQLErrName[errno.ErrMemExceedThreshold])

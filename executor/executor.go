@@ -118,16 +118,13 @@ type globalPanicOnExceed struct {
 func init() {
 	action := &globalPanicOnExceed{}
 	GlobalMemoryUsageTracker = memory.NewGlobalTracker(memory.LabelForGlobalMemory, -1)
-	GlobalMemoryUsageTracker.SetActionOnExceed(action)
+	GlobalMemoryUsageTracker.RegisterAction(action)
 	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
-	GlobalDiskUsageTracker.SetActionOnExceed(action)
+	GlobalDiskUsageTracker.RegisterAction(action)
 }
 
-// SetLogHook sets a hook for PanicOnExceed.
-func (a *globalPanicOnExceed) SetLogHook(hook func(uint64)) {}
-
 // Action panics when storage usage exceeds storage quota.
-func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
+func (a *globalPanicOnExceed) Action(t *memory.Tracker) bool {
 	a.mutex.Lock()
 	defer a.mutex.Unlock()
 	msg := ""
@@ -142,8 +139,9 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	panic(msg)
 }
 
-// SetFallback sets a fallback action.
-func (a *globalPanicOnExceed) SetFallback(memory.ActionOnExceed) {}
+func (a *globalPanicOnExceed) GetPriority() int64 {
+	return 0
+}
 
 // base returns the baseExecutor of an executor, don't override this method!
 func (e *baseExecutor) base() *baseExecutor {
