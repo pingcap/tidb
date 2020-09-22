@@ -20,7 +20,6 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.0.1-0.20190118093823-f849b5445de4
 	github.com/iancoleman/strcase v0.0.0-20191112232945-16388991a334
 	github.com/klauspost/cpuid v1.2.1
-	github.com/kr/pretty v0.2.0 // indirect
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/opentracing/basictracer-go v1.0.0
@@ -51,7 +50,6 @@ require (
 	go.etcd.io/etcd v0.5.0-alpha.5.0.20191023171146-3cf2f69b5738
 	go.uber.org/atomic v1.7.0
 	go.uber.org/automaxprocs v1.2.0
-	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.16.0
 	golang.org/x/net v0.0.0-20200813134508-3edf25e44fcc
 	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
