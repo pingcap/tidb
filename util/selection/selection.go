@@ -24,7 +24,7 @@ type Interface = sort.Interface
 // Select performs introselect algorithm on data and return index of the k-th smallest value.
 func Select(data Interface, k int) int {
 	if data.Len() > 0 {
-		return introselect(data, 0, data.Len()-1, k-1, 0)
+		return introselect(data, 0, data.Len()-1, k-1, 6)
 	}
 	return -1
 }
@@ -35,7 +35,7 @@ func introselect(data Interface, left, right, k int, depth int) int {
 	if left == right {
 		return left
 	}
-	if depth > 6 {
+	if depth <= 0 {
 		// Use median of medians algorithm(linear-time selection) when recurses too much times.
 		return medianOfMedians(data, left, right, k)
 	}
@@ -45,9 +45,24 @@ func introselect(data Interface, left, right, k int, depth int) int {
 	if k == pivotIndex {
 		return k
 	} else if k < pivotIndex {
-		return introselect(data, left, pivotIndex-1, k, depth+1)
+		return introselect(data, left, pivotIndex-1, k, depth-1)
 	} else {
-		return introselect(data, pivotIndex+1, right, k, depth+1)
+		return introselect(data, pivotIndex+1, right, k, depth-1)
+	}
+}
+
+func quickselect(data Interface, left, right, k int) int {
+	if left == right {
+		return left
+	}
+	pivotIndex := randomPivot(data, left, right)
+	pivotIndex = partition(data, left, right, pivotIndex)
+	if k == pivotIndex {
+		return k
+	} else if k < pivotIndex {
+		return quickselect(data, left, pivotIndex-1, k)
+	} else {
+		return quickselect(data, pivotIndex+1, right, k)
 	}
 }
 
