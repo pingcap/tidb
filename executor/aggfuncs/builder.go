@@ -59,6 +59,10 @@ func Build(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal
 		return buildApproxCountDistinct(aggFuncDesc, ordinal)
 	case ast.AggFuncStddevPop:
 		return buildStdDevPop(aggFuncDesc, ordinal)
+	case ast.AggFuncVarSamp:
+		return buildVarSamp(aggFuncDesc, ordinal)
+	case ast.AggFuncStddevSamp:
+		return buildStddevSamp(aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -88,6 +92,11 @@ func BuildWindowFunctions(ctx sessionctx.Context, windowFuncDesc *aggregation.Ag
 		return buildLead(windowFuncDesc, ordinal)
 	case ast.WindowFuncLag:
 		return buildLag(windowFuncDesc, ordinal)
+	case ast.AggFuncMax:
+		// The max/min aggFunc using in the window function will using the sliding window algo.
+		return buildMaxMinInWindowFunction(windowFuncDesc, ordinal, true)
+	case ast.AggFuncMin:
+		return buildMaxMinInWindowFunction(windowFuncDesc, ordinal, false)
 	default:
 		return Build(ctx, windowFuncDesc, ordinal)
 	}
@@ -361,6 +370,31 @@ func buildMaxMin(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) 
 	return nil
 }
 
+// buildMaxMin builds the AggFunc implementation for function "MAX" and "MIN" using by window function.
+func buildMaxMinInWindowFunction(aggFuncDesc *aggregation.AggFuncDesc, ordinal int, isMax bool) AggFunc {
+	base := buildMaxMin(aggFuncDesc, ordinal, isMax)
+	// build max/min aggFunc for window function using sliding window
+	switch baseAggFunc := base.(type) {
+	case *maxMin4Int:
+		return &maxMin4IntSliding{*baseAggFunc}
+	case *maxMin4Uint:
+		return &maxMin4UintSliding{*baseAggFunc}
+	case *maxMin4Float32:
+		return &maxMin4Float32Sliding{*baseAggFunc}
+	case *maxMin4Float64:
+		return &maxMin4Float64Sliding{*baseAggFunc}
+	case *maxMin4Decimal:
+		return &maxMin4DecimalSliding{*baseAggFunc}
+	case *maxMin4String:
+		return &maxMin4StringSliding{*baseAggFunc}
+	case *maxMin4Time:
+		return &maxMin4TimeSliding{*baseAggFunc}
+	case *maxMin4Duration:
+		return &maxMin4DurationSliding{*baseAggFunc}
+	}
+	return base
+}
+
 // buildGroupConcat builds the AggFunc implementation for function "GROUP_CONCAT".
 func buildGroupConcat(ctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	switch aggFuncDesc.Mode {
@@ -456,14 +490,10 @@ func buildVarPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 
 // buildStdDevPop builds the AggFunc implementation for function "STD()/STDDEV()/STDDEV_POP()"
 func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
-	base := baseStdDevPopAggFunc{
-		varPop4Float64{
-			baseVarPopAggFunc{
-				baseAggFunc{
-					args:    aggFuncDesc.Args,
-					ordinal: ordinal,
-				},
-			},
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
 		},
 	}
 	switch aggFuncDesc.Mode {
@@ -471,9 +501,47 @@ func buildStdDevPop(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 		return nil
 	default:
 		if aggFuncDesc.HasDistinct {
-			return &stdDevPop4DistinctFloat64{base}
+			return &stdDevPop4DistinctFloat64{varPop4DistinctFloat64{base}}
 		}
-		return &stdDevPop4Float64{base}
+		return &stdDevPop4Float64{varPop4Float64{base}}
+	}
+}
+
+// buildVarSamp builds the AggFunc implementation for function "VAR_SAMP()"
+func buildVarSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &varSamp4DistinctFloat64{varPop4DistinctFloat64{base}}
+		}
+		return &varSamp4Float64{varPop4Float64{base}}
+	}
+}
+
+// buildStddevSamp builds the AggFunc implementation for function "STDDEV_SAMP()"
+func buildStddevSamp(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	base := baseVarPopAggFunc{
+		baseAggFunc{
+			args:    aggFuncDesc.Args,
+			ordinal: ordinal,
+		},
+	}
+	switch aggFuncDesc.Mode {
+	case aggregation.DedupMode:
+		return nil
+	default:
+		if aggFuncDesc.HasDistinct {
+			return &stddevSamp4DistinctFloat64{varPop4DistinctFloat64{base}}
+		}
+		return &stddevSamp4Float64{varPop4Float64{base}}
 	}
 }
 
@@ -572,7 +640,8 @@ func buildLeadLag(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) baseLeadLag
 		args:    aggFuncDesc.Args,
 		ordinal: ordinal,
 	}
-	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: buildValueEvaluator(aggFuncDesc.RetTp)}
+	ve, _ := buildValueEvaluator(aggFuncDesc.RetTp)
+	return baseLeadLag{baseAggFunc: base, offset: offset, defaultExpr: defaultExpr, valueEvaluator: ve}
 }
 
 func buildLead(aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {

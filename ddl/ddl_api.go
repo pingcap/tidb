@@ -241,6 +241,9 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 	switch v.Tp {
 	case ast.ConstraintPrimaryKey:
 		for _, key := range v.Keys {
+			if key.Expr != nil {
+				continue
+			}
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
 				continue
@@ -251,6 +254,9 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 		}
 	case ast.ConstraintUniq, ast.ConstraintUniqIndex, ast.ConstraintUniqKey:
 		for i, key := range v.Keys {
+			if key.Expr != nil {
+				continue
+			}
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
 				continue
@@ -269,6 +275,9 @@ func setColumnFlagWithConstraint(colMap map[string]*table.Column, v *ast.Constra
 		}
 	case ast.ConstraintKey, ast.ConstraintIndex:
 		for i, key := range v.Keys {
+			if key.Expr != nil {
+				continue
+			}
 			c, ok := colMap[key.Column.Name.L]
 			if !ok {
 				continue
@@ -622,11 +631,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 		}
 	}
 
-	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
-
-	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
-	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
-	setNoDefaultValueFlag(col, hasDefaultValue)
+	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 
 	processColumnFlags(col)
 
@@ -817,6 +822,28 @@ func removeOnUpdateNowFlag(c *table.Column) {
 	}
 }
 
+func processDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdateNow bool) {
+	setTimestampDefaultValue(c, hasDefaultValue, setOnUpdateNow)
+
+	setYearDefaultValue(c, hasDefaultValue)
+
+	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
+	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
+	setNoDefaultValueFlag(c, hasDefaultValue)
+}
+
+func setYearDefaultValue(c *table.Column, hasDefaultValue bool) {
+	if hasDefaultValue {
+		return
+	}
+
+	if c.Tp == mysql.TypeYear && mysql.HasNotNullFlag(c.Flag) {
+		if err := c.SetDefaultValue("0000"); err != nil {
+			logutil.BgLogger().Error("set default value failed", zap.Error(err))
+		}
+	}
+}
+
 func setTimestampDefaultValue(c *table.Column, hasDefaultValue bool, setOnUpdateNow bool) {
 	if hasDefaultValue {
 		return
@@ -888,7 +915,7 @@ func checkPriKeyConstraint(col *table.Column, hasDefaultValue, hasNullFlag bool,
 	// Such as: create table t1 (id int , age int, primary key(id))
 	if !mysql.HasPriKeyFlag(col.Flag) && outPriKeyConstraint != nil {
 		for _, key := range outPriKeyConstraint.Keys {
-			if key.Column.Name.L != col.Name.L {
+			if key.Expr == nil && key.Column.Name.L != col.Name.L {
 				continue
 			}
 			col.Flag |= mysql.PriKeyFlag
@@ -1079,7 +1106,15 @@ func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign boo
 
 func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint, foreign bool) {
 	if constr.Name == "" && len(constr.Keys) > 0 {
-		colName := constr.Keys[0].Column.Name.L
+		var colName string
+		for _, keyPart := range constr.Keys {
+			if keyPart.Expr != nil {
+				colName = "expression_index"
+			}
+		}
+		if colName == "" {
+			colName = constr.Keys[0].Column.Name.L
+		}
 		constrName := colName
 		i := 2
 		if strings.EqualFold(constrName, mysql.PrimaryKeyName) {
@@ -1266,11 +1301,25 @@ func buildTableInfo(
 		Charset: charset,
 		Collate: collate,
 	}
+	tblColumns := make([]*table.Column, 0, len(cols))
 	for _, v := range cols {
 		v.ID = allocateColumnID(tbInfo)
 		tbInfo.Columns = append(tbInfo.Columns, v.ToInfo())
+		tblColumns = append(tblColumns, table.ToColumn(v.ToInfo()))
 	}
 	for _, constr := range constraints {
+		// Build hidden columns if necessary.
+		hiddenCols, err := buildHiddenColumnInfo(ctx, constr.Keys, model.NewCIStr(constr.Name), tbInfo, tblColumns)
+		if err != nil {
+			return nil, err
+		}
+		for _, hiddenCol := range hiddenCols {
+			hiddenCol.State = model.StatePublic
+			hiddenCol.ID = allocateColumnID(tbInfo)
+			hiddenCol.Offset = len(tbInfo.Columns)
+			tbInfo.Columns = append(tbInfo.Columns, hiddenCol)
+			tblColumns = append(tblColumns, table.ToColumn(hiddenCol))
+		}
 		if constr.Tp == ast.ConstraintForeignKey {
 			for _, fk := range tbInfo.ForeignKeys {
 				if fk.Name.L == strings.ToLower(constr.Name) {
@@ -1320,6 +1369,9 @@ func buildTableInfo(
 		idxInfo, err := buildIndexInfo(tbInfo, model.NewCIStr(constr.Name), constr.Keys, model.StatePublic)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if len(hiddenCols) > 0 {
+			addIndexColumnFlag(tbInfo, idxInfo)
 		}
 		// check if the index is primary or unique.
 		switch constr.Tp {
@@ -3223,19 +3275,25 @@ func CheckModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (al
 		default:
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
 		}
-	case mysql.TypeEnum:
+	case mysql.TypeEnum, mysql.TypeSet:
+		var typeVar string
+		if origin.Tp == mysql.TypeEnum {
+			typeVar = "enum"
+		} else {
+			typeVar = "set"
+		}
 		if origin.Tp != to.Tp {
-			msg := fmt.Sprintf("cannot modify enum type column's to type %s", to.String())
+			msg := fmt.Sprintf("cannot modify %s type column's to type %s", typeVar, to.String())
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		if len(to.Elems) < len(origin.Elems) {
-			msg := fmt.Sprintf("the number of enum column's elements is less than the original: %d", len(origin.Elems))
+			msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.Elems))
 			return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 		}
 		for index, originElem := range origin.Elems {
 			toElem := to.Elems[index]
 			if originElem != toElem {
-				msg := fmt.Sprintf("cannot modify enum column value %s to %s", originElem, toElem)
+				msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
 				return "", errUnsupportedModifyColumn.GenWithStackByArgs(msg)
 			}
 		}
@@ -3406,11 +3464,7 @@ func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*
 		}
 	}
 
-	setTimestampDefaultValue(col, hasDefaultValue, setOnUpdateNow)
-
-	// Set `NoDefaultValueFlag` if this field doesn't have a default value and
-	// it is `not null` and not an `AUTO_INCREMENT` field or `TIMESTAMP` field.
-	setNoDefaultValueFlag(col, hasDefaultValue)
+	processDefaultValue(col, hasDefaultValue, setOnUpdateNow)
 
 	processColumnFlags(col)
 
@@ -3509,6 +3563,10 @@ func (d *ddl) getModifiableColumnJob(ctx sessionctx.Context, ident ast.Ident, or
 	}
 
 	if err = processColumnOptions(ctx, newCol, specNewColumn.Options); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if err = checkColumnValueConstraint(newCol, newCol.Collate); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -4400,8 +4458,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 	return errors.Trace(err)
 }
 
-func buildHiddenColumnInfo(ctx sessionctx.Context, t table.Table, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr) ([]*model.ColumnInfo, error) {
-	tblInfo := t.Meta()
+func buildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName model.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
 	hiddenCols := make([]*model.ColumnInfo, 0, len(indexPartSpecifications))
 	for i, idxPart := range indexPartSpecifications {
 		if idxPart.Expr == nil {
@@ -4409,7 +4466,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, t table.Table, indexPartSpeci
 		}
 		idxPart.Column = &ast.ColumnName{Name: model.NewCIStr(fmt.Sprintf("%s_%s_%d", expressionIndexPrefix, indexName, i))}
 		// Check whether the hidden columns have existed.
-		col := table.FindCol(t.Cols(), idxPart.Column.Name.L)
+		col := table.FindCol(existCols, idxPart.Column.Name.L)
 		if col != nil {
 			// TODO: Use expression index related error.
 			return nil, infoschema.ErrColumnExists.GenWithStackByArgs(col.Name.String())
@@ -4457,7 +4514,7 @@ func buildHiddenColumnInfo(ctx sessionctx.Context, t table.Table, indexPartSpeci
 			colInfo.Dependences[colName.Name.O] = struct{}{}
 			checkDependencies[colName.Name.O] = struct{}{}
 		}
-		if err = checkDependedColExist(checkDependencies, t.Cols()); err != nil {
+		if err = checkDependedColExist(checkDependencies, existCols); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if err = checkAutoIncrementRef("", colInfo.Dependences, tblInfo); err != nil {
@@ -4513,12 +4570,9 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	tblInfo := t.Meta()
 
 	// Build hidden columns if necessary.
-	hiddenCols, err := buildHiddenColumnInfo(ctx, t, indexPartSpecifications, indexName)
+	hiddenCols, err := buildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
 	if err != nil {
 		return err
-	}
-	if len(hiddenCols) > 0 && !config.GetGlobalConfig().Experimental.AllowsExpressionIndex {
-		return ErrUnsupportedExpressionIndex
 	}
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + len(hiddenCols)); err != nil {
 		return errors.Trace(err)
@@ -4993,6 +5047,33 @@ func (d *ddl) UnlockTables(ctx sessionctx.Context, unlockTables []model.TableLoc
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
 	}
+	err = d.callHookOnChanged(err)
+	return errors.Trace(err)
+}
+
+// CleanDeadTableLock uses to clean dead table locks.
+func (d *ddl) CleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.SessionInfo) error {
+	if len(unlockTables) == 0 {
+		return nil
+	}
+	arg := &lockTablesArg{
+		UnlockTables: unlockTables,
+		SessionInfo:  se,
+	}
+	job := &model.Job{
+		SchemaID:   unlockTables[0].SchemaID,
+		TableID:    unlockTables[0].TableID,
+		Type:       model.ActionUnlockTable,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{arg},
+	}
+
+	ctx, err := d.sessPool.get()
+	if err != nil {
+		return err
+	}
+	defer d.sessPool.put(ctx)
+	err = d.doDDLJob(ctx, job)
 	err = d.callHookOnChanged(err)
 	return errors.Trace(err)
 }
