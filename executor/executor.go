@@ -139,8 +139,9 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) bool {
 	panic(msg)
 }
 
+// GetPriority will get the priority of the Action.
 func (a *globalPanicOnExceed) GetPriority() int64 {
-	return 0
+	return memory.DefPanicPriority
 }
 
 // base returns the baseExecutor of an executor, don't override this method!

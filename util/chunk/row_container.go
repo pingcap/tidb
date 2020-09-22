@@ -340,8 +340,9 @@ func (a *SpillDiskAction) Reset() {
 	a.once = sync.Once{}
 }
 
+// GetPriority will get the priority of the Action.
 func (a *SpillDiskAction) GetPriority() int64 {
-	return 1
+	return memory.DefSpillPriority
 }
 
 // WaitForTest waits all goroutine have gone.

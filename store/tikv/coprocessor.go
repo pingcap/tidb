@@ -1299,8 +1299,9 @@ func (e *rateLimitAction) Action(t *memory.Tracker) (fallback bool) {
 	return fallback
 }
 
+// GetPriority will get the priority of the Action.
 func (e *rateLimitAction) GetPriority() int64 {
-	return 2
+	return memory.DefRateLimitPriority
 }
 
 // broadcastIfNeeded will check whether the copWorkers is under suspended status.

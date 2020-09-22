@@ -46,8 +46,9 @@ func (a *LogOnExceed) SetLogHook(hook func(uint64)) {
 	a.logHook = hook
 }
 
+// GetPriority will get the priority of the Action.
 func (a *LogOnExceed) GetPriority() int64 {
-	return 0
+	return DefLogPriority
 }
 
 // Action logs a warning only once when memory usage exceeds memory quota.
@@ -94,8 +95,9 @@ func (a *PanicOnExceed) Action(t *Tracker) bool {
 	panic(PanicMemoryExceed + fmt.Sprintf("[conn_id=%d]", a.ConnID))
 }
 
+// GetPriority will get the priority of the Action.
 func (a *PanicOnExceed) GetPriority() int64 {
-	return 0
+	return DefPanicPriority
 }
 
 var (
@@ -105,4 +107,12 @@ var (
 const (
 	// PanicMemoryExceed represents the panic message when out of memory quota.
 	PanicMemoryExceed string = "Out Of Memory Quota!"
+)
+
+// Default OOM Action priority.
+const (
+	DefPanicPriority = iota
+	DefLogPriority
+	DefSpillPriority
+	DefRateLimitPriority
 )
