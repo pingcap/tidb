@@ -226,7 +226,7 @@ type SessionIndexUsageCollector struct {
 	deleted bool
 }
 
-func (m indexUsageMap) update(id string, value *IndexUsageInformation) {
+func (m indexUsageMap) updateByID(id string, value *IndexUsageInformation) {
 	item := m[id]
 	item.QueryCount += value.QueryCount
 	item.RowsSelected += value.RowsSelected
@@ -236,9 +236,14 @@ func (m indexUsageMap) update(id string, value *IndexUsageInformation) {
 	m[id] = item
 }
 
+func (m indexUsageMap) update(tableSchema string, tableName string, indexName string, value *IndexUsageInformation) {
+	id := fmt.Sprintf("%s.%s.%s", tableSchema, tableName, indexName)
+	m.updateByID(id, value)
+}
+
 func (m indexUsageMap) merge(destMap indexUsageMap) {
 	for id, item := range destMap {
-		m.update(id, &item)
+		m.updateByID(id, &item)
 	}
 }
 
@@ -252,11 +257,11 @@ func (m indexUsageMap) query(tableSchema string, tableName string, indexName str
 }
 
 // Update updates the mapper in SessionIndexUsageCollector.
-func (s *SessionIndexUsageCollector) Update(id string, value *IndexUsageInformation) {
+func (s *SessionIndexUsageCollector) Update(tableSchema string, tableName string, indexName string, value *IndexUsageInformation) {
 	value.LastUsedAt = time.Now().Format("2006-01-02 15:04:05")
 	s.Lock()
 	defer s.Unlock()
-	s.mapper.update(id, value)
+	s.mapper.update(tableSchema, tableName, indexName, value)
 }
 
 // Delete will set s.deleted to true which means it can be deleted from linked list.

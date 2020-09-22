@@ -365,8 +365,7 @@ func (s *session) StoreIndexUsage(dbName string, tblName string, idxName string,
 	if s.idxUsageCollector == nil {
 		return
 	}
-	id := fmt.Sprintf("%s.%s.%s", dbName, tblName, idxName)
-	s.idxUsageCollector.Update(id, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
+	s.idxUsageCollector.Update(dbName, tblName, idxName, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
 }
 
 // FieldList returns fields list of a table.
