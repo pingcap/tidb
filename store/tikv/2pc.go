@@ -51,6 +51,8 @@ var (
 	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
 	tiKVTxnHeartBeatHistogramOK                    = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("ok")
 	tiKVTxnHeartBeatHistogramError                 = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("err")
+	tikvAsyncCommitTxnCounterOk                    = metrics.TiKVAsyncCommitTxnCounter.WithLabelValues("ok")
+	tikvAsyncCommitTxnCounterError                 = metrics.TiKVAsyncCommitTxnCounter.WithLabelValues("err")
 )
 
 // Global variable set by config file.
@@ -754,8 +756,12 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			}
 		} else {
 			// The error means the async commit should not succeed.
+			// TODO: Handle undetermined case here.
 			if err != nil {
 				c.cleanup(ctx)
+				tikvAsyncCommitTxnCounterError.Inc()
+			} else {
+				tikvAsyncCommitTxnCounterOk.Inc()
 			}
 		}
 	}()
