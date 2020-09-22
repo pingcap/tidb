@@ -115,7 +115,7 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			if isNull {
 				break
@@ -129,11 +129,11 @@ func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup [
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
 		} else {
-			oldMem = p.buffer.Len()
+			oldMem = p.buffer.Cap()
 			p.buffer.WriteString(e.sep)
 		}
 		p.buffer.WriteString(p.valsBuf.String())
-		newMem := p.buffer.Len()
+		newMem := p.buffer.Cap()
 		memDelta += int64(newMem - oldMem)
 	}
 	if p.buffer != nil {
@@ -197,7 +197,7 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			if isNull {
 				break
@@ -219,12 +219,12 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 		if p.buffer == nil {
 			p.buffer = &bytes.Buffer{}
 		} else {
-			oldMem = p.buffer.Len()
+			oldMem = p.buffer.Cap()
 			p.buffer.WriteString(e.sep)
 		}
 		// write values
 		p.buffer.WriteString(p.valsBuf.String())
-		newMem := p.buffer.Len()
+		newMem := p.buffer.Cap()
 		memDelta += int64(newMem - oldMem)
 	}
 	if p.buffer != nil {
@@ -393,7 +393,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			if isNull {
 				break
@@ -410,7 +410,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		for _, byItem := range e.byItems {
 			d, err := byItem.Expr.Eval(row)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
@@ -419,11 +419,11 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGr
 		newMem := p.topN.currSize
 		memDelta += int64(newMem - oldMem)
 		if p.topN.err != nil {
-			return 0, p.topN.err
+			return memDelta, p.topN.err
 		}
 		if truncated {
 			if err := e.handleTruncateError(sctx); err != nil {
-				return 0, err
+				return memDelta, err
 			}
 		}
 	}
@@ -499,7 +499,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 		for _, arg := range e.args {
 			v, isNull, err = arg.EvalString(sctx, row)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			if isNull {
 				break
@@ -523,7 +523,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 		for _, byItem := range e.byItems {
 			d, err := byItem.Expr.Eval(row)
 			if err != nil {
-				return 0, err
+				return memDelta, err
 			}
 			sortRow.byItems = append(sortRow.byItems, d.Clone())
 		}
@@ -532,11 +532,11 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, 
 		newMem := p.topN.currSize
 		memDelta += int64(newMem - oldMem)
 		if p.topN.err != nil {
-			return 0, p.topN.err
+			return memDelta, p.topN.err
 		}
 		if truncated {
 			if err := e.handleTruncateError(sctx); err != nil {
-				return 0, err
+				return memDelta, err
 			}
 		}
 	}
