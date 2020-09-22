@@ -69,7 +69,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 
 	// first statement
 	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.ExecDetail.CommitDetail.Mu.BackoffTypes = make(map[string]int, 0)
+	stmtExecInfo1.ExecDetail.CommitDetail.Mu.BackoffTypes = make(map[string]int)
 	key := &stmtSummaryByDigestKey{
 		schemaName: stmtExecInfo1.SchemaName,
 		digest:     stmtExecInfo1.Digest,
