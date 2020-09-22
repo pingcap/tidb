@@ -1235,7 +1235,7 @@ func (it copErrorResponse) Close() error {
 type rateLimitAction struct {
 	enabledMu struct {
 		sync.RWMutex
-		// enabled indicates whether the coprocessor is running. rateLimitAction only Action when enabled is true.
+		// enabled indicates whether the rateLimitAction is permitted to Action.
 		enabled bool
 	}
 	fallbackAction memory.ActionOnExceed
@@ -1243,8 +1243,8 @@ type rateLimitAction struct {
 	totalTokenNum uint
 	cond          struct {
 		*sync.Cond
-		// exceed indicates whether have encountered OOM situation.
-		exceed bool
+		// exceeded indicates whether have encountered OOM situation.
+		exceeded bool
 		// remainingTokenNum indicates the count of tokens which still exists
 		remainingTokenNum uint
 		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
@@ -1258,13 +1258,13 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 		totalTokenNum: totalTokenNumber,
 		cond: struct {
 			*sync.Cond
-			exceed            bool
+			exceeded          bool
 			remainingTokenNum uint
 			isTokenDestroyed  bool
 			once              sync.Once
 		}{
 			Cond:              cond,
-			exceed:            false,
+			exceeded:          false,
 			remainingTokenNum: totalTokenNumber,
 			once:              sync.Once{},
 		},
@@ -1289,6 +1289,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	defer e.conditionUnlock()
 	e.cond.once.Do(func() {
 		if e.cond.remainingTokenNum < 2 {
+			e.setEnabled(false)
 			logutil.BgLogger().Info("memory exceed quota, rateLimitAction delegate to fallback action",
 				zap.Uint("total token count", e.totalTokenNum))
 			if e.fallbackAction != nil {
@@ -1302,7 +1303,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			zap.Uint("total token count", e.totalTokenNum),
 			zap.Uint("remaining token count", e.cond.remainingTokenNum))
 		e.cond.isTokenDestroyed = false
-		e.cond.exceed = true
+		e.cond.exceeded = true
 	})
 }
 
@@ -1322,8 +1323,8 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if e.cond.exceed && needed {
-		e.cond.exceed = false
+	if e.cond.exceeded && needed {
+		e.cond.exceeded = false
 		e.cond.Broadcast()
 		e.cond.once = sync.Once{}
 	}
@@ -1337,7 +1338,7 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	defer e.conditionUnlock()
 	// If actionOnExceed has been triggered and there is no token have been destroyed before,
 	// destroy one token.
-	if e.cond.exceed && !e.cond.isTokenDestroyed {
+	if e.cond.exceeded && !e.cond.isTokenDestroyed {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
 	} else {
@@ -1348,7 +1349,7 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 func (e *rateLimitAction) waitIfNeeded() {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	for e.cond.exceed {
+	for e.cond.exceeded {
 		e.cond.Wait()
 	}
 }
@@ -1365,7 +1366,7 @@ func (e *rateLimitAction) close() {
 	e.setEnabled(false)
 	e.conditionLock()
 	defer e.conditionUnlock()
-	e.cond.exceed = false
+	e.cond.exceeded = false
 	e.cond.isTokenDestroyed = false
 	// broadcast the signal in order not to leak worker goroutine if it is being suspended
 	e.cond.Broadcast()
