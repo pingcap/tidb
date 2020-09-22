@@ -5557,7 +5557,7 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 	c.Assert(t.Meta().Indices[1].Columns[0].Name.O, Equals, "cC2")
 	c.Assert(t.Meta().Indices[1].Columns[0].Offset, Equals, 2)
 
-	assertChangingColName1 := "_col$__col$_c1_0_1"
+	assertChangingColName1 := "_col$__col$_c1_1"
 	assertChangingColName2 := "_col$__col$__col$_c1_0_1"
 	query1 := "alter table t modify column _col$_c1 tinyint"
 	query2 := "alter table t modify column _col$__col$_c1_0 tinyint"
@@ -5591,7 +5591,9 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 	tk.MustExec("create table if not exists t(c1 bigint, _col$_c1 bigint, _col$__col$_c1_0 bigint, _col$__col$__col$_c1_0_0 bigint)")
 	tk.MustExec("alter table t modify column c1 tinyint")
 	tk.MustExec("alter table t modify column _col$_c1 tinyint")
+	c.Assert(checkErr, IsNil)
 	tk.MustExec("alter table t modify column _col$__col$_c1_0 tinyint")
+	c.Assert(checkErr, IsNil)
 	tk.MustExec("alter table t change column _col$__col$__col$_c1_0_0  _col$__col$__col$_c1_0_0 tinyint")
 
 	t = testGetTableByName(c, tk.Se, "test", "t")
