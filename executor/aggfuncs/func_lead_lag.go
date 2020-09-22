@@ -14,9 +14,16 @@
 package aggfuncs
 
 import (
+	"unsafe"
+
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+)
+
+const (
+	// DefPartialResult4LeadLagSize is the size of partialResult4LeadLag
+	DefPartialResult4LeadLagSize = int64(unsafe.Sizeof(partialResult4LeadLag{}))
 )
 
 type baseLeadLag struct {
@@ -33,7 +40,7 @@ type partialResult4LeadLag struct {
 }
 
 func (v *baseLeadLag) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	return PartialResult(&partialResult4LeadLag{}), 0
+	return PartialResult(&partialResult4LeadLag{}), DefPartialResult4LeadLagSize
 }
 
 func (v *baseLeadLag) ResetPartialResult(pr PartialResult) {
@@ -45,7 +52,8 @@ func (v *baseLeadLag) ResetPartialResult(pr PartialResult) {
 func (v *baseLeadLag) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4LeadLag)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
-	return 0, nil
+	memDelta += int64(len(rowsInGroup)) * DefRowSize
+	return memDelta, nil
 }
 
 type lead struct {
