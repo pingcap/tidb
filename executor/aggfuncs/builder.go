@@ -143,13 +143,13 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 	}
 
 	// Checked while building descriptor
-	percent, _, err := expression.GetIntFromConstant(sctx, aggFuncDesc.Args[1])
+	percent, _, err := aggFuncDesc.Args[1].EvalInt(sctx, chunk.Row{})
 	if err != nil {
 		// Should not reach here
 		panic(fmt.Sprintf("Error happened when buildApproxPercentile: %v", err))
 	}
 
-	base := basePercentile{percent: percent, baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
+	base := basePercentile{percent: int(percent), baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
 
 	switch aggFuncDesc.Mode {
 	case aggregation.CompleteMode, aggregation.Partial1Mode, aggregation.FinalMode:
