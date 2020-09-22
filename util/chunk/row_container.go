@@ -329,10 +329,7 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) (fallback bool) {
 	}
 	a.cond.L.Unlock()
 
-	if !t.CheckExceed() {
-		return false
-	}
-	return true
+	return a.getStatus() == spilledYet
 }
 
 // Reset resets the status for SpillDiskAction.
@@ -518,10 +515,7 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) (fallback bool) {
 	}
 	a.cond.L.Unlock()
 
-	if !t.CheckExceed() {
-		return false
-	}
-	return true
+	return a.getStatus() == spilledYet
 }
 
 // WaitForTest waits all goroutine have gone.
