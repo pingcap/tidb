@@ -1233,11 +1233,8 @@ func (it copErrorResponse) Close() error {
 // set on initial. Each time the Action is triggered, one token would be destroyed. If the count of the token is less
 // than 2, the action would be delegated to the fallback action.
 type rateLimitAction struct {
-	enabledMu struct {
-		sync.RWMutex
-		// enabled indicates whether the rateLimitAction is permitted to Action.
-		enabled bool
-	}
+	// enabled indicates whether the rateLimitAction is permitted to Action. 1 means permitted, 0 denied.
+	enabled        uint32
 	fallbackAction memory.ActionOnExceed
 	// totalTokenNum indicates the total token at initial
 	totalTokenNum uint
@@ -1373,15 +1370,16 @@ func (e *rateLimitAction) close() {
 }
 
 func (e *rateLimitAction) setEnabled(enabled bool) {
-	e.enabledMu.Lock()
-	defer e.enabledMu.Unlock()
-	e.enabledMu.enabled = enabled
+	newValue := uint32(0)
+	if enabled {
+		newValue = uint32(1)
+	}
+	e.enabled = newValue
+	atomic.StoreUint32(&e.enabled, newValue)
 }
 
 func (e *rateLimitAction) isEnabled() bool {
-	e.enabledMu.RLock()
-	defer e.enabledMu.RUnlock()
-	return e.enabledMu.enabled
+	return atomic.LoadUint32(&e.enabled) > 0
 }
 
 type maxIDHandler struct {
