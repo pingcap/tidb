@@ -1374,7 +1374,6 @@ func (e *rateLimitAction) setEnabled(enabled bool) {
 	if enabled {
 		newValue = uint32(1)
 	}
-	e.enabled = newValue
 	atomic.StoreUint32(&e.enabled, newValue)
 }
 
