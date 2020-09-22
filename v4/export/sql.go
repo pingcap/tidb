@@ -124,10 +124,11 @@ func ListAllViews(db *sql.Conn, database string) ([]string, error) {
 
 func SelectVersion(db *sql.DB) (string, error) {
 	var versionInfo string
-	row := db.QueryRow("SELECT version()")
+	const query = "SELECT version()"
+	row := db.QueryRow(query)
 	err := row.Scan(&versionInfo)
 	if err != nil {
-		return "", withStack(err)
+		return "", withStack(errors.WithMessage(err, query))
 	}
 	return versionInfo, nil
 }
@@ -297,18 +298,21 @@ func GetUniqueIndexName(db *sql.Conn, database, table string) (string, error) {
 }
 
 func FlushTableWithReadLock(ctx context.Context, db *sql.Conn) error {
-	_, err := db.ExecContext(ctx, "FLUSH TABLES WITH READ LOCK")
-	return withStack(err)
+	const ftwrlQuery = "FLUSH TABLES WITH READ LOCK"
+	_, err := db.ExecContext(ctx, ftwrlQuery)
+	return withStack(errors.WithMessage(err, ftwrlQuery))
 }
 
 func LockTables(ctx context.Context, db *sql.Conn, database, table string) error {
-	_, err := db.ExecContext(ctx, fmt.Sprintf("LOCK TABLES `%s`.`%s` READ", escapeString(database), escapeString(table)))
-	return withStack(err)
+	lockTableQuery := fmt.Sprintf("LOCK TABLES `%s`.`%s` READ", escapeString(database), escapeString(table))
+	_, err := db.ExecContext(ctx, lockTableQuery)
+	return withStack(errors.WithMessage(err, lockTableQuery))
 }
 
 func UnlockTables(ctx context.Context, db *sql.Conn) error {
-	_, err := db.ExecContext(ctx, "UNLOCK TABLES")
-	return withStack(err)
+	const unlockTableQuery = "UNLOCK TABLES"
+	_, err := db.ExecContext(ctx, unlockTableQuery)
+	return withStack(errors.WithMessage(err, unlockTableQuery))
 }
 
 func UseDatabase(db *sql.DB, databaseName string) error {
@@ -325,9 +329,10 @@ func ShowMasterStatus(db *sql.Conn, fieldNum int) ([]string, error) {
 	handleOneRow := func(rows *sql.Rows) error {
 		return rows.Scan(addr...)
 	}
-	err := simpleQuery(db, "SHOW MASTER STATUS", handleOneRow)
+	const showMasterStatusQuery = "SHOW MASTER STATUS"
+	err := simpleQuery(db, showMasterStatusQuery, handleOneRow)
 	if err != nil {
-		return nil, err
+		return nil, withStack(errors.WithMessage(err, showMasterStatusQuery))
 	}
 	return oneRow, nil
 }
@@ -363,7 +368,7 @@ func GetPdAddrs(db *sql.DB) ([]string, error) {
 	if err != nil {
 		log.Warn("can't execute query from db",
 			zap.String("query", query), zap.Error(err))
-		return []string{}, err
+		return []string{}, withStack(errors.WithMessage(err, query))
 	}
 	defer rows.Close()
 	return GetSpecifiedColumnValue(rows, "STATUS_ADDRESS")
@@ -375,7 +380,7 @@ func GetTiDBDDLIDs(db *sql.DB) ([]string, error) {
 	if err != nil {
 		log.Warn("can't execute query from db",
 			zap.String("query", query), zap.Error(err))
-		return []string{}, err
+		return []string{}, withStack(errors.WithMessage(err, query))
 	}
 	defer rows.Close()
 	return GetSpecifiedColumnValue(rows, "DDL_ID")
@@ -383,10 +388,11 @@ func GetTiDBDDLIDs(db *sql.DB) ([]string, error) {
 
 func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	var count int
-	row := db.QueryRow("SELECT COUNT(1) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'")
+	query := "SELECT COUNT(1) as c FROM MYSQL.TiDB WHERE VARIABLE_NAME='tikv_gc_safe_point'"
+	row := db.QueryRow(query)
 	err := row.Scan(&count)
 	if err != nil {
-		return false, err
+		return false, withStack(errors.WithMessage(err, query))
 	}
 	return count > 0, nil
 }
@@ -444,13 +450,15 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB) (*sql.Conn, erro
 	if err != nil {
 		return nil, withStack(err)
 	}
-	_, err = conn.ExecContext(ctx, "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+	query := "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+	_, err = conn.ExecContext(ctx, query)
 	if err != nil {
-		return nil, withStack(err)
+		return nil, withStack(errors.WithMessage(err, query))
 	}
-	_, err = conn.ExecContext(ctx, "START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */")
+	query = "START TRANSACTION /*!40108 WITH CONSISTENT SNAPSHOT */"
+	_, err = conn.ExecContext(ctx, query)
 	if err != nil {
-		return nil, withStack(err)
+		return nil, withStack(errors.WithMessage(err, query))
 	}
 	return conn, nil
 }
@@ -459,7 +467,7 @@ func buildSelectField(db *sql.Conn, dbName, tableName string, completeInsert boo
 	query := `SELECT COLUMN_NAME,EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=?;`
 	rows, err := db.QueryContext(context.Background(), query, dbName, tableName)
 	if err != nil {
-		return "", err
+		return "", withStack(errors.WithMessage(err, query))
 	}
 	defer rows.Close()
 	availableFields := make([]string, 0)
@@ -505,13 +513,13 @@ func simpleQuery(conn *sql.Conn, sql string, handleOneRow func(*sql.Rows) error)
 func simpleQueryWithArgs(conn *sql.Conn, handleOneRow func(*sql.Rows) error, sql string, args ...interface{}) error {
 	rows, err := conn.QueryContext(context.Background(), sql, args...)
 	if err != nil {
-		return withStack(err)
+		return withStack(errors.WithMessage(err, sql))
 	}
 
 	for rows.Next() {
 		if err := handleOneRow(rows); err != nil {
 			rows.Close()
-			return withStack(err)
+			return withStack(errors.WithMessage(err, sql))
 		}
 	}
 	return rows.Err()
@@ -649,10 +657,11 @@ func parseSnapshotToTSO(pool *sql.DB, snapshot string) (uint64, error) {
 		return snapshotTS, nil
 	}
 	var tso sql.NullInt64
-	row := pool.QueryRow("SELECT unix_timestamp(?)", snapshot)
+	query := "SELECT unix_timestamp(?)"
+	row := pool.QueryRow(query, snapshot)
 	err = row.Scan(&tso)
 	if err != nil {
-		return 0, withStack(err)
+		return 0, withStack(errors.WithMessage(err, strings.ReplaceAll(query, "?", fmt.Sprintf(`"%s"`, snapshot))))
 	}
 	if !tso.Valid {
 		return 0, withStack(fmt.Errorf("snapshot %s format not supported. please use tso or '2006-01-02 15:04:05' format time", snapshot))
