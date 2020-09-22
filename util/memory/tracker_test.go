@@ -113,8 +113,45 @@ func (s *testSuite) TestOOMAction(c *C) {
 	c.Assert(action2.called, IsTrue)
 }
 
+func (s *testSuite) TestOOMActionPriority(c *C) {
+	tracker := NewTracker(1, 100)
+	// make sure no panic here.
+	tracker.Consume(10000)
+
+	tracker = NewTracker(1, 1)
+	n := 100
+	actions := make([]*mockAction, n)
+	for i := 0; i < n; i++ {
+		actions[i] = &mockAction{priority: int64(i)}
+	}
+
+	randomSuffle := make([]int, n)
+	for i := 0; i < n; i++ {
+		randomSuffle[i] = i
+		pos := rand.Int() % (i + 1)
+		randomSuffle[i], randomSuffle[pos] = randomSuffle[pos], randomSuffle[i]
+	}
+
+	for i := 0; i < n; i++ {
+		tracker.RegisterAction(actions[randomSuffle[i]])
+	}
+
+	for i := n - 1; i >= 0; i-- {
+		tracker.Consume(100)
+		for j := n - 1; j >= 0; j-- {
+			if j >= i {
+				c.Assert(actions[j].called, IsTrue)
+			} else {
+				c.Assert(actions[j].called, IsFalse)
+			}
+		}
+	}
+
+}
+
 type mockAction struct {
-	called bool
+	called   bool
+	priority int64
 }
 
 func (a *mockAction) Action(t *Tracker) (fallback bool) {
@@ -126,7 +163,7 @@ func (a *mockAction) Action(t *Tracker) (fallback bool) {
 }
 
 func (a *mockAction) GetPriority() int64 {
-	return 0
+	return a.priority
 }
 
 func (s *testSuite) TestAttachTo(c *C) {
