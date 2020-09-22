@@ -180,7 +180,7 @@ type stmtSummaryByDigestElement struct {
 	execRetryTime  time.Duration
 
 	totalExecStats []*execdetails.RootRuntimeStats
-	renderPlan     func(total []*execdetails.RootRuntimeStats) string
+	renderPlan     func(total []*execdetails.RootRuntimeStats) (string, error)
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -211,7 +211,7 @@ type StmtExecInfo struct {
 	ExecRetryTime  time.Duration
 	ExecStats      *execdetails.RuntimeStatsColl
 	MergeStats     func(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl) []*execdetails.RootRuntimeStats
-	RenderPlan     func(total []*execdetails.RootRuntimeStats) string
+	RenderPlan     func(total []*execdetails.RootRuntimeStats) (string, error)
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -789,7 +789,11 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 	}
 	var totalPlanTree string
 	if ssElement.renderPlan != nil {
-		totalPlanTree = ssElement.renderPlan(ssElement.totalExecStats)
+		totalPlanTree, err = ssElement.renderPlan(ssElement.totalExecStats)
+		if err != nil {
+			logutil.BgLogger().Error("render total plan in statement summary failed", zap.String("sample_plan", ssElement.samplePlan), zap.Error(err))
+			totalPlanTree = ""
+		}
 	}
 
 	sampleUser := ""

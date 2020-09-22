@@ -1047,17 +1047,16 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	}
 
 	if sessVars.StmtCtx.RuntimeStatsColl != nil {
-		mergeStats := func(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl) []*execdetails.RootRuntimeStats {
-			//fmt.Printf("\ndepth start------\n")
-			depth := 0
-			return mergeRuntimeStats(total, rsColl, a.Plan, &depth, make(map[int]bool))
+		mergeStats := func(total []*execdetails.RootRuntimeStats, statsColl *execdetails.RuntimeStatsColl) []*execdetails.RootRuntimeStats {
+			t := plannercore.NewTotalRuntimeStatsColl()
+			return t.MergePlanRuntimeStats(total, statsColl, a.Plan)
 		}
 		stmtExecInfo.ExecStats = sessVars.StmtCtx.RuntimeStatsColl
 		stmtExecInfo.MergeStats = mergeStats
-		stmtExecInfo.RenderPlan = func(total []*execdetails.RootRuntimeStats) string {
+		stmtExecInfo.RenderPlan = func(total []*execdetails.RootRuntimeStats) (string, error) {
 			statsColl := execdetails.NewRuntimeStatsColl()
-			depth := 0
-			buildRuntimeStats(total, statsColl, a.Plan, &depth, make(map[int]bool))
+			t := plannercore.NewTotalRuntimeStatsColl()
+			t.BuildPlanRuntimeStats(total, statsColl, a.Plan)
 			return plannercore.RenderPlanTree(a.Plan, statsColl)
 		}
 	}
@@ -1066,55 +1065,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
 	stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
-}
-
-func buildRuntimeStats(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl, plan plannercore.Plan, id *int, added map[int]bool) {
-	pid := plan.ID()
-	if len(total) <= *id {
-		return
-	}
-	rsColl.RegisterRootStats(pid, total[*id])
-	added[pid] = true
-	*id++
-
-	selectPlan := plannercore.GetSelectPlan(plan)
-	if selectPlan == nil {
-		return
-	}
-	if !added[selectPlan.ID()] {
-		buildRuntimeStats(total, rsColl, selectPlan, id, added)
-	}
-	for _, child := range selectPlan.Children() {
-		buildRuntimeStats(total, rsColl, child, id, added)
-	}
-	return
-}
-
-func mergeRuntimeStats(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl, plan plannercore.Plan, id *int, added map[int]bool) []*execdetails.RootRuntimeStats {
-	pid := plan.ID()
-	if !rsColl.ExistsRootStats(pid) {
-		return total
-	}
-	//fmt.Printf("id: %v ------\n", *id)
-	for len(total) <= *id {
-		total = append(total, &execdetails.RootRuntimeStats{})
-	}
-	stats := rsColl.GetRootStats(pid)
-	total[*id].Merge(stats)
-	added[pid] = true
-	*id++
-
-	selectPlan := plannercore.GetSelectPlan(plan)
-	if selectPlan == nil {
-		return total
-	}
-	if !added[selectPlan.ID()] {
-		total = mergeRuntimeStats(total, rsColl, selectPlan, id, added)
-	}
-	for _, child := range selectPlan.Children() {
-		total = mergeRuntimeStats(total, rsColl, child, id, added)
-	}
-	return total
 }
 
 // GetTextToLog return the query text to log.

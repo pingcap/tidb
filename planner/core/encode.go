@@ -17,12 +17,12 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
-	"github.com/pingcap/tidb/util/execdetails"
 	"hash"
 	"sync"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/plancodec"
 )
 
@@ -53,11 +53,11 @@ func EncodePlan(p Plan) string {
 	return pn.encodePlanTree(p)
 }
 
-func RenderPlanTree(p Plan, statsColl *execdetails.RuntimeStatsColl) string {
+func RenderPlanTree(p Plan, statsColl *execdetails.RuntimeStatsColl) (string, error) {
 	pn := encoderPool.Get().(*planEncoder)
 	defer encoderPool.Put(pn)
 	if p == nil || p.SCtx() == nil {
-		return ""
+		return "", nil
 	}
 	selectPlan := getSelectPlan(p)
 	if selectPlan != nil {
@@ -68,8 +68,7 @@ func RenderPlanTree(p Plan, statsColl *execdetails.RuntimeStatsColl) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
 	pn.encodePlan(p, true, 0, statsColl)
-	result, _ := plancodec.RenderPlanTree(pn.buf.String())
-	return result
+	return plancodec.RenderPlanTree(pn.buf.String())
 }
 
 func (pn *planEncoder) encodePlanTree(p Plan) string {
@@ -199,10 +198,6 @@ func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, depth int) {
 	}
 }
 
-func GetSelectPlan(p Plan) PhysicalPlan {
-	return getSelectPlan(p)
-}
-
 func getSelectPlan(p Plan) PhysicalPlan {
 	var selectPlan PhysicalPlan
 	if physicalPlan, ok := p.(PhysicalPlan); ok {
@@ -218,4 +213,70 @@ func getSelectPlan(p Plan) PhysicalPlan {
 		}
 	}
 	return selectPlan
+}
+
+type totalRuntimeStatsColl struct {
+	id    int
+	added map[int]bool
+}
+
+func NewTotalRuntimeStatsColl() *totalRuntimeStatsColl {
+	return &totalRuntimeStatsColl{
+		id:    0,
+		added: make(map[int]bool),
+	}
+}
+
+// MergePlanRuntimeStats merges the plan runtime stats.
+// For those plans have same plan digest, their plan id maybe different, so use the plan traversal index as relate plan
+// "id" and save in an array.
+func (t *totalRuntimeStatsColl) MergePlanRuntimeStats(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl, plan Plan) []*execdetails.RootRuntimeStats {
+	pid := plan.ID()
+	if !rsColl.ExistsRootStats(pid) {
+		return total
+	}
+	//fmt.Printf("id: %v ------\n", *id)
+	for len(total) <= t.id {
+		total = append(total, &execdetails.RootRuntimeStats{})
+	}
+	stats := rsColl.GetRootStats(pid)
+	total[t.id].Merge(stats)
+	t.added[pid] = true
+	t.id++
+
+	selectPlan := getSelectPlan(plan)
+	if selectPlan == nil {
+		return total
+	}
+	if !t.added[selectPlan.ID()] {
+		total = t.MergePlanRuntimeStats(total, rsColl, selectPlan)
+	}
+	for _, child := range selectPlan.Children() {
+		total = t.MergePlanRuntimeStats(total, rsColl, child)
+	}
+	return total
+}
+
+// BuildPlanRuntimeStats builds an new RuntimeStatsColl from runtime stats array.
+// BuildPlanRuntimeStats is opposite of MergePlanRuntimeStats.
+func (t *totalRuntimeStatsColl) BuildPlanRuntimeStats(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl, plan Plan) {
+	pid := plan.ID()
+	if len(total) <= t.id {
+		return
+	}
+	rsColl.RegisterRootStats(pid, total[t.id])
+	t.added[pid] = true
+	t.id++
+
+	selectPlan := getSelectPlan(plan)
+	if selectPlan == nil {
+		return
+	}
+	if !t.added[selectPlan.ID()] {
+		t.BuildPlanRuntimeStats(total, rsColl, selectPlan)
+	}
+	for _, child := range selectPlan.Children() {
+		t.BuildPlanRuntimeStats(total, rsColl, child)
+	}
+	return
 }

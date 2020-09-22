@@ -653,10 +653,9 @@ func NewRuntimeStatsColl() *RuntimeStatsColl {
 		copStats: make(map[int]*CopRuntimeStats)}
 }
 
+// RegisterRootStats register a RootRuntimeStats for the plan.
 func (e *RuntimeStatsColl) RegisterRootStats(planID int, stats *RootRuntimeStats) {
-	e.mu.Lock()
 	e.rootStats[planID] = stats
-	e.mu.Unlock()
 }
 
 // RegisterStats register execStat for a executor.
