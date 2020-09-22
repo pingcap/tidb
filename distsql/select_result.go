@@ -319,9 +319,8 @@ type CopRuntimeStats interface {
 }
 
 type selectResultRuntimeStats struct {
-	copRespTime []time.Duration
-	procKeys    []int64
-
+	copRespTime      []time.Duration
+	procKeys         []int64
 	totalCopRespCnt  int
 	totalCopRespTime time.Duration
 	backoffSleep     map[string]time.Duration

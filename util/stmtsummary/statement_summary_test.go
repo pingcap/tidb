@@ -124,7 +124,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 		maxPrewriteRegionNum: stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		sumTxnRetry:          int64(stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry),
 		maxTxnRetry:          stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry,
-		backoffTypes:         make(map[fmt.Stringer]int),
+		backoffTypes:         make(map[string]int),
 		sumMem:               stmtExecInfo1.MemMax,
 		maxMem:               stmtExecInfo1.MemMax,
 		sumDisk:              stmtExecInfo1.DiskMax,
@@ -189,9 +189,9 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				CommitBackoffTime: 1000,
 				Mu: struct {
 					sync.Mutex
-					BackoffTypes []fmt.Stringer
+					BackoffTypes map[string]int
 				}{
-					BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
+					BackoffTypes: map[string]int{tikv.BoTxnLock.String(): 1},
 				},
 				ResolveLockTime:   10000,
 				WriteKeys:         100000,
@@ -254,7 +254,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.sumTxnRetry += int64(stmtExecInfo2.ExecDetail.CommitDetail.TxnRetry)
 	expectedSummaryElement.maxTxnRetry = stmtExecInfo2.ExecDetail.CommitDetail.TxnRetry
 	expectedSummaryElement.sumBackoffTimes += 1
-	expectedSummaryElement.backoffTypes[tikv.BoTxnLock] = 1
+	expectedSummaryElement.backoffTypes[tikv.BoTxnLock.String()] = 1
 	expectedSummaryElement.sumMem += stmtExecInfo2.MemMax
 	expectedSummaryElement.maxMem = stmtExecInfo2.MemMax
 	expectedSummaryElement.sumDisk += stmtExecInfo2.DiskMax
@@ -307,9 +307,9 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 				CommitBackoffTime: 100,
 				Mu: struct {
 					sync.Mutex
-					BackoffTypes []fmt.Stringer
+					BackoffTypes map[string]int
 				}{
-					BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
+					BackoffTypes: map[string]int{tikv.BoTxnLock.String(): 1},
 				},
 				ResolveLockTime:   1000,
 				WriteKeys:         10000,
@@ -351,7 +351,7 @@ func (s *testStmtSummarySuite) TestAddStatement(c *C) {
 	expectedSummaryElement.sumPrewriteRegionNum += int64(stmtExecInfo3.ExecDetail.CommitDetail.PrewriteRegionNum)
 	expectedSummaryElement.sumTxnRetry += int64(stmtExecInfo3.ExecDetail.CommitDetail.TxnRetry)
 	expectedSummaryElement.sumBackoffTimes += 1
-	expectedSummaryElement.backoffTypes[tikv.BoTxnLock] = 2
+	expectedSummaryElement.backoffTypes[tikv.BoTxnLock.String()] = 2
 	expectedSummaryElement.sumMem += stmtExecInfo3.MemMax
 	expectedSummaryElement.sumDisk += stmtExecInfo3.DiskMax
 	expectedSummaryElement.sumAffectedRows += stmtExecInfo3.StmtCtx.AffectedRows()
@@ -554,9 +554,9 @@ func generateAnyExecInfo() *StmtExecInfo {
 				CommitBackoffTime: 200,
 				Mu: struct {
 					sync.Mutex
-					BackoffTypes []fmt.Stringer
+					BackoffTypes map[string]int
 				}{
-					BackoffTypes: []fmt.Stringer{tikv.BoTxnLock},
+					BackoffTypes: map[string]int{tikv.BoTxnLock.String(): 1},
 				},
 				ResolveLockTime:   2000,
 				WriteKeys:         20000,
@@ -614,7 +614,7 @@ func (s *testStmtSummarySuite) TestToDatum(c *C) {
 		stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum, stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		"txnLock:1", stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax, stmtExecInfo1.StmtCtx.AffectedRows(),
-		t, t, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", ""}
+		t, t, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", "", ""}
 	match(c, datums[0], expectedDatum...)
 	datums = s.ssMap.ToHistoryDatum(nil, true)
 	c.Assert(len(datums), Equals, 1)
@@ -914,13 +914,13 @@ func (s *testStmtSummarySuite) TestGetMoreThanOnceSelect(c *C) {
 
 // Test `formatBackoffTypes`.
 func (s *testStmtSummarySuite) TestFormatBackoffTypes(c *C) {
-	backoffMap := make(map[fmt.Stringer]int)
+	backoffMap := make(map[string]int)
 	c.Assert(formatBackoffTypes(backoffMap), IsNil)
 
-	backoffMap[tikv.BoPDRPC] = 1
+	backoffMap[tikv.BoPDRPC.String()] = 1
 	c.Assert(formatBackoffTypes(backoffMap), Equals, "pdRPC:1")
 
-	backoffMap[tikv.BoTxnLock] = 2
+	backoffMap[tikv.BoTxnLock.String()] = 2
 	c.Assert(formatBackoffTypes(backoffMap), Equals, "txnLock:2,pdRPC:1")
 }
 

@@ -14,14 +14,12 @@
 package execdetails
 
 import (
-	"fmt"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -188,17 +186,10 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		BackoffTime:     int64(time.Second * 3),
 		Mu: struct {
 			sync.Mutex
-			BackoffTypes []fmt.Stringer
-		}{BackoffTypes: []fmt.Stringer{
-			stringutil.MemoizeStr(func() string {
-				return "backoff4"
-			}),
-			stringutil.MemoizeStr(func() string {
-				return "backoff5"
-			}),
-			stringutil.MemoizeStr(func() string {
-				return "backoff5"
-			}),
+			BackoffTypes map[string]int
+		}{BackoffTypes: map[string]int{
+			"backoff4": 1,
+			"backoff5": 2,
 		}},
 		LockRPCTime:  int64(time.Second * 5),
 		LockRPCCount: 50,
@@ -267,7 +258,7 @@ func TestRootRuntimeStats(t *testing.T) {
 		},
 	})
 	stats.Merge(stats2)
-	expect = "time:6s, loops:3, worker:15, concurrent:OFF, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}, lock_keys: {time:1s, region:3, keys:100, lock_rpc:100ms, retry_count:1}"
+	expect = "time:6s, loops:3, worker:15, concurrent:OFF, commit_txn: {prewrite:2s, get_commit_ts:2s, commit:2s, region_num:10, write_keys:6, write_byte:132, txn_retry:4}, lock_keys: {time:1s, region:3, keys:100, lock_rpc:100ms, retry_count:1}"
 	if stats.String() != expect {
 		t.Fatalf("%v != %v", stats.String(), expect)
 	}

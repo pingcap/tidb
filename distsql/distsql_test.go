@@ -177,11 +177,6 @@ func (s *testSuite) TestSelectResultRuntimeStats(c *C) {
 		Consume: int64(time.Second),
 	}
 	s2 := *s1
-	s2.rpcStat = tikv.NewRegionRequestRuntimeStats()
-	s2.rpcStat.Stats[tikvrpc.CmdCop] = &tikv.RPCRuntimeStats{
-		Count:   3,
-		Consume: int64(time.Second),
-	}
 	stmtStats := execdetails.NewRuntimeStatsColl()
 	stmtStats.RegisterStats(1, basic)
 	stmtStats.RegisterStats(1, s1)
