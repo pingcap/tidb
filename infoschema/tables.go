@@ -1129,7 +1129,7 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: "PREV_SAMPLE_TEXT", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The previous statement before commit"},
 	{name: "PLAN_DIGEST", tp: mysql.TypeVarchar, size: 64, comment: "Digest of its execution plan"},
 	{name: "PLAN", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "Sampled execution plan"},
-	{name: "TOTAL_PLAN", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "execution plan with total runtime stats"},
+	{name: "TOTAL_PLAN", tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "execution plan with total execution runtime stats"},
 }
 
 var tableStorageStatsCols = []columnInfo{
