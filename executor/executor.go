@@ -995,6 +995,9 @@ type LimitExec struct {
 	meetFirstBatch bool
 
 	childResult *chunk.Chunk
+
+	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
+	columnIdxsUsedByChild []int
 }
 
 // Next implements the Executor Next interface.
@@ -1025,7 +1028,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if begin == end {
 				break
 			}
-			req.Append(e.childResult, int(begin), int(end))
+			req.AppendByColIdxs(e.childResult, int(begin), int(end), e.columnIdxsUsedByChild)
 			return nil
 		}
 		e.cursor += batchSize

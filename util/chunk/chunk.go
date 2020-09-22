@@ -497,7 +497,15 @@ func (c *Chunk) insert(rowIdx int, row Row) {
 
 // Append appends rows in [begin, end) in another Chunk to a Chunk.
 func (c *Chunk) Append(other *Chunk, begin, end int) {
-	for colID, src := range other.columns {
+	c.AppendByColIdxs(other, begin, end, nil)
+}
+
+// AppendByColIdxs appends rows in [begin, end) by its colIdx in another Chunk to a Chunk.
+// 1. every columns are used if colIdxs is nil.
+// 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
+func (c *Chunk) AppendByColIdxs(other *Chunk, begin, end int, colIdxs []int) {
+	fn := func(colID int) {
+		src := other.columns[colID]
 		dst := c.columns[colID]
 		if src.isFixed() {
 			elemLen := len(src.elemBuf)
@@ -515,6 +523,17 @@ func (c *Chunk) Append(other *Chunk, begin, end int) {
 			dst.length++
 		}
 	}
+
+	if colIdxs != nil {
+		for colID := range colIdxs {
+			fn(colID)
+		}
+	} else {
+		for colID := range other.columns {
+			fn(colID)
+		}
+	}
+
 	c.numVirtualRows += end - begin
 }
 
