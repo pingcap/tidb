@@ -1179,5 +1179,66 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestApproxPercentile",
+    "Cases": [
+      {
+        "SQL": "select approx_percentile(a, 50) from t",
+        "Plan": [
+          "HashAgg_5 1.00 root  funcs:approx_percentile(test.t.a, 50)->Column#4",
+          "└─TableReader_11 10000.00 root  data:TableFullScan_10",
+          "  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "3"
+        ]
+      },
+      {
+        "SQL": "select approx_percentile(a, 10) from t",
+        "Plan": [
+          "HashAgg_5 1.00 root  funcs:approx_percentile(test.t.a, 10)->Column#4",
+          "└─TableReader_11 10000.00 root  data:TableFullScan_10",
+          "  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1"
+        ]
+      },
+      {
+        "SQL": "select approx_percentile(a, 10+70) from t",
+        "Plan": [
+          "HashAgg_5 1.00 root  funcs:approx_percentile(test.t.a, 80)->Column#4",
+          "└─TableReader_11 10000.00 root  data:TableFullScan_10",
+          "  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "4"
+        ]
+      },
+      {
+        "SQL": "select approx_percentile(a, 10*10) from t",
+        "Plan": [
+          "HashAgg_5 1.00 root  funcs:approx_percentile(test.t.a, 100)->Column#4",
+          "└─TableReader_11 10000.00 root  data:TableFullScan_10",
+          "  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "5"
+        ]
+      },
+      {
+        "SQL": "select approx_percentile(a, 50) from t group by b",
+        "Plan": [
+          "HashAgg_5 8000.00 root  group by:test.t.b, funcs:approx_percentile(test.t.a, 50)->Column#4",
+          "└─TableReader_9 10000.00 root  data:TableFullScan_8",
+          "  └─TableFullScan_8 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Res": [
+          "1",
+          "4"
+        ]
+      }
+    ]
   }
 ]

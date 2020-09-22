@@ -994,12 +994,25 @@ func (s *testIntegrationSuite) TestApproxPercentile(c *C) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into t values(1), (2), (3), (4), (5)")
-	tk.MustQuery("select approx_percentile(a, 50) from t").Check(testkit.Rows("3"))
-	tk.MustQuery("explain select approx_percentile(a, 50) from t").Check(testkit.Rows("HashAgg_5 1.00 root  funcs:approx_percentile(test.t.a, 50)->Column#3",
-		"└─TableReader_11 10000.00 root  data:TableFullScan_10",
-		"  └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values(1, 1), (2, 1), (3, 2), (4, 2), (5, 2)")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Res  []string
+	}
+	s.testData.GetTestCases(c, &input, &output)
+	for i, tt := range input {
+		s.testData.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = s.testData.ConvertRowsToStrings(tk.MustQuery("explain " + tt).Rows())
+			output[i].Res = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		tk.MustQuery("explain " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Check(testkit.Rows(output[i].Res...))
+	}
 }
 
 func (s *testIntegrationSuite) TestIssue17813(c *C) {
