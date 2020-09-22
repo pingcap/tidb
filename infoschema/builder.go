@@ -370,14 +370,14 @@ func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected [
 }
 
 func (b *Builder) applyPartitionPlacementUpdate(m *meta.Meta, diff *model.SchemaDiff) error {
-	tid := placement.GroupID(diff.TableID)
+	tID := placement.GroupID(diff.TableID)
 
-	bundle, err := infosync.GetRuleBundle(nil, tid)
+	bundle, err := infosync.GetRuleBundle(nil, tID)
 	if err != nil {
 		return err
 	}
 
-	b.is.ruleBundles[tid] = bundle
+	b.is.ruleBundleMap[tID] = bundle
 	return nil
 }
 
@@ -398,8 +398,8 @@ func (b *Builder) copySchemasMap(oldIS *infoSchema) {
 }
 
 func (b *Builder) copyBundlesMap(oldIS *infoSchema) {
-	for k, v := range oldIS.ruleBundles {
-		b.is.ruleBundles[k] = v
+	for k, v := range oldIS.ruleBundleMap {
+		b.is.ruleBundleMap[k] = v
 	}
 }
 
@@ -423,9 +423,9 @@ func (b *Builder) copySchemaTables(dbName string) *model.DBInfo {
 func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, bundles []*placement.Bundle, schemaVersion int64) (*Builder, error) {
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
-	info.ruleBundles = make(map[string]*placement.Bundle, len(bundles))
+	info.ruleBundleMap = make(map[string]*placement.Bundle, len(bundles))
 	for _, bundle := range bundles {
-		info.ruleBundles[bundle.ID] = bundle
+		info.ruleBundleMap[bundle.ID] = bundle
 	}
 
 	for _, di := range dbInfos {
@@ -496,7 +496,7 @@ func NewBuilder(handle *Handle) *Builder {
 	b.handle = handle
 	b.is = &infoSchema{
 		schemaMap:           map[string]*schemaTables{},
-		ruleBundles:         map[string]*placement.Bundle{},
+		ruleBundleMap:       map[string]*placement.Bundle{},
 		sortedTablesBuckets: make([]sortedTables, bucketCount),
 	}
 	return b

@@ -54,7 +54,7 @@ type InfoSchema interface {
 	// TableIsSequence indicates whether the schema.table is a sequence.
 	TableIsSequence(schema, table model.CIStr) bool
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo)
-	// BundleByName is used to get a rule bundle
+	// BundleByName is used to get a rule bundle.
 	BundleByName(name string) (*placement.Bundle, bool)
 }
 
@@ -90,8 +90,8 @@ type schemaTables struct {
 const bucketCount = 512
 
 type infoSchema struct {
-	// ruleBundles stores all placement rules
-	ruleBundles map[string]*placement.Bundle
+	// ruleBundleMap stores all placement rules
+	ruleBundleMap map[string]*placement.Bundle
 
 	schemaMap map[string]*schemaTables
 
@@ -398,6 +398,6 @@ func GetInfoSchemaBySessionVars(sessVar *variable.SessionVars) InfoSchema {
 }
 
 func (is *infoSchema) BundleByName(name string) (*placement.Bundle, bool) {
-	t, r := is.ruleBundles[name]
+	t, r := is.ruleBundleMap[name]
 	return t, r
 }
