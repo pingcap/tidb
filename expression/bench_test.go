@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/auth"
@@ -640,6 +641,27 @@ func (g *ipv4MappedByteGener) gen() interface{} {
 		ip[i] = uint8(g.randGen.Intn(256)) // reset the last 4 bytes
 	}
 	return string(ip[:net.IPv6len])
+}
+
+// uuidStrGener is used to generate uuid strings.
+type uuidStrGener struct {
+	randGen *defaultRandGen
+}
+
+func (g *uuidStrGener) gen() interface{} {
+	u, _ := uuid.NewUUID()
+	return u.String()
+}
+
+// uuidBinGener is used to generate uuid binarys.
+type uuidBinGener struct {
+	randGen *defaultRandGen
+}
+
+func (g *uuidBinGener) gen() interface{} {
+	u, _ := uuid.NewUUID()
+	val, _ := u.MarshalBinary()
+	return string(val)
 }
 
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).

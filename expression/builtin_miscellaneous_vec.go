@@ -617,3 +617,122 @@ func (b *builtinReleaseLockSig) vecEvalInt(input *chunk.Chunk, result *chunk.Col
 	}
 	return nil
 }
+
+func (b *builtinUUIDToBinSig) vectorized() bool {
+	return true
+}
+
+// evalString evals UUID_TO_BIN(string_uuid, swap_flag).
+// See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_uuid-to-bin
+func (b *builtinUUIDToBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	valBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(valBuf)
+	if err := b.args[0].VecEvalString(b.ctx, input, valBuf); err != nil {
+		return err
+	}
+
+	i64s := make([]int64, n)
+	if len(b.args) == 2 {
+		flagBuf, err := b.bufAllocator.get(types.ETInt, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(flagBuf)
+		if err := b.args[1].VecEvalInt(b.ctx, input, flagBuf); err != nil {
+			return err
+		}
+		i64s = flagBuf.Int64s()
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if valBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		val := valBuf.GetString(i)
+		u, err := uuid.Parse(val)
+		if err != nil {
+			return errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
+		}
+		bin, err := u.MarshalBinary()
+		if err != nil {
+			return errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
+		}
+		if i64s[i] != 0 {
+			swapBin := make([]byte, len(bin))
+			copy(swapBin[0:2], bin[6:8])
+			copy(swapBin[2:4], bin[4:6])
+			copy(swapBin[4:8], bin[0:4])
+			copy(swapBin[8:], bin[8:])
+			bin = swapBin
+		}
+		fmt.Println("flag=", i64s[i], " bin=", bin)
+
+		result.AppendString(string(bin))
+	}
+	return nil
+}
+
+func (b *builtinBinToUUIDSig) vectorized() bool {
+	return true
+}
+
+// evalString evals BIN_TO_UUID(binary_uuid, swap_flag).
+// See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_bin-to-uuid
+func (b *builtinBinToUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
+	n := input.NumRows()
+	valBuf, err := b.bufAllocator.get(types.ETString, n)
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(valBuf)
+	if err := b.args[0].VecEvalString(b.ctx, input, valBuf); err != nil {
+		return err
+	}
+
+	i64s := make([]int64, n)
+	if len(b.args) == 2 {
+		flagBuf, err := b.bufAllocator.get(types.ETInt, n)
+		if err != nil {
+			return err
+		}
+		defer b.bufAllocator.put(flagBuf)
+		if err := b.args[1].VecEvalInt(b.ctx, input, flagBuf); err != nil {
+			return err
+		}
+		i64s = flagBuf.Int64s()
+	}
+	result.ReserveString(n)
+	for i := 0; i < n; i++ {
+		if valBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		val := valBuf.GetString(i)
+		var u uuid.UUID
+		err = u.UnmarshalBinary([]byte(val))
+		if err != nil {
+			return errWrongValueForType.GenWithStackByArgs("string", val, "bin_to_uuid")
+		}
+		res := u.String()
+		if i64s[i] != 0 {
+			swapRes := make([]byte, len(res))
+			copy(swapRes[0:4], res[9:13])
+			copy(swapRes[4:8], res[14:18])
+			copy(swapRes[8:9], res[8:9])
+			copy(swapRes[9:13], res[4:8])
+			copy(swapRes[13:14], res[13:14])
+			copy(swapRes[14:18], res[0:4])
+			copy(swapRes[18:], res[18:])
+			res = string(swapRes)
+		}
+		fmt.Println("flag=", i64s[i], " res=", res)
+
+		result.AppendString(res)
+	}
+	return nil
+}

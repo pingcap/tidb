@@ -51,6 +51,7 @@ var (
 	_ functionClass = &releaseAllLocksFunctionClass{}
 	_ functionClass = &uuidFunctionClass{}
 	_ functionClass = &uuidShortFunctionClass{}
+	_ functionClass = &uuidToBinFunctionClass{}
 )
 
 var (
@@ -73,6 +74,8 @@ var (
 	_ builtinFunc = &builtinIsIPv4MappedSig{}
 	_ builtinFunc = &builtinIsIPv6Sig{}
 	_ builtinFunc = &builtinUUIDSig{}
+	_ builtinFunc = &builtinUUIDToBinSig{}
+	_ builtinFunc = &builtinBinToUUIDSig{}
 
 	_ builtinFunc = &builtinNameConstIntSig{}
 	_ builtinFunc = &builtinNameConstRealSig{}
@@ -572,6 +575,9 @@ func (b *builtinInet6AtonSig) evalString(row chunk.Row) (string, bool, error) {
 	} else {
 		copy(result, ip.To4())
 	}
+	fmt.Println("len==", len(result))
+	fmt.Println("res==", result)
+
 
 	return string(result[:]), false, nil
 }
@@ -1044,3 +1050,143 @@ type uuidShortFunctionClass struct {
 func (c *uuidShortFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	return nil, errFunctionNotExists.GenWithStackByArgs("FUNCTION", "UUID_SHORT")
 }
+
+type uuidToBinFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *uuidToBinFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := []types.EvalType{types.ETString}
+	if len(args) == 2 {
+		argTps = append(argTps, types.ETInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.Flen = 16
+	types.SetBinChsClnFlag(bf.tp)
+	bf.tp.Decimal = 0
+	sig := &builtinUUIDToBinSig{bf}
+	return sig, nil
+}
+
+type builtinUUIDToBinSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinUUIDToBinSig) Clone() builtinFunc {
+	newSig := &builtinUUIDToBinSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals UUID_TO_BIN(string_uuid, swap_flag).
+// See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_uuid-to-bin
+func (b *builtinUUIDToBinSig) evalString(row chunk.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+
+	u, err := uuid.Parse(val)
+	if err != nil {
+		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
+	}
+	bin, err := u.MarshalBinary()
+	if err != nil {
+		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
+	}
+
+	flag := int64(0)
+	if len(b.args) == 2 {
+		flag, isNull, err = b.args[1].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return "", isNull, err
+		}
+	}
+	if flag != 0 {
+		swapBin := make([]byte, len(bin))
+		copy(swapBin[0:2], bin[6:8])
+		copy(swapBin[2:4], bin[4:6])
+		copy(swapBin[4:8], bin[0:4])
+		copy(swapBin[8:], bin[8:])
+		return string(swapBin), false, nil
+	}
+	return string(bin), false, nil
+}
+
+type binToUuidFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *binToUuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := []types.EvalType{types.ETString}
+	if len(args) == 2 {
+		argTps = append(argTps, types.ETInt)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.tp.Charset, bf.tp.Collate = ctx.GetSessionVars().GetCharsetInfo()
+	bf.tp.Flen = 32
+	bf.tp.Decimal = 0
+	sig := &builtinBinToUUIDSig{bf}
+	return sig, nil
+}
+
+type builtinBinToUUIDSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinBinToUUIDSig) Clone() builtinFunc {
+	newSig := &builtinBinToUUIDSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals BIN_TO_UUID(binary_uuid, swap_flag).
+// See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_bin-to-uuid
+func (b *builtinBinToUUIDSig) evalString(row chunk.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+
+	var u uuid.UUID
+	err = u.UnmarshalBinary([]byte(val))
+	if err != nil {
+		return "", false, errWrongValueForType.GenWithStackByArgs("string", val, "bin_to_uuid")
+	}
+
+	res := u.String()
+	flag := int64(0)
+	if len(b.args) == 2 {
+		flag, isNull, err = b.args[1].EvalInt(b.ctx, row)
+		if isNull || err != nil {
+			return "", isNull, err
+		}
+	}
+	if flag != 0 {
+		swapRes := make([]byte, len(res))
+		copy(swapRes[0:4], res[9:13])
+		copy(swapRes[4:8], res[14:18])
+		copy(swapRes[8:9], res[8:9])
+		copy(swapRes[9:13], res[4:8])
+		copy(swapRes[13:14], res[13:14])
+		copy(swapRes[14:18], res[0:4])
+		copy(swapRes[18:], res[18:])
+		return string(swapRes), false, nil
+	}
+	return res, false, nil
+}
+
