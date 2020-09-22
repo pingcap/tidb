@@ -5530,6 +5530,7 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 	d := s.dom.DDL()
 	originHook := d.GetHook()
 	d.(ddl.DDLForTest).SetHook(hook)
+	defer d.(ddl.DDLForTest).SetHook(originHook)
 
 	tk.MustExec("create table if not exists t(c1 varchar(256), c2 bigint, `_col$_c2` varchar(10), unique _idx$_idx(c1), unique idx(c2));")
 	tk.MustExec("alter table test.t change column c2 cC2 tinyint after `_col$_c2`")
@@ -5556,7 +5557,35 @@ func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
 	c.Assert(t.Meta().Indices[1].Columns[0].Name.O, Equals, "cC2")
 	c.Assert(t.Meta().Indices[1].Columns[0].Offset, Equals, 2)
 
-	d.(ddl.DDLForTest).SetHook(originHook)
+	assertChangingColName1 := "_col$__col$_c1_0_1"
+	assertChangingColName2 := "_col$__col$__col$_c1_0_1"
+	query1 := "alter table t modify column _col$_c1 tinyint"
+	query2 := "alter table t modify column _col$__col$_c1_0 tinyint"
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if (job.Query == query1 || job.Query == query2) && job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
+			var (
+				newCol                *model.ColumnInfo
+				oldColName            *model.CIStr
+				modifyColumnTp        byte
+				updatedAutoRandomBits uint64
+				changingCol           *model.ColumnInfo
+				changingIdxs          []*model.IndexInfo
+			)
+			pos := &ast.ColumnPosition{}
+			err := job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+			if err != nil {
+				checkErr = err
+				return
+			}
+			if job.Query == query1 && changingCol.Name.L != assertChangingColName1 {
+				checkErr = errors.New("changing column name is incorrect")
+			}
+			if job.Query == query2 && changingCol.Name.L != assertChangingColName2 {
+				checkErr = errors.New("changing column name is incorrect")
+			}
+		}
+	}
+	d.(ddl.DDLForTest).SetHook(hook)
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table if not exists t(c1 bigint, _col$_c1 bigint, _col$__col$_c1_0 bigint, _col$__col$__col$_c1_0_0 bigint)")
