@@ -643,7 +643,10 @@ func (s *tikvSnapshot) mergeRegionRequestStats(stats map[tikvrpc.CmdType]*RPCRun
 	for k, v := range stats {
 		stat, ok := s.mu.stats.rpcStats.Stats[k]
 		if !ok {
-			s.mu.stats.rpcStats.Stats[k] = v
+			s.mu.stats.rpcStats.Stats[k] = &RPCRuntimeStats{
+				Count:   v.Count,
+				Consume: v.Consume,
+			}
 			continue
 		}
 		stat.Count += v.Count
@@ -667,9 +670,7 @@ func (rs *SnapshotRuntimeStats) Tp() int {
 func (rs *SnapshotRuntimeStats) Clone() execdetails.RuntimeStats {
 	newRs := SnapshotRuntimeStats{rpcStats: NewRegionRequestRuntimeStats()}
 	if rs.rpcStats.Stats != nil {
-		for k, v := range rs.rpcStats.Stats {
-			newRs.rpcStats.Stats[k] = v
-		}
+		newRs.rpcStats = rs.rpcStats.Clone()
 	}
 	if len(rs.backoffSleepMS) > 0 {
 		newRs.backoffSleepMS = make(map[backoffType]int)
