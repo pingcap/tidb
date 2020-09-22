@@ -1170,7 +1170,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	newColVal, err := table.CastValue(w.sessCtx, w.rowMap[w.oldColInfo.ID], w.newColInfo, false, false)
 	if err != nil {
 		if IsNormalWarning(err) || (!w.sqlMode.HasStrictMode() && IsStrictWarning(err)) {
-			// Keep the warnings
+			// Keep the warnings.
 			recordWarning = errors.Cause(err).(*terror.Error)
 		} else {
 			return errors.Trace(err)

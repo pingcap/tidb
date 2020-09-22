@@ -817,7 +817,6 @@ type addIndexWorker struct {
 	batchCheckKeys     []kv.Key
 	distinctCheckFlags []bool
 
-	// SQL Mode
 	sqlMode mysql.SQLMode
 }
 
