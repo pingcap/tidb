@@ -53,17 +53,12 @@ func EncodePlan(p Plan) string {
 	return pn.encodePlanTree(p)
 }
 
+// RenderPlanTree uses to render plan tree with giving RuntimeStatsColl.
 func RenderPlanTree(p Plan, statsColl *execdetails.RuntimeStatsColl) (string, error) {
 	pn := encoderPool.Get().(*planEncoder)
 	defer encoderPool.Put(pn)
 	if p == nil || p.SCtx() == nil {
 		return "", nil
-	}
-	selectPlan := getSelectPlan(p)
-	if selectPlan != nil {
-		failpoint.Inject("mockPlanRowCount", func(val failpoint.Value) {
-			selectPlan.statsInfo().RowCount = float64(val.(int))
-		})
 	}
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
@@ -215,13 +210,14 @@ func getSelectPlan(p Plan) PhysicalPlan {
 	return selectPlan
 }
 
-type totalRuntimeStatsColl struct {
+type totalPlanRuntimeStatsColl struct {
 	id    int
 	added map[int]bool
 }
 
-func NewTotalRuntimeStatsColl() *totalRuntimeStatsColl {
-	return &totalRuntimeStatsColl{
+// NewTotalRuntimeStatsColl returns a new totalPlanRuntimeStatsColl.
+func NewTotalRuntimeStatsColl() *totalPlanRuntimeStatsColl {
+	return &totalPlanRuntimeStatsColl{
 		id:    0,
 		added: make(map[int]bool),
 	}
@@ -230,12 +226,11 @@ func NewTotalRuntimeStatsColl() *totalRuntimeStatsColl {
 // MergePlanRuntimeStats merges the plan runtime stats.
 // For those plans have same plan digest, their plan id maybe different, so use the plan traversal index as relate plan
 // "id" and save in an array.
-func (t *totalRuntimeStatsColl) MergePlanRuntimeStats(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl, plan Plan) []*execdetails.RootRuntimeStats {
+func (t *totalPlanRuntimeStatsColl) MergePlanRuntimeStats(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl, plan Plan) []*execdetails.RootRuntimeStats {
 	pid := plan.ID()
 	if !rsColl.ExistsRootStats(pid) {
 		return total
 	}
-	//fmt.Printf("id: %v ------\n", *id)
 	for len(total) <= t.id {
 		total = append(total, &execdetails.RootRuntimeStats{})
 	}
@@ -259,7 +254,7 @@ func (t *totalRuntimeStatsColl) MergePlanRuntimeStats(total []*execdetails.RootR
 
 // BuildPlanRuntimeStats builds an new RuntimeStatsColl from runtime stats array.
 // BuildPlanRuntimeStats is opposite of MergePlanRuntimeStats.
-func (t *totalRuntimeStatsColl) BuildPlanRuntimeStats(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl, plan Plan) {
+func (t *totalPlanRuntimeStatsColl) BuildPlanRuntimeStats(total []*execdetails.RootRuntimeStats, rsColl *execdetails.RuntimeStatsColl, plan Plan) {
 	pid := plan.ID()
 	if len(total) <= t.id {
 		return

@@ -88,6 +88,7 @@ type CommitDetails struct {
 	TxnRetry          int
 }
 
+// RecordBackoff uses to record backoff stats during the commit.
 func (cd *CommitDetails) RecordBackoff(backoffs []fmt.Stringer) {
 	cd.Mu.Lock()
 	if cd.Mu.BackoffTypes == nil {
@@ -162,6 +163,7 @@ type LockKeysDetails struct {
 	RetryCount   int
 }
 
+// RecordBackoff uses to record backoff stats during the lock keys.
 func (ld *LockKeysDetails) RecordBackoff(backoffs []fmt.Stringer) {
 	ld.Mu.Lock()
 	if ld.Mu.BackoffTypes == nil {
@@ -539,6 +541,7 @@ type RootRuntimeStats struct {
 	groupRss [][]RuntimeStats
 }
 
+// Merge implements the RuntimeStats interface.
 func (e *RootRuntimeStats) Merge(rs *RootRuntimeStats) {
 	if rs == nil {
 		return
@@ -572,8 +575,9 @@ func (e *RootRuntimeStats) Merge(rs *RootRuntimeStats) {
 			idx = len(e.groupRss)
 			e.groupRss = append(e.groupRss, []RuntimeStats{rss[0].Clone()})
 		}
+		target := e.groupRss[idx][0]
 		for i := start; i < len(rss); i++ {
-			e.groupRss[idx][0].Merge(rss[i])
+			target.Merge(rss[i])
 		}
 	}
 }
@@ -818,17 +822,17 @@ func (e *RuntimeStatsWithConcurrencyInfo) Merge(rs RuntimeStats) {
 	if !ok {
 		return
 	}
-	for _, i := range tmp.concurrency {
+	for _, tmpConn := range tmp.concurrency {
 		found := false
-		for _, j := range e.concurrency {
-			if i.concurrencyName == j.concurrencyName {
-				j.concurrencyNum += i.concurrencyNum
+		for _, eConn := range e.concurrency {
+			if tmpConn.concurrencyName == eConn.concurrencyName {
+				eConn.concurrencyNum += tmpConn.concurrencyNum
 				found = true
 				break
 			}
 		}
 		if !found {
-			e.concurrency = append(e.concurrency, i)
+			e.concurrency = append(e.concurrency, tmpConn)
 		}
 	}
 }
