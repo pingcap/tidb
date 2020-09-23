@@ -314,6 +314,7 @@ func (s *testSuite3) TestInsertWrongValueForField(c *C) {
 	tk.MustExec(`alter table t1 add column b char(10) charset ascii as ((a));`)
 	tk.MustQuery(`select * from t1;`).Check(testkit.Rows(`我 `))
 
+	tk.MustExec(`drop table if exists t;`)
 	tk.MustExec(`create table t (a year);`)
 	_, err = tk.Exec(`insert into t values(2156);`)
 	c.Assert(err.Error(), Equals, `[types:1264]Out of range value for column 'a' at row 1`)
