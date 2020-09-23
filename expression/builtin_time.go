@@ -3416,6 +3416,11 @@ func (b *builtinAddDateStringStringSig) evalTime(row chunk.Row) (types.Time, boo
 		return types.ZeroTime, true, err
 	}
 
+	if invalidDate := date.InvalidZero(); invalidDate {
+		err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, date.String()))
+		return types.ZeroTime, true, err
+	}
+
 	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
@@ -3446,6 +3451,11 @@ func (b *builtinAddDateStringIntSig) evalTime(row chunk.Row) (types.Time, bool, 
 
 	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	if invalidDate := date.InvalidZero(); invalidDate {
+		err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, date.String()))
 		return types.ZeroTime, true, err
 	}
 
@@ -3482,6 +3492,11 @@ func (b *builtinAddDateStringRealSig) evalTime(row chunk.Row) (types.Time, bool,
 		return types.ZeroTime, true, err
 	}
 
+	if invalidDate := date.InvalidZero(); invalidDate {
+		err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, date.String()))
+		return types.ZeroTime, true, err
+	}
+
 	interval, isNull, err := b.getIntervalFromReal(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
@@ -3512,6 +3527,11 @@ func (b *builtinAddDateStringDecimalSig) evalTime(row chunk.Row) (types.Time, bo
 
 	date, isNull, err := b.getDateFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	if invalidDate := date.InvalidZero(); invalidDate {
+		err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, date.String()))
 		return types.ZeroTime, true, err
 	}
 
@@ -3548,6 +3568,10 @@ func (b *builtinAddDateIntStringSig) evalTime(row chunk.Row) (types.Time, bool, 
 		return types.ZeroTime, true, err
 	}
 
+	if invalidDate := date.InvalidZero(); invalidDate {
+		err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, date.String()))
+		return types.ZeroTime, true, err
+	}
 	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
@@ -3578,6 +3602,11 @@ func (b *builtinAddDateIntIntSig) evalTime(row chunk.Row) (types.Time, bool, err
 
 	date, isNull, err := b.getDateFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	if invalidDate := date.InvalidZero(); invalidDate {
+		err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, date.String()))
 		return types.ZeroTime, true, err
 	}
 
@@ -3614,6 +3643,11 @@ func (b *builtinAddDateIntRealSig) evalTime(row chunk.Row) (types.Time, bool, er
 		return types.ZeroTime, true, err
 	}
 
+	if invalidDate := date.InvalidZero(); invalidDate {
+		err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, date.String()))
+		return types.ZeroTime, true, err
+	}
+
 	interval, isNull, err := b.getIntervalFromReal(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
@@ -3644,6 +3678,11 @@ func (b *builtinAddDateIntDecimalSig) evalTime(row chunk.Row) (types.Time, bool,
 
 	date, isNull, err := b.getDateFromInt(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	if invalidDate := date.InvalidZero(); invalidDate {
+		err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, date.String()))
 		return types.ZeroTime, true, err
 	}
 
@@ -3680,6 +3719,11 @@ func (b *builtinAddDateDatetimeStringSig) evalTime(row chunk.Row) (types.Time, b
 		return types.ZeroTime, true, err
 	}
 
+	if invalidDate := date.InvalidZero(); invalidDate {
+		err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, date.String()))
+		return types.ZeroTime, true, err
+	}
+
 	interval, isNull, err := b.getIntervalFromString(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
@@ -3710,6 +3754,11 @@ func (b *builtinAddDateDatetimeIntSig) evalTime(row chunk.Row) (types.Time, bool
 
 	date, isNull, err := b.getDateFromDatetime(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	if invalidDate := date.InvalidZero(); invalidDate {
+		err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, date.String()))
 		return types.ZeroTime, true, err
 	}
 
@@ -3746,6 +3795,11 @@ func (b *builtinAddDateDatetimeRealSig) evalTime(row chunk.Row) (types.Time, boo
 		return types.ZeroTime, true, err
 	}
 
+	if invalidDate := date.InvalidZero(); invalidDate {
+		err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, date.String()))
+		return types.ZeroTime, true, err
+	}
+
 	interval, isNull, err := b.getIntervalFromReal(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
 		return types.ZeroTime, true, err
@@ -3776,6 +3830,11 @@ func (b *builtinAddDateDatetimeDecimalSig) evalTime(row chunk.Row) (types.Time, 
 
 	date, isNull, err := b.getDateFromDatetime(b.ctx, b.args, row, unit)
 	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	if invalidDate := date.InvalidZero(); invalidDate {
+		err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.TimeStr, date.String()))
 		return types.ZeroTime, true, err
 	}
 
