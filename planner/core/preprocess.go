@@ -147,7 +147,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
-	case *ast.SetOprSelectList:
+	case *ast.SetOprNodeList:
 		p.checkSetOprSelectList(node)
 	case *ast.DeleteTableList:
 		return in, true
@@ -407,7 +407,7 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 //        https://mariadb.com/kb/en/intersect/
 //        https://mariadb.com/kb/en/except/
 // "To apply ORDER BY or LIMIT to an individual SELECT, place the clause inside the parentheses that enclose the SELECT."
-func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
+func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprNodeList) {
 	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
 		switch s := sel.(type) {
 		case *ast.SelectStmt:
@@ -422,7 +422,7 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 				p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "ORDER BY")
 				return
 			}
-		case *ast.SetOprSelectList:
+		case *ast.SetOprNodeList:
 			p.checkSetOprSelectList(s)
 		}
 	}
@@ -529,7 +529,7 @@ func (p *preprocessor) checkCreateViewWithSelect(stmt ast.Node) {
 			s.LockInfo.LockType = ast.SelectLockNone
 			return
 		}
-	case *ast.SetOprSelectList:
+	case *ast.SetOprNodeList:
 		for _, sel := range s.Selects {
 			p.checkCreateViewWithSelect(sel)
 		}
@@ -541,7 +541,7 @@ func (p *preprocessor) checkCreateViewWithSelectGrammar(stmt *ast.CreateViewStmt
 	case *ast.SelectStmt:
 		p.checkCreateViewWithSelect(stmt)
 	case *ast.SetOprStmt:
-		for _, selectStmt := range stmt.SelectList.Selects {
+		for _, selectStmt := range stmt.SetOprList.Selects {
 			p.checkCreateViewWithSelect(selectStmt)
 			if p.err != nil {
 				return

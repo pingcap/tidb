@@ -67,3 +67,5 @@ require (
 )
 
 go 1.13
+
+replace github.com/pingcap/parser => github.com/YangKian/parser v0.0.0-20200923082156-e3ea18cfd641

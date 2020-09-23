@@ -1167,9 +1167,9 @@ func (b *PlanBuilder) buildProjection4Union(ctx context.Context, u *LogicalUnion
 
 func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (LogicalPlan, error) {
 	// Because INTERSECT has higher precedence than UNION and EXCEPT. We build it first.
-	selectPlans := make([]LogicalPlan, 0, len(setOpr.SelectList.Selects))
-	afterSetOprs := make([]*ast.SetOprType, 0, len(setOpr.SelectList.Selects))
-	selects := setOpr.SelectList.Selects
+	selectPlans := make([]LogicalPlan, 0, len(setOpr.SetOprList.Selects))
+	afterSetOprs := make([]*ast.SetOprType, 0, len(setOpr.SetOprList.Selects))
+	selects := setOpr.SetOprList.Selects
 	for i := 0; i < len(selects); i++ {
 		intersects := []ast.Node{selects[i]}
 		for i+1 < len(selects) {
@@ -1179,7 +1179,7 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 				if *x.AfterSetOperator != ast.Intersect && *x.AfterSetOperator != ast.IntersectAll {
 					breakIteration = true
 				}
-			case *ast.SetOprSelectList:
+			case *ast.SetOprNodeList:
 				if *x.AfterSetOperator != ast.Intersect && *x.AfterSetOperator != ast.IntersectAll {
 					breakIteration = true
 				}
@@ -1204,7 +1204,7 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 
 	oldLen := setOprPlan.Schema().Len()
 
-	for i := 0; i < len(setOpr.SelectList.Selects); i++ {
+	for i := 0; i < len(setOpr.SetOprList.Selects); i++ {
 		b.handleHelper.popMap()
 	}
 	b.handleHelper.pushMap(nil)
@@ -1277,9 +1277,9 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (L
 	case *ast.SelectStmt:
 		afterSetOperator = x.AfterSetOperator
 		leftPlan, err = b.buildSelect(ctx, x)
-	case *ast.SetOprSelectList:
+	case *ast.SetOprNodeList:
 		afterSetOperator = x.AfterSetOperator
-		leftPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+		leftPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SetOprList: x})
 	}
 	if err != nil {
 		return nil, nil, err
@@ -1298,12 +1298,12 @@ func (b *PlanBuilder) buildIntersect(ctx context.Context, selects []ast.Node) (L
 				return nil, nil, errors.Errorf("TiDB do not support intersect all")
 			}
 			rightPlan, err = b.buildSelect(ctx, x)
-		case *ast.SetOprSelectList:
+		case *ast.SetOprNodeList:
 			if *x.AfterSetOperator == ast.IntersectAll {
 				// TODO: support intersect all
 				return nil, nil, errors.Errorf("TiDB do not support intersect all")
 			}
-			rightPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SelectList: x})
+			rightPlan, err = b.buildSetOpr(ctx, &ast.SetOprStmt{SetOprList: x})
 		}
 		if err != nil {
 			return nil, nil, err
