@@ -2715,13 +2715,15 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	return builder.buildTableReaderFromHandles(ctx, e, handles)
 }
 
-func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []int64) (Executor, error) {
+func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Context, e *TableReaderExecutor, handles []int64, canReorderHandles bool) (Executor, error) {
 	startTS, err := builder.getSnapshotTS()
 	if err != nil {
 		return nil, err
 	}
 
-	sort.Sort(sortutil.Int64Slice(handles))
+	if canReorderHandles {
+		sort.Sort(sortutil.Int64Slice(handles))
+	}
 	var b distsql.RequestBuilder
 	kvReq, err := b.SetTableHandles(getPhysicalTableID(e.table), handles).
 		SetDAGRequest(e.dagPB).
