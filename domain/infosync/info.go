@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
+	"go.etcd.io/etcd/pkg/transport"
 	"go.uber.org/zap"
 )
 
