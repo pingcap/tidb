@@ -30,6 +30,7 @@ import (
 	ddltestutil "github.com/pingcap/tidb/ddl/testutil"
 	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -1425,4 +1426,49 @@ func (s *testRecoverTable) TestRenameTable(c *C) {
 	c.Assert(err, NotNil)
 	tk.MustExec("drop database rename1")
 	tk.MustExec("drop database rename2")
+}
+
+func (s *testRecoverTable) TestRenameMultiTables(c *C) {
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`), IsNil)
+	defer func() {
+		c.Assert(failpoint.Disable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange"), IsNil)
+	}()
+	tk := testkit.NewTestKit(c, s.store)
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create database rename3")
+	tk.MustExec("create database rename4")
+	tk.MustExec("create table rename1.t1 (a int primary key auto_increment)")
+	tk.MustExec("create table rename3.t3 (a int primary key auto_increment)")
+	tk.MustExec("rename table rename1.t1 to rename2.t2, rename3.t3 to rename4.t4")
+	tk.MustExec("insert rename2.t2 values ()")
+	tk.MustExec("insert rename4.t4 values ()")
+	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1"))
+	// Make sure the drop old database doesn't affect t2,t4's operations.
+	tk.MustExec("drop database rename1")
+	tk.MustExec("insert rename2.t2 values ()")
+	tk.MustQuery("select * from rename2.t2").Check(testkit.Rows("1", "3"))
+	tk.MustExec("drop database rename3")
+	tk.MustExec("insert rename4.t4 values ()")
+	tk.MustQuery("select * from rename4.t4").Check(testkit.Rows("1", "3"))
+	// Rename a table to another table in the same database.
+	tk.MustExec("rename table rename2.t2 to rename2.t1, rename4.t4 to rename4.t3")
+	tk.MustExec("insert rename2.t1 values ()")
+	tk.MustQuery("select * from rename2.t1").Check(testkit.Rows("1", "3", "2000001"))
+	tk.MustExec("insert rename4.t3 values ()")
+	tk.MustQuery("select * from rename4.t3").Check(testkit.Rows("1", "3", "2000001"))
+	tk.MustExec("drop database rename2")
+	tk.MustExec("drop database rename4")
+
+	tk.MustExec("create database rename1")
+	tk.MustExec("create database rename2")
+	tk.MustExec("create database rename3")
+	tk.MustExec("create database rename4")
+	tk.MustExec("create table rename1.t1 (a int primary key auto_increment)")
+	tk.MustExec("create table rename3.t3 (a int primary key auto_increment)")
+	//tk.MustExec("rename table rename1.t1 to rename2.t2, rename3.t3 to rename2.t2")
+	tk.MustGetErrCode("rename table rename1.t1 to rename2.t2, rename3.t3 to rename2.t2", errno.ErrTableExists)
+	tk.MustExec("rename table rename1.t1 to rename2.t2, rename2.t2 to rename1.t1")
 }

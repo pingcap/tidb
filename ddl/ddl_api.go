@@ -4305,22 +4305,22 @@ func (d *ddl) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 
 func (d *ddl) RenameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, isAlterTable bool) error {
 	is := d.GetInfoSchemaWithInterceptor(ctx)
-	if is.TableExists(newIdent.Schema, newIdent.Name) {
-		return infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
-	}
-
 	schemas, tableID, err := extractTblInfos(is, oldIdent, newIdent, isAlterTable)
 	if err != nil {
 		return err
 	}
 
+	if schemas == nil {
+		return nil
+	}
+
 	job := &model.Job{
-		SchemaID:   schemas[0].ID,
+		SchemaID:   schemas[1].ID,
 		TableID:    tableID,
 		SchemaName: schemas[1].Name.L,
 		Type:       model.ActionRenameTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{[]int64{schemas[0].ID}, newIdent.Name},
+		Args:       []interface{}{schemas[0].ID, newIdent.Name},
 	}
 
 	err = d.doDDLJob(ctx, job)
@@ -4334,9 +4334,15 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 	oldSchemaIDs := make([]int64, 0, len(oldIdents))
 	newSchemaIDs := make([]int64, 0, len(oldIdents))
 	tableIDs := make([]int64, 0, len(oldIdents))
+
 	var schemas []*model.DBInfo
 	var tableID int64
 	var err error
+	validate, err := validateTables(oldIdents, newIdents)
+	if !validate || err != nil {
+		return err
+	}
+
 	for i := 0; i < len(oldIdents); i++ {
 		schemas, tableID, err = extractTblInfos(is, oldIdents[i], newIdents[i], isAlterTable)
 		if err != nil {
@@ -4349,10 +4355,10 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 	}
 
 	job := &model.Job{
-		SchemaID:   schemas[0].ID,
+		SchemaID:   schemas[1].ID,
 		TableID:    tableIDs[0],
 		SchemaName: schemas[1].Name.L,
-		Type:       model.ActionRenameTable,
+		Type:       model.ActionRenameTables,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs},
 	}
@@ -4378,14 +4384,14 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		if isAlterTable {
 			return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 		}
+		if is.TableExists(newIdent.Schema, newIdent.Name) {
+			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+		}
 		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
 		//oldIdent is equal to newIdent, do nothing
 		return nil, 0, nil
-	}
-	if err := checkTooLongTable(newIdent.Name); err != nil {
-		return nil, 0, errors.Trace(err)
 	}
 	newSchema, ok := is.SchemaByName(newIdent.Schema)
 	if !ok {
@@ -4395,7 +4401,48 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 			168,
 			fmt.Sprintf("Database `%s` doesn't exist", newIdent.Schema))
 	}
+	if is.TableExists(newIdent.Schema, newIdent.Name) {
+		return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
+	}
+	if err := checkTooLongTable(newIdent.Name); err != nil {
+		return nil, 0, errors.Trace(err)
+	}
 	return []*model.DBInfo{oldSchema, newSchema}, oldTbl.Meta().ID, nil
+}
+
+func validateTables(oldIdents, newIdents []ast.Ident) (bool, error) {
+	oldTables := make(map[string]bool)
+	newTables := make(map[string]bool)
+	rename := make([][]string, 0, len(oldIdents))
+	for i := 0; i < len(oldIdents); i++ {
+		tables := make([]string, 0, 2)
+		oldIdent := fmt.Sprintf("%s_%s", oldIdents[i].Schema.L, oldIdents[i].Name)
+		newIdent := fmt.Sprintf("%s_%s", newIdents[i].Schema.L, newIdents[i].Name)
+		tables = append(tables, oldIdent)
+		tables = append(tables, newIdent)
+		rename = append(rename, tables)
+		oldTables[oldIdent] = true
+	}
+
+	for i := 0; i < len(rename); i++ {
+		tables := rename[i]
+		if _, ok := oldTables[tables[0]]; !ok {
+			return true, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdents[i].Schema, oldIdents[i].Name)
+		}
+		delete(oldTables, tables[0])
+		if _, ok := newTables[tables[1]]; ok {
+			return true, infoschema.ErrTableExists.GenWithStackByArgs(newIdents[i])
+		}
+		newTables[tables[1]] = true
+	}
+
+	for i := 0; i < len(rename); i++ {
+		if _, ok := newTables[rename[i][0]]; !ok {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {

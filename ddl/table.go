@@ -630,9 +630,9 @@ func verifyNoOverflowShardBits(s *sessionPool, tbl table.Table, shardRowIDBits u
 }
 
 func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
-	oldSchemaIDs := []int64{}
+	var oldSchemaID int64
 	var tableName model.CIStr
-	if err := job.DecodeArgs(&oldSchemaIDs, &tableName); err != nil {
+	if err := job.DecodeArgs(&oldSchemaID, &tableName); err != nil {
 		// Invalid arguments, cancel this job.
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -647,7 +647,7 @@ func onRenameTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error)
 		return ver, errors.Trace(err)
 	}
 
-	schemaIDs := []int64{oldSchemaIDs[0], job.SchemaID}
+	schemaIDs := []int64{oldSchemaID, job.SchemaID}
 	ver, tblInfo, err := checkAndRenameTables(t, job, schemaIDs, &tableName)
 	if err != nil {
 		return ver, errors.Trace(err)

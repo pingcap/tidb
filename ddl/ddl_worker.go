@@ -658,7 +658,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	case model.ActionRebaseAutoRandomBase:
 		ver, err = onRebaseAutoRandomType(d.store, t, job)
 	case model.ActionRenameTable:
-		ver, err = onRenameTables(d, t, job)
+		ver, err = onRenameTable(d, t, job)
 	case model.ActionShardRowID:
 		ver, err = w.onShardRowID(d, t, job)
 	case model.ActionModifyTableComment:
@@ -685,6 +685,8 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		ver, err = onAlterIndexVisibility(t, job)
 	case model.ActionAlterTableAlterPartition:
 		ver, err = onAlterTablePartition(t, job)
+	case model.ActionRenameTables:
+		ver, err = onRenameTables(d, t, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
@@ -843,6 +845,12 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		}
 		diff.TableID = tbInfo.ID
 	case model.ActionRenameTable:
+		err = job.DecodeArgs(&diff.OldSchemaID)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.TableID = job.TableID
+	case model.ActionRenameTables:
 		oldSchemaIDs := []int64{}
 		newSchemaIDs := []int64{}
 		tableNames := []*model.CIStr{}
@@ -851,12 +859,18 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		affects := make([]*model.AffectedOption, 1)
-		affects[0] = &model.AffectedOption{
-			SchemaID:   newSchemaIDs[0],
-			TableID:    tableIDs[0],
-			OldTableID: tableIDs[0],
+		affects := make([]*model.AffectedOption, len(newSchemaIDs))
+		for i, newSchemaID := range newSchemaIDs {
+			affects[i] = &model.AffectedOption{
+				SchemaID:   newSchemaID,
+				TableID:    tableIDs[i],
+				OldTableID: tableIDs[i],
+				OldSchemaID: oldSchemaIDs[i],
+			}
 		}
+		diff.TableID = tableIDs[0]
+		diff.SchemaID = newSchemaIDs[0]
+		diff.OldSchemaID = oldSchemaIDs[0]
 		diff.AffectedOpts = affects
 	case model.ActionExchangeTablePartition:
 		var (
