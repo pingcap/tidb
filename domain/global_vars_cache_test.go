@@ -39,11 +39,11 @@ func (gvcSuite *testGVCSuite) TestSimple(c *C) {
 	defer testleak.AfterTest(c)()
 	testleak.BeforeTest()
 
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	ddlLease := 50 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 	err = dom.Init(ddlLease, sysMockFactory)
 	c.Assert(err, IsNil)
 	defer dom.Close()
@@ -173,11 +173,11 @@ func (gvcSuite *testGVCSuite) TestCheckEnableStmtSummary(c *C) {
 	defer testleak.AfterTest(c)()
 	testleak.BeforeTest()
 
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	ddlLease := 50 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 	err = dom.Init(ddlLease, sysMockFactory)
 	c.Assert(err, IsNil)
 	defer dom.Close()

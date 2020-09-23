@@ -467,16 +467,12 @@ func (h *logResponseHeap) Pop() interface{} {
 }
 
 func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
-	isFailpointTestModeSkipCheck := false
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
 		// erase the error
 		err = nil
 		if s := val.(string); len(s) > 0 {
 			serversInfo = parseFailpointServerInfo(s)
-			isFailpointTestModeSkipCheck = true
-		} else {
-			isFailpointTestModeSkipCheck = false
 		}
 	})
 	if err != nil {
@@ -492,22 +488,22 @@ func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Co
 		levels = append(levels, sysutil.ParseLogLevel(l))
 	}
 
-	startTime, endTime := e.extractor.GetTimeRange(isFailpointTestModeSkipCheck)
+	// To avoid search log interface overload, the user should specify the time range, and at least one pattern
+	// in normally SQL.
+	if e.extractor.StartTime == 0 {
+		return nil, errors.New("denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`")
+	}
+	if e.extractor.EndTime == 0 {
+		return nil, errors.New("denied to scan logs, please specified the end time, such as `time < '2020-01-01 00:00:00'`")
+	}
 	patterns := e.extractor.Patterns
-
-	// There is no performance issue to check this variable because it will
-	// be eliminated in non-failpoint mode.
-	if !isFailpointTestModeSkipCheck {
-		// To avoid search log interface overload, the user should specify at least one pattern
-		// in normally SQL. (But in test mode we should relax this limitation)
-		if len(patterns) == 0 && len(levels) == 0 && len(instances) == 0 && len(nodeTypes) == 0 {
-			return nil, errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
-		}
+	if len(patterns) == 0 && len(levels) == 0 && len(instances) == 0 && len(nodeTypes) == 0 {
+		return nil, errors.New("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
 	}
 
 	req := &diagnosticspb.SearchLogRequest{
-		StartTime: startTime,
-		EndTime:   endTime,
+		StartTime: e.extractor.StartTime,
+		EndTime:   e.extractor.EndTime,
 		Levels:    levels,
 		Patterns:  patterns,
 	}

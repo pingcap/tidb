@@ -20,6 +20,7 @@ package session
 import (
 	"context"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"runtime/debug"
 	"strconv"
@@ -77,6 +78,8 @@ const (
 		Shutdown_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Reload_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		FILE_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Config_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
+		Create_Tablespace_Priv    ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE if not exists mysql.global_priv (" +
@@ -239,6 +242,7 @@ const (
 		update_time timestamp(3) NOT NULL,
 		charset text NOT NULL,
 		collation text NOT NULL,
+		source varchar(10) NOT NULL default 'unknown',
 		INDEX sql_index(original_sql(1024),default_db(1024)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -282,6 +286,34 @@ const (
 	// CreateOptRuleBlacklist stores the list of disabled optimizing operations.
 	CreateOptRuleBlacklist = `CREATE TABLE IF NOT EXISTS mysql.opt_rule_blacklist (
 		name char(100) NOT NULL
+	);`
+
+	// CreateStatsExtended stores the registered extended statistics.
+	CreateStatsExtended = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
+		stats_name varchar(32) NOT NULL,
+		db varchar(32) NOT NULL,
+		type tinyint(4) NOT NULL,
+		table_id bigint(64) NOT NULL,
+		column_ids varchar(32) NOT NULL,
+		scalar_stats double DEFAULT NULL,
+		blob_stats blob DEFAULT NULL,
+		version bigint(64) unsigned NOT NULL,
+		status tinyint(4) NOT NULL,
+		PRIMARY KEY(stats_name, db),
+		KEY idx_1 (table_id, status, version),
+		KEY idx_2 (status, version)
+	);`
+
+	// CreateSchemaIndexUsageTable stores the index usage information.
+	CreateSchemaIndexUsageTable = `CREATE TABLE IF NOT EXISTS mysql.schema_index_usage (
+		TABLE_SCHEMA varchar(64),
+		TABLE_NAME varchar(64),
+		INDEX_NAME varchar(64),
+		QUERY_COUNT bigint(64),
+		ROWS_SELECTED bigint(64),
+		LAST_USED_AT timestamp,
+		LAST_UPDATED_AT timestamp,
+		PRIMARY KEY(TABLE_SCHEMA, TABLE_NAME, INDEX_NAME)
 	);`
 )
 
@@ -381,6 +413,20 @@ const (
 	version43 = 43
 	// version44 delete tidb_isolation_read_engines from mysql.global_variables to avoid unexpected behavior after upgrade.
 	version44 = 44
+	// version45 introduces CONFIG_PRIV for SET CONFIG statements.
+	version45 = 45
+	// version46 fix a bug in v3.1.1.
+	version46 = 46
+	// version47 add Source to bindings to indicate the way binding created.
+	version47 = 47
+	// version48 reset all deprecated concurrency related system-variables if they were all default value.
+	version48 = 48
+	// version49 introduces mysql.stats_extended table.
+	version49 = 49
+	// version50 add mysql.schema_index_usage table.
+	version50 = 50
+	// version51 introduces CreateTablespacePriv to mysql.user.
+	version51 = 51
 )
 
 var (
@@ -428,6 +474,13 @@ var (
 		upgradeToVer42,
 		upgradeToVer43,
 		upgradeToVer44,
+		upgradeToVer45,
+		upgradeToVer46,
+		upgradeToVer47,
+		upgradeToVer48,
+		upgradeToVer49,
+		upgradeToVer50,
+		upgradeToVer51,
 	}
 )
 
@@ -1033,6 +1086,103 @@ func upgradeToVer44(s Session, ver int64) {
 	mustExecute(s, "DELETE FROM mysql.global_variables where variable_name = \"tidb_isolation_read_engines\"")
 }
 
+func upgradeToVer45(s Session, ver int64) {
+	if ver >= version45 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Config_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Config_priv='Y' where Super_priv='Y'")
+}
+
+// In v3.1.1, we wrongly replace the context of upgradeToVer39 with upgradeToVer44. If we upgrade from v3.1.1 to a newer version,
+// upgradeToVer39 will be missed. So we redo upgradeToVer39 here to make sure the upgrading from v3.1.1 succeed.
+func upgradeToVer46(s Session, ver int64) {
+	if ver >= version46 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Reload_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `File_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Reload_priv='Y' where Super_priv='Y'")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET File_priv='Y' where Super_priv='Y'")
+}
+
+func upgradeToVer47(s Session, ver int64) {
+	if ver >= version47 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `source` varchar(10) NOT NULL default 'unknown'", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer48(s Session, ver int64) {
+	if ver >= version48 {
+		return
+	}
+	defValues := map[string]string{
+		variable.TiDBIndexLookupConcurrency:     "4",
+		variable.TiDBIndexLookupJoinConcurrency: "4",
+		variable.TiDBHashAggFinalConcurrency:    "4",
+		variable.TiDBHashAggPartialConcurrency:  "4",
+		variable.TiDBWindowConcurrency:          "4",
+		variable.TiDBProjectionConcurrency:      "4",
+		variable.TiDBHashJoinConcurrency:        "5",
+	}
+	names := make([]string, 0, len(defValues))
+	for n := range defValues {
+		names = append(names, n)
+	}
+
+	selectSQL := "select HIGH_PRIORITY * from mysql.global_variables where variable_name in ('" + strings.Join(names, quoteCommaQuote) + "')"
+	ctx := context.Background()
+	rs, err := s.Execute(ctx, selectSQL)
+	terror.MustNil(err)
+	r := rs[0]
+	defer terror.Call(r.Close)
+	req := r.NewChunk()
+	it := chunk.NewIterator4Chunk(req)
+	err = r.Next(ctx, req)
+	for err == nil && req.NumRows() != 0 {
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			n := strings.ToLower(row.GetString(0))
+			v := row.GetString(1)
+			if defValue, ok := defValues[n]; !ok || defValue != v {
+				return
+			}
+		}
+		err = r.Next(ctx, req)
+	}
+	terror.MustNil(err)
+
+	mustExecute(s, "BEGIN")
+	v := strconv.Itoa(variable.ConcurrencyUnset)
+	sql := fmt.Sprintf("UPDATE %s.%s SET variable_value='%%s' WHERE variable_name='%%s'", mysql.SystemDB, mysql.GlobalVariablesTable)
+	for _, name := range names {
+		mustExecute(s, fmt.Sprintf(sql, v, name))
+	}
+	mustExecute(s, "COMMIT")
+}
+
+func upgradeToVer49(s Session, ver int64) {
+	if ver >= version49 {
+		return
+	}
+	doReentrantDDL(s, CreateStatsExtended)
+}
+
+func upgradeToVer50(s Session, ver int64) {
+	if ver >= version50 {
+		return
+	}
+	doReentrantDDL(s, CreateSchemaIndexUsageTable)
+}
+
+func upgradeToVer51(s Session, ver int64) {
+	if ver >= version51 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Create_tablespace_priv` ENUM('N','Y') DEFAULT 'N'", infoschema.ErrColumnExists)
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Create_tablespace_priv='Y' where Super_priv='Y'")
+}
+
 // updateBootstrapVer updates bootstrap version variable in mysql.TiDB table.
 func updateBootstrapVer(s Session) {
 	// Update bootstrap version.
@@ -1096,6 +1246,10 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateExprPushdownBlacklist)
 	// Create opt_rule_blacklist table.
 	mustExecute(s, CreateOptRuleBlacklist)
+	// Create stats_extended table.
+	mustExecute(s, CreateStatsExtended)
+	// Create schema_index_usage.
+	mustExecute(s, CreateSchemaIndexUsageTable)
 }
 
 // doDMLWorks executes DML statements in bootstrap stage.
@@ -1105,7 +1259,7 @@ func doDMLWorks(s Session) {
 
 	// Insert a default user with empty password.
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user VALUES
-		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y")`)
+		("%", "root", "", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y")`)
 
 	// Init global system variables table.
 	values := make([]string, 0, len(variable.SysVars))
@@ -1118,6 +1272,16 @@ func doDMLWorks(s Session) {
 			}
 			if v.Name == variable.TiDBRowFormatVersion {
 				vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
+			}
+			if v.Name == variable.TiDBEnableClusteredIndex {
+				vVal = "1"
+			}
+			if v.Name == variable.TiDBPartitionPruneMode {
+				vVal = string(variable.StaticOnly)
+				if flag.Lookup("test.v") != nil || flag.Lookup("check.v") != nil || config.CheckTableBeforeDrop {
+					// enable Dynamic Prune by default in test case.
+					vVal = string(variable.DynamicOnly)
+				}
 			}
 			value := fmt.Sprintf(`("%s", "%s")`, strings.ToLower(k), vVal)
 			values = append(values, value)

@@ -157,17 +157,27 @@ type stmtSummaryByDigestElement struct {
 	maxPrewriteRegionNum int32
 	sumTxnRetry          int64
 	maxTxnRetry          int
+	sumExecRetryCount    int64
+	sumExecRetryTime     time.Duration
 	sumBackoffTimes      int64
 	backoffTypes         map[fmt.Stringer]int
 	authUsers            map[string]struct{}
 	// other
 	sumMem          int64
 	maxMem          int64
+	sumDisk         int64
+	maxDisk         int64
 	sumAffectedRows uint64
 	// The first time this type of SQL executes.
 	firstSeen time.Time
 	// The last time this type of SQL executes.
 	lastSeen time.Time
+	// plan cache
+	planInCache   bool
+	planCacheHits int64
+	// pessimistic execution retry information.
+	execRetryCount uint
+	execRetryTime  time.Duration
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -189,9 +199,13 @@ type StmtExecInfo struct {
 	CopTasks       *stmtctx.CopTasksDetails
 	ExecDetail     *execdetails.ExecDetails
 	MemMax         int64
+	DiskMax        int64
 	StartTime      time.Time
 	IsInternal     bool
 	Succeed        bool
+	PlanInCache    bool
+	ExecRetryCount uint
+	ExecRetryTime  time.Duration
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -330,7 +344,7 @@ func (ssMap *stmtSummaryByDigestMap) GetMoreThanOnceSelect() ([]string, []string
 		func() {
 			ssbd.Lock()
 			defer ssbd.Unlock()
-			if ssbd.initialized && ssbd.stmtType == "select" {
+			if ssbd.initialized && ssbd.stmtType == "Select" {
 				if ssbd.history.Len() > 0 {
 					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 					ssElement.Lock()
@@ -455,7 +469,7 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, beginTime int64, interv
 	ssbd.schemaName = sei.SchemaName
 	ssbd.digest = sei.Digest
 	ssbd.planDigest = planDigest
-	ssbd.stmtType = strings.ToLower(sei.StmtCtx.StmtType)
+	ssbd.stmtType = sei.StmtCtx.StmtType
 	ssbd.normalizedSQL = formatSQL(sei.NormalizedSQL)
 	ssbd.tableNames = tableNames
 	ssbd.history = list.New()
@@ -568,13 +582,15 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
 		prevSQL: sei.PrevSQL,
 		// samplePlan needs to be decoded so it can't be truncated.
-		samplePlan:   sei.PlanGenerator(),
-		indexNames:   sei.StmtCtx.IndexNames,
-		minLatency:   sei.TotalLatency,
-		firstSeen:    sei.StartTime,
-		lastSeen:     sei.StartTime,
-		backoffTypes: make(map[fmt.Stringer]int),
-		authUsers:    make(map[string]struct{}),
+		samplePlan:    sei.PlanGenerator(),
+		indexNames:    sei.StmtCtx.IndexNames,
+		minLatency:    sei.TotalLatency,
+		firstSeen:     sei.StartTime,
+		lastSeen:      sei.StartTime,
+		backoffTypes:  make(map[fmt.Stringer]int),
+		authUsers:     make(map[string]struct{}),
+		planInCache:   false,
+		planCacheHits: 0,
 	}
 	ssElement.add(sei, intervalSeconds)
 	return ssElement
@@ -721,17 +737,33 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 		commitDetails.Mu.Unlock()
 	}
 
+	//plan cache
+	if sei.PlanInCache {
+		ssElement.planInCache = true
+		ssElement.planCacheHits += 1
+	} else {
+		ssElement.planInCache = false
+	}
+
 	// other
 	ssElement.sumAffectedRows += sei.StmtCtx.AffectedRows()
 	ssElement.sumMem += sei.MemMax
 	if sei.MemMax > ssElement.maxMem {
 		ssElement.maxMem = sei.MemMax
 	}
+	ssElement.sumDisk += sei.DiskMax
+	if sei.DiskMax > ssElement.maxDisk {
+		ssElement.maxDisk = sei.DiskMax
+	}
 	if sei.StartTime.Before(ssElement.firstSeen) {
 		ssElement.firstSeen = sei.StartTime
 	}
 	if ssElement.lastSeen.Before(sei.StartTime) {
 		ssElement.lastSeen = sei.StartTime
+	}
+	if sei.ExecRetryCount > 0 {
+		ssElement.execRetryCount += sei.ExecRetryCount
+		ssElement.execRetryTime += sei.ExecRetryTime
 	}
 }
 
@@ -808,13 +840,19 @@ func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) 
 		int(ssElement.maxPrewriteRegionNum),
 		avgFloat(ssElement.sumTxnRetry, ssElement.commitCount),
 		ssElement.maxTxnRetry,
+		int(ssElement.execRetryCount),
+		int64(ssElement.execRetryTime),
 		ssElement.sumBackoffTimes,
 		formatBackoffTypes(ssElement.backoffTypes),
 		avgInt(ssElement.sumMem, ssElement.execCount),
 		ssElement.maxMem,
+		avgInt(ssElement.sumDisk, ssElement.execCount),
+		ssElement.maxDisk,
 		avgFloat(int64(ssElement.sumAffectedRows), ssElement.execCount),
 		types.NewTime(types.FromGoTime(ssElement.firstSeen), mysql.TypeTimestamp, 0),
 		types.NewTime(types.FromGoTime(ssElement.lastSeen), mysql.TypeTimestamp, 0),
+		ssElement.planInCache,
+		ssElement.planCacheHits,
 		ssElement.sampleSQL,
 		ssElement.prevSQL,
 		ssbd.planDigest,

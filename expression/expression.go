@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/types/json"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -49,6 +49,9 @@ const (
 
 // EvalAstExpr evaluates ast expression directly.
 var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
+
+// RewriteAstExpr rewrites ast expression directly.
+var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice) (Expression, error)
 
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
@@ -427,7 +430,7 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			if buf.IsNull(i) {
 				isZero[i] = -1
 			} else {
-				iVal, err := types.StrToFloat(sc, buf.GetString(i))
+				iVal, err := types.StrToFloat(sc, buf.GetString(i), false)
 				if err != nil {
 					return err
 				}
@@ -452,7 +455,17 @@ func toBool(sc *stmtctx.StatementContext, eType types.EvalType, buf *chunk.Colum
 			}
 		}
 	case types.ETJson:
-		return errors.Errorf("cannot convert type json.BinaryJSON to bool")
+		for i := range sel {
+			if buf.IsNull(i) {
+				isZero[i] = -1
+			} else {
+				if buf.GetJSON(i).IsZero() {
+					isZero[i] = 0
+				} else {
+					isZero[i] = 1
+				}
+			}
+		}
 	}
 	return nil
 }
@@ -713,8 +726,11 @@ func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expressio
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
-func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName) {
-	cols, names := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Columns)
+func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *model.TableInfo) (*Schema, []*types.FieldName, error) {
+	cols, names, err := ColumnInfos2ColumnsAndNames(ctx, dbName, tbl.Name, tbl.Cols(), tbl)
+	if err != nil {
+		return nil, nil, err
+	}
 	keys := make([]KeyInfo, 0, len(tbl.Indices)+1)
 	for _, idx := range tbl.Indices {
 		if !idx.Unique || idx.State != model.StatePublic {
@@ -753,17 +769,14 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 	}
 	schema := NewSchema(cols...)
 	schema.SetUniqueKeys(keys)
-	return schema, names
+	return schema, names, nil
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
-func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo) ([]*Column, types.NameSlice) {
+func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
-		if col.State != model.StatePublic {
-			continue
-		}
 		names = append(names, &types.FieldName{
 			OrigTblName: tblName,
 			OrigColName: col.Name,
@@ -781,7 +794,38 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 		}
 		columns = append(columns, newCol)
 	}
-	return columns, names
+	// Resolve virtual generated column.
+	mockSchema := NewSchema(columns...)
+	// Ignore redundant warning here.
+	save := ctx.GetSessionVars().StmtCtx.IgnoreTruncate
+	defer func() {
+		ctx.GetSessionVars().StmtCtx.IgnoreTruncate = save
+	}()
+	ctx.GetSessionVars().StmtCtx.IgnoreTruncate = true
+	for i, col := range colInfos {
+		if col.IsGenerated() && !col.GeneratedStored {
+			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			e, err := RewriteAstExpr(ctx, expr, mockSchema, names)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			if e != nil {
+				columns[i].VirtualExpr = e.Clone()
+			}
+			columns[i].VirtualExpr, err = columns[i].VirtualExpr.ResolveIndices(mockSchema)
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+		}
+	}
+	return columns, names, nil
 }
 
 // NewValuesFunc creates a new values function.
@@ -806,18 +850,18 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 	// Use the failpoint to control whether to push down an expression in the integration test.
 	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
 	// whether scalar function's name is contained in the enabled expression list (e.g.`ne,eq,lt`).
-	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) bool {
+	// If neither of the above is true, switch to original logic.
+	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) {
 		enabled := val.(string)
 		if enabled == "all" {
-			return true
+			failpoint.Return(true)
 		}
 		exprs := strings.Split(enabled, ",")
 		for _, expr := range exprs {
 			if strings.ToLower(strings.TrimSpace(expr)) == sf.FuncName.L {
-				return true
+				failpoint.Return(true)
 			}
 		}
-		return false
 	})
 
 	ret := false
@@ -847,7 +891,8 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 		ast.In,
 		ast.IsNull,
 		ast.Like,
-		ast.IsTruth,
+		ast.IsTruthWithoutNull,
+		ast.IsTruthWithNull,
 		ast.IsFalsity,
 
 		// arithmetical functions.
@@ -1015,6 +1060,12 @@ func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
 		mask := storeTypeMask(storeType)
 		return !(value&mask == mask)
 	}
+
+	if storeType != kv.TiFlash && name == ast.AggFuncApproxCountDistinct {
+		// Can not push down approx_count_distinct to other store except tiflash by now.
+		return false
+	}
+
 	return true
 }
 
@@ -1059,11 +1110,13 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 }
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType) bool {
-	if storeType == kv.TiFlash && (expr.GetType().Tp == mysql.TypeDuration || expr.GetType().Tp == mysql.TypeJSON || collate.NewCollationEnabled()) {
+	if storeType == kv.TiFlash && expr.GetType().Tp == mysql.TypeDuration {
 		return false
 	}
 	switch x := expr.(type) {
-	case *Constant, *CorrelatedColumn:
+	case *CorrelatedColumn:
+		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column) != nil
+	case *Constant:
 		return pc.conOrCorColToPBExpr(expr) != nil
 	case *Column:
 		return pc.columnToPBExpr(x) != nil
@@ -1114,12 +1167,12 @@ func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
 
 func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	switch function.FuncName.L {
-	case ast.Plus, ast.Minus, ast.Div, ast.Mul,
-		ast.NullEQ, ast.GE, ast.LE, ast.EQ, ast.NE,
-		ast.LT, ast.GT, ast.Ifnull, ast.IsNull, ast.Or,
-		ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
+	case ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.GE, ast.LE,
+		ast.EQ, ast.NE, ast.LT, ast.GT, ast.Ifnull, ast.IsNull,
+		ast.Or, ast.In, ast.Mod, ast.And, ast.LogicOr, ast.LogicAnd,
 		ast.Like, ast.UnaryNot, ast.Case, ast.Month, ast.Substr,
-		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime:
+		ast.Substring, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
+		ast.JSONLength, ast.If, ast.BitNeg, ast.Xor:
 		return true
 	case ast.Cast:
 		switch function.Function.PbCode() {
@@ -1131,6 +1184,14 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 	case ast.DateAdd:
 		switch function.Function.PbCode() {
 		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt:
+			return true
+		default:
+			return false
+		}
+	case ast.Round:
+		switch function.Function.PbCode() {
+		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal,
+			tipb.ScalarFuncSig_RoundDec:
 			return true
 		default:
 			return false
@@ -1158,15 +1219,23 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 			}
 		}
 	}
-	fc := &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruth, 1, 1}, opcode.IsTruth, keepNull}
+	var fc *isTrueOrFalseFunctionClass
+	if keepNull {
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithNull, 1, 1}, opcode.IsTruth, keepNull}
+	} else {
+		fc = &isTrueOrFalseFunctionClass{baseFunctionClass{ast.IsTruthWithoutNull, 1, 1}, opcode.IsTruth, keepNull}
+	}
 	f, err := fc.getFunction(ctx, []Expression{arg})
 	if err != nil {
 		return nil, err
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.IsTruth),
+		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
+	}
+	if keepNull {
+		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)
 	}
 	return FoldConstant(sf), nil
 }

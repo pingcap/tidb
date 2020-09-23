@@ -144,8 +144,8 @@ func (s *testStringUtilSuite) TestCompileLike2Regexp(c *C) {
 		{`\_a`, `_a`},
 		{`\\_a`, `\.a`},
 		{`\a\b`, `\a\b`},
-		{`%%_`, `.*`},
-		{`%_%_aA`, ".*aA"},
+		{`%%_`, `..*`},
+		{`%_%_aA`, "...*aA"},
 	}
 	for _, v := range tbl {
 		result := CompileLike2Regexp(v.pattern)
@@ -181,20 +181,106 @@ func (s *testStringUtilSuite) TestIsExactMatch(c *C) {
 	}
 }
 
-func BenchmarkMatchSpecial(b *testing.B) {
-	var (
-		pattern = `a%a%a%a%a%a%a%a%b`
-		target  = `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
-		escape  = byte('\\')
-	)
+func (s *testStringUtilSuite) TestBuildStringFromLabels(c *C) {
+	defer testleak.AfterTest(c)()
+	testcases := []struct {
+		name     string
+		labels   map[string]string
+		expected string
+	}{
+		{
+			name:     "nil map",
+			labels:   nil,
+			expected: "",
+		},
+		{
+			name: "one label",
+			labels: map[string]string{
+				"aaa": "bbb",
+			},
+			expected: "aaa=bbb",
+		},
+		{
+			name: "two labels",
+			labels: map[string]string{
+				"aaa": "bbb",
+				"ccc": "ddd",
+			},
+			expected: "aaa=bbb,ccc=ddd",
+		},
+	}
+	for _, testcase := range testcases {
+		c.Log(testcase.name)
+		c.Assert(BuildStringFromLabels(testcase.labels), Equals, testcase.expected)
+	}
+}
 
-	patChars, patTypes := CompilePattern(pattern, escape)
+func BenchmarkDoMatch(b *testing.B) {
+	escape := byte('\\')
+	tbl := []struct {
+		pattern string
+		target  string
+	}{
+		{`a%_%_%_%_b`, `aababab`},
+		{`%_%_a%_%_b`, `bbbaaabb`},
+		{`a%_%_a%_%_b`, `aaaabbbbbbaaaaaaaaabbbbb`},
+	}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		match := DoMatch(target, patChars, patTypes)
-		if match {
-			b.Fatal("Unmatch expected.")
-		}
+	for _, v := range tbl {
+		b.Run(v.pattern, func(b *testing.B) {
+			patChars, patTypes := CompilePattern(v.pattern, escape)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				match := DoMatch(v.target, patChars, patTypes)
+				if !match {
+					b.Fatal("Match expected.")
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkDoMatchNegative(b *testing.B) {
+	escape := byte('\\')
+	tbl := []struct {
+		pattern string
+		target  string
+	}{
+		{`a%a%a%a%a%a%a%a%b`, `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`},
+	}
+
+	for _, v := range tbl {
+		b.Run(v.pattern, func(b *testing.B) {
+			patChars, patTypes := CompilePattern(v.pattern, escape)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				match := DoMatch(v.target, patChars, patTypes)
+				if match {
+					b.Fatal("Unmatch expected.")
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkBuildStringFromLabels(b *testing.B) {
+	cases := []struct {
+		name   string
+		labels map[string]string
+	}{
+		{
+			name: "normal case",
+			labels: map[string]string{
+				"aaa": "bbb",
+				"foo": "bar",
+			},
+		},
+	}
+
+	for _, testcase := range cases {
+		b.Run(testcase.name, func(b *testing.B) {
+			b.ResetTimer()
+			BuildStringFromLabels(testcase.labels)
+		})
 	}
 }

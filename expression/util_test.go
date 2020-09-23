@@ -48,8 +48,9 @@ func (s *testUtilSuite) checkPanic(f func()) (ret bool) {
 
 func (s *testUtilSuite) TestBaseBuiltin(c *check.C) {
 	ctx := mock.NewContext()
-	bf := newBaseBuiltinFuncWithTp(ctx, nil, types.ETTimestamp)
-	_, _, err := bf.evalInt(chunk.Row{})
+	bf, err := newBaseBuiltinFuncWithTp(ctx, "", nil, types.ETTimestamp)
+	c.Assert(err, check.IsNil)
+	_, _, err = bf.evalInt(chunk.Row{})
 	c.Assert(err, check.NotNil)
 	_, _, err = bf.evalReal(chunk.Row{})
 	c.Assert(err, check.NotNil)
@@ -301,21 +302,21 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, col)), check.IsTrue)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)), check.IsTrue)
 
 	// (not not (a+1)) should be optimized to (a+1 is true)
 	plusFunc := newFunction(ast.Plus, col, NewOne())
 	notFunc = newFunction(ast.UnaryNot, plusFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, plusFunc)), check.IsTrue)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, plusFunc)), check.IsTrue)
 
 	// (not not not a) should be optimized to (not (a is true))
 	notFunc = newFunction(ast.UnaryNot, col)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruth, col))), check.IsTrue)
+	c.Assert(ret.Equal(ctx, newFunction(ast.UnaryNot, newFunction(ast.IsTruthWithNull, col))), check.IsTrue)
 
 	// (not not not not a) should be optimized to (a is true)
 	notFunc = newFunction(ast.UnaryNot, col)
@@ -323,7 +324,7 @@ func (s *testUtilSuite) TestPushDownNot(c *check.C) {
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	notFunc = newFunction(ast.UnaryNot, notFunc)
 	ret = PushDownNot(ctx, notFunc)
-	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruth, col)), check.IsTrue)
+	c.Assert(ret.Equal(ctx, newFunction(ast.IsTruthWithNull, col)), check.IsTrue)
 }
 
 func (s *testUtilSuite) TestFilter(c *check.C) {
@@ -550,7 +551,7 @@ func (m *MockExpr) HasCoercibility() bool                             { return f
 func (m *MockExpr) Coercibility() Coercibility                        { return 0 }
 func (m *MockExpr) SetCoercibility(Coercibility)                      {}
 
-func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string, int) {
-	return "", "", 0
+func (m *MockExpr) CharsetAndCollation(ctx sessionctx.Context) (string, string) {
+	return "", ""
 }
-func (m *MockExpr) SetCharsetAndCollation(chs, coll string, flen int) {}
+func (m *MockExpr) SetCharsetAndCollation(chs, coll string) {}

@@ -36,7 +36,7 @@ func (s *testBackoffSuite) TearDownTest(c *C) {
 }
 
 func (s *testBackoffSuite) TestBackoffWithMax(c *C) {
-	b := NewBackoffer(context.TODO(), 2000)
+	b := NewBackofferWithVars(context.TODO(), 2000, nil)
 	err := b.BackoffWithMaxSleep(boTxnLockFast, 30, errors.New("test"))
 	c.Assert(err, IsNil)
 	c.Assert(b.totalSleep, Equals, 30)

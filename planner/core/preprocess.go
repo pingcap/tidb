@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/types/parser_driver"
+	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/domainutil"
 )
@@ -45,6 +45,36 @@ func InPrepare(p *preprocessor) {
 // InTxnRetry is a PreprocessOpt that indicates preprocess is executing under transaction retry.
 func InTxnRetry(p *preprocessor) {
 	p.flag |= inTxnRetry
+}
+
+// TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
+func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
+	if ctx.GetSessionVars().SelectLimit == math.MaxUint64 || ctx.GetSessionVars().InRestrictedSQL {
+		return node
+	}
+	if explain, ok := node.(*ast.ExplainStmt); ok {
+		explain.Stmt = TryAddExtraLimit(ctx, explain.Stmt)
+		return explain
+	} else if sel, ok := node.(*ast.SelectStmt); ok {
+		if sel.Limit != nil || sel.SelectIntoOpt != nil {
+			return node
+		}
+		newSel := *sel
+		newSel.Limit = &ast.Limit{
+			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
+		}
+		return &newSel
+	} else if setOprStmt, ok := node.(*ast.SetOprStmt); ok {
+		if setOprStmt.Limit != nil {
+			return node
+		}
+		newSetOpr := *setOprStmt
+		newSetOpr.Limit = &ast.Limit{
+			Count: ast.NewValueExpr(ctx.GetSessionVars().SelectLimit, "", ""),
+		}
+		return &newSetOpr
+	}
+	return node
 }
 
 // Preprocess resolves table names of the node, and checks some statements validation.
@@ -117,8 +147,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropDatabaseGrammar(node)
 	case *ast.ShowStmt:
 		p.resolveShowStmt(node)
-	case *ast.UnionSelectList:
-		p.checkUnionSelectList(node)
+	case *ast.SetOprSelectList:
+		p.checkSetOprSelectList(node)
 	case *ast.DeleteTableList:
 		return in, true
 	case *ast.Join:
@@ -154,6 +184,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
 		}
+	case *ast.BRIEStmt:
+		if node.Kind == ast.BRIEKindRestore {
+			p.flag |= inCreateOrDropTable
+		}
+	case *ast.CreateStatisticsStmt, *ast.DropStatisticsStmt:
+		p.checkStatisticsOpGrammar(in)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -247,6 +283,10 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.flag &= ^inRepairTable
 	case *ast.CreateSequenceStmt:
 		p.flag &= ^inCreateOrDropTable
+	case *ast.BRIEStmt:
+		if x.Kind == ast.BRIEKindRestore {
+			p.flag &= ^inCreateOrDropTable
+		}
 	}
 
 	return in, p.err == nil
@@ -288,6 +328,9 @@ func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
 
 func isConstraintKeyTp(constraints []*ast.Constraint, colDef *ast.ColumnDef) bool {
 	for _, c := range constraints {
+		if c.Keys[0].Expr != nil {
+			continue
+		}
 		// If the constraint as follows: primary key(c1, c2)
 		// we only support c1 column can be auto_increment.
 		if colDef.Name.Name.L != c.Keys[0].Column.Name.L {
@@ -359,21 +402,28 @@ func (p *preprocessor) checkAutoIncrement(stmt *ast.CreateTableStmt) {
 
 }
 
-// checkUnionSelectList checks union's selectList.
+// checkSetOprSelectList checks union's selectList.
 // refer: https://dev.mysql.com/doc/refman/5.7/en/union.html
+//        https://mariadb.com/kb/en/intersect/
+//        https://mariadb.com/kb/en/except/
 // "To apply ORDER BY or LIMIT to an individual SELECT, place the clause inside the parentheses that enclose the SELECT."
-func (p *preprocessor) checkUnionSelectList(stmt *ast.UnionSelectList) {
+func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 	for _, sel := range stmt.Selects[:len(stmt.Selects)-1] {
-		if sel.IsInBraces {
-			continue
-		}
-		if sel.Limit != nil {
-			p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "LIMIT")
-			return
-		}
-		if sel.OrderBy != nil {
-			p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "ORDER BY")
-			return
+		switch s := sel.(type) {
+		case *ast.SelectStmt:
+			if s.IsInBraces {
+				continue
+			}
+			if s.Limit != nil {
+				p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "LIMIT")
+				return
+			}
+			if s.OrderBy != nil {
+				p.err = ErrWrongUsage.GenWithStackByArgs("UNION", "ORDER BY")
+				return
+			}
+		case *ast.SetOprSelectList:
+			p.checkSetOprSelectList(s)
 		}
 	}
 }
@@ -421,12 +471,6 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		}
 	}
 	for _, constraint := range stmt.Constraints {
-		for _, spec := range constraint.Keys {
-			if spec.Expr != nil {
-				p.err = ErrNotSupportedYet.GenWithStackByArgs("create table with expression index")
-				return
-			}
-		}
 		switch tp := constraint.Tp; tp {
 		case ast.ConstraintKey, ast.ConstraintIndex, ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			err := checkIndexInfo(constraint.Name, constraint.Keys)
@@ -446,6 +490,9 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 				return
 			}
 		}
+	}
+	if p.err = checkUnsupportedTableOptions(stmt.Options); p.err != nil {
+		return
 	}
 	if stmt.Select != nil {
 		// FIXME: a temp error noticing 'not implemented' (issue 4754)
@@ -471,14 +518,21 @@ func (p *preprocessor) checkCreateViewGrammar(stmt *ast.CreateViewStmt) {
 	}
 }
 
-func (p *preprocessor) checkCreateViewWithSelect(stmt *ast.SelectStmt) {
-	if stmt.SelectIntoOpt != nil {
-		p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
-		return
-	}
-	if stmt.LockTp != ast.SelectLockNone {
-		stmt.LockTp = ast.SelectLockNone
-		return
+func (p *preprocessor) checkCreateViewWithSelect(stmt ast.Node) {
+	switch s := stmt.(type) {
+	case *ast.SelectStmt:
+		if s.SelectIntoOpt != nil {
+			p.err = ddl.ErrViewSelectClause.GenWithStackByArgs("INFO")
+			return
+		}
+		if s.LockInfo != nil && s.LockInfo.LockType != ast.SelectLockNone {
+			s.LockInfo.LockType = ast.SelectLockNone
+			return
+		}
+	case *ast.SetOprSelectList:
+		for _, sel := range s.Selects {
+			p.checkCreateViewWithSelect(sel)
+		}
 	}
 }
 
@@ -486,7 +540,7 @@ func (p *preprocessor) checkCreateViewWithSelectGrammar(stmt *ast.CreateViewStmt
 	switch stmt := stmt.Select.(type) {
 	case *ast.SelectStmt:
 		p.checkCreateViewWithSelect(stmt)
-	case *ast.UnionStmt:
+	case *ast.SetOprStmt:
 		for _, selectStmt := range stmt.SelectList.Selects {
 			p.checkCreateViewWithSelect(selectStmt)
 			if p.err != nil {
@@ -579,6 +633,21 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
 }
 
+func (p *preprocessor) checkStatisticsOpGrammar(node ast.Node) {
+	var statsName string
+	switch stmt := node.(type) {
+	case *ast.CreateStatisticsStmt:
+		statsName = stmt.StatsName
+	case *ast.DropStatisticsStmt:
+		statsName = stmt.StatsName
+	}
+	if isIncorrectName(statsName) {
+		msg := fmt.Sprintf("Incorrect statistics name: %s", statsName)
+		p.err = ErrInternal.GenWithStack(msg)
+	}
+	return
+}
+
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
 	oldTable := stmt.OldTable.Name.String()
 	newTable := stmt.NewTable.Name.String()
@@ -635,6 +704,9 @@ func (p *preprocessor) checkAlterTableGrammar(stmt *ast.AlterTableStmt) {
 				return
 			}
 		}
+		if p.err = checkUnsupportedTableOptions(spec.Options); p.err != nil {
+			return
+		}
 		switch spec.Tp {
 		case ast.AlterTableAddConstraint:
 			switch spec.Constraint.Tp {
@@ -677,6 +749,19 @@ func checkIndexInfo(indexName string, IndexPartSpecifications []*ast.IndexPartSp
 		return infoschema.ErrTooManyKeyParts.GenWithStackByArgs(mysql.MaxKeyParts)
 	}
 	return checkDuplicateColumnName(IndexPartSpecifications)
+}
+
+// checkUnsupportedTableOptions checks if there exists unsupported table options
+func checkUnsupportedTableOptions(options []*ast.TableOption) error {
+	for _, option := range options {
+		switch option.Tp {
+		case ast.TableOptionUnion:
+			return ddl.ErrTableOptionUnionUnsupported
+		case ast.TableOptionInsertMethod:
+			return ddl.ErrTableOptionInsertMethodUnsupported
+		}
+	}
+	return nil
 }
 
 // checkColumn checks if the column definition is valid.
@@ -924,6 +1009,12 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 		if spec.Tp == ast.AlterTableRenameTable {
 			p.flag |= inCreateOrDropTable
 			break
+		}
+		if spec.Tp == ast.AlterTableAddConstraint && spec.Constraint.Refer != nil {
+			table := spec.Constraint.Refer.Table
+			if table.Schema.L == "" && node.Table.Schema.L != "" {
+				table.Schema = model.NewCIStr(node.Table.Schema.L)
+			}
 		}
 	}
 }

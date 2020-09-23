@@ -29,7 +29,7 @@ type testBatchPointGetSuite struct {
 }
 
 func newStoreWithBootstrap() (kv.Storage, *domain.Domain, error) {
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -126,4 +126,27 @@ func (s *testBatchPointGetSuite) TestBatchPointGetInTxn(c *C) {
 	tk.MustExec("update s set c = 10 where a = 3")
 	tk.MustQuery("select * from s where (a, b) in ((1, 1), (2, 2), (3, 3)) for update").Check(testkit.Rows("1 1 1", "3 3 10"))
 	tk.MustExec("rollback")
+}
+
+func (s *testBatchPointGetSuite) TestBatchPointGetCache(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table customers (id int primary key, token varchar(255) unique)")
+	tk.MustExec("INSERT INTO test.customers (id, token) VALUES (28, '07j')")
+	tk.MustExec("INSERT INTO test.customers (id, token) VALUES (29, '03j')")
+	tk.MustExec("BEGIN")
+	tk.MustQuery("SELECT id, token FROM test.customers WHERE id IN (28)")
+	tk.MustQuery("SELECT id, token FROM test.customers WHERE id IN (28, 29);").Check(testkit.Rows("28 07j", "29 03j"))
+}
+
+func (s *testBatchPointGetSuite) TestIssue18843(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t18843 ( id bigint(10) primary key, f varchar(191) default null, unique key `idx_f` (`f`))")
+	tk.MustExec("insert into t18843 values (1, '')")
+	tk.MustQuery("select * from t18843 where f in (null)").Check(testkit.Rows())
+
+	tk.MustExec("insert into t18843 values (2, null)")
+	tk.MustQuery("select * from t18843 where f in (null)").Check(testkit.Rows())
+	tk.MustQuery("select * from t18843 where f is null").Check(testkit.Rows("2 <nil>"))
 }

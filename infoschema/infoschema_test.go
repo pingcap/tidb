@@ -44,7 +44,7 @@ type testSuite struct {
 
 func (*testSuite) TestT(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	// Make sure it calls perfschema.Init().
@@ -110,7 +110,7 @@ func (*testSuite) TestT(c *C) {
 	})
 	c.Assert(err, IsNil)
 
-	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(dbInfos, 1)
+	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(dbInfos, nil, 1)
 	c.Assert(err, IsNil)
 
 	txn, err := store.Begin()
@@ -255,7 +255,7 @@ func (testSuite) TestConcurrent(c *C) {
 	storeCount := 5
 	stores := make([]kv.Storage, storeCount)
 	for i := 0; i < storeCount; i++ {
-		store, err := mockstore.NewMockTikvStore()
+		store, err := mockstore.NewMockStore()
 		c.Assert(err, IsNil)
 		stores[i] = store
 	}
@@ -278,11 +278,11 @@ func (testSuite) TestConcurrent(c *C) {
 // TestInfoTables makes sure that all tables of information_schema could be found in infoschema handle.
 func (*testSuite) TestInfoTables(c *C) {
 	defer testleak.AfterTest(c)()
-	store, err := mockstore.NewMockTikvStore()
+	store, err := mockstore.NewMockStore()
 	c.Assert(err, IsNil)
 	defer store.Close()
 	handle := infoschema.NewHandle(store)
-	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, 0)
+	builder, err := infoschema.NewBuilder(handle).InitWithDBInfos(nil, nil, 0)
 	c.Assert(err, IsNil)
 	builder.Build()
 	is := handle.Get()

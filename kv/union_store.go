@@ -17,16 +17,22 @@ import (
 	"context"
 )
 
-// UnionStore is a store that wraps a snapshot for read and a BufferStore for buffered write.
+// UnionStore is a store that wraps a snapshot for read and a MemBuffer for buffered write.
 // Also, it provides some transaction related utilities.
 type UnionStore interface {
-	MemBuffer
-	// GetKeyExistErrInfo gets the key exist error info for the lazy check.
-	GetKeyExistErrInfo(k Key) *existErrInfo
-	// DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
-	DeleteKeyExistErrInfo(k Key)
-	// WalkBuffer iterates all buffered kv pairs.
-	WalkBuffer(f func(k Key, v []byte) error) error
+	Retriever
+
+	// HasPresumeKeyNotExists returns whether the key presumed key not exists error for the lazy check.
+	HasPresumeKeyNotExists(k Key) bool
+	// DeleteKeyExistErrInfo deletes the key presume key not exists error flag for the lazy check.
+	UnmarkPresumeKeyNotExists(k Key)
+	// CacheIndexName caches the index name.
+	// PresumeKeyNotExists will use this to help decode error message.
+	CacheIndexName(tableID, indexID int64, name string)
+	// GetIndexName returns the cached index name.
+	// If there is no such index already inserted through CacheIndexName, it will return UNKNOWN.
+	GetIndexName(tableID, indexID int64) string
+
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
@@ -34,7 +40,7 @@ type UnionStore interface {
 	DelOption(opt Option)
 	// GetOption gets an option.
 	GetOption(opt Option) interface{}
-	// GetMemBuffer return the MemBuffer binding to this UnionStore.
+	// GetMemBuffer return the MemBuffer binding to this unionStore.
 	GetMemBuffer() MemBuffer
 }
 
@@ -57,60 +63,39 @@ type Options interface {
 	Get(opt Option) (v interface{}, ok bool)
 }
 
-type existErrInfo struct {
-	idxName string
-	value   string
-}
-
-// NewExistErrInfo is used to new an existErrInfo
-func NewExistErrInfo(idxName string, value string) *existErrInfo {
-	return &existErrInfo{idxName: idxName, value: value}
-}
-
-// GetIdxName gets the index name of the existed error.
-func (e *existErrInfo) GetIdxName() string {
-	return e.idxName
-}
-
-// GetValue gets the existed value of the existed error.
-func (e *existErrInfo) GetValue() string {
-	return e.value
-}
-
-// Err generates the error for existErrInfo
-func (e *existErrInfo) Err() error {
-	return ErrKeyExists.FastGenByArgs(e.value, e.idxName)
+type idxNameKey struct {
+	tableID, indexID int64
 }
 
 // unionStore is an in-memory Store which contains a buffer for write and a
 // snapshot for read.
 type unionStore struct {
-	*BufferStore
-	keyExistErrs map[string]*existErrInfo // for the lazy check
+	memBuffer    *memdb
+	snapshot     Snapshot
+	idxNameCache map[idxNameKey]string
 	opts         options
 }
 
-// NewUnionStore builds a new UnionStore.
+// NewUnionStore builds a new unionStore.
 func NewUnionStore(snapshot Snapshot) UnionStore {
 	return &unionStore{
-		BufferStore:  NewBufferStore(snapshot),
-		keyExistErrs: make(map[string]*existErrInfo),
+		snapshot:     snapshot,
+		memBuffer:    newMemDB(),
+		idxNameCache: make(map[idxNameKey]string),
 		opts:         make(map[Option]interface{}),
 	}
 }
 
+// GetMemBuffer return the MemBuffer binding to this unionStore.
+func (us *unionStore) GetMemBuffer() MemBuffer {
+	return us.memBuffer
+}
+
 // Get implements the Retriever interface.
 func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
-	v, err := us.MemBuffer.Get(ctx, k)
+	v, err := us.memBuffer.Get(ctx, k)
 	if IsErrNotFound(err) {
-		if _, ok := us.opts.Get(PresumeKeyNotExists); ok {
-			e, ok := us.opts.Get(PresumeKeyNotExistsError)
-			if ok {
-				us.keyExistErrs[string(k)] = e.(*existErrInfo)
-			}
-			return nil, ErrNotExist
-		}
-		v, err = us.BufferStore.r.Get(ctx, k)
+		v, err = us.snapshot.Get(ctx, k)
 	}
 	if err != nil {
 		return v, err
@@ -121,47 +106,73 @@ func (us *unionStore) Get(ctx context.Context, k Key) ([]byte, error) {
 	return v, nil
 }
 
-func (us *unionStore) GetKeyExistErrInfo(k Key) *existErrInfo {
-	if c, ok := us.keyExistErrs[string(k)]; ok {
-		return c
+// Iter implements the Retriever interface.
+func (us *unionStore) Iter(k Key, upperBound Key) (Iterator, error) {
+	bufferIt, err := us.memBuffer.Iter(k, upperBound)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	retrieverIt, err := us.snapshot.Iter(k, upperBound)
+	if err != nil {
+		return nil, err
+	}
+	return NewUnionIter(bufferIt, retrieverIt, false)
 }
 
-func (us *unionStore) DeleteKeyExistErrInfo(k Key) {
-	delete(us.keyExistErrs, string(k))
+// IterReverse implements the Retriever interface.
+func (us *unionStore) IterReverse(k Key) (Iterator, error) {
+	bufferIt, err := us.memBuffer.IterReverse(k)
+	if err != nil {
+		return nil, err
+	}
+	retrieverIt, err := us.snapshot.IterReverse(k)
+	if err != nil {
+		return nil, err
+	}
+	return NewUnionIter(bufferIt, retrieverIt, true)
 }
 
-// SetOption implements the UnionStore SetOption interface.
+// HasPresumeKeyNotExists gets the key exist error info for the lazy check.
+func (us *unionStore) HasPresumeKeyNotExists(k Key) bool {
+	flags, err := us.memBuffer.GetFlags(k)
+	if err != nil {
+		return false
+	}
+	return flags.HasPresumeKeyNotExists()
+}
+
+// DeleteKeyExistErrInfo deletes the key exist error info for the lazy check.
+func (us *unionStore) UnmarkPresumeKeyNotExists(k Key) {
+	us.memBuffer.UpdateFlags(k, DelPresumeKeyNotExists)
+}
+
+func (us *unionStore) GetIndexName(tableID, indexID int64) string {
+	key := idxNameKey{tableID: tableID, indexID: indexID}
+	name, ok := us.idxNameCache[key]
+	if !ok {
+		return "UNKNOWN"
+	}
+	return name
+}
+
+func (us *unionStore) CacheIndexName(tableID, indexID int64, name string) {
+	key := idxNameKey{tableID: tableID, indexID: indexID}
+	us.idxNameCache[key] = name
+}
+
+// SetOption implements the unionStore SetOption interface.
 func (us *unionStore) SetOption(opt Option, val interface{}) {
 	us.opts[opt] = val
 }
 
-// DelOption implements the UnionStore DelOption interface.
+// DelOption implements the unionStore DelOption interface.
 func (us *unionStore) DelOption(opt Option) {
 	delete(us.opts, opt)
 }
 
-// GetOption implements the UnionStore GetOption interface.
+// GetOption implements the unionStore GetOption interface.
 func (us *unionStore) GetOption(opt Option) interface{} {
 	return us.opts[opt]
-}
-
-// GetMemBuffer return the MemBuffer binding to this UnionStore.
-func (us *unionStore) GetMemBuffer() MemBuffer {
-	return us.BufferStore.MemBuffer
-}
-
-func (us *unionStore) NewStagingBuffer() MemBuffer {
-	return us.BufferStore.NewStagingBuffer()
-}
-
-func (us *unionStore) Flush() (int, error) {
-	return us.BufferStore.Flush()
-}
-
-func (us *unionStore) Discard() {
-	us.BufferStore.Discard()
 }
 
 type options map[Option]interface{}

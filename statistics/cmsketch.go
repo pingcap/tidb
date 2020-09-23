@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 // topNThreshold is the minimum ratio of the number of topn elements in CMSketch, 10 means 1 / 10 = 10%.
@@ -60,8 +60,17 @@ func (t *TopNMeta) GetH2() uint64 {
 // NewCMSketch returns a new CM sketch.
 func NewCMSketch(d, w int32) *CMSketch {
 	tbl := make([][]uint32, d)
+	// Background: The Go's memory allocator will ask caller to sweep spans in some scenarios.
+	// This can cause memory allocation request latency unpredictable, if the list of spans which need sweep is too long.
+	// For memory allocation large than 32K, the allocator will never allocate memory from spans list.
+	//
+	// The memory referenced by the CMSketch will never be freed.
+	// If the number of table or index is extremely large, there will be a large amount of spans in global list.
+	// The default value of `d` is 5 and `w` is 2048, if we use a single slice for them the size will be 40K.
+	// This allocation will be handled by mheap and will never have impact on normal allocations.
+	arena := make([]uint32, d*w)
 	for i := range tbl {
-		tbl[i] = make([]uint32, w)
+		tbl[i] = arena[i*int(w) : (i+1)*int(w)]
 	}
 	return &CMSketch{depth: d, width: w, table: tbl}
 }
@@ -169,6 +178,15 @@ func (c *CMSketch) findTopNMeta(h1, h2 uint64, d []byte) *TopNMeta {
 		}
 	}
 	return nil
+}
+
+// MemoryUsage returns the total memory usage of a CMSketch.
+// only calc the hashtable size(CMSketch.table) and the CMSketch.topN
+// data are not tracked because size of CMSketch.topN take little influence
+// We ignore the size of other metadata in CMSketch.
+func (c *CMSketch) MemoryUsage() (sum int64) {
+	sum = int64(c.depth * c.width * 4)
+	return
 }
 
 // queryAddTopN TopN adds count to CMSketch.topN if exists, and returns the count of such elements after insert.
@@ -279,23 +297,32 @@ func (c *CMSketch) QueryBytes(d []byte) uint64 {
 func (c *CMSketch) queryHashValue(h1, h2 uint64) uint64 {
 	vals := make([]uint32, c.depth)
 	min := uint32(math.MaxUint32)
+	// We want that when res is 0 before the noise is eliminated, the default value is not used.
+	// So we need a temp value to distinguish before and after eliminating noise.
+	temp := uint32(1)
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
 		if min > c.table[i][j] {
 			min = c.table[i][j]
 		}
 		noise := (c.count - uint64(c.table[i][j])) / (uint64(c.width) - 1)
-		if uint64(c.table[i][j]) < noise {
+		if uint64(c.table[i][j]) == 0 {
 			vals[i] = 0
+		} else if uint64(c.table[i][j]) < noise {
+			vals[i] = temp
 		} else {
-			vals[i] = c.table[i][j] - uint32(noise)
+			vals[i] = c.table[i][j] - uint32(noise) + temp
 		}
 	}
 	sort.Sort(sortutil.Uint32Slice(vals))
 	res := vals[(c.depth-1)/2] + (vals[c.depth/2]-vals[(c.depth-1)/2])/2
-	if res > min {
-		res = min
+	if res > min+temp {
+		res = min + temp
 	}
+	if res == 0 {
+		return uint64(0)
+	}
+	res = res - temp
 	if c.considerDefVal(uint64(res)) {
 		return c.defaultValue
 	}
@@ -528,4 +555,17 @@ func (c *CMSketch) AppendTopN(data []byte, count uint64) {
 // GetWidthAndDepth returns the width and depth of CM Sketch.
 func (c *CMSketch) GetWidthAndDepth() (int32, int32) {
 	return c.width, c.depth
+}
+
+// CalcDefaultValForAnalyze calculate the default value for Analyze.
+// The value of it is count / NDV in CMSketch. This means count and NDV are not include topN.
+func (c *CMSketch) CalcDefaultValForAnalyze(NDV uint64) {
+	// If NDV <= TopN, all values should be in TopN.
+	// So we set c.defaultValue to 0 and return immediately.
+	if NDV <= uint64(len(c.topN)) {
+		c.defaultValue = 0
+		return
+	}
+	remainNDV := NDV - uint64(len(c.topN))
+	c.defaultValue = c.count / mathutil.MaxUint64(1, remainNDV)
 }

@@ -26,12 +26,14 @@ import (
 type flamegraphNode struct {
 	cumValue int64
 	children map[uint64]*flamegraphNode
+	name     string
 }
 
 func newFlamegraphNode() *flamegraphNode {
 	return &flamegraphNode{
 		cumValue: 0,
 		children: make(map[uint64]*flamegraphNode),
+		name:     "",
 	}
 }
 
@@ -60,15 +62,34 @@ func (n *flamegraphNode) add(sample *profile.Sample) {
 
 		// The previous implementation in TiDB identify nodes using location ID,
 		// but `go tool pprof` identify nodes using function ID. Should we follow?
-		loc := locs[len(locs)-1].ID
-		child, ok := n.children[loc]
+		loc := locs[len(locs)-1]
+		locID := loc.ID
+		child, ok := n.children[locID]
 		if !ok {
 			child = newFlamegraphNode()
-			n.children[loc] = child
+			n.children[locID] = child
+			if len(loc.Line) > 0 && loc.Line[0].Function != nil {
+				child.name = locs[len(locs)-1].Line[0].Function.Name
+			}
 		}
 		locs = locs[:len(locs)-1]
 		n = child
 	}
+}
+
+// collectFuncUsage collect the value by given function name
+func (n *flamegraphNode) collectFuncUsage(name string) int64 {
+	if n.name == name {
+		return n.cumValue
+	}
+	if len(n.children) == 0 {
+		return 0
+	}
+	var usage int64 = 0
+	for _, child := range n.children {
+		usage = child.collectFuncUsage(name) + usage
+	}
+	return usage
 }
 
 type flamegraphNodeWithLocation struct {

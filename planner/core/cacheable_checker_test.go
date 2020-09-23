@@ -43,15 +43,16 @@ func (s *testCacheableSuite) TestCacheable(c *C) {
 	tk.MustExec("create table t3(a int, b int)")
 	tbl := &ast.TableName{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t3")}
 	is := infoschema.GetInfoSchema(tk.Se)
-	// test non-SelectStmt/-InsertStmt/-DeleteStmt/-UpdateStmt/-SelectStmt
-	var stmt ast.Node = &ast.UnionStmt{}
-	c.Assert(core.Cacheable(stmt, is), IsFalse)
-
-	stmt = &ast.ShowStmt{}
+	// test non-SelectStmt/-InsertStmt/-DeleteStmt/-UpdateStmt/-SetOprStmt
+	var stmt ast.Node = &ast.ShowStmt{}
 	c.Assert(core.Cacheable(stmt, is), IsFalse)
 
 	stmt = &ast.LoadDataStmt{}
 	c.Assert(core.Cacheable(stmt, is), IsFalse)
+
+	// test SetOprStmt
+	stmt = &ast.SetOprStmt{}
+	c.Assert(core.Cacheable(stmt, is), IsTrue)
 
 	tableRefsClause := &ast.TableRefsClause{TableRefs: &ast.Join{Left: &ast.TableSource{Source: tbl}}}
 	// test InsertStmt

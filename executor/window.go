@@ -202,7 +202,8 @@ type aggWindowProcessor struct {
 
 func (p *aggWindowProcessor) consumeGroupRows(ctx sessionctx.Context, rows []chunk.Row) ([]chunk.Row, error) {
 	for i, windowFunc := range p.windowFuncs {
-		err := windowFunc.UpdatePartialResult(ctx, rows, p.partialResults[i])
+		// @todo Add memory trace
+		_, err := windowFunc.UpdatePartialResult(ctx, rows, p.partialResults[i])
 		if err != nil {
 			return nil, err
 		}
@@ -336,7 +337,7 @@ func (p *rowFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, row
 			if slidingWindowAggFunc != nil && initializedSlidingWindow {
 				err = slidingWindowAggFunc.Slide(ctx, rows, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
 			} else {
-				err = windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
+				_, err = windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
 			}
 			if err != nil {
 				return nil, err
@@ -480,7 +481,7 @@ func (p *rangeFrameWindowProcessor) appendResult2Chunk(ctx sessionctx.Context, r
 			if slidingWindowAggFunc != nil && initializedSlidingWindow {
 				err = slidingWindowAggFunc.Slide(ctx, rows, lastStart, lastEnd, shiftStart, shiftEnd, p.partialResults[i])
 			} else {
-				err = windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
+				_, err = windowFunc.UpdatePartialResult(ctx, rows[start:end], p.partialResults[i])
 			}
 			if err != nil {
 				return nil, err

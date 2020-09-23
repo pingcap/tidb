@@ -20,25 +20,36 @@ import (
 	"sort"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/mocktikv"
 )
 
 type testDeleteRangeSuite struct {
 	OneByOneSuite
-	cluster *mocktikv.Cluster
+	cluster cluster.Cluster
 	store   *tikvStore
 }
 
 var _ = Suite(&testDeleteRangeSuite{})
 
 func (s *testDeleteRangeSuite) SetUpTest(c *C) {
-	s.cluster = mocktikv.NewCluster()
-	mocktikv.BootstrapWithMultiRegions(s.cluster, []byte("b"), []byte("c"), []byte("d"))
-	client, pdClient, err := mocktikv.NewTiKVAndPDClient(s.cluster, nil, "")
+	client, cluster, pdClient, err := mocktikv.NewTiKVAndPDClient("")
 	c.Assert(err, IsNil)
-
+	mocktikv.BootstrapWithMultiRegions(cluster, []byte("b"), []byte("c"), []byte("d"))
+	s.cluster = cluster
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Check(err, IsNil)
+
+	// TODO: make this possible
+	// store, err := mockstore.NewMockStore(
+	// 	mockstore.WithStoreType(mockstore.MockTiKV),
+	// 	mockstore.WithClusterInspector(func(c cluster.Cluster) {
+	// 		mockstore.BootstrapWithMultiRegions(c, []byte("b"), []byte("c"), []byte("d"))
+	// 		s.cluster = c
+	// 	}),
+	// )
+	// c.Assert(err, IsNil)
+
 	s.store = store.(*tikvStore)
 }
 
