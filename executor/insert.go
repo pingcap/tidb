@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"runtime/trace"
+	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/parser/mysql"
@@ -82,6 +83,8 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			return err
 		}
 	} else {
+		e.collectRuntimeStatsEnabled()
+		start := time.Now()
 		for i, row := range rows {
 			var err error
 			if i == 0 {
@@ -92,6 +95,9 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			if err != nil {
 				return err
 			}
+		}
+		if e.stats != nil {
+			e.stats.checkInsertTime += time.Since(start)
 		}
 	}
 	e.memTracker.Consume(int64(txn.Size() - txnSize))
@@ -178,6 +184,7 @@ func (e *InsertExec) updateDupRow(ctx context.Context, txn kv.Transaction, row t
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
 func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.Datum) error {
 	// Get keys need to be checked.
+	start := time.Now()
 	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, newRows)
 	if err != nil {
 		return err
@@ -188,12 +195,24 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 		return err
 	}
 
+<<<<<<< HEAD
+=======
+	if e.collectRuntimeStatsEnabled() {
+		if snapshot := txn.GetSnapshot(); snapshot != nil {
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(kv.CollectRuntimeStats)
+		}
+	}
+	prefetchStart := time.Now()
+>>>>>>> bb354b0... *:Record the time consuming of memory operation of Insert Executor in Runtime Information (#19574)
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
 	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
-
+	if e.stats != nil {
+		e.stats.prefetch += time.Since(prefetchStart)
+	}
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
 			handle, err := tablecodec.DecodeRowKey(r.handleKey.newKey)
@@ -250,6 +269,9 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 		}
+	}
+	if e.stats != nil {
+		e.stats.checkInsertTime += time.Since(start)
 	}
 	return nil
 }
@@ -320,7 +342,6 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle int64, oldRow []
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
 	e.ctx.GetSessionVars().CurrInsertValues = e.curInsertVals.ToRow()
-
 	// NOTE: In order to execute the expression inside the column assignment,
 	// we have to put the value of "oldRow" before "newRow" in "row4Update" to
 	// be consistent with "Schema4OnDuplicate" in the "Insert" PhysicalPlan.

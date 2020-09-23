@@ -14,9 +14,13 @@
 package executor
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"math"
+	"time"
 
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
@@ -30,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -72,6 +77,11 @@ type InsertValues struct {
 	// https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 	lazyFillAutoID bool
 	memTracker     *memory.Tracker
+<<<<<<< HEAD
+=======
+
+	stats *insertRuntimeStat
+>>>>>>> bb354b0... *:Record the time consuming of memory operation of Insert Executor in Runtime Information (#19574)
 }
 
 type defaultVal struct {
@@ -901,7 +911,6 @@ func (e *InsertValues) allocAutoRandomID(fieldType *types.FieldType) (int64, err
 	if err != nil {
 		return 0, err
 	}
-
 	layout := autoid.NewAutoRandomIDLayout(fieldType, tableInfo.AutoRandomBits)
 	if tables.OverflowShardBits(autoRandomID, tableInfo.AutoRandomBits, layout.TypeBitsLength, layout.HasSignBit) {
 		return 0, autoid.ErrAutoRandReadFailed
@@ -929,12 +938,37 @@ func (e *InsertValues) handleWarning(err error) {
 	sc.AppendWarning(err)
 }
 
+<<<<<<< HEAD
+=======
+func (e *InsertValues) collectRuntimeStatsEnabled() bool {
+	if e.runtimeStats != nil {
+		if e.stats == nil {
+			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			e.stats = &insertRuntimeStat{
+				BasicRuntimeStats:    e.runtimeStats,
+				SnapshotRuntimeStats: snapshotStats,
+				prefetch:             0,
+				checkInsertTime:      0,
+			}
+			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
+		}
+		return true
+	}
+	return false
+}
+
+>>>>>>> bb354b0... *:Record the time consuming of memory operation of Insert Executor in Runtime Information (#19574)
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
 func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.Datum, addRecord func(ctx context.Context, row []types.Datum) (int64, error)) error {
 	// all the rows will be checked, so it is safe to set BatchCheck = true
 	e.ctx.GetSessionVars().StmtCtx.BatchCheck = true
-
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("InsertValues.batchCheckAndInsert", opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		opentracing.ContextWithSpan(ctx, span1)
+	}
+	start := time.Now()
 	// Get keys need to be checked.
 	toBeCheckedRows, err := getKeysNeedCheck(ctx, e.ctx, e.Table, rows)
 	if err != nil {
@@ -945,10 +979,23 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 
+=======
+	if e.collectRuntimeStatsEnabled() {
+		if snapshot := txn.GetSnapshot(); snapshot != nil {
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(kv.CollectRuntimeStats)
+		}
+	}
+	prefetchStart := time.Now()
+>>>>>>> bb354b0... *:Record the time consuming of memory operation of Insert Executor in Runtime Information (#19574)
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
 		return err
+	}
+	if e.stats != nil {
+		e.stats.prefetch += time.Since(prefetchStart)
 	}
 
 	// append warnings and get no duplicated error rows
@@ -976,6 +1023,7 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				return err
 			}
 		}
+
 		// If row was checked with no duplicate keys,
 		// it should be add to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
@@ -986,6 +1034,9 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				return err
 			}
 		}
+	}
+	if e.stats != nil {
+		e.stats.checkInsertTime += time.Since(start)
 	}
 	return nil
 }
@@ -1016,4 +1067,69 @@ func (e *InsertValues) addRecordWithAutoIDHint(ctx context.Context, row []types.
 		e.ctx.GetSessionVars().SetLastInsertID(e.lastInsertID)
 	}
 	return h, nil
+}
+
+type insertRuntimeStat struct {
+	*execdetails.BasicRuntimeStats
+	*tikv.SnapshotRuntimeStats
+	checkInsertTime time.Duration
+	prefetch        time.Duration
+}
+
+func (e *insertRuntimeStat) String() string {
+	if e.checkInsertTime == 0 {
+		// For replace statement.
+		if e.prefetch > 0 && e.SnapshotRuntimeStats != nil {
+			return fmt.Sprintf("prefetch: %v, rpc:{%v}", e.prefetch, e.SnapshotRuntimeStats.String())
+		}
+		return ""
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	buf.WriteString(fmt.Sprintf("prepare:%v, ", time.Duration(e.BasicRuntimeStats.GetTime())-e.checkInsertTime))
+	if e.prefetch > 0 {
+		buf.WriteString(fmt.Sprintf("check_insert:{total_time:%v, mem_insert_time:%v, prefetch:%v", e.checkInsertTime, e.checkInsertTime-e.prefetch, e.prefetch))
+		if e.SnapshotRuntimeStats != nil {
+			buf.WriteString(fmt.Sprintf(", rpc:{%s}", e.SnapshotRuntimeStats.String()))
+		}
+		buf.WriteString("}")
+	} else {
+		buf.WriteString(fmt.Sprintf("insert:%v", e.checkInsertTime))
+	}
+	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *insertRuntimeStat) Clone() execdetails.RuntimeStats {
+	newRs := &insertRuntimeStat{
+		checkInsertTime: e.checkInsertTime,
+		prefetch:        e.prefetch,
+	}
+	if e.SnapshotRuntimeStats != nil {
+		snapshotStats := e.SnapshotRuntimeStats.Clone()
+		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *insertRuntimeStat) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*insertRuntimeStat)
+	if !ok {
+		return
+	}
+	if tmp.SnapshotRuntimeStats != nil {
+		if e.SnapshotRuntimeStats == nil {
+			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
+			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+		} else {
+			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
+		}
+	}
+	e.prefetch += tmp.prefetch
+	e.checkInsertTime += tmp.checkInsertTime
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *insertRuntimeStat) Tp() int {
+	return execdetails.TpInsertRuntimeStat
 }

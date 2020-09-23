@@ -323,6 +323,32 @@ func (crs *CopRuntimeStats) String() string {
 		procTimes[n-1], procTimes[0], procTimes[n*4/5], procTimes[n*19/20], totalIters, totalTasks)
 }
 
+<<<<<<< HEAD
+=======
+const (
+	// TpBasicRuntimeStats is the tp for BasicRuntimeStats.
+	TpBasicRuntimeStats int = iota
+	// TpRuntimeStatsWithCommit is the tp for RuntimeStatsWithCommit.
+	TpRuntimeStatsWithCommit
+	// TpRuntimeStatsWithConcurrencyInfo is the tp for RuntimeStatsWithConcurrencyInfo.
+	TpRuntimeStatsWithConcurrencyInfo
+	// TpSnapshotRuntimeStats is the tp for SnapshotRuntimeStats.
+	TpSnapshotRuntimeStats
+	// TpHashJoinRuntimeStats is the tp for HashJoinRuntimeStats.
+	TpHashJoinRuntimeStats
+	// TpIndexLookUpJoinRuntimeStats is the tp for IndexLookUpJoinRuntimeStats.
+	TpIndexLookUpJoinRuntimeStats
+	// TpRuntimeStatsWithSnapshot is the tp for RuntimeStatsWithSnapshot.
+	TpRuntimeStatsWithSnapshot
+	// TpJoinRuntimeStats is the tp for JoinRuntimeStats.
+	TpJoinRuntimeStats
+	// TpSelectResultRuntimeStats is the tp for SelectResultRuntimeStats.
+	TpSelectResultRuntimeStats
+	// TpInsertRuntimeStat is the tp for InsertRuntimeStat
+	TpInsertRuntimeStat
+)
+
+>>>>>>> bb354b0... *:Record the time consuming of memory operation of Insert Executor in Runtime Information (#19574)
 // RuntimeStats is used to express the executor runtime information.
 type RuntimeStats interface {
 	GetActRows() int64
@@ -359,6 +385,11 @@ func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 // String implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) String() string {
 	return fmt.Sprintf("time:%v, loops:%d", time.Duration(e.consume), e.loop)
+}
+
+// GetTime get the int64 total time
+func (e *BasicRuntimeStats) GetTime() int64 {
+	return e.consume
 }
 
 // RuntimeStatsColl collects executors's execution info.
