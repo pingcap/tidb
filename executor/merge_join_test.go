@@ -251,6 +251,8 @@ func (s *testSerialSuite1) TestMergeJoinInDisk(c *C) {
 	defer func() {
 		c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/testMergeJoinRowContainerSpill"), IsNil)
 	}()
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionDisable")
 
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
