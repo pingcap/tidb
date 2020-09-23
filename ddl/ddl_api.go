@@ -5321,27 +5321,26 @@ func (d *ddl) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident, inde
 	return errors.Trace(err)
 }
 
-func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*placement.Rule, int, error) {
+func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*placement.Rule, error) {
 	var err error
 	cnstr = strings.TrimSpace(cnstr)
-	var ruleCnt int
 	rules := make([]*placement.Rule, 0, 1)
 	if len(cnstr) > 0 && cnstr[0] == '[' {
 		// can not emit REPLICAS with an array label
 		if replicas == 0 {
-			return rules, 0, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
+			return rules, errors.Errorf("array CONSTRAINTS should be with a positive REPLICAS")
 		}
 
 		constraints := []string{}
 
 		err = json.Unmarshal([]byte(cnstr), &constraints)
 		if err != nil {
-			return rules, 0, err
+			return rules, err
 		}
 
 		labelConstraints, err := placement.CheckLabelConstraints(constraints)
 		if err != nil {
-			return rules, 0, err
+			return rules, err
 		}
 
 		rules = append(rules, &placement.Rule{
@@ -5352,10 +5351,10 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 		constraints := map[string]int{}
 		err = json.Unmarshal([]byte(cnstr), &constraints)
 		if err != nil {
-			return rules, 0, err
+			return rules, err
 		}
 
-		ruleCnt = int(replicas)
+		ruleCnt := int(replicas)
 		for labels, cnt := range constraints {
 			if cnt <= 0 {
 				err = errors.Errorf("count should be positive, but got %d", cnt)
@@ -5379,17 +5378,21 @@ func buildPlacementSpecReplicasAndConstraint(replicas uint64, cnstr string) ([]*
 				LabelConstraints: labelConstraints,
 			})
 		}
+		if ruleCnt > 0 {
+			rules = append(rules, &placement.Rule{
+				Count: ruleCnt,
+			})
+		}
 	} else {
 		err = errors.Errorf("constraint should be a JSON array or object, but got '%s'", cnstr)
 	}
-	return rules, ruleCnt, err
+	return rules, err
 }
 
 func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (*placement.Bundle, error) {
 	var err error
 	var spec *ast.PlacementSpec
 
-buildloop:
 	for _, rspec := range specs {
 		spec = rspec
 
@@ -5405,7 +5408,7 @@ buildloop:
 			role = placement.Voter
 		default:
 			err = errors.Errorf("unknown role: %d", spec.Role)
-			break buildloop
+			break
 		}
 
 		if spec.Tp == ast.PlacementAlter || spec.Tp == ast.PlacementDrop {
@@ -5423,21 +5426,14 @@ buildloop:
 			}
 		}
 
-		var extra int
 		var newRules []*placement.Rule
-		newRules, extra, err = buildPlacementSpecReplicasAndConstraint(spec.Replicas, spec.Constraints)
+		newRules, err = buildPlacementSpecReplicasAndConstraint(spec.Replicas, spec.Constraints)
 		if err != nil {
-			break buildloop
+			break
 		}
 		for _, r := range newRules {
 			r.Role = role
 			bundle.Rules = append(bundle.Rules, r)
-		}
-		if extra > 0 {
-			bundle.Rules = append(bundle.Rules, &placement.Rule{
-				Role:  role,
-				Count: extra,
-			})
 		}
 	}
 
