@@ -87,6 +87,7 @@ var errPlacementRulesDisabled = errors.New("placement rules feature is disabled"
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
 	etcdCli         *clientv3.Client
+	dialCli         *http.Client
 	info            *ServerInfo
 	serverInfoPath  string
 	minStartTS      uint64
@@ -153,6 +154,25 @@ func GlobalInfoSyncerInit(ctx context.Context, id string, etcdCli *clientv3.Clie
 
 // Init creates a new etcd session and stores server info to etcd.
 func (is *InfoSyncer) init(ctx context.Context, skipRegisterToDashboard bool) error {
+	security := config.GetGlobalConfig().Security
+	if security.ClusterSSLCA == "" {
+		is.dialCli = &http.Client{}
+	} else {
+		tlsInfo := transport.TLSInfo{
+			TrustedCAFile: security.ClusterSSLCA,
+			CertFile:      security.ClusterSSLCert,
+			KeyFile:       security.ClusterSSLKey,
+		}
+		tlsConfig, err := tlsInfo.ClientConfig()
+		if err != nil {
+			return err
+		}
+		is.dialCli = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: tlsConfig,
+			},
+		}
+	}
 	err := is.newSessionAndStoreServerInfo(ctx, owner.NewSessionDefaultRetryCnt)
 	if err != nil {
 		return err
@@ -272,14 +292,16 @@ func GetTiFlashTableSyncProgress(ctx context.Context) (map[int64]float64, error)
 	return progressMap, nil
 }
 
-func doRequest(ctx context.Context, addrs []string, route, method string, body io.Reader) ([]byte, error) {
+func (is *InfoSyncer) requestPD(ctx context.Context, addrs []string, route, method string, body io.Reader) ([]byte, error) {
 	var err error
 	var req *http.Request
 	var res *http.Response
 	for _, addr := range addrs {
 		var url string
-		if strings.HasPrefix(addr, "http://") {
+		if strings.HasPrefix(addr, "http") {
 			url = fmt.Sprintf("%s%s", addr, route)
+		} else if is.dialCli.Transport != nil {
+			url = fmt.Sprintf("https://%s%s", addr, route)
 		} else {
 			url = fmt.Sprintf("http://%s%s", addr, route)
 		}
@@ -296,7 +318,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		res, err = http.DefaultClient.Do(req)
+		res, err = is.dialCli.Do(req)
 		if err == nil {
 			bodyBytes, err := ioutil.ReadAll(res.Body)
 			if err != nil {
@@ -335,7 +357,7 @@ func GetPlacementRules(ctx context.Context) ([]*placement.RuleOp, error) {
 	}
 
 	rules := []*placement.RuleOp{}
-	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "rules"), http.MethodGet, nil)
+	res, err := is.requestPD(ctx, addrs, path.Join(pdapi.Config, "rules"), http.MethodGet, nil)
 	if err == nil && res != nil {
 		err = json.Unmarshal(res, &rules)
 	}
@@ -368,7 +390,7 @@ func UpdatePlacementRules(ctx context.Context, rules []*placement.RuleOp) error 
 		return err
 	}
 
-	_, err = doRequest(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
+	_, err = is.requestPD(ctx, addrs, path.Join(pdapi.Config, "rules/batch"), http.MethodPost, bytes.NewReader(b))
 	return err
 }
 
@@ -390,7 +412,7 @@ func GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
 		return nil, errors.Errorf("pd unavailable")
 	}
 
-	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule"), "GET", nil)
+	res, err := is.requestPD(ctx, addrs, path.Join(pdapi.Config, "placement-rule"), "GET", nil)
 	if err == nil && res != nil {
 		err = json.Unmarshal(res, &bundles)
 	}
@@ -416,7 +438,7 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 		return nil, errors.Errorf("pd unavailable")
 	}
 
-	res, err := doRequest(ctx, addrs, path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
+	res, err := is.requestPD(ctx, addrs, path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
 	if err == nil && res != nil {
 		err = json.Unmarshal(res, bundle)
 	}
