@@ -588,7 +588,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv
 	}
 	tableReaderExec.buildVirtualColumnInfo()
 	rpcStart := time.Now()
-	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles)
+	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles, true)
 	if e.stats != nil {
 		recordIndexLookUpRuntimeStats(e.stats.rpcStats, "table_task", time.Since(rpcStart))
 	}
