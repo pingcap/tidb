@@ -99,7 +99,7 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 	tk.MustExec("create table t2(a varchar(10), b varchar(10))")
 	tk.MustExec("insert into t2 values ('1', '1')")
 	err = tk.ExecToErr("select default(a) from t1, t2")
-	c.Assert(err.Error(), Equals, "[planner:1052]Column 'a' in field list is ambiguous")
+	c.Assert(err.Error(), Equals, "[expression:1052]Column 'a' in field list is ambiguous")
 	tk.MustQuery("select default(t1.a) from t1, t2").Check(testkit.Rows("def"))
 
 	tk.MustExec(`create table t3(
@@ -130,6 +130,21 @@ func (s *testExpressionRewriterSuite) TestDefaultFunction(c *C) {
 
 	tk.MustExec("update t1 set c = c + default(c)")
 	tk.MustQuery("select c from t1").Check(testkit.Rows("11"))
+
+	tk.MustExec("create table t6(a int default -1, b int)")
+	tk.MustExec(`insert into t6 values (0, 0), (1, 1), (2, 2)`)
+	tk.MustExec("create table t7(a int default 1, b int)")
+	tk.MustExec(`insert into t7 values (0, 0), (1, 1), (2, 2)`)
+
+	tk.MustQuery(`select a from t6 where a > (select default(a) from t7 where t6.a = t7.a)`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select a, default(a) from t6 where a > (select default(a) from t7 where t6.a = t7.a)`).Check(testkit.Rows("2 -1"))
+
+	tk.MustExec("create table t8(a int default 1, b int default -1)")
+	tk.MustExec(`insert into t8 values (0, 0), (1, 1)`)
+
+	tk.MustQuery(`select a, a from t8 order by default(a)`).Check(testkit.Rows("0 0", "1 1"))
+	tk.MustQuery(`select a from t8 order by default(b)`).Check(testkit.Rows("0", "1"))
+	tk.MustQuery(`select a from t8 order by default(b) * a`).Check(testkit.Rows("1", "0"))
 }
 
 func (s *testExpressionRewriterSuite) TestCompareSubquery(c *C) {
@@ -259,4 +274,27 @@ func (s *testExpressionRewriterSuite) TestPatternLikeToExpression(c *C) {
 	tk.MustQuery("select 1 like '1';").Check(testkit.Rows("1"))
 	tk.MustQuery("select 0 like '0';").Check(testkit.Rows("1"))
 	tk.MustQuery("select 0.00 like '0.00';").Check(testkit.Rows("1"))
+}
+
+func (s *testExpressionRewriterSuite) TestIssue20007(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	defer func() {
+		dom.Close()
+		store.Close()
+	}()
+
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40), c_datetime datetime, primary key(c_int));")
+	tk.MustExec("create table t2 (c_int int, c_str varchar(40), c_datetime datetime, primary key (c_datetime)) partition by range (to_days(c_datetime)) ( partition p0 values less than (to_days('2020-02-01')), partition p1 values less than (to_days('2020-04-01')), partition p2 values less than (to_days('2020-06-01')), partition p3 values less than maxvalue);")
+	tk.MustExec("insert into t1 (c_int, c_str, c_datetime) values (1, 'xenodochial bassi', '2020-04-29 03:22:51'), (2, 'epic wiles', '2020-01-02 23:29:51'), (3, 'silly burnell', '2020-02-25 07:43:07');")
+	tk.MustExec("insert into t2 (c_int, c_str, c_datetime) values (1, 'trusting matsumoto', '2020-01-07 00:57:18'), (2, 'pedantic boyd', '2020-06-08 23:12:16'), (null, 'strange hypatia', '2020-05-23 17:45:27');")
+	// Test 10 times.
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str); ").Check(
+			testkit.Rows("2 epic wiles 2020-01-02 23:29:51", "3 silly burnell 2020-02-25 07:43:07"))
+	}
 }
