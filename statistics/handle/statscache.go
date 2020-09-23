@@ -28,8 +28,9 @@ type statsCache struct {
 	cache       *kvcache.SimpleLRUCache
 	memCapacity int64
 	version     uint64
-	memTracker  *memory.Tracker // track memory usage.
+	memTracker  *memory.Tracker
 }
+
 type statsCacheKey int64
 
 func (key statsCacheKey) Hash() []byte {
@@ -95,8 +96,9 @@ func (sc *statsCache) Lookup(id int64) (*statistics.Table, bool) {
 	return sc.lookupUnsafe(id)
 }
 
-// Insert insert a new table to tables and update the cache.
-// if bytesconsumed is more than capacity, remove oldest cache and add metadata of it
+// Insert inserts a new table to the statsCache.
+// If the memory consumption exceeds the capacity, remove the buckets and
+// CMSketch of the oldest cache and add metadata of it
 func (sc *statsCache) Insert(table *statistics.Table) {
 	if table == nil {
 		return
@@ -114,22 +116,23 @@ func (sc *statsCache) Insert(table *statistics.Table) {
 		sc.memTracker.Consume(-evictedValue.(*statistics.Table).MemoryUsage())
 		sc.cache.Put(evictedKey, evictedValue.(*statistics.Table).CopyWithoutBucketsAndCMS())
 	}
+	// erase the old element since the value may be different from the existing one.
 	sc.Erase(table.PhysicalID)
-	sc.memTracker.Consume(mem)
 	sc.cache.Put(key, table)
+	sc.memTracker.Consume(mem)
 	return
 }
 
-// Erase Erase a stateCache with physical id
+// Erase erase a stateCache with physical id.
 func (sc *statsCache) Erase(deletedID int64) bool {
 	table, hit := sc.lookupUnsafe(deletedID)
 	if !hit {
 		return false
 	}
-	sc.memTracker.Consume(-table.MemoryUsage())
 
 	key := statsCacheKey(deletedID)
 	sc.cache.Delete(key)
+	sc.memTracker.Consume(-table.MemoryUsage())
 	return true
 }
 
@@ -154,8 +157,8 @@ func (sc *statsCache) GetVersion() uint64 {
 	return sc.version
 }
 
-// initStatsCache should be called after the tables and their stats are initialized
-// using tables map and version to init statscache
+// initStatsCache should be invoked after the tables and their stats are initialized
+// using tables map and version to init statsCache
 func (sc *statsCache) initStatsCache(tables map[int64]*statistics.Table, version uint64) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()

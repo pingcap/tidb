@@ -14,6 +14,7 @@
 package statistics
 
 import (
+	"encoding/binary"
 	"fmt"
 	"math"
 	"sort"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
@@ -55,6 +57,27 @@ const (
 	// between condition selects 1/40 of total rows.
 	PseudoRowCount = 10000
 )
+
+// CMSketchSizeLimit indicates the max width and depth of CMSketch.
+var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
+
+// AnalyzeOptionLimit indicates the upper bound of some attribute.
+var AnalyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    1024,
+	ast.AnalyzeOptNumTopN:       1024,
+	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
+	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
+	ast.AnalyzeOptNumSamples:    100000,
+}
+
+// AnalyzeOptionDefault indicates the default values of some attributes.
+var AnalyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets:    256,
+	ast.AnalyzeOptNumTopN:       20,
+	ast.AnalyzeOptCMSketchWidth: 2048,
+	ast.AnalyzeOptCMSketchDepth: 5,
+	ast.AnalyzeOptNumSamples:    10000,
+}
 
 // Table represents statistics for a table.
 type Table struct {

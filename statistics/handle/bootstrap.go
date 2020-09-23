@@ -15,10 +15,12 @@ package handle
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 
 	"github.com/cznic/mathutil"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -32,13 +34,9 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// defaultTopNnum ,defaultBucketsSize are defined in planner/core/planbuilder.go analyzeOptionDefault.
-	defaultTopNnum     = 20
-	defaultBucketsSize = 256
-	// defaultStatDataSize is an estimated default statistic data size for one column/index(CMSKetch + Histogram).
-	defaultStatDataSize = 50 * 1024
-)
+// defaultStatDataSize is the default statistics data size for one (CMSKetch + Histogram).
+var defaultStatDataSize = int64(statistics.AnalyzeOptionDefault[ast.AnalyzeOptCMSketchWidth]*statistics.AnalyzeOptionDefault[ast.AnalyzeOptCMSketchDepth]*binary.MaxVarintLen32) +
+	int64(statistics.AnalyzeOptionDefault[ast.AnalyzeOptNumBuckets]*2*binary.MaxVarintLen64)
 
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -62,7 +60,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, tables map[int64]
 			Version:  row.GetUint64(0),
 			Name:     getFullTableName(is, tableInfo),
 		}
-		//Ignore the memory usage, it will be caculated later
+		// Ignore the memory usage, it will be calculated later.
 		tables[tbl.PhysicalID] = tbl
 	}
 }
@@ -92,6 +90,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (map[int64]*statistics.
 	}
 	return tables, nil
 }
+
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := tables[row.GetInt64(0)]
@@ -112,7 +111,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables map[
 			if idxInfo == nil {
 				continue
 			}
-			//load the meta data of every histogram
 			hist := statistics.NewHistogram(id, ndv, nullCount, version, types.NewFieldType(mysql.TypeBlob), 0, 0)
 			index := &statistics.Index{
 				Histogram:  *hist,
@@ -150,7 +148,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, tables map[
 	}
 }
 
-// initStatsHistograms loads ALL the meta data without cm_sketch
+// initStatsHistograms loads ALL the meta data except cm_sketch.
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables map[int64]*statistics.Table) error {
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version," +
 		" null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos " +
@@ -176,6 +174,7 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, tables map[int64]
 	}
 	return nil
 }
+
 func (h *Handle) initCMSketch4Indices4Chunk(is infoschema.InfoSchema, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		table, ok := tables[row.GetInt64(0)]
@@ -211,7 +210,7 @@ func (h *Handle) initCMSketch4Indices4Chunk(is infoschema.InfoSchema, tables map
 
 func (h *Handle) initCMSketch4Indices(is infoschema.InfoSchema, tables map[int64]*statistics.Table) error {
 	// indcies should be loaded first
-	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize)
+	limitSize := h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, cm_sketch " +
 		"from mysql.stats_histograms where is_index = 1 " +
 		fmt.Sprintf("order by table_id, hist_id limit %d", limitSize)
@@ -255,7 +254,7 @@ func (h *Handle) initStatsTopN4Chunk(tables map[int64]*statistics.Table, iter *c
 }
 
 func (h *Handle) initStatsTopN(tables map[int64]*statistics.Table) error {
-	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize) * defaultTopNnum
+	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize) * int64(statistics.AnalyzeOptionDefault[ast.AnalyzeOptNumTopN])
 	sql := "select HIGH_PRIORITY table_id, hist_id, value, count " +
 		"from mysql.stats_top_n " +
 		fmt.Sprintf("where is_index = 1 order by table_id, hist_id limit %d", limitSize)
@@ -281,7 +280,7 @@ func (h *Handle) initStatsTopN(tables map[int64]*statistics.Table) error {
 	return nil
 }
 
-func initColumnCountMeta4Chunk(ctx sessionctx.Context, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) error {
+func initColumnCountMeta4Chunk(tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) error {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, histID, decimalCount := row.GetInt64(0), row.GetInt64(1), row.GetMyDecimal(2)
 		table, ok := tables[tableID]
@@ -301,7 +300,7 @@ func initColumnCountMeta4Chunk(ctx sessionctx.Context, tables map[int64]*statist
 	return nil
 }
 
-//initColumnCount loads each column's meta data i.e. its row count.
+// initColumnCount loads row count for each column.
 func (h *Handle) initColumnCount(tables map[int64]*statistics.Table) (err error) {
 	sql := "select HIGH_PRIORITY table_id, hist_id, sum(count) " +
 		"from mysql.stats_buckets " +
@@ -324,13 +323,14 @@ func (h *Handle) initColumnCount(tables map[int64]*statistics.Table) (err error)
 		if req.NumRows() == 0 {
 			break
 		}
-		err = initColumnCountMeta4Chunk(h.mu.ctx, tables, iter)
+		err = initColumnCountMeta4Chunk(tables, iter)
 		if err != nil {
 			return err
 		}
 	}
 	return nil
 }
+
 func initStatsBuckets4Chunk(ctx sessionctx.Context, tables map[int64]*statistics.Table, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
@@ -375,7 +375,7 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, tables map[int64]*statistics
 }
 
 func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (err error) {
-	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize) * defaultBucketsSize
+	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize) * int64(statistics.AnalyzeOptionDefault[ast.AnalyzeOptNumBuckets])
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound," +
 		"upper_bound from mysql.stats_buckets " +
 		fmt.Sprintf("order by is_index desc, table_id, hist_id, bucket_id limit %d", limitSize)
@@ -395,8 +395,9 @@ func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (err error
 			return errors.Trace(err)
 		}
 		if req.NumRows() == 0 {
-			if limitSize == int64(req.NumRows()) && lastTableID != -1 {
-				// remove the stats buckets of the last table_id
+			if lastTableID != -1 {
+				// remove the stats buckets of the last table_id because it may
+				// not be loaded fully.
 				tables[lastTableID] = tables[lastTableID].CopyWithoutBucketsAndCMS()
 			}
 			break
@@ -406,10 +407,10 @@ func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (err error
 	}
 	return nil
 }
+
 func (h *Handle) preCalcScalar4StatsBuckets(tables map[int64]*statistics.Table) (lastVersion uint64, err error) {
 	lastVersion = uint64(0)
 	for _, table := range tables {
-		// The version is loaded by initStatsHistogramsMeta.
 		lastVersion = mathutil.MaxUint64(lastVersion, table.Version)
 		for _, idx := range table.Indices {
 			for i := 1; i < idx.Len(); i++ {
