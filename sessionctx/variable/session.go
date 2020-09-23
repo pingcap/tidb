@@ -713,6 +713,9 @@ type SessionVars struct {
 
 	// PartitionPruneMode indicates how and when to prune partitions.
 	PartitionPruneMode PartitionPruneMode
+
+	// EnableSafeUpdates indicates if safe-update mode is enabled.
+	EnableSafeUpdates bool
 }
 
 // UseDynamicPartitionPrune indicates whether use new dynamic partition prune.
@@ -1463,6 +1466,8 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		s.EnableChangeColumnType = TiDBOptOn(val)
 	case TiDBEnableAmendPessimisticTxn:
 		s.EnableAmendPessimisticTxn = TiDBOptOn(val)
+	case TiDBEnableSafeUpdates:
+		s.EnableSafeUpdates = TiDBOptOn(val)
 	}
 	s.systems[name] = val
 	return nil

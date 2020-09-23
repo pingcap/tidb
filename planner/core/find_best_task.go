@@ -642,6 +642,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	t = invalidTask
 	candidates := ds.skylinePruning(prop)
 
+	svars := ds.ctx.GetSessionVars()
+	safeUpdateMode := (svars.StmtCtx.InDeleteStmt || svars.StmtCtx.InUpdateStmt) && svars.EnableSafeUpdates
+	numRangeScanPlans := 0
+
 	cntPlan = 0
 	for _, candidate := range candidates {
 		path := candidate.path
@@ -704,6 +708,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 					pointGetTask = ds.convertToBatchPointGet(prop, candidate)
 				}
 				if !pointGetTask.invalid() {
+					if safeUpdateMode && notFullScanPlan(pointGetTask.plan()) {
+						numRangeScanPlans++
+					}
 					cntPlan += 1
 					planCounter.Dec(1)
 				}
@@ -728,6 +735,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				return nil, 0, err
 			}
 			if !tblTask.invalid() {
+				if safeUpdateMode && notFullScanPlan(tblTask.plan()) {
+					numRangeScanPlans++
+				}
 				cntPlan += 1
 				planCounter.Dec(1)
 			}
@@ -748,6 +758,9 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			return nil, 0, err
 		}
 		if !idxTask.invalid() {
+			if safeUpdateMode && notFullScanPlan(idxTask.plan()) {
+				numRangeScanPlans++
+			}
 			cntPlan += 1
 			planCounter.Dec(1)
 		}
@@ -759,7 +772,27 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		}
 	}
 
+	if safeUpdateMode && numRangeScanPlans == 0 {
+		return nil, 0, ErrUpdateWithoutKeyInSafeMode
+	}
 	return
+}
+
+func notFullScanPlan(p PhysicalPlan) bool {
+	if p == nil {
+		return false
+	}
+	switch scan := p.(type) {
+	case *PhysicalTableScan:
+		return !scan.isFullScan()
+	case *PhysicalIndexScan:
+		return !scan.isFullScan()
+	case *PhysicalIndexLookUpReader:
+		return notFullScanPlan(scan.indexPlan)
+	case *PointGetPlan, *BatchPointGetPlan:
+		return true
+	}
+	return false
 }
 
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath) (task task, err error) {

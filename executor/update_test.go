@@ -87,6 +87,41 @@ func (s *testUpdateSuite) TestUpdateGenColInTxn(c *C) {
 		`1 2`))
 }
 
+func (s *testUpdateSuite) TestSafeUpdates(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, d int, key(a), key(b, c))")
+
+	c.Assert(tk.ExecToErr("delete from t"), IsNil)
+	c.Assert(tk.ExecToErr("update t set a=2"), IsNil)
+
+	safeUpdatesErr := func(err error) {
+		c.Assert(err, Not(IsNil))
+		c.Assert(err.Error(), Equals, "[planner:1175]You are using safe update mode and you tried to update a table without a WHERE that uses a KEY column")
+	}
+
+	tk.MustExec("set @@tidb_enable_safe_updates = 1")
+	safeUpdatesErr(tk.ExecToErr("delete from t"))
+	safeUpdatesErr(tk.ExecToErr("delete from t where 1=1"))
+	safeUpdatesErr(tk.ExecToErr("delete from t where c=1"))
+	safeUpdatesErr(tk.ExecToErr("delete from t where d=1"))
+	safeUpdatesErr(tk.ExecToErr("delete from t where a=1 or 1=1"))
+	safeUpdatesErr(tk.ExecToErr("update t set a=2"))
+	safeUpdatesErr(tk.ExecToErr("update t set a=2 where c=1"))
+	safeUpdatesErr(tk.ExecToErr("update t set a=2 where d=1"))
+	safeUpdatesErr(tk.ExecToErr("update t set a=2 where a=1 or 1=1"))
+
+	tk.MustExec("delete from t where a=1")
+	tk.MustExec("delete from t where b=1")
+	tk.MustExec("delete from t where b>1")
+	tk.MustExec("delete from t where b=1 and c>0")
+	tk.MustExec("update t set a=2 where a=1")
+	tk.MustExec("update t set a=2 where b=1")
+	tk.MustExec("update t set a=2 where b>1")
+	tk.MustExec("update t set a=2 where b=1 and c>0")
+}
+
 func (s *testUpdateSuite) TestUpdateWithAutoidSchema(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
