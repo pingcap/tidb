@@ -635,9 +635,10 @@ func (b *builtinUUIDToBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 
+	var flagBuf *chunk.Column
 	i64s := make([]int64, n)
 	if len(b.args) == 2 {
-		flagBuf, err := b.bufAllocator.get(types.ETInt, n)
+		flagBuf, err = b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
 			return err
 		}
@@ -662,7 +663,7 @@ func (b *builtinUUIDToBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		if err != nil {
 			return errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
 		}
-		if i64s[i] != 0 {
+		if !flagBuf.IsNull(i) && i64s[i] != 0 {
 			swapBin := make([]byte, len(bin))
 			copy(swapBin[0:2], bin[6:8])
 			copy(swapBin[2:4], bin[4:6])
@@ -670,8 +671,6 @@ func (b *builtinUUIDToBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			copy(swapBin[8:], bin[8:])
 			bin = swapBin
 		}
-		fmt.Println("flag=", i64s[i], " bin=", bin)
-
 		result.AppendString(string(bin))
 	}
 	return nil
@@ -694,9 +693,10 @@ func (b *builtinBinToUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		return err
 	}
 
+	var flagBuf *chunk.Column
 	i64s := make([]int64, n)
 	if len(b.args) == 2 {
-		flagBuf, err := b.bufAllocator.get(types.ETInt, n)
+		flagBuf, err = b.bufAllocator.get(types.ETInt, n)
 		if err != nil {
 			return err
 		}
@@ -719,7 +719,7 @@ func (b *builtinBinToUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			return errWrongValueForType.GenWithStackByArgs("string", val, "bin_to_uuid")
 		}
 		res := u.String()
-		if i64s[i] != 0 {
+		if !flagBuf.IsNull(i) && i64s[i] != 0 {
 			swapRes := make([]byte, len(res))
 			copy(swapRes[0:4], res[9:13])
 			copy(swapRes[4:8], res[14:18])
@@ -730,8 +730,6 @@ func (b *builtinBinToUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			copy(swapRes[18:], res[18:])
 			res = string(swapRes)
 		}
-		fmt.Println("flag=", i64s[i], " res=", res)
-
 		result.AppendString(res)
 	}
 	return nil

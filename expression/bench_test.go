@@ -660,8 +660,8 @@ type uuidBinGener struct {
 
 func (g *uuidBinGener) gen() interface{} {
 	u, _ := uuid.NewUUID()
-	val, _ := u.MarshalBinary()
-	return string(val)
+	bin, _ := u.MarshalBinary()
+	return string(bin)
 }
 
 // randLenStrGener is used to generate strings whose lengths are in [lenBegin, lenEnd).

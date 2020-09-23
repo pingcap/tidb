@@ -770,7 +770,7 @@ var funcs = map[string]functionClass{
 	ast.UUID:            &uuidFunctionClass{baseFunctionClass{ast.UUID, 0, 0}},
 	ast.UUIDShort:       &uuidShortFunctionClass{baseFunctionClass{ast.UUIDShort, 0, 0}},
 	ast.UUIDToBin:       &uuidToBinFunctionClass{baseFunctionClass{ast.UUIDToBin, 1, 2}},
-	ast.BinToUUID:       &binToUuidFunctionClass{baseFunctionClass{ast.BinToUUID, 1, 2}},
+	ast.BinToUUID:       &binToUUIDFunctionClass{baseFunctionClass{ast.BinToUUID, 1, 2}},
 
 	// get_lock() and release_lock() are parsed but do nothing.
 	// It is used for preventing error in Ruby's activerecord migrations.

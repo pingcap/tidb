@@ -52,6 +52,7 @@ var (
 	_ functionClass = &uuidFunctionClass{}
 	_ functionClass = &uuidShortFunctionClass{}
 	_ functionClass = &uuidToBinFunctionClass{}
+	_ functionClass = &binToUUIDFunctionClass{}
 )
 
 var (
@@ -575,9 +576,6 @@ func (b *builtinInet6AtonSig) evalString(row chunk.Row) (string, bool, error) {
 	} else {
 		copy(result, ip.To4())
 	}
-	fmt.Println("len==", len(result))
-	fmt.Println("res==", result)
-
 
 	return string(result[:]), false, nil
 }
@@ -1105,8 +1103,8 @@ func (b *builtinUUIDToBinSig) evalString(row chunk.Row) (string, bool, error) {
 	flag := int64(0)
 	if len(b.args) == 2 {
 		flag, isNull, err = b.args[1].EvalInt(b.ctx, row)
-		if isNull || err != nil {
-			return "", isNull, err
+		if err != nil {
+			return "", false, err
 		}
 	}
 	if flag != 0 {
@@ -1120,11 +1118,11 @@ func (b *builtinUUIDToBinSig) evalString(row chunk.Row) (string, bool, error) {
 	return string(bin), false, nil
 }
 
-type binToUuidFunctionClass struct {
+type binToUUIDFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *binToUuidFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *binToUUIDFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1172,8 +1170,8 @@ func (b *builtinBinToUUIDSig) evalString(row chunk.Row) (string, bool, error) {
 	flag := int64(0)
 	if len(b.args) == 2 {
 		flag, isNull, err = b.args[1].EvalInt(b.ctx, row)
-		if isNull || err != nil {
-			return "", isNull, err
+		if err != nil {
+			return "", false, err
 		}
 	}
 	if flag != 0 {
@@ -1189,4 +1187,3 @@ func (b *builtinBinToUUIDSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	return res, false, nil
 }
-

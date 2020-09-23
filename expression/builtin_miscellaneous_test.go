@@ -365,10 +365,12 @@ func (s *testEvaluatorSuite) TestUUIDToBin(c *C) {
 		expect     interface{}
 		isNil      bool
 		getWarning bool
+		getError   bool
 	}{
 		{
 			[]interface{}{"6ccd780c-baba-1026-9564-5b8c656024db"},
 			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
+			false,
 			false,
 			false,
 		},
@@ -377,10 +379,12 @@ func (s *testEvaluatorSuite) TestUUIDToBin(c *C) {
 			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
 			false,
 			false,
+			false,
 		},
 		{
 			[]interface{}{"6ccd780cbaba102695645b8c656024db"},
 			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
+			false,
 			false,
 			false,
 		},
@@ -389,16 +393,40 @@ func (s *testEvaluatorSuite) TestUUIDToBin(c *C) {
 			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
 			false,
 			false,
+			false,
 		},
 		{
 			[]interface{}{"6ccd780c-baba-1026-9564-5b8c656024db", 0},
 			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
 			false,
 			false,
+			false,
 		},
 		{
 			[]interface{}{"6ccd780c-baba-1026-9564-5b8c656024db", 1},
 			[]byte{0x10, 0x26, 0xBA, 0xBA, 0x6C, 0xCD, 0x78, 0x0C, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
+			false,
+			false,
+			false,
+		},
+		{
+			[]interface{}{"6ccd780c-baba-1026-9564-5b8c656024db", "a"},
+			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
+			false,
+			true,
+			false,
+		},
+		{
+			[]interface{}{"6ccd780c-baba-1026-9564-5b8c6560"},
+			[]byte{},
+			false,
+			false,
+			true,
+		},
+		{
+			[]interface{}{nil},
+			[]byte{},
+			true,
 			false,
 			false,
 		},
@@ -410,7 +438,9 @@ func (s *testEvaluatorSuite) TestUUIDToBin(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getWarning {
+		if test.getError {
+			c.Assert(err, NotNil)
+		} else if test.getWarning {
 			c.Assert(err, IsNil)
 			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
 		} else {
@@ -418,7 +448,7 @@ func (s *testEvaluatorSuite) TestUUIDToBin(c *C) {
 			if test.isNil {
 				c.Assert(result.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
+				c.Assert(result, testutil.DatumEquals, types.NewDatum(test.expect))
 			}
 		}
 	}
@@ -433,10 +463,40 @@ func (s *testEvaluatorSuite) TestBinToUUID(c *C) {
 		expect     string
 		isNil      bool
 		getWarning bool
+		getError   bool
 	}{
 		{
 			[]interface{}{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB}},
 			"6ccd780c-baba-1026-9564-5b8c656024db",
+			false,
+			false,
+			false,
+		},
+		{
+			[]interface{}{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB}, 1},
+			"baba1026-780c-6ccd-9564-5b8c656024db",
+			false,
+			false,
+			false,
+		},
+		{
+			[]interface{}{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB}, "a"},
+			"6ccd780c-baba-1026-9564-5b8c656024db",
+			false,
+			true,
+			false,
+		},
+		{
+			[]interface{}{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60}},
+			"",
+			false,
+			false,
+			true,
+		},
+		{
+			[]interface{}{nil},
+			"",
+			true,
 			false,
 			false,
 		},
@@ -448,7 +508,9 @@ func (s *testEvaluatorSuite) TestBinToUUID(c *C) {
 		c.Assert(err, IsNil)
 
 		result, err := f.Eval(chunk.Row{})
-		if test.getWarning {
+		if test.getError {
+			c.Assert(err, NotNil)
+		} else if test.getWarning {
 			c.Assert(err, IsNil)
 			c.Assert(s.ctx.GetSessionVars().StmtCtx.WarningCount(), Equals, preWarningCnt+1)
 		} else {
@@ -456,7 +518,7 @@ func (s *testEvaluatorSuite) TestBinToUUID(c *C) {
 			if test.isNil {
 				c.Assert(result.Kind(), Equals, types.KindNull)
 			} else {
-				c.Assert(result.GetFloat64(), Equals, test.expect)
+				c.Assert(result.GetString(), Equals, test.expect)
 			}
 		}
 	}
