@@ -256,4 +256,12 @@ var (
 			Name:      "batch_client_no_available_connection_total",
 			Help:      "Counter of no available batch client.",
 		})
+
+	TiKVAsyncCommitTxnCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "async_commit_txn_counter",
+			Help:      "Counter of async commit transactions.",
+		}, []string{LblType})
 )
