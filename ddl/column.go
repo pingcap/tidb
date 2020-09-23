@@ -660,6 +660,7 @@ func CheckNeedReorg(from, to *model.ColumnInfo) bool {
 		}
 	} else {
 		// Diff type change
+		// TODO: fill in more judgement logic into this function.
 
 	}
 	return true
