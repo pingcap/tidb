@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	"go.etcd.io/etcd/clientv3"
 	"go.etcd.io/etcd/clientv3/concurrency"
-	"go.etcd.io/etcd/pkg/transport"
 	"go.uber.org/zap"
 )
 
@@ -282,7 +281,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 		if strings.HasPrefix(addr, "http") {
 			url = fmt.Sprintf("%s%s", addr, route)
 		} else {
-			url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, route)
+			url = fmt.Sprintf("%s://%s%s", util2.InternalHTTPSchema(), addr, route)
 		}
 
 		if ctx != nil {
@@ -297,7 +296,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		res, err = util.InternalHTTPClient().Do(req)
+		res, err = util2.InternalHTTPClient().Do(req)
 		if err == nil {
 			bodyBytes, err := ioutil.ReadAll(res.Body)
 			if err != nil {
