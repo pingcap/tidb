@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -113,9 +114,17 @@ const (
 	// DefFloat64Size is the size of float64
 	DefFloat64Size = int64(unsafe.Sizeof(float64(0)))
 	// DefTimeSize is the size of time
-	DefTimeSize = int64(16)
+	DefTimeSize = int64(unsafe.Sizeof(types.Time{}))
 	// DefRowSize is the size of row
 	DefRowSize = int64(unsafe.Sizeof(chunk.Row{}))
+	// DefBoolSize is the size of bool
+	DefBoolSize = int64(unsafe.Sizeof(false))
+	// DefInterfaceSize is the size of interface
+	DefInterfaceSize = int64(16)
+	// DefMyDecimalSize is the size of MyDecimal
+	DefMyDecimalSize = int64(unsafe.Sizeof(types.MyDecimal{}))
+	// DefDurationSize is the size of duration
+	DefDurationSize = int64(unsafe.Sizeof(types.Duration{}))
 )
 
 // PartialResult represents data structure to store the partial result for the
