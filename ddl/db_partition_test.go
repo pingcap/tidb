@@ -1280,7 +1280,7 @@ func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	for i := 1; i <= count; i++ {
 		sql1 += fmt.Sprintf("partition p%d values less than (%d),", i, i)
 	}
-	sql1 += "partition p1025 values less than (1025) );"
+	sql1 += "partition p8193 values less than (8193) );"
 	tk.MustGetErrCode(sql1, tmysql.ErrTooManyPartitions)
 
 	tk.MustExec("drop table if exists p2;")
@@ -1291,11 +1291,11 @@ func (s *testIntegrationSuite4) TestAddPartitionTooManyPartitions(c *C) {
 	for i := 1; i < count; i++ {
 		sql2 += fmt.Sprintf("partition p%d values less than (%d),", i, i)
 	}
-	sql2 += "partition p1024 values less than (1024) );"
+	sql2 += "partition p8192 values less than (8192) );"
 
 	tk.MustExec(sql2)
 	sql3 := `alter table p2 add partition (
-	partition p1025 values less than (1025)
+	partition p8193 values less than (8193)
 	);`
 	tk.MustGetErrCode(sql3, tmysql.ErrTooManyPartitions)
 }
@@ -2204,6 +2204,22 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", tmysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part remove partitioning;", tmysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part repair partition p1;", tmysql.ErrUnsupportedDDLOperation)
+
+	// Reduce the impact on DML when executing partition DDL
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec(`create table t(id int primary key)
+		partition by hash(id) partitions 4;`)
+	tk1.MustExec("begin")
+	tk1.MustExec("insert into t values(1);")
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk2.MustExec("alter table t truncate partition p0;")
+
+	_, err = tk1.Exec("commit")
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
