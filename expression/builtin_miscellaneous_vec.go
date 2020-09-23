@@ -654,10 +654,6 @@ func (b *builtinUUIDToBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			result.AppendNull()
 			continue
 		}
-		if len(b.args) == 2 && flagBuf.IsNull(i) {
-			result.AppendNull()
-			continue
-		}
 		val := valBuf.GetString(i)
 		u, err := uuid.Parse(val)
 		if err != nil {
@@ -667,7 +663,11 @@ func (b *builtinUUIDToBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 		if err != nil {
 			return errWrongValueForType.GenWithStackByArgs("string", val, "uuid_to_bin")
 		}
-		if !flagBuf.IsNull(i) && i64s[i] != 0 {
+		if len(b.args) == 2 && flagBuf.IsNull(i) {
+			result.AppendString(string(bin))
+			continue
+		}
+		if i64s[i] != 0 {
 			swapBin := make([]byte, len(bin))
 			copy(swapBin[0:2], bin[6:8])
 			copy(swapBin[2:4], bin[4:6])
@@ -716,10 +716,6 @@ func (b *builtinBinToUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			result.AppendNull()
 			continue
 		}
-		if len(b.args) == 2 && flagBuf.IsNull(i) {
-			result.AppendNull()
-			continue
-		}
 		val := valBuf.GetString(i)
 		var u uuid.UUID
 		err = u.UnmarshalBinary([]byte(val))
@@ -727,7 +723,11 @@ func (b *builtinBinToUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			return errWrongValueForType.GenWithStackByArgs("string", val, "bin_to_uuid")
 		}
 		res := u.String()
-		if !flagBuf.IsNull(i) && i64s[i] != 0 {
+		if len(b.args) == 2 && flagBuf.IsNull(i) {
+			result.AppendString(res)
+			continue
+		}
+		if i64s[i] != 0 {
 			swapRes := make([]byte, len(res))
 			copy(swapRes[0:4], res[9:13])
 			copy(swapRes[4:8], res[14:18])
