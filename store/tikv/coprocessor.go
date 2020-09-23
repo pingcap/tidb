@@ -1320,8 +1320,9 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if e.cond.exceeded && needed {
+	if e.cond.exceeded && needed && e.cond.isTokenDestroyed {
 		e.cond.exceeded = false
+		e.cond.isTokenDestroyed = false
 		e.cond.Broadcast()
 		e.cond.once = sync.Once{}
 	}
