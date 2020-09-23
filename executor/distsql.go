@@ -443,9 +443,7 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
-
 	e.collectRuntimeStatsEnabled()
-
 	if err := e.startIndexWorker(ctx, e.kvRanges, workCh, initBatchSize); err != nil {
 		return err
 	}
@@ -496,8 +494,12 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return err
 	}
 	tps := e.getRetTpsByHandle()
-	// Since the first read only need handle information. So its returned col is only 1.
+	// Since the first read only need handle information. So its returned col is only 1. here is rpc
+	rpcStart := time.Now()
 	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), e.id)
+	if e.stats != nil {
+		recordIndexLookUpRuntimeStats(e.stats.rpcStats, "index_task", time.Since(rpcStart))
+	}
 	if err != nil {
 		return err
 	}
@@ -535,8 +537,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
 		if e.stats != nil {
-			recordIndexLookUpRuntimeStats(e.stats.rpcStats, "index_task", time.Since(startTime))
-			//e.stats.indexScan += time.Since(startTime)
+			e.stats.indexScan += time.Since(startTime)
 		}
 	}()
 	return nil
@@ -562,10 +563,10 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
 			defer trace.StartRegion(ctx1, "IndexLookUpTableWorker").End()
-			start := time.Now()
+			startTime := time.Now()
 			worker.pickAndExecTask(ctx1)
 			if e.stats != nil {
-				recordIndexLookUpRuntimeStats(e.stats.rpcStats, "table_task", time.Since(start))
+				e.stats.tableRowScan += time.Since(startTime)
 			}
 			cancel()
 			e.tblWorkerWg.Done()
@@ -586,7 +587,11 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, handles []kv
 		plans:          e.tblPlans,
 	}
 	tableReaderExec.buildVirtualColumnInfo()
+	rpcStart := time.Now()
 	tableReader, err := e.dataReaderBuilder.buildTableReaderFromHandles(ctx, tableReaderExec, handles)
+	if e.stats != nil {
+		recordIndexLookUpRuntimeStats(e.stats.rpcStats, "table_task", time.Since(rpcStart))
+	}
 	if err != nil {
 		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
 		return nil, err
@@ -668,6 +673,8 @@ func (e *IndexLookUpExecutor) collectRuntimeStatsEnabled() bool {
 			e.stats = &indexLookUpRunTimeStats{
 				SnapshotRuntimeStats: snapshotStats,
 				rpcStats:             rpcstats,
+				indexScan:            0,
+				tableRowScan:         0,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -933,7 +940,9 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 
 type indexLookUpRunTimeStats struct {
 	*tikv.SnapshotRuntimeStats
-	rpcStats map[string]*tikv.RPCRuntimeStats
+	rpcStats     map[string]*tikv.RPCRuntimeStats
+	indexScan    time.Duration
+	tableRowScan time.Duration
 }
 
 func recordIndexLookUpRuntimeStats(stats map[string]*tikv.RPCRuntimeStats, cmd string, d time.Duration) {
@@ -951,11 +960,14 @@ func recordIndexLookUpRuntimeStats(stats map[string]*tikv.RPCRuntimeStats, cmd s
 
 func (e *indexLookUpRunTimeStats) String() string {
 	var buf bytes.Buffer
-	for k, v := range e.rpcStats {
+	if e.indexScan != 0 {
+		buf.WriteString(fmt.Sprintf("index_task:{time:%s, num_rpc:%d, total_time:%s}", e.indexScan, e.rpcStats["index_task"].Count, time.Duration(e.rpcStats["index_task"].Consume)))
+	}
+	if e.tableRowScan != 0 {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf("%s:{num_rpc:%d, total_time:%s}", k, v.Count, time.Duration(v.Consume)))
+		buf.WriteString(fmt.Sprintf("table_task:{time:%s, num_rpc:%d, total_time:%s}", e.tableRowScan, e.rpcStats["table_task"].Count, time.Duration(e.rpcStats["table_task"].Consume)))
 	}
 	return buf.String()
 }
