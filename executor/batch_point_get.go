@@ -15,6 +15,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync/atomic"
 
@@ -252,17 +253,36 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			failpoint.InjectContext(ctx, "batchPointGetRepeatableReadTest-step2", nil)
 		})
 	} else if e.keepOrder {
-		unsignedPK := e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().Flag)
-		sort.Slice(e.handles, func(i int, j int) bool {
-			compare := e.handles[i].Compare
-			if unsignedPK {
-				compare = kv.UintHandleComparator(e.handles[i].(kv.IntHandle)).Compare
-			}
+		less := func(i int, j int) bool {
 			if e.desc {
-				return compare(e.handles[j]) > 0
+				return e.handles[i].Compare(e.handles[j]) > 0
 			}
-			return compare(e.handles[j]) < 0
-		})
+			return e.handles[i].Compare(e.handles[j]) < 0
+
+		}
+		if e.tblInfo.PKIsHandle && mysql.HasUnsignedFlag(e.tblInfo.GetPkColInfo().Flag) {
+			uintComparator := func(i, h kv.Handle) int {
+				if !i.IsInt() || !h.IsInt() {
+					panic(fmt.Sprintf("both handles need be IntHandle, but got %T and %T ", i, h))
+				}
+				ihVal := uint64(i.IntValue())
+				hVal := uint64(h.IntValue())
+				if ihVal > hVal {
+					return 1
+				}
+				if ihVal < hVal {
+					return -1
+				}
+				return 0
+			}
+			less = func(i int, j int) bool {
+				if e.desc {
+					return uintComparator(e.handles[i], e.handles[j]) > 0
+				}
+				return uintComparator(e.handles[i], e.handles[j]) < 0
+			}
+		}
+		sort.Slice(e.handles, less)
 	}
 
 	keys := make([]kv.Key, len(e.handles))
