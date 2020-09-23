@@ -1385,25 +1385,27 @@ func (s *testEvaluatorSuite) TestAddDate(c *C) {
 	tests := []struct {
 		Date     string
 		Duration string
+		Unit     string
 		Expect   string
 	}{
-		{"2018-08-16 20:21:01", "00:00:00.000000", "2018-08-16 20:21:01"},
-		{"2018-08-16 20:21:01", "00:00:01", "2018-08-16 20:21:01"},
-		{"2018-08-16 20:21:01", "-00:00:00.000000", "2018-08-16 20:21:01"},
-		{"2018-08-16 20:21:01", "-00:00:01", "2018-08-16 20:21:01"},
+		{"2018-08-16 20:21:01", "00:00:00.000000", "", "2018-08-16 20:21:01"},
+		{"2018-08-16 20:21:01", "00:00:01", "", "2018-08-16 20:21:01"},
+		{"2018-08-16 20:21:01", "-00:00:00.000000", "", "2018-08-16 20:21:01"},
+		{"2018-08-16 20:21:01", "-00:00:01", "", "2018-08-16 20:21:01"},
 		// wrong date
-		{"00:00:00.000000", "2018-08-16 20:21:01", "NULL"},
-		{"00:00:00", "2018-08-16 20:21:01", "NULL"},
-		{"00:00:00.000", "00:00:00.000000", "NULL"},
-		{"00:00:00", "00:00:00.000000", "NULL"},
-		{"0", "2018-08-16 20:21:01", "NULL"},
+		{"00:00:00.000000", "2018-08-16 20:21:01", "", "NULL"},
+		{"00:00:00", "2018-08-16 20:21:01", "", "NULL"},
+		{"00:00:00.000", "00:00:00.000000", "", "NULL"},
+		{"00:00:00", "00:00:00.000000", "", "NULL"},
+		{"0", "2018-08-16 20:21:01", "", "NULL"},
 	}
 
 	fc := funcs[ast.AddDate]
 	for _, test := range tests {
 		date := types.NewStringDatum(test.Date)
 		duration := types.NewStringDatum(test.Duration)
-		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{date, duration}))
+		unit := types.NewStringDatum(test.Unit)
+		f, err := fc.getFunction(s.ctx, s.datumsToConstants([]types.Datum{date, duration, unit}))
 		c.Assert(err, IsNil)
 		d, err := evalBuiltinFunc(f, chunk.Row{})
 		c.Assert(err, IsNil)
