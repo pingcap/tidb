@@ -1294,10 +1294,11 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			}
 			return
 		}
-		logutil.BgLogger().Info("memory exceeds quota.",
+		logutil.BgLogger().Info("memory exceeds quota, one token needs to be destroyed.",
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()),
-			zap.Uint("total token count", e.totalTokenNum))
+			zap.Uint("total token count", e.totalTokenNum),
+			zap.Uint("remaining token count", e.cond.remainingTokenNum))
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
 	})
@@ -1338,7 +1339,9 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	if e.cond.exceeded && !e.cond.isTokenDestroyed {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
-		logutil.BgLogger().Info("destroy one token now", zap.Uint("remaining token num", e.cond.remainingTokenNum))
+		logutil.BgLogger().Info("destroy one token now",
+			zap.Uint("total token count", e.totalTokenNum),
+			zap.Uint("remaining token count", e.cond.remainingTokenNum))
 	} else {
 		returnToken()
 	}
