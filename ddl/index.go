@@ -252,6 +252,9 @@ func addIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 }
 
 func dropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
+	if len(indexInfo.Columns) == 0 {
+		return
+	}
 	if indexInfo.Primary {
 		for _, col := range indexInfo.Columns {
 			tblInfo.Columns[col.Offset].Flag &= ^mysql.PriKeyFlag
