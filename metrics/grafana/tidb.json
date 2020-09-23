@@ -11673,9 +11673,5 @@
   "timezone": "browser",
   "title": "Test-Cluster-TiDB",
   "uid": "000000011",
-<<<<<<< HEAD
   "version": 1
-=======
-  "version": 3
->>>>>>> da1c738... tikv, server: turn on grpc channelz to help diagnosis and add wait conn establish metric (#16263)
 }

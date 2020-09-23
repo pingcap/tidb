@@ -277,9 +277,6 @@ func (c *batchCommandsClient) failPendingRequests(err error) {
 }
 
 func (c *batchCommandsClient) waitConnReady() (err error) {
-<<<<<<< HEAD
-	dialCtx, cancel := context.WithTimeout(context.Background(), c.dialTimeout)
-=======
 	if c.conn.GetState() == connectivity.Ready {
 		return
 	}
@@ -288,7 +285,6 @@ func (c *batchCommandsClient) waitConnReady() (err error) {
 		metrics.TiKVBatchClientWaitEstablish.Observe(time.Since(start).Seconds())
 	}()
 	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
->>>>>>> da1c738... tikv, server: turn on grpc channelz to help diagnosis and add wait conn establish metric (#16263)
 	for {
 		s := c.conn.GetState()
 		if s == connectivity.Ready {
