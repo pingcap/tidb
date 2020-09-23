@@ -654,6 +654,10 @@ func (b *builtinUUIDToBinSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 			result.AppendNull()
 			continue
 		}
+		if len(b.args) == 2 && flagBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
 		val := valBuf.GetString(i)
 		u, err := uuid.Parse(val)
 		if err != nil {
@@ -709,6 +713,10 @@ func (b *builtinBinToUUIDSig) vecEvalString(input *chunk.Chunk, result *chunk.Co
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		if valBuf.IsNull(i) {
+			result.AppendNull()
+			continue
+		}
+		if len(b.args) == 2 && flagBuf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
