@@ -14,6 +14,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -442,17 +443,9 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
 
-	if e.collectRuntimeStatsEnabled() {
-		if snapshot := txn.GetSnapshot(); snapshot != nil {
-			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
-			defer snapshot.DelOption(kv.CollectRuntimeStats)
-		}
-	}
+	e.collectRuntimeStatsEnabled()
+
 	if err := e.startIndexWorker(ctx, e.kvRanges, workCh, initBatchSize); err != nil {
 		return err
 	}
@@ -542,7 +535,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
 		if e.stats != nil {
-			e.stats.indexScan += time.Since(startTime)
+			recordIndexLookUpRuntimeStats(e.stats.rpcStats, "index_task", time.Since(startTime))
+			//e.stats.indexScan += time.Since(startTime)
 		}
 	}()
 	return nil
@@ -552,7 +546,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-chan *lookupTableTask) {
 	lookupConcurrencyLimit := e.ctx.GetSessionVars().IndexLookupConcurrency()
 	e.tblWorkerWg.Add(lookupConcurrencyLimit)
-	start := time.Now()
 	for i := 0; i < lookupConcurrencyLimit; i++ {
 		workerID := i
 		worker := &tableWorker{
@@ -569,12 +562,13 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 		ctx1, cancel := context.WithCancel(ctx)
 		go func() {
 			defer trace.StartRegion(ctx1, "IndexLookUpTableWorker").End()
+			start := time.Now()
 			worker.pickAndExecTask(ctx1)
+			if e.stats != nil {
+				recordIndexLookUpRuntimeStats(e.stats.rpcStats, "table_task", time.Since(start))
+			}
 			cancel()
 			e.tblWorkerWg.Done()
-			if e.stats != nil {
-				e.stats.tableRowIDScan = time.Since(start)
-			}
 		}()
 	}
 }
@@ -670,10 +664,10 @@ func (e *IndexLookUpExecutor) collectRuntimeStatsEnabled() bool {
 	if e.runtimeStats != nil {
 		if e.stats == nil {
 			snapshotStats := &tikv.SnapshotRuntimeStats{}
+			rpcstats := make(map[string]*tikv.RPCRuntimeStats)
 			e.stats = &indexLookUpRunTimeStats{
 				SnapshotRuntimeStats: snapshotStats,
-				indexScan:            0,
-				tableRowIDScan:       0,
+				rpcStats:             rpcstats,
 			}
 			e.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.id, e.stats)
 		}
@@ -939,19 +933,31 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 
 type indexLookUpRunTimeStats struct {
 	*tikv.SnapshotRuntimeStats
-	indexScan      time.Duration
-	tableRowIDScan time.Duration
+	rpcStats map[string]*tikv.RPCRuntimeStats
+}
+
+func recordIndexLookUpRuntimeStats(stats map[string]*tikv.RPCRuntimeStats, cmd string, d time.Duration) {
+	stat, ok := stats[cmd]
+	if !ok {
+		stats[cmd] = &tikv.RPCRuntimeStats{
+			Count:   1,
+			Consume: int64(d),
+		}
+		return
+	}
+	stat.Count++
+	stat.Consume += int64(d)
 }
 
 func (e *indexLookUpRunTimeStats) String() string {
-	var indexScanStr, tableScanStr string
-	if e.indexScan != 0 {
-		indexScanStr = fmt.Sprintf("index_task:{time:%v}", e.indexScan)
+	var buf bytes.Buffer
+	for k, v := range e.rpcStats {
+		if buf.Len() > 0 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(fmt.Sprintf("%s:{num_rpc:%d, total_time:%s}", k, v.Count, time.Duration(v.Consume)))
 	}
-	if e.tableRowIDScan != 0 {
-		tableScanStr = fmt.Sprintf("table_task:{time:%v}", e.tableRowIDScan)
-	}
-	return indexScanStr + ", " + tableScanStr
+	return buf.String()
 }
 
 func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, tableReader Executor) error {
