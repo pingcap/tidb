@@ -389,13 +389,15 @@ func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (err error
 	req := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	var lastTableID int64 = -1
+	var totalRows int64 = 0
 	for {
 		err := rc[0].Next(context.TODO(), req)
+		totalRows += int64(req.NumRows())
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if req.NumRows() == 0 {
-			if lastTableID != -1 {
+			if limitSize == totalRows && lastTableID != -1 {
 				// remove the stats buckets of the last table_id because it may
 				// not be loaded fully.
 				tables[lastTableID] = tables[lastTableID].CopyWithoutBucketsAndCMS()
