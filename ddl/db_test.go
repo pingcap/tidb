@@ -3325,6 +3325,9 @@ func (s *testDBSuite) testRenameMultiTables(c *C, sql string, isAlterTable bool)
 	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
 	failSQL = fmt.Sprintf(sql, "test1.t2", "test_not_exist.t", "test1.t2", "test_not_exist.t")
 	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
+
+	tk.MustExec("drop database test1")
+	tk.MustExec("drop database test")
 }
 
 func (s *testDBSuite2) TestAddNotNullColumn(c *C) {
