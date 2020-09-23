@@ -15,7 +15,6 @@ package ddl
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"strconv"
 	"sync/atomic"
@@ -374,10 +373,8 @@ func (w *worker) sendRangeTaskToWorkers(workers []*backfillWorker, reorgInfo *re
 	physicalTableID := reorgInfo.PhysicalTableID
 
 	// Build reorg tasks.
-	fmt.Println("kv ranges", len(kvRanges))
-	for i, keyRange := range kvRanges {
+	for _, keyRange := range kvRanges {
 		startHandle, endHandle, err := decodeHandleRange(keyRange)
-		fmt.Println("kv range", i, len(kvRanges))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

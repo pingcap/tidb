@@ -918,7 +918,6 @@ func (w *worker) doModifyColumnTypeWithData(
 			return w.updateColumnAndIndexes(tbl, oldCol, changingCol, changingIdxs, reorgInfo)
 		})
 		if err != nil {
-			fmt.Println("run reorg done", err.Error())
 			if errWaitReorgTimeout.Equal(err) {
 				// If timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil

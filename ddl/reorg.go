@@ -197,7 +197,6 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
 		w.reorgCtx.mu.Unlock()
 
-		fmt.Println("job warnings", job.ReorgMeta.WarningsCount)
 		if err == nil {
 			metrics.AddIndexProgress.Set(100)
 		}
@@ -230,8 +229,6 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		partWarningsCount := w.reorgCtx.mu.warningsCount
 		job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
 		w.reorgCtx.mu.Unlock()
-
-		fmt.Println("job warnings", job.ReorgMeta.WarningsCount)
 
 		w.reorgCtx.resetWarnings()
 		// Update a reorgInfo's handle.
