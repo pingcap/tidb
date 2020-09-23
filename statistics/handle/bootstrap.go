@@ -397,7 +397,7 @@ func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (err error
 			return errors.Trace(err)
 		}
 		if req.NumRows() == 0 {
-			if limitSize == totalRows && lastTableID != -1 {
+			if limitSize <= totalRows && lastTableID != -1 {
 				// remove the stats buckets of the last table_id because it may
 				// not be loaded fully.
 				tables[lastTableID] = tables[lastTableID].CopyWithoutBucketsAndCMS()
