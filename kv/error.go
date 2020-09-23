@@ -14,8 +14,11 @@
 package kv
 
 import (
+	"strings"
+
 	"github.com/pingcap/parser/terror"
 	mysql "github.com/pingcap/tidb/errno"
+	"github.com/pingcap/tidb/util/redact"
 )
 
 // TxnRetryableMark is used to uniform the commit error messages which could retry the transaction.
@@ -39,7 +42,7 @@ var (
 	// ErrEntryTooLarge is the error when a key value entry is too large.
 	ErrEntryTooLarge = terror.ClassKV.New(mysql.ErrEntryTooLarge, mysql.MySQLErrName[mysql.ErrEntryTooLarge])
 	// ErrKeyExists returns when key is already exist.
-	ErrKeyExists = terror.ClassKV.New(mysql.ErrDupEntry, mysql.MySQLErrName[mysql.ErrDupEntry])
+	ErrKeyExists = redact.NewRedactError(terror.ClassKV.New(mysql.ErrDupEntry, mysql.MySQLErrName[mysql.ErrDupEntry]), 0, 1)
 	// ErrNotImplemented returns when a function is not implemented yet.
 	ErrNotImplemented = terror.ClassKV.New(mysql.ErrNotImplemented, mysql.MySQLErrName[mysql.ErrNotImplemented])
 	// ErrWriteConflict is the error when the commit meets an write conflict error.
@@ -66,4 +69,25 @@ func IsTxnRetryableError(err error) bool {
 // IsErrNotFound checks if err is a kind of NotFound error.
 func IsErrNotFound(err error) bool {
 	return ErrNotExist.Equal(err)
+}
+
+// GetDuplicateErrorHandleString is used to concat the handle columns data with '-'.
+// This is consistent with MySQL.
+func GetDuplicateErrorHandleString(handle Handle) string {
+	dt, err := handle.Data()
+	if err != nil {
+		return err.Error()
+	}
+	var sb strings.Builder
+	for i, d := range dt {
+		if i != 0 {
+			sb.WriteString("-")
+		}
+		s, err := d.ToString()
+		if err != nil {
+			return err.Error()
+		}
+		sb.WriteString(s)
+	}
+	return sb.String()
 }

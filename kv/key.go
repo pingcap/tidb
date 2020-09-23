@@ -20,6 +20,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 )
 
@@ -145,6 +147,8 @@ type Handle interface {
 	NumCols() int
 	// EncodedCol returns the encoded column value at the given column index.
 	EncodedCol(idx int) []byte
+	// Data returns the data of all columns of a handle.
+	Data() ([]types.Datum, error)
 	// String implements the fmt.Stringer interface.
 	String() string
 }
@@ -208,6 +212,11 @@ func (ih IntHandle) EncodedCol(idx int) []byte {
 	panic("not supported in IntHandle")
 }
 
+// Data implements the Handle interface.
+func (ih IntHandle) Data() ([]types.Datum, error) {
+	return []types.Datum{types.NewIntDatum(int64(ih))}, nil
+}
+
 // String implements the Handle interface.
 func (ih IntHandle) String() string {
 	return strconv.FormatInt(int64(ih), 10)
@@ -222,9 +231,18 @@ type CommonHandle struct {
 // NewCommonHandle creates a CommonHandle from a encoded bytes which is encoded by code.EncodeKey.
 func NewCommonHandle(encoded []byte) (*CommonHandle, error) {
 	ch := &CommonHandle{encoded: encoded}
+	if len(encoded) < 9 {
+		padded := make([]byte, 9)
+		copy(padded, encoded)
+		ch.encoded = padded
+	}
 	remain := encoded
 	endOff := uint16(0)
 	for len(remain) > 0 {
+		if remain[0] == 0 {
+			// padded data
+			break
+		}
 		var err error
 		var col []byte
 		col, remain, err = codec.CutOne(remain)
@@ -292,16 +310,29 @@ func (ch *CommonHandle) EncodedCol(idx int) []byte {
 	return ch.encoded[colStartOffset:ch.colEndOffsets[idx]]
 }
 
-// String implements the Handle interface.
-func (ch *CommonHandle) String() string {
-	strs := make([]string, 0, ch.NumCols())
+// Data implements the Handle interface.
+func (ch *CommonHandle) Data() ([]types.Datum, error) {
+	data := make([]types.Datum, 0, ch.NumCols())
 	for i := 0; i < ch.NumCols(); i++ {
 		encodedCol := ch.EncodedCol(i)
 		_, d, err := codec.DecodeOne(encodedCol)
 		if err != nil {
-			return err.Error()
+			return nil, err
 		}
-		str, err := d.ToString()
+		data = append(data, d)
+	}
+	return data, nil
+}
+
+// String implements the Handle interface.
+func (ch *CommonHandle) String() string {
+	data, err := ch.Data()
+	if err != nil {
+		return err.Error()
+	}
+	strs := make([]string, 0, ch.NumCols())
+	for _, datum := range data {
+		str, err := datum.ToString()
 		if err != nil {
 			return err.Error()
 		}
@@ -380,4 +411,21 @@ func (m *HandleMap) Range(fn func(h Handle, val interface{}) bool) {
 			return
 		}
 	}
+}
+
+// BuildHandleFromDatumRow builds kv.Handle from cols in row.
+func BuildHandleFromDatumRow(sctx *stmtctx.StatementContext, row []types.Datum, handleOrdinals []int) (Handle, error) {
+	pkDts := make([]types.Datum, 0, len(handleOrdinals))
+	for _, ordinal := range handleOrdinals {
+		pkDts = append(pkDts, row[ordinal])
+	}
+	handleBytes, err := codec.EncodeKey(sctx, nil, pkDts...)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := NewCommonHandle(handleBytes)
+	if err != nil {
+		return nil, err
+	}
+	return handle, nil
 }

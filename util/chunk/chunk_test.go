@@ -36,12 +36,12 @@ import (
 )
 
 func TestT(t *testing.T) {
-	cfg := config.GetGlobalConfig()
-	conf := *cfg
-	conf.TempStoragePath, _ = ioutil.TempDir("", "oom-use-tmp-storage")
-	config.StoreGlobalConfig(&conf)
-	_ = os.RemoveAll(conf.TempStoragePath) // clean the uncleared temp file during the last run.
-	_ = os.MkdirAll(conf.TempStoragePath, 0755)
+	path, _ := ioutil.TempDir("", "oom-use-tmp-storage")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = path
+	})
+	_ = os.RemoveAll(path) // clean the uncleared temp file during the last run.
+	_ = os.MkdirAll(path, 0755)
 	check.TestingT(t)
 }
 

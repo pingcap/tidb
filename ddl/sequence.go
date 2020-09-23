@@ -144,6 +144,10 @@ func validateSequenceOptions(seqInfo *model.SequenceInfo) bool {
 		// Increment shouldn't be set as 0.
 		return false
 	}
+	if seqInfo.CacheValue <= 0 {
+		// Cache value should be bigger than 0.
+		return false
+	}
 	maxIncrement = math2.Abs(seqInfo.Increment)
 
 	return seqInfo.MaxValue >= seqInfo.Start &&

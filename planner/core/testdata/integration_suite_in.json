@@ -29,7 +29,11 @@
   {
     "name": "TestMaxMinEliminate",
     "cases": [
-      "explain (select max(a) from t) union (select min(a) from t)"
+      "explain (select max(a) from t) union (select min(a) from t)",
+      "explain select min(a), max(a) from cluster_index_t",
+      "explain select min(b), max(b) from cluster_index_t where a = 1",
+      "explain select min(a), max(a) from cluster_index_t where b = 1",
+      "explain select min(b), max(b) from cluster_index_t where b = 1"
     ]
   },
   {
@@ -135,6 +139,74 @@
       "select /*+ stream_agg() */ count(*) c from t group by a order by c",
       "select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1",
       "select /*+ stream_agg() */ count(*) c from t group by a order by a"
+    ]
+  },
+  {
+    "name": "TestOptimizeHintOnPartitionTable",
+    "cases": [
+      "select /*+ use_index(t) */ * from t",
+      "select /*+ use_index(t partition(p0, p1) b, c) */ * from t partition(p1,p2)",
+      "select /*+ use_index(t partition(p_non_exist)) */ * from t partition(p1,p2)",
+      "select /*+ use_index(t partition(p0, p1) b, c) */ * from t",
+      "select /*+ ignore_index(t partition(p0, p1) b, c) */ * from t",
+      "select /*+ hash_join(t1, t2 partition(p0)) */ * from t t1 join t t2 on t1.a = t2.a",
+      "select /*+ use_index_merge(t partition(p0)) */ * from t where t.b = 1 or t.c = \"8\"",
+      "select /*+ use_index_merge(t partition(p0, p1) primary, b) */ * from t where t.a = 1 or t.b = 2",
+      "select /*+ use_index(t partition(p0) b) */ * from t partition(p0, p1)",
+      "select /*+ read_from_storage(tikv[t partition(p0)], tiflash[t partition(p1, p2)]) */ * from t"
+    ]
+  },
+  {
+    "name": "TestAccessPathOnClusterIndex",
+    "cases": [
+      "select * from t1",
+      "select * from t1 where t1.a >= 1 and t1.a < 4",
+      "select * from t1 where t1.a = 1 and t1.b < \"333\"",
+      "select t1.a, t1.b, t1.c from t1 where t1.c = 3.3",
+      "select t1.b, t1.c from t1 where t1.c = 2.2",
+      "select /*+ use_index(t1, c) */ * from t1",
+      "select * from t1 use index(c) where t1.c in (2.2, 3.3)",
+      "select * from t1 where t1.a = 1 order by b",
+      "select * from t1 order by a, b limit 1",
+      "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a >= 1 or t1.c = 2.2",
+      "select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a = 1 and t1.b = '111' or t1.c = 3.3"
+    ]
+  },
+  {
+    "name": "TestIndexJoinOnClusteredIndex",
+    "cases": [
+      "select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
+      "select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
+      "select /*+ inl_hash_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a",
+      "select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.b = t2.b",
+      "select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.c = t2.c"
+    ]
+  },
+  {
+    "name": "TestPartitionExplain",
+    "cases": [
+      // Table reader
+      "select * from pt where c > 10",
+      "select * from pt where c > 8",
+      "select * from pt where c < 2 or c >= 9",
+      // Index reader
+      "select c from pt",
+      "select c from pt where c > 10",
+      "select c from pt where c > 8",
+      "select c from pt where c < 2 or c >= 9",
+      // Index Lookup
+      "select /*+ use_index(pt, i_id) */ * from pt",
+      "select /*+ use_index(pt, i_id) */ * from pt where id < 4 and c > 10",
+      "select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c > 8",
+      "select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c < 2 or c >= 9",
+      // Partition selection
+      "select * from pt partition (p0) where c > 8",
+      "select c from pt partition (p0, p2) where c > 8",
+      "select /*+ use_index(pt, i_id) */ * from pt partition (p1, p2) where c < 3 and id = 5",
+
+      // Index Merge
+      "select * from pt where id = 4 or c < 7",
+      "select * from pt where id > 4 or c = 7"
     ]
   }
 ]

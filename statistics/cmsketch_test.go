@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {

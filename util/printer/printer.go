@@ -24,31 +24,22 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/israce"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/versioninfo"
 	"go.uber.org/zap"
-)
-
-// Version information.
-var (
-	TiDBBuildTS   = "None"
-	TiDBGitHash   = "None"
-	TiDBGitBranch = "None"
-	TiDBEdition   = "None"
-	// TiKVMinVersion is the minimum version of TiKV that can be compatible with the current TiDB.
-	TiKVMinVersion = "v3.0.0-60965b006877ca7234adaced7890d7b029ed1306"
 )
 
 // PrintTiDBInfo prints the TiDB version information.
 func PrintTiDBInfo() {
 	logutil.BgLogger().Info("Welcome to TiDB.",
 		zap.String("Release Version", mysql.TiDBReleaseVersion),
-		zap.String("Edition", TiDBEdition),
-		zap.String("Git Commit Hash", TiDBGitHash),
-		zap.String("Git Branch", TiDBGitBranch),
-		zap.String("UTC Build Time", TiDBBuildTS),
+		zap.String("Edition", versioninfo.TiDBEdition),
+		zap.String("Git Commit Hash", versioninfo.TiDBGitHash),
+		zap.String("Git Branch", versioninfo.TiDBGitBranch),
+		zap.String("UTC Build Time", versioninfo.TiDBBuildTS),
 		zap.String("GoVersion", buildVersion),
 		zap.Bool("Race Enabled", israce.RaceEnabled),
 		zap.Bool("Check Table Before Drop", config.CheckTableBeforeDrop),
-		zap.String("TiKV Min Version", TiKVMinVersion))
+		zap.String("TiKV Min Version", versioninfo.TiKVMinVersion))
 	configJSON, err := json.Marshal(config.GetGlobalConfig())
 	if err != nil {
 		panic(err)
@@ -68,13 +59,13 @@ func GetTiDBInfo() string {
 		"TiKV Min Version: %s\n"+
 		"Check Table Before Drop: %v",
 		mysql.TiDBReleaseVersion,
-		TiDBEdition,
-		TiDBGitHash,
-		TiDBGitBranch,
-		TiDBBuildTS,
+		versioninfo.TiDBEdition,
+		versioninfo.TiDBGitHash,
+		versioninfo.TiDBGitBranch,
+		versioninfo.TiDBBuildTS,
 		buildVersion,
 		israce.RaceEnabled,
-		TiKVMinVersion,
+		versioninfo.TiKVMinVersion,
 		config.CheckTableBeforeDrop)
 }
 

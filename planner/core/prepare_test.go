@@ -96,7 +96,7 @@ func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 	tk.MustExec(`insert into tp values(1, 1), (2, 2), (3, 3)`)
 
 	tk.MustExec(`create user 'u_tp'@'localhost'`)
-	tk.MustExec(`grant select on test.tp to u_tp@'localhost';flush privileges;`)
+	tk.MustExec(`grant select on test.tp to u_tp@'localhost';`)
 
 	// user u_tp
 	userSess := newSession(c, store, "test")
@@ -110,7 +110,7 @@ func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 
 	// root revoke
 	tk.Se = rootSe
-	tk.MustExec(`revoke all on test.tp from 'u_tp'@'localhost';flush privileges;`)
+	tk.MustExec(`revoke all on test.tp from 'u_tp'@'localhost';`)
 
 	// user u_tp
 	tk.Se = userSess
@@ -119,7 +119,7 @@ func (s *testPrepareSerialSuite) TestPrepareCache(c *C) {
 
 	// grant again
 	tk.Se = rootSe
-	tk.MustExec(`grant select on test.tp to u_tp@'localhost';flush privileges;`)
+	tk.MustExec(`grant select on test.tp to u_tp@'localhost';`)
 
 	// user u_tp
 	tk.Se = userSess
@@ -242,7 +242,7 @@ func (s *testPrepareSerialSuite) TestPrepareCacheNow(c *C) {
 	c.Assert(rs[0][3].(string), Equals, rs[0][8].(string))
 }
 
-func (s *testPrepareSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
+func (s *testPrepareSerialSuite) TestPrepareOverMaxPreparedStmtCount(c *C) {
 	defer testleak.AfterTest(c)()
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
@@ -411,68 +411,73 @@ func (s *testPrepareSerialSuite) TestPrepareCacheForPartition(c *C) {
 	c.Assert(err, IsNil)
 
 	tk.MustExec("use test")
-	// Test for PointGet and IndexRead.
-	tk.MustExec("drop table if exists t_index_read")
-	tk.MustExec("create table t_index_read (id int, k int, c varchar(10), primary key (id, k)) partition by hash(id+k) partitions 10")
-	tk.MustExec("insert into t_index_read values (1, 2, 'abc'), (3, 4, 'def'), (5, 6, 'xyz')")
-	tk.MustExec("prepare stmt1 from 'select c from t_index_read where id = ? and k = ?;'")
-	tk.MustExec("set @id=1, @k=2")
-	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
-	tk.MustQuery("execute stmt1 using @id, @k").Check(testkit.Rows("abc"))
-	tk.MustQuery("execute stmt1 using @id, @k").Check(testkit.Rows("abc"))
-	tk.MustExec("set @id=5, @k=6")
-	tk.MustQuery("execute stmt1 using @id, @k").Check(testkit.Rows("xyz"))
-	tk.MustExec("prepare stmt2 from 'select c from t_index_read where id = ? and k = ? and 1 = 1;'")
-	tk.MustExec("set @id=1, @k=2")
-	tk.MustQuery("execute stmt2 using @id, @k").Check(testkit.Rows("abc"))
-	tk.MustQuery("execute stmt2 using @id, @k").Check(testkit.Rows("abc"))
-	tk.MustExec("set @id=5, @k=6")
-	tk.MustQuery("execute stmt2 using @id, @k").Check(testkit.Rows("xyz"))
-	// Test for TableScan.
-	tk.MustExec("drop table if exists t_table_read")
-	tk.MustExec("create table t_table_read (id int, k int, c varchar(10), primary key(id)) partition by hash(id) partitions 10")
-	tk.MustExec("insert into t_table_read values (1, 2, 'abc'), (3, 4, 'def'), (5, 6, 'xyz')")
-	tk.MustExec("prepare stmt3 from 'select c from t_index_read where id = ?;'")
-	tk.MustExec("set @id=1")
-	// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
-	tk.MustQuery("execute stmt3 using @id").Check(testkit.Rows("abc"))
-	tk.MustQuery("execute stmt3 using @id").Check(testkit.Rows("abc"))
-	tk.MustExec("set @id=5")
-	tk.MustQuery("execute stmt3 using @id").Check(testkit.Rows("xyz"))
-	tk.MustExec("prepare stmt4 from 'select c from t_index_read where id = ? and k = ?'")
-	tk.MustExec("set @id=1, @k=2")
-	tk.MustQuery("execute stmt4 using @id, @k").Check(testkit.Rows("abc"))
-	tk.MustQuery("execute stmt4 using @id, @k").Check(testkit.Rows("abc"))
-	tk.MustExec("set @id=5, @k=6")
-	tk.MustQuery("execute stmt4 using @id, @k").Check(testkit.Rows("xyz"))
-	// Query on range partition tables should not raise error.
-	tk.MustExec("create table t_range_index (id int, k int, c varchar(10), primary key(id)) partition by range(id) ( PARTITION p0 VALUES LESS THAN (4), PARTITION p1 VALUES LESS THAN (14),PARTITION p2 VALUES LESS THAN (20) )")
-	tk.MustExec("insert into t_range_index values (1, 2, 'abc'), (5, 4, 'def'), (13, 6, 'xyz'), (17, 6, 'hij')")
-	tk.MustExec("prepare stmt5 from 'select c from t_range_index where id = ?'")
-	tk.MustExec("set @id=1")
-	tk.MustQuery("execute stmt5 using @id").Check(testkit.Rows("abc"))
-	tk.MustQuery("execute stmt5 using @id").Check(testkit.Rows("abc"))
-	tk.MustExec("set @id=5")
-	tk.MustQuery("execute stmt5 using @id").Check(testkit.Rows("def"))
-	tk.MustQuery("execute stmt5 using @id").Check(testkit.Rows("def"))
-	tk.MustExec("set @id=13")
-	tk.MustQuery("execute stmt5 using @id").Check(testkit.Rows("xyz"))
-	tk.MustExec("set @id=17")
-	tk.MustQuery("execute stmt5 using @id").Check(testkit.Rows("hij"))
+	for _, val := range []string{string(variable.StaticOnly), string(variable.DynamicOnly)} {
+		tk.MustExec("set @@tidb_partition_prune_mode = '" + val + "'")
+		// Test for PointGet and IndexRead.
+		tk.MustExec("drop table if exists t_index_read")
+		tk.MustExec("create table t_index_read (id int, k int, c varchar(10), primary key (id, k)) partition by hash(id+k) partitions 10")
+		tk.MustExec("insert into t_index_read values (1, 2, 'abc'), (3, 4, 'def'), (5, 6, 'xyz')")
+		tk.MustExec("prepare stmt1 from 'select c from t_index_read where id = ? and k = ?;'")
+		tk.MustExec("set @id=1, @k=2")
+		// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
+		tk.MustQuery("execute stmt1 using @id, @k").Check(testkit.Rows("abc"))
+		tk.MustQuery("execute stmt1 using @id, @k").Check(testkit.Rows("abc"))
+		tk.MustExec("set @id=5, @k=6")
+		tk.MustQuery("execute stmt1 using @id, @k").Check(testkit.Rows("xyz"))
+		tk.MustExec("prepare stmt2 from 'select c from t_index_read where id = ? and k = ? and 1 = 1;'")
+		tk.MustExec("set @id=1, @k=2")
+		tk.MustQuery("execute stmt2 using @id, @k").Check(testkit.Rows("abc"))
+		tk.MustQuery("execute stmt2 using @id, @k").Check(testkit.Rows("abc"))
+		tk.MustExec("set @id=5, @k=6")
+		tk.MustQuery("execute stmt2 using @id, @k").Check(testkit.Rows("xyz"))
+		// Test for TableScan.
+		tk.MustExec("drop table if exists t_table_read")
+		tk.MustExec("create table t_table_read (id int, k int, c varchar(10), primary key(id)) partition by hash(id) partitions 10")
+		tk.MustExec("insert into t_table_read values (1, 2, 'abc'), (3, 4, 'def'), (5, 6, 'xyz')")
+		tk.MustExec("prepare stmt3 from 'select c from t_index_read where id = ?;'")
+		tk.MustExec("set @id=1")
+		// When executing one statement at the first time, we don't use cache, so we need to execute it at least twice to test the cache.
+		tk.MustQuery("execute stmt3 using @id").Check(testkit.Rows("abc"))
+		tk.MustQuery("execute stmt3 using @id").Check(testkit.Rows("abc"))
+		tk.MustExec("set @id=5")
+		tk.MustQuery("execute stmt3 using @id").Check(testkit.Rows("xyz"))
+		tk.MustExec("prepare stmt4 from 'select c from t_index_read where id = ? and k = ?'")
+		tk.MustExec("set @id=1, @k=2")
+		tk.MustQuery("execute stmt4 using @id, @k").Check(testkit.Rows("abc"))
+		tk.MustQuery("execute stmt4 using @id, @k").Check(testkit.Rows("abc"))
+		tk.MustExec("set @id=5, @k=6")
+		tk.MustQuery("execute stmt4 using @id, @k").Check(testkit.Rows("xyz"))
+		// Query on range partition tables should not raise error.
+		tk.MustExec("drop table if exists t_range_index")
+		tk.MustExec("create table t_range_index (id int, k int, c varchar(10), primary key(id)) partition by range(id) ( PARTITION p0 VALUES LESS THAN (4), PARTITION p1 VALUES LESS THAN (14),PARTITION p2 VALUES LESS THAN (20) )")
+		tk.MustExec("insert into t_range_index values (1, 2, 'abc'), (5, 4, 'def'), (13, 6, 'xyz'), (17, 6, 'hij')")
+		tk.MustExec("prepare stmt5 from 'select c from t_range_index where id = ?'")
+		tk.MustExec("set @id=1")
+		tk.MustQuery("execute stmt5 using @id").Check(testkit.Rows("abc"))
+		tk.MustQuery("execute stmt5 using @id").Check(testkit.Rows("abc"))
+		tk.MustExec("set @id=5")
+		tk.MustQuery("execute stmt5 using @id").Check(testkit.Rows("def"))
+		tk.MustQuery("execute stmt5 using @id").Check(testkit.Rows("def"))
+		tk.MustExec("set @id=13")
+		tk.MustQuery("execute stmt5 using @id").Check(testkit.Rows("xyz"))
+		tk.MustExec("set @id=17")
+		tk.MustQuery("execute stmt5 using @id").Check(testkit.Rows("hij"))
 
-	tk.MustExec("create table t_range_table (id int, k int, c varchar(10)) partition by range(id) ( PARTITION p0 VALUES LESS THAN (4), PARTITION p1 VALUES LESS THAN (14),PARTITION p2 VALUES LESS THAN (20) )")
-	tk.MustExec("insert into t_range_table values (1, 2, 'abc'), (5, 4, 'def'), (13, 6, 'xyz'), (17, 6, 'hij')")
-	tk.MustExec("prepare stmt6 from 'select c from t_range_table where id = ?'")
-	tk.MustExec("set @id=1")
-	tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("abc"))
-	tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("abc"))
-	tk.MustExec("set @id=5")
-	tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("def"))
-	tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("def"))
-	tk.MustExec("set @id=13")
-	tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("xyz"))
-	tk.MustExec("set @id=17")
-	tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("hij"))
+		tk.MustExec("drop table if exists t_range_table")
+		tk.MustExec("create table t_range_table (id int, k int, c varchar(10)) partition by range(id) ( PARTITION p0 VALUES LESS THAN (4), PARTITION p1 VALUES LESS THAN (14),PARTITION p2 VALUES LESS THAN (20) )")
+		tk.MustExec("insert into t_range_table values (1, 2, 'abc'), (5, 4, 'def'), (13, 6, 'xyz'), (17, 6, 'hij')")
+		tk.MustExec("prepare stmt6 from 'select c from t_range_table where id = ?'")
+		tk.MustExec("set @id=1")
+		tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("abc"))
+		tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("abc"))
+		tk.MustExec("set @id=5")
+		tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("def"))
+		tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("def"))
+		tk.MustExec("set @id=13")
+		tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("xyz"))
+		tk.MustExec("set @id=17")
+		tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("hij"))
+	}
 }
 
 func newSession(c *C, store kv.Storage, dbName string) session.Session {
@@ -749,6 +754,43 @@ func (s *testPlanSerialSuite) TestPlanCacheUnsignedHandleOverflow(c *C) {
 	tk.MustExec("set @p = 18446744073709551615")
 	tk.MustQuery("execute stmt using @p").Check(testkit.Rows("18446744073709551615"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func (s *testPlanSerialSuite) TestIssue18066(c *C) {
+	defer testleak.AfterTest(c)()
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		dom.Close()
+		store.Close()
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	tk.Se, err = session.CreateSession4TestWithOpt(store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+	tk.GetConnectionID()
+	c.Assert(tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil), IsTrue)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("prepare stmt from 'select * from t'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+		testkit.Rows("1 0 0"))
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+		testkit.Rows("2 1 1"))
+	tk.MustExec("prepare stmt from 'select * from t'")
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustQuery("select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from t'").Check(
+		testkit.Rows("3 1 0"))
 }
 
 func (s *testPrepareSuite) TestPrepareForGroupByMultiItems(c *C) {
