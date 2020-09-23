@@ -889,6 +889,22 @@ func updateSchemaVersion(t *meta.Meta, job *model.Job) (int64, error) {
 			OldTableID: ptTableID,
 		}
 		diff.AffectedOpts = affects
+	case model.ActionTruncateTablePartition:
+		var oldIDs []int64
+		err = job.DecodeArgs(&oldIDs)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		diff.TableID = job.TableID
+		affects := make([]*model.AffectedOption, len(oldIDs))
+		for i := 0; i < len(oldIDs); i++ {
+			affects[i] = &model.AffectedOption{
+				SchemaID:   job.SchemaID,
+				TableID:    oldIDs[i],
+				OldTableID: oldIDs[i],
+			}
+		}
+		diff.AffectedOpts = affects
 	default:
 		diff.TableID = job.TableID
 	}
