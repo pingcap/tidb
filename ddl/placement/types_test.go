@@ -29,14 +29,14 @@ var _ = Suite(&testRuleSuite{})
 type testBundleSuite struct{}
 
 func (t *testBundleSuite) TestClone(c *C) {
-	bundle := &Bundle{ID: GroupID(1), Rules: []*Rule{&Rule{ID: "434"}}}
+	bundle := &Bundle{ID: GroupID(1), Rules: []*Rule{{ID: "434"}}}
 
 	newBundle := bundle.Clone()
 	newBundle.ID = GroupID(2)
 	newBundle.Rules[0] = &Rule{ID: "121"}
 
-	c.Assert(bundle, DeepEquals, &Bundle{ID: GroupID(1), Rules: []*Rule{&Rule{ID: "434"}}})
-	c.Assert(newBundle, DeepEquals, &Bundle{ID: GroupID(2), Rules: []*Rule{&Rule{ID: "121"}}})
+	c.Assert(bundle, DeepEquals, &Bundle{ID: GroupID(1), Rules: []*Rule{{ID: "434"}}})
+	c.Assert(newBundle, DeepEquals, &Bundle{ID: GroupID(2), Rules: []*Rule{{ID: "121"}}})
 }
 
 type testRuleSuite struct{}

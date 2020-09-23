@@ -89,12 +89,12 @@ type Bundle struct {
 	Rules    []*Rule `json:"rules"`
 }
 
-func (t *Bundle) String() string {
-	b, err := json.Marshal(t)
+func (b *Bundle) String() string {
+	t, err := json.Marshal(b)
 	if err != nil {
 		return ""
 	}
-	return string(b)
+	return string(t)
 }
 
 // Clone is used to duplicate a bundle.
