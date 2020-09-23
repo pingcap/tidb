@@ -370,6 +370,7 @@ const (
 	groupByClause
 	showStatement
 	globalOrderByClause
+	expressionClause
 )
 
 var clauseMsg = map[clauseCode]string{
@@ -382,6 +383,7 @@ var clauseMsg = map[clauseCode]string{
 	groupByClause:       "group statement",
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
+	expressionClause:    "expression",
 }
 
 type capFlagType = uint64
