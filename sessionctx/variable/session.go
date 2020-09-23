@@ -852,7 +852,7 @@ func NewSessionVars() *SessionVars {
 	}
 	vars.MemQuota = MemQuota{
 		MemQuotaQuery:               config.GetGlobalConfig().MemQuotaQuery,
-		MemQuotaStatistic:           config.GetGlobalConfig().MemQuotaStatistic,
+		MemQuotaStatistic:           config.GetGlobalConfig().MemQuotaStatistics,
 		NestedLoopJoinCacheCapacity: config.GetGlobalConfig().NestedLoopJoinCacheCapacity,
 
 		// The variables below do not take any effect anymore, it's remaining for compatibility.
@@ -1299,7 +1299,7 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 	case TIDBMemQuotaQuery:
 		s.MemQuotaQuery = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaQuery)
 	case TIDBMemQuotaStatistic:
-		s.MemQuotaStatistic = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaStatistic)
+		s.MemQuotaStatistic = tidbOptInt64(val, config.GetGlobalConfig().MemQuotaStatistics)
 	case TIDBNestedLoopJoinCacheCapacity:
 		s.NestedLoopJoinCacheCapacity = tidbOptInt64(val, config.GetGlobalConfig().NestedLoopJoinCacheCapacity)
 	case TIDBMemQuotaHashJoin:
@@ -1724,7 +1724,7 @@ func (c *Concurrency) UnionConcurrency() int {
 type MemQuota struct {
 	// MemQuotaQuery defines the memory quota for a query.
 	MemQuotaQuery int64
-	// MemQuotaStatistic defines the memory quota for the statistic Cache.
+	// MemQuotaStatistics defines the memory quota for the statistic Cache.
 	MemQuotaStatistic int64
 	// NestedLoopJoinCacheCapacity defines the memory capacity for apply cache.
 	NestedLoopJoinCacheCapacity int64

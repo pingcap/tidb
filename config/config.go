@@ -100,7 +100,7 @@ type Config struct {
 	TempStoragePath             string `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	OOMAction                   string `toml:"oom-action" json:"oom-action"`
 	MemQuotaQuery               int64  `toml:"mem-quota-query" json:"mem-quota-query"`
-	MemQuotaStatistic           int64  `toml:"mem-quota-statistic" json:"mem-quota-statistic"`
+	MemQuotaStatistics          int64  `toml:"mem-quota-statistics" json:"mem-quota-statistics"`
 	NestedLoopJoinCacheCapacity int64  `toml:"nested-loop-join-cache-capacity" json:"nested-loop-join-cache-capacity"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when OOMUseTmpStorage is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
@@ -608,7 +608,7 @@ var defaultConf = Config{
 	TempStoragePath:              tempStorageDirName,
 	OOMAction:                    OOMActionCancel,
 	MemQuotaQuery:                1 << 30,
-	MemQuotaStatistic:            int64(math.MaxInt32),
+	MemQuotaStatistics:           int64(math.MaxInt32),
 	NestedLoopJoinCacheCapacity:  20971520,
 	EnableStreaming:              false,
 	EnableBatchDML:               false,
@@ -935,8 +935,8 @@ func (c *Config) Valid() error {
 	if c.PreparedPlanCache.MemoryGuardRatio < 0 || c.PreparedPlanCache.MemoryGuardRatio > 1 {
 		return fmt.Errorf("memory-guard-ratio in [prepared-plan-cache] must be NOT less than 0 and more than 1")
 	}
-	if c.MemQuotaStatistic < DefMinQuotaStatistic {
-		return fmt.Errorf("memory-quota-statistic in must be greater than %dB", DefMinQuotaStatistic)
+	if c.MemQuotaStatistics < DefMinQuotaStatistic {
+		return fmt.Errorf("memory-quota-statistic should be greater than %dB", DefMinQuotaStatistic)
 	}
 	if len(c.IsolationRead.Engines) < 1 {
 		return fmt.Errorf("the number of [isolation-read]engines for isolation read should be at least 1")
