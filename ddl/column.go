@@ -918,6 +918,7 @@ func (w *worker) doModifyColumnTypeWithData(
 			return w.updateColumnAndIndexes(tbl, oldCol, changingCol, changingIdxs, reorgInfo)
 		})
 		if err != nil {
+			fmt.Println("run reorg done", err.Error())
 			if errWaitReorgTimeout.Equal(err) {
 				// If timeout, we should return, check for the owner and re-wait job done.
 				return ver, nil
@@ -1176,6 +1177,16 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 			return errors.Trace(err)
 		}
 	}
+
+	failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
+		if val.(bool) {
+			if handle.IntValue() == 3000 && atomic.LoadInt32(&TestCheckReorgTimeout) == 0 {
+				atomic.StoreInt32(&TestCheckReorgTimeout, 1)
+				failpoint.Return(errors.Trace(errWaitReorgTimeout))
+			}
+		}
+	})
+
 	w.rowMap[w.newColInfo.ID] = newColVal
 	newColumnIDs := make([]int64, 0, len(w.rowMap))
 	newRow := make([]types.Datum, 0, len(w.rowMap))
@@ -1256,10 +1267,7 @@ func (w *updateColumnWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (t
 		}
 
 		// Collect the warnings.
-		for k, warning := range warningsMap {
-			taskCtx.warnings = append(taskCtx.warnings, warning)
-			taskCtx.warningsCount = append(taskCtx.warningsCount, warningsCountMap[k])
-		}
+		taskCtx.warnings, taskCtx.warningsCount = warningsMap, warningsCountMap
 
 		return nil
 	})

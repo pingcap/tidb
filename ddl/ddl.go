@@ -524,12 +524,12 @@ func (d *ddl) doDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
 			// Judge whether there are some warnings when executing DDL under the certain SQL mode.
-			if len(historyJob.Warnings) != 0 {
-				if len(historyJob.Warnings) != len(historyJob.WarningsCount) {
+			if historyJob.ReorgMeta != nil && len(historyJob.ReorgMeta.Warnings) != 0 {
+				if len(historyJob.ReorgMeta.Warnings) != len(historyJob.ReorgMeta.WarningsCount) {
 					logutil.BgLogger().Info("[ddl] DDL warnings doesn't match the warnings count", zap.Int64("jobID", jobID))
 				} else {
-					for i, warning := range historyJob.Warnings {
-						for j := int64(0); j < historyJob.WarningsCount[i]; j++ {
+					for key, warning := range historyJob.ReorgMeta.Warnings {
+						for j := int64(0); j < historyJob.ReorgMeta.WarningsCount[key]; j++ {
 							ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 						}
 					}

@@ -67,8 +67,8 @@ type reorgCtx struct {
 	// a certain SQL Mode.
 	mu struct {
 		sync.Mutex
-		warnings      []*terror.Error
-		warningsCount []int64
+		warnings      map[errors.ErrorID]*terror.Error
+		warningsCount map[errors.ErrorID]int64
 	}
 }
 
@@ -120,12 +120,16 @@ func (rc *reorgCtx) setNextHandle(doneHandle kv.Handle) {
 	rc.doneHandle.Store(nullableHandle{handle: doneHandle})
 }
 
-func (rc *reorgCtx) setWarnings(warnings []*terror.Error, warningsCount []int64) {
+func (rc *reorgCtx) mergeWarnings(warnings map[errors.ErrorID]*terror.Error, warningsCount map[errors.ErrorID]int64) {
 	if len(warnings) == 0 || len(warningsCount) == 0 {
 		return
 	}
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
+	if rc.mu.warnings == nil || rc.mu.warningsCount == nil {
+		rc.mu.warnings = make(map[errors.ErrorID]*terror.Error, len(warnings))
+		rc.mu.warningsCount = make(map[errors.ErrorID]int64, len(warningsCount))
+	}
 	rc.mu.warnings, rc.mu.warningsCount = mergeWarningsAndWarningsCount(warnings, rc.mu.warnings, warningsCount, rc.mu.warningsCount)
 }
 
@@ -186,10 +190,14 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 
-		// Update a job's Warnings.
+		// Update a job's warnings.
+		w.reorgCtx.mu.Lock()
 		partWarnings := w.reorgCtx.mu.warnings
 		partWarningsCount := w.reorgCtx.mu.warningsCount
-		job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.Warnings, partWarningsCount, job.WarningsCount))
+		job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
+		w.reorgCtx.mu.Unlock()
+
+		fmt.Println("job warnings", job.ReorgMeta.WarningsCount)
 		if err == nil {
 			metrics.AddIndexProgress.Set(100)
 		}
@@ -215,10 +223,17 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// Update a job's RowCount.
 		job.SetRowCount(rowCount)
 		updateAddIndexProgress(w, tblInfo, rowCount)
-		// Update a job's Warnings.
+
+		// Update a job's warnings.
+		w.reorgCtx.mu.Lock()
 		partWarnings := w.reorgCtx.mu.warnings
 		partWarningsCount := w.reorgCtx.mu.warningsCount
-		job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.Warnings, partWarningsCount, job.WarningsCount))
+		job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
+		w.reorgCtx.mu.Unlock()
+
+		fmt.Println("job warnings", job.ReorgMeta.WarningsCount)
+
+		w.reorgCtx.resetWarnings()
 		// Update a reorgInfo's handle.
 		err := t.UpdateDDLReorgStartHandle(job, reorgInfo.currElement, doneHandle)
 		logutil.BgLogger().Info("[ddl] run reorg job wait timeout", zap.Duration("waitTime", waitTimeout),
