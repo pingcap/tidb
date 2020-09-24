@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
 	"go.uber.org/zap"
 )
@@ -58,6 +60,7 @@ type slowQueryRetriever struct {
 	checker     *slowLogChecker
 
 	parsedSlowLogCh chan parsedSlowLog
+	stats           *slowQueryRuntimeStats
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
@@ -99,6 +102,7 @@ func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 		hasProcessPriv: hasProcessPriv,
 		user:           sctx.GetSessionVars().User,
 	}
+	e.stats = &slowQueryRuntimeStats{}
 	if e.extractor != nil {
 		e.checker.enableTimeCheck = e.extractor.Enable
 		e.checker.startTime = types.NewTime(types.FromGoTime(e.extractor.StartTime), mysql.TypeDatetime, types.MaxFsp)
@@ -106,6 +110,17 @@ func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 	}
 	e.initialized = true
 	e.files, err = e.getAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
+	if err != nil {
+		return err
+	}
+	e.stats.readFileNum = len(e.files)
+	for _, f := range e.files {
+		stat, err := f.file.Stat()
+		if err != nil {
+			return err
+		}
+		e.stats.readFileSize += stat.Size()
+	}
 	return err
 }
 
@@ -257,13 +272,21 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	var wg sync.WaitGroup
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
-	ch := make(chan int, sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency())
+	concurrent := sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency()
+	ch := make(chan int, concurrent)
+	if e.stats != nil {
+		e.stats.concurrent = concurrent
+	}
 	defer close(ch)
 	for {
+		startTime := time.Now()
 		log, err := e.getBatchLog(reader, &offset, logNum)
 		if err != nil {
 			e.parsedSlowLogCh <- parsedSlowLog{nil, err}
 			break
+		}
+		if e.stats != nil {
+			e.stats.readFile += time.Since(startTime)
 		}
 		start := offset
 		wg.Add(1)
@@ -304,9 +327,13 @@ func getLineIndex(offset offset, index int) int {
 }
 
 func (e *slowQueryRetriever) parseLog(ctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
+	start := time.Now()
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%s", r)
+		}
+		if e.stats != nil {
+			atomic.AddInt64(&e.stats.parseLog, int64(time.Since(start)))
 		}
 	}()
 	failpoint.Inject("errorMockParseSlowLogPanic", func(val failpoint.Value) {
@@ -705,7 +732,16 @@ type logFile struct {
 
 // getAllFiles is used to get all slow-log needed to parse, it is exported for test.
 func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath string) ([]logFile, error) {
+	totalFileNum := 0
+	if e.stats != nil {
+		startTime := time.Now()
+		defer func() {
+			e.stats.initialize = time.Since(startTime)
+			e.stats.totalFileNum = totalFileNum
+		}()
+	}
 	if e.extractor == nil || !e.extractor.Enable {
+		totalFileNum = 1
 		file, err := os.Open(logFilePath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -738,6 +774,7 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if !strings.HasPrefix(path, prefix) {
 			return nil
 		}
+		totalFileNum++
 		file, err := os.OpenFile(path, os.O_RDONLY, os.ModePerm)
 		if err != nil {
 			return handleErr(err)
@@ -817,12 +854,50 @@ func (e *slowQueryRetriever) getFileStartTime(file *os.File) (time.Time, error) 
 	return t, errors.Errorf("malform slow query file %v", file.Name())
 }
 
-func (e *slowQueryRetriever) tryGetSlowLogTime(line string) string {
-	line = strings.TrimSpace(line)
-	if strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
-		return line[len(variable.SlowLogStartPrefixStr):]
+func (e *slowQueryRetriever) getRuntimeStats() execdetails.RuntimeStats {
+	return e.stats
+}
+
+type slowQueryRuntimeStats struct {
+	totalFileNum int
+	readFileNum  int
+	readFile     time.Duration
+	initialize   time.Duration
+	readFileSize int64
+	parseLog     int64
+	concurrent   int
+}
+
+// String implements the RuntimeStats interface.
+func (s *slowQueryRuntimeStats) String() string {
+	return fmt.Sprintf("initialize: %s, read_file: %s, parse_log: {time:%s, concurrency:%v}, total_file: %v, read_file: %v, read_size: %s",
+		s.initialize, s.readFile, time.Duration(s.parseLog), s.concurrent,
+		s.totalFileNum, s.readFileNum, memory.BytesToString(s.readFileSize))
+}
+
+// Merge implements the RuntimeStats interface.
+func (s *slowQueryRuntimeStats) Merge(rs execdetails.RuntimeStats) {
+	tmp, ok := rs.(*slowQueryRuntimeStats)
+	if !ok {
+		return
 	}
-	return ""
+	s.totalFileNum += tmp.totalFileNum
+	s.readFileNum += tmp.readFileNum
+	s.readFile += tmp.readFile
+	s.initialize += tmp.initialize
+	s.readFileSize += tmp.readFileSize
+	s.parseLog += tmp.parseLog
+}
+
+// Clone implements the RuntimeStats interface.
+func (s *slowQueryRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := *s
+	return &newRs
+}
+
+// Tp implements the RuntimeStats interface.
+func (s *slowQueryRuntimeStats) Tp() int {
+	return execdetails.TpSlowQueryRuntimeStat
 }
 
 func (e *slowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
