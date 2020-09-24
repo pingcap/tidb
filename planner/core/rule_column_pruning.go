@@ -424,6 +424,20 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 	return parentUsedCols
 }
 
+// PruneColumns implements LogicalPlan interface.
+func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
+	p.schema = p.children[0].Schema().Clone()
+
+	used := expression.GetUsedList(parentUsedCols, p.schema)
+	for i := len(used) - 1; i >= 0; i-- {
+		if !used[i] {
+			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
+		}
+	}
+
+	return p.children[0].PruneColumns(parentUsedCols)
+}
+
 func (*columnPruner) name() string {
 	return "column_prune"
 }

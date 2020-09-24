@@ -863,9 +863,18 @@ type PhysicalLock struct {
 // PhysicalLimit is the physical operator of Limit.
 type PhysicalLimit struct {
 	basePhysicalPlan
+	schema *expression.Schema
 
 	Offset uint64
 	Count  uint64
+}
+
+// Schema implements Plan Schema interface.
+func (p *PhysicalLimit) Schema() *expression.Schema {
+	if p.schema == nil {
+		return p.children[0].Schema()
+	}
+	return p.schema
 }
 
 // Clone implements PhysicalPlan interface.
@@ -877,6 +886,9 @@ func (p *PhysicalLimit) Clone() (PhysicalPlan, error) {
 		return nil, err
 	}
 	cloned.basePhysicalPlan = *base
+	if p.schema != nil {
+		cloned.schema = p.schema.Clone()
+	}
 	return cloned, nil
 }
 

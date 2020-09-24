@@ -1008,10 +1008,19 @@ func (lt *LogicalTopN) isLimit() bool {
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
 	baseLogicalPlan
+	schema *expression.Schema
 
 	Offset     uint64
 	Count      uint64
 	limitHints limitHintInfo
+}
+
+// Schema implements Plan Schema interface.
+func (p *LogicalLimit) Schema() *expression.Schema {
+	if p.schema == nil {
+		return p.children[0].Schema()
+	}
+	return p.schema
 }
 
 // LogicalLock represents a select lock plan.
