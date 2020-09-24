@@ -2204,6 +2204,22 @@ func (s *testIntegrationSuite3) TestPartitionErrorCode(c *C) {
 	tk.MustGetErrCode("alter table t_part rebuild partition p0,p1;", tmysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part remove partitioning;", tmysql.ErrUnsupportedDDLOperation)
 	tk.MustGetErrCode("alter table t_part repair partition p1;", tmysql.ErrUnsupportedDDLOperation)
+
+	// Reduce the impact on DML when executing partition DDL
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	tk1.MustExec("drop table if exists t;")
+	tk1.MustExec(`create table t(id int primary key)
+		partition by hash(id) partitions 4;`)
+	tk1.MustExec("begin")
+	tk1.MustExec("insert into t values(1);")
+
+	tk2 := testkit.NewTestKit(c, s.store)
+	tk2.MustExec("use test")
+	tk2.MustExec("alter table t truncate partition p0;")
+
+	_, err = tk1.Exec("commit")
+	c.Assert(err, IsNil)
 }
 
 func (s *testIntegrationSuite5) TestConstAndTimezoneDepent(c *C) {
