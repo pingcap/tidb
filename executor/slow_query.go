@@ -718,8 +718,7 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 	var logFiles []logFile
 	logDir := filepath.Dir(logFilePath)
 	ext := filepath.Ext(logFilePath)
-	base := filepath.Base(logFilePath)
-	prefix := base[:len(base)-len(ext)]
+	prefix := logFilePath[:len(logFilePath)-len(ext)]
 	handleErr := func(err error) error {
 		// Ignore the error and append warning for usability.
 		if err != io.EOF {
@@ -727,7 +726,7 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		}
 		return nil
 	}
-	files, err := ioutil.ReadDir(logDir) //读取目录下文件
+	files, err := ioutil.ReadDir(logDir)
 	if err != nil {
 		return nil, err
 	}
