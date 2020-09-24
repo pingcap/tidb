@@ -2590,23 +2590,74 @@ func buildPartitionTable(b *executorBuilder, tblInfo *model.TableInfo, partition
 	}, nil
 }
 
-func buildPartitionTableForInnerExecutor(b *executorBuilder, tblInfo *model.TableInfo, partitionInfo *plannercore.PartitionInfo,
-	lookUpContent []*indexJoinLookUpContent, e Executor, n innerNextPartition) (*PartitionTableExecutor, []int64, error) {
-	tbl, _ := b.is.TableByID(tblInfo.ID)
-	partitionTbl := tbl.(table.PartitionedTable)
-	locateKey := make([]types.Datum, e.Schema().Len())
-	// TODO: condition based pruning can be do in advance.
-	condPruneResult, err := partitionPruning(b.ctx, partitionTbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
-	if err != nil {
-		return nil, nil, err
+func buildIndexRangeForEachPartition(ctx sessionctx.Context, usedPartitions []table.PhysicalTable, contentPos []int64,
+	lookUpContent []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (map[int64][]*ranger.Range, error) {
+	contentBucket := make(map[int64][]*indexJoinLookUpContent)
+	for _, p := range usedPartitions {
+		contentBucket[p.GetPhysicalID()] = make([]*indexJoinLookUpContent, 0, 8)
 	}
+	for i, pos := range contentPos {
+		if _, ok := contentBucket[pos]; ok {
+			contentBucket[pos] = append(contentBucket[pos], lookUpContent[i])
+		}
+	}
+	nextRange := make(map[int64][]*ranger.Range)
+	for _, p := range usedPartitions {
+		ranges, err := buildRangesForIndexJoin(ctx, contentBucket[p.GetPhysicalID()], indexRanges, keyOff2IdxOff, cwc)
+		if err != nil {
+			return nil, err
+		}
+		nextRange[p.GetPhysicalID()] = ranges
+	}
+	return nextRange, nil
+}
+
+func buildKVRangeForEachPartition(ctx sessionctx.Context, usedPartitions []table.PhysicalTable, contentPos []int64, isCommonHandle bool,
+	lookUpContents []*indexJoinLookUpContent, indexRanges []*ranger.Range, keyOff2IdxOff []int, cwc *plannercore.ColWithCmpFuncManager) (map[int64]kvRangeBuilder, error) {
+	rangeBuilders := make(map[int64]kvRangeBuilder)
+	contentBucket := make(map[int64][]*indexJoinLookUpContent)
+	for _, p := range usedPartitions {
+		contentBucket[p.GetPhysicalID()] = make([]*indexJoinLookUpContent, 0, 8)
+	}
+	for i, pos := range contentPos {
+		if _, ok := contentBucket[pos]; ok {
+			contentBucket[pos] = append(contentBucket[pos], lookUpContents[i])
+		}
+	}
+	for _, p := range usedPartitions {
+		if isCommonHandle {
+			rangeBuilders[p.GetPhysicalID()] = kvRangeBuilderFromFunc(func(pid int64) ([]kv.KeyRange, error) {
+				return buildKvRangesForIndexJoin(ctx, pid, -1, contentBucket[p.GetPhysicalID()], indexRanges, keyOff2IdxOff, cwc)
+			})
+		} else {
+			handles := make([]kv.Handle, 0, len(contentBucket[p.GetPhysicalID()]))
+			for _, content := range contentBucket[p.GetPhysicalID()] {
+				handle := kv.IntHandle(content.keys[0].GetInt64())
+				handles = append(handles, handle)
+			}
+			rangeBuilders[p.GetPhysicalID()] = kvRangeBuilderFromHandles(handles)
+		}
+	}
+	return rangeBuilders, nil
+}
+
+func prunePartitionForInnerExecutor(ctx sessionctx.Context, tbl table.Table, schema *expression.Schema, partitionInfo *plannercore.PartitionInfo,
+	lookUpContent []*indexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
+	partitionTbl := tbl.(table.PartitionedTable)
+	locateKey := make([]types.Datum, schema.Len())
+	// TODO: condition based pruning can be do in advance.
+	condPruneResult, err := partitionPruning(ctx, partitionTbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+	if err != nil {
+		return nil, false, nil, err
+	}
+
 	// check whether can runtime prune.
 	type partitionExpr interface {
 		PartitionExpr() (*tables.PartitionExpr, error)
 	}
 	pe, err := tbl.(partitionExpr).PartitionExpr()
 	if err != nil {
-		return nil, nil, err
+		return nil, false, nil, err
 	}
 	offsetMap := make(map[int]bool)
 	for _, offset := range lookUpContent[0].keyCols {
@@ -2614,25 +2665,20 @@ func buildPartitionTableForInnerExecutor(b *executorBuilder, tblInfo *model.Tabl
 	}
 	for _, offset := range pe.ColumnOffset {
 		if _, ok := offsetMap[offset]; !ok {
-			n.GetInnerPartitionInfo().isFullPartition = true
 			logutil.BgLogger().Warn("can not runtime prune in index join")
-			return &PartitionTableExecutor{
-				baseExecutor:  *e.base(),
-				partitions:    condPruneResult,
-				nextPartition: n,
-			}, nil, nil
+			return condPruneResult, false, nil, nil
 		}
 	}
 
 	partitions := make(map[int64]table.PhysicalTable)
-	contentPos := make([]int64, len(lookUpContent))
+	contentPos = make([]int64, len(lookUpContent))
 	for idx, content := range lookUpContent {
 		for i, date := range content.keys {
 			locateKey[content.keyCols[i]] = date
 		}
-		p, err := partitionTbl.GetPartitionByRow(b.ctx, locateKey)
+		p, err := partitionTbl.GetPartitionByRow(ctx, locateKey)
 		if err != nil {
-			return nil, nil, err
+			return nil, false, nil, err
 		}
 		if _, ok := partitions[p.GetPhysicalID()]; !ok {
 			partitions[p.GetPhysicalID()] = p
@@ -2640,17 +2686,13 @@ func buildPartitionTableForInnerExecutor(b *executorBuilder, tblInfo *model.Tabl
 		contentPos[idx] = p.GetPhysicalID()
 	}
 
-	usedPartition := make([]table.PhysicalTable, 0, len(partitions))
+	usedPartition = make([]table.PhysicalTable, 0, len(partitions))
 	for _, p := range condPruneResult {
 		if _, ok := partitions[p.GetPhysicalID()]; ok {
 			usedPartition = append(usedPartition, p)
 		}
 	}
-	return &PartitionTableExecutor{
-		baseExecutor:  *e.base(),
-		partitions:    usedPartition,
-		nextPartition: n,
-	}, contentPos, nil
+	return usedPartition, true, contentPos, nil
 }
 
 func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexReader) (*IndexReaderExecutor, error) {
@@ -3101,38 +3143,30 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		e.kvRangeBuilder = kvRangeBuilderFromFunc(func(pid int64) ([]kv.KeyRange, error) {
 			return buildKvRangesForIndexJoin(e.ctx, pid, -1, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 		})
-
-		nextPartition := nextPartitionForTableReader{exec: e, innerPartitionInfo: &innerPartitionInfo{}}
-		// return buildPartitionTableForInnerExecutor(builder.executorBuilder, tbInfo, &v.PartitionInfo, lookUpContents, e, nextPartition)
-		partitionExec, lookUpContentMap, err := buildPartitionTableForInnerExecutor(builder.executorBuilder, tbInfo, &v.PartitionInfo, lookUpContents, e, nextPartition)
+		nextPartition := nextPartitionForTableReader{exec: e, innerPartitionInfo: &innerPartitionInfo{isFullPartition: true}}
+		tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
+		usedPartition, canPrune, contentPos, err := prunePartitionForInnerExecutor(builder.executorBuilder.ctx, tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 		if err != nil {
 			return nil, err
 		}
-		if len(partitionExec.partitions) != 0 {
-			if !nextPartition.isFullPartition {
-				nextPartition.rangeBuilders = make(map[int64]kvRangeBuilder)
-				contentBucket := make(map[int64][]*indexJoinLookUpContent)
-				for _, p := range partitionExec.partitions {
-					contentBucket[p.GetPhysicalID()] = make([]*indexJoinLookUpContent, 0, 8)
+		if len(usedPartition) != 0 {
+			if canPrune {
+				rangeBuilders, err := buildKVRangeForEachPartition(e.ctx, usedPartition, contentPos, v.IsCommonHandle, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+				if err != nil {
+					return nil, err
 				}
-				for i, pos := range lookUpContentMap {
-					if _, ok := contentBucket[pos]; ok {
-						contentBucket[pos] = append(contentBucket[pos], lookUpContents[i])
-					}
-				}
-				for _, p := range partitionExec.partitions {
-					//rangeBuilder := kvRangeBuilderFromHandles(contentBucket[p.GetPhysicalID()])
-					//nextPartition.rangeBuilders = append(nextPartition.rangeBuilders, rangeBuilder)
-					nextPartition.rangeBuilders[p.GetPhysicalID()] = kvRangeBuilderFromFunc(func(pid int64) ([]kv.KeyRange, error) {
-						return buildKvRangesForIndexJoin(e.ctx, pid, -1, contentBucket[p.GetPhysicalID()], indexRanges, keyOff2IdxOff, cwc)
-					})
-				}
-				partitionExec.nextPartition = nextPartition
+				nextPartition.rangeBuilders = rangeBuilders
+				nextPartition.isFullPartition = false
+			}
+			partitionExec := &PartitionTableExecutor{
+				baseExecutor:  *e.base(),
+				partitions:    usedPartition,
+				nextPartition: nextPartition,
 			}
 			return partitionExec, nil
 		}
 		ret := &TableDualExec{baseExecutor: *e.base()}
-		return ret, nil
+		return ret, err
 	}
 	handles := make([]kv.Handle, 0, len(lookUpContents))
 	validLookUpContents := make([]*indexJoinLookUpContent, 0, len(lookUpContents))
@@ -3158,34 +3192,30 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 		return builder.buildTableReaderFromHandles(ctx, e, handles, canReorderHandles)
 	}
 	e.kvRangeBuilder = kvRangeBuilderFromHandles(handles)
-	nextPartition := nextPartitionForTableReader{exec: e, innerPartitionInfo: &innerPartitionInfo{}}
-	// return buildPartitionTableForInnerExecutor(builder.executorBuilder, tbInfo, &v.PartitionInfo, lookUpContents, e, nextPartition)
-	partitionExec, lookUpContentMap, err := buildPartitionTableForInnerExecutor(builder.executorBuilder, tbInfo, &v.PartitionInfo, validLookUpContents, e, nextPartition)
+	nextPartition := nextPartitionForTableReader{exec: e, innerPartitionInfo: &innerPartitionInfo{isFullPartition: true}}
+	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
+	usedPartition, canPrune, contentPos, err := prunePartitionForInnerExecutor(builder.executorBuilder.ctx, tbl, e.Schema(), &v.PartitionInfo, validLookUpContents)
 	if err != nil {
 		return nil, err
 	}
-	if len(partitionExec.partitions) != 0 {
-		if !nextPartition.isFullPartition {
-			nextPartition.rangeBuilders = make(map[int64]kvRangeBuilder)
-			contentBucket := make(map[int64][]kv.Handle)
-			for _, p := range partitionExec.partitions {
-				contentBucket[p.GetPhysicalID()] = make([]kv.Handle, 0, 8)
+	if len(usedPartition) != 0 {
+		if canPrune {
+			rangeBuilders, err := buildKVRangeForEachPartition(e.ctx, usedPartition, contentPos, v.IsCommonHandle, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+			if err != nil {
+				return nil, err
 			}
-			for i, pos := range lookUpContentMap {
-				if _, ok := contentBucket[pos]; ok {
-					contentBucket[pos] = append(contentBucket[pos], handles[i])
-				}
-			}
-			for _, p := range partitionExec.partitions {
-				rangeBuilder := kvRangeBuilderFromHandles(contentBucket[p.GetPhysicalID()])
-				nextPartition.rangeBuilders[p.GetPhysicalID()] = rangeBuilder
-			}
-			partitionExec.nextPartition = nextPartition
+			nextPartition.rangeBuilders = rangeBuilders
+			nextPartition.isFullPartition = false
+		}
+		partitionExec := &PartitionTableExecutor{
+			baseExecutor:  *e.base(),
+			partitions:    usedPartition,
+			nextPartition: nextPartition,
 		}
 		return partitionExec, nil
 	}
 	ret := &TableDualExec{baseExecutor: *e.base()}
-	return ret, nil
+	return ret, err
 }
 
 type kvRangeBuilderFromFunc func(pid int64) ([]kv.KeyRange, error)
@@ -3268,36 +3298,30 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return e, err
 	}
 
-	nextPartition := nextPartitionForIndexReader{exec: e, innerPartitionInfo: &innerPartitionInfo{}}
-	partitionExec, lookUpContentMap, err := buildPartitionTableForInnerExecutor(builder.executorBuilder, tbInfo, &v.PartitionInfo, lookUpContents, e, nextPartition)
+	nextPartition := nextPartitionForIndexReader{exec: e, innerPartitionInfo: &innerPartitionInfo{isFullPartition: true}}
+	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
+	usedPartition, canPrune, contentPos, err := prunePartitionForInnerExecutor(builder.executorBuilder.ctx, tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
-	if len(partitionExec.partitions) != 0 {
-		if !nextPartition.isFullPartition {
-			contentBucket := make(map[int64][]*indexJoinLookUpContent)
-			for _, p := range partitionExec.partitions {
-				contentBucket[p.GetPhysicalID()] = make([]*indexJoinLookUpContent, 0, 8)
+	if len(usedPartition) != 0 {
+		if canPrune {
+			rangeMap, err := buildIndexRangeForEachPartition(e.ctx, usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+			if err != nil {
+				return nil, err
 			}
-			for i, pos := range lookUpContentMap {
-				if _, ok := contentBucket[pos]; ok {
-					contentBucket[pos] = append(contentBucket[pos], lookUpContents[i])
-				}
-			}
-			nextRange := make(map[int64][]*ranger.Range)
-			for _, p := range partitionExec.partitions {
-				ranges, err := buildRangesForIndexJoin(e.ctx, contentBucket[p.GetPhysicalID()], indexRanges, keyOff2IdxOff, cwc)
-				if err != nil {
-					return nil, err
-				}
-				nextRange[p.GetPhysicalID()] = ranges
-			}
-			nextPartition.nextRange = nextRange
+			nextPartition.isFullPartition = false
+			nextPartition.nextRange = rangeMap
 		} else {
 			e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 			if err != nil {
 				return nil, err
 			}
+		}
+		partitionExec := &PartitionTableExecutor{
+			baseExecutor:  *e.base(),
+			partitions:    usedPartition,
+			nextPartition: nextPartition,
 		}
 		err = partitionExec.Open(ctx)
 		return partitionExec, err
@@ -3323,36 +3347,30 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		err = e.open(ctx)
 		return e, err
 	}
-	nextPartition := nextPartitionForIndexLookUp{exec: e, innerPartitionInfo: &innerPartitionInfo{}}
-	partitionExec, lookUpContentMap, err := buildPartitionTableForInnerExecutor(builder.executorBuilder, tbInfo, &v.PartitionInfo, lookUpContents, e, nextPartition)
+	nextPartition := nextPartitionForIndexLookUp{exec: e, innerPartitionInfo: &innerPartitionInfo{isFullPartition: true}}
+	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
+	usedPartition, canPrune, contentPos, err := prunePartitionForInnerExecutor(builder.executorBuilder.ctx, tbl, e.Schema(), &v.PartitionInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
-	if len(partitionExec.partitions) != 0 {
-		if !nextPartition.isFullPartition {
-			contentBucket := make(map[int64][]*indexJoinLookUpContent)
-			for _, p := range partitionExec.partitions {
-				contentBucket[p.GetPhysicalID()] = make([]*indexJoinLookUpContent, 0, 8)
+	if len(usedPartition) != 0 {
+		if canPrune {
+			rangeMap, err := buildIndexRangeForEachPartition(e.ctx, usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+			if err != nil {
+				return nil, err
 			}
-			for i, pos := range lookUpContentMap {
-				if _, ok := contentBucket[pos]; ok {
-					contentBucket[pos] = append(contentBucket[pos], lookUpContents[i])
-				}
-			}
-			nextRange := make(map[int64][]*ranger.Range)
-			for _, p := range partitionExec.partitions {
-				ranges, err := buildRangesForIndexJoin(e.ctx, contentBucket[p.GetPhysicalID()], indexRanges, keyOff2IdxOff, cwc)
-				if err != nil {
-					return nil, err
-				}
-				nextRange[p.GetPhysicalID()] = ranges
-			}
-			nextPartition.nextRange = nextRange
+			nextPartition.isFullPartition = false
+			nextPartition.nextRange = rangeMap
 		} else {
 			e.ranges, err = buildRangesForIndexJoin(e.ctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 			if err != nil {
 				return nil, err
 			}
+		}
+		partitionExec := &PartitionTableExecutor{
+			baseExecutor:  *e.base(),
+			partitions:    usedPartition,
+			nextPartition: nextPartition,
 		}
 		err = partitionExec.Open(ctx)
 		return partitionExec, err
