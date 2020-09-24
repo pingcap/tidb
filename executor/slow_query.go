@@ -828,11 +828,17 @@ func (e *slowQueryRetriever) tryGetSlowLogTime(line string) string {
 func (e *slowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 	var t time.Time
 	var tried int
-	stat, _ := file.Stat()
+	stat, err := file.Stat()
+	if err != nil {
+		return t, err
+	}
 	endCursor := stat.Size()
 	maxLineNum := 128
 	for {
-		lines, readBytes := readLastLines(file, endCursor)
+		lines, readBytes, err := readLastLines(file, endCursor)
+		if err != nil {
+			return t, err
+		}
 		// read out the file
 		if readBytes == 0 {
 			break
@@ -853,12 +859,12 @@ func (e *slowQueryRetriever) getFileEndTime(file *os.File) (time.Time, error) {
 
 // Read lines from the end of a file
 // endCursor initial value should be the filesize
-func readLastLines(file *os.File, endCursor int64) ([]string, int) {
+func readLastLines(file *os.File, endCursor int64) ([]string, int, error) {
 	var lines []byte
 	var firstNonNewlinePos int
 	var cursor = endCursor
 	for {
-		// stop if we are at the begining
+		// stop if we are at the beginning
 		// check it in the start to avoid read beyond the size
 		if cursor <= 0 {
 			break
@@ -870,9 +876,15 @@ func readLastLines(file *os.File, endCursor int64) ([]string, int) {
 		}
 		cursor -= size
 
-		file.Seek(cursor, io.SeekStart)
+		_, err := file.Seek(cursor, io.SeekStart)
+		if err != nil {
+			return nil, 0, err
+		}
 		chars := make([]byte, size)
-		file.Read(chars)
+		_, err = file.Read(chars)
+		if err != nil {
+			return nil, 0, err
+		}
 		lines = append(chars, lines...)
 
 		// find first '\n' or '\r'
@@ -892,7 +904,7 @@ func readLastLines(file *os.File, endCursor int64) ([]string, int) {
 		}
 	}
 	finalStr := string(lines[firstNonNewlinePos:])
-	return strings.Split(strings.ReplaceAll(finalStr, "\r\n", "\n"), "\n"), len(finalStr)
+	return strings.Split(strings.ReplaceAll(finalStr, "\r\n", "\n"), "\n"), len(finalStr), nil
 }
 
 func (e *slowQueryRetriever) initializeAsyncParsing(ctx context.Context, sctx sessionctx.Context) {
