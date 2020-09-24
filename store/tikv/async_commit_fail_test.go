@@ -32,6 +32,7 @@ import (
 
 type testAsyncCommitFailSuite struct {
 	OneByOneSuite
+	testAsyncCommitCommon
 	cluster cluster.Cluster
 	store   *tikvStore
 }
@@ -84,17 +85,18 @@ func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
 	c.Assert(bytes.Equal(res, []byte("a1")), IsTrue)
 }
 
-func (s *testAsyncCommitSuite) TestSecondaryListInPrimaryLock(c *C) {
+func (s *testAsyncCommitFailSuite) TestSecondaryListInPrimaryLock(c *C) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.EnableAsyncCommit = true
 	})
-	defer config.RestoreFunc()()
 
-	s.putAlphabets(c)
+	s.putAlphabets(c, s.store)
 
 	// Split into several regions.
 	for _, splitKey := range []string{"h", "o", "u"} {
-		loc, err := s.store.GetRegionCache().LocateKey(s.bo, []byte(splitKey))
+		bo := NewBackofferWithVars(context.Background(), 5000, nil)
+		loc, err := s.store.GetRegionCache().LocateKey(bo, []byte(splitKey))
 		c.Assert(err, IsNil)
 		newRegionID := s.cluster.AllocID()
 		newPeerID := s.cluster.AllocID()
@@ -103,12 +105,13 @@ func (s *testAsyncCommitSuite) TestSecondaryListInPrimaryLock(c *C) {
 	}
 
 	// Ensure the region has been split
-	loc, err := s.store.GetRegionCache().LocateKey(s.bo, []byte("i"))
+	bo := NewBackofferWithVars(context.Background(), 5000, nil)
+	loc, err := s.store.GetRegionCache().LocateKey(bo, []byte("i"))
 	c.Assert(err, IsNil)
 	c.Assert([]byte(loc.StartKey), BytesEquals, []byte("h"))
 	c.Assert([]byte(loc.EndKey), BytesEquals, []byte("o"))
 
-	loc, err = s.store.GetRegionCache().LocateKey(s.bo, []byte("p"))
+	loc, err = s.store.GetRegionCache().LocateKey(bo, []byte("p"))
 	c.Assert(err, IsNil)
 	c.Assert([]byte(loc.StartKey), BytesEquals, []byte("o"))
 	c.Assert([]byte(loc.EndKey), BytesEquals, []byte("u"))
@@ -131,7 +134,8 @@ func (s *testAsyncCommitSuite) TestSecondaryListInPrimaryLock(c *C) {
 
 		tikvTxn := txn.(*tikvTxn)
 		primary := tikvTxn.committer.primary()
-		txnStatus, err := s.store.lockResolver.getTxnStatus(s.bo, txn.StartTS(), primary, 0, 0, false)
+		bo := NewBackofferWithVars(context.Background(), 5000, nil)
+		txnStatus, err := s.store.lockResolver.getTxnStatus(bo, txn.StartTS(), primary, 0, 0, false)
 		c.Assert(err, IsNil)
 		c.Assert(txnStatus.IsCommitted(), IsFalse)
 		c.Assert(txnStatus.action, Equals, kvrpcpb.Action_NoAction)
