@@ -22,7 +22,6 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
@@ -31,8 +30,13 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
+// testAsyncCommitCommon is used to put utility functions that will be both used by
+// testAsyncCommitSuite and testAsyncCommitFailSuite.
+type testAsyncCommitCommon struct{}
+
 type testAsyncCommitSuite struct {
 	OneByOneSuite
+	testAsyncCommitCommon
 	cluster cluster.Cluster
 	store   *tikvStore
 	bo      *Backoffer
@@ -52,20 +56,54 @@ func (s *testAsyncCommitSuite) SetUpTest(c *C) {
 	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
-func (s *testAsyncCommitSuite) putAlphabets(c *C) {
+func (s *testAsyncCommitCommon) putAlphabets(c *C, store *tikvStore) {
 	for ch := byte('a'); ch <= byte('z'); ch++ {
-		s.putKV(c, []byte{ch}, []byte{ch})
+		s.putKV(c, store, []byte{ch}, []byte{ch})
 	}
 }
 
-func (s *testAsyncCommitSuite) putKV(c *C, key, value []byte) (uint64, uint64) {
-	txn, err := s.store.Begin()
+func (s *testAsyncCommitCommon) putKV(c *C, store *tikvStore, key, value []byte) (uint64, uint64) {
+	txn, err := store.Begin()
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
 	err = txn.Commit(context.Background())
 	c.Assert(err, IsNil)
 	return txn.StartTS(), txn.(*tikvTxn).commitTS
+}
+
+func (s *testAsyncCommitCommon) mustGetFromTxn(c *C, txn kv.Transaction, key, expectedValue []byte) {
+	v, err := txn.Get(context.Background(), key)
+	c.Assert(err, IsNil)
+	c.Assert(v, BytesEquals, expectedValue)
+}
+
+func (s *testAsyncCommitCommon) mustGetLock(c *C, store *tikvStore, key []byte) *Lock {
+	ver, err := store.CurrentVersion()
+	c.Assert(err, IsNil)
+	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
+		Key:     key,
+		Version: ver.Ver,
+	})
+	bo := NewBackofferWithVars(context.Background(), 5000, nil)
+	loc, err := store.regionCache.LocateKey(bo, key)
+	c.Assert(err, IsNil)
+	resp, err := store.SendReq(bo, req, loc.Region, readTimeoutShort)
+	c.Assert(err, IsNil)
+	c.Assert(resp.Resp, NotNil)
+	keyErr := resp.Resp.(*kvrpcpb.GetResponse).GetError()
+	c.Assert(keyErr, NotNil)
+	lock, err := extractLockFromKeyErr(keyErr)
+	c.Assert(err, IsNil)
+	return lock
+}
+
+func (s *testAsyncCommitCommon) mustPointGet(c *C, store *tikvStore, key, expectedValue []byte) {
+	snap, err := store.GetSnapshot(kv.MaxVersion)
+	c.Assert(err, IsNil)
+	value, err := snap.Get(context.Background(), key)
+	c.Assert(err, IsNil)
+	c.Assert(value, BytesEquals, expectedValue)
 }
 
 func (s *testAsyncCommitSuite) lockKeys(c *C, keys, values [][]byte, primaryKey, primaryValue []byte, commitPrimary bool) (uint64, uint64) {
@@ -102,46 +140,13 @@ func (s *testAsyncCommitSuite) lockKeys(c *C, keys, values [][]byte, primaryKey,
 	return txn.startTS, tpc.commitTS
 }
 
-func (s *testAsyncCommitSuite) mustGetFromTxn(c *C, txn kv.Transaction, key, expectedValue []byte) {
-	v, err := txn.Get(context.Background(), key)
-	c.Assert(err, IsNil)
-	c.Assert(v, BytesEquals, expectedValue)
-}
-
-func (s *testAsyncCommitSuite) mustGetLock(c *C, key []byte) *Lock {
-	ver, err := s.store.CurrentVersion()
-	c.Assert(err, IsNil)
-	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
-		Key:     key,
-		Version: ver.Ver,
-	})
-	loc, err := s.store.regionCache.LocateKey(s.bo, key)
-	c.Assert(err, IsNil)
-	resp, err := s.store.SendReq(s.bo, req, loc.Region, readTimeoutShort)
-	c.Assert(err, IsNil)
-	c.Assert(resp.Resp, NotNil)
-	keyErr := resp.Resp.(*kvrpcpb.GetResponse).GetError()
-	c.Assert(keyErr, NotNil)
-	lock, err := extractLockFromKeyErr(keyErr)
-	c.Assert(err, IsNil)
-	return lock
-}
-
-func (s *testAsyncCommitSuite) mustPointGet(c *C, key, expectedValue []byte) {
-	snap, err := s.store.GetSnapshot(kv.MaxVersion)
-	c.Assert(err, IsNil)
-	value, err := snap.Get(context.Background(), key)
-	c.Assert(err, IsNil)
-	c.Assert(value, BytesEquals, expectedValue)
-}
-
 func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.EnableAsyncCommit = true
 	})
 
-	s.putAlphabets(c)
+	s.putAlphabets(c, s.store)
 
 	loc, err := s.store.GetRegionCache().LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
@@ -151,7 +156,7 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 
 	// No locks to check, only primary key is locked, should be successful.
 	s.lockKeys(c, [][]byte{}, [][]byte{}, []byte("z"), []byte("z"), false)
-	lock := s.mustGetLock(c, []byte("z"))
+	lock := s.mustGetLock(c, s.store, []byte("z"))
 	lock.UseAsyncCommit = true
 	ts, err := s.store.oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
@@ -289,7 +294,7 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 	defer config.RestoreFunc()()
 
 	test := func(isPessimistic bool) {
-		s.putKV(c, []byte("k1"), []byte("v1"))
+		s.putKV(c, s.store, []byte("k1"), []byte("v1"))
 
 		ctx := context.Background()
 		txn1, err := s.store.Begin()
@@ -322,38 +327,6 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 
 	test(false)
 	test(true)
-}
-
-func (s *testAsyncCommitSuite) TestPointGetWithAsyncCommit(c *C) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.EnableAsyncCommit = true
-	})
-	defer config.RestoreFunc()()
-
-	s.putAlphabets(c)
-
-	txn, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	txn.Set([]byte("a"), []byte("v1"))
-	txn.Set([]byte("b"), []byte("v2"))
-	s.mustPointGet(c, []byte("a"), []byte("a"))
-	s.mustPointGet(c, []byte("b"), []byte("b"))
-
-	// PointGet cannot ignore async commit transactions' locks.
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
-	err = txn.Commit(context.Background())
-	c.Assert(err, IsNil)
-	s.mustPointGet(c, []byte("a"), []byte("v1"))
-	s.mustPointGet(c, []byte("b"), []byte("v2"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
-
-	// PointGet will not push the `max_ts` to its ts which is MaxUint64.
-	txn2, err := s.store.Begin()
-	c.Assert(err, IsNil)
-	s.mustGetFromTxn(c, txn2, []byte("a"), []byte("v1"))
-	s.mustGetFromTxn(c, txn2, []byte("b"), []byte("v2"))
-	err = txn2.Rollback()
-	c.Assert(err, IsNil)
 }
 
 type mockResolveClient struct {
