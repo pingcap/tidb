@@ -19,6 +19,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/session"
@@ -495,4 +496,11 @@ func (s *testUtilSuite) TestParseNullTermString(c *C) {
 		c.Assert(string(str), Equals, t.str)
 		c.Assert(string(remain), Equals, t.remain)
 	}
+}
+
+func newTestConfig() *config.Config {
+	cfg := config.NewConfig()
+	cfg.Host = "127.0.0.1"
+	cfg.Status.StatusHost = "127.0.0.1"
+	return cfg
 }

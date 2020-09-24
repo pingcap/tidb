@@ -245,7 +245,7 @@
       ],
       [
         "IndexLookUp_7 2.00 root  ",
-        "├─IndexFullScan_5(Build) 2.00 cop[tikv] table:t, index:idx(a) keep order:false",
+        "├─IndexRangeScan_5(Build) 2.00 cop[tikv] table:t, index:idx(a) range:[NULL,NULL], keep order:false",
         "└─TableRowIDScan_6(Probe) 2.00 cop[tikv] table:t keep order:false"
       ],
       [

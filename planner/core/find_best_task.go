@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/set"
@@ -62,17 +63,17 @@ var aggFuncFactor = map[string]float64{
 }
 
 // PlanCounterTp is used in hint nth_plan() to indicate which plan to use.
-type PlanCounterTp int8
+type PlanCounterTp int64
 
 // PlanCounterDisabled is the default value of PlanCounterTp, indicating that optimizer needn't force a plan.
 var PlanCounterDisabled PlanCounterTp = -1
 
 // Dec minus PlanCounterTp value by x.
-func (c *PlanCounterTp) Dec(x int8) {
+func (c *PlanCounterTp) Dec(x int64) {
 	if *c <= 0 {
 		return
 	}
-	*c = PlanCounterTp(int8(*c) - x)
+	*c = PlanCounterTp(int64(*c) - x)
 	if *c < 0 {
 		*c = 0
 	}
@@ -260,7 +261,7 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 
 		cntPlan += curCntPlan
-		planCounter.Dec(int8(curCntPlan))
+		planCounter.Dec(curCntPlan)
 
 		if planCounter.Empty() {
 			bestTask = curTask
@@ -675,11 +676,16 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		canConvertPointGet = canConvertPointGet && candidate.path.StoreType != kv.TiFlash
 		if !candidate.path.IsIntHandlePath {
 			canConvertPointGet = canConvertPointGet &&
-				candidate.path.Index.Unique &&
-				!candidate.path.Index.HasPrefixIndex() &&
-				len(candidate.path.Ranges[0].LowVal) == len(candidate.path.Index.Columns)
+				candidate.path.Index.Unique && !candidate.path.Index.HasPrefixIndex()
+			idxColsLen := len(candidate.path.Index.Columns)
+			for _, ran := range candidate.path.Ranges {
+				if len(ran.LowVal) != idxColsLen {
+					canConvertPointGet = false
+					break
+				}
+			}
 		}
-		if ds.table.Meta().GetPartitionInfo() != nil && !tryOldPartitionImplementation(ds.ctx) {
+		if ds.table.Meta().GetPartitionInfo() != nil && ds.ctx.GetSessionVars().UseDynamicPartitionPrune() {
 			canConvertPointGet = false
 		}
 		if canConvertPointGet {
@@ -767,8 +773,12 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 	}
-	cop.partitionTable.pruningConds = ds.allConds
-	cop.partitionTable.partitionNames = ds.partitionNames
+	cop.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+	}
 	for _, partPath := range path.PartialIndexPaths {
 		var scan PhysicalPlan
 		var partialCost, rowCount float64
@@ -875,7 +885,6 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 	if err != nil {
 		return nil, 0, err
 	}
-	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 	if ts.Table.PKIsHandle {
 		if pkColInfo := ts.Table.GetPkColInfo(); pkColInfo != nil {
 			if ds.statisticTable.Columns[pkColInfo.ID] != nil {
@@ -906,8 +915,6 @@ func (ds *DataSource) buildIndexMergeTableScan(prop *property.PhysicalProperty, 
 func indexCoveringCol(col *expression.Column, indexCols []*expression.Column, idxColLens []int) bool {
 	for i, indexCol := range indexCols {
 		isFullLen := idxColLens[i] == types.UnspecifiedLength || idxColLens[i] == col.RetType.Flen
-		// We use col.OrigColName instead of col.ColName.
-		// Related issue: https://github.com/pingcap/tidb/issues/9636.
 		if indexCol != nil && col.Equal(nil, indexCol) && isFullLen {
 			return true
 		}
@@ -923,7 +930,16 @@ func (ds *DataSource) isCoveringIndex(columns, indexColumns []*expression.Column
 		if col.ID == model.ExtraHandleID {
 			continue
 		}
-		if !indexCoveringCol(col, indexColumns, idxColLens) && !indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens) {
+		coveredByPlainIndex := indexCoveringCol(col, indexColumns, idxColLens)
+		coveredByClusteredIndex := indexCoveringCol(col, ds.commonHandleCols, ds.commonHandleLens)
+		if !coveredByPlainIndex && !coveredByClusteredIndex {
+			return false
+		}
+
+		isClusteredNewCollationIdx := collate.NewCollationEnabled() &&
+			col.GetType().EvalType() == types.ETString &&
+			!mysql.HasBinaryFlag(col.GetType().Flag)
+		if !coveredByPlainIndex && coveredByClusteredIndex && isClusteredNewCollationIdx {
 			return false
 		}
 	}
@@ -963,8 +979,12 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 		tblColHists: ds.TblColHists,
 		tblCols:     ds.TblCols,
 	}
-	cop.partitionTable.pruningConds = ds.allConds
-	cop.partitionTable.partitionNames = ds.partitionNames
+	cop.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+	}
 	if !candidate.isSingleScan {
 		// On this way, it's double read case.
 		ts := PhysicalTableScan{
@@ -975,7 +995,6 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty, candid
 			physicalTableID: ds.physicalTableID,
 		}.Init(ds.ctx, is.blockOffset)
 		ts.SetSchema(ds.schema.Clone())
-		ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
 		cop.tablePlan = ts
 	}
 	cop.cst = cost
@@ -1367,8 +1386,12 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		tblColHists:       ds.TblColHists,
 		cst:               cost,
 	}
-	copTask.partitionTable.pruningConds = ds.allConds
-	copTask.partitionTable.partitionNames = ds.partitionNames
+	copTask.partitionInfo = PartitionInfo{
+		PruningConds:   ds.allConds,
+		PartitionNames: ds.partitionNames,
+		Columns:        ds.TblCols,
+		ColumnNames:    ds.names,
+	}
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
@@ -1398,6 +1421,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		return invalidTask
 	}
 
+	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
 	pointGetPlan := PointGetPlan{
 		ctx:              ds.ctx,
 		AccessConditions: candidate.path.AccessConds,
@@ -1407,7 +1431,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		outputNames:      ds.OutputNames(),
 		LockWaitTime:     ds.ctx.GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
-	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(1.0), ds.blockOffset)
+	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {
 		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
@@ -1475,13 +1499,14 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		return invalidTask
 	}
 
+	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
 	batchPointGetPlan := BatchPointGetPlan{
 		ctx:              ds.ctx,
 		AccessConditions: candidate.path.AccessConds,
 		TblInfo:          ds.TableInfo(),
 		KeepOrder:        !prop.IsEmpty(),
 		Columns:          ds.Columns,
-	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(float64(len(candidate.path.Ranges))), ds.schema.Clone(), ds.names, ds.blockOffset)
+	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.Items[0].Desc
 	}

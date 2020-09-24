@@ -51,6 +51,8 @@ var (
 	tikvSecondaryLockCleanupFailureCounterRollback = metrics.TiKVSecondaryLockCleanupFailureCounter.WithLabelValues("rollback")
 	tiKVTxnHeartBeatHistogramOK                    = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("ok")
 	tiKVTxnHeartBeatHistogramError                 = metrics.TiKVTxnHeartBeatHistogram.WithLabelValues("err")
+	tikvAsyncCommitTxnCounterOk                    = metrics.TiKVAsyncCommitTxnCounter.WithLabelValues("ok")
+	tikvAsyncCommitTxnCounterError                 = metrics.TiKVAsyncCommitTxnCounter.WithLabelValues("err")
 )
 
 // Global variable set by config file.
@@ -203,7 +205,11 @@ func (c *twoPhaseCommitter) extractKeyExistsErr(key kv.Key) error {
 		if handle.IsInt() {
 			return kv.ErrKeyExists.FastGenByArgs(handle.String(), "PRIMARY")
 		}
-		values, err := tablecodec.DecodeValuesBytesToStrings(handle.Encoded())
+		trimLen := 0
+		for i := 0; i < handle.NumCols(); i++ {
+			trimLen += len(handle.EncodedCol(i))
+		}
+		values, err := tablecodec.DecodeValuesBytesToStrings(handle.Encoded()[:trimLen])
 		if err == nil {
 			return kv.ErrKeyExists.FastGenByArgs(strings.Join(values, "-"), "PRIMARY")
 		}
@@ -426,7 +432,9 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 	action.tiKVTxnRegionsNumHistogram().Observe(float64(len(groups)))
 
 	var sizeFunc = c.keySize
-	if _, ok := action.(actionPrewrite); ok {
+
+	switch act := action.(type) {
+	case actionPrewrite:
 		// Do not update regionTxnSize on retries. They are not used when building a PrewriteRequest.
 		if len(bo.errors) == 0 {
 			for _, group := range groups {
@@ -435,6 +443,10 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		}
 		sizeFunc = c.keyValueSize
 		atomic.AddInt32(&c.getDetail().PrewriteRegionNum, int32(len(groups)))
+	case actionPessimisticLock:
+		if act.LockCtx.Stats != nil {
+			act.LockCtx.Stats.RegionNum = int32(len(groups))
+		}
 	}
 
 	batchBuilder := newBatched(c.primary())
@@ -472,8 +484,9 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		}
 	})
 
-	if firstIsPrimary && (actionIsCommit || actionIsCleanup || actionIsPessimiticLock) {
-		// primary should be committed/cleanup/pessimistically locked first
+	if firstIsPrimary &&
+		((actionIsCommit && !c.isAsyncCommit()) || actionIsCleanup || actionIsPessimiticLock) {
+		// primary should be committed(not async commit)/cleanup/pessimistically locked first
 		err = c.doActionOnBatches(bo, action, batchBuilder.primaryBatch())
 		if err != nil {
 			return errors.Trace(err)
@@ -484,12 +497,9 @@ func (c *twoPhaseCommitter) doActionOnGroupMutations(bo *Backoffer, action twoPh
 		}
 		batchBuilder.forgetPrimary()
 	}
-	if actionIsCommit && !actionCommit.retry {
-		// Commit secondary batches in background goroutine to reduce latency.
-		// The backoffer instance is created outside of the goroutine to avoid
-		// potential data race in unit test since `CommitMaxBackoff` will be updated
-		// by test suites.
-		secondaryBo := NewBackofferWithVars(context.Background(), CommitMaxBackoff, c.txn.vars)
+	// Already spawned a goroutine for async commit transaction.
+	if actionIsCommit && !actionCommit.retry && !c.isAsyncCommit() {
+		secondaryBo := NewBackofferWithVars(context.Background(), int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
 		go func() {
 			e := c.doActionOnBatches(secondaryBo, action, batchBuilder.allBatches())
 			if e != nil {
@@ -682,10 +692,10 @@ func sendTxnHeartBeat(bo *Backoffer, store *tikvStore, primary []byte, startTS, 
 // checkAsyncCommit checks if async commit protocol is available for current transaction commit, true is returned if possible.
 func (c *twoPhaseCommitter) checkAsyncCommit() bool {
 	// TODO the keys limit need more tests, this value makes the unit test pass by now.
-	const asyncCommitKeysLimit = 256
 	// Async commit is not compatible with Binlog because of the non unique timestamp issue.
 	if c.connID > 0 && config.GetGlobalConfig().TiKVClient.EnableAsyncCommit &&
-		len(c.mutations.keys) <= asyncCommitKeysLimit && !c.shouldWriteBinlog() {
+		uint(len(c.mutations.keys)) <= config.GetGlobalConfig().TiKVClient.AsyncCommitKeysLimit &&
+		!c.shouldWriteBinlog() {
 		return true
 	}
 	return false
@@ -746,8 +756,12 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 			}
 		} else {
 			// The error means the async commit should not succeed.
+			// TODO: Handle undetermined case here.
 			if err != nil {
 				c.cleanup(ctx)
+				tikvAsyncCommitTxnCounterError.Inc()
+			} else {
+				tikvAsyncCommitTxnCounterOk.Inc()
 			}
 		}
 	}()
@@ -813,7 +827,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 		logutil.SetTag(ctx, "commitTs", commitTS)
 	}
 
-	tryAmend := c.isPessimistic && c.connID > 0 && !c.isAsyncCommit()
+	tryAmend := c.isPessimistic && c.connID > 0 && !c.isAsyncCommit() && c.txn.schemaAmender != nil
 	if !tryAmend {
 		_, _, err = c.checkSchemaValid(ctx, commitTS, c.txn.txnInfoSchema, false)
 		if err != nil {
@@ -860,7 +874,7 @@ func (c *twoPhaseCommitter) execute(ctx context.Context) (err error) {
 				failpoint.Return()
 			})
 			defer c.ttlManager.close()
-			commitBo := NewBackofferWithVars(ctx, CommitMaxBackoff, c.txn.vars)
+			commitBo := NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
 			err := c.commitMutations(commitBo, c.mutations)
 			if err != nil {
 				logutil.Logger(ctx).Warn("2PC async commit failed", zap.Uint64("connID", c.connID),
@@ -877,7 +891,7 @@ func (c *twoPhaseCommitter) commitTxn(ctx context.Context, commitDetail *execdet
 	c.txn.GetMemBuffer().DiscardValues()
 	start := time.Now()
 
-	commitBo := NewBackofferWithVars(ctx, CommitMaxBackoff, c.txn.vars)
+	commitBo := NewBackofferWithVars(ctx, int(atomic.LoadUint64(&CommitMaxBackoff)), c.txn.vars)
 	err := c.commitMutations(commitBo, c.mutations)
 	commitDetail.CommitTime = time.Since(start)
 	if commitBo.totalSleep > 0 {
@@ -1003,8 +1017,12 @@ func (c *twoPhaseCommitter) checkSchemaValid(ctx context.Context, checkTS uint64
 	tryAmend bool) (*RelatedSchemaChange, bool, error) {
 	checker, ok := c.txn.us.GetOption(kv.SchemaChecker).(schemaLeaseChecker)
 	if !ok {
-		logutil.Logger(ctx).Warn("schemaLeaseChecker is not set for this transaction, schema check skipped",
-			zap.Uint64("connID", c.connID), zap.Uint64("startTS", c.startTS), zap.Uint64("commitTS", checkTS))
+		if c.connID > 0 {
+			logutil.Logger(ctx).Warn("schemaLeaseChecker is not set for this transaction",
+				zap.Uint64("connID", c.connID),
+				zap.Uint64("startTS", c.startTS),
+				zap.Uint64("commitTS", checkTS))
+		}
 		return nil, false, nil
 	}
 	relatedChanges, err := checker.CheckBySchemaVer(checkTS, startInfoSchema)

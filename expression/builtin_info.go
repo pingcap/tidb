@@ -774,14 +774,16 @@ func decodeKey(ctx sessionctx.Context, s string) string {
 	// Try to decode it as a record key.
 	tableID, handle, err := tablecodec.DecodeRecordKey(key)
 	if err == nil {
-		return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle.IntValue(), 10)
+		if handle.IsInt() {
+			return "tableID=" + strconv.FormatInt(tableID, 10) + ", _tidb_rowid=" + strconv.FormatInt(handle.IntValue(), 10)
+		}
+		return "tableID=" + strconv.FormatInt(tableID, 10) + ", clusterHandle=" + handle.String()
 	}
 	// Try decode as table index key.
 	tableID, indexID, indexValues, err := tablecodec.DecodeIndexKey(key)
 	if err == nil {
 		return "tableID=" + strconv.FormatInt(tableID, 10) + ", indexID=" + strconv.FormatInt(indexID, 10) + ", indexValues=" + strings.Join(indexValues, ",")
 	}
-
 	// TODO: try to decode other type key.
 	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("invalid record/index key: %X", key))
 	return s

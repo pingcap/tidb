@@ -16,6 +16,7 @@ package planner
 import (
 	"context"
 	"math"
+	"runtime/trace"
 	"strings"
 	"time"
 
@@ -105,13 +106,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
 	stmtHints, warns := handleStmtHints(tableHints)
-	defer func() {
-		sessVars.StmtCtx.StmtHints = stmtHints
-		for _, warn := range warns {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
-		}
-	}()
 	sessVars.StmtCtx.StmtHints = stmtHints
+	for _, warn := range warns {
+		sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
+	warns = warns[:0]
 	bestPlan, names, _, err := optimize(ctx, sctx, node, is)
 	if err != nil {
 		return nil, nil, err
@@ -142,6 +141,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 	bestPlanHintStr := hint.RestoreOptimizerHints(bestPlanHint)
 
+	defer func() {
+		sessVars.StmtCtx.StmtHints = stmtHints
+		for _, warn := range warns {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
+		}
+	}()
 	binding := bindRecord.FindBinding(bestPlanHintStr)
 	// If the best bestPlan is in baselines, just use it.
 	if binding != nil && binding.Status == bindinfo.Using {
@@ -345,7 +350,7 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 	}
 
 	v, ok := p.(*plannercore.PointGetPlan)
-	return ok && v.IndexInfo == nil
+	return ok && (v.IndexInfo == nil || (v.IndexInfo.Primary && v.TblInfo.IsCommonHandle))
 }
 
 // OptimizeExecStmt to optimize prepare statement protocol "execute" statement
@@ -353,6 +358,7 @@ func useMaxTS(ctx sessionctx.Context, p plannercore.Plan) bool {
 // for point select like plan which does not need extra things
 func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (plannercore.Plan, error) {
+	defer trace.StartRegion(ctx, "Optimize").End()
 	var err error
 	builder := plannercore.NewPlanBuilder(sctx, is, nil)
 	p, err := builder.Build(ctx, execAst)
@@ -469,10 +475,6 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		if stmtHints.ForceNthPlan < 1 {
 			stmtHints.ForceNthPlan = -1
 			warn := errors.Errorf("the hintdata for NTH_PLAN() is too small, hint ignored.")
-			warns = append(warns, warn)
-		} else if stmtHints.ForceNthPlan > 100 {
-			stmtHints.ForceNthPlan = -1
-			warn := errors.Errorf("the hintdata for NTH_PLAN() is too big, hint ignored.")
 			warns = append(warns, warn)
 		}
 	} else {
