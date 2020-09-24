@@ -254,20 +254,45 @@ func (p *PhysicalBroadCastJoin) ToPB(ctx sessionctx.Context, storeType kv.StoreT
 	if err != nil {
 		return nil, err
 	}
+
+	leftConditions, err := expression.ExpressionsToPBList(sc, p.LeftConditions, client)
+	if err != nil {
+		return nil, err
+	}
+	rightConditions, err := expression.ExpressionsToPBList(sc, p.RightConditions, client)
+	if err != nil {
+		return nil, err
+	}
+	otherConditions, err := expression.ExpressionsToPBList(sc, p.OtherConditions, client)
+	if err != nil {
+		return nil, err
+	}
+
 	pbJoinType := tipb.JoinType_TypeInnerJoin
 	switch p.JoinType {
 	case LeftOuterJoin:
 		pbJoinType = tipb.JoinType_TypeLeftOuterJoin
 	case RightOuterJoin:
 		pbJoinType = tipb.JoinType_TypeRightOuterJoin
+	case SemiJoin:
+		pbJoinType = tipb.JoinType_TypeSemiJoin
+	case AntiSemiJoin:
+		pbJoinType = tipb.JoinType_TypeAntiSemiJoin
+	case LeftOuterSemiJoin:
+		pbJoinType = tipb.JoinType_TypeLeftOuterSemiJoin
+	case AntiLeftOuterSemiJoin:
+		pbJoinType = tipb.JoinType_TypeAntiLeftOuterSemiJoin
 	}
 	join := &tipb.Join{
-		JoinType:      pbJoinType,
-		JoinExecType:  tipb.JoinExecType_TypeHashJoin,
-		InnerIdx:      int64(p.InnerChildIdx),
-		LeftJoinKeys:  left,
-		RightJoinKeys: right,
-		Children:      []*tipb.Executor{lChildren, rChildren},
+		JoinType:        pbJoinType,
+		JoinExecType:    tipb.JoinExecType_TypeHashJoin,
+		InnerIdx:        int64(p.InnerChildIdx),
+		LeftJoinKeys:    left,
+		RightJoinKeys:   right,
+		LeftConditions:  leftConditions,
+		RightConditions: rightConditions,
+		OtherConditions: otherConditions,
+		Children:        []*tipb.Executor{lChildren, rChildren},
 	}
 
 	executorID := p.ExplainID().String()

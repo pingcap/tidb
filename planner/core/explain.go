@@ -616,15 +616,20 @@ func (p *PhysicalMergeJoin) ExplainNormalizedInfo() string {
 
 // ExplainInfo implements Plan interface.
 func (p *PhysicalBroadCastJoin) ExplainInfo() string {
-	return p.explainInfo()
+	return p.explainInfo(false)
 }
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalBroadCastJoin) ExplainNormalizedInfo() string {
-	return p.explainInfo()
+	return p.explainInfo(true)
 }
 
-func (p *PhysicalBroadCastJoin) explainInfo() string {
+func (p *PhysicalBroadCastJoin) explainInfo(normalized bool) string {
+	sortedExplainExpressionList := expression.SortedExplainExpressionList
+	if normalized {
+		sortedExplainExpressionList = expression.SortedExplainNormalizedExpressionList
+	}
+
 	buffer := new(bytes.Buffer)
 
 	buffer.WriteString(p.JoinType.String())
@@ -636,6 +641,21 @@ func (p *PhysicalBroadCastJoin) explainInfo() string {
 	if len(p.RightJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", right key:%s",
 			expression.ExplainColumnList(p.RightJoinKeys))
+	}
+	if len(p.LeftConditions) > 0 {
+		if normalized {
+			fmt.Fprintf(buffer, ", left cond:%s", expression.SortedExplainNormalizedExpressionList(p.LeftConditions))
+		} else {
+			fmt.Fprintf(buffer, ", left cond:%s", p.LeftConditions)
+		}
+	}
+	if len(p.RightConditions) > 0 {
+		fmt.Fprintf(buffer, ", right cond:%s",
+			sortedExplainExpressionList(p.RightConditions))
+	}
+	if len(p.OtherConditions) > 0 {
+		fmt.Fprintf(buffer, ", other cond:%s",
+			sortedExplainExpressionList(p.OtherConditions))
 	}
 	return buffer.String()
 }
