@@ -643,29 +643,6 @@ func onSetDefaultValue(t *meta.Meta, job *model.Job) (ver int64, _ error) {
 	return updateColumnDefaultValue(t, job, newCol, &newCol.Name)
 }
 
-// CheckNeedReorg is used to judge whether it is necessary to reorg the data when we change column from `from` to `to` type.
-func CheckNeedReorg(from, to *model.ColumnInfo) bool {
-	// TODO: fill in more judgement logic into this function based the encode of TiDB and move this into parser as a member function of columnInfo.
-	if from.Tp == to.Tp {
-		// Same type change
-		switch to.Tp {
-		case mysql.TypeNewDecimal:
-			// Since type decimal will encode the precision, frac, negative(signed) and wordBuf into storage together, there is no short
-			// cut to eliminate data reorg change for column type change between decimal.
-			return from.Flen != to.Flen || from.Decimal != from.Flen || mysql.HasUnsignedFlag(from.Flag) != mysql.HasUnsignedFlag(to.Flag)
-		case mysql.TypeLonglong, mysql.TypeLong, mysql.TypeInt24, mysql.TypeShort, mysql.TypeTiny:
-			// Since type integer are all stored as int64(for signed) or uint64(for unsigned), shrinking the flen or changing the signed
-			// attribute need a data reorg change.
-			return from.Flen > to.Flen || mysql.HasUnsignedFlag(from.Flag) != mysql.HasUnsignedFlag(to.Flag)
-		}
-	} else {
-		// Diff type change
-		// TODO: fill in more judgement logic into this function.
-
-	}
-	return true
-}
-
 func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	toUnsigned := mysql.HasUnsignedFlag(newCol.Flag)
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.Flag)
@@ -1180,8 +1157,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 
 	failpoint.Inject("MockReorgTimeoutInOneRegion", func(val failpoint.Value) {
 		if val.(bool) {
-			if handle.IntValue() == 3000 && atomic.LoadInt32(&TestCheckReorgTimeout) == 0 {
-				atomic.StoreInt32(&TestCheckReorgTimeout, 1)
+			if handle.IntValue() == 3000 && atomic.CompareAndSwapInt32(&TestCheckReorgTimeout, 0, 1) {
 				failpoint.Return(errors.Trace(errWaitReorgTimeout))
 			}
 		}
