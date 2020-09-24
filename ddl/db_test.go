@@ -3323,43 +3323,59 @@ func (s *testDBSuite) testRenameMultiTables(c *C, isAlterTable bool) {
 	oldTblInfo3, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t5"))
 	c.Assert(err, IsNil)
 	oldTblID3 := oldTblInfo3.Meta().ID
-	tk.MustExec("rename table test1.t3 to test1.t6, test1.t4 to test1.t7, test1.t5 to test1.t8")
+	tk.MustExec("rename table test1.t3 to test1.t1, test1.t4 to test1.t2, test1.t5 to test1.t3")
 	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo1, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t6"))
+	newTblInfo1, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t1"))
 	c.Assert(err, IsNil)
 	c.Assert(newTblInfo1.Meta().ID, Equals, oldTblID1)
-	newTblInfo2, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t7"))
+	newTblInfo2, err = is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t2"))
 	c.Assert(err, IsNil)
 	c.Assert(newTblInfo2.Meta().ID, Equals, oldTblID2)
-	newTblInfo3, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t8"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo3.Meta().ID, Equals, oldTblID3)
-	tk.MustQuery("show tables").Check(testkit.Rows("t6", "t7", "t8"))
-
-	// for multi tables different databases
-	tk.MustExec("use test")
-	tk.MustExec("rename table test1.t6 to test.t1, test1.t7 to test.t2, test1.t8 to test.t3")
-	is = domain.GetDomain(ctx).InfoSchema()
-	newTblInfo1, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo1.Meta().ID, Equals, oldTblID1)
-	newTblInfo2, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
-	c.Assert(err, IsNil)
-	c.Assert(newTblInfo2.Meta().ID, Equals, oldTblID2)
-	newTblInfo3, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	newTblInfo3, err := is.TableByName(model.NewCIStr("test1"), model.NewCIStr("t3"))
 	c.Assert(err, IsNil)
 	c.Assert(newTblInfo3.Meta().ID, Equals, oldTblID3)
 	tk.MustQuery("show tables").Check(testkit.Rows("t1", "t2", "t3"))
 
+	// for multi tables different databases
+	tk.MustExec("use test")
+	tk.MustExec("rename table test1.t1 to test.t2, test1.t2 to test.t3, test1.t3 to test.t4")
+	is = domain.GetDomain(ctx).InfoSchema()
+	newTblInfo1, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo1.Meta().ID, Equals, oldTblID1)
+	newTblInfo2, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo2.Meta().ID, Equals, oldTblID2)
+	newTblInfo3, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t4"))
+	c.Assert(err, IsNil)
+	c.Assert(newTblInfo3.Meta().ID, Equals, oldTblID3)
+	tk.MustQuery("show tables").Check(testkit.Rows("t2", "t3", "t4"))
+
 	// for failure case
 	failSQL := "rename table test_not_exist.t to test_not_exist.t, test_not_exist.t to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
+	if isAlterTable {
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
+	} else {
+		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	}
 	failSQL = "rename table test.test_not_exist to test.test_not_exist, test.test_not_exist to test.test_not_exist"
-	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
+	if isAlterTable {
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
+	} else {
+		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	}
 	failSQL = "rename table test.t_not_exist to test_not_exist.t, test.t_not_exist to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
+	if isAlterTable {
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
+	} else {
+		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	}
 	failSQL = "rename table test1.t2 to test_not_exist.t, test1.t2 to test_not_exist.t"
-	tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
+	if isAlterTable {
+		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
+	} else {
+		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
+	}
 
 	tk.MustExec("drop database test1")
 	tk.MustExec("drop database test")
