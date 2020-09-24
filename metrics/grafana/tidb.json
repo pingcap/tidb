@@ -6122,7 +6122,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Copr Cache 100",
+          "title": "Coprocessor Cache",
           "tooltip": {
             "msResolution": false,
             "shared": true,
