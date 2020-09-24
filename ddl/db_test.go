@@ -3149,11 +3149,6 @@ func (s *testDBSuite6) TestRenameMultiTables(c *C) {
 	s.testRenameMultiTables(c, isAlterTable)
 }
 
-func (s *testDBSuite7) TestAlterTableRenameMultiTables(c *C) {
-	isAlterTable := true
-	s.testRenameMultiTables(c, isAlterTable)
-}
-
 func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3353,29 +3348,13 @@ func (s *testDBSuite) testRenameMultiTables(c *C, isAlterTable bool) {
 
 	// for failure case
 	failSQL := "rename table test_not_exist.t to test_not_exist.t, test_not_exist.t to test_not_exist.t"
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
-	}
+	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
 	failSQL = "rename table test.test_not_exist to test.test_not_exist, test.test_not_exist to test.test_not_exist"
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
-	}
+	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
 	failSQL = "rename table test.t_not_exist to test_not_exist.t, test.t_not_exist to test_not_exist.t"
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
-	}
+	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
 	failSQL = "rename table test1.t2 to test_not_exist.t, test1.t2 to test_not_exist.t"
-	if isAlterTable {
-		tk.MustGetErrCode(failSQL, errno.ErrNoSuchTable)
-	} else {
-		tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
-	}
+	tk.MustGetErrCode(failSQL, errno.ErrFileNotFound)
 
 	tk.MustExec("drop database test1")
 	tk.MustExec("drop database test")
