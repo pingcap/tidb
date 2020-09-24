@@ -136,11 +136,11 @@ func (e *slowQueryRetriever) getNextFileReader() *bufio.Reader {
 	e.fileIdx++
 	if e.stats != nil {
 		stat, err := file.Stat()
-		if err != nil {
-			logutil.BgLogger().Debug("get slow log stat failed", zap.Error(err))
+		if err == nil {
+			// ignore the err will be ok.
+			e.stats.readFileSize += stat.Size()
+			e.stats.readFileNum++
 		}
-		e.stats.readFileSize += stat.Size()
-		e.stats.readFileNum++
 	}
 	return bufio.NewReader(file)
 }
@@ -252,11 +252,11 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 			lineByte, err := getOneLine(reader)
 			if err != nil {
 				if err == io.EOF {
+					e.fileLine = 0
 					reader = e.getNextFileReader()
 					if reader == nil {
 						return log, nil
 					}
-					e.fileLine = 0
 					offset.length = len(log)
 					continue
 				}
