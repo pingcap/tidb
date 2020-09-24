@@ -191,6 +191,35 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		truncateTrailingSpaces(&casted)
 	}
 
+	if (sc.InInsertStmt || sc.InUpdateStmt) && !casted.IsNull() && (col.Tp == mysql.TypeDate || col.Tp == mysql.TypeDatetime) {
+		tm := casted.GetMysqlTime()
+		mode := ctx.GetSessionVars().SQLMode
+		ignoreErr := sc.DupKeyAsWarning
+
+		if (mode.HasNoZeroDateMode() && tm.IsZero()) ||
+			(mode.HasNoZeroInDateMode() && tm.Year() > 0 && (tm.Month() == 0 || tm.Day() == 0)) {
+			if mode.HasStrictMode() && !ignoreErr {
+				return casted, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, tm.String())
+			}
+			var (
+				zeroV interface{}
+				zeroT string
+			)
+			if col.Tp == mysql.TypeDate {
+				zeroV, zeroT = types.ZeroDate, types.DateStr
+			} else {
+				zeroV, zeroT = types.ZeroDatetime, types.DateTimeStr
+			}
+
+			// FIXME: as in MySQL 8.0's implement, warning message is `types.ErrWarnDataOutOfRange`,
+			// but this error message need a `rowIdx` argument, in this context, the `rowIdx` is missing.
+			// And refactor this function seems too complicated, so we set the warning message the same to error's.
+			sc.AppendWarning(types.ErrWrongValue.GenWithStackByArgs(zeroT, tm.String()))
+			return types.NewDatum(zeroV), nil
+		}
+		return casted, nil
+	}
+
 	if col.Charset == charset.CharsetASCII {
 		if ctx.GetSessionVars().SkipASCIICheck {
 			return casted, nil
