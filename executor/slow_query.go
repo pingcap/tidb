@@ -110,17 +110,6 @@ func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
 	}
 	e.initialized = true
 	e.files, err = e.getAllFiles(sctx, sctx.GetSessionVars().SlowQueryFile)
-	if err != nil {
-		return err
-	}
-	e.stats.readFileNum = len(e.files)
-	for _, f := range e.files {
-		stat, err := f.file.Stat()
-		if err != nil {
-			return err
-		}
-		e.stats.readFileSize += stat.Size()
-	}
 	return err
 }
 
@@ -139,14 +128,33 @@ type parsedSlowLog struct {
 	err  error
 }
 
+func (e *slowQueryRetriever) getNextFileReader() *bufio.Reader {
+	if e.fileIdx >= len(e.files) {
+		return nil
+	}
+	file := e.files[e.fileIdx].file
+	e.fileIdx++
+	if e.stats != nil {
+		stat, err := file.Stat()
+		if err != nil {
+			logutil.BgLogger().Debug("get slow log stat failed", zap.Error(err))
+		}
+		e.stats.readFileSize += stat.Size()
+		e.stats.readFileNum++
+	}
+	return bufio.NewReader(file)
+}
+
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
+	defer close(e.parsedSlowLogCh)
 	if len(e.files) == 0 {
-		close(e.parsedSlowLogCh)
 		return
 	}
-	reader := bufio.NewReader(e.files[0].file)
+	reader := e.getNextFileReader()
+	if reader == nil {
+		return
+	}
 	e.parseSlowLog(ctx, sctx, reader, 64)
-	close(e.parsedSlowLogCh)
 }
 
 func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, bool, error) {
@@ -244,13 +252,12 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 			lineByte, err := getOneLine(reader)
 			if err != nil {
 				if err == io.EOF {
-					e.fileIdx++
-					e.fileLine = 0
-					if e.fileIdx >= len(e.files) {
+					reader = e.getNextFileReader()
+					if reader == nil {
 						return log, nil
 					}
+					e.fileLine = 0
 					offset.length = len(log)
-					reader.Reset(e.files[e.fileIdx].file)
 					continue
 				}
 				return log, err
