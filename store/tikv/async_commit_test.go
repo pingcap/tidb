@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -294,10 +295,14 @@ func (s *testAsyncCommitSuite) TestSecondaryListInPrimaryLock(c *C) {
 
 	loc, err = s.store.GetRegionCache().LocateKey(s.bo, []byte("p"))
 	c.Assert(err, IsNil)
-	c.Assert(loc.StartKey, BytesEquals, []byte("o"))
-	c.Assert(loc.EndKey, BytesEquals, []byte("u"))
+	c.Assert([]byte(loc.StartKey), BytesEquals, []byte("o"))
+	c.Assert([]byte(loc.EndKey), BytesEquals, []byte("u"))
 
+	var connID uint64 = 0
 	test := func(keys []string, values []string) {
+		connID++
+		ctx := context.WithValue(context.Background(), sessionctx.ConnID, connID)
+
 		txn, err := s.store.Begin()
 		c.Assert(err, IsNil)
 		for i := range keys {
@@ -306,15 +311,18 @@ func (s *testAsyncCommitSuite) TestSecondaryListInPrimaryLock(c *C) {
 
 		c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
 
-		err = txn.Commit(context.Background())
+		err = txn.Commit(ctx)
 		c.Assert(err, IsNil)
 
-		primary := txn.(*tikvTxn).committer.primary()
+		tikvTxn := txn.(*tikvTxn)
+		primary := tikvTxn.committer.primary()
 		txnStatus, err := s.store.lockResolver.getTxnStatus(s.bo, txn.StartTS(), primary, 0, 0, false)
 		c.Assert(err, IsNil)
-		c.Assert(txnStatus.IsCommitted, IsFalse)
+		c.Assert(txnStatus.IsCommitted(), IsFalse)
 		c.Assert(txnStatus.action, Equals, kvrpcpb.Action_NoAction)
-		expectedSecondaries := make([][]byte, 0, len(keys)-1)
+		// Currently when the transaction has no secondary, the `secondaries` field of the txnStatus
+		// will be set nil. So here initialize the `expectedSecondaries` to nil too.
+		var expectedSecondaries [][]byte
 		for _, k := range keys {
 			if !bytes.Equal([]byte(k), primary) {
 				expectedSecondaries = append(expectedSecondaries, []byte(k))
