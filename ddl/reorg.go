@@ -126,10 +126,6 @@ func (rc *reorgCtx) mergeWarnings(warnings map[errors.ErrorID]*terror.Error, war
 	}
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
-	if rc.mu.warnings == nil || rc.mu.warningsCount == nil {
-		rc.mu.warnings = make(map[errors.ErrorID]*terror.Error, len(warnings))
-		rc.mu.warningsCount = make(map[errors.ErrorID]int64, len(warningsCount))
-	}
 	rc.mu.warnings, rc.mu.warningsCount = mergeWarningsAndWarningsCount(warnings, rc.mu.warnings, warningsCount, rc.mu.warningsCount)
 }
 
@@ -166,6 +162,8 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		// initial reorgCtx
 		w.reorgCtx.setRowCount(job.GetRowCount())
 		w.reorgCtx.setNextHandle(reorgInfo.StartHandle)
+		w.reorgCtx.mu.warnings = make(map[errors.ErrorID]*terror.Error)
+		w.reorgCtx.mu.warningsCount = make(map[errors.ErrorID]int64)
 		go func() {
 			defer w.wg.Done()
 			w.reorgCtx.doneCh <- f()

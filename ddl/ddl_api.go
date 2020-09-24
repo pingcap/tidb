@@ -4630,8 +4630,13 @@ func (d *ddl) CreateIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		SchemaName: schema.Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
-		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+		ReorgMeta: &model.DDLReorgMeta{
+			SQLMode:       ctx.GetSessionVars().SQLMode,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+		},
+		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
+		Priority: ctx.GetSessionVars().DDLReorgPriority,
 	}
 
 	err = d.doDDLJob(ctx, job)
