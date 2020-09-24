@@ -6429,24 +6429,25 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMAction = config.OOMActionCancel
 	})
-	// assert oom action
+	failpoint.Enable("github.com/pingcap/tidb/store/tikv/testRateLimitActionPerformed", `return(true)`)
+	// assert oom action happened once
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		quota := count * 15
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
 		tk.MustExec("use test")
-		tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
+		tk.MustExec("set @@tidb_mem_quota_query=1;")
 		var expect []string
 		for i := 0; i < count; i++ {
 			expect = append(expect, fmt.Sprintf("%v", i))
 		}
 		tk.MustQuery(testcase.sql).Sort().Check(testkit.Rows(expect...))
 		// assert oom action worked by max consumed > memory quota
-		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(quota))
+		c.Assert(tk.Se.GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), Greater, int64(1))
 		se.Close()
 	}
+	failpoint.Disable("github.com/pingcap/tidb/store/tikv/testRateLimitActionPerformed")
 
 	// assert oom fallback
 	for _, testcase := range testcases {

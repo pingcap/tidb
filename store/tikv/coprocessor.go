@@ -1270,6 +1270,11 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 
 // Action implements ActionOnExceed.Action
 func (e *rateLimitAction) Action(t *memory.Tracker) {
+	failpoint.Inject("testRateLimitActionPerformed", func(val failpoint.Value) {
+		if val.(bool) {
+			t.SetBytesLimit(1 * 1024 * 1024 * 1024)
+		}
+	})
 	failpoint.Inject("testRateLimitActionDisable", func(val failpoint.Value) {
 		if val.(bool) {
 			e.setEnabled(false)
