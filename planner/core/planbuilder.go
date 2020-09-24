@@ -369,6 +369,7 @@ const (
 	groupByClause
 	showStatement
 	globalOrderByClause
+	expressionClause
 )
 
 var clauseMsg = map[clauseCode]string{
@@ -381,6 +382,7 @@ var clauseMsg = map[clauseCode]string{
 	groupByClause:       "group statement",
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
+	expressionClause:    "expression",
 }
 
 type capFlagType = uint64
@@ -444,6 +446,10 @@ type PlanBuilder struct {
 	partitionedTable []table.PartitionedTable
 	// CreateView needs this information to check whether exists nested view.
 	underlyingViewNames set.StringSet
+
+	// evalDefaultExpr needs this information to find the corresponding column.
+	// It stores the OutputNames before buildProjection.
+	allNames [][]*types.FieldName
 }
 
 type handleColHelper struct {
