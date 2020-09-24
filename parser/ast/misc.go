@@ -2681,6 +2681,12 @@ type HintTimeRange struct {
 	To   string
 }
 
+// HintSetVar is the payload of `SET_VAR` hint
+type HintSetVar struct {
+	VarName string
+	Value   string
+}
+
 // HintTable is table in the hint. It may have query block info.
 type HintTable struct {
 	DBName        model.CIStr
@@ -2781,6 +2787,11 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteString(hintData.From)
 		ctx.WritePlain(", ")
 		ctx.WriteString(hintData.To)
+	case "set_var":
+		hintData := n.HintData.(HintSetVar)
+		ctx.WriteString(hintData.VarName)
+		ctx.WritePlain(", ")
+		ctx.WriteString(hintData.Value)
 	}
 	ctx.WritePlain(")")
 	return nil
