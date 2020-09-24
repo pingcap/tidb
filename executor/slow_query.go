@@ -90,10 +90,6 @@ func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Conte
 }
 
 func (e *slowQueryRetriever) initialize(sctx sessionctx.Context) error {
-	start := time.Now()
-	defer func() {
-		fmt.Printf("slow_query initialize time: %v  \n", time.Since(start))
-	}()
 	var err error
 	var hasProcessPriv bool
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
@@ -258,27 +254,17 @@ func (e *slowQueryRetriever) getBatchLog(reader *bufio.Reader, offset *offset, n
 }
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
-	start := time.Now()
-	defer func() {
-		fmt.Printf("slow_query parse log total time: %v  \n", time.Since(start))
-	}()
 	var wg sync.WaitGroup
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
 	ch := make(chan int, sctx.GetSessionVars().Concurrency.DistSQLScanConcurrency())
 	defer close(ch)
-	readTotal := time.Duration(0)
-	defer func() {
-		fmt.Printf("slow_query, read log: %v \n", readTotal.String())
-	}()
 	for {
-		startTime := time.Now()
 		log, err := e.getBatchLog(reader, &offset, logNum)
 		if err != nil {
 			e.parsedSlowLogCh <- parsedSlowLog{nil, err}
 			break
 		}
-		readTotal += time.Since(startTime)
 		start := offset
 		wg.Add(1)
 		ch <- 1
@@ -719,15 +705,6 @@ type logFile struct {
 
 // getAllFiles is used to get all slow-log needed to parse, it is exported for test.
 func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath string) ([]logFile, error) {
-	start := time.Now()
-	totalFile := 0
-	validFile := 0
-	queryFile := 0
-
-	defer func() {
-		fmt.Printf("slow_query get all files time: %v, %v,%v,%v \n", time.Since(start), totalFile, validFile, queryFile)
-	}()
-
 	if e.extractor == nil || !e.extractor.Enable {
 		file, err := os.Open(logFilePath)
 		if err != nil {
@@ -755,7 +732,6 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		return nil, err
 	}
 	walkFn := func(path string, info os.FileInfo) error {
-		totalFile++
 		if info.IsDir() {
 			return nil
 		}
@@ -763,7 +739,6 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if !strings.HasPrefix(path, prefix) {
 			return nil
 		}
-		validFile++
 		file, err := os.OpenFile(path, os.O_RDONLY, os.ModePerm)
 		if err != nil {
 			return handleErr(err)
@@ -797,7 +772,6 @@ func (e *slowQueryRetriever) getAllFiles(sctx sessionctx.Context, logFilePath st
 		if err != nil {
 			return handleErr(err)
 		}
-		queryFile++
 		logFiles = append(logFiles, logFile{
 			file:  file,
 			start: fileStartTime,
