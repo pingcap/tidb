@@ -483,6 +483,7 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		if e.Column != nil && e.Column.Name.L != col.Name.L {
 			continue
 		}
+
 		desc := table.NewColDesc(col)
 		var columnDefault interface{}
 		if desc.DefaultValue != nil {
