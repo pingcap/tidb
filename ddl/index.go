@@ -541,11 +541,19 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		}
 
 		reorgInfo, err := getReorgInfo(d, t, job, tbl)
-
 		if err != nil || reorgInfo.first {
 			// If we run reorg firstly, we should update the job snapshot version
 			// and then run the reorg next time.
 			return ver, errors.Trace(err)
+		}
+
+		var limit int64 = 1000000
+		if GetTableTotalCount(w, tblInfo) > limit {
+			reorgInfos, getReorgErr := getParentJobReorgInfo(d, t, job, tbl)
+			if getReorgErr != nil {
+				return ver, errors.Trace(getReorgErr)
+			}
+			w.dispatchAddIndexSubTasks(tbl, indexInfo, reorgInfos)
 		}
 
 		err = w.runReorgJob(t, reorgInfo, tbl.Meta(), d.lease, func() (addIndexErr error) {
@@ -1081,6 +1089,29 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, indexInfo *model.IndexInfo, reorgInfo *reorgInfo) error {
 	logutil.BgLogger().Info("[ddl] start to add table index", zap.String("job", reorgInfo.Job.String()), zap.String("reorgInfo", reorgInfo.String()))
 	return w.writePhysicalTableRecord(t.(table.PhysicalTable), typeAddIndexWorker, indexInfo, nil, nil, reorgInfo)
+}
+
+func (w *worker) dispatchAddIndexSubTasks(t table.Table, idx *model.IndexInfo, reorgInfos []reorgInfo) error {
+	var (
+		kvRange  []kv.KeyRange
+		kvRanges []kv.KeyRange
+		err      error
+	)
+	if tbl, ok := t.(table.PartitionedTable); ok {
+		for index, reorgInfo := range reorgInfos {
+			kvRange, err = SplitTableRanges(tbl.GetPartition(reorgInfo.PhysicalTableID), reorgInfo.d.store, reorgInfo.StartHandle, reorgInfo.EndHandle)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			//TODO construct subTasks and put into the queue
+			kvRanges = append(kvRanges, kvRange...)
+		}
+	} else {
+		kvRange, err = SplitTableRanges(t.(table.PhysicalTable), reorgInfos[0].d.store, reorgInfos[0].StartHandle, reorgInfos[0].EndHandle)
+		kvRanges = append(kvRanges, kvRange...)
+		//TODO construct subTasks and put into the queue
+	}
+	return errors.Trace(err)
 }
 
 // addTableIndex handles the add index reorganization state for a table.
