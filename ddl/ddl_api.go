@@ -5408,6 +5408,8 @@ func buildPlacementSpecs(bundle *placement.Bundle, specs []*ast.PlacementSpec) (
 			role = placement.Voter
 		default:
 			err = errors.Errorf("unknown role: %d", spec.Role)
+		}
+		if err != nil {
 			break
 		}
 
