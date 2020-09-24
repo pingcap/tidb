@@ -254,8 +254,13 @@ TableOptimizerHintOpt:
 	}
 |	"SET_VAR" '(' Identifier '=' Value ')'
 	{
-		parser.warnUnsupportedHint($1)
-		$$ = nil
+		$$ = &ast.TableOptimizerHint{
+			HintName: model.NewCIStr($1),
+			HintData: ast.HintSetVar{
+				VarName: $3,
+				Value:   $5,
+			},
+		}
 	}
 |	"RESOURCE_GROUP" '(' Identifier ')'
 	{
