@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
 )
 
@@ -175,6 +176,10 @@ type DDLReorgMeta struct {
 	// EndHandle is the last handle of the adding indices table.
 	// We should only backfill indices in the range [startHandle, EndHandle].
 	EndHandle int64 `json:"end_handle"`
+
+	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
+	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
+	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
 }
 
 // NewDDLReorgMeta new a DDLReorgMeta.
@@ -260,6 +265,17 @@ func (job *Job) GetRowCount() int64 {
 	defer job.Mu.Unlock()
 
 	return job.RowCount
+}
+
+// SetWarnings sets the warnings of rows handled.
+func (job *Job) SetWarnings(warnings map[errors.ErrorID]*terror.Error, warningsCount map[errors.ErrorID]int64) {
+	job.ReorgMeta.Warnings = warnings
+	job.ReorgMeta.WarningsCount = warningsCount
+}
+
+// GetWarnings gets the warnings of the rows handled.
+func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.ErrorID]int64) {
+	return job.ReorgMeta.Warnings, job.ReorgMeta.WarningsCount
 }
 
 // Encode encodes job with json format.
