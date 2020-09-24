@@ -65,6 +65,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 		fakePlan.schema = schema
 		fakePlan.names = names
 	}
+	b.curClause = expressionClause
 	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
 	if err != nil {
 		return nil, err
