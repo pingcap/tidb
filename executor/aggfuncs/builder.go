@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Build is used to build a specific AggFunc implementation according to the
@@ -146,7 +148,8 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 	percent, _, err := aggFuncDesc.Args[1].EvalInt(sctx, chunk.Row{})
 	if err != nil {
 		// Should not reach here
-		panic(fmt.Sprintf("Error happened when buildApproxPercentile: %v", err))
+		logutil.BgLogger().Error("Error happened when buildApproxPercentile", zap.Error(err))
+		return nil
 	}
 
 	base := basePercentile{percent: int(percent), baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
