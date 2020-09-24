@@ -45,7 +45,7 @@ func (s *testStatsSuite) TestStatsCacheMiniMemoryLimit(c *C) {
 	//set new BytesLimit
 	BytesLimit := int64(90000)
 
-	do.StatsHandle().SetBytesLimit(BytesLimit)
+	do.StatsHandle().SetBytesLimit4Test(BytesLimit)
 	//create t2 and kick t1 of cache
 	testKit.MustExec("create table t2 (c1 int, c2 int)")
 	testKit.MustExec("insert into t2 values(1, 2)")
@@ -76,7 +76,7 @@ func (s *testStatsSuite) TestLoadHistWithLimit(c *C) {
 	h.SetLease(time.Second)
 	defer func() { h.SetLease(origLease) }()
 	BytesLimit := int64(300000)
-	h.SetBytesLimit(BytesLimit)
+	h.SetBytesLimit4Test(BytesLimit)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1(c int)")
@@ -84,7 +84,7 @@ func (s *testStatsSuite) TestLoadHistWithLimit(c *C) {
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t1")
 	h.Clear()
-	h.SetBytesLimit(BytesLimit)
+	h.SetBytesLimit4Test(BytesLimit)
 
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)
 	result := testKit.MustQuery("show stats_histograms where Table_name = 't1'")
@@ -113,7 +113,7 @@ func (s *testStatsSuite) TestLoadHistWithInvalidIndex(c *C) {
 	h.SetLease(time.Second)
 	defer func() { h.SetLease(origLease) }()
 	BytesLimit := int64(300000)
-	h.SetBytesLimit(BytesLimit)
+	h.SetBytesLimit4Test(BytesLimit)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1(c int)")
@@ -169,7 +169,7 @@ func (s *testStatsSuite) TestManyTableChange(c *C) {
 	defer func() { h.SetLease(origLease) }()
 
 	BytesLimit := int64(300000)
-	h.SetBytesLimit(BytesLimit)
+	h.SetBytesLimit4Test(BytesLimit)
 	tableSize := 100
 	testKit.MustExec("use test")
 	for i := 0; i <= tableSize; i++ {
@@ -222,7 +222,7 @@ func (s *testStatsSuite) TestManyTableChangeWithQuery(c *C) {
 	defer func() { h.SetLease(origLease) }()
 
 	BytesLimit := int64(300000)
-	h.SetBytesLimit(BytesLimit)
+	h.SetBytesLimit4Test(BytesLimit)
 	tableSize := 100
 	testKit.MustExec("use test")
 	for i := 0; i <= tableSize; i++ {

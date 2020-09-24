@@ -210,7 +210,7 @@ func (h *Handle) initCMSketch4Indices4Chunk(is infoschema.InfoSchema, tables map
 
 func (h *Handle) initCMSketch4Indices(is infoschema.InfoSchema, tables map[int64]*statistics.Table) error {
 	// indcies should be loaded first
-	limitSize := h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize
+	limitSize := h.mu.ctx.GetSessionVars().MemQuotaStatistics / defaultStatDataSize
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, cm_sketch " +
 		"from mysql.stats_histograms where is_index = 1 " +
 		fmt.Sprintf("order by table_id, hist_id limit %d", limitSize)
@@ -254,7 +254,7 @@ func (h *Handle) initStatsTopN4Chunk(tables map[int64]*statistics.Table, iter *c
 }
 
 func (h *Handle) initStatsTopN(tables map[int64]*statistics.Table) error {
-	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize) * int64(statistics.AnalyzeOptionDefault[ast.AnalyzeOptNumTopN])
+	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistics / defaultStatDataSize) * int64(statistics.AnalyzeOptionDefault[ast.AnalyzeOptNumTopN])
 	sql := "select HIGH_PRIORITY table_id, hist_id, value, count " +
 		"from mysql.stats_top_n " +
 		fmt.Sprintf("where is_index = 1 order by table_id, hist_id limit %d", limitSize)
@@ -375,7 +375,7 @@ func initStatsBuckets4Chunk(ctx sessionctx.Context, tables map[int64]*statistics
 }
 
 func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (err error) {
-	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistic / defaultStatDataSize) * int64(statistics.AnalyzeOptionDefault[ast.AnalyzeOptNumBuckets])
+	limitSize := (h.mu.ctx.GetSessionVars().MemQuotaStatistics / defaultStatDataSize) * int64(statistics.AnalyzeOptionDefault[ast.AnalyzeOptNumBuckets])
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound," +
 		"upper_bound from mysql.stats_buckets " +
 		fmt.Sprintf("order by is_index desc, table_id, hist_id, bucket_id limit %d", limitSize)
@@ -389,15 +389,15 @@ func (h *Handle) initStatsBuckets(tables map[int64]*statistics.Table) (err error
 	req := rc[0].NewChunk()
 	iter := chunk.NewIterator4Chunk(req)
 	var lastTableID int64 = -1
-	var totalRows int64 = 0
+	var totalRowsCnt int64
 	for {
 		err := rc[0].Next(context.TODO(), req)
-		totalRows += int64(req.NumRows())
+		totalRowsCnt += int64(req.NumRows())
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if req.NumRows() == 0 {
-			if limitSize <= totalRows && lastTableID != -1 {
+			if limitSize <= totalRowsCnt && lastTableID != -1 {
 				// remove the stats buckets of the last table_id because it may
 				// not be loaded fully.
 				tables[lastTableID] = tables[lastTableID].CopyWithoutBucketsAndCMS()

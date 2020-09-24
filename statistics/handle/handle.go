@@ -76,9 +76,9 @@ type Handle struct {
 }
 
 // Clear the statsCache, only for test.
-func (h *Handle) Clear() {
+func (h *Handle) Clear4Test() {
 	h.mu.Lock()
-	h.SetBytesLimit(h.mu.ctx.GetSessionVars().MemQuotaStatistic)
+	h.SetBytesLimit4Test(h.mu.ctx.GetSessionVars().MemQuotaStatistics)
 	h.statsCache.Clear()
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
@@ -107,7 +107,7 @@ func NewHandle(ctx sessionctx.Context, lease time.Duration) *Handle {
 	if exec, ok := ctx.(sqlexec.RestrictedSQLExecutor); ok {
 		handle.restrictedExec = exec
 	}
-	handle.statsCache = newStatsCache(ctx.GetSessionVars().MemQuotaStatistic)
+	handle.statsCache = newStatsCache(ctx.GetSessionVars().MemQuotaStatistics)
 	handle.mu.ctx = ctx
 	handle.mu.rateMap = make(errorRateDeltaMap)
 	return handle
@@ -254,7 +254,6 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 
 // GetPartitionStats retrieves the partition stats from cache.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
-
 	tbl, ok := h.statsCache.Lookup(pid)
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo)
@@ -265,13 +264,13 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	return tbl
 }
 
-//SetBytesLimit sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
-func (h *Handle) SetBytesLimit(bytesLimit int64) {
+// SetBytesLimit4Test sets the bytes limit for this tracker. "bytesLimit <= 0" means no limit.
+// Only used for test.
+func (h *Handle) SetBytesLimit4Test(bytesLimit int64) {
 	h.statsCache.mu.Lock()
 	h.statsCache.memTracker.SetBytesLimit(bytesLimit)
 	h.statsCache.memCapacity = bytesLimit
 	h.statsCache.mu.Unlock()
-
 }
 
 // CanRuntimePrune indicates whether tbl support runtime prune for table and first partition id.
