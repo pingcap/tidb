@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
-	"github.com/pingcap/tidb/store/mockstore/mocktikv"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
@@ -41,10 +41,10 @@ type testAsyncCommitSuite struct {
 var _ = Suite(&testAsyncCommitSuite{})
 
 func (s *testAsyncCommitSuite) SetUpTest(c *C) {
-	client, clstr, pdClient, err := mocktikv.NewTiKVAndPDClient("")
+	client, pdClient, cluster, err := unistore.New("")
 	c.Assert(err, IsNil)
-	mocktikv.BootstrapWithSingleStore(clstr)
-	s.cluster = clstr
+	unistore.BootstrapWithSingleStore(cluster)
+	s.cluster = cluster
 	store, err := NewTestTiKVStore(client, pdClient, nil, nil, 0)
 	c.Assert(err, IsNil)
 
@@ -122,10 +122,10 @@ func (s *testAsyncCommitSuite) mustGetLock(c *C, key []byte) *Lock {
 }
 
 func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.EnableAsyncCommit = true
 	})
-	defer config.RestoreFunc()()
 
 	s.putAlphabets(c)
 
