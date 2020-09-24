@@ -50,7 +50,7 @@ func (s *testAsyncCommitFailSuite) SetUpTest(c *C) {
 // TestFailCommitPrimaryRpcErrors tests rpc errors are handled properly when
 // committing primary region task.
 func (s *testAsyncCommitFailSuite) TestFailAsyncCommitPrewriteRpcErrors(c *C) {
-	defer config.RestoreFunc()
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.Enable = true
 	})
