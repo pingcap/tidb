@@ -281,16 +281,14 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 
 	var enable bool
 	// When tidb_enable_table_partition is 'on' or 'auto'.
-	if s.Partition.Tp == model.PartitionTypeRange {
-		if s.Partition.Sub == nil {
-			// Partition by range expression is enabled by default.
-			if s.Partition.ColumnNames == nil {
-				enable = true
-			}
-			// Partition by range columns and just one column.
-			if len(s.Partition.ColumnNames) == 1 {
-				enable = true
-			}
+	if s.Partition.Tp == model.PartitionTypeRange && (s.Partition.Sub == nil || s.Partition.Sub.Tp == model.PartitionTypeHash) {
+		// Partition by range expression is enabled by default.
+		if s.Partition.ColumnNames == nil {
+			enable = true
+		}
+		// Partition by range columns and just one column.
+		if len(s.Partition.ColumnNames) == 1 {
+			enable = true
 		}
 	}
 	// Partition by hash is enabled by default.
@@ -306,53 +304,60 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 		return nil, nil
 	}
 
-	pi := &model.PartitionInfo{
-		Type:   s.Partition.Tp,
-		Enable: enable,
-		Num:    s.Partition.Num,
-	}
-	if s.Partition.Expr != nil {
-		buf := new(bytes.Buffer)
-		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
-		if err := s.Partition.Expr.Restore(restoreCtx); err != nil {
-			return nil, err
-		}
-		pi.Expr = buf.String()
-	} else if s.Partition.ColumnNames != nil {
-		// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
-		if len(s.Partition.ColumnNames) != 1 {
-			pi.Enable = false
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedPartitionByRangeColumns)
-		}
-		pi.Columns = make([]model.CIStr, 0, len(s.Partition.ColumnNames))
-		for _, cn := range s.Partition.ColumnNames {
-			pi.Columns = append(pi.Columns, cn.Name)
-		}
+	pi, err := buildPartInfo(ctx, &s.Partition.PartitionMethod, enable)
+	if err != nil {
+		return nil, err
 	}
 
 	if s.Partition.Tp == model.PartitionTypeRange {
-		if err := buildRangePartitionDefinitions(ctx, s, pi); err != nil {
+		if err := buildRangePartitionDefinitions(ctx, s.Partition, pi); err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else if s.Partition.Tp == model.PartitionTypeHash {
-		if err := buildHashPartitionDefinitions(ctx, s, pi); err != nil {
+		if err := buildHashPartitionDefinitions(s.Partition.Definitions, pi); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	return pi, nil
 }
 
-func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) error {
+func buildPartInfo(ctx sessionctx.Context, partition *ast.PartitionMethod, enable bool) (*model.PartitionInfo, error) {
+	pi := &model.PartitionInfo{
+		Type:   partition.Tp,
+		Enable: enable,
+		Num:    partition.Num,
+	}
+	if partition.Expr != nil {
+		buf := new(bytes.Buffer)
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, buf)
+		if err := partition.Expr.Restore(restoreCtx); err != nil {
+			return nil, err
+		}
+		pi.Expr = buf.String()
+	} else if partition.ColumnNames != nil {
+		// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
+		if len(partition.ColumnNames) != 1 {
+			pi.Enable = false
+			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrUnsupportedPartitionByRangeColumns)
+		}
+		pi.Columns = make([]model.CIStr, 0, len(partition.ColumnNames))
+		for _, cn := range partition.ColumnNames {
+			pi.Columns = append(pi.Columns, cn.Name)
+		}
+	}
+	return pi, nil
+}
+
+func buildHashPartitionDefinitions(definitions []*ast.PartitionDefinition, pi *model.PartitionInfo) error {
 	if err := checkAddPartitionTooManyPartitions(pi.Num); err != nil {
 		return err
 	}
-
 	defs := make([]model.PartitionDefinition, pi.Num)
 	for i := 0; i < len(defs); i++ {
-		if len(s.Partition.Definitions) == 0 {
+		if len(definitions) == 0 {
 			defs[i].Name = model.NewCIStr(fmt.Sprintf("p%v", i))
 		} else {
-			def := s.Partition.Definitions[i]
+			def := definitions[i]
 			defs[i].Name = def.Name
 			defs[i].Comment, _ = def.Comment()
 		}
@@ -361,8 +366,8 @@ func buildHashPartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStm
 	return nil
 }
 
-func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableStmt, pi *model.PartitionInfo) (err error) {
-	for _, def := range s.Partition.Definitions {
+func buildRangePartitionDefinitions(ctx sessionctx.Context, partition *ast.PartitionOptions, pi *model.PartitionInfo) (err error) {
+	for _, def := range partition.Definitions {
 		comment, _ := def.Comment()
 		err = checkTooLongTable(def.Name)
 		if err != nil {
@@ -381,6 +386,22 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, s *ast.CreateTableSt
 			buf.Reset()
 		}
 		pi.Definitions = append(pi.Definitions, piDef)
+	}
+	if partition.Sub != nil && partition.Sub.Tp == model.PartitionTypeHash {
+		subPart, err := buildPartInfo(ctx, partition.Sub, pi.Enable)
+		if err != nil {
+			return err
+		}
+		err = buildHashPartitionDefinitions(nil, subPart)
+		if err != nil {
+			return err
+		}
+		pi.SubPart = subPart
+		pi.ParentDef = pi.Definitions
+		pi.Definitions = make([]model.PartitionDefinition, len(pi.ParentDef)*int(partition.Sub.Num))
+		for i := range pi.Definitions {
+			pi.Definitions[i].Name = model.NewCIStr(fmt.Sprintf("sp%v", i))
+		}
 	}
 	return nil
 }
@@ -718,6 +739,10 @@ func checkCreatePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo)
 	defs := pi.Definitions
 	if len(defs) == 0 {
 		return nil
+	}
+
+	if pi.SubPart != nil {
+		defs = pi.ParentDef
 	}
 
 	cols := tblInfo.Columns

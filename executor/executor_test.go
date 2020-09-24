@@ -4045,6 +4045,46 @@ func (s *testSerialSuite) TestTSOFail(c *C) {
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/session/mockGetTSFail"), IsNil)
 }
 
+func (s *testSuite3) TestSubPartitionTable(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists ts`)
+	tk.MustExec(`create table ts (id int) partition by range(id)
+		subpartition by hash(id) subpartitions 2 (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than maxvalue
+	)`)
+	tk.MustQuery(`show create table ts`).Check(testkit.Rows(
+		"ts CREATE TABLE `ts` (\n" +
+			"  `id` int(11) DEFAULT NULL\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+			"PARTITION BY RANGE ( `id` )\n" +
+			"SUBPARTITION BY HASH( `id` )\n" +
+			"SUBPARTITIONS 2 (\n" +
+			"  PARTITION `p0` VALUES LESS THAN (10) (\n" +
+			"    SUBPARTITION `sp0`,\n" +
+			"    SUBPARTITION `sp1`\n" +
+			"  ),\n" +
+			"  PARTITION `p1` VALUES LESS THAN (20) (\n" +
+			"    SUBPARTITION `sp2`,\n" +
+			"    SUBPARTITION `sp3`\n" +
+			"  ),\n" +
+			"  PARTITION `p2` VALUES LESS THAN (MAXVALUE) (\n" +
+			"    SUBPARTITION `sp4`,\n" +
+			"    SUBPARTITION `sp5`\n" +
+			"  )\n" +
+			")"))
+	tk.MustExec(`insert into ts(id) values(11)`)
+	tk.MustQuery(`select * from ts`).Check(testkit.Rows("11"))
+	tk.MustQuery(`select * from ts partition(sp3)`).Check(testkit.Rows("11"))
+	tk.MustQuery(`select * from ts where id = 11`).Check(testkit.Rows("11"))
+	tk.MustExec(`update ts set id = 100 where id = 11`)
+	tk.MustQuery(`select * from ts where id = 100`).Check(testkit.Rows("100"))
+	tk.MustExec(`delete from ts where id = 100`)
+	tk.MustQuery(`select * from ts`).Check(testkit.Rows())
+}
+
 func (s *testSuite3) TestSelectHashPartitionTable(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
