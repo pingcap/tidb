@@ -1121,15 +1121,31 @@ func appendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer) 
 		}
 		buf.WriteString(") (\n")
 	} else {
-		fmt.Fprintf(buf, "\nPARTITION BY %s ( %s ) (\n", partitionInfo.Type.String(), partitionInfo.Expr)
+		fmt.Fprintf(buf, "\nPARTITION BY %s ( %s )", partitionInfo.Type.String(), partitionInfo.Expr)
 	}
-	for i, def := range partitionInfo.Definitions {
-		lessThans := strings.Join(def.LessThan, ",")
-		fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
-		if i < len(partitionInfo.Definitions)-1 {
-			buf.WriteString(",\n")
-		} else {
-			buf.WriteString("\n")
+	if partitionInfo.SubPart == nil {
+		fmt.Fprint(buf, " (\n")
+		for i, def := range partitionInfo.Definitions {
+			lessThans := strings.Join(def.LessThan, ",")
+			fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
+			if i < len(partitionInfo.Definitions)-1 {
+				buf.WriteString(",\n")
+			} else {
+				buf.WriteString("\n")
+			}
+		}
+	} else {
+		fmt.Fprintf(buf, "\nSUBPARTITION BY HASH( %s )", partitionInfo.SubPart.Expr)
+		fmt.Fprintf(buf, "\nSUBPARTITIONS %d", partitionInfo.SubPart.Num)
+		fmt.Fprint(buf, " (\n")
+		for i, def := range partitionInfo.ParentDef {
+			lessThans := strings.Join(def.LessThan, ",")
+			fmt.Fprintf(buf, "  PARTITION `%s` VALUES LESS THAN (%s)", def.Name, lessThans)
+			if i < len(partitionInfo.ParentDef)-1 {
+				buf.WriteString(",\n")
+			} else {
+				buf.WriteString("\n")
+			}
 		}
 	}
 	buf.WriteString(")")

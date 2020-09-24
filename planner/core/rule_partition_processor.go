@@ -234,6 +234,9 @@ func (s *partitionProcessor) prune(ds *DataSource) (LogicalPlan, error) {
 		return s.processHashPartition(ds, pi)
 	}
 	if pi.Type == model.PartitionTypeRange {
+		if pi.SubPart != nil {
+			return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)))
+		}
 		return s.processRangePartition(ds, pi)
 	}
 

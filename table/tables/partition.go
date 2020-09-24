@@ -113,6 +113,9 @@ func newPartitionExpr(tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	pi := tblInfo.GetPartitionInfo()
 	switch pi.Type {
 	case model.PartitionTypeRange:
+		if pi.SubPart != nil {
+			return generateRangeSubHashPartitionExpr(ctx, pi, columns, names)
+		}
 		return generateRangePartitionExpr(ctx, pi, columns, names)
 	case model.PartitionTypeHash:
 		return generateHashPartitionExpr(ctx, pi, columns, names)
@@ -128,6 +131,8 @@ type PartitionExpr struct {
 	OrigExpr ast.ExprNode
 	// Expr is the hash partition expression.
 	Expr expression.Expression
+	// SubExpr is the expr used in subpartition
+	SubExpr expression.Expression
 	// Used in the range pruning process.
 	*ForRangePruning
 	// Used in the range column pruning process.
@@ -162,15 +167,15 @@ type ForRangeColumnsPruning struct {
 	MaxValue bool
 }
 
-func dataForRangeColumnsPruning(ctx sessionctx.Context, pi *model.PartitionInfo, schema *expression.Schema, names []*types.FieldName, p *parser.Parser) (*ForRangeColumnsPruning, error) {
+func dataForRangeColumnsPruning(ctx sessionctx.Context, definitions []model.PartitionDefinition, schema *expression.Schema, names []*types.FieldName, p *parser.Parser) (*ForRangeColumnsPruning, error) {
 	var res ForRangeColumnsPruning
-	res.LessThan = make([]expression.Expression, len(pi.Definitions))
-	for i := 0; i < len(pi.Definitions); i++ {
-		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
+	res.LessThan = make([]expression.Expression, len(definitions))
+	for i := 0; i < len(definitions); i++ {
+		if strings.EqualFold(definitions[i].LessThan[0], "MAXVALUE") {
 			// Use a bool flag instead of math.MaxInt64 to avoid the corner cases.
 			res.MaxValue = true
 		} else {
-			tmp, err := parseSimpleExprWithNames(p, ctx, pi.Definitions[i].LessThan[0], schema, names)
+			tmp, err := parseSimpleExprWithNames(p, ctx, definitions[i].LessThan[0], schema, names)
 			if err != nil {
 				return nil, err
 			}
@@ -198,28 +203,28 @@ type ForRangePruning struct {
 }
 
 // dataForRangePruning extracts the less than parts from 'partition p0 less than xx ... partitoin p1 less than ...'
-func dataForRangePruning(sctx sessionctx.Context, pi *model.PartitionInfo) (*ForRangePruning, error) {
+func dataForRangePruning(sctx sessionctx.Context, definitions []model.PartitionDefinition) (*ForRangePruning, error) {
 	var maxValue bool
 	var unsigned bool
-	lessThan := make([]int64, len(pi.Definitions))
-	for i := 0; i < len(pi.Definitions); i++ {
-		if strings.EqualFold(pi.Definitions[i].LessThan[0], "MAXVALUE") {
+	lessThan := make([]int64, len(definitions))
+	for i := 0; i < len(definitions); i++ {
+		if strings.EqualFold(definitions[i].LessThan[0], "MAXVALUE") {
 			// Use a bool flag instead of math.MaxInt64 to avoid the corner cases.
 			maxValue = true
 		} else {
 			var err error
-			lessThan[i], err = strconv.ParseInt(pi.Definitions[i].LessThan[0], 10, 64)
+			lessThan[i], err = strconv.ParseInt(definitions[i].LessThan[0], 10, 64)
 			var numErr *strconv.NumError
 			if stderr.As(err, &numErr) && numErr.Err == strconv.ErrRange {
 				var tmp uint64
-				tmp, err = strconv.ParseUint(pi.Definitions[i].LessThan[0], 10, 64)
+				tmp, err = strconv.ParseUint(definitions[i].LessThan[0], 10, 64)
 				lessThan[i] = int64(tmp)
 				unsigned = true
 			}
 			if err != nil {
-				val, ok := fixOldVersionPartitionInfo(sctx, pi.Definitions[i].LessThan[0])
+				val, ok := fixOldVersionPartitionInfo(sctx, definitions[i].LessThan[0])
 				if !ok {
-					logutil.BgLogger().Error("wrong partition definition", zap.String("less than", pi.Definitions[i].LessThan[0]))
+					logutil.BgLogger().Error("wrong partition definition", zap.String("less than", definitions[i].LessThan[0]))
 					return nil, errors.WithStack(err)
 				}
 				lessThan[i] = val
@@ -298,14 +303,82 @@ func generateRangePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 		if err != nil {
 			return nil, err
 		}
-		tmp, err := dataForRangePruning(ctx, pi)
+		tmp, err := dataForRangePruning(ctx, pi.Definitions)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		ret.Expr = exprs
 		ret.ForRangePruning = tmp
 	case 1:
-		tmp, err := dataForRangeColumnsPruning(ctx, pi, schema, names, p)
+		tmp, err := dataForRangeColumnsPruning(ctx, pi.Definitions, schema, names, p)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ret.ForRangeColumnsPruning = tmp
+	default:
+		panic("range column partition currently support only one column")
+	}
+	return ret, nil
+}
+
+func generateRangeSubHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
+	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
+	// The caller should assure partition info is not nil.
+	locateExprs := make([]expression.Expression, 0, len(pi.ParentDef))
+	var buf bytes.Buffer
+	p := parser.New()
+	schema := expression.NewSchema(columns...)
+	partStr := rangePartitionString(pi)
+	for i := 0; i < len(pi.ParentDef); i++ {
+		if strings.EqualFold(pi.ParentDef[i].LessThan[0], "MAXVALUE") {
+			// Expr less than maxvalue is always true.
+			fmt.Fprintf(&buf, "true")
+		} else {
+			fmt.Fprintf(&buf, "((%s) < (%s))", partStr, pi.ParentDef[i].LessThan[0])
+		}
+
+		expr, err := parseSimpleExprWithNames(p, ctx, buf.String(), schema, names)
+		if err != nil {
+			// If it got an error here, ddl may hang forever, so this error log is important.
+			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+		locateExprs = append(locateExprs, expr)
+		buf.Reset()
+	}
+
+	origExpr, err := parseExpr(parser.New(), pi.SubPart.Expr)
+	if err != nil {
+		return nil, err
+	}
+	exprs, err := rewritePartitionExpr(ctx, origExpr, schema, names)
+	if err != nil {
+		// If it got an error here, ddl may hang forever, so this error log is important.
+		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", pi.Expr), zap.Error(err))
+		return nil, errors.Trace(err)
+	}
+	exprs.HashCode(ctx.GetSessionVars().StmtCtx)
+
+	ret := &PartitionExpr{
+		UpperBounds: locateExprs,
+		SubExpr:     exprs,
+		OrigExpr:    origExpr,
+	}
+
+	switch len(pi.Columns) {
+	case 0:
+		exprs, err := parseSimpleExprWithNames(p, ctx, pi.Expr, schema, names)
+		if err != nil {
+			return nil, err
+		}
+		tmp, err := dataForRangePruning(ctx, pi.ParentDef)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		ret.Expr = exprs
+		ret.ForRangePruning = tmp
+	case 1:
+		tmp, err := dataForRangeColumnsPruning(ctx, pi.ParentDef, schema, names, p)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -354,18 +427,35 @@ func (t *partitionedTable) locatePartition(ctx sessionctx.Context, pi *model.Par
 	var idx int
 	switch t.meta.Partition.Type {
 	case model.PartitionTypeRange:
-		if len(pi.Columns) == 0 {
-			idx, err = t.locateRangePartition(ctx, pi, r)
+		if pi.SubPart != nil {
+			parentIdx, err := t.locateRangePartition(ctx, pi, r, idx, err)
+			if err != nil {
+				return 0, err
+			}
+			subIdx, err := t.locateHashPartition(ctx, t.partitionExpr.SubExpr, int(pi.SubPart.Num), r)
+			if err != nil {
+				return 0, err
+			}
+			idx = parentIdx*int(pi.SubPart.Num) + subIdx
 		} else {
-			idx, err = t.locateRangeColumnPartition(ctx, pi, r)
+			idx, err = t.locateRangePartition(ctx, pi, r, idx, err)
 		}
 	case model.PartitionTypeHash:
-		idx, err = t.locateHashPartition(ctx, pi, r)
+		idx, err = t.locateHashPartition(ctx, t.partitionExpr.Expr, int(pi.Num), r)
 	}
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 	return pi.Definitions[idx].ID, nil
+}
+
+func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, idx int, err error) (int, error) {
+	if len(pi.Columns) == 0 {
+		idx, err = t.locateRangeExprPartition(ctx, pi, r)
+	} else {
+		idx, err = t.locateRangeColumnPartition(ctx, pi, r)
+	}
+	return idx, err
 }
 
 func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
@@ -413,7 +503,63 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx sessionctx.Context, pi
 	return idx, nil
 }
 
-func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
+func (t *partitionedTable) locateRangeSubHashPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
+	piExpr := pi.Expr
+	expr := t.partitionExpr.Expr
+	var (
+		ret    int64
+		val    int64
+		isNull bool
+		err    error
+	)
+	if col, ok := expr.(*expression.Column); ok {
+		if r[col.Index].IsNull() {
+			isNull = true
+		}
+		ret = r[col.Index].GetInt64()
+	} else {
+		evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
+		defer t.evalBufferPool.Put(evalBuffer)
+		evalBuffer.SetDatums(r...)
+		val, isNull, err = expr.EvalInt(ctx, evalBuffer.ToRow())
+		if err != nil {
+			return 0, err
+		}
+		ret = val
+	}
+	unsigned := mysql.HasUnsignedFlag(expr.GetType().Flag)
+	ranges := t.partitionExpr.ForRangePruning
+	length := len(ranges.LessThan)
+	pos := sort.Search(length, func(i int) bool {
+		if isNull {
+			return true
+		}
+		return ranges.compare(i, ret, unsigned) > 0
+	})
+	if isNull {
+		pos = 0
+	}
+	if pos < 0 || pos >= length {
+		// The data does not belong to any of the partition returns `table has no partition for value %s`.
+		var valueMsg string
+		if piExpr != "" {
+			e, err := expression.ParseSimpleExprWithTableInfo(ctx, piExpr, t.meta)
+			if err == nil {
+				val, _, err := e.EvalInt(ctx, chunk.MutRowFromDatums(r).ToRow())
+				if err == nil {
+					valueMsg = fmt.Sprintf("%d", val)
+				}
+			}
+		} else {
+			// When the table is partitioned by range columns.
+			valueMsg = "from column_list"
+		}
+		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(valueMsg)
+	}
+	return pos, nil
+}
+
+func (t *partitionedTable) locateRangeExprPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
 	var (
 		ret    int64
 		val    int64
@@ -468,10 +614,10 @@ func (t *partitionedTable) locateRangePartition(ctx sessionctx.Context, pi *mode
 }
 
 // TODO: supports linear hashing
-func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum) (int, error) {
-	if col, ok := t.partitionExpr.Expr.(*expression.Column); ok {
+func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, expr expression.Expression, num int, r []types.Datum) (int, error) {
+	if col, ok := expr.(*expression.Column); ok {
 		ret := r[col.Index].GetInt64()
-		ret = ret % int64(t.meta.Partition.Num)
+		ret = ret % int64(num)
 		if ret < 0 {
 			ret = -ret
 		}
@@ -480,14 +626,14 @@ func (t *partitionedTable) locateHashPartition(ctx sessionctx.Context, pi *model
 	evalBuffer := t.evalBufferPool.Get().(*chunk.MutRow)
 	defer t.evalBufferPool.Put(evalBuffer)
 	evalBuffer.SetDatums(r...)
-	ret, isNull, err := t.partitionExpr.Expr.EvalInt(ctx, evalBuffer.ToRow())
+	ret, isNull, err := expr.EvalInt(ctx, evalBuffer.ToRow())
 	if err != nil {
 		return 0, err
 	}
 	if isNull {
 		return 0, nil
 	}
-	ret = ret % int64(t.meta.Partition.Num)
+	ret = ret % int64(num)
 	if ret < 0 {
 		ret = -ret
 	}
