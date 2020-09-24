@@ -4070,6 +4070,10 @@ func (s *testSuite3) TestSubPartitionTable(c *C) {
 	tk.MustQuery(`select * from ts`).Check(testkit.Rows("11"))
 	tk.MustQuery(`select * from ts partition(sp3)`).Check(testkit.Rows("11"))
 	tk.MustQuery(`select * from ts where id = 11`).Check(testkit.Rows("11"))
+	tk.MustExec(`update ts set id = 100 where id = 11`)
+	tk.MustQuery(`select * from ts where id = 100`).Check(testkit.Rows("100"))
+	tk.MustExec(`delete from ts where id = 100`)
+	tk.MustQuery(`select * from ts where id = 100`).Check(testkit.Rows())
 }
 
 func (s *testSuite3) TestSelectHashPartitionTable(c *C) {
