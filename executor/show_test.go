@@ -971,7 +971,7 @@ func (s *testSuite5) TestShowBuiltin(c *C) {
 	rows := res.Rows()
 	c.Assert(270, Equals, len(rows))
 	c.Assert("abs", Equals, rows[0][0].(string))
-	c.Assert("yearweek", Equals, rows[267][0].(string))
+	c.Assert("yearweek", Equals, rows[269][0].(string))
 }
 
 func (s *testSuite5) TestShowClusterConfig(c *C) {
