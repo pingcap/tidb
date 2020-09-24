@@ -42,9 +42,9 @@
       // Row count of IndexScan should be 2.
       "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c = t2.c",
       // Row count of IndexScan should be 2.
-	  "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c <= t2.b",
+      "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c <= t2.b",
       // Row count of IndexScan should be 1.
-	  "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t2.b = 1"
+      "explain select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t2.b = 1"
     ]
   },
   {
@@ -203,10 +203,19 @@
       "select * from pt partition (p0) where c > 8",
       "select c from pt partition (p0, p2) where c > 8",
       "select /*+ use_index(pt, i_id) */ * from pt partition (p1, p2) where c < 3 and id = 5",
-
       // Index Merge
       "select * from pt where id = 4 or c < 7",
       "select * from pt where id > 4 or c = 7"
+    ]
+  },
+  {
+    "name": "TestApproxPercentile",
+    "cases": [
+      "select approx_percentile(a, 50) from t",
+      "select approx_percentile(a, 10) from t",
+      "select approx_percentile(a, 10+70) from t",
+      "select approx_percentile(a, 10*10) from t",
+      "select approx_percentile(a, 50) from t group by b order by b"
     ]
   }
 ]
