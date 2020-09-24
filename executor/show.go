@@ -474,14 +474,14 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			if idx >= 0 {
 				col.FieldType = *viewSchema.Columns[idx].GetType()
 			}
+			if col.Tp == mysql.TypeVarString {
+				col.Tp = mysql.TypeVarchar
+			}
 		}
 	}
 	for _, col := range cols {
 		if e.Column != nil && e.Column.Name.L != col.Name.L {
 			continue
-		}
-		if col.Tp == mysql.TypeVarString {
-			col.Tp = mysql.TypeVarchar
 		}
 		desc := table.NewColDesc(col)
 		var columnDefault interface{}
