@@ -6418,11 +6418,11 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	}{
 		{
 			name: "keep Order",
-			sql:  "select * from t6 order by id",
+			sql:  "select id from t6 order by id",
 		},
 		{
 			name: "non keep Order",
-			sql:  "select * from t5",
+			sql:  "select id from t5",
 		},
 	}
 	defer config.RestoreFunc()()
