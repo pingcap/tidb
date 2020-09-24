@@ -83,7 +83,7 @@ func (s *testStatsSuite) TestLoadHistWithLimit(c *C) {
 	testKit.MustExec("insert into t1 values(1),(2),(3),(4),(5)")
 	c.Assert(h.DumpStatsDeltaToKV(handle.DumpAll), IsNil)
 	testKit.MustExec("analyze table t1")
-	h.Clear()
+	h.Clear4Test()
 	h.SetBytesLimit4Test(BytesLimit)
 
 	c.Assert(h.Update(s.do.InfoSchema()), IsNil)

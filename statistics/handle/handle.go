@@ -75,7 +75,7 @@ type Handle struct {
 	lease atomic2.Duration
 }
 
-// Clear the statsCache, only for test.
+// Clear4Test the statsCache, only for test.
 func (h *Handle) Clear4Test() {
 	h.mu.Lock()
 	h.SetBytesLimit4Test(h.mu.ctx.GetSessionVars().MemQuotaStatistics)
