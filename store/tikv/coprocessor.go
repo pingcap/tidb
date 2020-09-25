@@ -1337,6 +1337,7 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 		e.cond.isTokenDestroyed = false
 		e.cond.Broadcast()
 		e.cond.once = sync.Once{}
+		logutil.BgLogger().Info("broadcast")
 	}
 }
 
