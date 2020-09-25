@@ -55,12 +55,9 @@ type Tracker struct {
 
 	label         int   // Label of this "Tracker".
 	bytesConsumed int64 // Consumed bytes.
-	limitMu       struct {
-		sync.RWMutex
-		bytesLimit int64 // bytesLimit <= 0 means no limit.
-	}
-	maxConsumed int64 // max number of bytes consumed during execution.
-	isGlobal    bool  // isGlobal indicates whether this tracker is global tracker
+	bytesLimit    int64 // bytesLimit <= 0 means no limit.
+	maxConsumed   int64 // max number of bytes consumed during execution.
+	isGlobal      bool  // isGlobal indicates whether this tracker is global tracker
 }
 
 // NewTracker creates a memory tracker.
@@ -69,9 +66,9 @@ type Tracker struct {
 // For the common tracker, isGlobal is default as false
 func NewTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{
-		label: label,
+		label:      label,
+		bytesLimit: bytesLimit,
 	}
-	t.limitMu.bytesLimit = bytesLimit
 	t.actionMu.actionOnExceed = &LogOnExceed{}
 	t.isGlobal = false
 	return t
@@ -80,9 +77,9 @@ func NewTracker(label int, bytesLimit int64) *Tracker {
 // NewGlobalTracker creates a global tracker, its isGlobal is default as true
 func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 	t := &Tracker{
-		label: label,
+		label:      label,
+		bytesLimit: bytesLimit,
 	}
-	t.limitMu.bytesLimit = bytesLimit
 	t.actionMu.actionOnExceed = &LogOnExceed{}
 	t.isGlobal = true
 	return t
@@ -91,28 +88,24 @@ func NewGlobalTracker(label int, bytesLimit int64) *Tracker {
 // CheckBytesLimit check whether the bytes limit of the tracker is equal to a value.
 // Only used in test.
 func (t *Tracker) CheckBytesLimit(val int64) bool {
-	return t.GetBytesLimit() == val
+	return t.bytesLimit == val
 }
 
 // SetBytesLimit sets the bytes limit for this tracker.
 // "bytesLimit <= 0" means no limit.
 func (t *Tracker) SetBytesLimit(bytesLimit int64) {
-	t.limitMu.Lock()
-	defer t.limitMu.Unlock()
-	t.limitMu.bytesLimit = bytesLimit
+	t.bytesLimit = bytesLimit
 }
 
 // GetBytesLimit gets the bytes limit for this tracker.
 // "bytesLimit <= 0" means no limit.
 func (t *Tracker) GetBytesLimit() int64 {
-	t.limitMu.RLock()
-	defer t.limitMu.RUnlock()
-	return t.limitMu.bytesLimit
+	return t.bytesLimit
 }
 
 // CheckExceed checks whether the consumed bytes is exceed for this tracker.
 func (t *Tracker) CheckExceed() bool {
-	return atomic.LoadInt64(&t.bytesConsumed) >= t.GetBytesLimit() && t.GetBytesLimit() > 0
+	return atomic.LoadInt64(&t.bytesConsumed) >= t.bytesLimit && t.bytesLimit > 0
 }
 
 // SetActionOnExceed sets the action when memory usage exceeds bytesLimit.
@@ -223,7 +216,7 @@ func (t *Tracker) Consume(bytes int64) {
 	}
 	var rootExceed *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
-		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.GetBytesLimit() && tracker.GetBytesLimit() > 0 {
+		if atomic.AddInt64(&tracker.bytesConsumed, bytes) >= tracker.bytesLimit && tracker.bytesLimit > 0 {
 			rootExceed = tracker
 		}
 
@@ -292,8 +285,8 @@ func (t *Tracker) String() string {
 
 func (t *Tracker) toString(indent string, buffer *bytes.Buffer) {
 	fmt.Fprintf(buffer, "%s\"%d\"{\n", indent, t.label)
-	if t.GetBytesLimit() > 0 {
-		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.BytesToString(t.GetBytesLimit()))
+	if t.bytesLimit > 0 {
+		fmt.Fprintf(buffer, "%s  \"quota\": %s\n", indent, t.BytesToString(t.bytesLimit))
 	}
 	fmt.Fprintf(buffer, "%s  \"consumed\": %s\n", indent, t.BytesToString(t.BytesConsumed()))
 
