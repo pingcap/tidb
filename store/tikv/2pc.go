@@ -329,7 +329,7 @@ func (c *twoPhaseCommitter) extractKeyExistsErrFromHandle(key kv.Key, value []by
 
 func (c *twoPhaseCommitter) genKeyExistsError(name string, value string, err error) error {
 	if err != nil {
-		logutil.BgLogger().Debug("extractKeyExistsErr meets error", zap.Error(err))
+		logutil.BgLogger().Info("extractKeyExistsErr meets error", zap.Error(err))
 	}
 	return kv.ErrKeyExists.FastGenByArgs(value, name)
 }
