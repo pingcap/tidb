@@ -716,7 +716,6 @@ func (rs *SnapshotRuntimeStats) Merge(other execdetails.RuntimeStats) {
 func (rs *SnapshotRuntimeStats) String() string {
 	var buf bytes.Buffer
 	buf.WriteString(rs.rpcStats.String())
-	fmt.Println(buf.String())
 	for k, v := range rs.backoffTimes {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
