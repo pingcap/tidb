@@ -149,11 +149,10 @@ func updateExecutorTableID(ctx context.Context, exec *tipb.Executor, partitionID
 		child = exec.TopN.Child
 	case tipb.ExecType_TypeLimit:
 		child = exec.Limit.Child
+	case tipb.ExecType_TypeExchangeServer:
+		child = exec.ExchangeServer.Child
 	case tipb.ExecType_TypeJoin:
-		// TiFlash currently does not support Join on partition table.
-		// The planner should not generate this kind of plan.
-		// So the code should never run here.
-		return errors.New("wrong plan, join on partition table is not supported on TiFlash")
+		child = exec.Join.Children[1-exec.Join.InnerIdx]
 	default:
 		return errors.Trace(fmt.Errorf("unknown new tipb protocol %d", exec.Tp))
 	}

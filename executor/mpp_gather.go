@@ -206,6 +206,7 @@ func (e *MPPGather) scheduleSinglePhysicalTable(ctx context.Context, tableID int
 func (e *MPPGather) getPlanFragments(p plannercore.PhysicalPlan, pf *planFragment) {
 	switch x := p.(type) {
 	case *plannercore.PhysicalTableScan:
+		x.IsGlobalRead = false
 		pf.tableScan = x
 	case *plannercore.PhysicalBroadCastJoin:
 		// This is a pipeline breaker. So we replace broadcast side with a exchangerClient
@@ -240,6 +241,11 @@ func (e *MPPGather) appendMPPDispatchReq(pf *planFragment, tasks []*mppTask, isR
 	}
 	for i := range pf.p.Schema().Columns {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
+	}
+	if !isRoot {
+		dagReq.EncodeType = tipb.EncodeType_TypeCHBlock
+	} else {
+		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
 	for _, mppTask := range tasks {
 		err := updateExecutorTableID(context.Background(), dagReq.RootExecutor, mppTask.tableID, true)
