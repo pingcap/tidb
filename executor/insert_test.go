@@ -1360,7 +1360,12 @@ func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a datetime, b int, c varchar(10), primary key (a, b, c)) collate utf8mb4_general_ci;")
 		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
-		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'asdd');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-asdd' for key 'PRIMARY'")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'PRIMARY'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime, b int, c varchar(10), unique key (a, b, c)) collate utf8mb4_general_ci;")
+		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'a'")
 	}
 }
 
