@@ -608,7 +608,13 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		select {
 		case resp, ok = <-respCh:
 			if it.memTracker != nil && resp != nil {
-				it.memTracker.Consume(-resp.MemSize())
+				consumed := resp.MemSize()
+				failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+					if val.(bool) {
+						consumed = 100
+					}
+				})
+				it.memTracker.Consume(-consumed)
 			}
 			return
 		case <-it.finishCh:
@@ -642,7 +648,13 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask) (exit bool) {
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
 	if worker.memTracker != nil && checkOOM {
-		worker.memTracker.Consume(resp.MemSize())
+		consumed := resp.MemSize()
+		failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+			if val.(bool) {
+				consumed = 100
+			}
+		})
+		worker.memTracker.Consume(consumed)
 	}
 	select {
 	case respCh <- resp:
@@ -1270,11 +1282,6 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 
 // Action implements ActionOnExceed.Action
 func (e *rateLimitAction) Action(t *memory.Tracker) {
-	failpoint.Inject("testRateLimitActionPerformed", func(val failpoint.Value) {
-		if val.(bool) {
-			t.SetBytesLimit(1 * 1024 * 1024 * 1024)
-		}
-	})
 	failpoint.Inject("testRateLimitActionDisable", func(val failpoint.Value) {
 		if val.(bool) {
 			e.setEnabled(false)
