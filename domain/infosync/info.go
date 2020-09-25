@@ -278,10 +278,10 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 	var res *http.Response
 	for _, addr := range addrs {
 		var url string
-		if strings.HasPrefix(addr, "http://") {
+		if strings.HasPrefix(addr, "http") {
 			url = fmt.Sprintf("%s%s", addr, route)
 		} else {
-			url = fmt.Sprintf("http://%s%s", addr, route)
+			url = fmt.Sprintf("%s://%s%s", util2.InternalHTTPSchema(), addr, route)
 		}
 
 		if ctx != nil {
@@ -296,7 +296,7 @@ func doRequest(ctx context.Context, addrs []string, route, method string, body i
 			req.Header.Set("Content-Type", "application/json")
 		}
 
-		res, err = http.DefaultClient.Do(req)
+		res, err = util2.InternalHTTPClient().Do(req)
 		if err == nil {
 			bodyBytes, err := ioutil.ReadAll(res.Body)
 			if err != nil {
