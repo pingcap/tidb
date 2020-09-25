@@ -32,19 +32,12 @@ import (
 
 // testAsyncCommitCommon is used to put common parts that will be both used by
 // testAsyncCommitSuite and testAsyncCommitFailSuite.
-type testAsyncCommitCommon struct{}
-
-type testAsyncCommitSuite struct {
-	OneByOneSuite
-	testAsyncCommitCommon
+type testAsyncCommitCommon struct {
 	cluster cluster.Cluster
 	store   *tikvStore
-	bo      *Backoffer
 }
 
-var _ = Suite(&testAsyncCommitSuite{})
-
-func (s *testAsyncCommitSuite) SetUpTest(c *C) {
+func (s *testAsyncCommitCommon) setUpTest(c *C) {
 	client, pdClient, cluster, err := unistore.New("")
 	c.Assert(err, IsNil)
 	unistore.BootstrapWithSingleStore(cluster)
@@ -53,17 +46,16 @@ func (s *testAsyncCommitSuite) SetUpTest(c *C) {
 	c.Assert(err, IsNil)
 
 	s.store = store.(*tikvStore)
-	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
-func (s *testAsyncCommitCommon) putAlphabets(c *C, store *tikvStore) {
+func (s *testAsyncCommitCommon) putAlphabets(c *C) {
 	for ch := byte('a'); ch <= byte('z'); ch++ {
-		s.putKV(c, store, []byte{ch}, []byte{ch})
+		s.putKV(c, []byte{ch}, []byte{ch})
 	}
 }
 
-func (s *testAsyncCommitCommon) putKV(c *C, store *tikvStore, key, value []byte) (uint64, uint64) {
-	txn, err := store.Begin()
+func (s *testAsyncCommitCommon) putKV(c *C, key, value []byte) (uint64, uint64) {
+	txn, err := s.store.Begin()
 	c.Assert(err, IsNil)
 	err = txn.Set(key, value)
 	c.Assert(err, IsNil)
@@ -78,17 +70,17 @@ func (s *testAsyncCommitCommon) mustGetFromTxn(c *C, txn kv.Transaction, key, ex
 	c.Assert(v, BytesEquals, expectedValue)
 }
 
-func (s *testAsyncCommitCommon) mustGetLock(c *C, store *tikvStore, key []byte) *Lock {
-	ver, err := store.CurrentVersion()
+func (s *testAsyncCommitCommon) mustGetLock(c *C, key []byte) *Lock {
+	ver, err := s.store.CurrentVersion()
 	c.Assert(err, IsNil)
 	req := tikvrpc.NewRequest(tikvrpc.CmdGet, &kvrpcpb.GetRequest{
 		Key:     key,
 		Version: ver.Ver,
 	})
 	bo := NewBackofferWithVars(context.Background(), 5000, nil)
-	loc, err := store.regionCache.LocateKey(bo, key)
+	loc, err := s.store.regionCache.LocateKey(bo, key)
 	c.Assert(err, IsNil)
-	resp, err := store.SendReq(bo, req, loc.Region, readTimeoutShort)
+	resp, err := s.store.SendReq(bo, req, loc.Region, readTimeoutShort)
 	c.Assert(err, IsNil)
 	c.Assert(resp.Resp, NotNil)
 	keyErr := resp.Resp.(*kvrpcpb.GetResponse).GetError()
@@ -98,12 +90,25 @@ func (s *testAsyncCommitCommon) mustGetLock(c *C, store *tikvStore, key []byte) 
 	return lock
 }
 
-func (s *testAsyncCommitCommon) mustPointGet(c *C, store *tikvStore, key, expectedValue []byte) {
-	snap, err := store.GetSnapshot(kv.MaxVersion)
+func (s *testAsyncCommitCommon) mustPointGet(c *C, key, expectedValue []byte) {
+	snap, err := s.store.GetSnapshot(kv.MaxVersion)
 	c.Assert(err, IsNil)
 	value, err := snap.Get(context.Background(), key)
 	c.Assert(err, IsNil)
 	c.Assert(value, BytesEquals, expectedValue)
+}
+
+type testAsyncCommitSuite struct {
+	OneByOneSuite
+	testAsyncCommitCommon
+	bo *Backoffer
+}
+
+var _ = Suite(&testAsyncCommitSuite{})
+
+func (s *testAsyncCommitSuite) SetUpTest(c *C) {
+	s.testAsyncCommitCommon.setUpTest(c)
+	s.bo = NewBackofferWithVars(context.Background(), 5000, nil)
 }
 
 func (s *testAsyncCommitSuite) lockKeys(c *C, keys, values [][]byte, primaryKey, primaryValue []byte, commitPrimary bool) (uint64, uint64) {
@@ -146,7 +151,7 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 		conf.TiKVClient.EnableAsyncCommit = true
 	})
 
-	s.putAlphabets(c, s.store)
+	s.putAlphabets(c)
 
 	loc, err := s.store.GetRegionCache().LocateKey(s.bo, []byte("a"))
 	c.Assert(err, IsNil)
@@ -156,7 +161,7 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 
 	// No locks to check, only primary key is locked, should be successful.
 	s.lockKeys(c, [][]byte{}, [][]byte{}, []byte("z"), []byte("z"), false)
-	lock := s.mustGetLock(c, s.store, []byte("z"))
+	lock := s.mustGetLock(c, []byte("z"))
 	lock.UseAsyncCommit = true
 	ts, err := s.store.oracle.GetTimestamp(context.Background())
 	c.Assert(err, IsNil)
@@ -294,7 +299,7 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 	})
 
 	test := func(isPessimistic bool) {
-		s.putKV(c, s.store, []byte("k1"), []byte("v1"))
+		s.putKV(c, []byte("k1"), []byte("v1"))
 
 		ctx := context.Background()
 		txn1, err := s.store.Begin()
