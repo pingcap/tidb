@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/util/rowDecoder"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -158,10 +159,12 @@ func (w *worker) start(d *ddlCtx) {
 		}
 
 		handleJobErr := w.handleDDLJobQueue(d)
-		handleTaskErr := w.handleDDLSubTaskQueue(d)
-		if handleJobErr != nil || handleTaskErr != nil{
+
+		//TODO Whether it is owner or not，it will read the subTask queue and execute the one which is unclaimed.
+		//handleTaskErr := w.handleDDLSubTaskQueue(d)
+		if handleJobErr != nil {
 			logutil.Logger(w.logCtx).Error("[ddl] handle DDL job failed", zap.Error(handleJobErr))
-			logutil.Logger(w.logCtx).Error("[ddl] handle DDL subTask failed", zap.Error(handleTaskErr))
+			//logutil.Logger(w.logCtx).Error("[ddl] handle DDL subTask failed", zap.Error(handleTaskErr))
 		}
 	}
 }
@@ -228,6 +231,19 @@ func (d *ddl) limitDDLJobs() {
 	}
 }
 
+func (d *ddlCtx) AddBatchTaskToQueue(subTasks []*SubTask) error {
+	err := kv.RunInNewTxn(d.store, true, func(txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		for _, task := range subTasks {
+			task.StartTS = txn.StartTS()
+			t.EnQueueDDLSubTask(task)
+		}
+		return nil
+	})
+	logutil.BgLogger().Info("[ddl] add DDL subTasks", zap.Int("batch count", len(subTasks)))
+	return err
+}
+
 // addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	startTime := time.Now()
@@ -288,10 +304,10 @@ func (w *worker) getFirstDDLJob(t *meta.Meta) (*model.Job, error) {
 	return job, errors.Trace(err)
 }
 
-func (w *worker) getFirstDDLSubTask(t *meta.Meta) (*SubTask, error) {
-	subTask, err := t.GetDDLSubTaskByIdx(0)
-	return subTask, errors.Trace(err)
-}
+//func (w *worker) getFirstDDLSubTask(t *meta.Meta) (*SubTask, error) {
+//	subTask, err := t.GetDDLSubTaskByIdx(0)
+//	return subTask, errors.Trace(err)
+//}
 
 // handleUpdateJobError handles the too large DDL job.
 func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) error {
@@ -338,10 +354,6 @@ func (w *worker) deleteRange(job *model.Job) error {
 		err = errInvalidDDLJobVersion.GenWithStackByArgs(job.Version, currentVersion)
 	}
 	return errors.Trace(err)
-}
-
-func (w *worker) finishDDLSubTask (t *meta.Meta, task SubTask) (err error){
-
 }
 
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
@@ -434,16 +446,31 @@ func newMetaWithQueueTp(txn kv.Transaction, tp string) *meta.Meta {
 
 type SubTaskType byte
 
+type SubTaskStatus byte
+
 const (
-	addIndexSubTask = 1
+	addIndexSubTaskType SubTaskType = 1
+)
+
+const (
+	running   SubTaskStatus = 0
+	unclaimed SubTaskStatus = 1
+	failed    SubTaskStatus = 2
 )
 
 type SubTask struct {
-	Job      *model.Job	 `json:"job"`
-	TaskType SubTaskType `json:"taskType"`
-	runner   string      `json:"runner"`
-	Mu       sync.Mutex  `json:"mu"`
-	status   string      `json:"status"`
+	Job      *model.Job    `json:"job"`
+	TaskType SubTaskType   `json:"taskType"`
+	runner   string        `json:"runner"`
+	Status   SubTaskStatus `json:"status"`
+	Args     []interface{} `json:"-"`
+	StartTS  uint64        `json:"start_ts"`
+}
+
+type addIndexSubTask struct {
+	IndexInfo             *model.IndexInfo         `json:"index_info"`
+	AddIndexSubTaskRanges []addIndexSubTaskRange   `json:"add_index_sub_task_items"`
+	decodeColMap          map[int64]decoder.Column `json:"decode_col_map"`
 }
 
 func (task *SubTask) Decode(b []byte) error {
@@ -455,36 +482,34 @@ func (task *SubTask) Decode(b []byte) error {
 func (task *SubTask) Encode() ([]byte, error) {
 	var err error
 	var b []byte
-	task.Mu.Lock()
-	defer task.Mu.Unlock()
 	b, err = json.Marshal(task)
 	return b, errors.Trace(err)
 }
 
-func (w *worker) handleDDLSubTaskQueue (d *ddlCtx) error{
-	for {
-		if isChanClosed(w.ctx.Done()) {
-			return nil
-		}
-		var (
-			subTask *SubTask
-			runTaskErr error
-		)
-		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
-
-			meta := newMetaWithQueueTp(txn, w.typeStr())
-			var err error
-			subTask, err = w.getFirstDDLSubTask(meta)
-			if subTask == nil || err != nil {
-				return errors.Trace(err)
-			}
-
-		}
-
-	}
-
-
-}
+//func (w *worker) handleDDLSubTaskQueue (d *ddlCtx) error{
+//	for {
+//		if isChanClosed(w.ctx.Done()) {
+//			return nil
+//		}
+//		var (
+//			subTask *SubTask
+//			runTaskErr error
+//		)
+//		err := kv.RunInNewTxn(d.store, false, func(txn kv.Transaction) error {
+//
+//			meta := newMetaWithQueueTp(txn, w.typeStr())
+//			var err error
+//			subTask, err = w.getFirstDDLSubTask(meta)
+//			if subTask == nil || err != nil {
+//				return errors.Trace(err)
+//			}
+//
+//		}
+//
+//	}
+//
+//
+//}
 
 // handleDDLJobQueue handles DDL jobs in DDL Job queue.
 func (w *worker) handleDDLJobQueue(d *ddlCtx) error {

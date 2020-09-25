@@ -579,12 +579,8 @@ func (m *Meta) enQueueDDLSubTask(key []byte, task *ddl.SubTask) error {
 	return errors.Trace(err)
 }
 
-func (m *Meta) EnQueueDDLSubTask(task *ddl.SubTask, jobListKeys ...JobListKeyType) error {
-	listKey := m.jobListKey
-	if len(jobListKeys) != 0 {
-		listKey = jobListKeys[0]
-	}
-	return m.enQueueDDLSubTask(listKey, task)
+func (m *Meta) EnQueueDDLSubTask(task *ddl.SubTask) error {
+	return m.enQueueDDLSubTask(SubTaskListKey, task)
 }
 
 func (m *Meta) enQueueDDLJob(key []byte, job *model.Job) error {
