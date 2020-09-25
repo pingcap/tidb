@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -1324,14 +1324,12 @@ func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
 
 func (s *testSuite10) TestInsertRuntimeStat(c *C) {
 	stats := &executor.InsertRuntimeStat{
-		BasicRuntimeStats: &execdetails.BasicRuntimeStats{
-			loop:    1,
-			consume: 5 * time.Second,
-		},
+		BasicRuntimeStats:    &execdetails.BasicRuntimeStats{},
 		SnapshotRuntimeStats: nil,
 		CheckInsertTime:      2 * time.Second,
 		Prefetch:             1 * time.Second,
 	}
+	stats.BasicRuntimeStats.Record(5*time.Second, 1)
 	c.Assert(stats.String(), Equals, "perpare: 3s, check_insert:{total_time:2s, mem_insert_time:1s, prefetch:1s}")
 	c.Assert(stats.String(), Equals, stats.Clone().String())
 	stats.Merge(stats.Clone())
