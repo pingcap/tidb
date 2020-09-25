@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/mockstore/cluster"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
@@ -298,10 +299,12 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 		conf.TiKVClient.EnableAsyncCommit = true
 	})
 
+	var connID uint64 = 0
 	test := func(isPessimistic bool) {
 		s.putKV(c, []byte("k1"), []byte("v1"))
 
-		ctx := context.Background()
+		connID++
+		ctx := context.WithValue(context.Background(), sessionctx.ConnID, connID)
 		txn1, err := s.store.Begin()
 		txn1.SetOption(kv.Pessimistic, isPessimistic)
 		c.Assert(err, IsNil)
@@ -319,6 +322,8 @@ func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
 
 		err = txn1.Commit(ctx)
 		c.Assert(err, IsNil)
+		// Check txn1 is committed in async commit.
+		c.Assert(txn1.(*tikvTxn).committer.isAsyncCommit(), IsTrue)
 		s.mustGetFromTxn(c, txn2, []byte("k1"), []byte("v1"))
 		err = txn2.Rollback()
 		c.Assert(err, IsNil)

@@ -91,8 +91,10 @@ func (s *testAsyncCommitFailSuite) TestPointGetWithAsyncCommit(c *C) {
 
 	// PointGet cannot ignore async commit transactions' locks.
 	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing", "return"), IsNil)
-	err = txn.Commit(context.Background())
+	ctx := context.WithValue(context.Background(), sessionctx.ConnID, uint64(1))
+	err = txn.Commit(ctx)
 	c.Assert(err, IsNil)
+	c.Assert(txn.(*tikvTxn).committer.isAsyncCommit(), IsTrue)
 	s.mustPointGet(c, []byte("a"), []byte("v1"))
 	s.mustPointGet(c, []byte("b"), []byte("v2"))
 	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/asyncCommitDoNothing"), IsNil)
