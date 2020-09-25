@@ -138,20 +138,6 @@ func (s *testBatchPointGetSuite) TestBatchPointGetCache(c *C) {
 	tk.MustQuery("SELECT id, token FROM test.customers WHERE id IN (28)")
 	tk.MustQuery("SELECT id, token FROM test.customers WHERE id IN (28, 29);").Check(testkit.Rows("28 07j", "29 03j"))
 }
-<<<<<<< HEAD
-=======
-
-func (s *testBatchPointGetSuite) TestIssue18843(c *C) {
-	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t18843 ( id bigint(10) primary key, f varchar(191) default null, unique key `idx_f` (`f`))")
-	tk.MustExec("insert into t18843 values (1, '')")
-	tk.MustQuery("select * from t18843 where f in (null)").Check(testkit.Rows())
-
-	tk.MustExec("insert into t18843 values (2, null)")
-	tk.MustQuery("select * from t18843 where f in (null)").Check(testkit.Rows())
-	tk.MustQuery("select * from t18843 where f is null").Check(testkit.Rows("2 <nil>"))
-}
 
 func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
@@ -164,4 +150,3 @@ func (s *testBatchPointGetSuite) TestBatchPointGetUnsignedHandleWithSort(c *C) {
 	tk.MustQuery("select id from t2 where id in (8738875760185212610, 1, 9814441339970117597) order by id").Check(testkit.Rows("1", "8738875760185212610", "9814441339970117597"))
 	tk.MustQuery("select id from t2 where id in (8738875760185212610, 1, 9814441339970117597) order by id desc").Check(testkit.Rows("9814441339970117597", "8738875760185212610", "1"))
 }
->>>>>>> 10fd83446... executor: fix sort result for batch-point-get by unsigned pk (#20108)
