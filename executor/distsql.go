@@ -444,7 +444,16 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
-	e.collectRuntimeStatsEnabled()
+	txn, err := e.ctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	if e.collectRuntimeStatsEnabled() {
+		if snapshot := txn.GetSnapshot(); snapshot != nil {
+			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
+			defer snapshot.DelOption(kv.CollectRuntimeStats)
+		}
+	}
 	if err := e.startIndexWorker(ctx, e.kvRanges, workCh, initBatchSize); err != nil {
 		return err
 	}
