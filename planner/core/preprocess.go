@@ -577,11 +577,12 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
-	if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
+	isOracleMode := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
+	if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil && !isOracleMode {
 		p.err = err
 		return
 	}
-	if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
+	if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil && !isOracleMode {
 		p.err = err
 		return
 	}

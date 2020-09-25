@@ -4034,10 +4034,15 @@ func (s *testSuite3) TestSubqueryTableAlias(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`create table t (a int, b int);`)
-	tk.MustGetErrCode(`select min(b) b from (select min(t.b) b from t where t.a = '');`, mysql.ErrDerivedMustHaveAlias)
+
+	tk.MustGetErrCode("select a, b from (select 1 a) ``, (select 2 b) ``;", mysql.ErrDerivedMustHaveAlias)
+	tk.MustGetErrCode("select a, b from (select 1 a) `x`, (select 2 b) `x`;", mysql.ErrNonuniqTable)
+	tk.MustGetErrCode("select a, b from (select 1 a), (select 2 b);", mysql.ErrDerivedMustHaveAlias)
+
 	tk.MustExec(`set sql_mode = 'oracle';`)
-	tk.MustExec(`select min(b) b from (select min(t.b) b from t where t.a = '');`)
+	tk.MustExec("select a, b from (select 1 a) ``, (select 2 b) ``;")
+	tk.MustExec("select a, b from (select 1 a) `x`, (select 2 b) `x`;")
+	tk.MustExec("select a, b from (select 1 a), (select 2 b);")
 }
 
 func (s *testSerialSuite) TestTSOFail(c *C) {
