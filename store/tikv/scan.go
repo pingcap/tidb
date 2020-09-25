@@ -144,7 +144,8 @@ func (s *Scanner) startTS() uint64 {
 }
 
 func (s *Scanner) resolveCurrentLock(bo *Backoffer, current *pb.KvPair) error {
-	val, err := s.snapshot.get(bo, current.Key)
+	ctx := context.Background()
+	val, err := s.snapshot.get(ctx, bo, current.Key)
 	if err != nil {
 		return errors.Trace(err)
 	}
