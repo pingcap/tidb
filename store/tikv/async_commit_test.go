@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 )
 
-// testAsyncCommitCommon is used to put utility functions that will be both used by
+// testAsyncCommitCommon is used to put common parts that will be both used by
 // testAsyncCommitSuite and testAsyncCommitFailSuite.
 type testAsyncCommitCommon struct{}
 
@@ -288,10 +288,10 @@ func (s *testAsyncCommitSuite) TestCheckSecondaries(c *C) {
 }
 
 func (s *testAsyncCommitSuite) TestRepeatableRead(c *C) {
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.EnableAsyncCommit = true
 	})
-	defer config.RestoreFunc()()
 
 	test := func(isPessimistic bool) {
 		s.putKV(c, s.store, []byte("k1"), []byte("v1"))
