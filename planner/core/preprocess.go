@@ -578,13 +578,15 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
 	isOracleMode := p.ctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
-	if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil && !isOracleMode {
-		p.err = err
-		return
-	}
-	if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil && !isOracleMode {
-		p.err = err
-		return
+	if !isOracleMode {
+		if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
+			p.err = err
+			return
+		}
+		if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
+			p.err = err
+			return
+		}
 	}
 	p.flag |= parentIsJoin
 }
