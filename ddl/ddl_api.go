@@ -4369,11 +4369,13 @@ func (d *ddl) RenameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 
 func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isAlterTable bool, tables map[string]int64) ([]*model.DBInfo, int64, error) {
 	oldSchema, ok := is.SchemaByName(oldIdent.Schema)
+	newIdentKey := getIdentKey(newIdent)
 	if !ok {
 		if isAlterTable {
 			return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 		}
-		if is.TableExists(newIdent.Schema, newIdent.Name) {
+		tableID, ok := tables[newIdentKey]
+		if (ok && tableID != tableNotExist) || is.TableExists(newIdent.Schema, newIdent.Name) {
 			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 		}
 		return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
@@ -4394,6 +4396,8 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 			return nil, 0, errFileNotFound.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 		}
 		oldTableID = oldTbl.Meta().ID
+	} else if ok && oldTableID == tableNotExist {
+		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
 	if isAlterTable && newIdent.Schema.L == oldIdent.Schema.L && newIdent.Name.L == oldIdent.Name.L {
 		//oldIdent is equal to newIdent, do nothing
@@ -4407,7 +4411,7 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 			168,
 			fmt.Sprintf("Database `%s` doesn't exist", newIdent.Schema))
 	}
-	newIdentKey := getIdentKey(newIdent)
+
 	newTableID, ok := tables[newIdentKey]
 	if (ok && newTableID > 0) || (!ok && is.TableExists(newIdent.Schema, newIdent.Name)) {
 		return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
@@ -4421,7 +4425,7 @@ func extractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 }
 
 func getIdentKey(ident ast.Ident) string {
-	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name)
+	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
 func getAnonymousIndex(t table.Table, colName model.CIStr) model.CIStr {

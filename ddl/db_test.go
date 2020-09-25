@@ -3144,11 +3144,6 @@ func (s *testDBSuite5) TestAlterTableRenameTable(c *C) {
 	s.testRenameTable(c, "alter table %s rename to %s", isAlterTable)
 }
 
-func (s *testDBSuite6) TestRenameMultiTables(c *C) {
-	isAlterTable := false
-	s.testRenameMultiTables(c, isAlterTable)
-}
-
 func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -3250,7 +3245,7 @@ func (s *testDBSuite) testRenameTable(c *C, sql string, isAlterTable bool) {
 	tk.MustExec("drop database test1")
 }
 
-func (s *testDBSuite) testRenameMultiTables(c *C, isAlterTable bool) {
+func (s *testDBSuite6) TestRenameMultiTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int)")
