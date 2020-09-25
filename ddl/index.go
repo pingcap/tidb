@@ -795,11 +795,13 @@ type indexRecord struct {
 	handle kv.Handle
 	key    []byte        // It's used to lock a record. Record it to reduce the encoding time.
 	vals   []types.Datum // It's the index values.
+	rsData []types.Datum // It's the restored data.
 	skip   bool          // skip indicates that the index key is already exists, we should not add it.
 }
 
 type addIndexWorker struct {
 	*backfillWorker
+	tbl           table.Table
 	index         table.Index
 	metricCounter prometheus.Counter
 
@@ -818,6 +820,7 @@ func newAddIndexWorker(sessCtx sessionctx.Context, worker *worker, id int, t tab
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	return &addIndexWorker{
 		backfillWorker: newBackfillWorker(sessCtx, worker, id, t),
+		tbl:            t,
 		index:          index,
 		metricCounter:  metrics.BackfillTotalCounter.WithLabelValues("add_idx_speed"),
 		rowDecoder:     rowDecoder,
@@ -841,6 +844,7 @@ func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawR
 		return nil, errors.Trace(errCantDecodeRecord.GenWithStackByArgs("index", err))
 	}
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
+	rsData := make([]types.Datum, len(idxInfo.Columns))
 	for j, v := range idxInfo.Columns {
 		col := cols[v.Offset]
 		idxColumnVal, ok := w.rowMap[col.ID]
@@ -865,10 +869,13 @@ func (w *addIndexWorker) getIndexRecord(handle kv.Handle, recordKey []byte, rawR
 		}
 		idxVal[j] = idxColumnVal
 	}
+	if t, ok := w.tbl.(*tables.TableCommon); ok {
+		rsData = t.TryGetHandleRestoredDataWrapper(nil, w.rowMap)
+	}
 	// If there are generated column, rowDecoder will use column value that not in idxInfo.Columns to calculate
 	// the generated value, so we need to clear up the reusing map.
 	w.cleanRowMap()
-	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal}
+	idxRecord := &indexRecord{handle: handle, key: recordKey, vals: idxVal, rsData: rsData}
 	return idxRecord, nil
 }
 
@@ -1058,7 +1065,7 @@ func (w *addIndexWorker) BackfillDataInTxn(handleRange reorgBackfillTask) (taskC
 			}
 
 			// Create the index.
-			handle, err := w.index.Create(w.sessCtx, txn.GetUnionStore(), idxRecord.vals, idxRecord.handle)
+			handle, err := w.index.Create(w.sessCtx, txn.GetUnionStore(), idxRecord.vals, idxRecord.handle, idxRecord.rsData)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) && idxRecord.handle.Equal(handle) {
 					// Index already exists, skip it.

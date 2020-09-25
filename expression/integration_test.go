@@ -7325,3 +7325,50 @@ func (s *testIntegrationSuite) TestIssue17476(c *C) {
 	tk.MustQuery(`SELECT count(*) FROM (table_float JOIN table_int_float_varchar AS tmp3 ON (tmp3.col_varchar_6 AND NULL) IS NULL);`).Check(testkit.Rows("154"))
 	tk.MustQuery(`SELECT * FROM (table_int_float_varchar AS tmp3) WHERE (col_varchar_6 AND NULL) IS NULL AND col_int_6=0;`).Check(testkit.Rows("13 0 -0.1 <nil>"))
 }
+
+func (s *testIntegrationSerialSuite) TestClusteredIndexAndNewCollationIndexEncodeDecodeV5(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b char(10) collate utf8mb4_bin, c char(10) collate utf8mb4_general_ci," +
+		"d varchar(10) collate utf8mb4_bin, e varchar(10) collate utf8mb4_general_ci," +
+		"primary key(a, b, c, d, e), key a(a), unique key ua(a), key b(b), unique key ub(b), key c(c), unique key uc(c)," +
+		"key d(d), unique key ud(d),key e(e), unique key ue(e))")
+
+	// Single Read.
+	tk.MustExec("insert into t values (1, '啊  ', '啊  ', '啊  ', '啊  ')")
+	tk.MustQuery("select * from t ").Check(testkit.Rows("1 啊 啊 啊   啊  "))
+	tk.MustQuery("select * from t use index(a)").Check(testkit.Rows("1 啊 啊 啊   啊  "))
+	tk.MustQuery("select * from t use index(ua)").Check(testkit.Rows("1 啊 啊 啊   啊  "))
+	tk.MustQuery("select * from t use index(b)").Check(testkit.Rows("1 啊 啊 啊   啊  "))
+	tk.MustQuery("select * from t use index(ub)").Check(testkit.Rows("1 啊 啊 啊   啊  "))
+	tk.MustQuery("select * from t use index(c)").Check(testkit.Rows("1 啊 啊 啊   啊  "))
+	tk.MustQuery("select * from t use index(uc)").Check(testkit.Rows("1 啊 啊 啊   啊  "))
+	tk.MustQuery("select * from t use index(d)").Check(testkit.Rows("1 啊 啊 啊   啊  "))
+	tk.MustQuery("select * from t use index(ud)").Check(testkit.Rows("1 啊 啊 啊   啊  "))
+	tk.MustQuery("select * from t use index(e)").Check(testkit.Rows("1 啊 啊 啊   啊  "))
+	tk.MustQuery("select * from t use index(ue)").Check(testkit.Rows("1 啊 啊 啊   啊  "))
+
+	tk.MustExec("alter table t add column h varchar(10) collate utf8mb4_general_ci default '🐸'")
+	tk.MustExec("alter table t add column i varchar(10) collate utf8mb4_general_ci default '🐸'")
+	tk.MustExec("alter table t add index h(h)")
+	tk.MustExec("alter table t add unique index uh(h)")
+
+	tk.MustQuery("select * from t use index(h)").Check(testkit.Rows("1 啊 啊 啊   啊   🐸 🐸"))
+	tk.MustQuery("select * from t use index(uh)").Check(testkit.Rows("1 啊 啊 啊   啊   🐸 🐸"))
+
+	// Double read.
+	tk.MustQuery("select * from t use index(a)").Check(testkit.Rows("1 啊 啊 啊   啊   🐸 🐸"))
+	tk.MustQuery("select * from t use index(ua)").Check(testkit.Rows("1 啊 啊 啊   啊   🐸 🐸"))
+	tk.MustQuery("select * from t use index(b)").Check(testkit.Rows("1 啊 啊 啊   啊   🐸 🐸"))
+	tk.MustQuery("select * from t use index(ub)").Check(testkit.Rows("1 啊 啊 啊   啊   🐸 🐸"))
+	tk.MustQuery("select * from t use index(c)").Check(testkit.Rows("1 啊 啊 啊   啊   🐸 🐸"))
+	tk.MustQuery("select * from t use index(uc)").Check(testkit.Rows("1 啊 啊 啊   啊   🐸 🐸"))
+	tk.MustQuery("select * from t use index(d)").Check(testkit.Rows("1 啊 啊 啊   啊   🐸 🐸"))
+	tk.MustQuery("select * from t use index(ud)").Check(testkit.Rows("1 啊 啊 啊   啊   🐸 🐸"))
+	tk.MustQuery("select * from t use index(e)").Check(testkit.Rows("1 啊 啊 啊   啊   🐸 🐸"))
+	tk.MustQuery("select * from t use index(ue)").Check(testkit.Rows("1 啊 啊 啊   啊   🐸 🐸"))
+}

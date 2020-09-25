@@ -828,7 +828,8 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 			idxMeta := v.Meta()
 			dupErr = kv.ErrKeyExists.FastGenByArgs(entryKey, idxMeta.Name.String())
 		}
-		if dupHandle, err := v.Create(sctx, txn.GetUnionStore(), indexVals, recordID, opts...); err != nil {
+		rsData := t.TryGetHandleRestoredDataWrapper(r, nil)
+		if dupHandle, err := v.Create(sctx, txn.GetUnionStore(), indexVals, recordID, rsData, opts...); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
 			}
@@ -1135,7 +1136,8 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 	if untouched {
 		opts = append(opts, table.IndexIsUntouched)
 	}
-	if _, err := idx.Create(ctx, txn.GetUnionStore(), vals, h, opts...); err != nil {
+	rsData := t.TryGetHandleRestoredDataWrapper(vals, nil)
+	if _, err := idx.Create(ctx, txn.GetUnionStore(), vals, h, rsData, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
 			entryKey, err1 := t.genIndexKeyStr(vals)
@@ -1667,6 +1669,43 @@ func (t *TableCommon) GetSequenceID() int64 {
 // GetSequenceCommon is used in test to get sequenceCommon.
 func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 	return t.sequence
+}
+
+// TryGetHandleRestoredDataWrapper tries to get the restored data. The argument can be a slice or a map.
+func (t *TableCommon) TryGetHandleRestoredDataWrapper(row []types.Datum, rowMap map[int64]types.Datum) []types.Datum {
+	if !collate.NewCollationEnabled() || !t.Meta().IsCommonHandle {
+		return nil
+	}
+
+	useIDMap := false
+	if len(rowMap) > 0 {
+		useIDMap = true
+	}
+
+	var datum types.Datum
+	rsData := make([]types.Datum, 0, 4)
+	pkCols := TryGetCommonPkColumns(t)
+	for _, col := range pkCols {
+		if !types.NeedRestoredData(&col.FieldType) {
+			continue
+		}
+		if collate.IsBinCollation(col.Collate) {
+			if useIDMap {
+				datum = rowMap[col.ID]
+			} else {
+				datum = row[col.Offset]
+			}
+			rsData = append(rsData, types.NewIntDatum(stringutil.GetTailSpaceCount(datum.GetString())))
+		} else {
+			if useIDMap {
+				rsData = append(rsData, rowMap[col.ID])
+			} else {
+				rsData = append(rsData, row[col.Offset])
+			}
+		}
+	}
+
+	return rsData
 }
 
 func getSequenceAllocator(allocs autoid.Allocators) (autoid.Allocator, error) {

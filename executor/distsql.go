@@ -25,7 +25,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/parser/charset"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -41,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -861,20 +859,6 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 		var handleEncoded []byte
 		var datums []types.Datum
 		for i, idx := range handleIdx {
-			// If the new collation is enabled and the handle contains non-binary string,
-			// the handle in the index is encoded as "sortKey". So we cannot restore its
-			// original value(the primary key) here.
-			// We use a trick to avoid encoding the "sortKey" again by changing the charset
-			// collation to `binary`.
-			// TODO: Add the restore value to the secondary index to remove this trick.
-			rtp := e.handleCols[i].RetType
-			if collate.NewCollationEnabled() && rtp.EvalType() == types.ETString &&
-				!mysql.HasBinaryFlag(rtp.Flag) && tp == getHandleFromIndex {
-				rtp = rtp.Clone()
-				rtp.Collate = charset.CollationBin
-				datums = append(datums, row.GetDatum(idx, rtp))
-				continue
-			}
 			datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
 		}
 		if tp == getHandleFromTable {

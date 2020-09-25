@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"math"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/stringutil"
 )
 
 var (
@@ -63,6 +65,8 @@ const (
 	CommonHandleFlag byte = 127
 	// PartitionIDFlag is the flag used to decode the partition ID in global index value.
 	PartitionIDFlag byte = 126
+	// RestoredDataV5 is the flag used to decode the restored data whose format is introduced in v5.0.
+	RestoredDataV5 byte = 125
 	// RestoreDataFlag is the flag that RestoreData begin with.
 	// See rowcodec.Encoder.Encode and rowcodec.row.toBytes
 	RestoreDataFlag byte = rowcodec.CodecVer
@@ -715,6 +719,28 @@ func reEncodeHandle(handle kv.Handle, unsigned bool) ([][]byte, error) {
 	return [][]byte{intHandleBytes}, err
 }
 
+// reEncodeHandleConsiderNewCollation encodes the handle as a Datum so it can be properly decoded later.
+func reEncodeHandleConsiderNewCollation(handle kv.Handle, columns []rowcodec.ColInfo, restoreData []byte, unsigned bool) ([][]byte, error) {
+	if handle.IsInt() {
+		handleDatum := types.NewIntDatum(handle.IntValue())
+		if unsigned {
+			handleDatum.SetUint64(handleDatum.GetUint64())
+		}
+		intHandleBytes, err := codec.EncodeValue(nil, nil, handleDatum)
+		return [][]byte{intHandleBytes}, err
+	}
+
+	handleColLen := handle.NumCols()
+	cHandleBytes := make([][]byte, 0, handleColLen)
+	for i := 0; i < handleColLen; i++ {
+		cHandleBytes = append(cHandleBytes, handle.EncodedCol(i))
+	}
+	if len(restoreData) == 0 {
+		return cHandleBytes, nil
+	}
+	return decodeRestoredValuesV5(columns, cHandleBytes, restoreData)
+}
+
 func decodeRestoredValues(columns []rowcodec.ColInfo, restoredVal []byte) ([][]byte, error) {
 	colIDs := make(map[int64]int, len(columns))
 	for i, col := range columns {
@@ -727,6 +753,73 @@ func decodeRestoredValues(columns []rowcodec.ColInfo, restoredVal []byte) ([][]b
 		return nil, errors.Trace(err)
 	}
 	return resultValues, nil
+}
+
+// decodeRestoredValuesV5 decodes index values whose format is introduced in TiDB 5.0.
+// Unlike the format in TiDB 4.0, the new format is optimized for storage space:
+// 1. If the index is a composed index, only the non-binary string column's value need to write to value, not all.
+// 2. If a string column's collation is _bin, then we only write the number of the truncated spaces to value.
+// 3. If a string column is char, not varchar, then we use the sortKey directly.
+func decodeRestoredValuesV5(columns []rowcodec.ColInfo, keyVal [][]byte, restoredVal []byte) ([][]byte, error) {
+	colIDs := make(map[int64]int, len(columns))
+	result := make([][]byte, len(columns))
+	// restoredData2All is the map from the offset in restoredColumns to the offset in columns.
+	restoredData2All := make(map[int]int)
+	restoredColumns := make([]rowcodec.ColInfo, 0, len(columns))
+	j := 0
+
+	// Collate some information, restoredColumns means the columns whose value need to restore from the index value.
+	for i, col := range columns {
+		if types.NeedRestoredData(col.Ft) {
+			colIDs[col.ID] = j
+			restoredData2All[j] = i
+			j++
+			copyColInfo := rowcodec.ColInfo{
+				ID: col.ID,
+				Ft: columns[i].Ft.Clone(),
+			}
+			if collate.IsBinCollation(col.Ft.Collate) {
+				// Change the fieldType from string to uint since we store the number of the truncated spaces.
+				copyColInfo.Ft = types.NewFieldType(mysql.TypeLonglong)
+			}
+			restoredColumns = append(restoredColumns, copyColInfo)
+		} else {
+			// Use the value in index key directly.
+			result[i] = keyVal[i]
+		}
+	}
+
+	// We don't need to decode handle here, and colIDs >= 0 always.
+	rd := rowcodec.NewByteDecoder(restoredColumns, []int64{-1}, nil, nil)
+	restoredValues, err := rd.DecodeToBytesNoHandle(colIDs, restoredVal)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// Restore value. If it is the _bin collation, we use the sortKey and restore value together to get the original value.
+	// Otherwise, use the restore value directly.
+	for _, offset := range colIDs {
+		rv := restoredValues[offset]
+		allOffset := restoredData2All[offset]
+		if collate.IsBinCollation(columns[allOffset].Ft.Collate) {
+			noPaddingStr, err := DecodeColumnValue(keyVal[allOffset], columns[allOffset].Ft, nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			paddingCount, err := DecodeColumnValue(restoredValues[offset], types.NewFieldType(mysql.TypeLonglong), nil)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			noPaddingStr.SetString(noPaddingStr.GetString()+strings.Repeat(" ", int(paddingCount.GetInt64())), noPaddingStr.Collation())
+			result[allOffset] = result[allOffset][:0]
+			result[allOffset] = append(result[allOffset], rowcodec.BytesFlag)
+			result[allOffset] = codec.EncodeBytes(result[allOffset], noPaddingStr.GetBytes())
+		} else {
+			result[allOffset] = rv
+		}
+	}
+
+	return result, nil
 }
 
 func decodeIndexKvOldCollation(key, value []byte, colsLen int, hdStatus HandleStatus) ([][]byte, error) {
@@ -956,14 +1049,34 @@ func GenIndexKey(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo
 }
 
 // GenIndexValue creates encoded index value and returns the result, only support local index
-func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, containNonBinaryString bool,
-	distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle) ([]byte, error) {
-	return GenIndexValueNew(sc, tblInfo, idxInfo, containNonBinaryString, distinct, untouched, indexedValues, h, 0)
+func GenIndexValue(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, restoredData []types.Datum) ([]byte, error) {
+	return GenIndexValueNew(sc, tblInfo, idxInfo, needRestoredData, distinct, untouched, indexedValues, h, 0, restoredData)
+}
+
+// TryGetCommonPkColumnRestoredIds get the IDs of primary key columns which need restored data if the table has common handle.
+// Caller need to make sure the table has common handle.
+func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
+	var pkColIds []int64
+	var pkIdx *model.IndexInfo
+	for _, idx := range tbl.Indices {
+		if idx.Primary {
+			pkIdx = idx
+			break
+		}
+	}
+	if pkIdx == nil {
+		return pkColIds
+	}
+	for _, idxCol := range pkIdx.Columns {
+		if types.NeedRestoredData(&tbl.Columns[idxCol.Offset].FieldType) {
+			pkColIds = append(pkColIds, tbl.Columns[idxCol.Offset].ID)
+		}
+	}
+	return pkColIds
 }
 
 // GenIndexValueNew create index value for both local and global index.
-func GenIndexValueNew(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, containNonBinaryString bool,
-	distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64) ([]byte, error) {
+func GenIndexValueNew(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, needRestoredData bool, distinct bool, untouched bool, indexedValues []types.Datum, h kv.Handle, partitionID int64, restoredData []types.Datum) ([]byte, error) {
 	idxVal := make([]byte, 1)
 	newEncode := false
 	tailLen := 0
@@ -975,13 +1088,30 @@ func GenIndexValueNew(sc *stmtctx.StatementContext, tblInfo *model.TableInfo, id
 		idxVal = encodePartitionID(idxVal, partitionID)
 		newEncode = true
 	}
-	if collate.NewCollationEnabled() && containNonBinaryString {
-		colIds := make([]int64, len(idxInfo.Columns))
+	if collate.NewCollationEnabled() && (needRestoredData || len(restoredData) > 0) {
+		idxVal = append(idxVal, RestoredDataV5)
+
+		colIds := make([]int64, 0, len(idxInfo.Columns))
+		allRestoredData := make([]types.Datum, 0, len(restoredData)+len(idxInfo.Columns))
 		for i, col := range idxInfo.Columns {
-			colIds[i] = tblInfo.Columns[col.Offset].ID
+			if types.NeedRestoredData(&tblInfo.Columns[col.Offset].FieldType) {
+				colIds = append(colIds, tblInfo.Columns[col.Offset].ID)
+				if collate.IsBinCollation(tblInfo.Columns[col.Offset].Collate) {
+					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
+				} else {
+					allRestoredData = append(allRestoredData, indexedValues[i])
+				}
+			}
 		}
+
+		if len(restoredData) > 0 {
+			pkColIds := TryGetCommonPkColumnRestoredIds(tblInfo)
+			colIds = append(colIds, pkColIds...)
+			allRestoredData = append(allRestoredData, restoredData...)
+		}
+
 		rd := rowcodec.Encoder{Enable: true}
-		rowRestoredValue, err := rd.Encode(sc, colIds, indexedValues, nil)
+		rowRestoredValue, err := rd.Encode(sc, colIds, allRestoredData, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1109,10 +1239,11 @@ func encodePartitionID(idxVal []byte, partitionID int64) []byte {
 }
 
 type indexValueSegments struct {
-	commonHandle   []byte
-	partitionID    []byte
-	restoredValues []byte
-	intHandle      []byte
+	commonHandle    []byte
+	partitionID     []byte
+	restoredValues  []byte
+	intHandle       []byte
+	restoredValueV5 bool
 }
 
 // splitIndexValue splits index value into segments.
@@ -1133,7 +1264,10 @@ func splitIndexValue(value []byte) (segs indexValueSegments) {
 		segs.partitionID = value[1:9]
 		value = value[9:]
 	}
-	if len(value) > 0 && value[0] == RestoreDataFlag {
+	if len(value) > 0 && value[0] == RestoredDataV5 {
+		segs.restoredValues = value[1:]
+		segs.restoredValueV5 = true
+	} else if len(value) > 0 && value[0] == RestoreDataFlag {
 		segs.restoredValues = value
 	}
 	return
@@ -1151,7 +1285,11 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 		return nil, err
 	}
 	if segs.restoredValues != nil { // new collation
-		resultValues, err = decodeRestoredValues(columns[:colsLen], segs.restoredValues)
+		if segs.restoredValueV5 {
+			resultValues, err = decodeRestoredValuesV5(columns[:colsLen], resultValues, segs.restoredValues)
+		} else {
+			resultValues, err = decodeRestoredValues(columns[:colsLen], segs.restoredValues)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1176,7 +1314,7 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 			return nil, err
 		}
 	}
-	handleBytes, err := reEncodeHandle(handle, hdStatus == HandleIsUnsigned)
+	handleBytes, err := reEncodeHandleConsiderNewCollation(handle, columns[colsLen:], segs.restoredValues, hdStatus == HandleIsUnsigned)
 	if err != nil {
 		return nil, err
 	}

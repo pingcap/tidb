@@ -345,6 +345,7 @@ func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (int64, int64, err
 type recoverRows struct {
 	handle  kv.Handle
 	idxVals []types.Datum
+	rsData  []types.Datum
 	skip    bool
 }
 
@@ -373,7 +374,11 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			}
 			idxVals := extractIdxVals(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, idxValLen)
 			e.idxValsBufs[result.scanRowCount] = idxVals
-			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, skip: false})
+			var rsData []types.Datum
+			if t, ok := e.table.(*tables.TableCommon); ok {
+				rsData = t.TryGetHandleRestoredDataWrapper(idxVals, nil)
+			}
+			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: false})
 			result.scanRowCount++
 			result.currentHandle = handle
 		}
@@ -459,7 +464,7 @@ func (e *RecoverIndexExec) backfillIndexInTxn(ctx context.Context, txn kv.Transa
 			return result, err
 		}
 
-		_, err = e.index.Create(e.ctx, txn.GetUnionStore(), row.idxVals, row.handle)
+		_, err = e.index.Create(e.ctx, txn.GetUnionStore(), row.idxVals, row.handle, row.rsData)
 		if err != nil {
 			return result, err
 		}

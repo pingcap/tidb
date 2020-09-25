@@ -20,7 +20,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
-	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -80,27 +79,26 @@ func (c *indexIter) Next() (val []types.Datum, h kv.Handle, err error) {
 
 // index is the data structure for index data in the KV store.
 type index struct {
-	idxInfo                *model.IndexInfo
-	tblInfo                *model.TableInfo
-	prefix                 kv.Key
-	containNonBinaryString bool
-	phyTblID               int64
+	idxInfo          *model.IndexInfo
+	tblInfo          *model.TableInfo
+	prefix           kv.Key
+	needRestoredData bool
+	phyTblID         int64
 }
 
-// ContainsNonBinaryString checks whether the index columns contains non binary string column, the input
-// colInfos should be column info correspond to the table contains the index.
-func ContainsNonBinaryString(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+// NeedRestoredData checks whether the index columns needs restored data.
+func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
 	for _, idxCol := range idxCols {
 		col := colInfos[idxCol.Offset]
-		if col.EvalType() == types.ETString && !mysql.HasBinaryFlag(col.Flag) {
+		if types.NeedRestoredData(&col.FieldType) {
 			return true
 		}
 	}
 	return false
 }
 
-func (c *index) checkContainNonBinaryString() bool {
-	return ContainsNonBinaryString(c.idxInfo.Columns, c.tblInfo.Columns)
+func (c *index) checkNeedRestoredData() bool {
+	return NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 }
 
 // NewIndex builds a new Index object.
@@ -120,7 +118,7 @@ func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.Index
 		prefix:   prefix,
 		phyTblID: physicalID,
 	}
-	index.containNonBinaryString = index.checkContainNonBinaryString()
+	index.needRestoredData = index.checkNeedRestoredData()
 	return index
 }
 
@@ -157,14 +155,19 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 //		|
 //		|  Layout of Options:
 //		|
-//		|     Segment:             Common Handle                 |     Global Index      | New Collation
-// 		|     Layout:  CHandle Flag | CHandle Len | CHandle      | PidFlag | PartitionID | restoreData
-//		|     Length:     1         | 2           | len(CHandle) |    1    |    8        | len(restoreData)
+//		|     Segment:             Common Handle                 |     Global Index      |       New Collation
+// 		|     Layout:  CHandle Flag | CHandle Len | CHandle      | PidFlag | PartitionID | [v5.0 Flag] |    restoreData
+//		|     Length:     1         | 2           | len(CHandle) |    1    |    8        |     1       | len(restoreData)
 //		|
 //		|     Common Handle Segment: Exists when unique index used common handles.
 //		|     Global Index Segment:  Exists when index is global.
-//		|     New Collation Segment: Exists when new collation is used and index contains non-binary string.
-//		|
+//		|     New Collation Segment: (Created in v4.0) Exists when new collation is used and index contains non-binary string.
+//		|                            (Created in v5.0) Exists when new collation is used and index or handle contains non-binary string.
+//		|     In v4.0, restored data contains all the index values. For example, (a int, b char(10)) and index (a, b).
+//		|     The restored data contains both the values of a and b.
+//		|     In v5.0, restored data contains only non-binary data(except for char and _bin). In the above example, the restored data contains only the value of b.
+//		|     Besides, if the collation of b is _bin, then restored data is an integer indicate the spaces are truncated. Then we use sortKey
+//		|     and the restored data together to restore original data.
 //		+--Old Encoding (without restore data, integer handle, local)
 //
 //		   Layout: [Handle] | [UntouchedFlag]
@@ -176,7 +179,7 @@ func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.
 //		   If neither Handle nor UntouchedFlag exists, value will be one single byte '0' (i.e. []byte{'0'}).
 //		   Length of value <= 9, use to distinguish from the new encoding.
 //
-func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
+func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
 	if c.Meta().Unique {
 		us.CacheIndexName(c.phyTblID, c.Meta().ID, c.Meta().Name.String())
 	}
@@ -209,8 +212,7 @@ func (c *index) Create(sctx sessionctx.Context, us kv.UnionStore, indexedValues 
 
 	// save the key buffer to reuse.
 	writeBufs.IndexKeyBuf = key
-	idxVal, err := tablecodec.GenIndexValueNew(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo,
-		c.containNonBinaryString, distinct, opt.Untouched, indexedValues, h, c.phyTblID)
+	idxVal, err := tablecodec.GenIndexValueNew(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, opt.Untouched, indexedValues, h, c.phyTblID, handleRestoreData)
 	if err != nil {
 		return nil, err
 	}
