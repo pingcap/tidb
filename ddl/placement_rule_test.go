@@ -234,7 +234,19 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 			c.Assert(err, IsNil)
 			got, err := json.Marshal(out.Rules)
 			c.Assert(err, IsNil)
-			c.Assert(out.Rules, DeepEquals, t.output, Commentf("%d test\nexpected %s\nbut got %s", i, expected, got))
+			for _, r1 := range out.Rules {
+				found := false
+				for _, r2 := range t.output {
+					if ok, _ := DeepEquals.Check([]interface{}{r1, r2}, nil); ok {
+						found = true
+						break
+					}
+				}
+				if !found {
+					c.Logf("%d test\nexpected %s\nbut got %s", i, expected, got)
+					c.Fail()
+				}
+			}
 		} else {
 			c.Assert(err.Error(), ErrorMatches, t.err)
 		}
