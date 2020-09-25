@@ -212,6 +212,8 @@ type MemBuffer interface {
 	// InspectStage used to inspect the value updates in the given stage.
 	InspectStage(StagingHandle, func(Key, KeyFlags, []byte))
 
+	// SelectValueHistory select the latest value which makes `predicate` returns true from the modification history.
+	SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error)
 	// SnapshotGetter returns a Getter for a snapshot of MemBuffer.
 	SnapshotGetter() Getter
 	// SnapshotIter returns a Iterator for a snapshot of MemBuffer.
