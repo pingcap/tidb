@@ -1258,7 +1258,10 @@ type rateLimitAction struct {
 		remainingTokenNum uint
 		// isTokenDestroyed indicates whether there is one token has been isTokenDestroyed after Action been triggered
 		isTokenDestroyed bool
-		once             sync.Once
+		// once should be initialized only if the `initOnce` is false
+		once sync.Once
+		// initOnce indicate whether the once have been initialized
+		initOnce bool
 	}
 }
 
@@ -1271,11 +1274,13 @@ func newRateLimitAction(totalTokenNumber uint, cond *sync.Cond) *rateLimitAction
 			remainingTokenNum uint
 			isTokenDestroyed  bool
 			once              sync.Once
+			initOnce          bool
 		}{
 			Cond:              cond,
 			exceeded:          false,
 			remainingTokenNum: totalTokenNumber,
 			once:              sync.Once{},
+			initOnce:          true,
 		},
 	}
 }
@@ -1313,6 +1318,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 			zap.Uint("remaining token count", e.cond.remainingTokenNum))
 		e.cond.isTokenDestroyed = false
 		e.cond.exceeded = true
+		e.cond.initOnce = false
 	})
 }
 
@@ -1332,12 +1338,10 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if e.cond.exceeded && needed && e.cond.isTokenDestroyed {
+	if e.cond.exceeded && needed {
 		e.cond.exceeded = false
 		e.cond.isTokenDestroyed = false
 		e.cond.Broadcast()
-		e.cond.once = sync.Once{}
-		logutil.BgLogger().Info("broadcast")
 	}
 }
 
@@ -1352,6 +1356,7 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	if e.cond.exceeded && !e.cond.isTokenDestroyed {
 		e.cond.remainingTokenNum = e.cond.remainingTokenNum - 1
 		e.cond.isTokenDestroyed = true
+		e.cond.Broadcast()
 		logutil.BgLogger().Info("destroy one token now",
 			zap.Uint("total token count", e.totalTokenNum),
 			zap.Uint("remaining token count", e.cond.remainingTokenNum))
@@ -1363,8 +1368,13 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 func (e *rateLimitAction) waitIfNeeded() {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	if e.cond.exceeded {
+	// Only if the !exceeded and isTokenDestroyed is both meet, the process should be permitted.
+	for e.cond.exceeded && !e.cond.isTokenDestroyed {
 		e.cond.Wait()
+	}
+	if !e.cond.initOnce {
+		e.cond.once = sync.Once{}
+		e.cond.initOnce = true
 	}
 }
 
