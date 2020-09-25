@@ -771,6 +771,11 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogQuerySQLStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: variable.SlowLogKVTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogPDTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogBackoffTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogWriteSQLRespTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogPrepared, tp: mysql.TypeTiny, size: 1},
 }
 
 // TableTiDBHotRegionsCols is TiDB hot region mem table columns.
