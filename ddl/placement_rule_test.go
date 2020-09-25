@@ -254,48 +254,39 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 func (s *testPlacementSuite) TestPlacementBuildDrop(c *C) {
 	tests := []struct {
 		input  []int64
-		output []*placement.RuleOp
+		output []*placement.Bundle
 	}{
 		{
 			input: []int64{2},
-			output: []*placement.RuleOp{
+			output: []*placement.Bundle{
 				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      "0_t0_p2",
-					},
+					ID:       placement.GroupID(2),
+					Index:    placement.RuleIndexPartition,
+					Override: true,
 				},
 			},
 		},
 		{
 			input: []int64{1, 2},
-			output: []*placement.RuleOp{
+			output: []*placement.Bundle{
 				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      "0_t0_p1",
-					},
+					ID:       placement.GroupID(1),
+					Index:    placement.RuleIndexPartition,
+					Override: true,
 				},
 				{
-					Action:           placement.RuleOpDel,
-					DeleteByIDPrefix: true,
-					Rule: &placement.Rule{
-						GroupID: placement.RuleDefaultGroupID,
-						ID:      "0_t0_p2",
-					},
+					ID:       placement.GroupID(2),
+					Index:    placement.RuleIndexPartition,
+					Override: true,
 				},
 			},
 		},
 	}
 	for _, t := range tests {
-		out := buildPlacementDropRules(0, 0, t.input)
+		out := buildPlacementDropRules(t.input)
 		c.Assert(len(out), Equals, len(t.output))
 		for i := range t.output {
-			c.Assert(s.compareRuleOp(out[i], t.output[i]), IsTrue, Commentf("expect: %+v, obtained: %+v", t.output[i], out[i]))
+			c.Assert(t.output[i], DeepEquals, out[i])
 		}
 	}
 }
