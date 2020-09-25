@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -657,6 +658,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, err error) (E
 	// Rollback the statement change before retry it.
 	a.Ctx.StmtRollback()
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
+	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
 	if err = e.Open(ctx); err != nil {
 		return nil, err
@@ -808,7 +810,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, succ bool, hasMoreResults boo
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
 	prevStmt := a.GetTextToLog()
-	if sessVars.EnableLogDesensitization {
+	if config.RedactLogEnabled() {
 		sessVars.PrevStmt = FormatSQL(prevStmt, nil)
 	} else {
 		pps := types.CloneRow(sessVars.PreparedParams)
@@ -852,7 +854,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 	var sql stringutil.StringerFunc
 	normalizedSQL, digest := sessVars.StmtCtx.SQLDigest()
-	if sessVars.EnableLogDesensitization {
+	if config.RedactLogEnabled() {
 		sql = FormatSQL(normalizedSQL, nil)
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = FormatSQL(sensitiveStmt.SecureText(), nil)
@@ -911,6 +913,9 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	}
 	if _, ok := a.StmtNode.(*ast.CommitStmt); ok {
 		slowItems.PrevStmt = sessVars.PrevStmt.String()
+	}
+	if trace.IsEnabled() {
+		trace.Log(a.GoCtx, "details", sessVars.SlowLogFormat(slowItems))
 	}
 	if costTime < threshold {
 		logutil.SlowQueryLogger.Debug(sessVars.SlowLogFormat(slowItems))
@@ -1054,9 +1059,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 // GetTextToLog return the query text to log.
 func (a *ExecStmt) GetTextToLog() string {
 	var sql string
-	sessVars := a.Ctx.GetSessionVars()
-	if sessVars.EnableLogDesensitization {
-		sql, _ = sessVars.StmtCtx.SQLDigest()
+	if config.RedactLogEnabled() {
+		sql, _ = a.Ctx.GetSessionVars().StmtCtx.SQLDigest()
 	} else if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
 		sql = sensitiveStmt.SecureText()
 	} else {

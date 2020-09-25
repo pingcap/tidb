@@ -699,7 +699,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeGlobal | ScopeSession, TiDBEnableClusteredIndex, BoolToIntStr(DefTiDBEnableClusteredIndex)},
 	{ScopeGlobal | ScopeSession, TiDBPartitionPruneMode, string(StaticOnly)},
 	{ScopeGlobal, TiDBSlowLogMasking, BoolToIntStr(DefTiDBSlowLogMasking)},
-	{ScopeGlobal, TiDBLogDesensitization, BoolToIntStr(DefTiDBLogDesensitization)},
+	{ScopeGlobal, TiDBRedactLog, strconv.Itoa(config.DefTiDBRedactLog)},
 	{ScopeGlobal | ScopeSession, TiDBShardAllocateStep, strconv.Itoa(DefTiDBShardAllocateStep)},
 	{ScopeGlobal, TiDBEnableTelemetry, BoolToIntStr(DefTiDBEnableTelemetry)},
 	{ScopeGlobal | ScopeSession, TiDBEnableAmendPessimisticTxn, boolToOnOff(DefTiDBEnableAmendPessimisticTxn)},

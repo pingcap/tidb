@@ -1065,8 +1065,6 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
 			indexCols = append(indexCols, idxExprCols[i])
 		}
-		is.SetSchema(expression.NewSchema(indexCols...))
-		return
 	}
 	setHandle := len(indexCols) > len(is.Index.Columns)
 	if !setHandle {
@@ -1078,13 +1076,24 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 			}
 		}
 	}
-	// If it's double read case, the first index must return handle. So we should add extra handle column
-	// if there isn't a handle column.
-	if isDoubleRead && !setHandle {
-		if !is.Table.IsCommonHandle {
+
+	if isDoubleRead {
+		// If it's double read case, the first index must return handle. So we should add extra handle column
+		// if there isn't a handle column.
+		if !setHandle {
+			if !is.Table.IsCommonHandle {
+				indexCols = append(indexCols, &expression.Column{
+					RetType:  types.NewFieldType(mysql.TypeLonglong),
+					ID:       model.ExtraHandleID,
+					UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
+				})
+			}
+		}
+		// If index is global, we should add extra column for pid.
+		if is.Index.Global {
 			indexCols = append(indexCols, &expression.Column{
 				RetType:  types.NewFieldType(mysql.TypeLonglong),
-				ID:       model.ExtraHandleID,
+				ID:       model.ExtraPidColID,
 				UniqueID: is.ctx.GetSessionVars().AllocPlanColumnID(),
 			})
 		}
@@ -1413,6 +1422,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		return invalidTask
 	}
 
+	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
 	pointGetPlan := PointGetPlan{
 		ctx:              ds.ctx,
 		AccessConditions: candidate.path.AccessConds,
@@ -1422,7 +1432,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		outputNames:      ds.OutputNames(),
 		LockWaitTime:     ds.ctx.GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
-	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(1.0), ds.blockOffset)
+	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.blockOffset)
 	var partitionInfo *model.PartitionDefinition
 	if ds.isPartition {
 		if pi := ds.tableInfo.GetPartitionInfo(); pi != nil {
@@ -1490,13 +1500,14 @@ func (ds *DataSource) convertToBatchPointGet(prop *property.PhysicalProperty, ca
 		return invalidTask
 	}
 
+	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
 	batchPointGetPlan := BatchPointGetPlan{
 		ctx:              ds.ctx,
 		AccessConditions: candidate.path.AccessConds,
 		TblInfo:          ds.TableInfo(),
 		KeepOrder:        !prop.IsEmpty(),
 		Columns:          ds.Columns,
-	}.Init(ds.ctx, ds.stats.ScaleByExpectCnt(float64(len(candidate.path.Ranges))), ds.schema.Clone(), ds.names, ds.blockOffset)
+	}.Init(ds.ctx, ds.tableStats.ScaleByExpectCnt(accessCnt), ds.schema.Clone(), ds.names, ds.blockOffset)
 	if batchPointGetPlan.KeepOrder {
 		batchPointGetPlan.Desc = prop.Items[0].Desc
 	}
