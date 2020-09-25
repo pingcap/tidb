@@ -398,7 +398,7 @@ var defaultSysVars = []*SysVar{
 	{ScopeNone, "table_open_cache_instances", "1", false},
 	{ScopeGlobal, InnodbStatsPersistent, "1", false},
 	{ScopeGlobal | ScopeSession, "session_track_state_change", "", false},
-	{ScopeNone, "optimizer_switch", "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,subquery_materialization_cost_based=on,use_index_extensions=on", true},
+	{ScopeNone, OptimizerSwitch, "index_merge=on,index_merge_union=on,index_merge_sort_union=on,index_merge_intersection=on,engine_condition_pushdown=on,index_condition_pushdown=on,mrr=on,mrr_cost_based=on,block_nested_loop=on,batched_key_access=off,materialization=on,semijoin=on,loosescan=on,firstmatch=on,duplicateweedout=on,subquery_materialization_cost_based=on,use_index_extensions=on,condition_fanout_filter=on,derived_merge=on,use_invisible_indexes=off,skip_scan=on,hash_join=on,subquery_to_derived=off,prefer_ordering_index=on", true},
 	{ScopeGlobal, "delayed_queue_size", "1000", false},
 	{ScopeNone, "innodb_read_only", "0", false},
 	{ScopeNone, "datetime_format", "%Y-%m-%d %H:%i:%s", false},
@@ -831,6 +831,8 @@ const (
 	OptimizerPruneLevel = "optimizer_prune_level"
 	// OptimizerSearchDepth is the name for 'optimizer_search_depth' system variable.
 	OptimizerSearchDepth = "optimizer_search_depth"
+	// OptimizerSwitch is the name for 'optimizer_switch' system variable.
+	OptimizerSwitch = "optimizer_switch"
 	// InteractiveTimeout is the name for 'interactive_timeout' system variable.
 	InteractiveTimeout = "interactive_timeout"
 	// JoinBufferSize is the name for 'join_buffer_size' system variable.
