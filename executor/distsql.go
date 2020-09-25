@@ -954,8 +954,10 @@ func recordIndexLookUpRuntimeStats(stats map[string]*tikv.RPCRuntimeStats, cmd s
 		}
 		return
 	}
-	stat.Count++
-	stat.Consume += int64(d)
+	//stat.Count++
+	atomic.AddInt64(&stat.Count, int64(1))
+	atomic.AddInt64(&stat.Consume, int64(d))
+	//stat.Consume += int64(d)
 }
 
 func (e *indexLookUpRunTimeStats) String() string {
