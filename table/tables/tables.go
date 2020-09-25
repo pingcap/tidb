@@ -601,7 +601,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		hasRecordID = true
 	} else {
 		tblInfo := t.Meta()
-		txn.GetUnionStore().CacheIndexInfo(t.physicalTableID, 0, tblInfo)
+		txn.GetUnionStore().CacheTableInfo(t.physicalTableID, tblInfo)
 		if tblInfo.PKIsHandle {
 			recordID = kv.IntHandle(r[tblInfo.GetPkColInfo().Offset].GetInt64())
 			hasRecordID = true

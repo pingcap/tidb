@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/store/tikv/oracle"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -209,7 +210,7 @@ func (c *twoPhaseCommitter) extractKeyExistsErr(key kv.Key) error {
 		return c.genKeyExistsError("UNKNOWN", key.String(), err)
 	}
 
-	tblInfo := c.txn.us.GetIndexInfo(tableID, indexID)
+	tblInfo := c.txn.us.GetTableInfo(tableID)
 	if tblInfo == nil {
 		return c.genKeyExistsError("UNKNOWN", key.String(), errors.New("cannot find table info"))
 	}
@@ -285,13 +286,7 @@ func (c *twoPhaseCommitter) extractKeyExistsErrFromHandle(key kv.Key, value []by
 		return c.genKeyExistsError(name, handle.String(), errors.New("missing value"))
 	}
 
-	var idxInfo *model.IndexInfo
-	for _, idx := range tblInfo.Indices {
-		if idx.Primary {
-			idxInfo = idx
-			break
-		}
-	}
+	idxInfo := tables.FindPrimaryIndex(tblInfo)
 	if idxInfo == nil {
 		return c.genKeyExistsError(name, handle.String(), errors.New("cannot find index info"))
 	}
