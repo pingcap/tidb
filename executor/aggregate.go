@@ -164,7 +164,7 @@ type HashAggExec struct {
 
 	// isChildReturnEmpty indicates whether the child executor only returns an empty input.
 	isChildReturnEmpty bool
-	// After we support parallel execution for aggregation functions with distinct,
+	// isUnparallelExec After we support parallel execution for aggregation functions with distinct,
 	// we can remove this attribute.
 	isUnparallelExec bool
 	prepared         bool
@@ -452,7 +452,7 @@ func getGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			return nil, err
 		}
 
-		if err := expression.EvalExpr(ctx, item, input, buf); err != nil {
+		if err := expression.EvalExpr(ctx, item, tp.EvalType(), input, buf); err != nil {
 			expression.PutColumn(buf)
 			return nil, err
 		}
@@ -676,7 +676,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 	go e.waitFinalWorkerAndCloseFinalOutput(finalWorkerWaitGroup)
 }
 
-// HashAggExec employs one input reader, M partial workers and N final workers to execute parallelly.
+// parallelExec employs one input reader, M partial workers and N final workers to execute parallelly.
 // The parallel execution flow is:
 // 1. input reader reads data from child executor and send them to partial workers.
 // 2. partial worker receives the input data, updates the partial results, and shuffle the partial results to the final workers.
@@ -1019,7 +1019,7 @@ type vecGroupChecker struct {
 	// sameGroup is used to check whether the current row belongs to the same group as the previous row
 	sameGroup []bool
 
-	// set these functions for testing
+	// allocateBuffer set these functions for testing
 	allocateBuffer func(evalType types.EvalType, capacity int) (*chunk.Column, error)
 	releaseBuffer  func(buf *chunk.Column)
 }
@@ -1296,7 +1296,7 @@ func (e *vecGroupChecker) evalGroupItemsAndResolveGroups(item expression.Express
 		return err
 	}
 	defer e.releaseBuffer(col)
-	err = expression.EvalExpr(e.ctx, item, chk, col)
+	err = expression.EvalExpr(e.ctx, item, eType, chk, col)
 	if err != nil {
 		return err
 	}
