@@ -538,7 +538,6 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		e.idxWorkerWg.Done()
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.indexScan, int64(time.Since(startTime)))
-			//e.stats.indexScan += int64(time.Since(startTime))
 		}
 	}()
 	return nil
@@ -568,7 +567,6 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			worker.pickAndExecTask(ctx1)
 			if e.stats != nil {
 				atomic.AddInt64(&e.stats.tableRowScan, int64(time.Since(startTime)))
-				//e.stats.tableRowScan += time.Since(startTime)
 			}
 			cancel()
 			e.tblWorkerWg.Done()
