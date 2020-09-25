@@ -494,7 +494,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		return err
 	}
 	tps := e.getRetTpsByHandle()
-	// Since the first read only need handle information. So its returned col is only 1. here is rpc
+	// Since the first read only need handle information. So its returned col is only 1.
 	rpcStart := time.Now()
 	result, err := distsql.SelectWithRuntimeStats(ctx, e.ctx, kvReq, tps, e.feedback, getPhysicalPlanIDs(e.idxPlans), e.id)
 	if e.stats != nil {
@@ -537,7 +537,8 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, kvRanges []k
 		close(e.resultCh)
 		e.idxWorkerWg.Done()
 		if e.stats != nil {
-			e.stats.indexScan += time.Since(startTime)
+			atomic.AddInt64(&e.stats.indexScan, int64(time.Since(startTime)))
+			//e.stats.indexScan += int64(time.Since(startTime))
 		}
 	}()
 	return nil
@@ -566,7 +567,8 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 			startTime := time.Now()
 			worker.pickAndExecTask(ctx1)
 			if e.stats != nil {
-				e.stats.tableRowScan += time.Since(startTime)
+				atomic.AddInt64(&e.stats.tableRowScan, int64(time.Since(startTime)))
+				//e.stats.tableRowScan += time.Since(startTime)
 			}
 			cancel()
 			e.tblWorkerWg.Done()
@@ -941,8 +943,8 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 type indexLookUpRunTimeStats struct {
 	*tikv.SnapshotRuntimeStats
 	rpcStats     map[string]*tikv.RPCRuntimeStats
-	indexScan    time.Duration
-	tableRowScan time.Duration
+	indexScan    int64
+	tableRowScan int64
 }
 
 func recordIndexLookUpRuntimeStats(stats map[string]*tikv.RPCRuntimeStats, cmd string, d time.Duration) {
@@ -963,13 +965,13 @@ func recordIndexLookUpRuntimeStats(stats map[string]*tikv.RPCRuntimeStats, cmd s
 func (e *indexLookUpRunTimeStats) String() string {
 	var buf bytes.Buffer
 	if e.indexScan != 0 {
-		buf.WriteString(fmt.Sprintf("index_task:{time:%s, num_rpc:%d, total_time:%s}", e.indexScan, e.rpcStats["index_task"].Count, time.Duration(e.rpcStats["index_task"].Consume)))
+		buf.WriteString(fmt.Sprintf("index_task:{time:%s, num_rpc:%d, total_time:%s}", time.Duration(e.indexScan), e.rpcStats["index_task"].Count, time.Duration(e.rpcStats["index_task"].Consume)))
 	}
 	if e.tableRowScan != 0 {
 		if buf.Len() > 0 {
 			buf.WriteByte(',')
 		}
-		buf.WriteString(fmt.Sprintf("table_task:{time:%s, num_rpc:%d, total_time:%s}", e.tableRowScan, e.rpcStats["table_task"].Count, time.Duration(e.rpcStats["table_task"].Consume)))
+		buf.WriteString(fmt.Sprintf("table_task:{time:%s, num_rpc:%d, total_time:%s}", time.Duration(e.tableRowScan), e.rpcStats["table_task"].Count, time.Duration(e.rpcStats["table_task"].Consume)))
 	}
 	return buf.String()
 }
