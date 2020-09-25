@@ -2299,7 +2299,7 @@ func (s *testDBSuite4) TestChangeColumn(c *C) {
 	sql = "alter table t4 change c2 a bigint not null;"
 	tk.MustGetErrCode(sql, mysql.WarnDataTruncated)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
-	tk.MustGetErrCode(sql, errno.ErrUnsupportedDDLOperation)
+	tk.MustExec(sql)
 	// Rename to an existing column.
 	s.mustExec(tk, c, "alter table t3 add column a bigint")
 	sql = "alter table t3 change aa a bigint"
@@ -3737,24 +3737,51 @@ func (s *testSerialDBSuite) TestModifyColumnNullToNotNullWithChangingVal(c *C) {
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeTiny)
 }
 
-func (s *testSerialDBSuite) TestModifyColumnBetweenChar(c *C) {
+func (s *testSerialDBSuite) TestModifyColumnBetweenStringTypes(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
+
+	//varchar to varchar
 	tk.MustExec("drop table if exists tt;")
 	tk.MustExec("create table tt (a varchar(10));")
-	tk.MustExec("insert into tt values ('111', '10000');")
-	tk.MustExec("alert table tt change a a varchar(5);")
-	c2 := getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "tt", "a", false)
+	tk.MustExec("insert into tt values ('111'),('10000');")
+	tk.MustExec("alter table tt change a a varchar(5);")
+	c2 := getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(c2.FieldType.Flen, Equals, 5)
-	tk.MustQuery("select * from t1").Check(testkit.Rows("'111' '10000'"))
-	_, err := tk.Exec("alert table tt change a a varchar(4);")
-	c.Assert(err.Error(), Equals, "[ddl:1265]Data truncated for column 'a' at row 2")
-	tk.MustExec("alert table tt change a a varchar(100);")
-	tk.MustExec("alert table tt change a a char(10);")
-	c2 = getModifyColumn(c, s.s.(sessionctx.Context), s.schemaName, "tt", "a", false)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustGetErrMsg("alter table tt change a a varchar(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+	tk.MustExec("alter table tt change a a varchar(100);")
+
+	// varchar to char
+	tk.MustExec("alter table tt change a a char(10);")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
 	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeString)
 	c.Assert(c2.FieldType.Flen, Equals, 10)
-	tk.MustQuery("select * from t1").Check(testkit.Rows("'111' '10000'"))
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustGetErrMsg("alter table tt change a a char(4);", "[types:1406]Data Too Long, field len 4, data len 5")
+
+	// char to text
+	tk.MustExec("alter table tt change a a text;")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeBlob)
+
+	// text to set
+	tk.MustGetErrMsg("alter table tt change a a set('111', '2222');", "[types:1265]Data truncated for column 'a' at row 2")
+	tk.MustExec("alter table tt change a a set('111', '10000');")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeSet)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+
+	// set to enum
+	tk.MustGetErrMsg("alter table tt change a a enum('111', '2222');", "[types:1265]Data truncated for column 'a' at row 2")
+	tk.MustExec("alter table tt change a a enum('111', '10000');")
+	c2 = getModifyColumn(c, s.s.(sessionctx.Context), "test", "tt", "a", false)
+	c.Assert(c2.FieldType.Tp, Equals, mysql.TypeEnum)
+	tk.MustQuery("select * from tt").Check(testkit.Rows("111", "10000"))
+	tk.MustExec("alter table tt change a a enum('10000', '111');")
+	tk.MustQuery("select * from tt where a = 1").Check(testkit.Rows("10000"))
+	tk.MustQuery("select * from tt where a = 2").Check(testkit.Rows("111"))
+
 	tk.MustExec("drop table tt;")
 }
 
