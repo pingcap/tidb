@@ -683,7 +683,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return nil, nil
 		}
 		// The respCh has been drained out
-		it.actionOnExceed.broadcastIfNeeded(len(it.respChan) < 1)
+		it.actionOnExceed.resetExceededIfNeeded(len(it.respChan) < 1)
 	} else {
 		for {
 			if it.curr >= len(it.tasks) {
@@ -708,7 +708,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			// The tasks whose id is less than maxID are assumed that being sending to their task channel.
 			// So the response channel would be thought as drained out if the current taskID is greater or equal than
 			// the maxID as all the workers are being suspended at that time.
-			it.actionOnExceed.broadcastIfNeeded(finishedTaskID >= maxID)
+			it.actionOnExceed.resetExceededIfNeeded(finishedTaskID >= maxID)
 		}
 	}
 
@@ -1332,10 +1332,10 @@ func (e *rateLimitAction) SetFallback(a memory.ActionOnExceed) {
 	e.fallbackAction = a
 }
 
-// broadcastIfNeeded will check whether the copWorkers is under suspended status.
+// resetExceededIfNeeded will check whether the copWorkers is under suspended status.
 // If they are, `broadcastIfNeeded` would try to recover them if there are no more
 // copResponse remained in the channel.
-func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
+func (e *rateLimitAction) resetExceededIfNeeded(needed bool) {
 	e.conditionLock()
 	defer e.conditionUnlock()
 	if e.cond.exceeded && needed {
@@ -1346,7 +1346,8 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 
 // destroyTokenIfNeeded will check the `exceed` flag after copWorker finished one task.
 // If the exceed flag is true and there is no token been destroyed before, one token will be destroyed,
-// or the token would be return back.
+// or the token would be return back. When the token is destroyed, the condition will try to broadcast
+// and try to recover the suspended workers.
 func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	e.conditionLock()
 	defer e.conditionUnlock()
@@ -1364,13 +1365,15 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 	}
 }
 
+// waitIfNeeded will check the exceeded and isTokenDestroyed and decided whether the workers should be suspended.
 func (e *rateLimitAction) waitIfNeeded() {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	// Only if the !exceeded and isTokenDestroyed is both meet, the process should be permitted.
+	// Only if the !exceeded and isTokenDestroyed is both meet, the worker should be permitted to continue.
 	for e.cond.exceeded && !e.cond.isTokenDestroyed {
 		e.cond.Wait()
 	}
+	// As one Token is destroyed and the exceeded data is consumed, the once could be initialized again.
 	if !e.cond.initOnce {
 		e.cond.once = sync.Once{}
 		e.cond.initOnce = true
