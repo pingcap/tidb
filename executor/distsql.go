@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
@@ -950,13 +951,6 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 	return
 }
 
-type indexLookUpRunTimeStats struct {
-	*tikv.SnapshotRuntimeStats
-	rpcStats     map[string]*tikv.RPCRuntimeStats
-	indexScan    int64
-	tableRowScan int64
-}
-
 func recordIndexLookUpRuntimeStats(stats map[string]*tikv.RPCRuntimeStats, cmd string, d time.Duration) {
 	stat, ok := stats[cmd]
 	if !ok {
@@ -966,10 +960,15 @@ func recordIndexLookUpRuntimeStats(stats map[string]*tikv.RPCRuntimeStats, cmd s
 		}
 		return
 	}
-	//stat.Count++
 	atomic.AddInt64(&stat.Count, int64(1))
 	atomic.AddInt64(&stat.Consume, int64(d))
-	//stat.Consume += int64(d)
+}
+
+type indexLookUpRunTimeStats struct {
+	*tikv.SnapshotRuntimeStats
+	rpcStats     map[string]*tikv.RPCRuntimeStats
+	indexScan    int64
+	tableRowScan int64
 }
 
 func (e *indexLookUpRunTimeStats) String() string {
@@ -984,6 +983,61 @@ func (e *indexLookUpRunTimeStats) String() string {
 		buf.WriteString(fmt.Sprintf("table_task:{time:%s, num_rpc:%d, total_time:%s}", time.Duration(e.tableRowScan), e.rpcStats["table_task"].Count, time.Duration(e.rpcStats["table_task"].Consume)))
 	}
 	return buf.String()
+}
+
+// Clone implements the RuntimeStats interface.
+func (e *indexLookUpRunTimeStats) Clone() execdetails.RuntimeStats {
+	rpcstats := make(map[string]*tikv.RPCRuntimeStats)
+	newRs := &indexLookUpRunTimeStats{
+		rpcStats:     rpcstats,
+		indexScan:    e.indexScan,
+		tableRowScan: e.tableRowScan,
+	}
+	if e.SnapshotRuntimeStats != nil {
+		snapshotStats := e.SnapshotRuntimeStats.Clone()
+		newRs.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+	}
+	if e.rpcStats != nil {
+		for k, v := range e.rpcStats {
+			newRs.rpcStats[k] = v
+		}
+	}
+	return newRs
+}
+
+// Merge implements the RuntimeStats interface.
+func (e *indexLookUpRunTimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*indexLookUpRunTimeStats)
+	if !ok {
+		return
+	}
+	if tmp.SnapshotRuntimeStats != nil {
+		if e.SnapshotRuntimeStats == nil {
+			snapshotStats := tmp.SnapshotRuntimeStats.Clone()
+			e.SnapshotRuntimeStats = snapshotStats.(*tikv.SnapshotRuntimeStats)
+		} else {
+			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
+		}
+	}
+	for cmd, v := range tmp.rpcStats {
+		stat, ok := e.rpcStats[cmd]
+		if !ok {
+			e.rpcStats[cmd] = &tikv.RPCRuntimeStats{
+				Count:   v.Count,
+				Consume: v.Consume,
+			}
+			continue
+		}
+		stat.Count += v.Count
+		stat.Consume += v.Consume
+	}
+	e.indexScan += tmp.indexScan
+	e.tableRowScan += tmp.tableRowScan
+}
+
+// Tp implements the RuntimeStats interface.
+func (e *indexLookUpRunTimeStats) Tp() int {
+	return execdetails.TpIndexLookUpRunTimeStats
 }
 
 func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, tableReader Executor) error {
