@@ -547,6 +547,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			return ver, errors.Trace(err)
 		}
 
+		//TODO set a proper value later
 		var limit int64 = 1000000
 
 		//TODO Check the job is the parent job first, if it is, it will only do the following two things:
