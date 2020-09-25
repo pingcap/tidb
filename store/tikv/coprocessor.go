@@ -1340,7 +1340,6 @@ func (e *rateLimitAction) broadcastIfNeeded(needed bool) {
 	defer e.conditionUnlock()
 	if e.cond.exceeded && needed {
 		e.cond.exceeded = false
-		e.cond.isTokenDestroyed = false
 		e.cond.Broadcast()
 	}
 }
