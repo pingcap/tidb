@@ -108,11 +108,14 @@ func onAddTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ 
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		// none -> replica only
-		job.SchemaState = model.StateReplicaOnly
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
 		ver, err = updateVersionAndTableInfoWithCheck(t, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// none -> replica only
+		job.SchemaState = model.StateReplicaOnly
 	case model.StateReplicaOnly:
 		// replica only -> public
 		// Here need do some tiflash replica complement check.
