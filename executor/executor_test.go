@@ -2030,7 +2030,7 @@ func (s *testSuiteP1) TestGeneratedColumnRead(c *C) {
 	}
 }
 
-// TestGeneratedColumnPointGet tests generated columns using point get and batch point get
+// TestGeneratedColumnRead tests generated columns using point get and batch point get
 func (s *testSuiteP1) TestGeneratedColumnPointGet(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
@@ -6005,7 +6005,7 @@ func (s *testSuite) TestIssue19100(c *C) {
 	tk.MustQuery("select count(*) from t2 where c;").Check(testkit.Rows("0"))
 }
 
-// TestInsertValuesWithSubQuery this is from jira issue #5856
+// this is from jira issue #5856
 func (s *testSuite1) TestInsertValuesWithSubQuery(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
@@ -6232,7 +6232,7 @@ func (s *testSuiteP2) TestApplyCache(c *C) {
 	c.Assert(value[ind:], Equals, "cache:OFF")
 }
 
-// TestGenerateColumnReplace For issue 17256
+// For issue 17256
 func (s *testSuite) TestGenerateColumnReplace(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test;")
