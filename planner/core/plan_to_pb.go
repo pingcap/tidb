@@ -202,6 +202,8 @@ func (p *PhysicalIndexScan) ToPB(ctx sessionctx.Context, _ kv.StoreType) (*tipb.
 	for _, col := range p.schema.Columns {
 		if col.ID == model.ExtraHandleID {
 			columns = append(columns, model.NewExtraHandleColInfo())
+		} else if col.ID == model.ExtraPidColID {
+			columns = append(columns, model.NewExtraPartitionIDColInfo())
 		} else {
 			columns = append(columns, findColumnInfoByID(tableColumns, col.ID))
 		}

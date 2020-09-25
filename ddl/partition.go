@@ -1521,8 +1521,8 @@ func truncateTableByReassignPartitionIDs(t *meta.Meta, tblInfo *model.TableInfo)
 
 func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 	var partitionID int64
-	var rules []*placement.RuleOp
-	err := job.DecodeArgs(&partitionID, &rules)
+	bundle := &placement.Bundle{}
+	err := job.DecodeArgs(&partitionID, bundle)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return 0, errors.Trace(err)
@@ -1539,23 +1539,15 @@ func onAlterTablePartition(t *meta.Meta, job *model.Job) (int64, error) {
 		return 0, errors.Trace(table.ErrUnknownPartition.GenWithStackByArgs("drop?", tblInfo.Name.O))
 	}
 
-	for i, rule := range rules {
-		if rule.Action == placement.RuleOpDel {
-			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s", job.SchemaID, tblInfo.ID, partitionID, rule.Role)
-		} else {
-			rule.ID = fmt.Sprintf("%d_t%d_p%d_%s_%d_%d", job.SchemaID, tblInfo.ID, partitionID, rule.Role, job.ID, i)
-		}
-	}
-
-	ver, err := t.GetSchemaVersion()
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
-
-	err = infosync.UpdatePlacementRules(nil, rules)
+	err = infosync.PutRuleBundle(nil, bundle)
 	if err != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
+
+	ver, err := updateSchemaVersion(t, job)
+	if err != nil {
+		return ver, errors.Trace(err)
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
