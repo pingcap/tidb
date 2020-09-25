@@ -6436,10 +6436,10 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 		name string
 		sql  string
 	}{
-		//{
-		//	name: "keep Order",
-		//	sql:  "select id from t6 order by id",
-		//},
+		{
+			name: "keep Order",
+			sql:  "select id from t6 order by id",
+		},
 		{
 			name: "non keep Order",
 			sql:  "select id from t5",

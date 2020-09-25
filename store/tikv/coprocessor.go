@@ -1363,7 +1363,7 @@ func (e *rateLimitAction) destroyTokenIfNeeded(returnToken func()) {
 func (e *rateLimitAction) waitIfNeeded() {
 	e.conditionLock()
 	defer e.conditionUnlock()
-	for e.cond.exceeded {
+	if e.cond.exceeded {
 		e.cond.Wait()
 	}
 }
