@@ -4036,6 +4036,8 @@ func (s *testSuite3) TestSubqueryTableAlias(c *C) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t (a int, b int);`)
 	tk.MustGetErrCode(`select min(b) b from (select min(t.b) b from t where t.a = '');`, mysql.ErrDerivedMustHaveAlias)
+	tk.MustExec(`set sql_mode = 'oracle';`)
+	tk.MustExec(`select min(b) b from (select min(t.b) b from t where t.a = '');`)
 }
 
 func (s *testSerialSuite) TestTSOFail(c *C) {
