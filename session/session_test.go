@@ -3140,7 +3140,7 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
 
 	// Test SET_VAR hint
-	tk.Se.GetSessionVars().SetSystemVar("unique_checks", "ON")
+	tk.Se.GetSessionVars().SetSystemVar("unique_checks", "1")
 	tk.MustQuery("SELECT /*+ SET_VAR(unique_checks=OFF) */ @@unique_checks;").Check(testkit.Rows("0"))
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
 	tk.MustQuery("SELECT @@unique_checks;").Check(testkit.Rows("1"))
