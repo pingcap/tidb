@@ -250,6 +250,24 @@ func (db *memdb) Get(_ context.Context, key Key) ([]byte, error) {
 	return db.vlog.getValue(x.vptr), nil
 }
 
+func (db *memdb) SelectValueHistory(key Key, predicate func(value []byte) bool) ([]byte, error) {
+	x := db.traverse(key, false)
+	if x.isNull() {
+		return nil, ErrNotExist
+	}
+	if x.vptr.isNull() {
+		// A flag only key, act as value not exists
+		return nil, ErrNotExist
+	}
+	result := db.vlog.selectValueHistory(x.vptr, func(addr memdbArenaAddr) bool {
+		return predicate(db.vlog.getValue(addr))
+	})
+	if result.isNull() {
+		return nil, nil
+	}
+	return db.vlog.getValue(result), nil
+}
+
 func (db *memdb) GetFlags(key Key) (KeyFlags, error) {
 	x := db.traverse(key, false)
 	if x.isNull() {
