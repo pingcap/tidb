@@ -6804,6 +6804,20 @@ func (s *testIntegrationSuite) TestIssue16505(c *C) {
 	tk.MustExec("drop table t;")
 }
 
+func (s *testIntegrationSuite) TestIssue20121(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a datetime, b year)")
+	tk.MustExec("insert into t values('2000-05-03 16:44:44', 2018)")
+	tk.MustExec("insert into t values('2020-10-01 11:11:11', 2000)")
+	tk.MustExec("insert into t values('2020-10-01 11:11:11', 2070)")
+	tk.MustExec("insert into t values('2020-10-01 11:11:11', 1999)")
+
+	tk.MustQuery("select * from t where t.a < t.b").Check(testkit.Rows("2000-05-03 16:44:44 2018", "2020-10-01 11:11:11 2070"))
+	tk.MustQuery("select * from t where t.a > t.b").Check(testkit.Rows("2020-10-01 11:11:11 2000", "2020-10-01 11:11:11 1999"))
+}
+
 func (s *testIntegrationSuite) TestIssue16779(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")

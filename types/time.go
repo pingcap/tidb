@@ -1712,6 +1712,24 @@ func ParseDate(sc *stmtctx.StatementContext, str string) (Time, error) {
 	return ParseTime(sc, str, mysql.TypeDate, MinFsp)
 }
 
+func ParseTimeFromYear(sc *stmtctx.StatementContext, num int64) (Time, error) {
+	if num == 0 {
+		return NewTime(ZeroCoreTime, mysql.TypeDate, DefaultFsp), nil
+	}
+
+	if num < math.MinInt16 || num > math.MaxInt16 {
+		return ZeroDate, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, strconv.FormatInt(num, 10)))
+	}
+
+	if int16(num) < MinYear || int16(num) > MaxYear {
+		return NewTime(ZeroCoreTime, mysql.TypeDatetime, DefaultFsp), nil
+	}
+
+	dt := FromDate(int(num), 0, 0, 0, 0, 0, 0)
+
+	return NewTime(dt, mysql.TypeDatetime, DefaultFsp), nil
+}
+
 // ParseTimeFromNum parses a formatted int64,
 // returns the value which type is tp.
 func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int8) (Time, error) {

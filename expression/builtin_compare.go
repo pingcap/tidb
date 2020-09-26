@@ -1059,9 +1059,9 @@ func getBaseCmpType(lhs, rhs types.EvalType, lft, rft *types.FieldType) types.Ev
 	} else if ((lhs == types.ETInt || lft.Hybrid()) || lhs == types.ETDecimal) &&
 		((rhs == types.ETInt || rft.Hybrid()) || rhs == types.ETDecimal) {
 		return types.ETDecimal
-	} else if lhs == types.ETDatetime && rhs == types.ETInt && rft.Tp == mysql.TypeYear ||
-		lhs == types.ETInt && rhs == types.ETDatetime && lft.Tp == mysql.TypeYear {
-		return types.ETTimestamp
+	} else if types.IsTemporalWithDate(lft.Tp) && rhs == types.ETInt && rft.Tp == mysql.TypeYear ||
+		lhs == types.ETInt && lft.Tp == mysql.TypeYear && types.IsTemporalWithDate(rft.Tp) {
+		return types.ETDatetime
 	}
 	return types.ETReal
 }
@@ -1328,6 +1328,7 @@ func (c *compareFunctionClass) refineArgs(ctx sessionctx.Context, args []Express
 			}
 		}
 	}
+
 	if isExceptional && (c.op == opcode.EQ || c.op == opcode.NullEQ) {
 		// This will always be false.
 		return []Expression{NewZero(), NewOne()}
