@@ -733,7 +733,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 
 	if jobParam.changingCol == nil {
 		changingColPos := &ast.ColumnPosition{Tp: ast.ColumnPositionNone}
-		newColName := model.NewCIStr(fmt.Sprintf("%s%s", changingColumnPrefix, oldCol.Name.O))
+		newColName := model.NewCIStr(genChangingColumnUniqueName(tblInfo, oldCol))
 		if mysql.HasPriKeyFlag(oldCol.Flag) {
 			job.State = model.JobStateCancelled
 			msg := "tidb_enable_change_column_type is true and this column has primary key flag"
@@ -753,7 +753,7 @@ func (w *worker) onModifyColumn(d *ddlCtx, t *meta.Meta, job *model.Job) (ver in
 		jobParam.changingIdxs = make([]*model.IndexInfo, 0, len(idxInfos))
 		for i, idxInfo := range idxInfos {
 			newIdxInfo := idxInfo.Clone()
-			newIdxInfo.Name = model.NewCIStr(fmt.Sprintf("%s%s", changingIndexPrefix, newIdxInfo.Name.O))
+			newIdxInfo.Name = model.NewCIStr(genChangingIndexUniqueName(tblInfo, idxInfo))
 			newIdxInfo.ID = allocateIndexID(tblInfo)
 			newIdxInfo.Columns[offsets[i]].Name = newColName
 			newIdxInfo.Columns[offsets[i]].Offset = jobParam.changingCol.Offset
@@ -916,9 +916,9 @@ func (w *worker) doModifyColumnTypeWithData(
 		oldIdxIDs := make([]int64, 0, len(changingIdxs))
 		tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-1]
 		for _, cIdx := range changingIdxs {
-			idxName := strings.TrimPrefix(cIdx.Name.O, changingIndexPrefix)
+			idxName := getChangingIndexOriginName(cIdx)
 			for i, idx := range tblInfo.Indices {
-				if strings.EqualFold(idxName, idx.Name.L) {
+				if strings.EqualFold(idxName, idx.Name.O) {
 					cIdx.Name = model.NewCIStr(idxName)
 					tblInfo.Indices[i] = cIdx
 					oldIdxIDs = append(oldIdxIDs, idx.ID)
@@ -926,11 +926,12 @@ func (w *worker) doModifyColumnTypeWithData(
 				}
 			}
 		}
+		changingColumnUniqueName := changingCol.Name
 		changingCol.Name = colName
 		changingCol.ChangeStateInfo = nil
 		tblInfo.Indices = tblInfo.Indices[:len(tblInfo.Indices)-len(changingIdxs)]
 		// Adjust table column offset.
-		if err = adjustColumnInfoInModifyColumn(job, tblInfo, changingCol, oldCol, pos); err != nil {
+		if err = adjustColumnInfoInModifyColumn(job, tblInfo, changingCol, oldCol, pos, changingColumnUniqueName.L); err != nil {
 			// TODO: Do rollback.
 			return ver, errors.Trace(err)
 		}
@@ -1221,7 +1222,7 @@ func (w *worker) doModifyColumn(
 		}
 	}
 
-	if err := adjustColumnInfoInModifyColumn(job, tblInfo, newCol, oldCol, pos); err != nil {
+	if err := adjustColumnInfoInModifyColumn(job, tblInfo, newCol, oldCol, pos, ""); err != nil {
 		return ver, errors.Trace(err)
 	}
 
@@ -1239,7 +1240,7 @@ func (w *worker) doModifyColumn(
 }
 
 func adjustColumnInfoInModifyColumn(
-	job *model.Job, tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) error {
+	job *model.Job, tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition, changingColUniqueLowerName string) error {
 	// We need the latest column's offset and state. This information can be obtained from the store.
 	newCol.Offset = oldCol.Offset
 	newCol.State = oldCol.State
@@ -1300,7 +1301,14 @@ func adjustColumnInfoInModifyColumn(
 	// Change offset and name in indices.
 	for _, idx := range tblInfo.Indices {
 		for _, c := range idx.Columns {
-			cName := strings.ToLower(strings.TrimPrefix(c.Name.O, changingColumnPrefix))
+			cName := c.Name.L
+			// With the unique changing column name, the format is designed as `_Col$_xx_uniqueNum`.
+			// The suffix `_uniqueNum` will be trimmed when we get the origin changing column name.
+			// There is a possibility that some other column named as `xx_xx_xx`, and it will be get
+			// trimmed as `xx_xx`. So here we check here and only do the trim for the changing index column.
+			if len(changingColUniqueLowerName) != 0 && c.Name.L == changingColUniqueLowerName {
+				cName = strings.ToLower(getChangingColumnOriginName(c))
+			}
 			if newCol, ok := columnChanged[cName]; ok {
 				c.Name = newCol.Name
 				c.Offset = newCol.Offset
@@ -1560,4 +1568,56 @@ func indexInfosToIDList(idxInfos []*model.IndexInfo) []int64 {
 		ids = append(ids, idxInfo.ID)
 	}
 	return ids
+}
+
+func genChangingColumnUniqueName(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) string {
+	suffix := 0
+	newColumnNamePrefix := fmt.Sprintf("%s%s", changingColumnPrefix, oldCol.Name.O)
+	newColumnLowerName := fmt.Sprintf("%s_%d", strings.ToLower(newColumnNamePrefix), suffix)
+	// Check whether the new column name is used.
+	columnNameMap := make(map[string]bool, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		columnNameMap[col.Name.L] = true
+	}
+	for columnNameMap[newColumnLowerName] {
+		suffix++
+		newColumnLowerName = fmt.Sprintf("%s_%d", strings.ToLower(newColumnNamePrefix), suffix)
+	}
+	return fmt.Sprintf("%s_%d", newColumnNamePrefix, suffix)
+}
+
+func genChangingIndexUniqueName(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) string {
+	suffix := 0
+	newIndexNamePrefix := fmt.Sprintf("%s%s", changingIndexPrefix, idxInfo.Name.O)
+	newIndexLowerName := fmt.Sprintf("%s_%d", strings.ToLower(newIndexNamePrefix), suffix)
+	// Check whether the new index name is used.
+	indexNameMap := make(map[string]bool, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		indexNameMap[idx.Name.L] = true
+	}
+	for indexNameMap[newIndexLowerName] {
+		suffix++
+		newIndexLowerName = fmt.Sprintf("%s_%d", strings.ToLower(newIndexNamePrefix), suffix)
+	}
+	return fmt.Sprintf("%s_%d", newIndexNamePrefix, suffix)
+}
+
+func getChangingColumnOriginName(changingCol *model.IndexColumn) string {
+	colName := strings.ToLower(strings.TrimPrefix(changingCol.Name.O, changingColumnPrefix))
+	// Since the unique colName may contain the suffix number (columnName_num), better trim the suffix.
+	var pos int
+	if pos = strings.LastIndex(colName, "_"); pos == -1 {
+		return colName
+	}
+	return colName[:pos]
+}
+
+func getChangingIndexOriginName(changingIdx *model.IndexInfo) string {
+	idxName := strings.TrimPrefix(changingIdx.Name.O, changingIndexPrefix)
+	// Since the unique idxName may contain the suffix number (indexName_num), better trim the suffix.
+	var pos int
+	if pos = strings.LastIndex(idxName, "_"); pos == -1 {
+		return idxName
+	}
+	return idxName[:pos]
 }
