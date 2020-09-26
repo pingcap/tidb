@@ -500,25 +500,25 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			flagMap[fields[0]] = strings.ToLower(fields[1])
 		}
 
-		oldValue, err := GetGlobalSystemVar(vars, name)
+		origValue, err := GetGlobalSystemVar(vars, name)
 		if err != nil {
 			return value, err
 		}
-		oldFlags := strings.Split(oldValue, ",")
-		for i, oldFlag := range oldFlags {
-			fields := strings.Split(oldFlag, "=")
+		origFlags := strings.Split(origValue, ",")
+		for i, origFlag := range origFlags {
+			fields := strings.Split(origFlag, "=")
 			if len(fields) != 2 {
 				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 			}
 			if val, ok := flagMap[fields[0]]; ok {
-				oldFlags[i] = fields[0] + "=" + val
+				origFlags[i] = fields[0] + "=" + val
 				delete(flagMap, fields[0])
 			}
 		}
 		if len(flagMap) > 0 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 		}
-		return strings.Join(oldFlags, ","), nil
+		return strings.Join(origFlags, ","), nil
 	case TiDBOptBCJ:
 		if (strings.EqualFold(value, "ON") || value == "1") && vars.AllowBatchCop == 0 {
 			return value, ErrWrongValueForVar.GenWithStackByArgs("Can't set Broadcast Join to 1 but tidb_allow_batch_cop is 0, please active batch cop at first.")
