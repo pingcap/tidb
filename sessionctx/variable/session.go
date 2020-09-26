@@ -1160,11 +1160,10 @@ func (s *SessionVars) SetTmpSystemVar(name string, val string) error {
 }
 
 // ClearTmpSystemVars clear temporarily system variables.
-func (s *SessionVars) ClearTmpSystemVars() error {
+func (s *SessionVars) ClearTmpSystemVars() {
 	for name := range s.tmpSystems {
 		delete(s.tmpSystems, name)
 	}
-	return nil
 }
 
 // SetSystemVar sets the value of a system variable.
