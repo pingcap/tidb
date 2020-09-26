@@ -28,6 +28,7 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/terror"
@@ -2234,7 +2235,8 @@ func (s *testDBSuite6) TestDropColumn(c *C) {
 	tk.MustExec("create table t1 (a int,b int) partition by hash(a) partitions 4;")
 	_, err := tk.Exec("alter table t1 drop column a")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
+	// TODO: refine the error message to compatible with MySQL
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'expression'")
 
 	tk.MustExec("drop database drop_col_db")
 }
@@ -5070,7 +5072,8 @@ func (s *testDBSuite2) TestDDLWithInvalidTableInfo(c *C) {
 	// Test drop partition column.
 	_, err = tk.Exec("alter table t drop column a;")
 	c.Assert(err, NotNil)
-	c.Assert(err.Error(), Equals, "[expression:1054]Unknown column 'a' in 'expression'")
+	// TODO: refine the error message to compatible with MySQL
+	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'expression'")
 	// Test modify column with invalid expression.
 	_, err = tk.Exec("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));")
 	c.Assert(err, NotNil)
@@ -5088,7 +5091,7 @@ func (s *testDBSuite4) TestColumnCheck(c *C) {
 	tk.MustExec("create table column_check (pk int primary key, a int check (a > 1))")
 	defer tk.MustExec("drop table if exists column_check")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
-	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|Column check is not supported"))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|CONSTRAINT CHECK is not supported"))
 }
 
 func (s *testDBSuite5) TestAlterCheck(c *C) {
@@ -5122,6 +5125,19 @@ func (s *testDBSuite7) TestAddConstraintCheck(c *C) {
 	tk.MustExec("alter table add_constraint_check add constraint crn check (a > 1)")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
 	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|ADD CONSTRAINT CHECK is not supported"))
+}
+
+func (s *testDBSuite7) TestCreateTableIngoreCheckConstraint(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use " + s.schemaName)
+	tk.MustExec("drop table if exists table_constraint_check")
+	tk.MustExec("CREATE TABLE admin_user (enable bool, CHECK (enable IN (0, 1)));")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.WarningCount(), Equals, uint16(1))
+	tk.MustQuery("show warnings").Check(testutil.RowsWithSep("|", "Warning|8231|CONSTRAINT CHECK is not supported"))
+	tk.MustQuery("show create table admin_user").Check(testutil.RowsWithSep("|", ""+
+		"admin_user CREATE TABLE `admin_user` (\n"+
+		"  `enable` tinyint(1) DEFAULT NULL\n"+
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
 func (s *testDBSuite6) TestAlterOrderBy(c *C) {
@@ -5483,6 +5499,132 @@ func (s *testSerialDBSuite) TestCreateTableWithIntegerLengthWaring(c *C) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int8(2))")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+
+	tk.MustExec("drop table if exists t")
+}
+
+func (s *testSerialDBSuite) TestColumnTypeChangeGenUniqueChangingName(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+
+	enableChangeColumnType := tk.Se.GetSessionVars().EnableChangeColumnType
+	tk.Se.GetSessionVars().EnableChangeColumnType = true
+	defer func() {
+		tk.Se.GetSessionVars().EnableChangeColumnType = enableChangeColumnType
+		config.RestoreFunc()()
+	}()
+
+	hook := &ddl.TestDDLCallback{}
+	var checkErr error
+	assertChangingColName := "_col$_c2_0"
+	assertChangingIdxName := "_idx$_idx_0"
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
+			var (
+				newCol                *model.ColumnInfo
+				oldColName            *model.CIStr
+				modifyColumnTp        byte
+				updatedAutoRandomBits uint64
+				changingCol           *model.ColumnInfo
+				changingIdxs          []*model.IndexInfo
+			)
+			pos := &ast.ColumnPosition{}
+			err := job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+			if err != nil {
+				checkErr = err
+				return
+			}
+			if changingCol.Name.L != assertChangingColName {
+				checkErr = errors.New("changing column name is incorrect")
+			} else if changingIdxs[0].Name.L != assertChangingIdxName {
+				checkErr = errors.New("changing index name is incorrect")
+			}
+		}
+	}
+	d := s.dom.DDL()
+	originHook := d.GetHook()
+	d.(ddl.DDLForTest).SetHook(hook)
+	defer d.(ddl.DDLForTest).SetHook(originHook)
+
+	tk.MustExec("create table if not exists t(c1 varchar(256), c2 bigint, `_col$_c2` varchar(10), unique _idx$_idx(c1), unique idx(c2));")
+	tk.MustExec("alter table test.t change column c2 cC2 tinyint after `_col$_c2`")
+	c.Assert(checkErr, IsNil)
+
+	t := testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(len(t.Meta().Columns), Equals, 3)
+	c.Assert(t.Meta().Columns[0].Name.O, Equals, "c1")
+	c.Assert(t.Meta().Columns[0].Offset, Equals, 0)
+	c.Assert(t.Meta().Columns[1].Name.O, Equals, "_col$_c2")
+	c.Assert(t.Meta().Columns[1].Offset, Equals, 1)
+	c.Assert(t.Meta().Columns[2].Name.O, Equals, "cC2")
+	c.Assert(t.Meta().Columns[2].Offset, Equals, 2)
+
+	c.Assert(len(t.Meta().Indices), Equals, 2)
+	c.Assert(t.Meta().Indices[0].Name.O, Equals, "_idx$_idx")
+	c.Assert(t.Meta().Indices[1].Name.O, Equals, "idx")
+
+	c.Assert(len(t.Meta().Indices[0].Columns), Equals, 1)
+	c.Assert(t.Meta().Indices[0].Columns[0].Name.O, Equals, "c1")
+	c.Assert(t.Meta().Indices[0].Columns[0].Offset, Equals, 0)
+
+	c.Assert(len(t.Meta().Indices[1].Columns), Equals, 1)
+	c.Assert(t.Meta().Indices[1].Columns[0].Name.O, Equals, "cC2")
+	c.Assert(t.Meta().Indices[1].Columns[0].Offset, Equals, 2)
+
+	assertChangingColName1 := "_col$__col$_c1_1"
+	assertChangingColName2 := "_col$__col$__col$_c1_0_1"
+	query1 := "alter table t modify column _col$_c1 tinyint"
+	query2 := "alter table t modify column _col$__col$_c1_0 tinyint"
+	hook.OnJobUpdatedExported = func(job *model.Job) {
+		if (job.Query == query1 || job.Query == query2) && job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
+			var (
+				newCol                *model.ColumnInfo
+				oldColName            *model.CIStr
+				modifyColumnTp        byte
+				updatedAutoRandomBits uint64
+				changingCol           *model.ColumnInfo
+				changingIdxs          []*model.IndexInfo
+			)
+			pos := &ast.ColumnPosition{}
+			err := job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+			if err != nil {
+				checkErr = err
+				return
+			}
+			if job.Query == query1 && changingCol.Name.L != assertChangingColName1 {
+				checkErr = errors.New("changing column name is incorrect")
+			}
+			if job.Query == query2 && changingCol.Name.L != assertChangingColName2 {
+				checkErr = errors.New("changing column name is incorrect")
+			}
+		}
+	}
+	d.(ddl.DDLForTest).SetHook(hook)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table if not exists t(c1 bigint, _col$_c1 bigint, _col$__col$_c1_0 bigint, _col$__col$__col$_c1_0_0 bigint)")
+	tk.MustExec("alter table t modify column c1 tinyint")
+	tk.MustExec("alter table t modify column _col$_c1 tinyint")
+	c.Assert(checkErr, IsNil)
+	tk.MustExec("alter table t modify column _col$__col$_c1_0 tinyint")
+	c.Assert(checkErr, IsNil)
+	tk.MustExec("alter table t change column _col$__col$__col$_c1_0_0  _col$__col$__col$_c1_0_0 tinyint")
+
+	t = testGetTableByName(c, tk.Se, "test", "t")
+	c.Assert(len(t.Meta().Columns), Equals, 4)
+	c.Assert(t.Meta().Columns[0].Name.O, Equals, "c1")
+	c.Assert(t.Meta().Columns[0].Tp, Equals, mysql.TypeTiny)
+	c.Assert(t.Meta().Columns[0].Offset, Equals, 0)
+	c.Assert(t.Meta().Columns[1].Name.O, Equals, "_col$_c1")
+	c.Assert(t.Meta().Columns[1].Tp, Equals, mysql.TypeTiny)
+	c.Assert(t.Meta().Columns[1].Offset, Equals, 1)
+	c.Assert(t.Meta().Columns[2].Name.O, Equals, "_col$__col$_c1_0")
+	c.Assert(t.Meta().Columns[2].Tp, Equals, mysql.TypeTiny)
+	c.Assert(t.Meta().Columns[2].Offset, Equals, 2)
+	c.Assert(t.Meta().Columns[3].Name.O, Equals, "_col$__col$__col$_c1_0_0")
+	c.Assert(t.Meta().Columns[3].Tp, Equals, mysql.TypeTiny)
+	c.Assert(t.Meta().Columns[3].Offset, Equals, 3)
 
 	tk.MustExec("drop table if exists t")
 }
