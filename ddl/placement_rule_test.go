@@ -243,10 +243,7 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 						break
 					}
 				}
-				if !found {
-					c.Logf("%d test\nexpected %s\nbut got %s", i, expected, got)
-					c.Fail()
-				}
+				c.Assert(found, IsTrue, Commentf("%d test\nexpected %s\nbut got %s", i, expected, got))
 			}
 		} else {
 			c.Assert(err.Error(), ErrorMatches, t.err)
