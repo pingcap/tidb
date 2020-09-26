@@ -234,9 +234,9 @@ func (s *testPlacementSuite) TestPlacementBuild(c *C) {
 			c.Assert(err, IsNil)
 			got, err := json.Marshal(out.Rules)
 			c.Assert(err, IsNil)
-			for _, r1 := range out.Rules {
+			for _, r1 := range t.output {
 				found := false
-				for _, r2 := range t.output {
+				for _, r2 := range out.Rules {
 					if ok, _ := DeepEquals.Check([]interface{}{r1, r2}, nil); ok {
 						found = true
 						break
