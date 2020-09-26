@@ -444,16 +444,7 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	// indexWorker will write to workCh and tableWorker will read from workCh,
 	// so fetching index and getting table data can run concurrently.
 	workCh := make(chan *lookupTableTask, 1)
-	txn, err := e.ctx.Txn(true)
-	if err != nil {
-		return err
-	}
-	if e.collectRuntimeStatsEnabled() {
-		if snapshot := txn.GetSnapshot(); snapshot != nil {
-			snapshot.SetOption(kv.CollectRuntimeStats, e.stats.SnapshotRuntimeStats)
-			defer snapshot.DelOption(kv.CollectRuntimeStats)
-		}
-	}
+	e.collectRuntimeStatsEnabled()
 	if err := e.startIndexWorker(ctx, e.kvRanges, workCh, initBatchSize); err != nil {
 		return err
 	}
@@ -683,6 +674,14 @@ func (e *IndexLookUpExecutor) collectRuntimeStatsEnabled() bool {
 		if e.stats == nil {
 			snapshotStats := &tikv.SnapshotRuntimeStats{}
 			rpcstats := make(map[string]*tikv.RPCRuntimeStats)
+			rpcstats["index_task"] = &tikv.RPCRuntimeStats{
+				Count:   0,
+				Consume: 0,
+			}
+			rpcstats["table_task"] = &tikv.RPCRuntimeStats{
+				Count:   0,
+				Consume: 0,
+			}
 			e.stats = &indexLookUpRunTimeStats{
 				SnapshotRuntimeStats: snapshotStats,
 				rpcStats:             rpcstats,
@@ -961,16 +960,8 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 }
 
 func recordIndexLookUpRuntimeStats(stats map[string]*tikv.RPCRuntimeStats, cmd string, d time.Duration) {
-	stat, ok := stats[cmd]
-	if !ok {
-		stats[cmd] = &tikv.RPCRuntimeStats{
-			Count:   1,
-			Consume: int64(d),
-		}
-		return
-	}
-	atomic.AddInt64(&stat.Count, int64(1))
-	atomic.AddInt64(&stat.Consume, int64(d))
+	atomic.AddInt64(&stats[cmd].Count, int64(1))
+	atomic.AddInt64(&stats[cmd].Consume, int64(d))
 }
 
 type indexLookUpRunTimeStats struct {
