@@ -426,6 +426,10 @@ func (p *LogicalWindow) extractUsedCols(parentUsedCols []*expression.Column) []*
 
 // PruneColumns implements LogicalPlan interface.
 func (p *LogicalLimit) PruneColumns(parentUsedCols []*expression.Column) error {
+	if len(parentUsedCols) == 0 { // TODO: why?
+		return nil
+	}
+
 	p.schema = p.children[0].Schema().Clone()
 
 	used := expression.GetUsedList(parentUsedCols, p.schema)

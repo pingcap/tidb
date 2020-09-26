@@ -1052,7 +1052,7 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.cursor += batchSize
 
 	req.SwapColumns(e.childResult.Prune(e.columnIdxsUsedByChild))
-	e.childResult = newFirstChunk(e.children[0])
+	e.childResult = newFirstChunk(e.children[0]) //TOOD: improve
 	return nil
 }
 
