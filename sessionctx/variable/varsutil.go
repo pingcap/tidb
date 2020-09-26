@@ -987,6 +987,7 @@ func tidbOptFloat64(opt string, defaultVal float64) float64 {
 	return val
 }
 
+// ParseSize parse value to real size number
 func ParseSize(value string) string {
 	if len(value) == 0 {
 		return value
