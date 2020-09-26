@@ -7330,6 +7330,21 @@ func (s *testIntegrationSerialSuite) TestIssue18949(c *C) {
 	c.Assert(result, Matches, `(?s).*enum\('a','b	',' c'\).*set\('a','b	',' c'\).*`)
 }
 
+func (s *testIntegrationSuite) TestIssue17767(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0;")
+	tk.MustExec("CREATE TABLE t0(c0 INTEGER AS (NULL) NOT NULL, c1 INT);")
+	tk.MustExec("CREATE INDEX i0 ON t0(c0, c1);")
+	tk.MustExec("INSERT IGNORE INTO t0(c1) VALUES (0);")
+	tk.MustQuery("SELECT * FROM t0").Check(testkit.Rows("0 0"))
+
+	tk.MustExec("begin")
+	tk.MustExec("INSERT IGNORE INTO t0(c1) VALUES (0);")
+	tk.MustQuery("SELECT * FROM t0").Check(testkit.Rows("0 0", "0 0"))
+	tk.MustExec("rollback")
+}
+
 func (s *testIntegrationSuite) TestIssue19596(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
