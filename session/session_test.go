@@ -3138,6 +3138,32 @@ func (s *testSessionSuite2) TestStmtHints(c *C) {
 	tk.MustExec("select /*+ READ_CONSISTENT_REPLICA(), READ_CONSISTENT_REPLICA() */ 1;")
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
 	c.Assert(tk.Se.GetSessionVars().GetReplicaRead(), Equals, kv.ReplicaReadFollower)
+
+	// Test SET_VAR hint
+	tk.Se.GetSessionVars().SetSystemVar("unique_checks", "ON")
+	tk.MustQuery("SELECT /*+ SET_VAR(unique_checks=OFF) */ @@unique_checks;").Check(testkit.Rows("0"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
+	tk.MustQuery("SELECT @@unique_checks;").Check(testkit.Rows("1"))
+
+	tk.MustExec("SELECT /*+ SET_VAR(collation_server = 'utf8') */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "Variable 'collation_server' cannot be set using SET_VAR hint.")
+
+	tk.MustExec("SELECT /*+ SET_VAR(optimizer_switch = 'mrr_cost_based=off') SET_VAR(max_heap_table_size = 1G) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 0)
+
+	tk.Se.GetSessionVars().SetSystemVar("max_heap_table_size", "16777216")
+	tk.MustQuery("SELECT /*+ SET_VAR(max_heap_table_size = 1G) SET_VAR(max_heap_table_size = 3G) */ @@max_heap_table_size;").Check(testkit.Rows("1073741824"))
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "Hint SET_VAR(max_heap_table_size=3221225472) is ignored as conflicting/duplicated")
+
+	tk.MustExec("SELECT /*+ SET_VAR(max_size = 1G) */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "Unresolved name 'max_size' for SET_VAR hint")
+
+	tk.MustExec("SELECT /*+ SET_VAR(optimizer_switch = 'mrr_cost_based=yes') */ 1;")
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings(), HasLen, 1)
+	c.Assert(tk.Se.GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error(), Equals, "Variable 'optimizer_switch' can't be set to the value of 'mrr_cost_based=yes'")
 }
 
 func (s *testSessionSuite3) TestPessimisticLockOnPartition(c *C) {

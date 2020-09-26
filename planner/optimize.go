@@ -424,6 +424,13 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 				continue
 			}
 
+			switch setVarHint.VarName {
+			case variable.BulkInsertBufferSize, variable.JoinBufferSize, variable.MaxHeapTableSize,
+				variable.MaxJoinSize, variable.RangeAllocBlockSize, variable.ReadBufferSize,
+				variable.ReadRndBufferSize, variable.SortBufferSize, variable.TmpTableSize:
+				setVarHint.Value = variable.ParseSize(setVarHint.Value)
+			}
+
 			// If several hints with the same variable name appear in the same statement, the first one is applied and the others are ignored with a warning
 			if _, ok := setVars[setVarHint.VarName]; ok {
 				msg := fmt.Sprintf("%s(%s=%s)", hint.HintName.O, setVarHint.VarName, setVarHint.Value)
@@ -431,16 +438,6 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 				warns = append(warns, warn)
 				continue
 			}
-
-			// @todo
-			// Because the SET_VAR hint applies only to session variables, session scope is implicit, and SESSION, @@SESSION., and @@ are neither needed nor permitted. Including explicit session-indicator syntax results in the SET_VAR hint being ignored with a warning.
-
-			// @todo
-			// A SET_VAR hint is ignored with a warning if no system variable has the specified name or the variable value is incorrect:
-
-			// @todo
-			// The SET_VAR hint is permitted only at the statement level. If used in a subquery, the hint is ignored with a warning.
-
 			setVars[setVarHint.VarName] = setVarHint.Value
 		}
 	}

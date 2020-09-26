@@ -491,7 +491,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 		flagMap := make(map[string]string)
 		for _, flag := range flags {
 			fields := strings.Split(flag, "=")
-			if len(fields) == 1 {
+			if len(fields) != 2 {
 				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 			}
 			if !strings.EqualFold(fields[1], "ON") && !strings.EqualFold(fields[1], "OFF") {
@@ -500,14 +500,14 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string, scope Sc
 			flagMap[fields[0]] = strings.ToLower(fields[1])
 		}
 
-		oldValue, err := vars.GlobalVarsAccessor.GetGlobalSysVar(name)
+		oldValue, err := GetGlobalSystemVar(vars, name)
 		if err != nil {
 			return value, err
 		}
 		oldFlags := strings.Split(oldValue, ",")
 		for i, oldFlag := range oldFlags {
 			fields := strings.Split(oldFlag, "=")
-			if len(fields) == 1 {
+			if len(fields) != 2 {
 				return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 			}
 			if val, ok := flagMap[fields[0]]; ok {
@@ -985,6 +985,30 @@ func tidbOptFloat64(opt string, defaultVal float64) float64 {
 		return defaultVal
 	}
 	return val
+}
+
+func ParseSize(value string) string {
+	if len(value) == 0 {
+		return value
+	}
+	pow := uint64(1)
+	unit := value[len(value)-1]
+	if unit == 'K' {
+		pow = 1024
+	} else if unit == 'M' {
+		pow = 1024 * 1024
+	} else if unit == 'G' {
+		pow = 1024 * 1024 * 1024
+	}
+	if pow == 1 {
+		return value
+	}
+	val, err := strconv.ParseUint(value[0:len(value)-1], 10, 64)
+	if err != nil {
+		return value
+	}
+	value = strconv.FormatUint(val*pow, 10)
+	return value
 }
 
 func parseTimeZone(s string) (*time.Location, error) {
