@@ -1033,21 +1033,26 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		e.cursor += batchSize
 	}
-	e.adjustRequiredRows(req)
-	err := Next(ctx, e.children[0], req)
+	e.childResult.Reset()
+	e.childResult = e.childResult.SetRequiredRows(req.RequiredRows(), e.maxChunkSize)
+	e.adjustRequiredRows(e.childResult)
+	err := Next(ctx, e.children[0], e.childResult)
 	if err != nil {
 		return err
 	}
-	batchSize := uint64(req.NumRows())
+	batchSize := uint64(e.childResult.NumRows())
 	// no more data.
 	if batchSize == 0 {
 		return nil
 	}
 	if e.cursor+batchSize > e.end {
-		req.TruncateTo(int(e.end - e.cursor))
+		e.childResult.TruncateTo(int(e.end - e.cursor))
 		batchSize = e.end - e.cursor
 	}
 	e.cursor += batchSize
+
+	req.SwapColumns(e.childResult.Prune(e.columnIdxsUsedByChild))
+	e.childResult = newFirstChunk(e.children[0])
 	return nil
 }
 
