@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"math"
 )
 
 // Scanner support tikv scan
@@ -160,10 +159,6 @@ func (s *Scanner) getData(bo *Backoffer) error {
 		zap.Stringer("nextEndKey", s.nextEndKey),
 		zap.Bool("reverse", s.reverse),
 		zap.Uint64("txnStartTS", s.startTS()))
-	if s.startTS() == math.MaxInt64 {
-		err := errors.Errorf("try to get data with invalid txnStartTS: %d", s.startTS())
-		return errors.Trace(err)
-	}
 	sender := NewRegionRequestSender(s.snapshot.store.regionCache, s.snapshot.store.client)
 	var reqEndKey, reqStartKey []byte
 	var loc *KeyLocation

@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -82,7 +83,12 @@ type tikvSnapshot struct {
 }
 
 // newTiKVSnapshot creates a snapshot of an TiKV store.
-func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *tikvSnapshot {
+func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) (*tikvSnapshot, error) {
+	// Sanity check for snapshot version.
+	if ver.Ver >= math.MaxInt64 && ver.Ver != math.MaxUint64 {
+		err := errors.Errorf("try to get snapshot with a large ts: %d", ver.Ver)
+		return nil, errors.Trace(err)
+	}
 	return &tikvSnapshot{
 		store:           store,
 		version:         ver,
@@ -92,7 +98,7 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *
 		minCommitTSPushed: minCommitTSPushed{
 			data: make(map[uint64]struct{}, 5),
 		},
-	}
+	}, nil
 }
 
 func (s *tikvSnapshot) setSnapshotTS(ts uint64) {

@@ -98,7 +98,10 @@ func newTiKVTxn(store *tikvStore) (*tikvTxn, error) {
 // newTikvTxnWithStartTS creates a txn with startTS.
 func newTikvTxnWithStartTS(store *tikvStore, startTS uint64, replicaReadSeed uint32) (*tikvTxn, error) {
 	ver := kv.NewVersion(startTS)
-	snapshot := newTiKVSnapshot(store, ver, replicaReadSeed)
+	snapshot, err := newTiKVSnapshot(store, ver, replicaReadSeed)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	return &tikvTxn{
 		snapshot:  snapshot,
 		us:        kv.NewUnionStore(snapshot),
