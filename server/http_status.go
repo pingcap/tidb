@@ -21,6 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -75,7 +76,7 @@ func sleepWithCtx(ctx context.Context, d time.Duration) {
 
 func (s *Server) listenStatusHTTPServer() error {
 	s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, s.cfg.Status.StatusPort)
-	if s.cfg.Status.StatusPort == 0 {
+	if s.cfg.Status.StatusPort == 0 && !runInGoTest {
 		s.statusAddr = fmt.Sprintf("%s:%d", s.cfg.Status.StatusHost, defaultStatusPort)
 	}
 
@@ -96,6 +97,9 @@ func (s *Server) listenStatusHTTPServer() error {
 	if err != nil {
 		logutil.BgLogger().Info("listen failed", zap.Error(err))
 		return errors.Trace(err)
+	} else if runInGoTest && s.cfg.Status.StatusPort == 0 {
+		s.statusAddr = s.statusListener.Addr().String()
+		s.cfg.Status.StatusPort = uint(s.statusListener.Addr().(*net.TCPAddr).Port)
 	}
 	return nil
 }
@@ -179,6 +183,30 @@ func (s *Server) startHTTPServer() {
 	serverMux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, err := w.Write([]byte(strconv.Itoa(util.GetGOGC())))
+			terror.Log(err)
+		case http.MethodPost:
+			body, err := ioutil.ReadAll(r.Body)
+			if err != nil {
+				terror.Log(err)
+				return
+			}
+
+			val, err := strconv.Atoi(string(body))
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				if _, err := w.Write([]byte(err.Error())); err != nil {
+					terror.Log(err)
+				}
+				return
+			}
+
+			util.SetGOGC(val)
+		}
+	})
 
 	serverMux.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip"))

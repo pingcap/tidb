@@ -17,20 +17,16 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 )
 
 // PartitionPruning finds all used partitions according to query conditions, it will
 // return nil if condition match none of partitions. The return value is a array of the
 // idx in the partition definitions array, use pi.Definitions[idx] to get the partition ID
-func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr) ([]int, error) {
+func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
+	columns []*expression.Column, names types.NameSlice) ([]int, error) {
 	s := partitionProcessor{}
-	tblInfo := tbl.Meta()
-	dbName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Columns, tblInfo)
-	if err != nil {
-		return nil, err
-	}
-	pi := tblInfo.Partition
+	pi := tbl.Meta().Partition
 	switch pi.Type {
 	case model.PartitionTypeHash:
 		return s.pruneHashPartition(ctx, tbl, partitionNames, conds, columns, names)

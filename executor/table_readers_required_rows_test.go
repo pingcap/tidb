@@ -103,7 +103,7 @@ func mockDistsqlSelectCtxGet(ctx context.Context) (totalRows int, expectedRowsRe
 }
 
 func mockSelectResult(ctx context.Context, sctx sessionctx.Context, kvReq *kv.Request,
-	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []fmt.Stringer) (distsql.SelectResult, error) {
+	fieldTypes []*types.FieldType, fb *statistics.QueryFeedback, copPlanIDs []int) (distsql.SelectResult, error) {
 	totalRows, expectedRowsRet := mockDistsqlSelectCtxGet(ctx)
 	return &requiredRowsSelectResult{
 		retTypes:        fieldTypes,
@@ -142,7 +142,7 @@ func buildMockBaseExec(sctx sessionctx.Context) baseExecutor {
 		cols[i] = &expression.Column{Index: i, RetType: retTypes[i]}
 	}
 	schema := expression.NewSchema(cols...)
-	baseExec := newBaseExecutor(sctx, schema, nil)
+	baseExec := newBaseExecutor(sctx, schema, 0)
 	return baseExec
 }
 

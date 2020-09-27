@@ -23,6 +23,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -550,7 +551,11 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 	tName := curTable.Name.String()
 	tID := curTable.ID
 	pi := curTable.GetPartitionInfo()
+	isCommonHandle := curTable.IsCommonHandle
 	for _, index := range curTable.Indices {
+		if index.Primary && isCommonHandle {
+			continue
+		}
 		if pi != nil {
 			for _, def := range pi.Definitions {
 				if f := r.GetIndexFrame(def.ID, index.ID, dbName, fmt.Sprintf("%s(%s)", tName, def.Name.O), index.Name.String()); f != nil {
@@ -567,12 +572,12 @@ func (rt *RegionDetail) addTableInRange(dbName string, curTable *model.TableInfo
 
 	if pi != nil {
 		for _, def := range pi.Definitions {
-			if f := r.GetRecordFrame(def.ID, dbName, fmt.Sprintf("%s(%s)", tName, def.Name.O)); f != nil {
+			if f := r.GetRecordFrame(def.ID, dbName, fmt.Sprintf("%s(%s)", tName, def.Name.O), isCommonHandle); f != nil {
 				rt.Frames = append(rt.Frames, f)
 			}
 		}
 	} else {
-		if f := r.GetRecordFrame(tID, dbName, tName); f != nil {
+		if f := r.GetRecordFrame(tID, dbName, tName, isCommonHandle); f != nil {
 			rt.Frames = append(rt.Frames, f)
 		}
 	}
@@ -1080,13 +1085,15 @@ func (h ddlResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 }
 
 func (h tableHandler) getPDAddr() ([]string, error) {
-	var pdAddrs []string
 	etcd, ok := h.Store.(tikv.EtcdBackend)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
-	pdAddrs = etcd.EtcdAddrs()
-	if len(pdAddrs) < 0 {
+	pdAddrs, err := etcd.EtcdAddrs()
+	if err != nil {
+		return nil, err
+	}
+	if len(pdAddrs) == 0 {
 		return nil, errors.New("pd unavailable")
 	}
 	return pdAddrs, nil
@@ -1383,6 +1390,9 @@ func (h regionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// 		`for id in [frameRange.firstTableID,frameRange.endTableID]`
 	// on [frameRange.firstTableID,frameRange.endTableID] is small enough.
 	for _, db := range schema.AllSchemas() {
+		if util.IsMemDB(db.Name.L) {
+			continue
+		}
 		for _, tableVal := range db.Tables {
 			regionDetail.addTableInRange(db.Name.String(), tableVal, frameRange)
 		}
@@ -1597,7 +1607,9 @@ func (h *mvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface
 
 // serverInfo is used to report the servers info when do http request.
 type serverInfo struct {
-	IsOwner bool `json:"is_owner"`
+	IsOwner  bool `json:"is_owner"`
+	MaxProcs int  `json:"max_procs"`
+	GOGC     int  `json:"gogc"`
 	*infosync.ServerInfo
 }
 
@@ -1617,6 +1629,8 @@ func (h serverInfoHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	info.IsOwner = do.DDL().OwnerManager().IsOwner()
+	info.MaxProcs = runtime.GOMAXPROCS(0)
+	info.GOGC = util.GetGOGC()
 	writeData(w, info)
 }
 

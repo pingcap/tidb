@@ -359,7 +359,7 @@ insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
 insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
 desc select * from th where a=-2;
 id	estRows	task	access object	operator info
-TableReader_7	10.00	root	partition:all	data:Selection_6
+TableReader_7	10.00	root	partition:p2	data:Selection_6
 └─Selection_6	10.00	cop[tikv]		eq(test.th.a, -2)
   └─TableFullScan_5	10000.00	cop[tikv]	table:th	keep order:false, stats:pseudo
 desc select * from th;
@@ -376,7 +376,7 @@ explain select a != any (select a from t t2) from t t1;
 id	estRows	task	access object	operator info
 Projection_8	10000.00	root		and(or(or(gt(Column#8, 1), ne(test.t.a, Column#7)), if(ne(Column#9, 0), <nil>, 0)), and(ne(Column#10, 0), if(isnull(test.t.a), <nil>, 1)))->Column#11
 └─HashJoin_9	10000.00	root		CARTESIAN inner join
-  ├─StreamAgg_14(Build)	1.00	root		funcs:firstrow(Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:count(1)->Column#10
+  ├─StreamAgg_14(Build)	1.00	root		funcs:max(Column#13)->Column#7, funcs:count(distinct Column#14)->Column#8, funcs:sum(Column#15)->Column#9, funcs:count(1)->Column#10
   │ └─Projection_19	10000.00	root		test.t.a, test.t.a, cast(isnull(test.t.a), decimal(65,0) BINARY)->Column#15
   │   └─TableReader_18	10000.00	root		data:TableFullScan_17
   │     └─TableFullScan_17	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo

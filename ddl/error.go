@@ -25,7 +25,7 @@ var (
 	errInvalidWorker = terror.ClassDDL.New(mysql.ErrInvalidDDLWorker, mysql.MySQLErrName[mysql.ErrInvalidDDLWorker])
 	// errNotOwner means we are not owner and can't handle DDL jobs.
 	errNotOwner              = terror.ClassDDL.New(mysql.ErrNotOwner, mysql.MySQLErrName[mysql.ErrNotOwner])
-	errCantDecodeIndex       = terror.ClassDDL.New(mysql.ErrCantDecodeIndex, mysql.MySQLErrName[mysql.ErrCantDecodeIndex])
+	errCantDecodeRecord      = terror.ClassDDL.New(mysql.ErrCantDecodeRecord, mysql.MySQLErrName[mysql.ErrCantDecodeRecord])
 	errInvalidDDLJob         = terror.ClassDDL.New(mysql.ErrInvalidDDLJob, mysql.MySQLErrName[mysql.ErrInvalidDDLJob])
 	errCancelledDDLJob       = terror.ClassDDL.New(mysql.ErrCancelledDDLJob, mysql.MySQLErrName[mysql.ErrCancelledDDLJob])
 	errFileNotFound          = terror.ClassDDL.New(mysql.ErrFileNotFound, mysql.MySQLErrName[mysql.ErrFileNotFound])

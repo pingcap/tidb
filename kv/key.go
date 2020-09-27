@@ -147,6 +147,8 @@ type Handle interface {
 	NumCols() int
 	// EncodedCol returns the encoded column value at the given column index.
 	EncodedCol(idx int) []byte
+	// Data returns the data of all columns of a handle.
+	Data() ([]types.Datum, error)
 	// String implements the fmt.Stringer interface.
 	String() string
 }
@@ -208,6 +210,11 @@ func (ih IntHandle) NumCols() int {
 // EncodedCol implements the Handle interface., not supported for IntHandle type.
 func (ih IntHandle) EncodedCol(idx int) []byte {
 	panic("not supported in IntHandle")
+}
+
+// Data implements the Handle interface.
+func (ih IntHandle) Data() ([]types.Datum, error) {
+	return []types.Datum{types.NewIntDatum(int64(ih))}, nil
 }
 
 // String implements the Handle interface.
@@ -303,16 +310,29 @@ func (ch *CommonHandle) EncodedCol(idx int) []byte {
 	return ch.encoded[colStartOffset:ch.colEndOffsets[idx]]
 }
 
-// String implements the Handle interface.
-func (ch *CommonHandle) String() string {
-	strs := make([]string, 0, ch.NumCols())
+// Data implements the Handle interface.
+func (ch *CommonHandle) Data() ([]types.Datum, error) {
+	data := make([]types.Datum, 0, ch.NumCols())
 	for i := 0; i < ch.NumCols(); i++ {
 		encodedCol := ch.EncodedCol(i)
 		_, d, err := codec.DecodeOne(encodedCol)
 		if err != nil {
-			return err.Error()
+			return nil, err
 		}
-		str, err := d.ToString()
+		data = append(data, d)
+	}
+	return data, nil
+}
+
+// String implements the Handle interface.
+func (ch *CommonHandle) String() string {
+	data, err := ch.Data()
+	if err != nil {
+		return err.Error()
+	}
+	strs := make([]string, 0, ch.NumCols())
+	for _, datum := range data {
+		str, err := datum.ToString()
 		if err != nil {
 			return err.Error()
 		}
@@ -408,4 +428,42 @@ func BuildHandleFromDatumRow(sctx *stmtctx.StatementContext, row []types.Datum, 
 		return nil, err
 	}
 	return handle, nil
+}
+
+// PartitionHandle combines a handle and a PartitionID, used to location a row in partioned table.
+// Now only used in global index.
+// TODO: support PartitionHandle in HandleMap.
+type PartitionHandle struct {
+	Handle
+	PartitionID int64
+}
+
+// NewPartitionHandle creates a PartitionHandle from a normal handle and a pid.
+func NewPartitionHandle(pid int64, h Handle) PartitionHandle {
+	return PartitionHandle{
+		Handle:      h,
+		PartitionID: pid,
+	}
+}
+
+// Equal implements the Handle interface.
+func (ph PartitionHandle) Equal(h Handle) bool {
+	if ph2, ok := h.(PartitionHandle); ok {
+		return ph.PartitionID == ph2.PartitionID && ph.Handle.Equal(ph2.Handle)
+	}
+	return false
+}
+
+// Compare implements the Handle interface.
+func (ph PartitionHandle) Compare(h Handle) int {
+	if ph2, ok := h.(PartitionHandle); ok {
+		if ph.PartitionID < ph2.PartitionID {
+			return -1
+		}
+		if ph.PartitionID > ph2.PartitionID {
+			return 1
+		}
+		return ph.Handle.Compare(ph2.Handle)
+	}
+	panic("PartitonHandle compares to non-parition Handle")
 }

@@ -15,10 +15,10 @@ package chunk
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/parser/terror"
@@ -26,7 +26,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/checksum"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/util/encrypt"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // ListInDisk represents a slice of chunks storing in temporary disk.
@@ -43,26 +44,42 @@ type ListInDisk struct {
 	bufFlushMutex sync.RWMutex
 	diskTracker   *disk.Tracker // track disk usage.
 	numRowsInDisk int
+
+	// ctrCipher stores the key and nonce using by aes encrypt io layer
+	ctrCipher *encrypt.CtrCipher
 }
 
-var defaultChunkListInDiskLabel fmt.Stringer = stringutil.StringerStr("chunk.ListInDisk")
+var defaultChunkListInDiskPath = "chunk.ListInDisk"
 
 // NewListInDisk creates a new ListInDisk with field types.
 func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 	l := &ListInDisk{
 		fieldTypes: fieldTypes,
 		// TODO(fengliyuan): set the quota of disk usage.
-		diskTracker: disk.NewTracker(defaultChunkListInDiskLabel, -1),
+		diskTracker: disk.NewTracker(memory.LabelForChunkListInDisk, -1),
 	}
 	return l
 }
 
 func (l *ListInDisk) initDiskFile() (err error) {
-	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, l.diskTracker.Label().String())
+	err = disk.CheckAndInitTempDir()
 	if err != nil {
 		return
 	}
-	l.w = checksum.NewWriter(l.disk)
+	l.disk, err = ioutil.TempFile(config.GetGlobalConfig().TempStoragePath, defaultChunkListInDiskPath+strconv.Itoa(l.diskTracker.Label()))
+	if err != nil {
+		return
+	}
+	var underlying io.WriteCloser = l.disk
+	if config.GetGlobalConfig().Security.SpilledFileEncryptionMethod != config.SpilledFileEncryptionMethodPlaintext {
+		// The possible values of SpilledFileEncryptionMethod are "plaintext", "aes128-ctr"
+		l.ctrCipher, err = encrypt.NewCtrCipher()
+		if err != nil {
+			return
+		}
+		underlying = encrypt.NewWriter(l.disk, l.ctrCipher)
+	}
+	l.w = checksum.NewWriter(underlying)
 	l.bufFlushMutex = sync.RWMutex{}
 	return
 }
@@ -151,7 +168,11 @@ func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
 		return
 	}
 	off := l.offsets[ptr.ChkIdx][ptr.RowIdx]
-	r := io.NewSectionReader(checksum.NewReader(l.disk), off, l.offWrite-off)
+	var underlying io.ReaderAt = l.disk
+	if l.ctrCipher != nil {
+		underlying = encrypt.NewReader(l.disk, l.ctrCipher)
+	}
+	r := io.NewSectionReader(checksum.NewReader(underlying), off, l.offWrite-off)
 	format := rowInDisk{numCol: len(l.fieldTypes)}
 	_, err = format.ReadFrom(r)
 	if err != nil {
@@ -176,7 +197,7 @@ func (l *ListInDisk) Close() error {
 	if l.disk != nil {
 		l.diskTracker.Consume(-l.diskTracker.BytesConsumed())
 		terror.Call(l.disk.Close)
-		return os.Remove(l.disk.Name())
+		terror.Log(os.Remove(l.disk.Name()))
 	}
 	return nil
 }

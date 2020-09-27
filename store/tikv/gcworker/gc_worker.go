@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/parser/terror"
-	pd "github.com/pingcap/pd/v4/client"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 

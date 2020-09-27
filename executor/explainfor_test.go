@@ -233,6 +233,38 @@ func (s *testPrepareSerialSuite) TestExplainForConnPlanCache(c *C) {
 	wg.Wait()
 }
 
+func (s *testPrepareSerialSuite) TestSavedPlanPanicPlanCache(c *C) {
+	orgEnable := core.PreparedPlanCacheEnabled()
+	defer func() {
+		core.SetPreparedPlanCache(orgEnable)
+	}()
+	core.SetPreparedPlanCache(true)
+
+	var err error
+	tk := testkit.NewTestKit(c, s.store)
+	tk.Se, err = session.CreateSession4TestWithOpt(s.store, &session.Opt{
+		PreparedPlanCache: kvcache.NewSimpleLRUCache(100, 0.1, math.MaxUint64),
+	})
+	c.Assert(err, IsNil)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int generated always as (a+b) stored)")
+	tk.MustExec("insert into t(a,b) values(1,1)")
+	tk.MustExec("begin")
+	tk.MustExec("update t set b = 2 where a = 1")
+	tk.MustExec("prepare stmt from 'select b from t where a > ?'")
+	tk.MustExec("set @p = 0")
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows(
+		"2",
+	))
+	tk.MustExec("set @p = 1")
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
+	err = tk.ExecToErr("insert into t(a,b,c) values(3,3,3)")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Equals, "[planner:3105]The value specified for generated column 'c' in table 't' is not allowed.")
+}
+
 func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -249,6 +281,25 @@ func (s *testPrepareSerialSuite) TestExplainDotForExplainPlan(c *C) {
 	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Check(nil)
+}
+
+func (s *testPrepareSerialSuite) TestExplainDotForQuery(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk2 := testkit.NewTestKit(c, s.store)
+
+	rows := tk.MustQuery("select connection_id()").Rows()
+	c.Assert(len(rows), Equals, 1)
+	connID := rows[0][0].(string)
+	tk.MustQuery("select 1")
+	tkProcess := tk.Se.ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Se.SetSessionManager(&mockSessionManager1{PS: ps})
+
+	expected := tk2.MustQuery("explain format=\"dot\" select 1").Rows()
+	got := tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Rows()
+	for i := range got {
+		c.Assert(got[i], DeepEquals, expected[i])
+	}
 }
 
 func (s *testSuite) TestExplainTableStorage(c *C) {

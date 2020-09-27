@@ -403,7 +403,7 @@ func (s *testSuite7) TestUser(c *C) {
 	tk.Se, err = session.CreateSession4Test(s.store)
 	c.Check(err, IsNil)
 	ctx := tk.Se.(sessionctx.Context)
-	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost"}
+	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "test1", Hostname: "localhost", AuthHostname: "localhost"}
 	tk.MustExec(alterUserSQL)
 	result = tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="test1" and Host="localhost"`)
 	result.Check(testkit.Rows(auth.EncodePassword("1")))
@@ -586,6 +586,42 @@ func (s *testSuite3) TestDropStats(c *C) {
 	h.SetLease(0)
 }
 
+func (s *testSuite3) TestDropStatsFromKV(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 varchar(20), c2 varchar(20))")
+	tk.MustExec(`insert into t values("1","1"),("2","2"),("3","3"),("4","4")`)
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("analyze table t")
+	tblID := tk.MustQuery(`select tidb_table_id from information_schema.tables where table_name = "t" and table_schema = "test"`).Rows()[0][0].(string)
+	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
+		testkit.Rows("0 16"))
+	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
+		testkit.Rows("1", "2"))
+	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
+		testkit.Rows("1 0",
+			"1 1",
+			"1 2",
+			"1 3",
+			"2 0",
+			"2 1",
+			"2 2",
+			"2 3"))
+	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
+		testkit.Rows("1", "1", "1", "1", "2", "2", "2", "2"))
+
+	tk.MustExec("drop stats t")
+	tk.MustQuery("select modify_count, count from mysql.stats_meta where table_id = " + tblID).Check(
+		testkit.Rows("0 16"))
+	tk.MustQuery("select hist_id from mysql.stats_histograms where table_id = " + tblID).Check(
+		testkit.Rows())
+	tk.MustQuery("select hist_id, bucket_id from mysql.stats_buckets where table_id = " + tblID).Check(
+		testkit.Rows())
+	tk.MustQuery("select hist_id from mysql.stats_top_n where table_id = " + tblID).Check(
+		testkit.Rows())
+}
+
 func (s *testSuite3) TestFlushTables(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 
@@ -718,4 +754,22 @@ func (s *testSuite3) TestExtendedStatsPrivileges(c *C) {
 	_, err = se.Execute(ctx, "drop statistics s1")
 	c.Assert(err, IsNil)
 	tk.MustExec("drop user 'u1'@'%'")
+}
+
+func (s *testSuite3) TestIssue17247(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("create user 'issue17247'")
+	tk.MustExec("grant CREATE USER on *.* to 'issue17247'")
+
+	tk1 := testkit.NewTestKit(c, s.store)
+	tk1.MustExec("use test")
+	c.Assert(tk1.Se.Auth(&auth.UserIdentity{Username: "issue17247", Hostname: "%"}, nil, nil), IsTrue)
+	tk1.MustExec("ALTER USER USER() IDENTIFIED BY 'xxx'")
+	tk1.MustExec("ALTER USER CURRENT_USER() IDENTIFIED BY 'yyy'")
+	tk1.MustExec("ALTER USER CURRENT_USER IDENTIFIED BY 'zzz'")
+	tk.MustExec("ALTER USER 'issue17247'@'%' IDENTIFIED BY 'kkk'")
+	tk.MustExec("ALTER USER 'issue17247'@'%' IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
+	// Wrong grammar
+	_, err := tk1.Exec("ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
+	c.Assert(err, NotNil)
 }

@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"runtime/trace"
 	"strconv"
 	"strings"
 	"sync"
@@ -164,6 +165,7 @@ type session struct {
 		values map[fmt.Stringer]interface{}
 	}
 
+	currentCtx  context.Context // only use for runtime.trace, Please NEVER use it.
 	currentPlan plannercore.Plan
 
 	store kv.Storage
@@ -360,6 +362,19 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 	is := infoschema.GetInfoSchema(s)
 	dbName := model.NewCIStr(s.GetSessionVars().CurrentDB)
 	tName := model.NewCIStr(tableName)
+	pm := privilege.GetPrivilegeManager(s)
+	if pm != nil && s.sessionVars.User != nil {
+		if !pm.RequestVerification(s.sessionVars.ActiveRoles, dbName.O, tName.O, "", mysql.AllPrivMask) {
+			user := s.sessionVars.User
+			u := user.Username
+			h := user.Hostname
+			if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
+				u = user.AuthUsername
+				h = user.AuthHostname
+			}
+			return nil, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
+		}
+	}
 	table, err := is.TableByName(dbName, tName)
 	if err != nil {
 		return nil, err
@@ -427,7 +442,10 @@ func (s *session) doCommit(ctx context.Context) error {
 	// Set this option for 2 phase commit to validate schema lease.
 	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.sessionVars.TxnCtx.SchemaVersion, physicalTableIDs))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
-	s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+	s.txn.SetOption(kv.CommitHook, func(info kv.TxnInfo, _ error) { s.sessionVars.LastTxnInfo = info })
+	if s.GetSessionVars().EnableAmendPessimisticTxn {
+		s.txn.SetOption(kv.SchemaAmender, NewSchemaAmenderForTikvTxn(s))
+	}
 
 	return s.txn.Commit(sessionctx.SetCommitCtx(ctx, s))
 }
@@ -478,7 +496,6 @@ func (s *session) doCommitWithRetry(ctx context.Context) error {
 				zap.Int64("tidb_retry_limit", s.sessionVars.RetryLimit),
 				zap.Bool("tidb_disable_txn_auto_retry", s.sessionVars.DisableTxnAutoRetry))
 		}
-
 	}
 	counter := s.sessionVars.TxnCtx.StatementCount
 	duration := time.Since(s.GetSessionVars().TxnCtx.CreateTime).Seconds()
@@ -654,11 +671,15 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 			if retryCnt == 0 {
 				// We do not have to log the query every time.
 				// We print the queries at the first try only.
+				sql := sqlForLog(st.GetTextToLog())
+				if !config.RedactLogEnabled() {
+					sql += sessVars.PreparedParams.String()
+				}
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
 					zap.Uint("retryCnt", retryCnt),
 					zap.Int("queryNum", i),
-					zap.String("sql", sqlForLog(st.OriginText())+sessVars.PreparedParams.String()))
+					zap.String("sql", sql))
 			} else {
 				logutil.Logger(ctx).Warn("retrying",
 					zap.Int64("schemaVersion", schemaVersion),
@@ -999,6 +1020,7 @@ func (s *session) ParseSQL(ctx context.Context, sql, charset, collation string) 
 		span1 := span.Tracer().StartSpan("session.ParseSQL", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 	}
+	defer trace.StartRegion(ctx, "ParseSQL").End()
 	s.parser.SetSQLMode(s.sessionVars.SQLMode)
 	s.parser.EnableWindowFunc(s.sessionVars.EnableWindowFunction)
 	return s.parser.Parse(sql, charset, collation)
@@ -1029,6 +1051,8 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		StatsInfo:        plannercore.GetStatsInfo,
 		MaxExecutionTime: maxExecutionTime,
 	}
+	_, pi.Digest = s.sessionVars.StmtCtx.SQLDigest()
+	s.currentPlan = nil
 	if s.sessionVars.User != nil {
 		pi.User = s.sessionVars.User.Username
 		pi.Host = s.sessionVars.User.Hostname
@@ -1053,31 +1077,17 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 		logutil.Eventf(ctx, "execute: %s", sql)
 	}
 
-	charsetInfo, collation := s.sessionVars.GetCharsetInfo()
-	parseStartTime := time.Now()
-	stmtNodes, warns, err := s.ParseSQL(ctx, sql, charsetInfo, collation)
+	stmtNodes, err := s.Parse(ctx, sql)
 	if err != nil {
-		s.rollbackOnError(ctx)
-
-		// Only print log message when this SQL is from the user.
-		// Mute the warning for internal SQLs.
-		if !s.sessionVars.InRestrictedSQL {
-			logutil.Logger(ctx).Warn("parse SQL failed", zap.Error(err), zap.String("SQL", sql))
-		}
-		return nil, util.SyntaxError(err)
+		return nil, err
 	}
 	if len(stmtNodes) != 1 {
 		return nil, errors.New("Execute() API doesn't support multiple statements any more")
 	}
-	durParse := time.Since(parseStartTime)
-	s.GetSessionVars().DurationParse = durParse
 
 	rs, err := s.ExecuteStmt(ctx, stmtNodes[0])
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
-	}
-	for _, warn := range warns {
-		s.sessionVars.StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 	}
 	if rs == nil {
 		return nil, err
@@ -1431,7 +1441,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 		// Transaction is lazy initialized.
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
-		if err := s.txn.changePendingToValid(); err != nil {
+		if err := s.txn.changePendingToValid(s.currentCtx); err != nil {
 			logutil.BgLogger().Error("active transaction fail",
 				zap.Error(err))
 			s.txn.cleanup()
@@ -1948,7 +1958,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 
 const (
 	notBootstrapped         = 0
-	currentBootstrapVersion = version49
+	currentBootstrapVersion = version51
 )
 
 func getStoreBootstrapVersion(store kv.Storage) int64 {
@@ -2087,10 +2097,13 @@ var builtinGlobalVariable = []string{
 	variable.TiDBStoreLimit,
 	variable.TiDBAllowAutoRandExplicitInsert,
 	variable.TiDBEnableClusteredIndex,
+	variable.TiDBPartitionPruneMode,
 	variable.TiDBSlowLogMasking,
-	variable.TiDBLogDesensitization,
+	variable.TiDBRedactLog,
 	variable.TiDBEnableTelemetry,
 	variable.TiDBShardAllocateStep,
+	variable.TiDBEnableChangeColumnType,
+	variable.TiDBEnableAmendPessimisticTxn,
 }
 
 var (
@@ -2162,6 +2175,7 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 // PrepareTxnCtx starts a goroutine to begin a transaction if needed, and creates a new transaction context.
 // It is called before we execute a sql query.
 func (s *session) PrepareTxnCtx(ctx context.Context) {
+	s.currentCtx = ctx
 	if s.txn.validOrPending() {
 		return
 	}
@@ -2174,11 +2188,8 @@ func (s *session) PrepareTxnCtx(ctx context.Context) {
 		ShardStep:     int(s.sessionVars.ShardAllocateStep),
 	}
 	if !s.sessionVars.IsAutocommit() || s.sessionVars.RetryInfo.Retrying {
-		pessTxnConf := config.GetGlobalConfig().PessimisticTxn
-		if pessTxnConf.Enable {
-			if s.sessionVars.TxnMode == ast.Pessimistic {
-				s.sessionVars.TxnCtx.IsPessimistic = true
-			}
+		if s.sessionVars.TxnMode == ast.Pessimistic {
+			s.sessionVars.TxnCtx.IsPessimistic = true
 		}
 	}
 }
@@ -2269,7 +2280,7 @@ func logStmt(execStmt *executor.ExecStmt, vars *variable.SessionVars) {
 func logQuery(query string, vars *variable.SessionVars) {
 	if atomic.LoadUint32(&variable.ProcessGeneralLog) != 0 && !vars.InRestrictedSQL {
 		query = executor.QueryReplacer.Replace(query)
-		if !vars.EnableLogDesensitization {
+		if !config.RedactLogEnabled() {
 			query = query + vars.PreparedParams.String()
 		}
 		logutil.BgLogger().Info("GENERAL_LOG",

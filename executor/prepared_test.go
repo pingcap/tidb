@@ -14,14 +14,17 @@
 package executor_test
 
 import (
+	"crypto/tls"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/parser/auth"
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/tidb/domain"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/testkit"
 )
@@ -102,6 +105,62 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	c.Assert(len(tk.Se.GetSessionVars().PreparedStmts), Equals, 1)
 	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedSQL, Equals, "select * from t")
 	c.Assert(tk.Se.GetSessionVars().PreparedStmts[1].(*plannercore.CachedPrepareStmt).NormalizedPlan, Equals, "")
+}
+
+type mockSessionManager2 struct {
+	se     session.Session
+	killed bool
+}
+
+func (sm *mockSessionManager2) ShowProcessList() map[uint64]*util.ProcessInfo {
+	pl := make(map[uint64]*util.ProcessInfo)
+	if pi, ok := sm.GetProcessInfo(0); ok {
+		pl[pi.ID] = pi
+	}
+	return pl
+}
+
+func (sm *mockSessionManager2) GetProcessInfo(id uint64) (pi *util.ProcessInfo, notNil bool) {
+	pi = sm.se.ShowProcess()
+	if pi != nil {
+		notNil = true
+	}
+	return
+}
+func (sm *mockSessionManager2) Kill(connectionID uint64, query bool) {
+	sm.killed = true
+	atomic.StoreUint32(&sm.se.GetSessionVars().Killed, 1)
+}
+func (sm *mockSessionManager2) UpdateTLSConfig(cfg *tls.Config) {}
+
+var _ = SerialSuites(&testSuite12{&baseTestSuite{}})
+
+type testSuite12 struct {
+	*baseTestSuite
+}
+
+func (s *testSuite12) TestPreparedStmtWithHint(c *C) {
+	// see https://github.com/pingcap/tidb/issues/18535
+	store, dom, err := newStoreWithBootstrap()
+	c.Assert(err, IsNil)
+	defer func() {
+		store.Close()
+		dom.Close()
+	}()
+
+	se, err := session.CreateSession4Test(store)
+	c.Assert(err, IsNil)
+	tk := testkit.NewTestKit(c, store)
+	tk.Se = se
+
+	sm := &mockSessionManager2{
+		se: se,
+	}
+	se.SetSessionManager(sm)
+	go dom.ExpensiveQueryHandle().SetSessionManager(sm).Run()
+	tk.MustExec("prepare stmt from \"select /*+ max_execution_time(100) */ sleep(10)\"")
+	tk.MustQuery("execute stmt").Check(testkit.Rows("1"))
+	c.Check(sm.killed, Equals, true)
 }
 
 func (s *testSuite9) TestPlanCacheClusterIndex(c *C) {
