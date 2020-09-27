@@ -6821,9 +6821,9 @@ func (s *testIntegrationSuite) TestIssue20121(c *C) {
 	// testcase for Date vs Year
 	tk.MustExec("drop table if exists tt")
 	tk.MustExec("create table tt(a date, b year)")
-	tk.MustExec("insert into tt values('2019-11-11', 2000")
-	tk.MustExec("insert into tt values('2019-11-11', 2020")
-	tk.MustExec("insert into tt values('2019-11-11', 2022")
+	tk.MustExec("insert into tt values('2019-11-11', 2000)")
+	tk.MustExec("insert into tt values('2019-11-11', 2020)")
+	tk.MustExec("insert into tt values('2019-11-11', 2022)")
 
 	tk.MustQuery("select * from tt where tt.a > tt.b").Check(testkit.Rows("2019-11-11 2000"))
 	tk.MustQuery("select * from tt where tt.a < tt.b").Check(testkit.Rows("2019-11-11 2020", "2019-11-11 2022"))
