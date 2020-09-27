@@ -6684,6 +6684,23 @@ func (s *testIntegrationSuite) TestIssue18515(c *C) {
 	tk.MustExec("select /*+ TIDB_INLJ(t2) */ t1.a, t1.c, t2.a from t t1, t t2 where t1.c=t2.c;")
 }
 
+func (s *testIntegrationSuite) TestIssue20223(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (" +
+		"id int(10) unsigned NOT NULL AUTO_INCREMENT," +
+		"type tinyint(4) NOT NULL," +
+		"create_time int(11) NOT NULL," +
+		"PRIMARY KEY (id)" +
+		")")
+	tk.MustExec("insert into t values (4, 2, 1598584933)")
+	tk.MustQuery("select from_unixtime(create_time,'%Y-%m-%d') as t_day,count(*) as cnt from t where `type` = 1 " +
+		"group by t_day union all " +
+		"select from_unixtime(create_time,'%Y-%m-%d') as t_day,count(*) as cnt from t where `type` = 2 " +
+		"group by t_day").Check(testkit.Rows("2020-08-28 1"))
+}
+
 func (s *testIntegrationSuite) TestIssue18525(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
