@@ -672,6 +672,13 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		ok     bool
 		closed bool
 	)
+	// wait unit at least 2 copResponse received.
+	failpoint.Inject("testRateLimitActionMockConsume", func(val failpoint.Value) {
+		if val.(bool) {
+			for it.memTracker.MaxConsumed() < 200 {
+			}
+		}
+	})
 
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
