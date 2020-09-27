@@ -264,14 +264,17 @@ func (s *testFastAnalyze) TestAnalyzeFastSample(c *C) {
 	opts := make(map[ast.AnalyzeOptionType]uint64)
 	opts[ast.AnalyzeOptNumSamples] = 20
 	mockExec := &executor.AnalyzeTestFastExec{
-		Ctx:             tk.Se.(sessionctx.Context),
-		HandleCols:      handleCols,
-		ColsInfo:        colsInfo,
-		IdxsInfo:        indicesInfo,
-		Concurrency:     1,
-		PhysicalTableID: tbl.(table.PhysicalTable).GetPhysicalID(),
-		TblInfo:         tblInfo,
-		Opts:            opts,
+		Ctx:         tk.Se.(sessionctx.Context),
+		HandleCols:  handleCols,
+		ColsInfo:    colsInfo,
+		IdxsInfo:    indicesInfo,
+		Concurrency: 1,
+		TableID: core.AnalyzeTableID{
+			CollectIDs: []int64{tbl.(table.PhysicalTable).GetPhysicalID()},
+			PersistID:  tbl.(table.PhysicalTable).GetPhysicalID(),
+		},
+		TblInfo: tblInfo,
+		Opts:    opts,
 	}
 	err = mockExec.TestFastSample()
 	c.Assert(err, IsNil)
