@@ -59,9 +59,8 @@ const (
 	batchAddingJobs = 10
 
 	// PartitionCountLimit is limit of the number of partitions in a table.
-	// Mysql maximum number of partitions is 8192, our maximum number of partitions is 1024.
 	// Reference linking https://dev.mysql.com/doc/refman/5.7/en/partitioning-limitations.html.
-	PartitionCountLimit = 1024
+	PartitionCountLimit = 8192
 )
 
 // OnExist specifies what to do when a new object has a name collision.
@@ -573,6 +572,9 @@ func (d *ddl) startCleanDeadTableLock() {
 		select {
 		case <-ticker.C:
 			if !d.ownerManager.IsOwner() {
+				continue
+			}
+			if d.infoHandle == nil || !d.infoHandle.IsValid() {
 				continue
 			}
 			deadLockTables, err := d.tableLockCkr.GetDeadLockedTables(d.ctx, d.infoHandle.Get().AllSchemas())

@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/mysql"
@@ -200,13 +201,15 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 			defer snapshot.DelOption(kv.CollectRuntimeStats)
 		}
 	}
-
+	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
 	if err = prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
 		return err
 	}
-
+	if e.stats != nil {
+		e.stats.prefetch = time.Since(prefetchStart)
+	}
 	e.ctx.GetSessionVars().StmtCtx.AddRecordRows(uint64(len(newRows)))
 	for _, r := range toBeCheckedRows {
 		err = e.replaceRow(ctx, r)

@@ -1706,6 +1706,10 @@ func FillVirtualColumnValue(virtualRetTypes []*types.FieldType, virtualColumnInd
 			if err != nil {
 				return err
 			}
+			// Handle the bad null error.
+			if (mysql.HasNotNullFlag(columns[idx].Flag) || mysql.HasPreventNullInsertFlag(columns[idx].Flag)) && castDatum.IsNull() {
+				castDatum = table.GetZeroValue(columns[idx])
+			}
 			virCols.AppendDatum(i, &castDatum)
 		}
 		req.SetCol(idx, virCols.Column(i))
