@@ -51,64 +51,66 @@ var _ = Suite(&testFastAnalyze{})
 
 func (s *testSuite1) TestAnalyzePartition(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
+	testkit.WithPruneMode(tk, variable.StaticOnly, func() {
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		createTable := `CREATE TABLE t (a int, b int, c varchar(10), primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p1 VALUES LESS THAN (11),
 		PARTITION p2 VALUES LESS THAN (16),
 		PARTITION p3 VALUES LESS THAN (21)
 )`
-	tk.MustExec(createTable)
-	for i := 1; i < 21; i++ {
-		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
-	}
-	tk.MustExec("analyze table t")
-
-	is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	pi := table.Meta().GetPartitionInfo()
-	c.Assert(pi, NotNil)
-	do, err := session.GetDomain(s.store)
-	c.Assert(err, IsNil)
-	handle := do.StatsHandle()
-	for _, def := range pi.Definitions {
-		statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
-		c.Assert(statsTbl.Pseudo, IsFalse)
-		c.Assert(len(statsTbl.Columns), Equals, 3)
-		c.Assert(len(statsTbl.Indices), Equals, 1)
-		for _, col := range statsTbl.Columns {
-			c.Assert(col.Len(), Greater, 0)
+		tk.MustExec(createTable)
+		for i := 1; i < 21; i++ {
+			tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
 		}
-		for _, idx := range statsTbl.Indices {
-			c.Assert(idx.Len(), Greater, 0)
-		}
-	}
+		tk.MustExec("analyze table t")
 
-	tk.MustExec("drop table t")
-	tk.MustExec(createTable)
-	for i := 1; i < 21; i++ {
-		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
-	}
-	tk.MustExec("alter table t analyze partition p0")
-	is = infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
-	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	c.Assert(err, IsNil)
-	pi = table.Meta().GetPartitionInfo()
-	c.Assert(pi, NotNil)
-
-	for i, def := range pi.Definitions {
-		statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
-		if i == 0 {
+		is := infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+		table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		pi := table.Meta().GetPartitionInfo()
+		c.Assert(pi, NotNil)
+		do, err := session.GetDomain(s.store)
+		c.Assert(err, IsNil)
+		handle := do.StatsHandle()
+		for _, def := range pi.Definitions {
+			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
 			c.Assert(statsTbl.Pseudo, IsFalse)
 			c.Assert(len(statsTbl.Columns), Equals, 3)
 			c.Assert(len(statsTbl.Indices), Equals, 1)
-		} else {
-			c.Assert(statsTbl.Pseudo, IsTrue)
+			for _, col := range statsTbl.Columns {
+				c.Assert(col.Len(), Greater, 0)
+			}
+			for _, idx := range statsTbl.Indices {
+				c.Assert(idx.Len(), Greater, 0)
+			}
 		}
-	}
+
+		tk.MustExec("drop table t")
+		tk.MustExec(createTable)
+		for i := 1; i < 21; i++ {
+			tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "hello")`, i, i))
+		}
+		tk.MustExec("alter table t analyze partition p0")
+		is = infoschema.GetInfoSchema(tk.Se.(sessionctx.Context))
+		table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+		c.Assert(err, IsNil)
+		pi = table.Meta().GetPartitionInfo()
+		c.Assert(pi, NotNil)
+
+		for i, def := range pi.Definitions {
+			statsTbl := handle.GetPartitionStats(table.Meta(), def.ID)
+			if i == 0 {
+				c.Assert(statsTbl.Pseudo, IsFalse)
+				c.Assert(len(statsTbl.Columns), Equals, 3)
+				c.Assert(len(statsTbl.Indices), Equals, 1)
+			} else {
+				c.Assert(statsTbl.Pseudo, IsTrue)
+			}
+		}
+	})
 }
 
 func (s *testSuite1) TestAnalyzeReplicaReadFollower(c *C) {

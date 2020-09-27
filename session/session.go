@@ -777,13 +777,16 @@ func (s *session) ExecRestrictedSQLWithContext(ctx context.Context, sql string) 
 		se.sessionVars.OptimizerUseInvisibleIndexes = true
 		defer func() { se.sessionVars.OptimizerUseInvisibleIndexes = false }()
 	}
+	prePruneMode := se.sessionVars.PartitionPruneMode.Load()
 	defer func() {
 		if se != nil && se.GetSessionVars().StmtCtx.WarningCount() > 0 {
 			warnings := se.GetSessionVars().StmtCtx.GetWarnings()
 			s.GetSessionVars().StmtCtx.AppendWarnings(warnings)
 		}
+		se.sessionVars.PartitionPruneMode.Store(prePruneMode)
 		s.sysSessionPool().Put(tmp)
 	}()
+	se.sessionVars.PartitionPruneMode.Store(s.sessionVars.PartitionPruneMode.Load())
 	metrics.SessionRestrictedSQLCounter.Inc()
 
 	return execRestrictedSQL(ctx, se, sql)
@@ -1664,6 +1667,16 @@ func getHostByIP(ip string) []string {
 		// The empty line here makes the golint tool (which complains err is not checked) happy.
 	}
 	return addrs
+}
+
+// RefreshVars implements the sessionctx.Context interface.
+func (s *session) RefreshVars(ctx context.Context) error {
+	pruneMode, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
+	if err != nil {
+		return err
+	}
+	s.sessionVars.PartitionPruneMode.Store(pruneMode)
+	return nil
 }
 
 // CreateSession4Test creates a new session environment for test.
