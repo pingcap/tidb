@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/testkit"
 	"github.com/pingcap/tidb/util/testutil"
 )
@@ -1316,6 +1317,56 @@ func (s *testSuite10) TestClusterPrimaryKeyForIndexScan(c *C) {
 		cnt++
 	}
 	c.Assert(cnt, Equals, 15)
+}
+
+func (s *testSerialSuite) TestDuplicateEntryMessage(c *C) {
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test;")
+	for _, enable := range []int{0, 1} {
+		tk.MustExec(fmt.Sprintf("set session tidb_enable_clustered_index=%d;", enable))
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
+		tk.MustExec("insert into t value (34, '12Ak');")
+		tk.MustGetErrMsg("insert into t value (34, '12Ak');", "[kv:1062]Duplicate entry '12Ak' for key 'b'")
+
+		tk.MustExec("begin optimistic;")
+		tk.MustExec("insert into t value (34, '12ak');")
+		tk.MustExec("delete from t where b = '12ak';")
+		tk.MustGetErrMsg("commit;", "previous statement: delete from t where b = '12ak';: [kv:1062]Duplicate entry '12ak' for key 'b'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime primary key);")
+		tk.MustExec("insert into t values ('2020-01-01');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
+
+		tk.MustExec("begin optimistic;")
+		tk.MustExec("insert into t values ('2020-01-01');")
+		tk.MustExec("delete from t where a = '2020-01-01';")
+		tk.MustGetErrMsg("commit;", "previous statement: delete from t where a = '2020-01-01';: [kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'PRIMARY'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int primary key );")
+		tk.MustExec("insert into t value (1);")
+		tk.MustGetErrMsg("insert into t value (1);", "[kv:1062]Duplicate entry '1' for key 'PRIMARY'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime unique);")
+		tk.MustExec("insert into t values ('2020-01-01');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00' for key 'a'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime, b int, c varchar(10), primary key (a, b, c)) collate utf8mb4_general_ci;")
+		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'PRIMARY'")
+
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a datetime, b int, c varchar(10), unique key (a, b, c)) collate utf8mb4_general_ci;")
+		tk.MustExec("insert into t values ('2020-01-01', 1, 'aSDd');")
+		tk.MustGetErrMsg("insert into t values ('2020-01-01', 1, 'ASDD');", "[kv:1062]Duplicate entry '2020-01-01 00:00:00-1-ASDD' for key 'a'")
+	}
 }
 
 func combination(items []string) func() []string {
