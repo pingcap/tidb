@@ -6265,7 +6265,6 @@ func (s *testSuite) TestIssue13758(c *C) {
 	))
 }
 
-<<<<<<< HEAD
 func (s *testSuite) TestIssue20237(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
