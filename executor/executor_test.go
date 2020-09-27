@@ -6477,7 +6477,8 @@ func (s *testSerialSuite) TestCoprocessorOOMAction(c *C) {
 	// assert oom action
 	for _, testcase := range testcases {
 		c.Log(testcase.name)
-		quota := 255
+		// larger than one copResponse, smaller than 2 copResponse
+		quota := 201
 		se, err := session.CreateSession4Test(s.store)
 		c.Check(err, IsNil)
 		tk.Se = se
