@@ -239,6 +239,7 @@ func (txn *tikvTxn) Commit(ctx context.Context) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		txn.committer = committer
 	}
 	defer func() {
 		// For async commit transactions, the ttl manager will be closed in the asynchronous commit goroutine.
