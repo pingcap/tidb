@@ -155,6 +155,15 @@ func (rc *reorgCtx) clean() {
 
 func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.TableInfo, lease time.Duration, f func() error) error {
 	job := reorgInfo.Job
+	// This is for tests compatible, because most of the early tests try to build the reorg job manually
+	// without reorg meta info, which will cause nil pointer in here.
+	if job.ReorgMeta == nil {
+		job.ReorgMeta = &model.DDLReorgMeta{
+			SQLMode:       mysql.ModeNone,
+			Warnings:      make(map[errors.ErrorID]*terror.Error),
+			WarningsCount: make(map[errors.ErrorID]int64),
+		}
+	}
 	if w.reorgCtx.doneCh == nil {
 		// start a reorganization job
 		w.wg.Add(1)

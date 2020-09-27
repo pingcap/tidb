@@ -5827,7 +5827,7 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
 	}
 	tk.MustExec(dml)
 	// Make the regions scale like: [1, 1024), [1024, 2048), [2048, 3072), [3072, 4096]
-	tk.MustQuery("split table t between(0) and (4096) regions 4").Check(testkit.Rows("4 1"))
+	tk.MustQuery("split table t between(0) and (4096) regions 4").Check(testkit.Rows("3 1"))
 
 	d := s.dom.DDL()
 	hook := &ddl.TestDDLCallback{}
