@@ -6835,8 +6835,8 @@ func (s *testIntegrationSuite) TestIssue20121(c *C) {
 	tk.MustExec("insert into ttt values('2019-11-11 11:11:11', 2000)")
 	tk.MustExec("insert into ttt values('2019-11-11 11:11:11', 2022)")
 
-	tk.MustQuery("select * from ttt where ttt.a > ttt.b").Check(testkit.Rows("2011-11-11 11:11:11  2022"))
-	tk.MustQuery("select * from ttt where ttt.a < ttt.b").Check(testkit.Rows("2019-11-11 11:11:11 2000", "2019-11-11 11:11:11 2022"))
+	tk.MustQuery("select * from ttt where ttt.a > ttt.b").Check(testkit.Rows("2019-11-11 11:11:11  2019", "2019-11-11 11:11:11 2000"))
+	tk.MustQuery("select * from ttt where ttt.a < ttt.b").Check(testkit.Rows("2019-11-11 11:11:11 2022"))
 }
 
 func (s *testIntegrationSuite) TestIssue16779(c *C) {
