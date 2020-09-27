@@ -87,6 +87,7 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tikv'")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("prepare stmt from \"select * from t\"")
 	tk.MustQuery("execute stmt")
 	tkProcess := tk.Se.ShowProcess()
@@ -182,6 +183,7 @@ func (s *testSuite9) TestPlanCacheOnPointGet(c *C) {
 
 	// For point get
 	tk.MustExec("drop table if exists t1")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("create table t1(a varchar(20), b varchar(20), c varchar(20), primary key(a, b))")
 	tk.MustExec("insert into t1 values('1','1','111'),('2','2','222'),('3','3','333')")
 	tk.MustExec(`prepare stmt2 from "select * from t1 where t1.a = ? and t1.b = ?"`)
