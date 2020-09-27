@@ -16,6 +16,7 @@ func init() {
 	if val, err := strconv.Atoi(os.Getenv("GOGC")); err == nil {
 		gogcValue = int64(val)
 	}
+	metrics.GOGC.Set(float64(gogcValue))
 }
 
 // SetGOGC update GOGC and related metrics.
