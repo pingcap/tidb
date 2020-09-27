@@ -570,8 +570,8 @@ func (it *copIterator) open(ctx context.Context) {
 		sendRate: it.sendRate,
 	}
 	taskSender.respChan = it.respChan
-	go taskSender.run()
 	it.actionOnExceed.setEnabled(true)
+	go taskSender.run()
 }
 
 func (sender *copIteratorTaskSender) run() {
