@@ -973,7 +973,7 @@ type indexLookUpRunTimeStats struct {
 func (e *indexLookUpRunTimeStats) String() string {
 	var buf bytes.Buffer
 	if e.indexScan != 0 && e.indexTask.Count != 0 {
-		buf.WriteString(fmt.Sprintf("index_task:{time:%s, num_rpc:%d, total_time:%s}", time.Duration(e.indexScan), e.indexTask.Count, time.Duration(e.indexTask.Consume)))
+		buf.WriteString(fmt.Sprintf("index_task:{time:%s, num_rpc:%d}", time.Duration(e.indexScan), e.indexTask.Count))
 	}
 	if e.tableRowScan != 0 && e.tableTask.Count != 0 {
 		if buf.Len() > 0 {
