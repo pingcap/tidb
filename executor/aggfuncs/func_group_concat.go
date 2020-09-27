@@ -33,13 +33,13 @@ import (
 )
 
 const (
-	// DefPartialResult4GroupConcatSize is the size of partialResult4CountDistinctInt
+	// DefPartialResult4GroupConcatSize is the size of partialResult4GroupConcat
 	DefPartialResult4GroupConcatSize = int64(unsafe.Sizeof(partialResult4GroupConcat{}))
 	// DefPartialResult4GroupConcatDistinctSize is the size of partialResult4GroupConcatDistinct
 	DefPartialResult4GroupConcatDistinctSize = int64(unsafe.Sizeof(partialResult4GroupConcatDistinct{}))
-	// DefPartialResult4CountDistinctDecimalSize is the size of partialResult4GroupConcatOrder
+	// DefPartialResult4GroupConcatOrderSize is the size of partialResult4GroupConcatOrder
 	DefPartialResult4GroupConcatOrderSize = int64(unsafe.Sizeof(partialResult4GroupConcatOrder{}))
-	// DefPartialResult4CountDistinctDurationSize is the size of partialResult4GroupConcatOrderDistinct
+	// DefPartialResult4GroupConcatOrderDistinctSize is the size of partialResult4GroupConcatOrderDistinct
 	DefPartialResult4GroupConcatOrderDistinctSize = int64(unsafe.Sizeof(partialResult4GroupConcatOrderDistinct{}))
 )
 
