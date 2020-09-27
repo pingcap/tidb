@@ -290,22 +290,39 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 	locateExprs := make([]expression.Expression, 0, len(pi.Definitions))
 	var buf, nullCondBuf bytes.Buffer
 	schema := expression.NewSchema(columns...)
-	partStr := pi.Expr
 	p := parser.New()
+	var partStr string
+	if len(pi.Columns) == 0 {
+		partStr = pi.Expr
+	} else {
+		for i, col := range pi.Columns {
+			if i > 0 {
+				partStr += ","
+			}
+			partStr += col.L
+		}
+	}
 	for _, def := range pi.Definitions {
-		buf.WriteString("((%s) in (")
+		buf.WriteString("((")
+		buf.WriteString(partStr)
+		buf.WriteString(") in (")
 		for i, vs := range def.InValues {
 			if i > 0 {
 				buf.WriteByte(',')
 			}
-			buf.WriteString("('")
-			buf.WriteString(strings.Join(vs, "','"))
-			buf.WriteString("')")
+			if len(vs) == 1 {
+				buf.WriteString(vs[0])
+			} else {
+				buf.WriteString("(")
+				buf.WriteString(strings.Join(vs, ","))
+				buf.WriteString(")")
+			}
 		}
-		buf.WriteString(")")
+		buf.WriteString("))")
 		for _, vs := range def.InValues {
 			nullCondBuf.Reset()
-			for _, value := range vs {
+			hasNull := false
+			for i, value := range vs {
 				expr, err := parseSimpleExprWithNames(p, ctx, value, schema, names)
 				if err != nil {
 					return nil, errors.Trace(err)
@@ -314,13 +331,29 @@ func generateListPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
+				if i > 0 {
+					nullCondBuf.WriteString(" and ")
+				}
 				if v.IsNull() {
 					hasNull = true
-					break
+					if len(pi.Columns) > 0 {
+						fmt.Fprintf(&nullCondBuf, "%s is null", pi.Columns[i])
+					} else {
+						fmt.Fprintf(&nullCondBuf, "%s is null", pi.Expr)
+					}
+				} else {
+					if len(pi.Columns) > 0 {
+						fmt.Fprintf(&nullCondBuf, "%s = %s", pi.Columns[i], value)
+					} else {
+						fmt.Fprintf(&nullCondBuf, "%s is = %s", pi.Expr, value)
+					}
 				}
 			}
+			if hasNull {
+				fmt.Fprintf(&buf, " or (%s) ", nullCondBuf.String())
+			}
 		}
-
+		fmt.Printf("list partition expr: %v  \n\n----\n", buf.String())
 		expr, err := parseSimpleExprWithNames(p, ctx, buf.String(), schema, names)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.

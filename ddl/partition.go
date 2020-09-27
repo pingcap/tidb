@@ -300,6 +300,9 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 			enable = true
 		}
 	}
+	if s.Partition.Tp == model.PartitionTypeList {
+		enable = true
+	}
 
 	if !enable {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnsupportedCreatePartition)
@@ -318,7 +321,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.CreateTableStmt) (*m
 			return nil, err
 		}
 		pi.Expr = buf.String()
-	} else if s.Partition.ColumnNames != nil && s.Partition.Tp == model.PartitionTypeRange {
+	} else if s.Partition.ColumnNames != nil {
 		// TODO: Support multiple columns for 'PARTITION BY RANGE COLUMNS'.
 		if s.Partition.Tp == model.PartitionTypeRange && len(s.Partition.ColumnNames) != 1 {
 			pi.Enable = false
