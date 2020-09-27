@@ -5774,9 +5774,6 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWithWarnings(c *C) {
 	tk.MustExec("use test")
 	// Enable column change variable.
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = false
-	}()
 
 	// Test normal warnings.
 	tk.MustExec("drop table if exists t")
@@ -5807,16 +5804,13 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWithWarnings(c *C) {
 		"Warning 1690 DECIMAL value is out of range in '(3, 1)'"))
 }
 
-// TestModifyColumnTypeWithWarningsWhenInterception is to test modifying column type with warnings intercepted by
+// TestModifyColumnTypeWhenInterception is to test modifying column type with warnings intercepted by
 // reorg timeout, not owner error and so on.
 func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	// Enable column change variable.
 	tk.Se.GetSessionVars().EnableChangeColumnType = true
-	defer func() {
-		tk.Se.GetSessionVars().EnableChangeColumnType = false
-	}()
 
 	// Test normal warnings.
 	tk.MustExec("drop table if exists t")
@@ -5845,7 +5839,7 @@ func (s *testSerialDBSuite) TestModifyColumnTypeWhenInterception(c *C) {
 	// Since the existence of reorg batch size, only the last reorg batch [2816, 3072) of kv
 	// range [2048, 3072) fail to commit, the rest of them all committed successfully. So the
 	// addedCount and warnings count in the job are all equal to `4096 - reorg batch size`.
-	// In the next round of this ddl job, the last reorg batch region will be finished.
+	// In the next round of this ddl job, the last reorg batch will be finished.
 	var middleWarningsCount = int64(defaultBatchSize*4 - defaultReorgBatchSize)
 	hook.OnJobUpdatedExported = func(job *model.Job) {
 		if job.SchemaState == model.StateWriteReorganization || job.SnapshotVer != 0 {

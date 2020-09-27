@@ -132,8 +132,8 @@ func (rc *reorgCtx) mergeWarnings(warnings map[errors.ErrorID]*terror.Error, war
 func (rc *reorgCtx) resetWarnings() {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
-	rc.mu.warnings = nil
-	rc.mu.warningsCount = nil
+	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
+	rc.mu.warningsCount = make(map[errors.ErrorID]int64)
 }
 
 func (rc *reorgCtx) increaseRowCount(count int64) {
@@ -189,11 +189,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		job.SetRowCount(rowCount)
 
 		// Update a job's warnings.
-		w.reorgCtx.mu.Lock()
-		partWarnings := w.reorgCtx.mu.warnings
-		partWarningsCount := w.reorgCtx.mu.warningsCount
-		job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
-		w.reorgCtx.mu.Unlock()
+		w.mergeWarningsIntoJob(job)
 
 		if err == nil {
 			metrics.AddIndexProgress.Set(100)
@@ -222,11 +218,7 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		updateAddIndexProgress(w, tblInfo, rowCount)
 
 		// Update a job's warnings.
-		w.reorgCtx.mu.Lock()
-		partWarnings := w.reorgCtx.mu.warnings
-		partWarningsCount := w.reorgCtx.mu.warningsCount
-		job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
-		w.reorgCtx.mu.Unlock()
+		w.mergeWarningsIntoJob(job)
 
 		w.reorgCtx.resetWarnings()
 		// Update a reorgInfo's handle.
@@ -238,6 +230,14 @@ func (w *worker) runReorgJob(t *meta.Meta, reorgInfo *reorgInfo, tblInfo *model.
 		return errWaitReorgTimeout
 	}
 	return nil
+}
+
+func (w *worker) mergeWarningsIntoJob(job *model.Job) {
+	w.reorgCtx.mu.Lock()
+	partWarnings := w.reorgCtx.mu.warnings
+	partWarningsCount := w.reorgCtx.mu.warningsCount
+	job.SetWarnings(mergeWarningsAndWarningsCount(partWarnings, job.ReorgMeta.Warnings, partWarningsCount, job.ReorgMeta.WarningsCount))
+	w.reorgCtx.mu.Unlock()
 }
 
 func updateAddIndexProgress(w *worker, tblInfo *model.TableInfo, addedRowCount int64) {
