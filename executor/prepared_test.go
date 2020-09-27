@@ -66,7 +66,7 @@ func (s *testSuite1) TestIgnorePlanCache(c *C) {
 	c.Assert(tk.Se.GetSessionVars().StmtCtx.UseCache, IsFalse)
 }
 
-func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
+func (s *testSerialSuite) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	tk := testkit.NewTestKitWithInit(c, s.store)
 	tk.Se.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"))
 
@@ -87,6 +87,7 @@ func (s *testSuite1) TestPrepareStmtAfterIsolationReadChange(c *C) {
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tikv'")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("prepare stmt from \"select * from t\"")
 	tk.MustQuery("execute stmt")
 	tkProcess := tk.Se.ShowProcess()
@@ -164,8 +165,12 @@ func (s *testSuite12) TestPreparedStmtWithHint(c *C) {
 	c.Check(sm.killed, Equals, true)
 }
 
+<<<<<<< HEAD
 func (s *testSuite9) TestPlanCacheOnPointGet(c *C) {
 	defer testleak.AfterTest(c)()
+=======
+func (s *testSerialSuite) TestPlanCacheClusterIndex(c *C) {
+>>>>>>> 17b7b5e81... *: add executor runtime info for `explain for connection` statement (#19183)
 	store, dom, err := newStoreWithBootstrap()
 	c.Assert(err, IsNil)
 	tk := testkit.NewTestKit(c, store)
@@ -182,6 +187,11 @@ func (s *testSuite9) TestPlanCacheOnPointGet(c *C) {
 
 	// For point get
 	tk.MustExec("drop table if exists t1")
+<<<<<<< HEAD
+=======
+	tk.MustExec("set @@tidb_enable_clustered_index = 1")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+>>>>>>> 17b7b5e81... *: add executor runtime info for `explain for connection` statement (#19183)
 	tk.MustExec("create table t1(a varchar(20), b varchar(20), c varchar(20), primary key(a, b))")
 	tk.MustExec("insert into t1 values('1','1','111'),('2','2','222'),('3','3','333')")
 	tk.MustExec(`prepare stmt2 from "select * from t1 where t1.a = ? and t1.b = ?"`)
