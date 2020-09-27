@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1646,6 +1647,11 @@ func listIndicesWithColumn(colName string, indices []*model.IndexInfo) ([]*model
 			}
 		}
 	}
+	// We should sort compositeIndices to make sure this list not changed by other DDL statements.
+	// If this order changed, reorg job may got some problem on reorg multi indices.
+	sort.Slice(compositeIndices, func(i, j int) bool {
+		return compositeIndices[i].ID < compositeIndices[j].ID
+	})
 	return singleIndices, compositeIndices
 }
 
