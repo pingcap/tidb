@@ -671,26 +671,27 @@ func (s *testIntegrationSerialSuite) TestIsolationReadDoNotFilterSystemDB(c *C) 
 
 func (s *testIntegrationSuite) TestPartitionTableStats(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	{
+		tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
+		tk.MustExec("insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5)")
+		tk.MustExec("analyze table t")
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int)partition by range columns(a)(partition p0 values less than (10), partition p1 values less than(20), partition p2 values less than(30));")
-	tk.MustExec("insert into t values(21, 1), (22, 2), (23, 3), (24, 4), (15, 5)")
-	tk.MustExec("analyze table t")
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.StaticOnly) + `'`)
-
-	var input []string
-	var output []struct {
-		SQL    string
-		Result []string
-	}
-	s.testData.GetTestCases(c, &input, &output)
-	for i, tt := range input {
-		s.testData.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		var input []string
+		var output []struct {
+			SQL    string
+			Result []string
+		}
+		s.testData.GetTestCases(c, &input, &output)
+		for i, tt := range input {
+			s.testData.OnRecord(func() {
+				output[i].SQL = tt
+				output[i].Result = s.testData.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			})
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
+		}
 	}
 }
 
