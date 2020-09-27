@@ -98,16 +98,6 @@ func (action actionPrewrite) handleSingleBatch(c *twoPhaseCommitter, bo *Backoff
 		txnSize = math.MaxUint64
 	}
 
-	// Sanity check for forUpdateTS, this ensures minCommitTS will not be too large
-	// 3600000 << 18 = 943718400000
-	if c.forUpdateTS-c.commitTS >= 943718400000 {
-		err := errors.Errorf("forUpdateTS too large: %d", c.forUpdateTS)
-		logutil.BgLogger().Error("prewrite failed",
-			zap.Uint64("conn", c.connID),
-			zap.Error(err))
-		return errors.Trace(err)
-	}
-
 	req := c.buildPrewriteRequest(batch, txnSize)
 	for {
 		sender := NewRegionRequestSender(c.store.regionCache, c.store.client)

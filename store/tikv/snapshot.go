@@ -86,8 +86,8 @@ type tikvSnapshot struct {
 func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *tikvSnapshot {
 	// Sanity check for snapshot version.
 	if ver.Ver >= math.MaxInt64 && ver.Ver != math.MaxUint64 {
-		logutil.BgLogger().Warn("try to get snapshot with a large ts",
-			zap.Uint64("ts", ver.Ver))
+		err := errors.Errorf("try to get snapshot with a large ts %d", ver.Ver)
+		panic(err)
 	}
 	return &tikvSnapshot{
 		store:           store,
@@ -102,6 +102,11 @@ func newTiKVSnapshot(store *tikvStore, ver kv.Version, replicaReadSeed uint32) *
 }
 
 func (s *tikvSnapshot) setSnapshotTS(ts uint64) {
+	// Sanity check for snapshot version.
+	if ts >= math.MaxInt64 && ts != math.MaxUint64 {
+		err := errors.Errorf("try to get snapshot with a large ts %d", ts)
+		panic(err)
+	}
 	// Invalidate cache if the snapshotTS change!
 	s.version.Ver = ts
 	s.mu.Lock()
