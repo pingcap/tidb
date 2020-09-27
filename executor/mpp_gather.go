@@ -39,8 +39,7 @@ func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader
 	if tr.StoreType != kv.TiFlash {
 		return false
 	}
-	_, ok := tr.GetTablePlan().(*plannercore.PhysicalBroadCastJoin)
-	return ok
+	return true
 }
 
 type mppTask struct {

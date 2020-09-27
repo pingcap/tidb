@@ -327,6 +327,7 @@ func (c *MPPClient) DispatchMPPTasks(ctx context.Context, dispatchReqs []*kv.MPP
 		finishCh:  make(chan struct{}),
 		rpcCancel: NewRPCanceller(),
 		respChan:  make(chan *mppResponse, 4096),
+		startTs:   dispatchReqs[0].StartTs,
 	}
 	ctx = context.WithValue(ctx, RPCCancellerCtxKey{}, iter.rpcCancel)
 
